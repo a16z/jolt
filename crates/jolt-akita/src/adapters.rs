@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
+pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Dense;
 pub(crate) type AkitaOneHotK16Config = crate::configs::JoltD64OneHotK16;
 pub(crate) type AkitaOneHotK256Config = crate::configs::JoltD64OneHotK256;
 pub(crate) const AKITA_D: usize = AkitaConfig::D;
@@ -253,7 +253,7 @@ impl AkitaVerifierSetup {
                     self.max_num_polys_per_commitment_group,
                 )
                 .map_err(|err| invalid_setup(&err))?;
-                Ok(AkitaBackendScheme::setup_verifier(&prover_setup))
+                AkitaBackendScheme::setup_verifier(&prover_setup).map_err(|err| invalid_setup(&err))
             }
             AkitaBackendFlavor::OneHot => {
                 let log_k = validate_one_hot_k(self.one_hot_k)?;
@@ -619,9 +619,12 @@ pub(crate) fn one_hot_setup_verifier(
     one_hot_k: usize,
     prover_setup: &AkitaBackendProverSetup,
 ) -> Result<AkitaBackendVerifier, OpeningsError> {
+    let invalid_setup = |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
     match one_hot_k {
-        AKITA_ONE_HOT_K16 => Ok(AkitaOneHotK16BackendScheme::setup_verifier(prover_setup)),
-        AKITA_ONE_HOT_K256 => Ok(AkitaOneHotK256BackendScheme::setup_verifier(prover_setup)),
+        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::setup_verifier(prover_setup)
+            .map_err(|err| invalid_setup(&err)),
+        AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::setup_verifier(prover_setup)
+            .map_err(|err| invalid_setup(&err)),
         _ => Err(invalid_batch(format!(
             "Akita one-hot chunk size must be 16 or 256, got {one_hot_k}"
         ))),

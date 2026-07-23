@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 akita-config = { workspace = true, features = [
-  "schedules-fp128-d64-full",
+  "schedules-fp128-d64-dense",
   "schedules-fp128-d64-onehot",
 ] }
 akita-pcs = { workspace = true, features = ["parallel"] }

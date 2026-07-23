@@ -38,27 +38,18 @@ fn akita_public_commit_open_uses_sparse_one_hot_path() {
     assert!(!AkitaScheme::supports_unit_sparse_dimension(5));
     assert!(AkitaScheme::supports_unit_sparse_dimension(6));
 
-    let num_vars = 6;
+    let num_vars = 13;
     let (prover_setup, verifier_setup) = setup_for(num_vars, 1, layout(7));
     let k = 4;
-    let indices = vec![
-        Some(2),
-        None,
-        Some(0),
-        Some(3),
-        Some(1),
-        None,
-        Some(2),
-        Some(0),
-        None,
-        Some(3),
-        Some(1),
-        None,
-        Some(0),
-        Some(2),
-        None,
-        Some(1),
-    ];
+    let indices = (0..(1usize << num_vars) / k)
+        .map(|row| {
+            if row % 5 == 4 {
+                None
+            } else {
+                Some((row % k) as u8)
+            }
+        })
+        .collect::<Vec<_>>();
     let one_hot = OneHotPolynomial::new(k, indices.clone());
     let mut dense = vec![f(0); 1 << num_vars];
     for (row, col) in indices.iter().enumerate() {
@@ -110,10 +101,18 @@ fn akita_public_commit_open_uses_sparse_one_hot_path() {
 
 #[test]
 fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
-    let num_vars = 10;
+    let num_vars = 13;
     let (prover_setup, verifier_setup) = setup_for(num_vars, 1, layout(9));
     let k = 256;
-    let indices = vec![Some(2), None, Some(129), Some(255)];
+    let indices = (0..(1usize << num_vars) / k)
+        .map(|row| {
+            if row % 7 == 3 {
+                None
+            } else {
+                Some(((row * 11) % k) as u8)
+            }
+        })
+        .collect::<Vec<_>>();
     let one_hot = OneHotPolynomial::new(k, indices.clone());
     let mut dense = vec![f(0); 1 << num_vars];
     for (row, col) in indices.iter().enumerate() {
@@ -269,8 +268,8 @@ fn akita_native_batching_rejects_corrupted_proof_payloads() {
 #[test]
 fn akita_zk_interfaces_are_explicitly_unsupported() {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly = polynomial(4, 1);
-    let point = vec![f(2), f(3), f(5), f(7)];
+    let poly = polynomial(13, 1);
+    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).unwrap();
 
@@ -324,9 +323,9 @@ fn native_proof_fixture(
     label: &'static [u8],
 ) -> (VerifierSetup, AkitaNativeBatchStatement, AkitaBatchProof) {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly_a = polynomial(4, 1);
-    let poly_b = polynomial(4, 20);
-    let point = vec![f(2), f(3), f(5), f(7)];
+    let poly_a = polynomial(13, 1);
+    let poly_b = polynomial(13, 20);
+    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =

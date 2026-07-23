@@ -268,6 +268,13 @@ impl CommitmentScheme for AkitaPackedScheme {
     type BatchedProof = AkitaPackedScheme;
     type OpeningProofHint = AkitaPackedScheme;
 
+    /// Akita's folded-only protocol cannot schedule the K=16 `OneHotTrace`
+    /// group below 16 variables, and column arity is `4 + log_T`, so the
+    /// packed pipeline pads every trace to at least 2^12 cycles. Dishonest
+    /// sub-floor trace lengths are rejected by verifier-side schedule
+    /// resolution.
+    const MIN_PADDED_TRACE_LENGTH: usize = 1 << 12;
+
     fn setup_prover(_max_num_vars: usize) -> Self::ProverSetup {
         Self
     }

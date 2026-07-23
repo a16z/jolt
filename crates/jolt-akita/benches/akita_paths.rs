@@ -35,7 +35,7 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use akita_config::{
-    proof_optimized::fp128::{D64Full as AkitaConfig, D64OneHot as AkitaOneHotConfig},
+    proof_optimized::fp128::{D64Dense as AkitaConfig, D64OneHot as AkitaOneHotConfig},
     CommitmentConfig,
 };
 use akita_pcs::{AkitaCommitmentScheme, ComputeBackendSetup, CpuBackend};
@@ -46,7 +46,7 @@ use akita_prover::{
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims, SetupContributionMode,
+    PolynomialGroupClaims,
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
@@ -629,7 +629,6 @@ fn akita_prover_open_dense(
         &stack,
         &mut transcript,
         BasisMode::Lagrange,
-        SetupContributionMode::Direct,
     )
     .expect("Akita backend dense proof should succeed")
 }
@@ -662,7 +661,6 @@ fn akita_prover_open_one_hot(
         &stack,
         &mut transcript,
         BasisMode::Lagrange,
-        SetupContributionMode::Direct,
     )
     .expect("Akita backend one-hot proof should succeed")
 }

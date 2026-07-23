@@ -331,8 +331,8 @@ impl<
         );
 
         let unpadded_trace_len = trace.len();
-        let padded_trace_len = if unpadded_trace_len < 256 {
-            256 // ensures that T >= k^{1/D}
+        let padded_trace_len = if unpadded_trace_len < PCS::MIN_PADDED_TRACE_LENGTH {
+            PCS::MIN_PADDED_TRACE_LENGTH
         } else {
             (trace.len() + 1).next_power_of_two()
         };

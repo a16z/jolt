@@ -330,7 +330,8 @@ impl CommitmentScheme for AkitaScheme {
             let prepared_backend_setup = CpuBackend
                 .prepare_setup(&backend_prover_setup)
                 .map_err(|err| invalid_setup(&err))?;
-            let backend_verifier_setup = AkitaBackendScheme::setup_verifier(&backend_prover_setup);
+            let backend_verifier_setup = AkitaBackendScheme::setup_verifier(&backend_prover_setup)
+                .map_err(|err| invalid_setup(&err))?;
             (
                 Some(std::sync::Arc::new(backend_prover_setup)),
                 Some(std::sync::Arc::new(prepared_backend_setup)),
@@ -677,12 +678,21 @@ mod tests {
     }
 
     fn one_hot_roundtrip(one_hot_k: usize) {
-        let num_vars = one_hot_k.ilog2() as usize + 2;
+        let num_vars = one_hot_k.ilog2() as usize + 8;
         let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
             num_vars, 1, [4; 32], one_hot_k,
         ))
         .unwrap();
-        let polynomial = OneHotPolynomial::new(one_hot_k, vec![Some(0), Some(1), None, Some(3)]);
+        let indices = (0..256usize)
+            .map(|row| {
+                if row == 2 {
+                    None
+                } else {
+                    Some((row % one_hot_k) as u8)
+                }
+            })
+            .collect::<Vec<_>>();
+        let polynomial = OneHotPolynomial::new(one_hot_k, indices);
         let (commitment, hint) = AkitaScheme::commit_one_hot_group(
             &prover_setup,
             [4; 32],
@@ -746,7 +756,8 @@ mod tests {
     /// must re-derive the same backend key from its shape.
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
-        let (_, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::new(2, 1, [3; 32])).unwrap();
+        let (_, verifier_setup) =
+            AkitaScheme::setup(AkitaSetupParams::new(13, 1, [3; 32])).unwrap();
         let json = serde_json::to_string(&verifier_setup).unwrap();
         let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
         assert_eq!(transported, verifier_setup);
@@ -765,9 +776,13 @@ mod tests {
 
     #[test]
     fn direct_opening_requires_statement_commitment_layout_digest() {
-        let setup_params = AkitaSetupParams::new(1, 1, [7; 32]);
+        let setup_params = AkitaSetupParams::new(13, 1, [7; 32]);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
-        let polynomial = Polynomial::new(vec![AkitaField::from_u64(2), AkitaField::from_u64(5)]);
+        let polynomial = Polynomial::new(
+            (0..(1u64 << 13))
+                .map(|i| AkitaField::from_u64(2 + 5 * i))
+                .collect(),
+        );
         let commitment_digest = [9; 32];
         let (commitment, hint) = AkitaScheme::commit_group(
             &prover_setup,
@@ -777,7 +792,7 @@ mod tests {
         .expect("direct commitment may use its own layout digest");
         assert_eq!(commitment.layout_digest, commitment_digest);
 
-        let point = vec![AkitaField::from_u64(3)];
+        let point = (3..16).map(AkitaField::from_u64).collect::<Vec<_>>();
         let claim = polynomial.evaluate(&point);
         let statement = vec![VerifierOpeningClaim {
             commitment: commitment.clone(),

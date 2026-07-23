@@ -18,9 +18,7 @@
 
 use akita_pcs::AkitaTranscript;
 use akita_prover::ProverOpeningData;
-use akita_types::{
-    BasisMode, OpeningClaims, PointVariableSelection, PolynomialGroupClaims, SetupContributionMode,
-};
+use akita_types::{BasisMode, OpeningClaims, PointVariableSelection, PolynomialGroupClaims};
 use jolt_openings::{BatchOpeningScheme, OpeningsError, VerifierOpeningClaim};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
@@ -222,7 +220,6 @@ macro_rules! prove_dense_backend {
             &stack,
             $transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         )
         .map_err(prove_failed)?
     }};
@@ -257,7 +254,6 @@ fn prove_one_hot(
             &stack,
             akita_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         ),
         AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_prove(
             backend_prover_setup,
@@ -265,7 +261,6 @@ fn prove_one_hot(
             &stack,
             akita_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
         ),
         _ => unreachable!("one-hot K is validated during setup"),
     }
@@ -433,7 +428,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 &mut akita_transcript,
                 claims,
                 BasisMode::Lagrange,
-                SetupContributionMode::Direct,
             ),
             AkitaBackendFlavor::OneHot => match setup.one_hot_k {
                 AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_verify(
@@ -442,7 +436,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                     &mut akita_transcript,
                     claims,
                     BasisMode::Lagrange,
-                    SetupContributionMode::Direct,
                 ),
                 AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_verify(
                     &backend_proof,
@@ -450,7 +443,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                     &mut akita_transcript,
                     claims,
                     BasisMode::Lagrange,
-                    SetupContributionMode::Direct,
                 ),
                 _ => unreachable!("one-hot K is validated during setup"),
             },
