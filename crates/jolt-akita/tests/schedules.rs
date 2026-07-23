@@ -111,3 +111,37 @@ fn catalogs_match_planner_regeneration() {
         }
     }
 }
+
+/// Perf-iteration diagnostic: print the planner DP's expanded schedule (all
+/// levels, matrices, digit plans) for one K256 key. Override the key with
+/// PROBE_NUM_VARS / PROBE_NUM_POLYS.
+#[test]
+#[ignore = "diagnostic printout for perf work"]
+#[expect(clippy::print_stdout, reason = "diagnostic printout is the test's output")]
+fn print_expanded_k256_schedule() {
+    use akita_config::{policy_of, CommitmentConfig};
+    use akita_planner::find_group_batch_schedule;
+    use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout};
+    use jolt_akita::configs::JoltD64OneHotK256;
+
+    let num_vars: usize = std::env::var("PROBE_NUM_VARS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(34);
+    let num_polys: usize = std::env::var("PROBE_NUM_POLYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(29);
+    let key = OpeningClaimsLayout::new(num_vars, num_polys)
+        .and_then(|layout| layout.root_final_group_layout())
+        .expect("valid probe layout");
+    let planned = find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(key),
+        &policy_of::<JoltD64OneHotK256>(),
+        JoltD64OneHotK256::ring_challenge_config,
+        JoltD64OneHotK256::fold_challenge_shape_at_level,
+    )
+    .expect("planner DP must schedule the probe key");
+    println!("=== expanded K256 schedule (num_vars={num_vars}, num_polys={num_polys}) ===");
+    println!("{:#?}", planned.schedule);
+}

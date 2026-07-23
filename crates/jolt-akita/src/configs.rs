@@ -128,6 +128,13 @@ macro_rules! delegate_preset {
                 <$base>::recursive_setup_planning()
             }
 
+            fn selection_payload_slack_permille() -> u32 {
+                // Accept up to 1% larger proofs when that buys a smaller root
+                // inner rank `n_a` — the rank multiplies the whole one-hot
+                // commit kernel, the dominant prover cost at large T.
+                10
+            }
+
             fn supports_multi_group_final_commit() -> bool {
                 <$base>::supports_multi_group_final_commit()
             }
