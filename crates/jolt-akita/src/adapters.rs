@@ -43,6 +43,35 @@ pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaFie
 
 pub(crate) type AkitaLayoutDigest = [u8; 32];
 
+/// Worker stack size for [`with_backend_pool`]. Stacks are lazily committed,
+/// so oversizing costs virtual address space only.
+const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// Runs `f` with rayon parallelism on a dedicated pool whose workers have
+/// large stacks.
+///
+/// The Akita backend kernels recurse deeply inside rayon parallel iterators
+/// (the bridge splitter re-splits whenever a job migrates to a stealing
+/// worker, and the fold kernels carry large frames), which overflows rayon's
+/// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
+/// the packed prover at trace-scale shapes. Every backend setup/commit/
+/// prove/verify entry funnels through this pool. Nested calls reuse it.
+#[expect(
+    clippy::expect_used,
+    reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
+)]
+pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .thread_name(|index| format!("jolt-akita-{index}"))
+            .stack_size(BACKEND_WORKER_STACK_BYTES)
+            .build()
+            .expect("the Akita backend thread pool must build")
+    })
+    .install(f)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaSetupParams {
@@ -248,12 +277,15 @@ impl AkitaVerifierSetup {
             |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
         match flavor {
             AkitaBackendFlavor::Dense => {
-                let prover_setup = AkitaBackendScheme::setup_prover(
-                    self.max_num_vars,
-                    self.max_num_polys_per_commitment_group,
-                )
+                let prover_setup = with_backend_pool(|| {
+                    AkitaBackendScheme::setup_prover(
+                        self.max_num_vars,
+                        self.max_num_polys_per_commitment_group,
+                    )
+                })
                 .map_err(|err| invalid_setup(&err))?;
-                AkitaBackendScheme::setup_verifier(&prover_setup).map_err(|err| invalid_setup(&err))
+                with_backend_pool(|| AkitaBackendScheme::setup_verifier(&prover_setup))
+                    .map_err(|err| invalid_setup(&err))
             }
             AkitaBackendFlavor::OneHot => {
                 let log_k = validate_one_hot_k(self.one_hot_k)?;
@@ -606,13 +638,13 @@ pub(crate) fn one_hot_setup_prover(
     max_num_vars: usize,
     max_num_polys: usize,
 ) -> Result<AkitaBackendProverSetup, akita_pcs::AkitaError> {
-    match one_hot_k {
+    with_backend_pool(|| match one_hot_k {
         AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::setup_prover(max_num_vars, max_num_polys),
         AKITA_ONE_HOT_K256 => {
             AkitaOneHotK256BackendScheme::setup_prover(max_num_vars, max_num_polys)
         }
         _ => unreachable!("one-hot K is validated before backend setup"),
-    }
+    })
 }
 
 pub(crate) fn one_hot_setup_verifier(
@@ -621,10 +653,14 @@ pub(crate) fn one_hot_setup_verifier(
 ) -> Result<AkitaBackendVerifier, OpeningsError> {
     let invalid_setup = |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
     match one_hot_k {
-        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::setup_verifier(prover_setup)
-            .map_err(|err| invalid_setup(&err)),
-        AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::setup_verifier(prover_setup)
-            .map_err(|err| invalid_setup(&err)),
+        AKITA_ONE_HOT_K16 => {
+            with_backend_pool(|| AkitaOneHotK16BackendScheme::setup_verifier(prover_setup))
+                .map_err(|err| invalid_setup(&err))
+        }
+        AKITA_ONE_HOT_K256 => {
+            with_backend_pool(|| AkitaOneHotK256BackendScheme::setup_verifier(prover_setup))
+                .map_err(|err| invalid_setup(&err))
+        }
         _ => Err(invalid_batch(format!(
             "Akita one-hot chunk size must be 16 or 256, got {one_hot_k}"
         ))),

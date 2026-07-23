@@ -27,10 +27,11 @@ use tracing::info_span;
 use crate::adapters::{
     akita_error, append_batch_statement, append_verifier_setup, backend_stack,
     bridge_jolt_statement_challenge, invalid_batch, prove_failed, reverse_point, serialize_akita,
-    AkitaBackendCommitment, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
-    AkitaBackendProof, AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField,
-    AkitaHintPolynomials, AkitaOneHotK16BackendScheme, AkitaOneHotK256BackendScheme,
-    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    with_backend_pool, AkitaBackendCommitment, AkitaBackendFlavor, AkitaBackendHint,
+    AkitaBackendOneHotPoly, AkitaBackendProof, AkitaBackendScheme, AkitaBatchProof,
+    AkitaCommitment, AkitaField, AkitaHintPolynomials, AkitaOneHotK16BackendScheme,
+    AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup,
+    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
@@ -214,13 +215,16 @@ macro_rules! prove_dense_backend {
         let (backend_prover_setup, prepared_backend_setup) = $setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
-        AkitaBackendScheme::batched_prove(
-            backend_prover_setup,
-            claims,
-            &stack,
-            $transcript,
-            BasisMode::Lagrange,
-        )
+        let transcript = $transcript;
+        with_backend_pool(|| {
+            AkitaBackendScheme::batched_prove(
+                backend_prover_setup,
+                claims,
+                &stack,
+                transcript,
+                BasisMode::Lagrange,
+            )
+        })
         .map_err(prove_failed)?
     }};
 }
@@ -247,7 +251,7 @@ fn prove_one_hot(
     )?;
     let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
-    match setup.one_hot_k() {
+    with_backend_pool(|| match setup.one_hot_k() {
         AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_prove(
             backend_prover_setup,
             claims,
@@ -263,7 +267,7 @@ fn prove_one_hot(
             BasisMode::Lagrange,
         ),
         _ => unreachable!("one-hot K is validated during setup"),
-    }
+    })
     .map_err(prove_failed)
 }
 
@@ -421,7 +425,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         )
         .map_err(akita_error)?;
         let claims = OpeningClaims::from_groups(backend_point, vec![group]).map_err(akita_error)?;
-        match commitment.backend_flavor {
+        with_backend_pool(|| match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => AkitaBackendScheme::batched_verify(
                 &backend_proof,
                 backend_verifier,
@@ -446,7 +450,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 ),
                 _ => unreachable!("one-hot K is validated during setup"),
             },
-        }
+        })
         .map_err(|_| OpeningsError::VerificationFailed)
     }
 }
