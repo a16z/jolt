@@ -2,13 +2,19 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::BlindFoldProtocol;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use jolt_verifier::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::blindfold,
+    preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
+    stages::{
+        stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
+        zk::{blindfold, inputs::BlindFoldInputs},
+    },
     VerifierError,
 };
 
@@ -58,12 +64,99 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let (stages, _transcript) = jolt_verifier::verify_stages::<F, PCS, VC, T, ZkProof>(
-        preprocessing,
-        public_io,
+    let (checked, mut transcript) =
+        jolt_verifier::validate_and_seed_transcript::<PCS, VC, T, ZkProof>(
+            preprocessing,
+            public_io,
+            proof,
+            trusted_advice_commitment,
+        )?;
+
+    let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
         proof,
-        trusted_advice_commitment,
+        preprocessing,
+        &checked,
+        checked.trace_length.ilog2() as usize,
+        JoltRelationId::InstructionReadRaf,
     )?;
-    let blindfold = blindfold::build(stages.blindfold_inputs(preprocessing, proof)?)?;
+
+    let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
+    let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
+    let stage3 = stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2)?;
+    let stage4 = stage4::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        &stage2,
+        &stage3,
+    )?;
+    let stage5 = stage5::verify(
+        &checked,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage2,
+        &stage4,
+    )?;
+    let stage6a = stage6a::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+    )?;
+    let stage6b = stage6b::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
+        &stage6a,
+    )?;
+    let stage7 = stage7::verify(
+        &checked,
+        proof,
+        &formula_dimensions,
+        &mut transcript,
+        &stage4,
+        &stage6b,
+    )?;
+    let stage8 = stage8::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &formula_dimensions,
+        trusted_advice_commitment,
+        &mut transcript,
+        &stage6b,
+        &stage7,
+    )?;
+
+    let blindfold = blindfold::build(BlindFoldInputs {
+        checked: &checked,
+        preprocessing,
+        proof,
+        stage1: stage1.zk()?,
+        stage2: stage2.zk()?,
+        stage3: stage3.zk()?,
+        stage4: stage4.zk()?,
+        stage5: stage5.zk()?,
+        stage6a: stage6a.zk()?,
+        stage6b: stage6b.zk()?,
+        stage7: stage7.zk()?,
+        stage8: stage8.zk()?,
+    })?;
+
     Ok(ZkBlindFoldProtocolShape::from_protocol(&blindfold))
 }

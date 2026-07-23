@@ -5,8 +5,8 @@ use jolt_sumcheck::{
 };
 
 use crate::{
-    BlindFoldConstruction, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement,
-    CommittedClaimRows, Error, FinalOpeningBinding, OpeningAlias, VerificationError,
+    BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows, Error,
+    FinalOpeningBinding, OpeningAlias, VerificationError,
 };
 
 #[derive(Clone, Debug)]
@@ -71,24 +71,8 @@ where
     Ch: Clone + PartialEq,
 {
     pub fn build(self) -> Result<BlindFoldProtocol<F, Com>, VerificationError<F>> {
-        self.build_construction()
-            .map(|construction| construction.protocol)
-    }
-
-    /// Build the protocol while keeping the statement and baked sources — the
-    /// prover-side entry point: witness assembly needs the statement to re-run
-    /// the layout/constraint pass in assignment mode.
-    pub fn build_construction(
-        self,
-    ) -> Result<BlindFoldConstruction<F, O, Com, P, Ch>, VerificationError<F>> {
         let statement = BlindFoldStatement::new(self.stages, self.final_openings);
-        let protocol = BlindFoldProtocol::from_parts(&statement, &self.publics, &self.challenges)?;
-        Ok(BlindFoldConstruction {
-            protocol,
-            statement,
-            publics: self.publics,
-            challenges: self.challenges,
-        })
+        BlindFoldProtocol::from_parts(&statement, &self.publics, &self.challenges)
     }
 }
 
