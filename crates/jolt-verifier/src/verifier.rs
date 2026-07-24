@@ -1192,7 +1192,10 @@ mod tests {
     /// generic input validation also pass under the `zk` feature (where
     /// `validate_inputs` unconditionally requires the setup).
     fn test_preprocessing_with_vc_setup() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        #[cfg_attr(not(feature = "zk"), expect(unused_mut, reason = "mutated only under zk"))]
+        #[cfg_attr(
+            not(feature = "zk"),
+            expect(unused_mut, reason = "mutated only under zk")
+        )]
         let mut preprocessing = test_preprocessing();
         #[cfg(feature = "zk")]
         {

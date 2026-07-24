@@ -68,8 +68,8 @@ Infrastructure:
 
 Sweep (same PR, after infra):
 
-- [ ] Every in-scope crate reaches ≥ 80% cumulative line coverage across its declared feature paths, or carries a documented exception comment in `coverage-floors.toml` explaining why the target is unreachable and what the achievable floor is.
-- [ ] Floors in `coverage-floors.toml` are pinned at post-sweep measured values (rounded down to the integer), and the coverage job passes on the final commit.
+- [x] Every in-scope crate reaches ≥ 80% cumulative line coverage across its declared feature paths, or carries a documented exception comment in `coverage-floors.toml` explaining why the target is unreachable and what the achievable floor is.
+- [x] Floors in `coverage-floors.toml` are pinned at post-sweep measured values (rounded down to the integer), and the coverage job passes on the final commit.
 - [x] `jolt-blindfold`: the real `prove()` is exercised — prover↔verifier round-trip tests, a differential test against the harness prover in `tests/support/`, and a bad-witness-rejected test (`validate_witness` / `ensure_row_capacity`).
 - [x] `jolt-verifier`: tamper tests assert the expected `VerifierError` variant/stage recorded in the manifest's `checked_at`, not bare `Err(_)`; the 16 `Deferred`/`IgnoredUntilFixture` tamper targets are activated or carry per-target justification.
 - [x] `jolt-transcript`: pinned known-answer vectors for `LegacyBlake2bTranscript` (state chaining, `challenge_bytes` chunking, label packing) and for the `challenge_scalar` decode path.
@@ -84,7 +84,7 @@ Sweep (same PR, after infra):
 - [x] `jolt-sumcheck`: compressed-encoding tamper test; `BatchedCommittedSumcheckConsistency` offset/overflow error branches.
 - [x] `jolt-dory` / `jolt-hyperkzg` / `jolt-akita`: transcript-adapter byte-layout golden test; `WrongEvaluationWidth` negative test; Jolt↔Akita basis-order index KAT.
 - [ ] All new sweep tests score ≥ 7 under the rubric (the routine's first full workout is this PR's own sweep).
-- [ ] Full workspace `cargo nextest run --cargo-quiet` passes; `muldiv` e2e passes under `--features host` and `--features host,zk`; clippy is clean in both modes.
+- [x] Full workspace `cargo nextest run --cargo-quiet` passes; `muldiv` e2e passes under `--features host` and `--features host,zk`; clippy is clean in both modes.
 
 ### Testing Strategy
 

@@ -11,9 +11,8 @@
 # are static minimums under a manual ratchet: raising them is a deliberate,
 # reviewed edit; CI never moves them.
 #
-# Floors are provisional baseline values (2026-07-23) and are re-pinned at
-# post-sweep measured values before this PR merges (target >= 80, documented
-# exception otherwise).
+# Floors are pinned at post-sweep measured values (2026-07-24, cumulative
+# across the declared paths); every in-scope crate clears the 80 target.
 
 [scope]
 root = "jolt-verifier"
@@ -38,32 +37,46 @@ jolt-verifier = [
 ]
 
 [floors]
-common = 70
-jolt-akita = 71
+common = 99
+jolt-akita = 88
 jolt-blindfold = 93
-jolt-claims = 87
+jolt-claims = 88
 jolt-claims-derive = 86
-jolt-crypto = 84
-jolt-dory = 92
-jolt-field = 80
-jolt-hyperkzg = 94
+jolt-crypto = 87
+jolt-dory = 94
+jolt-field = 81
+jolt-hyperkzg = 96
 jolt-lookup-tables = 93
-jolt-openings = 89
-jolt-poly = 82
-jolt-program = 81
-jolt-r1cs = 95
-jolt-riscv = 72
-jolt-sumcheck = 90
-jolt-transcript = 62
-jolt-verifier = 29
+jolt-openings = 90
+jolt-poly = 87
+jolt-program = 86
+jolt-r1cs = 96
+jolt-riscv = 86
+jolt-sumcheck = 91
+jolt-transcript = 98
+jolt-verifier = 87
 jolt-verifier-derive = 90
-tracer = 65
+tracer = 90
 
 [soundness]
 # 111/113 tamper targets active post-sweep (the two exceptions carry
 # documented justifications in the manifest); must not regress.
 tamper_active_ratio_min = 0.98
 
-# Per-crate error-variant coverage floors. Report-only until pinned:
-# crates absent from this table are printed but not enforced.
+# Per-crate error-variant coverage floors, pinned at post-sweep values.
+# Crates absent from this table have no locatable error enums and are
+# printed report-only.
 [soundness.error_variants]
+common = 100
+jolt-blindfold = 58
+jolt-claims = 52
+jolt-crypto = 90
+jolt-hyperkzg = 71
+jolt-openings = 100
+jolt-poly = 100
+jolt-program = 62
+jolt-r1cs = 58
+jolt-riscv = 100
+jolt-sumcheck = 42
+jolt-verifier = 88
+tracer = 100

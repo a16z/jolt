@@ -421,7 +421,6 @@ fn tampered_stage7_committed_claims_reject() {
     );
 }
 
-
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tamper_each_stage1_uniskip_round(base: &VerifierFixtureCase) {
     let round_count = clear_full_round_count(&base.proof.stages.stage1_uni_skip_first_round_proof);
