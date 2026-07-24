@@ -22,15 +22,19 @@ On `perf/optimize-akita-prover` (jolt) + `perf/onehot-commit-sweep`
 Done when: primary goal met AND every queue item is landed or written into
 the dead-end ledger with a measurement — or all items are exhausted.
 
-## State (2026-07-24)
+## State (2026-07-24, evening)
 
-333 s at campaign start → 91.93 s now (dory same-branch ≈ 112-114 s).
+333 s at campaign start → 90.27 s now (dory same-branch ≈ 112-114 s).
+MACHINE-DRIFT NOTE: the 91.93 record does not reproduce tonight — the
+same-code baseline re-ran at 96.31 (B1, +4.4 s ambient); accept decisions
+tonight used same-night A/B pairs + traced spans, not the stale record.
 Landed: A1 kernel chunking; J2+J3 decode dedupe (shared Spartan, sped dory
 too); P1 rank-aware catalogs (root n_a 7→6); A5 fused multi-poly sweep with
-self-reducing accumulators + bench-tuned tiles (commit 96→~45 s).
-Attribution at 98.8 s traced: commit 45-48 | fold/opening 14.8 (grind-fold
-6.2 + onehot_accumulate 5.9) | stage1 8.0 | stage6b lattice 8.0 | stages
-3/4/5/6a/7 ~17 | RSS 94.9 GB.
+self-reducing accumulators + bench-tuned tiles (commit 96→~45 s); Q2A
+RaIndices sharing into 6b inits (9e957dbfc, span −2.3 s, A/B 96.31→90.27).
+Attribution (95.2 s traced, tonight): commit 44.1 | fold/opening ~15.6
+(grind-fold + onehot_accumulate) | stage1 8.5 | stage6b lattice 6.0 |
+stages 3/4/5/6a/7 ~17.1 | RSS 94.7 GB.
 
 Facts that bound the work: PIOP already runs over the 128-bit field
 (`AkitaPackedScheme::Field = AkitaFp128`, in-field challenges); commit work
@@ -39,7 +43,9 @@ Facts that bound the work: PIOP already runs over the 128-bit field
 Dead-end ledger (measured; do not revisit): A4 lazy u128 accumulators (NEON
 wide wins 1.9×); A6 fused in-register widen (100→131 s); merge-tile tuning
 beyond (64 blocks, 32 cols) — bench matrix flat; L1 tiles under block
-splitting (252 s; fixed by cap-triggered self-reduction, akita 015669b9).
+splitting (252 s; fixed by cap-triggered self-reduction, akita 015669b9);
+Q1 P-core-affine pool / thread-count tuning (16t already optimal: 1.15 s vs
+12t 1.31 s at bench shape; e2e-vs-bench 61 vs 50 ns is sustained-clock).
 
 ## Harness (exact commands)
 
@@ -85,42 +91,42 @@ splitting (252 s; fixed by cap-triggered self-reduction, akita 015669b9).
 
 ## Work queue (descending payoff; per-item protocol inline)
 
-### Q1 [ENG] Commit kernel gap: 61 ns/accum measured vs 26-44 ns modeled — expect −8 to −18 s
+### Q1 [CLOSED 2026-07-24 — kernel already at machine rate; no software-recoverable gap]
 
-Rationale: 11.7 G ring-accums / 45 s / 16 threads = 61 ns; the L1-traffic
-model (6 KB/accum at ~80 B/cycle) says 26-28 ns on a P-core. Hypotheses, in
-test order: (a) E-core drag (rayon uses 12P+4E; if E-cores run ~3× slower
-per accum the blended rate matches measurement) — test by running the sweep
-with a 12-thread P-core-affine pool (or `RAYON_NUM_THREADS=12` +
-QoS-pinning) in the kernel bench first, then e2e; (b) sustained clocks /
-L2 residency at the 64-block tile — bounded by the flat bench matrix, do
-not re-tune tiles; (c) per-entry decode overhead — bounded ≤15%.
-First step: merge_sweep_bench under varying thread counts (16/12/8) — the
-per-thread ns curve immediately separates (a) from (b)/(c).
-Accept: e2e −≥3 s. If (a) confirmed but the fix helps <3 s (E-cores still
-net-positive), record the measured split and close the item.
+Probe (`merge_sweep_thread_probe`, akita d17635fc, bench shape = e2e shape):
+16t 1.15 s / 50.4 ns×t · 12t 1.31 s / 43.1 · 10t 1.54 s / 42.1 ·
+8t 1.82 s / 39.8. Verdicts: (a) REFUTED as a fix — E-cores net-positive
+(16t beats 12t by 14%); implied split P≈43 ns, E≈102 ns, and blended 16t
+throughput already equals perfect balance (macOS migration load-balances
+the static partition; finer chunking buys nothing). (b) confirmed as the
+in-situ residual: e2e kernel spans total 717 CPU-s / 11.7 G accums =
+61.3 ns vs 50.4 fresh-bench — sustained-clock/thermal, not software.
+(c) moot — 1-coeff-entry bench already shows 50.4. The 26-28 ns model was
+optimistic: true P-core burst rate ≈40 ns/accum (8t). Commit-window
+occupancy is 16-17 busy threads end-to-end (no serial gaps; build_blocks
+overlapped). Commit time is P·T·n_a·D-bound at machine rate → only fewer
+committed columns (Q3) can shrink it.
 
-### Q2 [ENG] Stage-6b index-builder hoisting + cross-stage index sharing — expect −2 to −5 s
+### Q2 [DONE 2026-07-24 — −2.3 s span-attributed; A/B 96.31→90.27 s] (jolt 9e957dbfc)
 
-Audit-grounded (see appendix). Three 6b `initialize()`s rebuild d chunk
-columns with one full `trace.par_iter()` PER CHUNK, recomputing the
-chunk-independent base each pass: `LookupsRa`
-(instruction_lookups/ra_virtual.rs:218 — `to_lookup_index` evaluated
-instruction_d=16 × T; 15 redundant full-trace passes), `RamRaVirtual`
-(ram/ra_virtual.rs:220 — `remap_address` ram_d×T), `BytecodeReadRafCycle`
-(bytecode/read_raf_checking.rs:700 — `get_pc_for_cycle` bytecode_d×T).
-Fix: one pass computing the base, extracting all d chunks (the pattern
-already exists in `RaIndices::from_cycle`, shared_ra_polys.rs:145).
-Second leg: `compute_all_G_and_ra_indices` (shared_ra_polys.rs:229) already
-materializes all families' indices in 6a — thread them to 6b instead of
-rebuilding (`get_pc_for_cycle` currently computed over T in ≥3 places);
-caveat: LookupsRa uses the virtual chunk width, so share the base
-`lookup_index`, not the chunks.
-CLOSED-alternative recorded: the f128 arithmetic audit found NO
-reduce-per-op in any T-sized hot loop (all `Folded128Product` /
-`par_fold_out_in_unreduced`; mul is 35-instr aarch64 asm ≈ 6 mul-ops) — the
-old "delayed-reduction coverage" hypothesis is dead. Remaining arithmetic
-crumbs are in Q5.
+Init-vs-rounds split measured (2^26 trace): Bytecode cycle init 2.21 s
+(get_pc linear scan ×bytecode_d passes) | InstructionRa init 0.38 s |
+RamRaVirtual init 0.05 s. Landed: `BooleanityCycleInput.ra_indices` →
+`Arc<Vec<RaIndices>>`, all three 6b initializers gather their chunk
+columns from it via `gather_index_columns` (L2-blocked single pass — a
+block of RaIndices stays cache-resident while all d columns sweep it; the
+naive d-interleaved write loop was 10× slower). Traced 2^26: inits
+2.64 → 0.16 s (+0.16 gathers), stage 6b inclusive 8.03 → 6.02 s. RSS and
+verify neutral; transcript-identical. NOTE: the caveat in the audit was
+wrong in a good way — LookupsRa chunks ARE committed-width, so chunks are
+shared directly (no base-index sharing needed).
+REMAINING (deferred, not counted done-work): stage-7
+HammingWeightClaimReduction::initialize re-runs the full decode pass via
+compute_all_G (1.62 s) at a different r_cycle. Reusing ra_indices there
+extends the 3.6 GB vec's lifetime past 6b → RSS-gated; decide after Q6
+attribution, or via a flat PC array (u32×T = 256 MB) at witness time that
+would also cheapen witness/stage-1/6a decode sites. Also 6b bytecode-init
+now exposes ~0.04 s floor; nothing further here.
 
 ### Q3 [PROTOCOL] Committed-column virtualization — expect −3 to −9 s commit + PIOP share
 
