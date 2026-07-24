@@ -45,7 +45,12 @@ wide wins 1.9×); A6 fused in-register widen (100→131 s); merge-tile tuning
 beyond (64 blocks, 32 cols) — bench matrix flat; L1 tiles under block
 splitting (252 s; fixed by cap-triggered self-reduction, akita 015669b9);
 Q1 P-core-affine pool / thread-count tuning (16t already optimal: 1.15 s vs
-12t 1.31 s at bench shape; e2e-vs-bench 61 vs 50 ns is sustained-clock).
+12t 1.31 s at bench shape; e2e-vs-bench 61 vs 50 ns is sustained-clock);
+Q1b merge-sweep partition rebalance (real but −1.2 s attributable < bar —
+idle was pipeline-absorbed; see Q1b entry for the resurrection diff);
+Q3 committed-column virtualization (see specs/committed-column-
+virtualization.md — RamRa sparse ⇒ 0.24 s, BytecodeRa circular, msb net
+−1 s, K reshapes = Q7 wall).
 
 ## Harness (exact commands)
 
@@ -143,28 +148,37 @@ geometry wall (ring footprint ∝ K). Real finding: a 3.26 s kernel
 load-imbalance artifact → Q1b [ENG], no approval needed. Do not implement
 Q3 unless the goal is unmet after Q1b/Q4/Q5/Q6 (then msb, net ~−1 s).
 
-### Q1b [ENG] Entry-weighted merge-sweep partition — measured −3.3 s available
+### Q1b [CLOSED 2026-07-24 — real but sub-bar: −1.2 s attributable; reverted per discipline]
 
-From the Q3 audit: `column_sweep_core_merge` partitions 3712 flat block-rows
-into 16 contiguous equal-count ranges (column_sweep.rs:404); the range
-covering the two ~7-8%-dense RamRa columns finishes at 25.6 s while dense
-threads run to 62.3 s (52.2 idle core-s = 3.26 s wall at 2^26). Fix:
-partition by cumulative ENTRY count (or steal at tile granularity) so
-per-thread work is balanced; output must stay byte-identical (per-block
-results are independent — only the partition boundaries move). Equality
-test vs the current partition; kernel bench with a skewed-density shape;
-accept per discipline (same-night A/B at 2^26).
+Two implementations measured (both byte-identical, suite-green): (v1)
+global 64-block tile grid with rayon stealing — dense tiles are ~10.7
+CPU-s, so ±half-tile quantization re-created seconds of tail (per-thread
+merge busy 33.0/34.2/42.3 min/med/max); (v2) entry-weighted contiguous
+ranges ×2-per-worker, tile-capped (sub-tile ranges cost +18% A-widening at
+the uniform bench shape) — balance fixed (min 6.7→38.0 CPU-s, mergeCPU
+642→623), and the cooled uniform kernel bench improved 1.14→1.07 s. BUT
+commit wall moved only 44.09→42.92 traced (−1.17 s): most of the "3.26 s
+idle" was absorbed by pipeline overlap, and the residual max-thread 42.3
+vs med 38.9 is scheduler/E-core-blended. e2e pairs contradictory within
+±2 s ambient (N1 90.27 → N2 91.94 untraced; traced pair −4.1 with −1.9
+ambient drift in untouched spans). Below both accept clauses → reverted.
+Resurrection candidate if the campaign ends <1.5 s short: the v2 diff is
+fully specified above (weighted bounds + tile-cap + 2x-worker ranges).
 
-### Q4 [ENG] Fold-pass fusion — expect −4 to −6 s
+### Q4 [CLOSED 2026-07-24 — premise false: the spans are nested, not sequential]
 
-`fold_grind_sample` (6.2 s, single accepted fold — no rerolls to hide) and
-`onehot_accumulate` (5.9 s) walk identical per-block entry lists with
-challenge weights back-to-back (`decompose_fold.rs` imports `accumulate`).
-Fuse into one walk; byte-equality test against the unfused pair (same shape
-as the A5 equality tests). Watch: the grind may in principle reroll — the
-fused path must preserve probe-order semantics exactly (transcript
-identity).
-Accept: e2e −≥2 s, akita suite green.
+Trace nesting (B/E parent chains, 2^26): `onehot_accumulate` (5.85 s) runs
+INSIDE `fold_grind_sample > OneHotPoly::decompose_fold_batched` — the
+grind's single accepted probe (nonce 0, plain preset) IS the fold walk
+(`fold_probe_witness_kernel` → `build_point_decompose_fold_witness` →
+`OneHotPoly::decompose_fold_batched` → `onehot_accumulate`,
+ring_relation.rs:165→209, fold_grind.rs:383). The two span totals in the
+analyzer ranking (7.5 s x8 grind / 5.9 s x1 accumulate) are parent and
+child: root-level grind ≈ 6.4 s (mostly the accumulate), the 7 recursive
+levels ≈ 1.1 s combined. Nothing to fuse; no rerolls to hide at this
+preset. Residual fold-side floor: the accumulate itself (~51 ns/entry over
+~1.8 G entries — position-sorted streaming, already parallel) — no bounded
+idea ≥ the accept bar found.
 
 ### Q5 [ENG] Stage1 residual + audited small items — expect −2 to −4 s
 
