@@ -18,6 +18,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
   cancel-in-progress: true
 
+# Caching strategy: jobs with near-identical dependency footprints share one
+# rust-cache entry (shared-key), and only the job with the largest footprint
+# saves it. Per-job caches previously totaled >10 GB, blowing the repository
+# cache quota so every run started cold.
 jobs:
   fmt:
     runs-on: ubuntu-latest
@@ -26,6 +30,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
+          cache: false
       - name: cargo fmt
         run: cargo fmt --all --check
 
@@ -47,6 +52,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: clippy
       - name: cargo clippy --features allocative,host
         run: cargo clippy --all --all-targets --features allocative,host
       - name: cargo clippy --features allocative,host,zk
@@ -114,6 +123,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wasm
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
@@ -128,6 +142,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
@@ -141,12 +160,14 @@ jobs:
           curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
           mkdir -p ~/.zeroos
           tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      # --target-dir target shares dependency artifacts with the test build
+      # below (cargo install otherwise compiles everything in a temp dir).
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force
+        run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests
-        run: cargo nextest run --release -p jolt-prover-legacy
+        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
 
   test-prover-zk:
     runs-on: ubuntu-latest
@@ -156,6 +177,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
@@ -170,11 +196,11 @@ jobs:
           mkdir -p ~/.zeroos
           tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force
+        run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests with zk feature
-        run: cargo nextest run --release -p jolt-prover-legacy --features zk
+        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features zk
 
   test-prover-akita:
     runs-on: ubuntu-latest
@@ -184,6 +210,12 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rust-src
+          cache: false
+      # Sole saver for the release-tests shared cache — largest dependency
+      # footprint of the group (host + akita at release).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
@@ -198,14 +230,14 @@ jobs:
           mkdir -p ~/.zeroos
           tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force
+        run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       # The packed-prover e2e suite: muldiv, forced K=256, trusted/untrusted
       # advice, and committed-program, each proving and verifying over the
       # Akita lattice PCS (the release-only perf harness stays ignored).
       - name: Run jolt-prover-legacy tests with akita feature
-        run: cargo nextest run --release -p jolt-prover-legacy --features akita
+        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features akita
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest
@@ -215,6 +247,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
@@ -229,7 +266,7 @@ jobs:
           mkdir -p ~/.zeroos
           tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force
+        run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       # The fixture-driven akita suites: valid-fixture acceptance
@@ -237,7 +274,7 @@ jobs:
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
       # by fixtures the real packed prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
-        run: cargo nextest run --release -p jolt-verifier --features akita,prover-fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures
 
   typos:
     runs-on: ubuntu-latest
@@ -254,9 +291,14 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force
+        run: cargo install --path . --locked --force --profile ci --target-dir target
 
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
@@ -284,12 +326,17 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
           cache-directories: ~/.cache/dory
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force
+        run: cargo install --path . --locked --force --profile ci --target-dir target
 
       - name: Cache wasm-pack
         id: cache-wasm-pack
@@ -329,12 +376,25 @@ jobs:
         working-directory: ./sample_project
         run: node verify.mjs
 
-  test-crates:
-    name: Test modular crates
+  # Sharded 3-way: the sequential per-crate loop was the CI critical path
+  # (~18 min). Crates are assigned to shards by discovery index; each crate
+  # keeps its own nextest invocation so per-crate feature resolution is
+  # unchanged.
+  test-crates-shard:
+    name: Test modular crates (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dev-tests-${{ matrix.shard }}
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Discover modular crates
@@ -351,19 +411,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          i=0
           for pkg in ${{ steps.discover.outputs.pkgs }}; do
-            features=()
-            if cargo metadata --format-version=1 --no-deps \
-                 | jq -e --arg pkg "$pkg" '.packages[] | select(.name == $pkg) | .features | has("test-utils")' >/dev/null; then
-              features=(--features test-utils)
+            if (( i % 3 == ${{ matrix.shard }} )); then
+              features=()
+              if cargo metadata --format-version=1 --no-deps \
+                   | jq -e --arg pkg "$pkg" '.packages[] | select(.name == $pkg) | .features | has("test-utils")' >/dev/null; then
+                features=(--features test-utils)
+              fi
+              cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
             fi
-            cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
+            i=$((i + 1))
           done
       - name: Test lookup table prover ABI
+        if: matrix.shard == 1
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
       - name: Test jolt-verifier with akita feature
+        if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
       - name: Test crates with field-inline
+        if: matrix.shard == 1
         shell: bash
         run: |
           set -euo pipefail
@@ -371,12 +438,34 @@ jobs:
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
 
+  # Join gate so the check name "Test modular crates" is stable regardless of
+  # shard count.
+  test-crates:
+    name: Test modular crates
+    runs-on: ubuntu-latest
+    needs: test-crates-shard
+    if: always()
+    steps:
+      - name: Check shard results
+        run: |
+          if [ "${{ needs.test-crates-shard.result }}" != "success" ]; then
+            echo "Shard result: ${{ needs.test-crates-shard.result }}"
+            exit 1
+          fi
+
   test-akita-schedules:
     name: Akita schedule catalog drift
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       # Regenerates every checked-in schedule through the planner DP and
@@ -384,7 +473,7 @@ jobs:
       # planner drift. Ignored by default (minutes of DP solves), so it needs
       # its own lane.
       - name: Regenerate schedule catalogs through the planner
-        run: cargo nextest run --release -p jolt-akita --run-ignored all -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p jolt-akita --run-ignored all -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
 
   test-inlines:
     name: Test inlines
@@ -392,6 +481,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dev-inlines
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Discover inline crates
@@ -420,15 +514,20 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
           cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force
+        run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Generate test fixtures
         run: bash jolt-sdk/tests/gen-fixtures.sh
       - name: Run SDK verifier tests
-        run: cargo nextest run --release -p jolt-sdk --features host
+        run: cargo nextest run --cargo-profile ci -p jolt-sdk --features host
 
   test-tracer:
     runs-on: ubuntu-latest
@@ -436,14 +535,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
       - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force
+        run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run tracer tests
-        run: cargo nextest run --release -p tracer --features test-utils --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
-        run: cargo nextest run --release -p tracer --features test-utils,field-inline --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
 
   zklean-extractor-tests:
     name: ZkLean extractor tests

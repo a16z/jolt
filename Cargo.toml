@@ -163,6 +163,14 @@ debug = 0
 debug = 1
 lto = "fat"
 
+# CI test builds: release-grade codegen without fat LTO and debuginfo, which
+# dominate CI compile time. Guest builds keep using --release, so guest
+# artifacts are identical to production.
+[profile.ci]
+inherits = "release"
+debug = 0
+lto = "off"
+
 [profile.build-fast]
 inherits = "release"
 incremental = true
