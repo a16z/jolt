@@ -13,11 +13,6 @@ use jolt_witness::{JoltWitnessOracle, WitnessBundle};
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
-/// The stage-6a bytecode read+RAF address-phase slot. The typed relation data
-/// is the per-row stage-value table (the verifier's `read_raf_stage_values`
-/// output over the padded bytecode), the five upstream stage cycle points,
-/// the per-cycle bytecode indices (the PC pushforward source), and the
-/// preprocessing entry index.
 /// The per-cycle witness of the bytecode read+RAF address phase: the PC
 /// pushforward source (no-ops and unmapped rows land on slot 0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
@@ -25,6 +20,11 @@ pub struct BytecodeReadRafWitness {
     pub bytecode_pc: BytecodePc,
 }
 
+/// The stage-6a bytecode read+RAF address-phase slot. The typed relation data
+/// is the per-row stage-value table (the verifier's `read_raf_stage_values`
+/// output over the padded bytecode), the five upstream stage cycle points,
+/// the per-cycle bytecode indices (the PC pushforward source), and the
+/// preprocessing entry index.
 pub trait BytecodeReadRafAddressProver<F: Field> {
     #[expect(
         clippy::too_many_arguments,

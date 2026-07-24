@@ -15,6 +15,13 @@ pub trait StreamConsumer: Send + Sync {
     type Witness: WitnessBundle;
 
     fn consume(&mut self, chunk: &[Self::Witness]);
+
+    /// Whether this consumer wants the bundles at all. An inactive consumer
+    /// is skipped *before* extraction, so a runtime-absent slot costs nothing
+    /// beyond the branch — extraction is the expensive half of the pass.
+    fn is_active(&self) -> bool {
+        true
+    }
 }
 
 impl<C: StreamConsumer> StreamConsumer for Option<C> {
@@ -24,6 +31,10 @@ impl<C: StreamConsumer> StreamConsumer for Option<C> {
         if let Some(consumer) = self {
             consumer.consume(chunk);
         }
+    }
+
+    fn is_active(&self) -> bool {
+        self.as_ref().is_some_and(C::is_active)
     }
 }
 
@@ -44,6 +55,9 @@ fn deliver<C: StreamConsumer>(
     next_after: Option<&TraceRow>,
     env: &WitnessEnv<'_>,
 ) -> Result<(), WitnessError> {
+    if !consumer.is_active() {
+        return Ok(());
+    }
     let mut bundles = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
         let next = rows.get(index + 1).or(next_after);
@@ -153,6 +167,7 @@ mod tests {
     use crate::BundleSource;
     use jolt_claims::protocols::jolt::JoltPolynomialId;
     use jolt_field::Fr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A hand-implemented bundle carrying a lookahead witness, so chunk
     /// boundaries are observable.
@@ -172,6 +187,27 @@ mod tests {
                 pc: UnexpandedPc::extract(row, next, env)?,
                 next_pc: NextUnexpandedPc::extract(row, next, env)?,
             })
+        }
+
+        fn annotated_ids() -> Vec<JoltPolynomialId> {
+            Vec::new()
+        }
+    }
+
+    /// Counts its own extractions, so a skipped consumer is observable.
+    #[derive(Clone, Copy, Debug)]
+    struct CountingBundle;
+
+    static EXTRACTIONS: AtomicUsize = AtomicUsize::new(0);
+
+    impl WitnessBundle for CountingBundle {
+        fn from_row(
+            _row: &TraceRow,
+            _next: Option<&TraceRow>,
+            _env: &WitnessEnv<'_>,
+        ) -> Result<Self, WitnessError> {
+            let _ = EXTRACTIONS.fetch_add(1, Ordering::Relaxed);
+            Ok(Self)
         }
 
         fn annotated_ids() -> Vec<JoltPolynomialId> {
@@ -213,6 +249,24 @@ mod tests {
             assert_eq!(first.len(), 4);
             assert_eq!(consumers.1.unwrap().into_rows(), first);
             assert!(consumers.2.is_none());
+        });
+    }
+
+    #[test]
+    fn absent_slots_skip_extraction_too() {
+        with_sample_backend(|backend| {
+            EXTRACTIONS.store(0, Ordering::Relaxed);
+            let mut consumers = (
+                None::<CollectBundles<CountingBundle>>,
+                CollectBundles::<WindowBundle>::default(),
+            );
+            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
+            assert_eq!(consumers.1.into_rows().len(), 4);
+            assert_eq!(EXTRACTIONS.load(Ordering::Relaxed), 0);
+
+            let mut consumers = (Some(CollectBundles::<CountingBundle>::default()),);
+            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
+            assert_eq!(EXTRACTIONS.load(Ordering::Relaxed), 4);
         });
     }
 
