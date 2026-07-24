@@ -376,9 +376,17 @@ jobs:
         working-directory: ./sample_project
         run: node verify.mjs
 
-  test-crates:
-    name: Test modular crates
+  # Sharded 3-way: the sequential per-crate loop was the CI critical path
+  # (~18 min). Crates are assigned to shards by discovery index; each crate
+  # keeps its own nextest invocation so per-crate feature resolution is
+  # unchanged.
+  test-crates-shard:
+    name: Test modular crates (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -386,7 +394,7 @@ jobs:
           cache: false
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: dev-tests
+          shared-key: dev-tests-${{ matrix.shard }}
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Discover modular crates
@@ -403,25 +411,47 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          i=0
           for pkg in ${{ steps.discover.outputs.pkgs }}; do
-            features=()
-            if cargo metadata --format-version=1 --no-deps \
-                 | jq -e --arg pkg "$pkg" '.packages[] | select(.name == $pkg) | .features | has("test-utils")' >/dev/null; then
-              features=(--features test-utils)
+            if (( i % 3 == ${{ matrix.shard }} )); then
+              features=()
+              if cargo metadata --format-version=1 --no-deps \
+                   | jq -e --arg pkg "$pkg" '.packages[] | select(.name == $pkg) | .features | has("test-utils")' >/dev/null; then
+                features=(--features test-utils)
+              fi
+              cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
             fi
-            cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
+            i=$((i + 1))
           done
       - name: Test lookup table prover ABI
+        if: matrix.shard == 1
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
       - name: Test jolt-verifier with akita feature
+        if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
       - name: Test crates with field-inline
+        if: matrix.shard == 1
         shell: bash
         run: |
           set -euo pipefail
           cargo nextest run -p jolt-claims -p jolt-r1cs \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
+
+  # Join gate so the check name "Test modular crates" is stable regardless of
+  # shard count.
+  test-crates:
+    name: Test modular crates
+    runs-on: ubuntu-latest
+    needs: test-crates-shard
+    if: always()
+    steps:
+      - name: Check shard results
+        run: |
+          if [ "${{ needs.test-crates-shard.result }}" != "success" ]; then
+            echo "Shard result: ${{ needs.test-crates-shard.result }}"
+            exit 1
+          fi
 
   test-akita-schedules:
     name: Akita schedule catalog drift
@@ -455,8 +485,7 @@ jobs:
           cache: false
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: dev-tests
-          save-if: false
+          shared-key: dev-inlines
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Discover inline crates
