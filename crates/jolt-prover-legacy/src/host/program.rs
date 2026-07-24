@@ -214,6 +214,19 @@ impl Program {
             let mut cmd = Command::new(&jolt_cmd);
             cmd.args(&args);
 
+            // The riscv guest must not inherit host coverage instrumentation:
+            // cargo-llvm-cov injects `-C instrument-coverage` via RUSTC_WRAPPER
+            // (older versions via RUSTFLAGS), which fails the cross-compile
+            // (no profiler_builtins for the guest target).
+            let _ = cmd
+                .env_remove("RUSTFLAGS")
+                .env_remove("CARGO_ENCODED_RUSTFLAGS")
+                .env_remove("LLVM_PROFILE_FILE")
+                .env_remove("RUSTC_WRAPPER")
+                .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER")
+                .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER_RUSTFLAGS")
+                .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES");
+
             // Pass JOLT_FUNC_NAME if a specific function is set (for guest packages with multiple provable functions)
             if let Some(func) = &self.func {
                 cmd.env("JOLT_FUNC_NAME", func);
