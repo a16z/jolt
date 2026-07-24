@@ -42,6 +42,8 @@
         - [RISC-V](./how/appendix/risc-v.md)
         - [Jolt 0.1.0](./how/appendix/jolt-classic.md)
         - [Additional resources](./how/appendix/resources.md)
+- [Development](./dev/testing-gates.md)
+    - [Testing and coverage gates](./dev/testing-gates.md)
 - [Roadmap](./roadmap/roadmap.md)
     - [Streaming](./roadmap/streaming.md)
     - [Recursion](./roadmap/recursion.md)

@@ -761,9 +761,23 @@ struct SumcheckTrace {
     point: Vec<F>,
 }
 
-pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTestProof {
+/// Everything needed to drive a prover (harness or real) over the same
+/// protocol-backed instance: the statement-derived protocol plus the real
+/// witness rows, blindings, and final-opening evaluations.
+pub struct ProtocolBackedInstance {
+    pub setup: PedersenSetup<Bn254G1>,
+    pub protocol: BlindFoldProtocol<F, Bn254G1>,
+    pub rows: Vec<Vec<F>>,
+    pub blindings: Vec<F>,
+    pub eval_outputs: Vec<F>,
+    pub eval_blindings: Vec<F>,
+}
+
+pub const PROTOCOL_BACKED_TRANSCRIPT_LABEL: &[u8] = b"protocol-backed-blindfold-proof";
+
+pub fn build_protocol_backed_instance<R: RngCore>(rng: &mut R) -> ProtocolBackedInstance {
     let setup = pedersen_setup(4);
-    let transcript_label = b"protocol-backed-blindfold-proof";
+    let transcript_label = PROTOCOL_BACKED_TRANSCRIPT_LABEL;
     let statement1 = SumcheckStatement::new(3, 3);
     let statement2 = SumcheckStatement::new(2, 3);
     let input1 = f(37);
@@ -843,8 +857,6 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
     );
     let protocol = blindfold_protocol_from_statement(&statement)
         .expect("protocol builds from committed statement");
-    let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
-    append_protocol_transcript_prefix(&protocol, &mut transcript);
     let (real_witness_rows, real_witness_blindings) = protocol_backed_witness(
         &protocol,
         &statement,
@@ -853,18 +865,38 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
         &real_eval_blindings,
         rng,
     );
+    ProtocolBackedInstance {
+        setup,
+        protocol,
+        rows: real_witness_rows,
+        blindings: real_witness_blindings,
+        eval_outputs: real_eval_outputs,
+        eval_blindings: real_eval_blindings,
+    }
+}
+
+pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTestProof {
+    let instance = build_protocol_backed_instance(rng);
+    let mut transcript = Blake2bTranscript::<F>::new(PROTOCOL_BACKED_TRANSCRIPT_LABEL);
+    append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
     let witness = ProtocolWitness {
-        rows: &real_witness_rows,
-        blindings: &real_witness_blindings,
-        eval_outputs: &real_eval_outputs,
-        eval_blindings: &real_eval_blindings,
+        rows: &instance.rows,
+        blindings: &instance.blindings,
+        eval_outputs: &instance.eval_outputs,
+        eval_blindings: &instance.eval_blindings,
     };
-    let proof = prove_from_protocol_witness(&setup, &protocol, &mut transcript, witness, rng);
+    let proof = prove_from_protocol_witness(
+        &instance.setup,
+        &instance.protocol,
+        &mut transcript,
+        witness,
+        rng,
+    );
 
     BlindFoldTestProof {
-        protocol,
+        protocol: instance.protocol,
         proof,
-        setup,
+        setup: instance.setup,
     }
 }
 

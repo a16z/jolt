@@ -95,3 +95,88 @@ impl SymbolicSumcheck for OuterUniskip {
         opening(outer_uniskip_opening())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocols::jolt::JoltVirtualPolynomial;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn dimensions() -> SpartanOuterDimensions {
+        match SpartanOuterDimensions::new(
+            8,
+            vec![
+                JoltVirtualPolynomial::PC,
+                JoltVirtualPolynomial::LookupOutput,
+            ],
+            true,
+        ) {
+            Some(dimensions) => dimensions,
+            None => unreachable!("test Spartan outer dimensions should be valid"),
+        }
+    }
+
+    /// The uni-skip's input claim is the constant zero: the expression carries
+    /// no leaves at all, so evaluation never consults any resolver (resolvers
+    /// here panic to prove it) and returns zero.
+    #[test]
+    fn input_expression_is_leafless_constant_zero() {
+        let relation = OuterUniskip::new(dimensions());
+        assert!(relation.input_expression::<Fr>().is_zero());
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| unreachable!("input expression must not read opening {id:?}"),
+            |id| unreachable!("input expression must not read challenge {id:?}"),
+            |id| unreachable!("input expression must not read derived value {id:?}"),
+        );
+        assert_eq!(input, Fr::from_u64(0));
+    }
+
+    /// The output claim is the single reduced uni-skip opening passed through
+    /// verbatim (coefficient one, no other sources), and the symbolically
+    /// derived produced-opening set contains exactly that id.
+    #[test]
+    fn output_expression_is_the_uniskip_opening_verbatim() {
+        let relation = OuterUniskip::new(dimensions());
+        let uniskip_value = Fr::from_u64(41);
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| {
+                assert_eq!(*id, outer_uniskip_opening(), "unexpected opening {id:?}");
+                uniskip_value
+            },
+            |id| unreachable!("output expression must not read challenge {id:?}"),
+            |id| unreachable!("output expression must not read derived value {id:?}"),
+        );
+        assert_eq!(output, uniskip_value);
+
+        assert_eq!(
+            relation.expected_output_openings::<Fr>(),
+            std::iter::once(outer_uniskip_opening()).collect(),
+        );
+    }
+
+    /// Pins the uni-skip sumcheck spec: a single round over the centered-integer
+    /// domain, with the shared geometry constants for size and degree.
+    #[test]
+    fn sumcheck_spec_matches_uniskip_geometry_constants() {
+        let relation = OuterUniskip::new(dimensions());
+        assert_eq!(OuterUniskip::id(), JoltRelationId::SpartanOuter);
+        assert_eq!(relation.rounds(), 1);
+        assert_eq!(relation.degree(), OUTER_UNISKIP_FIRST_ROUND_DEGREE);
+        assert_eq!(
+            relation.domain(),
+            SumcheckDomain::centered_integer(OUTER_UNISKIP_DOMAIN_SIZE),
+        );
+    }
+
+    /// The hand-written `InputClaims` impl (the derive requires at least one
+    /// field) must present an empty consumed-claim surface: no canonical ids
+    /// and no resolvable values, not even for this relation's own opening.
+    #[test]
+    fn input_claims_resolve_nothing() {
+        let claims = OuterUniskipInputClaims::<Fr>::default();
+        assert!(claims.canonical_order().is_empty());
+        assert_eq!(claims.resolve_input(&outer_uniskip_opening()), None);
+    }
+}

@@ -32,6 +32,27 @@ cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
 
 ```
 
+### Coverage and Quality Gates
+
+CI enforces per-crate coverage floors over the jolt-verifier dependency
+closure (`ci/coverage-floors.toml`) and scores new/modified tests 1-10
+against `ci/test-quality-rubric.md` — tests below 7 get flagged for rework
+or deletion, so write tests with an independent oracle, adversarial inputs,
+exact failure assertions, and seeded randomness. See
+`specs/test-quality-ci.md` and `book/src/dev/testing-gates.md`.
+
+```bash
+# Validate the floors config against the computed closure (requires python 3.11+)
+python3 ci/coverage_gate.py self-test && python3 ci/coverage_gate.py check-config
+
+# Emit the llvm-cov run plan CI executes, then enforce against its JSON exports
+python3 ci/coverage_gate.py plan
+python3 ci/coverage_gate.py enforce --coverage-json <export.json> [--coverage-json ...]
+
+# Soundness metrics (tamper-manifest ratio needs no coverage data)
+python3 ci/soundness_metrics.py tamper-ratio
+```
+
 ### Building
 
 ```bash

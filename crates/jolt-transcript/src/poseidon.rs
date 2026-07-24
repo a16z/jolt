@@ -207,4 +207,81 @@ mod tests {
         b.squeeze(&mut y);
         assert_ne!(x, y);
     }
+
+    /// Clone rebuilds the (non-Clone) hasher but must preserve the duplex
+    /// state, including a partially consumed squeeze block.
+    #[test]
+    fn clone_resumes_a_partially_consumed_squeeze_block() {
+        let mut original = PoseidonSponge::new();
+        original.absorb(b"clone me");
+        let mut prefix = [0u8; 11];
+        original.squeeze(&mut prefix);
+
+        let mut cloned = original.clone();
+        let mut rest_original = [0u8; 40];
+        let mut rest_cloned = [0u8; 40];
+        original.squeeze(&mut rest_original);
+        cloned.squeeze(&mut rest_cloned);
+        assert_eq!(rest_original, rest_cloned);
+    }
+
+    #[test]
+    fn clones_diverge_after_independent_absorbs() {
+        let mut left = PoseidonSponge::new();
+        left.absorb(b"shared");
+        let mut right = left.clone();
+        left.absorb(b"left");
+        right.absorb(b"right");
+        let mut x = [0u8; 32];
+        let mut y = [0u8; 32];
+        left.squeeze(&mut x);
+        right.squeeze(&mut y);
+        assert_ne!(x, y);
+    }
+
+    #[test]
+    fn debug_output_reports_the_squeeze_offset() {
+        let sponge = PoseidonSponge::new();
+        let output = format!("{sponge:?}");
+        assert!(
+            output.contains("PoseidonSponge") && output.contains("squeeze_offset"),
+            "unexpected Debug output: {output}"
+        );
+    }
+
+    #[test]
+    fn ratchet_advances_the_state_and_discards_pending_output() {
+        let mut baseline_sponge = PoseidonSponge::new();
+        baseline_sponge.absorb(b"m");
+        let mut baseline = [0u8; 32];
+        baseline_sponge.squeeze(&mut baseline);
+
+        let mut a = PoseidonSponge::new();
+        let mut b = PoseidonSponge::new();
+        a.absorb(b"m").ratchet();
+        b.absorb(b"m").ratchet();
+        let mut x = [0u8; 32];
+        let mut y = [0u8; 32];
+        a.squeeze(&mut x);
+        b.squeeze(&mut y);
+        assert_eq!(x, y, "ratchet must be deterministic");
+        assert_ne!(x, baseline, "ratchet must advance the state");
+
+        // A ratchet after a partial squeeze must not resume the pending
+        // block: the remaining 27 bytes of the pre-ratchet block would be
+        // `baseline[5..]`.
+        let mut partial = PoseidonSponge::new();
+        partial.absorb(b"m");
+        let mut consumed = [0u8; 5];
+        partial.squeeze(&mut consumed);
+        assert_eq!(consumed, baseline[..5], "fixture must share the block");
+        partial.ratchet();
+        let mut post_ratchet = [0u8; 27];
+        partial.squeeze(&mut post_ratchet);
+        assert_ne!(
+            post_ratchet[..],
+            baseline[5..],
+            "pending squeeze bytes must be discarded by ratchet"
+        );
+    }
 }

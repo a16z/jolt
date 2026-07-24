@@ -254,4 +254,32 @@ mod tests {
         let f = vec![Fr::from_u64(3), Fr::from_u64(5)];
         assert_eq!(eval_univariate(&f, Fr::from_u64(2)), Fr::from_u64(13));
     }
+
+    /// `kzg_commit` needs one G1 power per coefficient: a 4-power SRS commits
+    /// degree-3 polynomials but rejects a 5-coefficient one with the exact
+    /// have/need counts instead of truncating the MSM.
+    #[test]
+    fn kzg_commit_rejects_polynomial_longer_than_srs() {
+        use crate::scheme::HyperKZGScheme;
+        use jolt_crypto::Bn254;
+
+        // max_degree = 3 yields exactly 4 G1 powers.
+        let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+            Fr::from_u64(0x005e_c2e7),
+            3,
+            Bn254::g1_generator(),
+            Bn254::g2_generator(),
+        );
+
+        let coeffs: Vec<Fr> = (1..=5).map(Fr::from_u64).collect();
+        let result = kzg_commit::<Bn254>(&coeffs, &setup);
+        assert!(matches!(
+            result,
+            Err(HyperKZGError::SrsTooSmall { have: 4, need: 5 })
+        ));
+
+        // The boundary case must still succeed: exactly as many powers as
+        // coefficients.
+        assert!(kzg_commit::<Bn254>(&coeffs[..4], &setup).is_ok());
+    }
 }

@@ -1,0 +1,82 @@
+# Per-crate coverage floors for the jolt-verifier dependency closure
+# (specs/test-quality-ci.md). Enforced by ci/coverage_gate.py in
+# .github/workflows/coverage.yml.
+#
+# The in-scope set is computed at CI runtime: the cargo-metadata normal-dep
+# closure of [scope].root, union [scope].extras. [floors] must list exactly
+# the in-scope crates — the gate fails loudly on drift in either direction.
+#
+# A crate's coverage is measured cumulatively across its [paths] entries
+# (merged at line level), over files under its src/ directory only. Floors
+# are static minimums under a manual ratchet: raising them is a deliberate,
+# reviewed edit; CI never moves them.
+#
+# Floors are pinned at post-sweep measured values (2026-07-24, cumulative
+# across the declared paths); every in-scope crate clears the 80 target.
+
+[scope]
+root = "jolt-verifier"
+# Verification-relevant crates that are not normal deps of the root:
+# the commitment schemes are dev-deps behind trait abstractions, and the
+# tracer defines the execution semantics the verified statement is about.
+extras = ["jolt-dory", "jolt-akita", "jolt-hyperkzg", "tracer"]
+
+[paths]
+# Feature paths per crate; crates not listed run "default" only.
+# NOTE: when the Solinas field stack merges, add "solinas" to jolt-field.
+jolt-sumcheck = ["default", "r1cs"]
+jolt-claims = ["default", "field-inline"]
+jolt-r1cs = ["default", "field-inline"]
+# image gates the ELF loader + RV64 decoder; field-inline is additive
+jolt-program = ["default", "image,field-inline"]
+jolt-riscv = ["default", "field-inline"]
+jolt-verifier = [
+  "default",
+  { features = "prover-fixtures", release = true },
+  { features = "prover-fixtures,zk", release = true },
+]
+
+[floors]
+common = 99
+jolt-akita = 88
+jolt-blindfold = 93
+jolt-claims = 88
+jolt-claims-derive = 86
+jolt-crypto = 87
+jolt-dory = 94
+jolt-field = 81
+jolt-hyperkzg = 96
+jolt-lookup-tables = 93
+jolt-openings = 90
+jolt-poly = 87
+jolt-program = 86
+jolt-r1cs = 96
+jolt-riscv = 86
+jolt-sumcheck = 90
+jolt-transcript = 98
+jolt-verifier = 87
+jolt-verifier-derive = 90
+tracer = 90
+
+[soundness]
+# 111/113 tamper targets active post-sweep (the two exceptions carry
+# documented justifications in the manifest); must not regress.
+tamper_active_ratio_min = 0.98
+
+# Per-crate error-variant coverage floors, pinned at post-sweep values.
+# Crates absent from this table have no locatable error enums and are
+# printed report-only.
+[soundness.error_variants]
+common = 100
+jolt-blindfold = 58
+jolt-claims = 52
+jolt-crypto = 90
+jolt-hyperkzg = 71
+jolt-openings = 100
+jolt-poly = 100
+jolt-program = 62
+jolt-r1cs = 58
+jolt-riscv = 100
+jolt-sumcheck = 42
+jolt-verifier = 88
+tracer = 100

@@ -3172,6 +3172,7 @@ dependencies = [
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-claims-derive",
@@ -3180,6 +3181,8 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-riscv",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
 ]

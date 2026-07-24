@@ -117,11 +117,60 @@ impl From<RAMAccess> for ProgramRamAccess {
 #[cfg(test)]
 #[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 mod tests {
+    use super::*;
+    use crate::emulator::elf_analyzer::test_elf::build_elf64;
+    use common::jolt_device::MemoryConfig;
+    use jolt_program::execution::{TraceError, TraceInputs};
+
     #[cfg(feature = "field-inline")]
     use crate::{
         emulator::{cpu::Cpu, default_terminal::DefaultTerminal},
         instruction::Instruction,
     };
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test-only assertions")]
+    fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
+        // addi x1, x0, 1 ; addi x2, x1, 2 ; j .
+        let elf = build_elf64(&[0x0010_0093, 0x0020_8113, 0x0000_006f], &[]);
+        let program = JoltProgram::from_elf_bytes(elf.clone());
+        let inputs = TraceInputs {
+            memory_config: MemoryConfig {
+                program_size: Some(elf.len() as u64),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut backend = TracerBackend::new();
+        let output = backend.trace(&program, inputs).expect("trace succeeds");
+
+        let rows = output.trace.rows();
+        assert!(rows.len() >= 3, "two ADDIs plus the jump expansion");
+        // addi x1, x0, 1
+        let rd = rows[0].registers.rd.expect("first ADDI writes rd");
+        assert_eq!((rd.register, rd.pre_value, rd.post_value), (1, 0, 1));
+        // addi x2, x1, 2 reads the value the first ADDI wrote
+        let rs1 = rows[1].registers.rs1.expect("second ADDI reads rs1");
+        assert_eq!((rs1.register, rs1.value), (1, 1));
+        let rd = rows[1].registers.rd.expect("second ADDI writes rd");
+        assert_eq!((rd.register, rd.pre_value, rd.post_value), (2, 0, 3));
+
+        // The final memory image contains the loaded program bytes
+        let image = output.final_memory.expect("memory image present");
+        assert!(!image.bytes.is_empty());
+        assert!(!output.device.panic);
+    }
+
+    #[test]
+    fn tracer_backend_rejects_programs_without_elf_bytes() {
+        let program = JoltProgram::from_elf_bytes(Vec::new());
+        let mut backend = TracerBackend::with_elf_path(std::path::PathBuf::from("/nonexistent"));
+        assert!(matches!(
+            backend.trace(&program, TraceInputs::default()),
+            Err(TraceError::MissingElfBytes)
+        ));
+    }
     #[cfg(feature = "field-inline")]
     use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
     #[cfg(feature = "field-inline")]

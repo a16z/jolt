@@ -1,0 +1,10 @@
+# Test-quality gate configuration (specs/test-quality-ci.md).
+#
+# `enforce = false` ships the gate advisory: the routine posts scores and
+# rework-or-delete suggestions but never fails the check. Flip to true once
+# the routine has scored several real PRs without misfiring.
+
+[gate]
+threshold = 7
+enforce = false
+rubric = "ci/test-quality-rubric.md"

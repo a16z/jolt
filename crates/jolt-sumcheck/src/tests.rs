@@ -766,6 +766,129 @@ fn batched_committed_consistency_accessors() {
     ));
 }
 
+fn batched_consistency_with_challenges(
+    challenges: &[F],
+    max_num_vars: usize,
+) -> BatchedCommittedSumcheckConsistency<F, F> {
+    BatchedCommittedSumcheckConsistency {
+        consistency: CommittedSumcheckConsistency {
+            rounds: challenges
+                .iter()
+                .enumerate()
+                .map(|(index, &challenge)| VerifiedCommittedRound {
+                    commitment: F::from_u64(50 + index as u64),
+                    degree: 1,
+                    challenge,
+                })
+                .collect(),
+        },
+        batching_coefficients: vec![F::from_u64(7)],
+        max_num_vars,
+        max_degree: 1,
+    }
+}
+
+#[test]
+fn batched_try_round_offset_rejects_instance_wider_than_batch() {
+    let challenges: Vec<F> = (101..=103).map(F::from_u64).collect();
+    let batched = batched_consistency_with_challenges(&challenges, 3);
+
+    assert!(matches!(
+        batched.try_round_offset(4),
+        Err(SumcheckError::BatchedPointOutOfRange {
+            offset: 0,
+            num_vars: 4,
+            total: 3
+        })
+    ));
+    // Boundary: an instance exactly as wide as the batch is tail-aligned at 0.
+    assert_eq!(batched.try_round_offset(3).unwrap(), 0);
+}
+
+#[test]
+fn batched_instance_points_are_challenge_suffixes_for_mixed_arities() {
+    let challenges: Vec<F> = (201..=204).map(F::from_u64).collect();
+    let batched = batched_consistency_with_challenges(&challenges, 4);
+
+    // Tail-aligned members of a mixed-arity batch (4, 2, and 1 rounds) get
+    // dummy rounds front-loaded, so each point is a challenge suffix.
+    assert_eq!(batched.try_round_offset(4).unwrap(), 0);
+    assert_eq!(batched.try_round_offset(2).unwrap(), 2);
+    assert_eq!(batched.try_round_offset(1).unwrap(), 3);
+    assert_eq!(batched.try_instance_point(4).unwrap(), challenges);
+    assert_eq!(
+        batched.try_instance_point(2).unwrap(),
+        challenges[2..].to_vec()
+    );
+    assert_eq!(
+        batched.try_instance_point(1).unwrap(),
+        challenges[3..].to_vec()
+    );
+    // Head-aligned members bypass the suffix default with an explicit offset.
+    assert_eq!(
+        batched.try_instance_point_at(0, 2).unwrap(),
+        challenges[..2].to_vec()
+    );
+    assert_eq!(
+        batched.try_instance_point_at(1, 2).unwrap(),
+        challenges[1..3].to_vec()
+    );
+}
+
+#[test]
+fn batched_instance_point_at_rejects_windows_past_recorded_challenges() {
+    let challenges: Vec<F> = (301..=303).map(F::from_u64).collect();
+    let batched = batched_consistency_with_challenges(&challenges, 3);
+
+    assert!(matches!(
+        batched.try_instance_point_at(2, 2),
+        Err(SumcheckError::BatchedPointOutOfRange {
+            offset: 2,
+            num_vars: 2,
+            total: 3
+        })
+    ));
+    assert!(matches!(
+        batched.try_instance_point_at(4, 1),
+        Err(SumcheckError::BatchedPointOutOfRange {
+            offset: 4,
+            num_vars: 1,
+            total: 3
+        })
+    ));
+    assert!(matches!(
+        batched.try_instance_point_at(usize::MAX - 1, 2),
+        Err(SumcheckError::BatchedPointRangeOverflow {
+            offset,
+            num_vars: 2
+        }) if offset == usize::MAX - 1
+    ));
+    // Boundary: an empty window ending exactly at the last challenge is valid.
+    assert_eq!(
+        batched.try_instance_point_at(3, 0).unwrap(),
+        Vec::<F>::new()
+    );
+}
+
+#[test]
+fn batched_instance_point_rejects_declared_width_exceeding_recorded_rounds() {
+    // Adversarial mismatch: the batch declares five rounds but the proof only
+    // recorded three. The suffix offset is computed from the declared width,
+    // so the lookup must fail against the recorded challenge count.
+    let challenges: Vec<F> = (401..=403).map(F::from_u64).collect();
+    let batched = batched_consistency_with_challenges(&challenges, 5);
+
+    assert_eq!(batched.try_round_offset(1).unwrap(), 4);
+    assert!(matches!(
+        batched.try_instance_point(1),
+        Err(SumcheckError::BatchedPointOutOfRange {
+            offset: 4,
+            num_vars: 1,
+            total: 3
+        })
+    ));
+}
+
 #[test]
 fn committed_rounds_check_transcript_and_return_public_data() {
     let rounds = vec![

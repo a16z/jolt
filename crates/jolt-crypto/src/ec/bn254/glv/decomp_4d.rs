@@ -123,12 +123,107 @@ pub fn decompose_scalar_4d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 4], [boo
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests convert decomposition magnitudes that are below the modulus by construction"
+)]
 mod tests {
     use super::super::frobenius::frobenius_psi_power_projective;
     use super::*;
-    use ark_bn254::G2Projective;
+    use ark_bn254::{Fq, G2Projective};
     use ark_ec::AffineRepr;
-    use ark_std::Zero;
+    use ark_ff::PrimeField;
+    use ark_std::{UniformRand, Zero};
+    use num_bigint::BigUint;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    /// The 4D GLV eigenvalue: on G2 the twisted Frobenius ψ acts as
+    /// multiplication by q mod r (the base-field characteristic reduced into
+    /// the scalar field). Anchored against the group in
+    /// [`lambda_powers_match_frobenius_powers_on_g2`].
+    fn lambda() -> Fr {
+        Fr::from(BigUint::from_bytes_be(&Fq::MODULUS.to_bytes_be()))
+    }
+
+    // Ties the scalar-field lambda used by the reconstruction check to the
+    // actual psi powers the table test verifies the table against.
+    #[test]
+    fn lambda_powers_match_frobenius_powers_on_g2() {
+        let lambda = lambda();
+        let g = ark_bn254::G2Affine::generator().into_group();
+        let mut power = Fr::from(1u64);
+        for exponent in 1usize..4 {
+            power *= lambda;
+            assert_eq!(
+                frobenius_psi_power_projective(&g, exponent),
+                g * power,
+                "psi^{exponent} must act as multiplication by lambda^{exponent}"
+            );
+        }
+    }
+
+    #[test]
+    fn decomposition_reconstructs_scalar_within_documented_bounds() {
+        let lambda = lambda();
+
+        // Worst-case per-component magnitude: each scalar bit adds at most one
+        // table row, so |k_i| is bounded by the column-wise sum of row
+        // magnitudes. The sum must stay far below 2^100, the documented
+        // sign-detection safety margin.
+        let mut bounds = [0u128; 4];
+        for &(k0, k1, k2, k3, ..) in &POWER_OF_2_DECOMPOSITIONS {
+            bounds[0] += k0;
+            bounds[1] += k1;
+            bounds[2] += k2;
+            bounds[3] += k3;
+        }
+        for (component, bound) in bounds.iter().enumerate() {
+            assert!(
+                *bound < 1u128 << 100,
+                "component {component} worst case {bound} breaches the sign-safety margin"
+            );
+        }
+
+        let mut rng = ChaCha20Rng::seed_from_u64(0x4d61);
+        let mut scalars: Vec<Fr> = (0..64).map(|_| Fr::rand(&mut rng)).collect();
+        scalars.extend([
+            Fr::from(0u64),
+            Fr::from(1u64),
+            -Fr::from(1u64), // r - 1
+            lambda,
+            lambda * lambda,
+            lambda * lambda * lambda,
+            lambda - Fr::from(1u64),
+            // magnitudes at the ~64-66 bit component boundary
+            Fr::from(u64::MAX),
+            Fr::from((1u128 << 66) - 1),
+            Fr::from(1u128 << 66),
+            Fr::from(u128::MAX),
+        ]);
+
+        for scalar in scalars {
+            let (coeffs, signs) = decompose_scalar_4d(scalar);
+            let mut reconstructed = Fr::from(0u64);
+            let mut power = Fr::from(1u64);
+            for (coeff, sign) in coeffs.iter().zip(signs) {
+                let value = Fr::from_bigint(*coeff).unwrap();
+                reconstructed += power * if sign { value } else { -value };
+                power *= lambda;
+            }
+            assert_eq!(
+                reconstructed, scalar,
+                "sum k_i*lambda^i must reconstruct {scalar}"
+            );
+            for (component, coeff) in coeffs.iter().enumerate() {
+                let mag = BigUint::from_bytes_be(&coeff.to_bytes_be());
+                assert!(
+                    mag <= BigUint::from(bounds[component]),
+                    "|k{component}| = {mag} exceeds the table-derived bound for {scalar}"
+                );
+            }
+        }
+    }
 
     // Independent per-row verification of the power-of-2 table. Catches table
     // corruption that end-to-end GLV tests can miss when wrong rows cancel out

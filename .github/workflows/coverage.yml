@@ -1,0 +1,109 @@
+name: Coverage Gate
+
+# Enforces the per-crate coverage floors and soundness metrics defined in
+# ci/coverage-floors.toml over the jolt-verifier dependency closure
+# (specs/test-quality-ci.md). The run plan is derived from the config by
+# ci/coverage_gate.py so refactors of the closure track automatically.
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "tracer/**"
+      - "common/**"
+      - "ci/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/coverage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Coverage floors + soundness metrics
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: llvm-tools-preview, rust-src
+          cache-directories: ~/.cache/dory
+
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+
+      # The tracer guest-build tests and verifier fixture generation spawn the
+      # jolt CLI to cross-compile guest ELFs.
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Gate script self-tests
+        run: |
+          python3 ci/coverage_gate.py self-test
+          python3 ci/soundness_metrics.py self-test
+
+      - name: Validate floors config against the closure
+        run: python3 ci/coverage_gate.py check-config
+
+      - name: Cache verifier prover fixtures
+        uses: actions/cache@v6
+        with:
+          path: |
+            crates/jolt-verifier/tests/fixtures/verifier
+            /tmp/jolt-verifier-fixtures
+          key: verifier-fixtures-${{ hashFiles('Cargo.lock', 'crates/jolt-prover-legacy/**', 'crates/jolt-verifier/tests/support/**') }}
+          restore-keys: verifier-fixtures-
+
+      - name: Run coverage plan
+        run: |
+          set -euo pipefail
+          mkdir -p coverage-out
+          python3 ci/coverage_gate.py plan > coverage-plan.json
+          jq -c '.[]' coverage-plan.json | while read -r run; do
+            slug=$(jq -r '.slug' <<<"$run")
+            features=$(jq -r '.features // empty' <<<"$run")
+            release=$(jq -r '.release' <<<"$run")
+            args=()
+            while read -r pkg; do args+=(-p "$pkg"); done < <(jq -r '.packages[]' <<<"$run")
+            [ -n "$features" ] && args+=(--features "$features")
+            [ "$release" = "true" ] && args+=(--release)
+            echo "::group::llvm-cov run: $slug"
+            cargo llvm-cov nextest "${args[@]}" --cargo-quiet \
+              --json --output-path "coverage-out/${slug}.json"
+            echo "::endgroup::"
+          done
+
+      - name: Enforce coverage floors
+        run: |
+          set -euo pipefail
+          args=()
+          for f in coverage-out/*.json; do args+=(--coverage-json "$f"); done
+          python3 ci/coverage_gate.py enforce "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Soundness metrics
+        run: |
+          set -euo pipefail
+          args=()
+          for f in coverage-out/*.json; do args+=(--coverage-json "$f"); done
+          python3 ci/soundness_metrics.py error-variants "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 ci/soundness_metrics.py tamper-ratio | tee -a "$GITHUB_STEP_SUMMARY"

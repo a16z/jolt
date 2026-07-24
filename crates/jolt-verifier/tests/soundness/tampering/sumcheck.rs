@@ -19,7 +19,8 @@ use jolt_claims::protocols::jolt::{
     geometry::{
         booleanity, bytecode,
         claim_reductions::{
-            advice, hamming_weight, increments, instruction as instruction_claim_reduction,
+            advice, bytecode as bytecode_reduction, hamming_weight, increments,
+            instruction as instruction_claim_reduction, program_image as program_image_reduction,
             registers as registers_claim_reduction,
         },
         dimensions::JoltFormulaDimensions,
@@ -42,7 +43,7 @@ use jolt_poly::{CompressedPoly, UnivariatePoly};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_sumcheck::{ClearProof, SumcheckProof};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use jolt_verifier::stages::PrecommittedSchedule;
+use jolt_verifier::stages::{CommittedProgramSchedule, PrecommittedSchedule};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use num_traits::Zero;
 
@@ -312,6 +313,108 @@ fn tampered_stage7_sumcheck_payload_reject() {}
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn real_advice_case() -> VerifierFixtureCase {
     crate::support::verifier_fixtures::standard_advice_consumer_case()
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn real_committed_case() -> VerifierFixtureCase {
+    crate::support::verifier_fixtures::standard_committed_muldiv_case()
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage4_program_image_contribution_rejects() {
+    let base = real_committed_case();
+    offset_claim_rejects(
+        &base,
+        "stage4.claims.program_image_contribution",
+        program_image_reduction::ram_val_check_contribution_opening(),
+    );
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage6_committed_bytecode_claims_reject() {
+    let base = real_committed_case();
+    let schedule = case_advice_layouts(&base);
+    let layout = schedule
+        .bytecode
+        .unwrap_or_else(|| panic!("committed fixture must schedule a bytecode reduction"));
+    let chunk_count = base.preprocessing.program.committed().map_or_else(
+        || panic!("committed fixture must carry chunk commitments"),
+        |committed| committed.bytecode_chunk_count(),
+    );
+
+    for stage in 0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES {
+        offset_claim_rejects(
+            &base,
+            "stage6.claims.address_phase.bytecode_val_stages",
+            bytecode_reduction::bytecode_val_stage_opening(stage),
+        );
+    }
+
+    let dimensions = layout.dimensions();
+    assert!(
+        dimensions.has_address_phase(),
+        "committed muldiv fixture lost its bytecode address phase; retire the \
+         stage6 intermediate / stage7 chunk tamper targets"
+    );
+    for id in bytecode_reduction::cycle_phase_output_openings(dimensions, chunk_count) {
+        offset_claim_rejects(&base, "stage6.claims.bytecode_reduction.intermediate", id);
+    }
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage6_committed_program_image_claim_rejects() {
+    let base = real_committed_case();
+    let schedule = case_advice_layouts(&base);
+    let layout = schedule
+        .program_image
+        .unwrap_or_else(|| panic!("committed fixture must schedule a program-image reduction"));
+
+    for id in program_image_reduction::cycle_phase_output_openings(layout.dimensions()) {
+        offset_claim_rejects(
+            &base,
+            "stage6.claims.program_image_reduction.program_image",
+            id,
+        );
+    }
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
+fn tampered_stage7_committed_claims_reject() {
+    let base = real_committed_case();
+    let schedule = case_advice_layouts(&base);
+    let bytecode_layout = schedule
+        .bytecode
+        .unwrap_or_else(|| panic!("committed fixture must schedule a bytecode reduction"));
+    let image_layout = schedule
+        .program_image
+        .unwrap_or_else(|| panic!("committed fixture must schedule a program-image reduction"));
+    let chunk_count = base.preprocessing.program.committed().map_or_else(
+        || panic!("committed fixture must carry chunk commitments"),
+        |committed| committed.bytecode_chunk_count(),
+    );
+
+    assert!(
+        bytecode_layout.dimensions().has_address_phase()
+            && image_layout.dimensions().has_address_phase(),
+        "committed muldiv fixture lost its address phase; retire the stage7 \
+         committed tamper targets"
+    );
+    for chunk in 0..chunk_count {
+        offset_claim_rejects(
+            &base,
+            "stage7.claims.bytecode_address_phase.chunks",
+            bytecode_reduction::final_bytecode_chunk_opening(chunk),
+        );
+    }
+    offset_claim_rejects(
+        &base,
+        "stage7.claims.program_image_address_phase",
+        program_image_reduction::final_program_image_opening(),
+    );
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -1015,6 +1118,21 @@ fn stage6_formula_output_openings(
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn case_advice_layouts(base: &VerifierFixtureCase) -> PrecommittedSchedule {
+    let committed_program = base.preprocessing.program.committed().map(|committed| {
+        let start_index = base
+            .public_io
+            .memory_layout
+            .remapped_word_address(committed.meta.min_bytecode_address)
+            .unwrap_or_else(|error| {
+                panic!("committed fixture bytecode address must remap: {error}")
+            });
+        CommittedProgramSchedule {
+            bytecode_len: committed.meta.bytecode_len,
+            bytecode_chunk_count: committed.bytecode_chunk_count(),
+            program_image_len_words: committed.meta.program_image_len_words,
+            program_image_start_index: start_index as usize,
+        }
+    });
     PrecommittedSchedule::new(
         base.proof.trace_polynomial_order,
         base.proof.trace_length.ilog2() as usize,
@@ -1026,7 +1144,7 @@ fn case_advice_layouts(base: &VerifierFixtureCase) -> PrecommittedSchedule {
             .untrusted_advice_commitment
             .is_some()
             .then_some(base.public_io.memory_layout.max_untrusted_advice_size as usize),
-        None,
+        committed_program,
     )
     .unwrap_or_else(|error| panic!("precommitted schedule should build: {error}"))
 }

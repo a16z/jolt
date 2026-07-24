@@ -25,3 +25,8 @@ jolt-openings.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true
+
+[dev-dependencies]
+bincode.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true

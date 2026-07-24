@@ -637,6 +637,106 @@ mod tests {
     }
 
     #[test]
+    fn empty_point_rejects_open_and_verify_with_empty_point_error() {
+        let ell = 2;
+        let n = 1 << ell;
+        let mut rng = ChaCha20Rng::seed_from_u64(0x0e11);
+        let (pk, vk) = test_setup(n);
+
+        let poly = Polynomial::<Fr>::random(ell, &mut rng);
+        let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
+        let eval = poly.evaluate(&point);
+        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
+
+        let mut open_transcript = Blake2bTranscript::new(b"empty-point");
+        let open_result = TestScheme::open(&pk, &[Fr::from_u64(7)], &[], &mut open_transcript);
+        assert!(matches!(open_result, Err(HyperKZGError::EmptyPoint)));
+
+        let mut prover_transcript = Blake2bTranscript::new(b"empty-point");
+        let proof = <TestScheme as CommitmentScheme>::open(
+            &poly,
+            &point,
+            eval,
+            &pk,
+            None,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"empty-point");
+        let verify_result = TestScheme::verify(
+            &vk,
+            &commitment,
+            &[],
+            &eval,
+            &proof,
+            &mut verifier_transcript,
+        );
+        assert!(matches!(verify_result, Err(HyperKZGError::EmptyPoint)));
+    }
+
+    #[test]
+    fn wrong_evaluation_width_rejects_before_touching_the_transcript() {
+        let ell = 4;
+        let n = 1 << ell;
+        let mut rng = ChaCha20Rng::seed_from_u64(0x71d7);
+        let (pk, vk) = test_setup(n);
+
+        let poly = Polynomial::<Fr>::random(ell, &mut rng);
+        let point: Vec<Fr> = (0..ell).map(|_| Fr::random(&mut rng)).collect();
+        let eval = poly.evaluate(&point);
+        let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
+
+        let mut prover_transcript = Blake2bTranscript::new(b"wrong-width");
+        let proof = <TestScheme as CommitmentScheme>::open(
+            &poly,
+            &point,
+            eval,
+            &pk,
+            None,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        // One row short and one row long must both be rejected with the
+        // exact expected width, without absorbing anything into the
+        // transcript (the width check documents it runs pre-mutation).
+        let mut truncated = proof.clone();
+        let _ = truncated.v[1].pop();
+        let mut verifier_transcript = Blake2bTranscript::new(b"wrong-width");
+        let untouched_state = verifier_transcript.state();
+        let result = TestScheme::verify(
+            &vk,
+            &commitment,
+            &point,
+            &eval,
+            &truncated,
+            &mut verifier_transcript,
+        );
+        assert!(matches!(
+            result,
+            Err(HyperKZGError::WrongEvaluationWidth { expected: 4 })
+        ));
+        assert_eq!(verifier_transcript.state(), untouched_state);
+
+        let mut widened = proof;
+        widened.v[2].push(Fr::from_u64(1));
+        let mut verifier_transcript = Blake2bTranscript::new(b"wrong-width");
+        let result = TestScheme::verify(
+            &vk,
+            &commitment,
+            &point,
+            &eval,
+            &widened,
+            &mut verifier_transcript,
+        );
+        assert!(matches!(
+            result,
+            Err(HyperKZGError::WrongEvaluationWidth { expected: 4 })
+        ));
+    }
+
+    #[test]
     fn trivial_polynomial() {
         // 1-variable polynomial: [a, b]
         let ell = 1;

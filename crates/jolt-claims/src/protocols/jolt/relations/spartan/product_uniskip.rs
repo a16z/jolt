@@ -88,3 +88,124 @@ impl SymbolicSumcheck for ProductUniskip {
         opening(product_uniskip_opening())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocols::jolt::geometry::dimensions::{
+        PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+    };
+    use crate::protocols::jolt::SpartanProductVirtualizationPublic;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    /// The input claim is the Lagrange-reweighted sum of the three consumed
+    /// Spartan-outer openings: `w0*product + w1*should_branch + w2*should_jump`.
+    /// Distinct primes per source make any dropped, duplicated, or swapped term
+    /// change the total.
+    #[test]
+    fn input_expression_evaluates_like_lagrange_weighted_sum() {
+        let relation = ProductUniskip::new(SpartanProductDimensions::new(7));
+
+        let product = Fr::from_u64(2);
+        let should_branch = Fr::from_u64(3);
+        let should_jump = Fr::from_u64(5);
+        let weights = [Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == product_outer_opening() => product,
+                id if id == product_should_branch_outer_opening() => should_branch,
+                id if id == product_should_jump_outer_opening() => should_jump,
+                _ => zero,
+            },
+            |_| zero,
+            |id| match *id {
+                JoltDerivedId::SpartanProductVirtualization(
+                    SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index),
+                ) => weights[index],
+                _ => zero,
+            },
+        );
+
+        assert_eq!(
+            input,
+            weights[0] * product + weights[1] * should_branch + weights[2] * should_jump
+        );
+    }
+
+    /// The output claim is the single reduced uni-skip opening passed through
+    /// verbatim (coefficient one, no other sources), and the symbolically
+    /// derived produced-opening set contains exactly that id.
+    #[test]
+    fn output_expression_is_the_uniskip_opening_verbatim() {
+        let relation = ProductUniskip::new(SpartanProductDimensions::new(7));
+        let uniskip_value = Fr::from_u64(59);
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| {
+                assert_eq!(*id, product_uniskip_opening(), "unexpected opening {id:?}");
+                uniskip_value
+            },
+            |id| unreachable!("output expression must not read challenge {id:?}"),
+            |id| unreachable!("output expression must not read derived value {id:?}"),
+        );
+        assert_eq!(output, uniskip_value);
+
+        assert_eq!(
+            relation.expected_output_openings::<Fr>(),
+            std::iter::once(product_uniskip_opening()).collect(),
+        );
+    }
+
+    /// Pins the uni-skip sumcheck spec: a single round over the centered-integer
+    /// domain, with the shared geometry constants for size and degree.
+    #[test]
+    fn sumcheck_spec_matches_uniskip_geometry_constants() {
+        let relation = ProductUniskip::new(SpartanProductDimensions::new(7));
+        assert_eq!(
+            ProductUniskip::id(),
+            JoltRelationId::SpartanProductVirtualization
+        );
+        assert_eq!(relation.rounds(), 1);
+        assert_eq!(relation.degree(), PRODUCT_UNISKIP_FIRST_ROUND_DEGREE);
+        assert_eq!(
+            relation.domain(),
+            SumcheckDomain::centered_integer(PRODUCT_UNISKIP_DOMAIN_SIZE),
+        );
+    }
+
+    /// The derived `InputClaims` wiring: each consumed opening resolves under
+    /// its Spartan-outer id in field-declaration order, and an id from a
+    /// different relation resolves to `None`.
+    #[test]
+    fn input_claims_resolve_by_spartan_outer_ids_in_declaration_order() {
+        let claims = ProductUniskipInputClaims {
+            product: Fr::from_u64(2),
+            should_branch: Fr::from_u64(3),
+            should_jump: Fr::from_u64(5),
+        };
+
+        assert_eq!(
+            claims.canonical_order(),
+            vec![
+                product_outer_opening(),
+                product_should_branch_outer_opening(),
+                product_should_jump_outer_opening(),
+            ],
+        );
+        assert_eq!(
+            claims.resolve_input(&product_outer_opening()),
+            Some(Fr::from_u64(2)),
+        );
+        assert_eq!(
+            claims.resolve_input(&product_should_branch_outer_opening()),
+            Some(Fr::from_u64(3)),
+        );
+        assert_eq!(
+            claims.resolve_input(&product_should_jump_outer_opening()),
+            Some(Fr::from_u64(5)),
+        );
+        assert_eq!(claims.resolve_input(&product_uniskip_opening()), None);
+    }
+}

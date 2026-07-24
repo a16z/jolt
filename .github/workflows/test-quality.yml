@@ -1,0 +1,67 @@
+name: Test Quality Review
+
+# Fires the hosted Claude test-quality routine (specs/test-quality-ci.md) on
+# PRs whose diff adds or modifies test code. The routine scores each new or
+# changed test 1-10 against ci/test-quality-rubric.md and posts a PR review;
+# gate behavior (threshold, advisory vs blocking) lives in ci/test-quality.toml.
+#
+# Setup: mint the routine and store its id in the repo variable
+# TEST_QUALITY_ROUTINE_ID and its bearer token in the secret
+# ANTHROPIC_TEST_QUALITY_AUTHORIZATION. Until both exist this workflow skips.
+#
+# Uses `pull_request_target` (like claude-routines.yml) so secrets are
+# available on PRs from forks; only the PR *diff metadata* is inspected here —
+# PR code is never checked out or executed.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  detect:
+    name: Detect test changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_tests: ${{ steps.scan.outputs.has_tests }}
+    steps:
+      - name: Scan PR diff for test hunks
+        id: scan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          has=false
+          page=1
+          while :; do
+            files=$(gh api "repos/$REPO/pulls/$PR/files?per_page=100&page=$page")
+            count=$(jq 'length' <<<"$files")
+            [ "$count" -eq 0 ] && break
+            if jq -e '
+              .[] | select(
+                (.filename | test("(^|/)tests?/")) or
+                ((.patch // "") | test("^\\+.*#\\[(test|cfg\\(test\\))"; "m"))
+              )' <<<"$files" >/dev/null; then
+              has=true
+              break
+            fi
+            page=$((page + 1))
+          done
+          echo "has_tests=$has" >> "$GITHUB_OUTPUT"
+
+  fire:
+    name: Claude test-quality review
+    needs: detect
+    if: needs.detect.outputs.has_tests == 'true' && vars.TEST_QUALITY_ROUTINE_ID != ''
+    uses: ./.github/workflows/_fire-claude-routine.yml
+    with:
+      routine_id: ${{ vars.TEST_QUALITY_ROUTINE_ID }}
+      session_kind: test-quality review
+    secrets:
+      routine_token: ${{ secrets.ANTHROPIC_TEST_QUALITY_AUTHORIZATION }}

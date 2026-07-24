@@ -47,6 +47,56 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     }
 }
 
+/// The emit specs are the single source of truth for what the generator
+/// writes; each checked-in catalog must be exactly its family's grid — the
+/// forward inclusion is checked above, so a length match plus a
+/// reverse-inclusion sweep rules out stale or duplicated entries.
+#[test]
+fn emit_specs_and_checked_in_catalogs_agree_exactly() {
+    let [k16_spec, k256_spec] = family_specs(std::path::PathBuf::new());
+    let cases = [
+        (
+            k16_spec,
+            "jolt_fp128_d64_onehot_k16",
+            jolt_fp128_d64_onehot_k16_table().expect("K16 catalog is checked in"),
+        ),
+        (
+            k256_spec,
+            "jolt_fp128_d64_onehot_k256",
+            jolt_fp128_d64_onehot_k256_table().expect("K256 catalog is checked in"),
+        ),
+    ];
+    for (spec, module_name, table) in cases {
+        assert_eq!(spec.module_name, module_name, "spec order regressed");
+        assert!(
+            !spec.emit_group_batch && spec.group_batch_keys.is_empty(),
+            "Jolt families emit scalar single-group schedules only"
+        );
+        assert_eq!(
+            spec.keys.len(),
+            table.entries.len(),
+            "{module_name}: grid and catalog must have the same key count"
+        );
+        for entry in table.entries {
+            assert!(
+                entry.root.precommitted_groups.is_empty(),
+                "{module_name}: Jolt catalogs are scalar-only"
+            );
+            assert!(
+                spec.keys.contains(&entry.root.final_group.layout),
+                "{module_name}: stale catalog entry {:?} is not a reachable shape",
+                entry.root.final_group.layout
+            );
+        }
+        for (index, key) in spec.keys.iter().enumerate() {
+            assert!(
+                !spec.keys[..index].contains(key),
+                "{module_name}: duplicate grid key {key:?}"
+            );
+        }
+    }
+}
+
 /// Splits Rust source into a whitespace-insensitive token stream:
 /// identifier/number runs stay whole, every other non-whitespace character is
 /// its own token. The planner emits unformatted source while the checked-in
