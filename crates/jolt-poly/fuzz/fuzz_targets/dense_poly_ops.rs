@@ -1,41 +1,60 @@
 #![no_main]
-use jolt_field::{Fr, ReducingBytes};
+
+//! Differential check of `Polynomial` evaluation paths against a naive
+//! per-index multilinear-extension reference.
+
+use jolt_field::{Fr, FromPrimitiveInt, ReducingBytes};
 use jolt_poly::Polynomial;
 use libfuzzer_sys::fuzz_target;
 
+/// Bytes per BN254 scalar window.
+const SCALAR_BYTES: usize = 32;
+
+/// Largest variable count whose full encoding (`2^n` coefficients plus the
+/// point, one 32-byte window each) fits the runner's 4096-byte input cap;
+/// 7 variables would need 4321 bytes.
+const MAX_NUM_VARS: usize = 6;
+
 fuzz_target!(|data: &[u8]| {
-    // Need at least 32 bytes for a single field element to build a polynomial,
-    // plus 32 bytes per point coordinate. Keep num_vars small to avoid OOM.
-    if data.len() < 64 {
+    if data.is_empty() {
         return;
     }
 
-    // Derive num_vars from first byte, capped at 8 (256 evaluations)
-    let num_vars = (data[0] as usize % 8).max(1);
+    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1; // 1..=6, all reachable
     let n = 1usize << num_vars;
-    let needed = n * 32 + num_vars * 32;
-    if data.len() < needed {
+    if data.len() < 1 + (n + num_vars) * SCALAR_BYTES {
         return;
     }
 
-    // Build evaluation vector from fuzzer data
-    let evals: Vec<Fr> = (0..n)
-        .map(|i| <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[i * 32..(i + 1) * 32]))
-        .collect();
-    let poly = Polynomial::new(evals);
+    let scalar_at = |index: usize| {
+        let start = 1 + index * SCALAR_BYTES;
+        <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[start..start + SCALAR_BYTES])
+    };
+    let evals: Vec<Fr> = (0..n).map(scalar_at).collect();
+    let point: Vec<Fr> = (0..num_vars).map(|i| scalar_at(n + i)).collect();
 
-    // Build evaluation point from fuzzer data
-    let point_start = n * 32;
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|i| {
-            <Fr as ReducingBytes>::from_le_bytes_mod_order(
-                &data[point_start + i * 32..point_start + (i + 1) * 32],
-            )
-        })
-        .collect();
+    let poly = Polynomial::new(evals.clone());
 
-    // evaluate and evaluate_and_consume must agree and not panic
+    // The two optimized paths must agree with each other...
     let eval = poly.evaluate(&point);
     let eval_consumed = poly.clone().evaluate_and_consume(&point);
-    assert_eq!(eval, eval_consumed, "evaluate and evaluate_and_consume disagree");
+    assert_eq!(
+        eval, eval_consumed,
+        "evaluate and evaluate_and_consume disagree"
+    );
+
+    // ...and with a naive Σᵢ evals[i]·eq(bits(i), point) reference computed
+    // without the shared eq-table machinery. The first point coordinate
+    // corresponds to the most significant index bit.
+    let one = Fr::from_u64(1);
+    let mut reference = Fr::from_u64(0);
+    for (i, &coeff) in evals.iter().enumerate() {
+        let mut weight = one;
+        for (k, &p) in point.iter().enumerate() {
+            let bit = (i >> (num_vars - 1 - k)) & 1;
+            weight *= if bit == 1 { p } else { one - p };
+        }
+        reference += coeff * weight;
+    }
+    assert_eq!(eval, reference, "evaluate disagrees with naive MLE reference");
 });

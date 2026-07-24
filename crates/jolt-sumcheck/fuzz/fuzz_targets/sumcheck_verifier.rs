@@ -1,16 +1,21 @@
-//! Fuzz `SumcheckVerifier::verify` with attacker-controlled claim and round
-//! polynomials. The verifier MUST never panic on any input — it must either
-//! return `Ok(EvaluationClaim)` or a typed [`SumcheckError`].
+//! Fuzz `SumcheckVerifier::verify_compressed` — the production wire path —
+//! with an attacker-controlled claim and compressed round polynomials. The
+//! verifier MUST never panic on any input: it must either return
+//! `Ok(EvaluationClaim)` or a typed [`SumcheckError`].
 //!
-//! This is a single-instance verifier panic-guard, mirroring the audit-driven
-//! panic-resistance work in `jolt-prover-legacy` (e.g. PR #1408 wrapping the verifier in
-//! `catch_unwind` for malformed proofs).
+//! This exercises the c₁-recovery arithmetic (`evaluate_with_hint`) and the
+//! `CompressedPolynomialTooShort` and degree-bound rejects that the clear
+//! path never reaches. Full-depth accept-path coverage lives in
+//! `valid_prefix_proof`.
 
 #![no_main]
 
 use jolt_field::{Fr, ReducingBytes};
-use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
+use jolt_poly::CompressedPoly;
+use jolt_sumcheck::{
+    BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckVerifier,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
@@ -37,11 +42,12 @@ fuzz_target!(|data: &[u8]| {
     let claimed_sum = read_scalar(&data[2..2 + SCALAR_BYTES]);
     let claim = SumcheckClaim::new(num_vars, degree, claimed_sum);
 
-    // Each round polynomial has at most `degree + 1` coefficients on the wire.
-    // The fuzzer also picks the polynomial *length* (capped at degree+1) so
-    // we exercise the verifier's degree-bound + empty-poly handling.
+    // A compressed round stores `degree` coefficients (the linear term is
+    // omitted and recovered from the running sum). The fuzzer picks each
+    // round's stored length (0..=degree+1) so we exercise the too-short and
+    // degree-bound rejects around the recovery path.
     let mut cursor = 2 + SCALAR_BYTES;
-    let mut round_proofs: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
+    let mut round_polynomials: Vec<CompressedPoly<Fr>> = Vec::with_capacity(num_vars);
     for _ in 0..num_vars {
         if cursor >= data.len() {
             return;
@@ -56,15 +62,17 @@ fuzz_target!(|data: &[u8]| {
             .map(|i| read_scalar(&data[cursor + i * SCALAR_BYTES..cursor + (i + 1) * SCALAR_BYTES]))
             .collect();
         cursor += needed;
-        round_proofs.push(UnivariatePoly::new(coeffs));
+        round_polynomials.push(CompressedPoly::new(coeffs));
     }
+    let proof = CompressedSumcheckProof { round_polynomials };
 
     // The verifier must terminate without panicking on any input.
     let mut transcript = Blake2bTranscript::new(b"jolt-sumcheck-fuzz");
-    let _ = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
+    let _ = SumcheckVerifier::verify_compressed(
         &claim,
-        &round_proofs,
+        &proof,
         BooleanHypercube,
+        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
         &mut transcript,
     );
 });

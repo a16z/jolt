@@ -1,5 +1,15 @@
 [workspace]
 
+# The fuzz sub-workspace does not inherit the root workspace's `[patch.crates-io]`.
+# `light-poseidon` (via jolt-transcript) pulls unpatched `ark-ff` from crates.io;
+# jolt-hyperkzg's types are built against the patched fork. Apply the same patches
+# here so both sides see the same `ark-ff`.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
 [package]
 name = "jolt-hyperkzg-fuzz"
 version = "0.0.0"
@@ -8,6 +18,20 @@ edition = "2021"
 
 [package.metadata]
 cargo-fuzz = true
+
+[package.metadata.jolt-fuzz.targets.fuzzed_poly_completeness]
+focus = "correctness"
+pr-seconds = 60
+daily-seconds = 1500
+weekly-seconds = 2700
+
+# Absorbs the deleted wrong_eval target as one tamper class; its budget
+# folds in here.
+[package.metadata.jolt-fuzz.targets.tampered_proof]
+focus = "soundness"
+pr-seconds = 90
+daily-seconds = 2100
+weekly-seconds = 3900
 
 [dependencies]
 libfuzzer-sys = "0.4"
@@ -21,16 +45,15 @@ rand_chacha = "0.3"
 rand_core = "0.6"
 
 [[bin]]
-name = "commit_open_verify"
-path = "fuzz_targets/commit_open_verify.rs"
+name = "fuzzed_poly_completeness"
+path = "fuzz_targets/fuzzed_poly_completeness.rs"
+test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "tampered_proof"
 path = "fuzz_targets/tampered_proof.rs"
+test = false
 doc = false
-
-[[bin]]
-name = "wrong_eval"
-path = "fuzz_targets/wrong_eval.rs"
-doc = false
+bench = false

@@ -19,11 +19,32 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.transcript_determinism]
+focus = "soundness"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.encoding_injectivity]
+focus = "soundness"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-transcript = { path = ".." }
 
 [[bin]]
-name = "transcript_no_panic"
-path = "fuzz_targets/transcript_no_panic.rs"
+name = "transcript_determinism"
+path = "fuzz_targets/transcript_determinism.rs"
+test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "encoding_injectivity"
+path = "fuzz_targets/encoding_injectivity.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,37 @@
+[workspace]
+
+# The fuzz sub-workspace does not inherit the root workspace's `[patch.crates-io]`.
+# jolt-field pulls `ark-ff`/`ark-bn254`, which must resolve to the a16z fork so
+# the field arithmetic matches the rest of the tree.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
+[package]
+name = "jolt-lookup-tables-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[package.metadata.jolt-fuzz.targets.mle_materialize_equivalence]
+focus = "soundness"
+pr-seconds = 30
+daily-seconds = 900
+weekly-seconds = 1800
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-lookup-tables = { path = ".." }
+jolt-field = { path = "../../jolt-field", features = ["bn254"] }
+
+[[bin]]
+name = "mle_materialize_equivalence"
+path = "fuzz_targets/mle_materialize_equivalence.rs"
+test = false
+doc = false
+bench = false

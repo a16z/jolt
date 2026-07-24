@@ -14,6 +14,7 @@ workspace = true
 [features]
 default = ["transcript-blake2b"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+fuzzing = []
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
 zk = ["jolt-prover-legacy/zk"]
 # The packed (lattice/Akita) commitment mode: one packed one-hot witness per
