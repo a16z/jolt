@@ -22,7 +22,6 @@ use allocative::FlameGraphBuilder;
 use ark_std::Zero;
 use rayon::prelude::*;
 use std::iter::zip;
-#[cfg(all(feature = "prover", feature = "akita"))]
 use std::sync::Arc;
 
 #[cfg(all(feature = "prover", feature = "akita"))]
@@ -216,7 +215,16 @@ fn compute_gamma_powers<F: JoltField>(gamma: F::Challenge, count: usize) -> (Vec
 #[derive(Allocative)]
 pub struct BooleanityCycleInput<F: JoltField> {
     params: BooleanitySumcheckParams<F>,
-    ra_indices: Vec<RaIndices>,
+    ra_indices: Arc<Vec<RaIndices>>,
+}
+
+impl<F: JoltField> BooleanityCycleInput<F> {
+    /// Shared handle to the per-cycle RA indices computed in the address
+    /// phase; the stage-6b RA initializers gather their chunk columns from it
+    /// instead of re-deriving them from the trace.
+    pub fn ra_indices(&self) -> Arc<Vec<RaIndices>> {
+        Arc::clone(&self.ra_indices)
+    }
 }
 
 /// Booleanity address-phase prover.
@@ -227,7 +235,7 @@ pub struct BooleanityAddressSumcheckProver<F: JoltField> {
     /// G[i][k] = Σ_j eq(r_cycle, j) · ra_i(k, j) for all RA polynomials.
     G: Vec<Vec<F>>,
     /// RA indices computed alongside `G`, reused by the cycle phase.
-    ra_indices: Vec<RaIndices>,
+    ra_indices: Arc<Vec<RaIndices>>,
     /// F: Expanding table over address bits for phase 1.
     F: ExpandingTable<F>,
     /// Most recent round polynomial, used to cache the address-phase output claim.
@@ -266,7 +274,7 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
         Self {
             B,
             G,
-            ra_indices,
+            ra_indices: Arc::new(ra_indices),
             F: F_table,
             last_round_poly: None,
             address_claim: None,
@@ -711,6 +719,14 @@ pub struct LatticeBooleanityCycleInput<F: JoltField> {
     base: BooleanityCycleInput<F>,
     #[allocative(skip)]
     one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
+}
+
+#[cfg(all(feature = "prover", feature = "akita"))]
+impl<F: JoltField> LatticeBooleanityCycleInput<F> {
+    /// See [`BooleanityCycleInput::ra_indices`].
+    pub fn ra_indices(&self) -> Arc<Vec<RaIndices>> {
+        self.base.ra_indices()
+    }
 }
 
 /// Lattice booleanity address phase: the base prover with the chunk columns'
@@ -1297,7 +1313,7 @@ mod tests {
         let input = LatticeBooleanityCycleInput {
             base: BooleanityCycleInput {
                 params: params.clone(),
-                ra_indices,
+                ra_indices: Arc::new(ra_indices),
             },
             one_hot_columns,
         };

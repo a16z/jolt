@@ -45,10 +45,6 @@
 //!
 //! Variables are bound low-to-high, matching the polynomial layout.
 
-use common::jolt_device::MemoryLayout;
-use std::sync::Arc;
-use tracer::instruction::Cycle;
-
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
@@ -56,6 +52,7 @@ use crate::poly::opening_proof::{
     SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
+use crate::poly::shared_ra_polys::{gather_index_columns, RaIndices};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::UniPoly;
 #[cfg(feature = "zk")]
@@ -66,7 +63,6 @@ use crate::subprotocols::mles_product_sum::compute_mles_product_sum;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::zkvm::config::OneHotParams;
-use crate::zkvm::ram::remap_address;
 use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::{
     field::JoltField,
@@ -80,7 +76,6 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
-use rayon::prelude::*;
 
 /// Shared parameters between prover and verifier.
 #[derive(Allocative, Clone)]
@@ -200,12 +195,7 @@ pub struct RamRaVirtualSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRaVirtualSumcheckProver::initialize")]
-    pub fn initialize(
-        params: RamRaVirtualParams<F>,
-        trace: &[Cycle],
-        memory_layout: &MemoryLayout,
-        one_hot_params: &OneHotParams,
-    ) -> Self {
+    pub fn initialize(params: RamRaVirtualParams<F>, ra_indices: &[RaIndices]) -> Self {
         // Precompute EQ tables for each address chunk
         let eq_tables: Vec<Vec<F>> = params
             .r_address_chunks
@@ -217,19 +207,11 @@ impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
         let eq_poly = GruenSplitEqPolynomial::new(&params.r_cycle.r, BindingOrder::LowToHigh);
 
         // Create ra_i polynomials for each decomposition chunk
-        let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..params.d)
-            .into_par_iter()
-            .zip(eq_tables.into_par_iter())
-            .map(|(i, eq_table)| {
-                let ra_i_indices: Vec<Option<u8>> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        remap_address(cycle.ram_access().address() as u64, memory_layout)
-                            .map(|address| one_hot_params.ram_address_chunk(address, i))
-                    })
-                    .collect();
-                RaPolynomial::new(Arc::new(ra_i_indices), eq_table)
-            })
+        let columns = gather_index_columns(ra_indices, params.d, |ra, i| ra.ram[i]);
+        let ra_i_polys: Vec<RaPolynomial<u8, F>> = columns
+            .into_iter()
+            .zip(eq_tables)
+            .map(|(column, eq_table)| RaPolynomial::new(column, eq_table))
             .collect();
 
         Self {

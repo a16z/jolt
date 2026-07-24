@@ -27,6 +27,7 @@ use crate::{
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
+        shared_ra_polys::{gather_index_columns, RaIndices},
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -605,8 +606,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafCycleSumcheckProver::initialize")]
     pub fn initialize(
         mut params: BytecodeReadRafSumcheckParams<F>,
-        trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: Arc<BytecodePreprocessing>,
+        ra_indices: &[RaIndices],
         accumulator: &ProverOpeningAccumulator<F>,
         #[cfg(feature = "akita")] fused_deltas: Vec<i128>,
     ) -> Self {
@@ -621,18 +621,15 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
         let r_address_chunks = params
             .one_hot_params
             .compute_r_address_chunks::<F>(&r_address);
-        let ra = r_address_chunks
-            .iter()
-            .enumerate()
-            .map(|(i, r_address_chunk)| {
-                let ra_i: Vec<Option<u8>> = trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let pc = super::get_pc_for_cycle(&bytecode_preprocessing, cycle);
-                        Some(params.one_hot_params.bytecode_pc_chunk(pc, i))
-                    })
-                    .collect();
-                RaPolynomial::new(Arc::new(ra_i), EqPolynomial::evals(r_address_chunk))
+        debug_assert_eq!(r_address_chunks.len(), params.one_hot_params.bytecode_d);
+        let columns = gather_index_columns(ra_indices, r_address_chunks.len(), |ra, i| {
+            Some(ra.bytecode[i])
+        });
+        let ra = columns
+            .into_iter()
+            .zip(&r_address_chunks)
+            .map(|(column, r_address_chunk)| {
+                RaPolynomial::new(column, EqPolynomial::evals(r_address_chunk))
             })
             .collect::<Vec<_>>();
 

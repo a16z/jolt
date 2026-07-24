@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
@@ -16,6 +14,7 @@ use crate::{
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
         },
         ra_poly::RaPolynomial,
+        shared_ra_polys::{gather_index_columns, RaIndices},
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -31,15 +30,12 @@ use crate::{
     transcripts::Transcript,
     zkvm::{
         config::OneHotParams,
-        instruction::LookupQuery,
         instruction_lookups::LOG_K,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 use allocative::Allocative;
-use common::constants::XLEN;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 #[derive(Allocative, Clone)]
 pub struct InstructionRaSumcheckParams<F: JoltField> {
@@ -209,23 +205,16 @@ pub struct InstructionRaSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> InstructionRaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::initialize")]
-    pub fn initialize(params: InstructionRaSumcheckParams<F>, trace: &[Cycle]) -> Self {
+    pub fn initialize(params: InstructionRaSumcheckParams<F>, ra_indices: &[RaIndices]) -> Self {
         // Compute r_address_chunks with proper padding
         let r_address_chunks = params
             .one_hot_params
             .compute_r_address_chunks::<F>(&params.r_address.r);
 
-        let H_indices: Vec<Vec<Option<u8>>> = (0..params.one_hot_params.instruction_d)
-            .map(|i| {
-                trace
-                    .par_iter()
-                    .map(|cycle| {
-                        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-                        Some(params.one_hot_params.lookup_index_chunk(lookup_index, i))
-                    })
-                    .collect()
-            })
-            .collect();
+        let H_indices =
+            gather_index_columns(ra_indices, params.one_hot_params.instruction_d, |ra, i| {
+                Some(ra.instruction[i])
+            });
 
         let n_committed_per_virtual = params.n_committed_per_virtual;
         let gamma_powers = params.gamma_powers();
@@ -252,7 +241,7 @@ impl<F: JoltField> InstructionRaSumcheckProver<F> {
                 };
                 let eq_evals =
                     EqPolynomial::evals_with_scaling(&r_address_chunks[i], scaling_factor);
-                RaPolynomial::new(Arc::new(lookup_indices), eq_evals)
+                RaPolynomial::new(lookup_indices, eq_evals)
             })
             .collect();
 

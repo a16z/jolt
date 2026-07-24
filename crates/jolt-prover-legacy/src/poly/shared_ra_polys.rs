@@ -39,6 +39,7 @@ use crate::zkvm::ram::remap_address;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
+use std::sync::Arc;
 use tracer::instruction::Cycle;
 
 /// Maximum number of instruction RA chunks (lookup index splits into at most 32 chunks)
@@ -472,8 +473,9 @@ pub struct SharedRaRound1<F: JoltField> {
     /// In the booleanity sumcheck, these tables may already be pre-scaled by a per-polynomial
     /// constant (e.g. a batching coefficient).
     tables: Vec<Vec<F>>,
-    /// RA indices for all cycles (non-transposed)
-    indices: Vec<RaIndices>,
+    /// RA indices for all cycles (non-transposed), shared with the stage-6b
+    /// RA initializers that gather their per-chunk columns from it.
+    indices: Arc<Vec<RaIndices>>,
     /// Number of polynomials
     num_polys: usize,
     /// OneHotParams for index extraction
@@ -489,7 +491,7 @@ pub struct SharedRaRound2<F: JoltField> {
     /// Per-polynomial tables for the 1-branch: tables_1[poly_idx][k]
     tables_1: Vec<Vec<F>>,
     /// RA indices for all cycles
-    indices: Vec<RaIndices>,
+    indices: Arc<Vec<RaIndices>>,
     num_polys: usize,
     #[allocative(skip)]
     one_hot_params: OneHotParams,
@@ -503,7 +505,7 @@ pub struct SharedRaRound3<F: JoltField> {
     tables_01: Vec<Vec<F>>,
     tables_10: Vec<Vec<F>>,
     tables_11: Vec<Vec<F>>,
-    indices: Vec<RaIndices>,
+    indices: Arc<Vec<RaIndices>>,
     num_polys: usize,
     #[allocative(skip)]
     one_hot_params: OneHotParams,
@@ -512,7 +514,11 @@ pub struct SharedRaRound3<F: JoltField> {
 
 impl<F: JoltField> SharedRaPolynomials<F> {
     /// Create new SharedRaPolynomials from eq table and indices.
-    pub fn new(tables: Vec<Vec<F>>, indices: Vec<RaIndices>, one_hot_params: OneHotParams) -> Self {
+    pub fn new(
+        tables: Vec<Vec<F>>,
+        indices: Arc<Vec<RaIndices>>,
+        one_hot_params: OneHotParams,
+    ) -> Self {
         let num_polys =
             one_hot_params.instruction_d + one_hot_params.bytecode_d + one_hot_params.ram_d;
         debug_assert!(
@@ -880,4 +886,60 @@ pub fn compute_ra_indices(
         .par_iter()
         .map(|cycle| RaIndices::from_cycle(cycle, bytecode, memory_layout, one_hot_params))
         .collect()
+}
+
+/// Gather one family's per-cycle chunk indices out of precomputed
+/// [`RaIndices`] as the per-chunk `Option<u8>` columns the `RaPolynomial`
+/// constructors expect.
+///
+/// One streamed pass over `ra_indices` writes all `d` columns, replacing the
+/// per-chunk full-trace passes (instruction decode / PC lookup / address
+/// remap per cycle) the stage-6b initializers used to run.
+#[tracing::instrument(skip_all, name = "shared_ra_polys::gather_index_columns")]
+pub fn gather_index_columns<G>(
+    ra_indices: &[RaIndices],
+    d: usize,
+    get: G,
+) -> Vec<Arc<Vec<Option<u8>>>>
+where
+    G: Fn(&RaIndices, usize) -> Option<u8> + Sync,
+{
+    let T = ra_indices.len();
+    // Allocate zeroed columns directly: the all-zero byte pattern is a valid
+    // `Option<u8>` (`None`) — the same invariant `RaIndices::zero` documents —
+    // and `alloc_zeroed` hands back untouched zero pages, so this costs
+    // nothing until the gather writes each element exactly once.
+    let mut cols: Vec<Vec<Option<u8>>> = (0..d)
+        .map(|_| unsafe {
+            let layout = std::alloc::Layout::array::<Option<u8>>(T).unwrap();
+            let ptr = std::alloc::alloc_zeroed(layout) as *mut Option<u8>;
+            if ptr.is_null() {
+                panic!("gather_index_columns: column allocation failed");
+            }
+            Vec::from_raw_parts(ptr, T, T)
+        })
+        .collect();
+
+    let col_ptrs: Vec<usize> = cols.iter_mut().map(|c| c.as_mut_ptr() as usize).collect();
+    // Block the cycle range so a block of `RaIndices` stays cache-resident
+    // while all `d` columns sweep it: one DRAM pass over the indices plus
+    // contiguous per-column writes, instead of `d` interleaved write streams
+    // per element (which ran ~10x slower).
+    const BLOCK: usize = 1 << 15;
+    (0..T.div_ceil(BLOCK)).into_par_iter().for_each(|b| {
+        let start = b * BLOCK;
+        let end = (start + BLOCK).min(T);
+        let block = &ra_indices[start..end];
+        for (i, &ptr) in col_ptrs.iter().enumerate() {
+            let dst = ptr as *mut Option<u8>;
+            for (j, ra) in block.iter().enumerate() {
+                // SAFETY: blocks partition 0..T disjointly and each column is
+                // pre-sized to T, so every write is in-bounds and no element
+                // is written twice.
+                unsafe { dst.add(start + j).write(get(ra, i)) };
+            }
+        }
+    });
+
+    cols.into_iter().map(Arc::new).collect()
 }

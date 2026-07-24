@@ -873,10 +873,14 @@ impl AkitaPackedProver<'_> {
             .iter()
             .map(|gammas| gammas.to_vec())
             .collect();
+        // The 6a booleanity address phase already derived every family's
+        // per-cycle chunk indices; the RA initializers gather from that shared
+        // vector instead of re-walking the trace (decode + PC lookup + address
+        // remap per chunk).
+        let ra_indices = booleanity_cycle_input.ra_indices();
         let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize(
             bytecode_read_raf_params,
-            Arc::clone(&self.trace),
-            self.preprocessing.bytecode(),
+            &ra_indices,
             &self.opening_accumulator,
             fused_inc,
         );
@@ -886,14 +890,14 @@ impl AkitaPackedProver<'_> {
         );
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
-        let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
-            ram_ra_virtual_params,
-            &self.trace,
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
-        );
+        let mut ram_ra_virtual =
+            RamRaVirtualSumcheckProver::initialize(ram_ra_virtual_params, &ra_indices);
         let mut lookups_ra_virtual =
-            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
+            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &ra_indices);
+        // Release the handle so the indices' lifetime stays owned by the
+        // booleanity cycle prover (dropped at its RoundN materialization),
+        // exactly as before this sharing.
+        drop(ra_indices);
 
         // The advice claim-reduction cycle phases join at the bundle's
         // canonical tail, exactly as in the base 6b assembly (the lattice
