@@ -339,12 +339,10 @@ fn tampered_stage6_committed_bytecode_claims_reject() {
     let layout = schedule
         .bytecode
         .unwrap_or_else(|| panic!("committed fixture must schedule a bytecode reduction"));
-    let chunk_count = base
-        .preprocessing
-        .program
-        .committed()
-        .map(|committed| committed.bytecode_chunk_count())
-        .unwrap_or_else(|| panic!("committed fixture must carry chunk commitments"));
+    let chunk_count = base.preprocessing.program.committed().map_or_else(
+        || panic!("committed fixture must carry chunk commitments"),
+        |committed| committed.bytecode_chunk_count(),
+    );
 
     for stage in 0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES {
         offset_claim_rejects(
@@ -394,12 +392,10 @@ fn tampered_stage7_committed_claims_reject() {
     let image_layout = schedule
         .program_image
         .unwrap_or_else(|| panic!("committed fixture must schedule a program-image reduction"));
-    let chunk_count = base
-        .preprocessing
-        .program
-        .committed()
-        .map(|committed| committed.bytecode_chunk_count())
-        .unwrap_or_else(|| panic!("committed fixture must carry chunk commitments"));
+    let chunk_count = base.preprocessing.program.committed().map_or_else(
+        || panic!("committed fixture must carry chunk commitments"),
+        |committed| committed.bytecode_chunk_count(),
+    );
 
     assert!(
         bytecode_layout.dimensions().has_address_phase()
