@@ -35,9 +35,12 @@ weekly-seconds = 1800
 
 [dependencies]
 libfuzzer-sys = "0.4"
-tracer = { path = ".." }
-jolt-program = { path = "../../crates/jolt-program", features = ["image", "serialization"] }
+jolt-program = { path = "../../crates/jolt-program", features = [
+  "image",
+  "serialization",
+] }
 jolt-riscv = { path = "../../crates/jolt-riscv", features = ["serialization"] }
+tracer = { path = ".." }
 
 [[bin]]
 name = "decode_differential"

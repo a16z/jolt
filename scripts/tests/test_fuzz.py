@@ -406,6 +406,50 @@ class FuzzInventoryTests(unittest.TestCase):
                 self.assertIn("--features", command)
                 self.assertEqual(command[command.index("--features") + 1], "zk,fuzzing")
 
+    def test_target_triple_reaches_cargo_fuzz_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            fuzz_dir = self.make_validated_workspace(root, targets=("alpha",))
+            corpus_dir = fuzz_dir / "corpus" / "alpha"
+            corpus_dir.mkdir(parents=True)
+            (corpus_dir / "input").write_text("corpus")
+            commands = []
+            target_triple = "x86_64-unknown-linux-gnu"
+
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                mock.patch.object(FUZZ, "check_cargo_fuzz_version"),
+                mock.patch.object(FUZZ, "check_workspace"),
+                mock.patch.object(
+                    FUZZ,
+                    "run_command",
+                    side_effect=lambda command, **_: commands.append(command) or 0,
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                self.assertEqual(
+                    FUZZ.main(("--target-triple", target_triple, "build")), 0
+                )
+                self.assertEqual(
+                    FUZZ.main(("--target-triple", target_triple, "replay")), 0
+                )
+                self.assertEqual(
+                    FUZZ.main(
+                        ("--target-triple", target_triple, "run", "--seconds", "1")
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    FUZZ.main(("--target-triple", target_triple, "cmin")), 0
+                )
+                self.assertEqual(
+                    FUZZ.main(("--target-triple", target_triple, "coverage")), 0
+                )
+
+            for command in commands:
+                self.assertIn("--target", command)
+                self.assertEqual(command[command.index("--target") + 1], target_triple)
+
     def test_run_requires_exactly_one_of_profile_or_seconds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

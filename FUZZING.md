@@ -67,8 +67,9 @@ dependency tree includes the patched arkworks fork (`jolt-crypto`, `jolt-dory`,
 `jolt-hyperkzg`) fail to **link** under ASan: the fork's `ark-ff` enables its
 `allocative` feature by default, which pulls in `ctor`, and the macOS linker
 rejects `ctor`'s static initializer in sanitized builds (`ld: initializer
-pointer has no target`). CI fuzzes on Linux and is unaffected. For local work
-on macOS, pass `--sanitizer none`:
+pointer has no target`). CI fuzzes on Linux and passes
+`--target-triple x86_64-unknown-linux-gnu` so sanitizer builds do not use a
+static musl target. For local work on macOS, pass `--sanitizer none`:
 
 ```bash
 python3 scripts/fuzz.py --workspace jolt-dory --sanitizer none replay

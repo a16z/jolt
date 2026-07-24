@@ -144,22 +144,23 @@ jobs:
       # Configuration validation never compiles a target, so API bitrot in a
       # target source must fail here, before the timed phases.
       - name: Build fuzz targets
-        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" build
+        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu build
       - name: Replay seeds and regressions
-        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" replay
+        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu replay
       - name: Run ${{ steps.profile.outputs.name }} fuzz profile
         run: |
           set -o pipefail
           python3 scripts/fuzz.py \
             --workspace "${{ matrix.workspace }}" \
+            --target-triple x86_64-unknown-linux-gnu \
             run --profile "${{ steps.profile.outputs.name }}" \
             2>&1 | tee "fuzz-${{ matrix.workspace }}.log"
       - name: Minimize weekly corpus
         if: success() && steps.profile.outputs.name == 'weekly'
-        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" cmin
+        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu cmin
       - name: Generate weekly coverage
         if: success() && steps.profile.outputs.name == 'weekly'
-        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" coverage
+        run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu coverage
       - name: Save trusted corpus
         if: success() && github.event_name == 'schedule' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v6

@@ -346,7 +346,8 @@ available as a local override for all selected targets.
 
 Each fuzz invocation uses:
 
-- AddressSanitizer through `cargo-fuzz` defaults;
+- AddressSanitizer through `cargo-fuzz`, with Linux CI pinned to
+  `x86_64-unknown-linux-gnu` to avoid sanitized musl builds;
 - a bounded maximum input length;
 - a per-input timeout and RSS limit;
 - libFuzzer final statistics and value profiling;

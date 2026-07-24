@@ -386,6 +386,12 @@ def cargo_feature_args(target: FuzzTarget) -> list[str]:
     return ["--features", ",".join(target.cargo_features)]
 
 
+def cargo_target_args(args: argparse.Namespace) -> list[str]:
+    if args.target_triple is None:
+        return []
+    return ["--target", args.target_triple]
+
+
 def run_for_targets(
     root: Path,
     workspaces: Sequence[FuzzWorkspace],
@@ -398,6 +404,7 @@ def run_for_targets(
         check_workspace(root, workspace, resolve=True)
         for target in selected_targets(workspace, args.target):
             sanitizer = ["--sanitizer", args.sanitizer]
+            target_triple = cargo_target_args(args)
             features = cargo_feature_args(target)
             seconds = None
             if args.command == "replay":
@@ -406,7 +413,15 @@ def run_for_targets(
                     raise FuzzConfigurationError(
                         f"{workspace.name}/{target.name} has no seeds or regressions"
                     )
-                command = ["cargo", "fuzz", "run", *sanitizer, *features, target.name]
+                command = [
+                    "cargo",
+                    "fuzz",
+                    "run",
+                    *sanitizer,
+                    *target_triple,
+                    *features,
+                    target.name,
+                ]
                 command.extend(str(path) for path in files)
             elif args.command == "reproduce":
                 command = [
@@ -414,6 +429,7 @@ def run_for_targets(
                     "fuzz",
                     "run",
                     *sanitizer,
+                    *target_triple,
                     *features,
                     target.name,
                     str(args.input),
@@ -424,6 +440,7 @@ def run_for_targets(
                     "fuzz",
                     "tmin",
                     *sanitizer,
+                    *target_triple,
                     *features,
                     target.name,
                     str(args.input),
@@ -443,6 +460,7 @@ def run_for_targets(
                     "fuzz",
                     "run",
                     *sanitizer,
+                    *target_triple,
                     *features,
                     target.name,
                     str(corpus),
@@ -474,6 +492,7 @@ def run_for_targets(
                     "fuzz",
                     "cmin",
                     *sanitizer,
+                    *target_triple,
                     *features,
                     target.name,
                     str(corpus),
@@ -484,7 +503,14 @@ def run_for_targets(
                     raise FuzzConfigurationError(
                         f"{workspace.name}/{target.name} has no corpus inputs"
                     )
-                command = ["cargo", "fuzz", "coverage", *features, target.name]
+                command = [
+                    "cargo",
+                    "fuzz",
+                    "coverage",
+                    *target_triple,
+                    *features,
+                    target.name,
+                ]
                 command.extend(str(path) for path in directories)
             else:
                 raise AssertionError(f"unsupported target command {args.command}")
@@ -591,6 +617,11 @@ def create_parser() -> argparse.ArgumentParser:
         default="address",
         help="sanitizer for target builds; macOS local builds of the "
         "arkworks-dependent workspaces fail to link under ASan (see FUZZING.md)",
+    )
+    parser.add_argument(
+        "--target-triple",
+        help="pass a cargo-fuzz --target triple; CI pins Linux ASan builds to "
+        "x86_64-unknown-linux-gnu so cargo-fuzz does not select musl",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -721,6 +752,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                         "build",
                         "--sanitizer",
                         args.sanitizer,
+                        *cargo_target_args(args),
                         *cargo_feature_args(target),
                         target.name,
                     ]
