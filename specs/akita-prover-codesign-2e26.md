@@ -100,20 +100,27 @@ per-thread ns curve immediately separates (a) from (b)/(c).
 Accept: e2e −≥3 s. If (a) confirmed but the fix helps <3 s (E-cores still
 net-positive), record the measured split and close the item.
 
-### Q2 [ENG] f128 delayed-reduction coverage in hot PIOP loops — expect −5 to −10 s
+### Q2 [ENG] Stage-6b index-builder hoisting + cross-stage index sharing — expect −2 to −5 s
 
-Rationale: comparable-work PIOP is 1.7× vs legacy-Fr (33 vs 55.4 s after
-removing ~9 s of lattice-only stages); pseudo-Mersenne op-level potential is
-2-2.5×. Targets in cost order: stage6b lattice booleanity (8.0 s,
-`subprotocols/booleanity.rs` compute_message paths), stage5 (4.5 s),
-`MultilinearPolynomial::bind_parallel` (3.5 s / 3,141 calls), stage6a
-(3.3 s). Audit each inner loop: does it accumulate via
-`F::UnreducedProductAccum` (`Folded128Product`) / `par_fold_out_in_unreduced`
-or reduce per op? Fix pattern is mechanical (mirror the existing BN254
-delayed-reduction shape). An algorithm-level audit report may exist in this
-spec's companion section below — read it first if present.
-First step: cycle-count one stage6b inner loop vs mul-count × 7 ops.
-Accept: per-stage traced-span −≥25% and e2e −≥1.5 s cumulative.
+Audit-grounded (see appendix). Three 6b `initialize()`s rebuild d chunk
+columns with one full `trace.par_iter()` PER CHUNK, recomputing the
+chunk-independent base each pass: `LookupsRa`
+(instruction_lookups/ra_virtual.rs:218 — `to_lookup_index` evaluated
+instruction_d=16 × T; 15 redundant full-trace passes), `RamRaVirtual`
+(ram/ra_virtual.rs:220 — `remap_address` ram_d×T), `BytecodeReadRafCycle`
+(bytecode/read_raf_checking.rs:700 — `get_pc_for_cycle` bytecode_d×T).
+Fix: one pass computing the base, extracting all d chunks (the pattern
+already exists in `RaIndices::from_cycle`, shared_ra_polys.rs:145).
+Second leg: `compute_all_G_and_ra_indices` (shared_ra_polys.rs:229) already
+materializes all families' indices in 6a — thread them to 6b instead of
+rebuilding (`get_pc_for_cycle` currently computed over T in ≥3 places);
+caveat: LookupsRa uses the virtual chunk width, so share the base
+`lookup_index`, not the chunks.
+CLOSED-alternative recorded: the f128 arithmetic audit found NO
+reduce-per-op in any T-sized hot loop (all `Folded128Product` /
+`par_fold_out_in_unreduced`; mul is 35-instr aarch64 asm ≈ 6 mul-ops) — the
+old "delayed-reduction coverage" hypothesis is dead. Remaining arithmetic
+crumbs are in Q5.
 
 ### Q3 [PROTOCOL] Committed-column virtualization — expect −3 to −9 s commit + PIOP share
 
@@ -140,12 +147,16 @@ fused path must preserve probe-order semantics exactly (transcript
 identity).
 Accept: e2e −≥2 s, akita suite green.
 
-### Q5 [ENG] Stage1 residual — expect −2 to −3 s
+### Q5 [ENG] Stage1 residual + audited small items — expect −2 to −4 s
 
-Post-J3 stage1 = 8.0 s: uniskip extended evals 3.1 (S64/S128 integer
-products — SIMD candidates), linear-stage materialise 3.1, claimed-inputs
-1.8. Shared Spartan code: transcript-identical rewrites only; muldiv gates
-mandatory. Benefits dory equally (acceptable).
+Stage1 (8.0 s): uniskip extended evals 3.1 (S64/S128 integer products,
+SIMD candidates), materialise 3.1, claimed-inputs 1.8; shared code, muldiv
+gates mandatory. Audited smalls to bundle: `CompactPolynomial::bind_parallel`
+LowToHigh frees the old buffer synchronously each round — use
+`drop_in_background_thread` (compact_polynomial.rs:256, 3,141 calls);
+shift Phase2 serial `for j in 0..half_n` loop + reduce-per-op products
+(spartan/shift.rs:866); bytecode address-phase reduced products
+(bytecode/read_raf_checking.rs:472). Each bounded (√T/K domains).
 
 ### Q6 [ENG] RSS attribution and reduction — target ≤60 GB; possible 1-3 s side win
 
@@ -182,3 +193,22 @@ anything in the dead-end ledger.
 Never push or force-push. Commits stay local on both repos. If context runs
 long, this file plus the memory entry `akita-perf-branch-state` are the
 resume points — keep both current as part of step 5.
+
+## Appendix: algorithm/arithmetic audit (2026-07-24, agent-verified file:line)
+
+Verdict: per-element inner arithmetic uniformly tuned — every T-sized fold
+accumulates unreduced (`Folded128Product` via `mul_to_product_accum`,
+`par_fold_out_in_unreduced`) and reduces once per lane/round; no dense
+materialization of one-hot data (RaPolynomial/SharedRaPolynomials index
+form); AkitaFp128 mul/add/sub are hand asm (schoolbook 2x2 + Solinas fold,
+~6 mul-ops; flag-fused canonicalize). Confirmed-tuned compute_message list:
+booleanity.rs:894/293, read_raf_checking.rs:797, hamming_booleanity.rs:164,
+ram/ra_virtual.rs:257, instruction_lookups/ra_virtual.rs:273,
+spartan/instruction_input.rs:314, registers/val_evaluation.rs:207,
+instruction_lookups/read_raf_checking.rs:866. Structural waste found only
+in initialize() index builders (now Q2) and the Q5 smalls. Stage map:
+stage3 = Shift + InstructionInput + RegistersClaimReduction; stage5 =
+InstructionReadRaf + RamRaClaimReduction + ValEvaluation; 6a = bytecode
+address read-raf + booleanity address; 6b = bytecode cycle read-raf +
+booleanity cycle + hamming + RamRaVirtual + LookupsRa + claim reductions.
+Not measured: init-vs-rounds split per 6b sub-prover (bounds Q2's payoff).
