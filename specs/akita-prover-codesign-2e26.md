@@ -180,6 +180,14 @@ validate at 2^27 on a bigger box. Also re-check the K16 regime (T < 2^25).
   `HasCommitAccum` seam stay in-tree for probes (akita 676ef27b).
 - **A2 A-sharing via bigger tile budgets**: tile-budget insensitivity showed
   the win isn't in accumulator tiling; the A-reuse win is across *polys* (A5).
+- **A6 fused in-register widen**: regressed 100.3→131.1 s — fusing re-widens
+  per *use* (~14× more converts than the staged chunk buffer amortizes).
+  Reverted (akita b52753b5).
+- **Merge-kernel tile tuning beyond (64 blocks, 32 cols)**: the full
+  (tile × chunk) bench matrix is flat within 5-30%; 61.4 ns/accum is the
+  practical floor at quarter-density one-hot shapes (the 28 ns dense-bench
+  figure does not transfer). Commit ≈ 45-48 s is this kernel's floor on CPU;
+  further commit cuts need work-count changes (rank/K/protocol) or GPU.
 
 ## Protocol (goal mode)
 
