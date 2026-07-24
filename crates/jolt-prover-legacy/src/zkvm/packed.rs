@@ -1394,8 +1394,8 @@ impl AkitaPackedProver<'_> {
     pub fn prove_packed(
         mut self,
         object_setup: &<AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
-        trusted_advice: Option<AdviceOneHot>,
-        program: Option<ProgramOneHot>,
+        trusted_advice: Option<&AdviceOneHot>,
+        program: Option<&ProgramOneHot>,
     ) -> Result<AkitaJoltProof, VerifierError> {
         assert_eq!(
             program.is_some(),
@@ -1450,12 +1450,12 @@ impl AkitaPackedProver<'_> {
         // verifier's `absorb_commitments` akita arm does.
         append_length_prefixed(&mut self.transcript, b"commitment", &commitment);
         let advice_object = self.generate_and_commit_untrusted_advice_packed()?;
-        if let Some(trusted) = trusted_advice.as_ref() {
+        if let Some(trusted) = trusted_advice {
             append_length_prefixed(&mut self.transcript, b"trusted_advice", &trusted.commitment);
             self.advice.trusted_advice_polynomial =
                 Some(MultilinearPolynomial::from(trusted.words.clone()));
         }
-        if let Some(program) = program.as_ref() {
+        if let Some(program) = program {
             append_length_prefixed(
                 &mut self.transcript,
                 b"program_one_hot_commitment",
@@ -1479,7 +1479,7 @@ impl AkitaPackedProver<'_> {
         );
         let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns);
         let reconstruction_proof =
-            self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice.as_ref());
+            self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice);
 
         // Stage 8: OneHotTrace opens as one native same-point batch. Advice
         // and ProgramOneHot remain auxiliary packed objects.
@@ -1526,14 +1526,12 @@ impl AkitaPackedProver<'_> {
             })
             .transpose()?;
         let trusted_statement = trusted_advice
-            .as_ref()
             .map(|object| {
                 self.packed_advice_statement(JoltAdviceKind::Trusted, object)
                     .map(|(packing, statement)| (object, packing, statement))
             })
             .transpose()?;
         let program_statement = program
-            .as_ref()
             .map(|object| {
                 self.packed_program_statement(object)
                     .map(|(packing, statement)| (object, packing, statement))
@@ -1954,7 +1952,7 @@ mod advice_tests {
                 .expect("the transparent packed setup must derive");
         let trusted_commitment = trusted_object.commitment.clone();
         let proof = prover
-            .prove_packed(&object_setup, Some(trusted_object), None)
+            .prove_packed(&object_setup, Some(&trusted_object), None)
             .expect("packed prover should produce a verifier-native proof");
         assert!(proof.untrusted_advice_commitment.is_some());
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
@@ -2075,7 +2073,7 @@ mod advice_tests {
                 .expect("the transparent packed setup must derive");
         let trusted_commitment = trusted_object.commitment.clone();
         let proof = prover
-            .prove_packed(&object_setup, Some(trusted_object), None)
+            .prove_packed(&object_setup, Some(&trusted_object), None)
             .expect("packed prover should produce a verifier-native proof");
 
         let verifier_preprocessing =
@@ -2138,7 +2136,7 @@ mod committed_tests {
                 .expect("the transparent packed setup must derive");
         let program_one_hot_commitment = program_one_hot.commitment.clone();
         let proof = prover
-            .prove_packed(&object_setup, None, Some(program_one_hot))
+            .prove_packed(&object_setup, None, Some(&program_one_hot))
             .expect("packed prover should produce a verifier-native proof");
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
         // OneHotTrace is discharged by its native same-point batch; ProgramOneHot is the
