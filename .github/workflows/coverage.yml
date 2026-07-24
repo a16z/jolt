@@ -30,8 +30,26 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          components: llvm-tools-preview
+          components: llvm-tools-preview, rust-src
           cache-directories: ~/.cache/dory
+
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+
+      # The tracer guest-build tests and verifier fixture generation spawn the
+      # jolt CLI to cross-compile guest ELFs.
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
