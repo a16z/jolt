@@ -16,6 +16,19 @@ use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
 const MAX_OPS: usize = 64;
+// FrSmallScalarAccumulator keeps unreduced 5-limb positive/negative buckets.
+// 32-bit scalar magnitudes keep MAX_OPS within that carry envelope while still
+// exercising signed and unsigned fused-add paths.
+const SMALL_SCALAR_MASK: u64 = 0xffff_ffff;
+
+fn bounded_i64(raw: u64) -> i64 {
+    let magnitude = (raw & SMALL_SCALAR_MASK) as i64;
+    if raw >> 63 == 0 {
+        magnitude
+    } else {
+        -magnitude
+    }
+}
 
 fuzz_target!(|data: &[u8]| {
     let mut small = FrSmallScalarAccumulator::default();
@@ -44,7 +57,9 @@ fuzz_target!(|data: &[u8]| {
                 if cursor + 8 > data.len() {
                     break;
                 }
-                let scalar = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                let scalar =
+                    u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap())
+                        & SMALL_SCALAR_MASK;
                 cursor += 8;
                 small.fmadd_u64(value, scalar);
                 small_naive.fmadd_u64(value, scalar);
@@ -53,7 +68,9 @@ fuzz_target!(|data: &[u8]| {
                 if cursor + 8 > data.len() {
                     break;
                 }
-                let scalar = i64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                let scalar = bounded_i64(u64::from_le_bytes(
+                    data[cursor..cursor + 8].try_into().unwrap(),
+                ));
                 cursor += 8;
                 small.fmadd_i64(value, scalar);
                 small_naive.fmadd_i64(value, scalar);
