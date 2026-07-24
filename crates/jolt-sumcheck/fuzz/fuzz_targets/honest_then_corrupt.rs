@@ -13,7 +13,7 @@
 //! sound if the returned claim matches the true product evaluation.
 
 use jolt_field::{Fr, FromPrimitiveInt, Invertible, ReducingBytes};
-use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;

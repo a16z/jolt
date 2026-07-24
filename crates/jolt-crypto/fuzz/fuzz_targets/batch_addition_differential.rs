@@ -11,7 +11,7 @@
 use std::sync::OnceLock;
 
 use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi;
-use jolt_crypto::{Bn254, Bn254G1, JoltGroup};
+use jolt_crypto::{Bn254, Bn254G1};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
