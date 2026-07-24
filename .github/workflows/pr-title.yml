@@ -1,0 +1,39 @@
+name: PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  conventional-title:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # Keep in sync with .githooks/commit-msg
+          types='feat|fix|chore|docs|refactor|perf|test|build|ci|style|revert|spec'
+          re="^($types)(\([a-z0-9 ,._/-]+\))?!?: .+"
+
+          if [[ "$TITLE" =~ ^Revert\  ]]; then
+            echo "Revert PR, skipping"
+            exit 0
+          fi
+
+          if [[ "$TITLE" =~ $re ]]; then
+            echo "PR title OK: $TITLE"
+            exit 0
+          fi
+
+          echo "::error::PR title does not follow Conventional Commits: \"$TITLE\""
+          echo "Expected: <type>[optional scope][optional !]: <description>"
+          echo "Types: ${types//|/ }"
+          echo "Examples:"
+          echo "  feat(dory): batch tier-2 openings"
+          echo "  fix: handle empty trace in preprocessing"
+          echo "  refactor(claims,verifier)!: split relation claims"
+          exit 1
