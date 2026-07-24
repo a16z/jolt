@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784927596861,
+  "lastUpdate": 1784931441111,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -126886,6 +126886,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 872236,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "21a0b8a6928531567f0f420d978d51014efbbcad",
+          "message": "Refactor jolt-witness (#1677)\n\n* refactor(jolt-witness): remove the speculative API surface\n\nCut the crate to the API its consumers actually use. Verified dead by\ngrep across jolt-kernels/jolt-prover/jolt-verifier and by the dead-code\nlint after the trait reshape:\n\n- WitnessProvider loses view_requirements and try_evaluate_oracle_view\n  (zero callers); oracle_view(ViewRequirement) -> PolynomialView becomes\n  oracle_table(OracleRef) -> Vec<F>, deleting ViewRequirement,\n  MaterializationPolicy, RetentionHint (set once, read nowhere), and\n  PolynomialView (Borrowed/Deferred were never produced by the live\n  provider). The orphaned evaluate_* bodies in ra/ram/registers/trace\n  and the unconsumed RaFamilyCycleIndexSource fast path go with them.\n- Unconsumed namespaces deleted: protocols/wrapper, protocols/\n  dory_assist, the blindfold and rv64 namespace-const stubs, and their\n  only dependency protocols/util.\n- Dead stage-row builders deleted: stage2, stage3, spartan_outer, and\n  the register read-write row types (only the stage5 instruction\n  read-RAF and stage6 row traits have consumers).\n- Dead root exports deleted: PublicValue, OpeningWitness, RaFamily*;\n  polynomial.rs shrinks to descriptor.rs (OracleDescriptor only).\n- jolt-kernels dense_view collapses to a single oracle_table call,\n  removing the double materialization at the one former call site.\n\nGates: byte-diff harness 10/10 (proofs byte-identical to legacy),\njolt-witness tests in both feature modes, workspace suite 2324 passed,\nclippy clean under host and host,zk.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): introduce atomic witnesses with single-sourced Extract impls\n\nSplit trace_virtual_value's 27 arms one-for-one into per-witness Extract\nimpls over row-free newtypes (witnesses/), with WitnessEnv carrying the\npreprocessing. The materialization loop now dispatches through\ncycle_witness_value's one-liner arms; the monolithic function is gone.\nInternal only — values byte-pinned (byte-diff 10/10).\n\nSlice 1 of specs/witness-redesign.md.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): colocate Extract impls with their newtypes\n\nEach witnesses/ file now holds a family's complete definition — value\nnewtype, field encoding, and its single-sourced trace derivation. The\nExtract/ExtractIndexed traits, WitnessEnv, and the shared row helpers\nmove to witnesses/mod.rs; the id-driven dispatcher stays backend-side\nin trace.rs. Pure code motion (byte-diff 10/10).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): exhaustive id-indexed oracle, namespaces deleted\n\nReplace the WitnessNamespace/OracleRef abstraction with the object-safe\nJoltWitnessOracle<F> trait speaking JoltPolynomialId directly — the crate\nnow defines no id vocabulary at all. TraceBackend (nee\nTraceBackedJoltVmWitness, under backend/trace/) serves shape() and\noracle_table() through two hand-written no-wildcard matches over every\nJoltPolynomialId variant: a new jolt-claims variant fails compilation\nhere until mapped or added to an explicit exclusion arm. Excluded ids\n(committed-program, lattice-mode, protocol intermediates, and the\nunserved Rd/InstructionRaf/RamValInit) return NotServed with a\ndocumented reason, asserted per-family in tests.\n\nShape replaces OracleDescriptor; the batch chunk types take a plain Id\nparameter; error labels survive as plain &'static strs (field renamed\nnamespace -> label). JoltOpeningId::polynomial_id() lands in jolt-claims\nwhere the opening->polynomial mapping belongs; kernels' dense_view and\nall 23 slot traits take &dyn JoltWitnessOracle<F>. Field-inline becomes\na concrete sibling backend surface (inherent methods over its own ids;\nfull mirror treatment lands with its slice). supported_trace_virtual is\nabsorbed by the exhaustive match.\n\nSlice 2 of specs/witness-redesign.md. Byte-diff 10/10; workspace suite\nand clippy green in both modes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): fold WitnessDimensions into Shape, dispatch oracle arms per-witness\n\nShape is now the single shape type ({ log_rows, encoding }); the\ndimension helpers become log-row helpers and WitnessDimensions is gone.\n\nThe witnesses' field encodings move onto a ToField trait next to their\nExtract impls, and the backend keeps exactly one generic cycle walk\n(materialize_cycle/materialize_cycle_indexed) — oracle_table's\ncycle-domain arms are now one-liners dispatching to the atomic structs\n(V::PC => self.materialize_cycle::<F, Pc>()), deleting the parallel\ncycle_witness_value dispatcher. All per-witness metadata and behavior\nlives in witnesses/; the exhaustive matches carry only the id map and\nthe exclusion classification.\n\nByte-diff 10/10; workspace suite and clippy green in both modes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-witness): consumer bundles and the stream_witnesses pass\n\nNew jolt-witness-derive crate: #[derive(WitnessBundle)] turns a struct\nof atomic witnesses into a consumer bundle — from_row composes the\nfields' single-sourced Extract impls, #[opening(..)] annotations (the\nOutputClaims grammar: bare virtual variant, payload-carrying indexed\nform, committed = X) expose the annotated id set and columns, and a\ngenerated #[cfg(test)] consistency test per annotated field pins the\nbundle column against oracle_table on a canned trace (the fixture lives\nin jolt_witness::testing behind test-utils/cfg(test)).\n\nThe fused pass: StreamConsumer (Option<C> is an absent-able slot),\nConsumerSet tuple impls, and stream_witnesses over a RowSource of\nsequential row-buffer chunks with a one-row lookahead. TraceBackend\nimplements RowSource, and BundleSource::bundles materializes through a\ncollecting consumer, so the pass driver is the live path. Pass tests\npin lookahead values across chunk boundaries and one-walk fan-out.\n\nStage-row surface replaced: Stage5InstructionReadRafRow becomes the\nInstructionReadRafWitness bundle beside its kernel (carrying the\nannotated InstructionRafFlag — the exact negation of the old\ninterleaved_operands field, since operand interleaving is a derived\nmarker with no OpFlags id) and JoltVmStage6Row becomes the one-field\nBytecodeReadRafWitness (its only consumed field; the pushforward\nBytecodePc atomic lands with it, alongside LookupIndex and TableIndex).\nstage5.rs/stage6.rs and their traits are deleted from jolt-witness; the\nprover's W: bound is JoltWitnessOracle<F> + BundleSource.\n\nSlice 3 of specs/witness-redesign.md. Byte-diff 10/10; workspace suite\nand clippy green in both modes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): keep the bundle consistency surface test-only\n\nannotated_columns leaves the WitnessBundle trait: the derive now emits\nthe per-field column extraction as a closure inside the generated\n#[cfg(test)] module (passed to testing::assert_bundle_column_matches),\nso the test-only surface exists only in test builds by construction —\na cross-crate cfg(test) gate on a trait method cannot work, since\nconsumers compile their derived impls without jolt-witness's cfg(test).\nannotated_ids stays on the trait: it is the production input to\nstage-0 bundle validation.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): use std::ops::Range for the pass range\n\nCycleRange duplicated std vocabulary: Range<usize> says the same thing,\ncall sites get literal syntax (0..total), and the pass consumes the\nrange once so Copy never mattered.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-witness): unify committed streams over atomics, FixedBackend, stage-0 validation\n\nThe committed stream kinds now dispatch to atomic extractors — new\nRdInc/RamInc increment witnesses (increments.rs) and the one-hot chunk\nfamily (one_hot.rs: InstructionRaChunk/BytecodeRaChunk/RamRaChunk,\nindexed by RaChunkSelector, which moves to witnesses/ as the family's\nindex binding). JoltVmBatchNeeds/JoltVmBatchRow and the per-kind\nvalue_from_row/value_from_facts duplication are deleted; the batch\nstream computes each planned column through the same atomics, one row\nwalk as before. PcLookupCache and the backend lookup-index wrapper die\nwith their last users (the virtual instruction-RA grid reuses the\nLookupIndex atomic). Existing stream tests pin the chunk values.\n\nFixedBackend (backend/fixed.rs): stored dense columns behind\nJoltWitnessOracle — the seam's second implementor and the slot-fixture\nreplay substrate; a jolt-kernels unit test drives dense_view and both\ngrid folds against it with no trace behind the oracle.\n\nStage-0 validation: validate_servable checks every requested id — the\nproof config's committed set plus each bundle's annotated set — against\nthe backend's servable set (its shape() resolving, derived from the\nexhaustive match) before witness generation starts.\n\nSlice 4 of specs/witness-redesign.md. Byte-diff 10/10; workspace suite\nand clippy green in both modes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): InstructionRaChunk is plain usize\n\nEvery cycle performs an instruction lookup (no-ops look up index 0), so\nthe chunk is always hot; the Option was one-hot chunk-encoding plumbing\nleaking into the witness type. The Some wrap moves to the stream\nboundary where the encoding demands it. BytecodeRaChunk and RamRaChunk\nkeep their Option — those have genuine cold cases.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): gate FixedBackend behind test-utils\n\nLike the testing module, FixedBackend is test/replay surface: cfg(any(\ntest, feature = \"test-utils\")) keeps it out of production builds while\nstaying visible to jolt-witness's own tests, to consumers' test builds\nvia the dev-dependency feature (jolt-kernels' fold test), and to a\nfuture fixture harness that enables the feature as a regular dep. A\nliteral cfg(test) cannot cross crates.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): field-inline mirrors the atomic-witness pattern\n\nfield_inline/witnesses.rs: one newtype per field-inline witness with its\nsingle-sourced derivation over the row's field-inline payload —\nFieldRs1Value/FieldRs2Value/FieldRdValue/FieldProduct/FieldInvProduct\n(F-carrying, decoded field values), the indexed FieldOpFlag, and the\ncommitted FieldRdInc. The value accessor is FieldValue<F> (the analog\nof the scalar witnesses' ToField); decode_value and the op mapping move\nin with them. The backend's shape/oracle_table become exhaustive\nno-wildcard matches over FieldInlinePolynomialId with per-witness\none-liner arms over one generic parallel walk; trace_virtual_value,\nis_register_domain_virtual, describe_virtual, field_rd_inc, and\nmaterialize_field_rd_inc are deleted. The committed stream and the\nregister-row view dispatch through the same atomics; the register-grid\nstate loops stay private materializers.\n\nSlice 5 of specs/witness-redesign.md — the spec's execution plan is\ncomplete. Byte-diff 10/10; workspace suite and clippy green in both\nmodes; field-inline suite 47/47.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): committed columns walk push-based, old stream objects deleted\n\nThe pre-redesign pull-based streaming — boxed PolynomialStream cursors,\nthe lockstep PolynomialBatchStream (zero production consumers), and the\n9-variant PolynomialChunk — is replaced by the consumer-era shape:\nJoltWitnessOracle::visit_committed_column(id, chunk_size, visitor)\nwalks one column sequentially and pushes borrowed CommittedChunk\nslices, slimmed to the encodings backends actually produce (Dense,\nZeros, Words, Increments, HotAddresses). Padding keeps the committed\nconventions (zero increments, address-0 instruction/bytecode chunks,\ncold RAM cycles) rather than default-row extraction, documented in\ncommitted.rs (nee streams.rs).\n\nThe commit kernel walks the visitor for all four of its paths (dense\nfeed, one-hot column-major streaming, widened one-hot, address-major\nmaterialization), parking kernel errors across the walk's abort\nchannel; oracle_table's committed materializers and field-inline's\ncolumn reuse the same walkers. FixedBackend serves borrowed stored\nslices instead of allocating per chunk. The dead U8/U16/U32/I64 chunk\nvariants and the batch tests go with the machinery.\n\nByte-diff 10/10 pins the commitment bytes; workspace suite and clippy\ngreen in both modes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): committed columns share the pass's row walk\n\nInvestigating whether the committed walk could adopt the bundle pattern\ndisproved the module doc's justification for its private loop: padding\nby default (no-op) rows IS the committed convention by construction — a\nno-op's lookup index is 0 and get_pc short-circuits no-ops to slot 0,\nso extraction pads instruction/bytecode one-hots to the address-0\nchunk, RAM one-hots to cold cycles, and increments to zero. The column\nwalk now drives RowSource::visit_chunks (the crate's one row walk) and\npadding_value is deleted; the padding-pinning stream tests and\nbyte-diff confirm value identity.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-kernels): commitment is a StreamConsumer of the witness stream\n\nThe commit kernel becomes a consumer of the bundle pass: a\nCommittedColumnsWitness fact bundle (rd/ram increments, lookup index,\nmapped bytecode PC, remapped RAM address — two new fact atomics, with\nthe one-hot chunk atomics now delegating to them) flows through ONE\nfused stream_witnesses pass in the cycle-major mode, and the FusedColumns\nStreamConsumer holds every column's streaming PCS state — the runtime\narity (chunk selectors built from ids + grid) lives in the consumer,\nwhere the dynamism belongs. Per-column call sequences are unchanged, so\ncommitments are byte-identical; the fused walk replaces ~40 per-column\ntrace walks. The materializing modes (address-major; widened one-hot\ngrids) run one pass per column to keep peak memory at one grid table.\n\nThe CommitWitness slot takes &dyn RowSource; advice — not trace-derived\n— commits through the new commit_advice slot over oracle_table (advice\nwords feed identically by feed_u64's definition). stage0 goes generic\nover W: JoltWitnessOracle + RowSource; visit_committed_column comes off\nthe oracle trait (back to shape/oracle_table/committed_order) and stays\nas the backends' inherent column walk serving oracle_table.\n\nByte-diff 10/10; workspace suite and clippy green in both modes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-kernels): rename ColumnFeeder to ColumnCommitState, document the scratch buffers\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-witness): committed columns materialize directly, chunk visitor deleted\n\nThe push-based committed-column walk (CommittedChunk/ColumnVisitor,\nvisit_committed_column, the ColumnValues trait, and the JoltVm*Kind\nenums) had no production consumer left outside its own file: since the\ncommit kernel became a StreamConsumer of the fact-bundle pass, its only\njob was feeding oracle_table materialization. Delete the whole layer.\n\noracle_table's committed arms now dispatch like the virtual arms:\nmaterialize_cycle::<F, RdInc/RamInc> for increments, and a generic\nmaterialize_one_hot::<F, W> (one walk_cycles pass collecting per-cycle\nhot addresses, then a scatter of ones into the flat address-major K x T\ngrid) for the RA families — committed and virtual InstructionRa share\nit, deleting ra.rs. The chunk atomics convert to Option<usize> via From\n(hot address; None is a cold cycle), so no bespoke dispatch trait.\ncommitted.rs becomes advice.rs, with advice_words() single-sourcing the\ncolumn length between shape_of and materialization.\n\nValue-identical: the one-hot fact extractors ignore the lookahead row,\ndefault padding rows extract to the committed conventions (lookup index\n0, PC slot 0, cold RAM), and the old dynamic address-bound check was\ndead — the selector mask already bounds addresses. Byte-diff fixtures\npass. WitnessError::UnsupportedView loses its last users and is gone;\ntests assert materialized tables instead of chunk boundaries.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* Check in spec\n\n* chore(jolt-witness): drop unused jolt-poly dependency\n\ncargo-machete flagged it after the chunk visitor deletion removed the\nlast use.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* chore: sync Cargo.lock with main's syn 2.0.119 bump\n\nThe rebased slice-3 commit recorded jolt-witness-derive's syn entry at\n2.0.118 (pre-bump); cargo refreshed it on first build after the rebase.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* review: address jolt-witness PR feedback\n\n- bytecode_read_raf: reattach the stage-6a slot doc to the prover trait\n  instead of the witness struct\n- jolt-witness: make rayon optional, gated on the field-inline feature\n  (its only remaining user)\n- consumer: add StreamConsumer::is_active so an absent Option slot skips\n  extraction, not just the sink\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* fix(jolt-witness): follow main's BytecodeValStage -> BytecodeValClaim rename\n\nThe oracle's exhaustive virtual-id match and its test still named the old\nvariant, so the merge with main did not compile.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-07-24T14:05:28-07:00",
+          "tree_id": "b7a8789387fd690d249999a3255d3969cd602876",
+          "url": "https://github.com/a16z/jolt/commit/21a0b8a6928531567f0f420d978d51014efbbcad"
+        },
+        "date": 1784931436853,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.9392,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 869668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4213,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 510996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 511068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 502820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7643,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6271,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 504668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.2324,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 496808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.2702,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 201668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5881,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 872352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5952,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500104,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4913,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 23.2146,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5735,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 497772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 33.5868,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1057928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.4512,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 634208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 104.3443,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2135304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5876,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 507060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6316,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.8434,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 871024,
             "unit": "KB",
             "extra": ""
           }
