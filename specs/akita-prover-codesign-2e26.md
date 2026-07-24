@@ -29,7 +29,31 @@ stages 3/4/5/6a/7 ~21 s, witness+assemble ~16 s.
 
 Landed so far: A1 sub-block chunking (333→154 s), J2 uni-skip decode dedupe
 (stage1 init 15→6.2 s), P1 rank-aware catalogs (root n_a 7→6, 154→136.7 s,
-+112 B proof).
++112 B proof), A5 fused multi-poly sweep (commit 82.4→51.4 s traced;
+124.7 s traced prove), J3 sequential decode carry (three trace scans),
+merge-tile L1 tuning (commit target ~38-40 s).
+
+## Measured campaign log (traced @2^26 unless noted)
+
+| Milestone | prove | commit | notes |
+|---|---|---|---|
+| session start | 333 s | ~252 s | safe-path fallback pathology |
+| A1 | 154.4 s untraced | — | |
+| A1+J2 (n_a=7) | 170.2 s | 96.0 s | stage1 init 15→6.2 s |
+| +P1 (n_a=6) | 155.4 s | 82.4 s | 136.7 s untraced; RSS 80.1 GB |
+| +A5 fused sweep | 124.7 s | 51.4 s | merge span 797 thread-s = 68 ns/accum (L2-resident tile) |
+| dory, same branch (J2+J3 shared) | 122.4 s | 38.0+26.7 (w+c / open) | untraced est ~114 s; RSS 36.6 GB |
+| +J3 +self-reducing merge kernel, L1 tiles | **100.34 s untraced** | — | **primary bar (≤119 s) cleared**; RSS 94.9 GB (M2 now top item) |
+
+Detour recorded: naive L1 tiles regressed to 252 s — the 2^15 accumulator cap
+was silently splitting every trace-scale block 16×, so small tiles re-streamed
+A ~29×. Fixed by cap-triggered self-reduction into canonical partials
+(akita 015669b9); block splitting removed from the merge path entirely.
+
+**PIOP verdict (traced stages @2^26):** legacy (dory) 55.4 s vs packed ~42 s
+like-for-like (≈1.3×, concentrated in stage5 1.8× and stage6b 1.6×). The
+historical "PIOP ≈2×" held against the pre-J2/J3 legacy baseline; J2+J3 are
+shared Spartan code and improved both provers (legacy stage1 24→11.9 s).
 
 ## Cost model (the math)
 
