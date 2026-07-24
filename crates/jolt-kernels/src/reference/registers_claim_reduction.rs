@@ -17,8 +17,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersClaimReductionPublic,
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
 use crate::registers_claim_reduction::RegistersClaimReductionProver;
@@ -31,7 +30,7 @@ impl<F: Field> RegistersClaimReductionProver<F> for ReferenceBackend {
         trace_dimensions: TraceDimensions,
         product_uniskip_tau_low: &[F],
         challenges: &RegistersClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>
     {
         let ids = [

@@ -5,8 +5,7 @@ use jolt_claims::protocols::jolt::relations::ram::RamValCheckChallenges;
 use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_field::Field;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -25,6 +24,6 @@ pub trait RamValCheckProver<F: Field> {
         r_address: &[F],
         r_cycle: &[F],
         challenges: &RamValCheckChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamValCheck<F>>>, KernelError<F>>;
 }

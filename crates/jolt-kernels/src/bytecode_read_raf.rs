@@ -8,10 +8,17 @@ use jolt_claims::protocols::jolt::relations::bytecode::{
 use jolt_field::Field;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::witnesses::BytecodePc;
+use jolt_witness::{JoltWitnessOracle, WitnessBundle};
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
+
+/// The per-cycle witness of the bytecode read+RAF address phase: the PC
+/// pushforward source (no-ops and unmapped rows land on slot 0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
+pub struct BytecodeReadRafWitness {
+    pub bytecode_pc: BytecodePc,
+}
 
 /// The stage-6a bytecode read+RAF address-phase slot. The typed relation data
 /// is the per-row stage-value table (the verifier's `read_raf_stage_values`
@@ -30,7 +37,7 @@ pub trait BytecodeReadRafAddressProver<F: Field> {
         committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
-        bytecode_indices: Vec<usize>,
+        rows: Vec<BytecodeReadRafWitness>,
         entry_bytecode_index: usize,
         challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>;
@@ -58,6 +65,6 @@ pub trait BytecodeReadRafCycleProver<F: Field> {
         committed_chunk_bits: usize,
         stage_values_at_r_address: [F; 5],
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>;
 }

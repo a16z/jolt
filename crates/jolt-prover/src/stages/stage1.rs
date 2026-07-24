@@ -26,8 +26,7 @@ use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchOutputClaims, Stage1BatchSumchecks, Stage1ClearOutput,
     Stage1OutputClaims,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::ProverError;
 
@@ -45,7 +44,7 @@ pub fn prove_stage1<F, PCS, C, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     log_t: usize,
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, C>, ProverError<F>>
 where

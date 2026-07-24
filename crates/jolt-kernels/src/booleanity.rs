@@ -6,8 +6,7 @@ use jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhaseCha
 use jolt_field::Field;
 use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -22,7 +21,7 @@ pub trait BooleanityAddressProver<F: Field> {
         reference_address: &[F],
         reference_cycle: &[F],
         gamma: F,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>;
 }
 
@@ -46,6 +45,6 @@ pub trait BooleanityCycleProver<F: Field> {
         reference_address: &[F],
         reference_cycle: &[F],
         challenges: &BooleanityCyclePhaseChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = Booleanity<F>>>, KernelError<F>>;
 }

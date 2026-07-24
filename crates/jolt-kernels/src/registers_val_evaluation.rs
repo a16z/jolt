@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -17,6 +16,6 @@ pub trait RegistersValEvaluationProver<F: Field> {
         trace_dimensions: TraceDimensions,
         registers_val_point: &[F],
         challenges: &NoChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>;
 }

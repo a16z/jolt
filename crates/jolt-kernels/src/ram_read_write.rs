@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::relations::ram::RamReadWriteChallenges;
 use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::Field;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -18,6 +17,6 @@ pub trait RamReadWriteProver<F: Field> {
         ram_log_k: usize,
         tau_low: &[F],
         challenges: &RamReadWriteChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>;
 }

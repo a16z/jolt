@@ -527,6 +527,20 @@ pub enum JoltOpeningId {
 }
 
 impl JoltOpeningId {
+    /// The polynomial this opening refers to; advice openings resolve to
+    /// their committed advice polynomials.
+    pub const fn polynomial_id(self) -> JoltPolynomialId {
+        match self {
+            Self::Polynomial { polynomial, .. } => polynomial,
+            Self::TrustedAdvice { .. } => {
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::TrustedAdvice)
+            }
+            Self::UntrustedAdvice { .. } => {
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::UntrustedAdvice)
+            }
+        }
+    }
+
     pub fn polynomial(polynomial: impl Into<JoltPolynomialId>, relation: JoltRelationId) -> Self {
         Self::Polynomial {
             polynomial: polynomial.into(),

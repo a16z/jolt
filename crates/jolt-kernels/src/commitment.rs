@@ -9,10 +9,23 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
+use jolt_witness::{JoltWitnessOracle, RowSource, WitnessBundle};
 
 use crate::{KernelError, ProofSession};
+
+/// The per-cycle facts every committed column derives from — the commitment
+/// consumer's bundle. The runtime-arity chunk selection (which `InstructionRa`
+/// chunk of the lookup index, etc.) lives in the consumer, which owns the
+/// proof config; the bundle carries only the trace-derived values.
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+pub struct CommittedColumnsWitness {
+    pub rd_inc: RdInc,
+    pub ram_inc: RamInc,
+    pub lookup_index: LookupIndex,
+    pub bytecode_pc: MappedPc,
+    pub ram_address: RemappedRamAddress,
+}
 
 /// The shared embedding grid every witness polynomial is committed in:
 /// `2^⌈total_vars/2⌉` columns, where `total_vars` is the maximum over the
@@ -64,13 +77,16 @@ pub struct WitnessCommitment<PCS: CommitmentScheme> {
     pub hint: PCS::OpeningHint,
 }
 
-/// The witness-commitment slot: commit every polynomial in `ids` out of the
-/// witness oracle over the shared embedding grid. Results are returned in
-/// `ids` order; execution order, batching, and streaming strategy are the
-/// implementation's business (the trait deliberately does not require
+/// The witness-commitment slot: commit every trace-derived polynomial in
+/// `ids` as a consumer of the witness stream over the shared embedding grid.
+/// Results are returned in `ids` order; execution order, batching, and
+/// streaming strategy are the implementation's business (the trait
+/// deliberately does not require
 /// [`StreamingCommitment`](jolt_openings::StreamingCommitment) — that is
 /// the reference implementation's
-/// strategy). Transcript-free: the caller absorbs the returned commitments.
+/// strategy). Advice polynomials are not trace-derived and commit through
+/// [`commit_advice`](Self::commit_advice) instead. Transcript-free: the
+/// caller absorbs the returned commitments.
 pub trait CommitWitness<F, PCS>
 where
     F: Field,
@@ -79,9 +95,19 @@ where
     fn commit_witness(
         &self,
         session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        source: &dyn RowSource,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>;
+
+    /// Commit one advice polynomial in its dedicated cycle-major grid.
+    fn commit_advice(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessOracle<F>,
+        id: JoltCommittedPolynomial,
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<WitnessCommitment<PCS>, KernelError<F>>;
 }

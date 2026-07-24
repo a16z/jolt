@@ -26,8 +26,7 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::commitment::CommitmentGrid;
 use crate::{KernelError, ProofSession};
@@ -41,7 +40,7 @@ pub trait JointOpeningPolynomials<F: Field> {
     fn prepare(
         &self,
         session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,

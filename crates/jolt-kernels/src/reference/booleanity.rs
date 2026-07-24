@@ -34,8 +34,7 @@ use jolt_verifier::stages::stage6a::booleanity::{
     BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{address_fold, dense_view, eq_table};
 use crate::booleanity::{BooleanityAddressProver, BooleanityCycleProver};
@@ -49,7 +48,7 @@ impl<F: Field> BooleanityAddressProver<F> for ReferenceBackend {
         reference_address: &[F],
         reference_cycle: &[F],
         gamma: F,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
         Ok(Box::new(BooleanityAddressKernel::new(
@@ -82,7 +81,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
         reference_address: &[F],
         reference_cycle: &[F],
         gamma: F,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Self, KernelError<F>> {
         let log_k_chunk = dimensions.log_k_chunk;
         let log_t = dimensions.log_t;
@@ -251,7 +250,7 @@ impl<F: Field> BooleanityCycleProver<F> for ReferenceBackend {
         reference_address: &[F],
         reference_cycle: &[F],
         challenges: &BooleanityCyclePhaseChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = Booleanity<F>>>, KernelError<F>> {
         let relation = Booleanity::new(
             dimensions,

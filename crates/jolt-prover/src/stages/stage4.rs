@@ -35,8 +35,7 @@ use jolt_verifier::stages::stage4::{
     VerifiedRamValCheckAdviceContribution,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -58,7 +57,7 @@ pub fn prove_stage4<F, PCS, VC, C, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage2: &Stage2ClearOutput<F>,
     stage3: &Stage3ClearOutput<F>,
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     transcript: &mut T,
 ) -> Result<Stage4ProverOutput<F, C>, ProverError<F>>
 where

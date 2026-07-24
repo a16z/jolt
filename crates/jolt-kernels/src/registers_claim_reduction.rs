@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::relations::claim_reductions::registers::Regist
 use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_field::Field;
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -17,6 +16,6 @@ pub trait RegistersClaimReductionProver<F: Field> {
         trace_dimensions: TraceDimensions,
         product_uniskip_tau_low: &[F],
         challenges: &RegistersClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>;
 }

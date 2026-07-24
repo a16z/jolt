@@ -16,6 +16,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_kernels::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
@@ -35,8 +36,8 @@ use jolt_verifier::stages::stage5::{
     stage5_input_points_from_upstream, stage5_input_values_from_upstream,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage5InstructionReadRafRows};
-use jolt_witness::WitnessProvider;
+use jolt_witness::BundleSource;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -67,7 +68,7 @@ where
     VC: VectorCommitment<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage5InstructionReadRafRows,
+    W: JoltWitnessOracle<F> + BundleSource,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
@@ -103,7 +104,7 @@ where
     let (batch, coefficients) =
         sumchecks.begin_batch(&inputs, &challenges, &mut recorder, transcript)?;
 
-    let rows = witness.stage5_instruction_read_raf_rows(log_t)?;
+    let rows: Vec<InstructionReadRafWitness> = witness.bundles()?;
     let mut instruction_read_raf = backend.instruction_read_raf.prepare(
         session,
         formula_dimensions.instruction_read_raf,

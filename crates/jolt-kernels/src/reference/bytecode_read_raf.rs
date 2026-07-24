@@ -44,11 +44,12 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
 use jolt_verifier::stages::stage6b::bytecode_read_raf::{
     BytecodeReadRafCycle, BytecodeReadRafCycleInputs,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{address_fold, eq_table};
-use crate::bytecode_read_raf::{BytecodeReadRafAddressProver, BytecodeReadRafCycleProver};
+use crate::bytecode_read_raf::{
+    BytecodeReadRafAddressProver, BytecodeReadRafCycleProver, BytecodeReadRafWitness,
+};
 use crate::{KernelError, NaiveSumcheckProver, ProofSession, ProveSumcheck, ReferenceBackend};
 
 impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
@@ -59,11 +60,12 @@ impl<F: Field> BytecodeReadRafAddressProver<F> for ReferenceBackend {
         committed_program: bool,
         stage_values: Vec<[F; 5]>,
         stage_cycle_points: &[Vec<F>; 5],
-        bytecode_indices: Vec<usize>,
+        rows: Vec<BytecodeReadRafWitness>,
         entry_bytecode_index: usize,
         challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
+        let bytecode_indices = rows.iter().map(|row| row.bytecode_pc.0).collect();
         Ok(Box::new(BytecodeReadRafAddressKernel::new(
             dimensions,
             committed_program,
@@ -292,7 +294,7 @@ impl<F: Field> BytecodeReadRafCycleProver<F> for ReferenceBackend {
         committed_chunk_bits: usize,
         stage_values_at_r_address: [F; 5],
         challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>> {
         let cycles = 1usize << dimensions.log_t();
         // The table fold feeds only `expected_output`, which the kernel's

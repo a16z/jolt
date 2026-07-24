@@ -4,8 +4,7 @@
 
 use jolt_claims::protocols::jolt::{AdviceClaimReductionLayout, JoltAdviceKind};
 use jolt_field::Field;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::precommitted_reduction::PrecommittedReductionProver;
 use crate::{KernelError, ProofSession};
@@ -22,7 +21,7 @@ pub trait AdviceClaimReduction<F: Field> {
         session: &mut ProofSession,
         kind: JoltAdviceKind,
         point: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<F, KernelError<F>>;
 
     /// Build the two-phase reduction member for `kind`. `r_val` is the staged
@@ -34,6 +33,6 @@ pub trait AdviceClaimReduction<F: Field> {
         kind: JoltAdviceKind,
         layout: &AdviceClaimReductionLayout,
         r_val: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn PrecommittedReductionProver<F>>, KernelError<F>>;
 }

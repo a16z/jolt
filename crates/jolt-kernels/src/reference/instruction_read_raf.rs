@@ -33,6 +33,7 @@
 //! optimizations of the same true polynomials; byte parity needs only
 //! exactness, so this kernel always uses 8-variable phases.)
 
+use crate::instruction_read_raf::InstructionReadRafWitness;
 use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
 use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafChallenges, InstructionReadRafOutputClaims,
@@ -44,7 +45,6 @@ use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::protocols::jolt_vm::Stage5InstructionReadRafRow;
 
 use super::views::eq_table;
 use crate::instruction_read_raf::InstructionReadRafProver;
@@ -62,7 +62,7 @@ impl<F: Field> InstructionReadRafProver<F> for ReferenceBackend {
         _session: &mut ProofSession,
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        rows: Vec<Stage5InstructionReadRafRow>,
+        rows: Vec<InstructionReadRafWitness>,
         challenges: &InstructionReadRafChallenges<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         Ok(Box::new(InstructionReadRafKernel::new(
@@ -137,7 +137,7 @@ pub struct InstructionReadRafKernel<F: Field> {
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
-    rows: Vec<Stage5InstructionReadRafRow>,
+    rows: Vec<InstructionReadRafWitness>,
     /// Per-table cycle buckets, indexed by `LookupTableKind::index()`.
     buckets: Vec<Vec<usize>>,
     /// Condensed per-cycle eq weights: after phase `p` starts,
@@ -168,7 +168,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
     pub fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        rows: Vec<Stage5InstructionReadRafRow>,
+        rows: Vec<InstructionReadRafWitness>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
@@ -204,7 +204,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
 
         let mut buckets = vec![Vec::new(); LookupTableKind::<RISCV_XLEN>::COUNT];
         for (j, row) in rows.iter().enumerate() {
-            if let Some(table_index) = row.table_index {
+            if let Some(table_index) = row.table_index.0 {
                 buckets
                     .get_mut(table_index)
                     .ok_or(KernelError::InvariantViolation {
@@ -273,7 +273,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
             } = self;
             let v_prev = &v_tables[phase - 1];
             for (u, row) in u_evals.iter_mut().zip(rows.iter()) {
-                *u *= v_prev[((row.lookup_index >> shift) as usize) & (CHUNK_SIZE - 1)];
+                *u *= v_prev[((row.lookup_index.0 >> shift) as usize) & (CHUNK_SIZE - 1)];
             }
         }
 
@@ -293,9 +293,9 @@ impl<F: Field> InstructionReadRafKernel<F> {
         let mut q_shift_full_raw = [F::zero(); CHUNK_SIZE];
         let mut q_identity = [F::zero(); CHUNK_SIZE];
         for (row, &u) in self.rows.iter().zip(&self.u_evals) {
-            let chunk = self.chunk(row.lookup_index, phase);
-            let suffix_bits = row.lookup_index & suffix_mask;
-            if row.interleaved_operands {
+            let chunk = self.chunk(row.lookup_index.0, phase);
+            let suffix_bits = row.lookup_index.0 & suffix_mask;
+            if !row.raf_flag.0 {
                 q_shift_half_raw[chunk] += u;
                 let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
                 let left = u64::from(left);
@@ -352,8 +352,8 @@ impl<F: Field> InstructionReadRafKernel<F> {
                 for &j in &self.buckets[table.index()] {
                     let row = &self.rows[j];
                     let u = self.u_evals[j];
-                    let chunk = self.chunk(row.lookup_index, phase);
-                    let suffix_bits = LookupBits::new(row.lookup_index & suffix_mask, suffix_len);
+                    let chunk = self.chunk(row.lookup_index.0, phase);
+                    let suffix_bits = LookupBits::new(row.lookup_index.0 & suffix_mask, suffix_len);
                     for (accumulator, suffix) in accumulators.iter_mut().zip(suffixes) {
                         let value = suffix.suffix_mle(suffix_bits);
                         if value != 0 {
@@ -487,8 +487,9 @@ impl<F: Field> InstructionReadRafKernel<F> {
             .map(|row| {
                 let table_value = row
                     .table_index
+                    .0
                     .map_or_else(F::zero, |index| table_values[index]);
-                let raf_value = if row.interleaved_operands {
+                let raf_value = if !row.raf_flag.0 {
                     raf_interleaved
                 } else {
                     raf_identity
@@ -508,7 +509,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
                             (0..phases_per_ra)
                                 .map(|q| {
                                     let phase = i * phases_per_ra + q;
-                                    self.v_tables[phase][self.chunk(row.lookup_index, phase)]
+                                    self.v_tables[phase][self.chunk(row.lookup_index.0, phase)]
                                 })
                                 .product()
                         })
@@ -639,10 +640,10 @@ impl<F: Field> ProveSumcheck<F> for InstructionReadRafKernel<F> {
         let mut lookup_table_flags = vec![F::zero(); LookupTableKind::<RISCV_XLEN>::COUNT];
         let mut instruction_raf_flag = F::zero();
         for (row, &eq) in self.rows.iter().zip(&eq_cycle) {
-            if let Some(index) = row.table_index {
+            if let Some(index) = row.table_index.0 {
                 lookup_table_flags[index] += eq;
             }
-            if !row.interleaved_operands {
+            if row.raf_flag.0 {
                 instruction_raf_flag += eq;
             }
         }

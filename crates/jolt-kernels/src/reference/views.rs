@@ -3,31 +3,16 @@
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
-use jolt_witness::protocols::jolt_vm::{jolt_opening_oracle_ref, JoltVmNamespace};
-use jolt_witness::{
-    MaterializationPolicy, PolynomialEncoding, RetentionHint, ViewRequirement, WitnessProvider,
-};
+use jolt_witness::JoltWitnessOracle;
 
 use crate::KernelError;
 
 /// Materialize a dense field-element table of the oracle behind `opening`.
 pub(crate) fn dense_view<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
 ) -> Result<Vec<F>, KernelError<F>> {
-    let oracle = jolt_opening_oracle_ref(opening)?;
-    let view = witness.oracle_view(ViewRequirement {
-        oracle,
-        encoding: PolynomialEncoding::Dense,
-        materialization: MaterializationPolicy::BackendChoice,
-        retention: RetentionHint::Ephemeral,
-    })?;
-    Ok(view
-        .as_slice()
-        .ok_or(KernelError::InvariantViolation {
-            reason: "oracle view was not materialized as a dense slice",
-        })?
-        .to_vec())
+    Ok(witness.oracle_table(opening.polynomial_id())?)
 }
 
 /// `eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index MSB).
@@ -39,7 +24,7 @@ pub(crate) fn eq_table<F: Field>(point: &[F]) -> Vec<F> {
 /// eq weights of `point` (big-endian, `K = 2^point.len()`):
 /// `out[j] = Σ_k eq(point, k) · grid[(k << log_t) | j]`.
 pub(crate) fn address_fold<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
     log_t: usize,
     point: &[F],
@@ -68,7 +53,7 @@ pub(crate) fn address_fold<F: Field>(
 /// eq weights of `point` (big-endian, `T = 2^point.len()`):
 /// `out[k] = Σ_j eq(point, j) · grid[(k << log_t) | j]`.
 pub(crate) fn cycle_fold<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
     log_k: usize,
     point: &[F],
@@ -124,4 +109,61 @@ pub(crate) fn stream_pair_lsb<F: Field>(values: [F; 2], cycles: usize) -> Vec<F>
         out.push(values[1]);
     }
     out
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use jolt_claims::protocols::jolt::{
+        JoltOpeningId, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
+    };
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
+
+    use super::{address_fold, cycle_fold, dense_view};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    /// The stored-column backend replays a `(K x T)` grid into the kernels'
+    /// fold helpers — the oracle seam's second implementor, no trace behind
+    /// it.
+    #[test]
+    fn fold_helpers_run_against_a_fixed_backend_grid() {
+        let mut backend = FixedBackend::new();
+        let id = JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamVal);
+        // K = 2, T = 2, address-major: grid[(k << log_t) | j].
+        let grid = vec![fr(1), fr(2), fr(3), fr(4)];
+        backend
+            .insert(id, Shape::new(2, PolynomialEncoding::Dense), grid.clone())
+            .unwrap();
+        let opening = JoltOpeningId::virtual_polynomial(
+            JoltVirtualPolynomial::RamVal,
+            JoltRelationId::RamReadWriteChecking,
+        );
+
+        assert_eq!(dense_view::<Fr>(&backend, opening).unwrap(), grid);
+
+        let r = fr(7);
+        let folded = address_fold::<Fr>(&backend, opening, 1, &[r]).unwrap();
+        // out[j] = (1 - r) * grid[j] + r * grid[2 + j]
+        assert_eq!(
+            folded,
+            vec![
+                (Fr::from_u64(1) - r) * fr(1) + r * fr(3),
+                (Fr::from_u64(1) - r) * fr(2) + r * fr(4),
+            ]
+        );
+
+        let folded_cycles = cycle_fold::<Fr>(&backend, opening, 1, &[r]).unwrap();
+        // out[k] = (1 - r) * grid[k << 1] + r * grid[(k << 1) | 1]
+        assert_eq!(
+            folded_cycles,
+            vec![
+                (Fr::from_u64(1) - r) * fr(1) + r * fr(2),
+                (Fr::from_u64(1) - r) * fr(3) + r * fr(4),
+            ]
+        );
+    }
 }

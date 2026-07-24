@@ -3821,11 +3821,20 @@ dependencies = [
  "jolt-claims",
  "jolt-field",
  "jolt-lookup-tables",
- "jolt-poly",
  "jolt-program",
  "jolt-riscv",
+ "jolt-witness-derive",
  "rayon",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-witness-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
