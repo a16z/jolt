@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+pub use num_bigint::BigInt as NBigInt;
 pub use num_bigint::BigUint as NBigUint;
 use tracer::{
     instruction::inline::INLINE,
@@ -71,6 +72,11 @@ pub mod instruction {
 }
 
 /// Convert a slice of `u64` limbs (little-endian) to `NBigUint`.
+///
+/// WARNING: arkworks pins num-bigint 0.4, so `ark_ff::BigInt<N>`'s `Into`
+/// impls target *that* crate's `BigUint`/`BigInt`, not this workspace's 0.5.
+/// Limbs are the only portable bridge — route ark conversions through here
+/// and [`limbs_to_nbigint`] rather than `.into()`.
 pub fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
     let mut bytes = Vec::with_capacity(limbs.len() * 8);
     for &limb in limbs {
@@ -79,6 +85,11 @@ pub fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
         }
     }
     NBigUint::from_bytes_le(&bytes)
+}
+
+/// Convert a slice of `u64` limbs (little-endian) to a non-negative `NBigInt`.
+pub fn limbs_to_nbigint(limbs: &[u64]) -> NBigInt {
+    NBigInt::from(limbs_to_nbiguint(limbs))
 }
 
 /// Convert an `NBigUint` to a `Vec<u64>` of little-endian limbs.

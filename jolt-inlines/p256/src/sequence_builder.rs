@@ -5,7 +5,7 @@ use jolt_inlines_sdk::host::{
         add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, virtual_advice::VirtualAdvice,
         virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, Cpu,
+    limbs_to_nbigint, limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, Cpu,
     ExpandedInstructionSequence, ExpansionError, FieldElementLimbs, FormatInline, InlineAdvice,
     InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
     ModularDivisionAdvice, MulAccExt, MulqType, QuotientAdvice, SignedU128Advice,
@@ -79,9 +79,9 @@ struct P256Mulq {
 
 fn p256_modulus(is_scalar_field: bool) -> jolt_inlines_sdk::host::NBigUint {
     if is_scalar_field {
-        Fr::MODULUS.into()
+        limbs_to_nbiguint(&Fr::MODULUS.0)
     } else {
-        Fq::MODULUS.into()
+        limbs_to_nbiguint(&Fq::MODULUS.0)
     }
 }
 
@@ -726,7 +726,7 @@ impl FakeGlvAdvBuilder {
         let ry: [u64; 4] = r_result.y.into_bigint().0;
 
         // Half-GCD decomposition via shared module
-        let s_big: NBigInt = Fr::new(BigInt(s_limbs)).into_bigint().into();
+        let s_big: NBigInt = limbs_to_nbigint(&Fr::new(BigInt(s_limbs)).into_bigint().0);
         let (a, a_negative, b, b_negative) = crate::fake_glv::decompose_to_u128s(&s_big);
 
         P256FakeGlvAdvice {

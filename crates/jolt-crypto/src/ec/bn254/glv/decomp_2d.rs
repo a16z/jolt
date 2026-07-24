@@ -72,8 +72,11 @@ pub fn decompose_scalar_2d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 2], [boo
     let k2 = -b2;
     let k2_abs = BigUint::try_from(k2.abs()).unwrap();
 
-    let k1_fr = Fr::from(k1_abs);
-    let k2_fr = Fr::from(k2_abs);
+    // WARNING: arkworks pins num-bigint 0.4, so `Fr: From<BigUint>` targets
+    // that crate's `BigUint`, not this workspace's 0.5. Bytes are the bridge;
+    // both halves are already reduced, so the mod-order reduction is a no-op.
+    let k1_fr = Fr::from_le_bytes_mod_order(&k1_abs.to_bytes_le());
+    let k2_fr = Fr::from_le_bytes_mod_order(&k2_abs.to_bytes_le());
 
     let k_bigint = [k1_fr.into_bigint(), k2_fr.into_bigint()];
     let signs = [k1.sign() == Sign::Plus, k2.sign() == Sign::Plus];

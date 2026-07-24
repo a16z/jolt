@@ -720,6 +720,7 @@ fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u12
 #[cfg(feature = "host")]
 fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u128, bool) {
     use ark_ff::{BigInt, PrimeField};
+    use jolt_inlines_sdk::host::limbs_to_nbigint;
     use num_bigint::BigInt as NBigInt;
 
     // Compute R = s * P using arkworks
@@ -735,7 +736,7 @@ fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u12
     ]);
 
     // Half-GCD decomposition via shared module
-    let s_big: NBigInt = Fr::new(BigInt(s.e())).into_bigint().into();
+    let s_big: NBigInt = limbs_to_nbigint(&Fr::new(BigInt(s.e())).into_bigint().0);
     let (a_val, a_sign, b_val, b_sign) = crate::fake_glv::decompose_to_u128s(&s_big);
     (r_point, a_val, a_sign, b_val, b_sign)
 }

@@ -1,9 +1,9 @@
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_grumpkin::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    Cpu, ExpandedInstructionSequence, ExpansionError, FieldElementAdvice, FormatInline,
-    GlvDecompositionAdvice, InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands,
-    InlineRegister,
+    limbs_to_nbigint, Cpu, ExpandedInstructionSequence, ExpansionError, FieldElementAdvice,
+    FormatInline, GlvDecompositionAdvice, InlineBuilderExt, InlineExpansionBuilder, InlineOp,
+    InlineOperands, InlineRegister,
 };
 struct GrumpkinDivAdv {
     asm: InlineExpansionBuilder,
@@ -85,7 +85,7 @@ impl GlvrAdvBuilder {
             cpu.mmu.load_doubleword(k_addr + 16).unwrap().0,
             cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
         ];
-        let k = Fr::new_unchecked(BigInt(k_limbs)).into_bigint().into();
+        let k = limbs_to_nbigint(&Fr::new_unchecked(BigInt(k_limbs)).into_bigint().0);
         GlvDecompositionAdvice::from_sign_abs(crate::glv::decompose_scalar(k))
     }
 

@@ -531,6 +531,8 @@ impl GrumpkinPointExt for GrumpkinPoint {
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 fn decompose_scalar_impl(k: &GrumpkinFr) -> [(bool, u128); 2] {
+    use jolt_inlines_sdk::host::limbs_to_nbigint;
+
     let mut out = [0u64; 6];
     unsafe {
         use crate::{GRUMPKIN_FUNCT7, GRUMPKIN_GLVR_ADV_FUNCT3, INLINE_OPCODE};
@@ -576,5 +578,7 @@ fn decompose_scalar_impl(_k: &GrumpkinFr) -> [(bool, u128); 2] {
 
 #[cfg(feature = "host")]
 fn decompose_scalar_impl(k: &GrumpkinFr) -> [(bool, u128); 2] {
-    crate::glv::decompose_scalar(k.e.into_bigint().into())
+    use jolt_inlines_sdk::host::limbs_to_nbigint;
+
+    crate::glv::decompose_scalar(limbs_to_nbigint(&k.e.into_bigint().0))
 }

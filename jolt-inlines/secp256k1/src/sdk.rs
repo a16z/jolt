@@ -745,6 +745,8 @@ impl Secp256k1PointExt for Secp256k1Point {
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 fn decompose_scalar_impl(k: &Secp256k1Fr) -> [(bool, u128); 2] {
+    use jolt_inlines_sdk::host::limbs_to_nbigint;
+
     let mut out = [0u64; 6];
     unsafe {
         use crate::{INLINE_OPCODE, SECP256K1_FUNCT7, SECP256K1_GLVR_ADV_FUNCT3};
@@ -794,7 +796,9 @@ fn decompose_scalar_impl(_k: &Secp256k1Fr) -> [(bool, u128); 2] {
 
 #[cfg(feature = "host")]
 fn decompose_scalar_impl(k: &Secp256k1Fr) -> [(bool, u128); 2] {
-    let k = Fr::new(BigInt(k.e)).into_bigint().into();
+    use jolt_inlines_sdk::host::limbs_to_nbigint;
+
+    let k = limbs_to_nbigint(&Fr::new(BigInt(k.e)).into_bigint().0);
     crate::glv::decompose_scalar(k)
 }
 

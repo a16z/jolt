@@ -6,7 +6,7 @@ use jolt_inlines_sdk::host::{
         virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, Cpu,
+    limbs_to_nbigint, limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, Cpu,
     ExpandedInstructionSequence, ExpansionError, FormatInline, GlvDecompositionAdvice,
     InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
     ModularDivisionAdvice, MulqType, QuotientAdvice,
@@ -35,7 +35,7 @@ impl GlvrAdvBuilder {
             cpu.mmu.load_doubleword(k_addr + 16).unwrap().0,
             cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
         ];
-        let k = Fr::new(BigInt(kr)).into_bigint().into();
+        let k = limbs_to_nbigint(&Fr::new(BigInt(kr)).into_bigint().0);
         GlvDecompositionAdvice::from_sign_abs(crate::glv::decompose_scalar(k))
     }
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -78,9 +78,9 @@ struct MulqBuilder {
 
 fn secp256k1_modulus(is_scalar_field: bool) -> jolt_inlines_sdk::host::NBigUint {
     if is_scalar_field {
-        Fr::MODULUS.into()
+        limbs_to_nbiguint(&Fr::MODULUS.0)
     } else {
-        Fq::MODULUS.into()
+        limbs_to_nbiguint(&Fq::MODULUS.0)
     }
 }
 
