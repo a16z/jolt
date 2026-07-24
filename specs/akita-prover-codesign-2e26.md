@@ -43,7 +43,8 @@ merge-tile L1 tuning (commit target ~38-40 s).
 | +P1 (n_a=6) | 155.4 s | 82.4 s | 136.7 s untraced; RSS 80.1 GB |
 | +A5 fused sweep | 124.7 s | 51.4 s | merge span 797 thread-s = 68 ns/accum (L2-resident tile) |
 | dory, same branch (J2+J3 shared) | 122.4 s | 38.0+26.7 (w+c / open) | untraced est ~114 s; RSS 36.6 GB |
-| +J3 +self-reducing merge kernel, L1 tiles | **100.34 s untraced** | — | **primary bar (≤119 s) cleared**; RSS 94.9 GB (M2 now top item) |
+| +J3 +self-reducing merge kernel, L1 tiles | 100.34 s untraced | ~48.7 s | primary bar (≤119 s) cleared; RSS 94.9 GB (M2 now top item) |
+| +bench-tuned tiles (64 blocks, 32 cols) | **91.93 s untraced** | ~45 s est | **at the stretch bar (≤90 s) within noise**; 3.62× from session start, ~1.24× vs dory |
 
 Detour recorded: naive L1 tiles regressed to 252 s — the 2^15 accumulator cap
 was silently splitting every trace-scale block 16×, so small tiles re-streamed
