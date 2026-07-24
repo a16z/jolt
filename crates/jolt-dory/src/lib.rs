@@ -29,6 +29,8 @@ mod scheme;
 mod streaming;
 mod transcript;
 mod types;
+#[cfg(not(target_arch = "wasm32"))]
+mod urs_lock;
 
 pub use scheme::DoryScheme;
 pub use types::{
