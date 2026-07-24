@@ -100,7 +100,8 @@ impl<F: Field> Stage1ClearOutput<F> {
     /// [`cycle_binding`](Self::cycle_binding), attributing an empty remainder
     /// point to the consuming `stage`.
     pub fn cycle_binding_checked(&self, stage: JoltRelationId) -> Result<Vec<F>, VerifierError> {
-        self.cycle_binding().ok_or(empty_remainder_point(stage))
+        self.cycle_binding()
+            .ok_or_else(|| empty_remainder_point(stage))
     }
 }
 
@@ -161,7 +162,8 @@ impl<F: Field, C> Stage1Output<F, C> {
     /// [`cycle_binding`](Self::cycle_binding), attributing an empty remainder
     /// point to the consuming `stage`.
     pub fn cycle_binding_checked(&self, stage: JoltRelationId) -> Result<Vec<F>, VerifierError> {
-        self.cycle_binding().ok_or(empty_remainder_point(stage))
+        self.cycle_binding()
+            .ok_or_else(|| empty_remainder_point(stage))
     }
 
     pub fn clear(&self) -> Result<&Stage1ClearOutput<F>, VerifierError> {

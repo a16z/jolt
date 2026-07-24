@@ -333,9 +333,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     );
     let stage_relation_id_method = quote! {
         /// The batch's representative relation id for batch-level error
-        /// attribution: the first non-`Option` member's relation id. The single
-        /// source read by the generated verify drivers and by `jolt-prover`'s
-        /// `impl_stage_prover!` expansion.
+        /// attribution: the first non-`Option` member's relation id. Consumed
+        /// only by `jolt-prover`'s `impl_stage_prover!` expansion; the
+        /// generated verify drivers do not read it.
         pub fn stage_relation_id(&self) -> ::jolt_claims::protocols::jolt::JoltRelationId {
             #stage_id_body
         }

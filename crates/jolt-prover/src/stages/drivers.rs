@@ -154,7 +154,10 @@ mod stage7 {
 /// / precommitted-span pattern) — driven end to end (head → prepare → round
 /// loop → typed extraction → per-member `park_residue` → shape validation →
 /// final-claim self-check → finish) and byte-compared against the generated
-/// `verify_clear` on a twin transcript.
+/// `verify_clear` on a twin transcript. A second toy batch pairs a
+/// full-window member with a head-aligned shorter member (`offset = 0`,
+/// trailing dummy rounds), locking the engine's delayed `finish_rounds`
+/// bookkeeping through the generated driver.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::panic)]
 mod twin_tests {
@@ -164,7 +167,7 @@ mod twin_tests {
         JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
-    use jolt_field::{Field, Fr, FromPrimitiveInt, RingCore};
+    use jolt_field::{Field, Fr, FromPrimitiveInt, MulPow2, RingCore};
     use jolt_kernels::{
         KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
         SumcheckKernelError,
@@ -189,10 +192,13 @@ mod twin_tests {
 
     /// Declare one toy dense relation: a single produced opening, a single
     /// consumed claim carrying the true table sum, no challenges, degree 1.
+    /// The optional `head_pad` marks the relation head-aligned (`offset = 0`)
+    /// with that many trailing dummy rounds in its batch.
     macro_rules! toy_relation {
         (
             $symbolic:ident, $relation:ident, $inputs:ident, $outputs:ident,
             rel = $rel:ident, output = $output:ident, input = $input:ident
+            $(, head_pad = $head_pad:expr)?
         ) => {
             #[derive(Clone, Debug, Default, PartialEq, Eq, jolt_claims::InputClaims)]
             struct $inputs<C> {
@@ -292,6 +298,30 @@ mod twin_tests {
                         value: sumcheck_point.to_vec(),
                     })
                 }
+
+                $(
+                    fn instance_point_offset(
+                        &self,
+                        _batch_num_vars: usize,
+                    ) -> Result<usize, VerifierError> {
+                        Ok(0)
+                    }
+
+                    /// The engine halves an inactive member's claim once per
+                    /// round, so the head-aligned member's final batch claim
+                    /// is the fully bound (padded-scale) table value with the
+                    /// trailing dummy rounds halved back out.
+                    fn expected_output(
+                        &self,
+                        _input_points: &$inputs<Vec<F>>,
+                        output_values: &$outputs<F>,
+                        _output_points: &$outputs<Vec<F>>,
+                        _challenges: &NoChallenges<F>,
+                    ) -> Result<F, VerifierError> {
+                        let scale = F::from_u64(1u64 << $head_pad).inverse().unwrap();
+                        Ok(output_values.value * scale)
+                    }
+                )?
             }
         };
     }
@@ -323,6 +353,16 @@ mod twin_tests {
         output = RightLookupOperand,
         input = UnexpandedPC
     );
+    toy_relation!(
+        DeltaSymbolic,
+        ToyDelta,
+        ToyDeltaInputs,
+        ToyDeltaOutputs,
+        rel = RegistersReadWriteChecking,
+        output = RegistersVal,
+        input = UnexpandedPC,
+        head_pad = HEAD_PAD
+    );
 
     #[derive(SumcheckBatch)]
     struct ToyDriverSumchecks<F: Field> {
@@ -331,9 +371,19 @@ mod twin_tests {
         gamma: ToyGamma<F>,
     }
 
+    /// The head-aligned twin batch: a full-window member plus a shorter
+    /// member active from round 0, whose final bind the engine delivers only
+    /// after the trailing dummy rounds (the delayed `finish_rounds` path).
+    #[derive(SumcheckBatch)]
+    struct ToyHeadSumchecks<F: Field> {
+        alpha: ToyAlpha<F>,
+        delta: ToyDelta<F>,
+    }
+
     // Unqualified: a macro-expanded `#[macro_export]` macro from the SAME
     // crate is reachable only textually, not by absolute path (#52234).
     toy_driver_sumchecks_members!(impl_stage_prover);
+    toy_head_sumchecks_members!(impl_stage_prover);
 
     /// A dense multilinear kernel with a prescribed total sum (HighToLow
     /// binding, degree 1): the single produced opening is the fully bound
@@ -478,6 +528,30 @@ mod twin_tests {
 
     impl_dense_prepare!(ToyAlpha, ToyBeta);
 
+    /// Mints the head-aligned member's kernel at the dummy-round padding
+    /// scale: a head-aligned member is active from round 0 at
+    /// `input_claim · 2^(max − rounds)`, so its table must sum to the padded
+    /// claim (see `BatchPrelude::new`).
+    struct HeadDensePrepare {
+        seed: u64,
+    }
+
+    impl PrepareKernel<Fr, ToyDelta<Fr>> for HeadDensePrepare {
+        fn prepare(
+            &self,
+            session: &mut ProofSession,
+            _witness: &dyn JoltVmWitnessPlane<Fr>,
+            inputs: ProverInputs<'_, Fr, ToyDelta<Fr>>,
+        ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = ToyDelta<Fr>>>, KernelError<Fr>> {
+            log_prepare(session, "delta");
+            Ok(Box::new(DenseKernel::<ToyDelta<Fr>>::with_sum(
+                inputs.relation.rounds(),
+                inputs.claims.claimed_sum.mul_pow_2(HEAD_PAD),
+                self.seed,
+            )))
+        }
+    }
+
     /// The gamma kernel is a `ProofSession` carry, parked by the toy front
     /// before `prove` — the uni-skip-remainder / precommitted-span pattern. A
     /// missing carry is a proof-time `KernelError`.
@@ -524,6 +598,12 @@ mod twin_tests {
             }),
             gamma: Box::new(SessionCarriedToyGamma),
         }
+    }
+
+    #[derive(KernelSlots)]
+    struct ToyHeadKernels {
+        alpha: Box<dyn PrepareKernel<Fr, ToyAlpha<Fr>>>,
+        delta: Box<dyn PrepareKernel<Fr, ToyDelta<Fr>>>,
     }
 
     /// A witness plane the toy kernels never read: every access errors.
@@ -583,6 +663,10 @@ mod twin_tests {
     const BETA_ROUNDS: usize = 2;
     const GAMMA_ROUNDS: usize = 3;
     const GAMMA_SUM: u64 = 4242;
+    const HEAD_ROUNDS: usize = 2;
+    /// The head-aligned member's trailing dummy rounds in the head twin batch
+    /// (alpha is its full-window member).
+    const HEAD_PAD: usize = ALPHA_ROUNDS - HEAD_ROUNDS;
 
     fn fixture(beta: bool) -> ToyDriverSumchecks<Fr> {
         ToyDriverSumchecks {
@@ -702,6 +786,88 @@ mod twin_tests {
             vec![
                 JoltRelationId::RegistersValEvaluation,
                 JoltRelationId::SpartanShift,
+            ]
+        );
+    }
+
+    /// The head-aligned driver path: a shorter member active from the batch's
+    /// FIRST round alongside a full-window member. Its final bind arrives only
+    /// through the engine's delayed `finish_rounds` delivery — after the
+    /// trailing dummy rounds — yet typed extraction and `park_residue` see the
+    /// kernel fully bound, and the twin `verify_clear` reproduces the
+    /// transcript byte for byte.
+    #[test]
+    fn driver_twin_with_head_aligned_member() {
+        let sumchecks = ToyHeadSumchecks {
+            alpha: ToyAlpha::new(ALPHA_ROUNDS),
+            delta: ToyDelta::new(HEAD_ROUNDS),
+        };
+        let inputs = ToyHeadInputClaims {
+            alpha: ToyAlphaInputs {
+                claimed_sum: Fr::from_u64(1234),
+            },
+            delta: ToyDeltaInputs {
+                claimed_sum: Fr::from_u64(4321),
+            },
+        };
+        let kernels = ToyHeadKernels {
+            alpha: Box::new(DensePrepare {
+                member: "alpha",
+                seed: 5,
+            }),
+            delta: Box::new(HeadDensePrepare { seed: 37 }),
+        };
+        let mut session = ProofSession::default();
+
+        let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
+        let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
+        let input_points = sumchecks.empty_input_points();
+        let proved = sumchecks
+            .prove(
+                &kernels,
+                &mut session,
+                &NoWitness,
+                &inputs,
+                &input_points,
+                &challenges,
+                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                &mut prover_transcript,
+            )
+            .unwrap();
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
+        let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
+        let verified_points = sumchecks
+            .verify_clear(
+                &inputs,
+                &input_points,
+                &verifier_challenges,
+                &proved.output_claims,
+                &proved.recorded.proof,
+                &mut verifier_transcript,
+                0,
+            )
+            .unwrap();
+        sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
+
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(verified_points, proved.output_points);
+        // The head member is bound on the batch point's PREFIX: its opening
+        // point is the leading entries of the full-window member's point.
+        assert_eq!(
+            proved.output_points.delta.value.as_slice(),
+            &proved.output_points.alpha.value[..HEAD_ROUNDS]
+        );
+        assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
+        assert_eq!(proved.output_claims.delta.opening_values().len(), 1);
+        let calls = session.take::<PrepareCallLog>().unwrap().0;
+        let residues = session.take::<ResidueCallLog>().unwrap().0;
+        assert_eq!(calls, vec!["alpha", "delta"]);
+        assert_eq!(
+            residues,
+            vec![
+                JoltRelationId::RegistersValEvaluation,
+                JoltRelationId::RegistersReadWriteChecking,
             ]
         );
     }
