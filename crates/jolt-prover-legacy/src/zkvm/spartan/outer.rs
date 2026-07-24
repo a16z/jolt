@@ -51,7 +51,7 @@ use crate::zkvm::r1cs::{
         OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
     evaluation::R1CSEval,
-    inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
+    inputs::{DecodedCycle, R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
 
@@ -222,15 +222,21 @@ impl<F: JoltField> OuterUniSkipProver<F> {
             .into_par_iter()
             .map(|x_out| {
                 let mut inner = [FullAccumS::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                // Consecutive steps share a decode: this iteration's "next"
+                // is the following iteration's "current".
+                let mut carried: Option<DecodedCycle<'_>> = None;
                 for x_in_prime in 0..(in_len / 2).max(1) {
                     let base_step_idx = (x_out << num_x_in_prime_bits) | x_in_prime;
 
-                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                        bytecode_preprocessing,
-                        trace,
-                        base_step_idx,
-                    );
+                    let cur = carried.take().unwrap_or_else(|| {
+                        DecodedCycle::new(bytecode_preprocessing, trace, base_step_idx)
+                    });
+                    let next = (base_step_idx + 1 < trace.len()).then(|| {
+                        DecodedCycle::new(bytecode_preprocessing, trace, base_step_idx + 1)
+                    });
+                    let row_inputs = R1CSCycleInputs::from_decoded::<F>(&cur, next.as_ref());
                     let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    carried = next;
 
                     let e_in_group0 = e_in[2 * x_in_prime];
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
@@ -852,14 +858,36 @@ impl<F: JoltField> OuterSharedState<F> {
             .zip(acc_bz_second.par_iter_mut())
             .enumerate()
             .for_each(|(j, ((acc_az_j, acc_bz_first_j), acc_bz_second_j))| {
+                // Consecutive `full_idx` values visit each step twice (the low
+                // bit is the constraint-group selector) and steps advance by
+                // one, so cache the built row across the selector pair and
+                // carry the next-step decode into the following step.
+                let mut carried: Option<DecodedCycle<'_>> = None;
+                let mut cached: Option<(usize, R1CSCycleInputs)> = None;
                 for k in 0..klen {
                     let full_idx = offset + j * klen + k;
                     let current_step_idx = full_idx >> 1;
                     let selector = (full_idx & 1) == 1;
 
-                    let row_inputs =
-                        R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    if cached
+                        .as_ref()
+                        .is_none_or(|(step, _)| *step != current_step_idx)
+                    {
+                        let cur = carried.take().unwrap_or_else(|| {
+                            DecodedCycle::new(preprocess, trace, current_step_idx)
+                        });
+                        let next = (current_step_idx + 1 < trace.len()).then(|| {
+                            DecodedCycle::new(preprocess, trace, current_step_idx + 1)
+                        });
+                        cached = Some((
+                            current_step_idx,
+                            R1CSCycleInputs::from_decoded::<F>(&cur, next.as_ref()),
+                        ));
+                        carried = next;
+                    }
+                    #[expect(clippy::unwrap_used, reason = "filled by the branch above")]
+                    let row_inputs = &cached.as_ref().unwrap().1;
+                    let eval = R1CSEval::<F>::from_cycle_inputs(row_inputs);
                     let w_k = &scaled_w[k];
 
                     if !selector {

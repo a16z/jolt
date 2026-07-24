@@ -62,7 +62,7 @@ use super::constraints::{
 };
 #[cfg(test)]
 use super::constraints::{R1CS_CONSTRAINTS_FIRST_GROUP, R1CS_CONSTRAINTS_SECOND_GROUP};
-use super::inputs::{JoltR1CSInputs, R1CSCycleInputs, NUM_R1CS_INPUTS};
+use super::inputs::{DecodedCycle, JoltR1CSInputs, R1CSCycleInputs, NUM_R1CS_INPUTS};
 
 pub(crate) const UNISKIP_TARGETS: [i64; OUTER_UNIVARIATE_SKIP_DEGREE] =
     uniskip_targets::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_DEGREE>();
@@ -861,10 +861,19 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     .collect();
 
                 let eq_two_len = eq_two.len();
+                // Consecutive steps share a decode: this iteration's "next"
+                // is the following iteration's "current".
+                let mut carried: Option<DecodedCycle<'_>> = None;
                 for x2 in 0..eq_two_len {
                     let e_in = eq_two[x2];
                     let idx = x1 * eq_two_len + x2;
-                    let row = R1CSCycleInputs::from_trace::<F>(bytecode_preprocessing, trace, idx);
+                    let cur = carried
+                        .take()
+                        .unwrap_or_else(|| DecodedCycle::new(bytecode_preprocessing, trace, idx));
+                    let next = (idx + 1 < trace.len())
+                        .then(|| DecodedCycle::new(bytecode_preprocessing, trace, idx + 1));
+                    let row = R1CSCycleInputs::from_decoded::<F>(&cur, next.as_ref());
+                    carried = next;
 
                     acc_left_input.fmadd(&e_in, &row.left_input);
                     acc_right_input.fmadd(&e_in, &row.right_input.to_i128());
