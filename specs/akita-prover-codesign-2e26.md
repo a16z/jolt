@@ -102,10 +102,13 @@ the static partition; finer chunking buys nothing). (b) confirmed as the
 in-situ residual: e2e kernel spans total 717 CPU-s / 11.7 G accums =
 61.3 ns vs 50.4 fresh-bench — sustained-clock/thermal, not software.
 (c) moot — 1-coeff-entry bench already shows 50.4. The 26-28 ns model was
-optimistic: true P-core burst rate ≈40 ns/accum (8t). Commit-window
-occupancy is 16-17 busy threads end-to-end (no serial gaps; build_blocks
-overlapped). Commit time is P·T·n_a·D-bound at machine rate → only fewer
-committed columns (Q3) can shrink it.
+optimistic: true P-core burst rate ≈40 ns/accum (8t).
+AMENDED by the Q3 audit (2026-07-24): the "no serial gaps" occupancy read
+was too coarse. Fine-grained per-thread analysis of the merge window shows
+the static block partition (column_sweep.rs:404) hands one thread the
+nearly-empty RamRa range (RamRa ≈7-8% dense) — 15 busy threads for 74.7%
+of the window, 3.26 s of wall lost. That imbalance IS most of the
+61-vs-50 ns e2e-vs-bench gap. Recoverable with no protocol change → Q1b.
 
 ### Q2 [DONE 2026-07-24 — −2.3 s span-attributed; A/B 96.31→90.27 s] (jolt 9e957dbfc)
 
@@ -128,19 +131,29 @@ attribution, or via a flat PC array (u32×T = 256 MB) at witness time that
 would also cheapen witness/stage-1/6a decode sites. Also 6b bytecode-init
 now exposes ~0.04 s floor; nothing further here.
 
-### Q3 [PROTOCOL] Committed-column virtualization — expect −3 to −9 s commit + PIOP share
+### Q3 [PROTOCOL] [NOTE WRITTEN 2026-07-24 — awaiting approval; recommendation: CLOSE]
 
-Commit costs 1.55 s per committed column (45 s / 29). Inventory at K256:
-16 instruction chunks + 8 increment chunks + 1 increment MSB + ~4
-bytecode/RAM chunks. One-hot is already the cheapest encoding, so the win is
-NOT re-encoding — it is not committing columns the PIOP can derive from
-other commitments via existing claims (candidates: bytecode/RAM address
-chunks, increment MSB).
-Protocol gate: produce a design note (new file in specs/) enumerating, per
-candidate column, the replacement derivation sumcheck and its cost bound,
-soundness argument sketch, and the affected `input_claim_constraint` /
-BlindFold surfaces (CLAUDE.md invariant). STOP after the note — user
-approval required before implementation.
+Design note: `specs/committed-column-virtualization.md`. Measured verdicts
+(three claim-graph audits + commit-cost audit): the premise's 1.55 s/column
+uniformity is wrong — RamRa is ~7-8% dense (worth 0.24 s, not 3 s);
+BytecodeRa virtualization is soundness-circular (the committed one-hot form
+IS the PC range-binding via the RAF/Int identity); the msb elimination nets
+only ~−1 s after its replacement sumcheck; per-family K reshapes hit the Q7
+geometry wall (ring footprint ∝ K). Real finding: a 3.26 s kernel
+load-imbalance artifact → Q1b [ENG], no approval needed. Do not implement
+Q3 unless the goal is unmet after Q1b/Q4/Q5/Q6 (then msb, net ~−1 s).
+
+### Q1b [ENG] Entry-weighted merge-sweep partition — measured −3.3 s available
+
+From the Q3 audit: `column_sweep_core_merge` partitions 3712 flat block-rows
+into 16 contiguous equal-count ranges (column_sweep.rs:404); the range
+covering the two ~7-8%-dense RamRa columns finishes at 25.6 s while dense
+threads run to 62.3 s (52.2 idle core-s = 3.26 s wall at 2^26). Fix:
+partition by cumulative ENTRY count (or steal at tile granularity) so
+per-thread work is balanced; output must stay byte-identical (per-block
+results are independent — only the partition boundaries move). Equality
+test vs the current partition; kernel bench with a skewed-density shape;
+accept per discipline (same-night A/B at 2^26).
 
 ### Q4 [ENG] Fold-pass fusion — expect −4 to −6 s
 
