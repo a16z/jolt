@@ -79,6 +79,15 @@ where
     D: Digest<OutputSize = U32>,
     F: jolt_field::TranscriptChallenge,
 {
+    /// Raw multi-byte squeeze backing jolt-prover-legacy's challenge
+    /// decoding, so its legacy `Transcript` vocabulary can drive this engine
+    /// directly (no state handoffs). Hidden: protocol code squeezes through
+    /// the [`Transcript`] challenge methods.
+    #[doc(hidden)]
+    pub fn raw_challenge_bytes(&mut self, out: &mut [u8]) {
+        self.challenge_bytes(out);
+    }
+
     #[inline]
     fn hasher(&self) -> D {
         let mut round_bytes = [0u8; 32];

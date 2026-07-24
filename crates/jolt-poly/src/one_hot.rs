@@ -87,6 +87,12 @@ impl OneHotPolynomial {
         &self.indices
     }
 
+    /// Consumes the polynomial and returns its row-wise hot indices.
+    #[inline]
+    pub fn into_indices(self) -> Vec<Option<u8>> {
+        self.indices
+    }
+
     #[inline]
     pub fn num_rows(&self) -> usize {
         self.indices.len()

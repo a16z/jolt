@@ -35,6 +35,11 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         + CanonicalSerialize
         + CanonicalDeserialize;
 
+    /// Minimum padded trace length the proof pipeline uses with this scheme.
+    /// The default ensures that `T >= k^{1/D}`; schemes whose commitment
+    /// shapes have a larger floor (e.g. the packed Akita pipeline) override it.
+    const MIN_PADDED_TRACE_LENGTH: usize = 256;
+
     /// Generates the prover setup for this PCS. `max_num_vars` is the maximum number of
     /// variables of any polynomial that will be committed using this setup.
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup;

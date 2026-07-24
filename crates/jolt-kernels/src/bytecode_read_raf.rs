@@ -45,7 +45,7 @@ pub trait BytecodeReadRafAddressProver<F: Field> {
 
 /// The stage-6b bytecode read+RAF cycle-phase slot: a naive member driven
 /// through the dispatch enum's *committed* anchor `Expr` — sound in full mode
-/// because the committed `Expr` with constant `BytecodeValStage` tables (the
+/// because the committed `Expr` with constant `BytecodeValClaim` tables (the
 /// address fold values) and cycle-eq `StageCycleEq` publics computes the same
 /// summand the full-mode `Expr` describes. The `BytecodeRa` opening tables are
 /// address folds of the committed one-hot grids at the 6a address point's

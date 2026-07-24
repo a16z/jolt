@@ -30,7 +30,7 @@ fn phase1_instance_point_offset(
     let window_offset = batch_num_vars
         .checked_sub(dimensions.read_write_rounds())
         .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-            stage,
+            stage: format!("{stage:?}"),
             reason: format!(
                 "batch challenge vector has {batch_num_vars} entries, fewer than the \
                      active stage-2 window's {} rounds",

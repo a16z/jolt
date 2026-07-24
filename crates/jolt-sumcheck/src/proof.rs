@@ -94,7 +94,6 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
     where
         T: Transcript<Challenge = F>,
         D: SumcheckDomain<F>,
-        C: Clone + AppendToTranscript,
     {
         match self {
             Self::Clear(ClearProof::Full(proof)) => {
@@ -131,7 +130,6 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
     {
         match self {
             Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(

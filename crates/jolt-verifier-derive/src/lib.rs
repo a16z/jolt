@@ -51,11 +51,12 @@
 //!   (clear appends, committed no-ops), never by a runtime flag. Returns the
 //!   engine-form `jolt_sumcheck::BatchPrelude` paired with the stage's named
 //!   `BatchingCoefficients`.
-//! - `verify_clear` — the clear-path batched-verify driver: `begin_batch` with a
-//!   clear recorder, then reduce the combined claim through the single-instance
-//!   `SumcheckProof::verify_compressed_boolean`. The batching lives in the
-//!   generated head; `jolt-sumcheck` provides only the single-instance verifier.
-//!   Returns `StageNClearBatch { reduction, coefficients }`.
+//! - `verify_clear` — the composed clear-path driver: `begin_batch` with a clear
+//!   recorder, reduce the combined claim through the single-instance
+//!   `SumcheckProof::verify_compressed_boolean`, `derive_opening_points` at the
+//!   reduced point, then the `expected_final_claim` equality check. The batching
+//!   lives in the generated head; `jolt-sumcheck` provides only the single-instance
+//!   verifier. Returns the stage's produced `OutputPoints`.
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
 //!   batching coefficients, and check committed consistency through
 //!   `SumcheckProof::verify_committed_consistency_dims`. Committed proofs reveal no
@@ -173,13 +174,14 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 "a #[derive(SumcheckBatch)] struct must be named `<Stage>Sumchecks`",
             )
         })?;
+    // The batch's string label for stage-level sumcheck errors.
+    let base_lit = syn::LitStr::new(&base, name.span());
     let input_claims_name = format_ident!("{base}InputClaims");
     let input_points_name = format_ident!("{base}InputPoints");
     let output_claims_name = format_ident!("{base}OutputClaims");
     let output_points_name = format_ident!("{base}OutputPoints");
     let challenges_name = format_ident!("{base}Challenges");
     let batching_coefficients_name = format_ident!("{base}BatchingCoefficients");
-    let clear_batch_name = format_ident!("{base}ClearBatch");
 
     let options = StageOptions::parse(&input.attrs)?;
 
@@ -285,14 +287,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: self.#id.draw_challenges(transcript)?)
         }
     });
-    // The representative relation id used in a batch-level sumcheck error: the first
-    // non-`Option` member (the batch's leading instance), matching the hand-written
-    // stages' choice. Falls back to the first member if every member is optional.
-    let stage_id_ident = plans
-        .iter()
-        .find(|plan| !plan.is_option)
-        .map_or(&plans[0].ident, |plan| &plan.ident);
-
     // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
     // max_degree)` — the front-loaded batching layout's combined dimensions. Reused
     // by both the clear and ZK drivers, so it is a closure re-invoked per block (a
@@ -349,7 +343,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (::core::option::Option::Some(__member), __inputs, _) => {
                             return ::core::result::Result::Err(
                                 crate::VerifierError::StageClaimSumcheckFailed {
-                                    stage: __member.id(),
+                                    stage: #base_lit.to_string(),
                                     reason: if __inputs.is_none() {
                                         "present instance is missing its input values"
                                     } else {
@@ -494,17 +488,34 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // The clear-path batched-verify driver: the generated `begin_batch` head
-    // (with a clear recorder, so the claim absorbs are appended) followed by the
-    // single-instance `SumcheckProof::verify_compressed_boolean` tail.
+    // The composed clear-path driver: begin the batch (clear recorder, so the
+    // claim absorbs are appended), verify the single-instance compressed-boolean
+    // sumcheck, derive the produced opening points at the reduced point, and check
+    // the reduced claim against the expected final-claim fold — the tail every
+    // stage repeats verbatim. Validation (`validate_output_claims`,
+    // member-presence guards) and the canonical opening absorb stay with the
+    // caller: their position and form are stage-specific.
     let verify_clear_method = quote! {
+        /// Run the clear-path batched verification in one call: `begin_batch`
+        /// (with a clear recorder, so the claim absorbs are appended), the
+        /// single-instance `SumcheckProof::verify_compressed_boolean`,
+        /// [`Self::derive_opening_points`] at the reduced point, then the
+        /// [`Self::expected_final_claim`] equality check (attributed to `stage`
+        /// on mismatch). Returns the produced opening points.
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "the composed tail threads every per-stage aggregate once"
+        )]
         pub fn verify_clear<__C, __T>(
             &self,
             inputs: &#input_claims_name<#f>,
+            input_points: &#input_points_name<#f>,
             challenges: &#challenges_name<#f>,
+            claims: &#output_claims_name<#f>,
             proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
             transcript: &mut __T,
-        ) -> ::core::result::Result<#clear_batch_name<#f>, crate::VerifierError>
+            stage: usize,
+        ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError>
         where
             __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
             __T: ::jolt_transcript::Transcript<Challenge = #f>,
@@ -523,14 +534,25 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     transcript,
                 )
                 .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
-                    stage: self.#stage_id_ident.id(),
+                    stage: #base_lit.to_string(),
                     reason: error.to_string(),
                 })?;
 
-            ::core::result::Result::Ok(#clear_batch_name {
-                reduction: __reduction,
-                coefficients: __coefficients,
-            })
+            let __output_points =
+                self.derive_opening_points(__reduction.point.as_slice(), input_points)?;
+            let __expected_final_claim = self.expected_final_claim(
+                &__coefficients,
+                input_points,
+                claims,
+                &__output_points,
+                challenges,
+            )?;
+            if __reduction.value != __expected_final_claim {
+                return ::core::result::Result::Err(
+                    crate::VerifierError::StageClaimOutputMismatch { stage },
+                );
+            }
+            ::core::result::Result::Ok(__output_points)
         }
     };
 
@@ -588,7 +610,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let __consistency = proof
                     .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
                     .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
-                        stage: self.#stage_id_ident.id(),
+                        stage: #base_lit.to_string(),
                         reason: error.to_string(),
                     })?;
 
@@ -627,7 +649,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (::core::option::Option::Some(__member), ::core::option::Option::None) => {
                             return ::core::result::Result::Err(
                                 crate::VerifierError::StageClaimSumcheckFailed {
-                                    stage: __member.id(),
+                                    stage: #base_lit.to_string(),
                                     reason: "present instance is missing its input opening points"
                                         .to_string(),
                                 },
@@ -755,7 +777,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         ) else {
                             return ::core::result::Result::Err(
                                 crate::VerifierError::StageClaimSumcheckFailed {
-                                    stage: __member.id(),
+                                    stage: #base_lit.to_string(),
                                     reason: "present instance is missing a coefficient, claim, \
                                              point, or challenge cell for the final-claim fold"
                                         .to_string(),
@@ -983,16 +1005,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // derives serde. `F: Field` does not imply the serde traits, so the bounds are
     // spelled explicitly (the workspace convention for claim structs), fully
     // qualified so call sites need no serde imports.
-    // `verify_clear`'s result: the single-instance reduction plus the named batching
-    // coefficients.
-    let clear_batch_struct = quote! {
-        #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #clear_batch_name<#f: ::jolt_field::Field> {
-            pub reduction: ::jolt_sumcheck::EvaluationClaim<#f>,
-            pub coefficients: #batching_coefficients_name<#f>,
-        }
-    };
-
     let serialize_bound = format!("{f}: ::serde::Serialize");
     let deserialize_bound = format!("{f}: for<'a> ::serde::Deserialize<'a>");
 
@@ -1027,8 +1039,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         #vis struct #batching_coefficients_name<#f: ::jolt_field::Field> {
             #(#batching_coefficient_fields,)*
         }
-
-        #clear_batch_struct
 
         #driver_impl
     })
@@ -1065,7 +1075,7 @@ impl StageOptions {
                 continue;
             }
             // `#[sumcheck_batch(flag, flag, ...)]` — a comma-separated list of
-            // bare-word flags (`Meta::Path`). Reject any non-flag form or unknown
+            // bare-word flags (`Meta::Path`). Reject any other form or unknown
             // flag with a span-pointed error.
             let flags = attr.parse_args_with(
                 syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated,

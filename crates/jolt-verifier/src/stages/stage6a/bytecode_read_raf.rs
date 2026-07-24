@@ -5,8 +5,12 @@
 //! the two PC claims), wired by
 //! [`bytecode_read_raf_address_phase_input_values_from_upstream`]. Its output is
 //! the staged `BytecodeReadRafAddrClaim` intermediate (consumed by the stage-6b
-//! cycle phase) followed, in committed mode, by the `BytecodeValStage` openings.
+//! cycle phase) followed, in committed mode, by the `BytecodeValClaim` openings.
+//!
+//! Under the `akita` feature the symbolic swaps to the lattice address phase,
+//! whose input fold additionally consumes the four reduced `Inc` claims
 
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
@@ -20,12 +24,18 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 
-use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints};
 use crate::stages::{
     stage1::Stage1BatchOutputClaims, stage2::Stage2BatchOutputClaims, stage3::Stage3OutputClaims,
     stage4::Stage4OutputClaims, stage5::Stage5OutputClaims,
 };
 use crate::VerifierError;
+
+#[cfg(not(feature = "akita"))]
+type AddressPhaseSymbolic = relations::bytecode::ReadRafAddressPhase;
+#[cfg(feature = "akita")]
+type AddressPhaseSymbolic =
+    jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhase;
 
 /// Wire the prior-proof opening *values* the address-phase input claim binds
 /// (every stage-1..5 opening folded by the `read_raf_address_phase` input `Expr`,
@@ -88,8 +98,8 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
 }
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
-    symbolic: relations::bytecode::ReadRafAddressPhase,
-    /// Committed-program mode stages the `BytecodeValStage` wire claims.
+    symbolic: AddressPhaseSymbolic,
+    /// Committed-program mode stages the `BytecodeValClaim` wire claims.
     committed_program: bool,
     _field: core::marker::PhantomData<F>,
 }
@@ -97,13 +107,13 @@ pub struct BytecodeReadRafAddressPhase<F: Field> {
 impl<F: Field> BytecodeReadRafAddressPhase<F> {
     pub fn new(dimensions: BytecodeReadRafDimensions, committed_program: bool) -> Self {
         Self {
-            symbolic: relations::bytecode::ReadRafAddressPhase::new(dimensions),
+            symbolic: AddressPhaseSymbolic::new(dimensions),
             committed_program,
             _field: core::marker::PhantomData,
         }
     }
 
-    /// The staged `BytecodeValStage` wire-claim count: all
+    /// The staged `BytecodeValClaim` wire-claim count: all
     /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, none in full mode.
     fn num_val_stages(&self) -> usize {
         if self.committed_program {
@@ -115,14 +125,14 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
-    type Symbolic = relations::bytecode::ReadRafAddressPhase;
+    type Symbolic = AddressPhaseSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
     }
 
     fn wire_output_openings(&self) -> std::collections::BTreeSet<JoltOpeningId> {
-        // Committed-program mode absorbs the staged `BytecodeValStage` columns
+        // Committed-program mode absorbs the staged `BytecodeValClaim` columns
         // beyond the output-`Expr` set (the address-phase intermediate); their
         // constraining fold happens in stage 6b's bytecode claim reduction.
         let mut openings = self.symbolic().expected_output_openings::<F>();
@@ -134,7 +144,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _input_points: &BytecodeReadRafAddressPhaseInputClaims<Vec<F>>,
+        _input_points: &SumcheckInputPoints<F, Self>,
     ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
         // `bytecode_r_address` is the reversed address sumcheck point; the
         // intermediate and every staged Val column open there.

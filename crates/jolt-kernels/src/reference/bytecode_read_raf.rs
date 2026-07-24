@@ -19,7 +19,7 @@
 //! The raw `Val_s` tables and the `Int` identity table bind SEPARATELY (the
 //! per-round extension is linear, so the split computes field-identical
 //! messages to a pre-folded table): committed-program mode stages the five
-//! raw bound `Val_s` values as `BytecodeValStage` wire claims, which the
+//! raw bound `Val_s` values as `BytecodeValClaim` wire claims, which the
 //! folded table cannot produce.
 
 use std::collections::BTreeMap;
