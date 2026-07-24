@@ -69,10 +69,7 @@ impl<F: Field> SumcheckChallenges<F> for RamOutputCheckChallenges<F> {
     fn from_transcript_values<I: Iterator<Item = F>>(
         _values: I,
     ) -> Result<Self, ChallengeDrawError> {
-        Err(ChallengeDrawError {
-            required: 1,
-            populated: 0,
-        })
+        Err(ChallengeDrawError::NotStreamConstructible)
     }
 
     fn resolve_challenge(&self, _id: &JoltChallengeId) -> Option<F> {

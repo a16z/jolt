@@ -102,6 +102,8 @@ where
 /// A relation with no slot is a missing-`HasKernel` bound error at the
 /// consuming stage impl, and so is a slot mis-declared past the derive's
 /// syntactic match (a non-`Box<dyn PrepareKernel<..>>` field yields no impl).
+/// That match is single-bound: a `Box<dyn PrepareKernel<F, R> + Send>` (any
+/// extra bound) is silently skipped and surfaces the same distant way.
 pub trait HasKernel<F, R>
 where
     F: Field,
@@ -229,11 +231,16 @@ impl ProofSession {
     }
 
     /// Reclaim (remove and return) a parked carry, if present.
+    #[expect(
+        clippy::expect_used,
+        reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
+    )]
     pub fn take<T: Any>(&mut self) -> Option<T> {
-        self.state
-            .remove(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.downcast::<T>().ok())
-            .map(|boxed| *boxed)
+        self.state.remove(&TypeId::of::<T>()).map(|boxed| {
+            *boxed
+                .downcast::<T>()
+                .expect("ProofSession state entry keyed by its own TypeId")
+        })
     }
 }
 

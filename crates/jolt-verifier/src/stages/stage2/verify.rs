@@ -263,7 +263,7 @@ where
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let tau_low = product_tau_low(&stage1.remainder_point(), log_t)?;
 
-    let tau_high = transcript.challenge();
+    let tau_high = uniskip::draw_spartan_product_tau_high(transcript);
     let uniskip_params = uniskip::UniskipParams::spartan_product();
     match stage1 {
         Stage1Output::Clear(stage1) => {

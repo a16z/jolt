@@ -22,6 +22,7 @@ use jolt_verifier::stages::stage1::outer_remainder::{
 use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
+use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
 use crate::{ProverError, StageProver as _};
@@ -49,7 +50,7 @@ where
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let tau = transcript.challenge_vector(log_t + 2);
+    let tau = draw_spartan_outer_tau(transcript, log_t);
     backend
         .spartan_outer_uniskip
         .prepare(session, log_t, &tau, witness)?;

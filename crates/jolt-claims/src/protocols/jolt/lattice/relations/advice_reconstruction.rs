@@ -34,17 +34,18 @@
 //! point is fixed by the incoming claim, mirroring how the inc chunk
 //! reconstruction fixes its cycle point).
 
-use jolt_field::RingCore;
+use jolt_field::{Field, RingCore};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::advice::final_advice_opening;
 use crate::protocols::jolt::{
-    JoltAdviceKind, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationId,
-    TrustedAdviceReconstructionPublic, UntrustedAdviceReconstructionChallenge,
+    JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId,
+    JoltRelationId, TrustedAdviceReconstructionPublic, UntrustedAdviceReconstructionChallenge,
     UntrustedAdviceReconstructionPublic,
 };
 use crate::{
-    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
+    challenge, derived, opening, ChallengeDrawError, InputClaims, OutputClaims, SumcheckChallenges,
+    SymbolicSumcheck,
 };
 
 use super::super::geometry::{byte_place_vars, word_byte_num_vars};
@@ -82,10 +83,31 @@ pub struct UntrustedAdviceReconstructionInputClaims<C> {
     pub word: C,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+/// The vector field rules out the `SumcheckChallenges` derive, so the impl is
+/// hand-written: the reference point is not challenge-id-resolvable (it never
+/// appears as an `Expr` leaf; the scalar gamma resolves as the derive would),
+/// and the struct cannot be built from a per-field scalar stream —
+/// `from_transcript_values` fails rather than fabricate a reference point.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UntrustedAdviceReconstructionChallenges<F> {
-    #[challenge(UntrustedAdviceReconstructionChallenge::Gamma)]
+    /// The fresh reference point the booleanity/hamming legs compare against,
+    /// drawn over the full `(byte ‖ place ‖ word)` cell domain before the
+    /// gamma.
+    pub r_reference: Vec<F>,
     pub gamma: F,
+}
+
+impl<F: Field> SumcheckChallenges<F> for UntrustedAdviceReconstructionChallenges<F> {
+    fn from_transcript_values<I: Iterator<Item = F>>(
+        _values: I,
+    ) -> Result<Self, ChallengeDrawError> {
+        Err(ChallengeDrawError::NotStreamConstructible)
+    }
+
+    fn resolve_challenge(&self, id: &JoltChallengeId) -> Option<F> {
+        (*id == JoltChallengeId::from(UntrustedAdviceReconstructionChallenge::Gamma))
+            .then_some(self.gamma)
+    }
 }
 
 #[derive(Clone)]

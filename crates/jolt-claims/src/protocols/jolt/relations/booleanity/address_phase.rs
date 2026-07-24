@@ -74,10 +74,7 @@ impl<F: Field> SumcheckChallenges<F> for BooleanityAddressPhaseChallenges<F> {
     fn from_transcript_values<I: Iterator<Item = F>>(
         _values: I,
     ) -> Result<Self, ChallengeDrawError> {
-        Err(ChallengeDrawError {
-            required: 3,
-            populated: 0,
-        })
+        Err(ChallengeDrawError::NotStreamConstructible)
     }
 
     fn resolve_challenge(&self, id: &JoltChallengeId) -> Option<F> {

@@ -156,7 +156,7 @@ mod stage7 {
 /// final-claim self-check → finish) and byte-compared against the generated
 /// `verify_clear` on a twin transcript.
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::panic)]
 mod twin_tests {
     use core::marker::PhantomData;
 
@@ -610,7 +610,10 @@ mod twin_tests {
     /// Drive the macro-expanded `prove` and its `verify_clear` twin, assert
     /// byte-identical transcript states, and return the driver's output plus
     /// the recorded prepare and residue call orders.
-    #[expect(clippy::type_complexity)]
+    #[expect(
+        clippy::type_complexity,
+        reason = "the twin driver's aggregate return: the proved carrier plus the two recorded call orders"
+    )]
     fn drive(
         beta: bool,
     ) -> (
@@ -730,6 +733,38 @@ mod twin_tests {
             result,
             Err(ProverError::Kernel(KernelError::InvariantViolation { .. }))
         ));
+    }
+
+    /// Cells populated for a member the batch did not instantiate fail at
+    /// prepare, attributed to the member's relation id — the mirror of the
+    /// present-instance-with-missing-cell check.
+    #[test]
+    fn populated_cells_for_absent_member_fail_at_prepare() {
+        let kernels = toy_kernels();
+        let mut session = ProofSession::default();
+        let claims = ToyBetaInputs {
+            claimed_sum: Fr::from_u64(777),
+        };
+        let points = ToyBetaInputs {
+            claimed_sum: Vec::new(),
+        };
+
+        let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, _>(
+            &kernels,
+            None,
+            &mut session,
+            &NoWitness,
+            Some(&claims),
+            Some(&points),
+            Some(&NoChallenges::default()),
+        )
+        .map(|kernel| kernel.map(|_| ()))
+        .unwrap_err();
+        let ProverError::Verifier(VerifierError::StageClaimSumcheckFailed { stage, .. }) = &error
+        else {
+            panic!("expected the populated-cell wiring error, got {error:?}");
+        };
+        assert_eq!(*stage, format!("{:?}", JoltRelationId::RamValCheck));
     }
 
     /// `prove` is generic over the recorder: this compiles it against the

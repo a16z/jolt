@@ -18,24 +18,30 @@ use jolt_claims::protocols::jolt::{
     },
     JoltAdviceKind, JoltRelationId,
 };
+use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::JoltInstructionRow;
+use jolt_transcript::Transcript;
 
-use super::booleanity::Booleanity;
+use super::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use super::bytecode_read_raf::{
     BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycle, BytecodeReadRafCycleInputs,
-    BytecodeReadRafTableFoldInputs, READ_RAF_CYCLE_STAGES,
+    BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafTableFoldInputs,
+    READ_RAF_CYCLE_STAGES,
 };
 use super::committed_reduction_cycle_phase::{
     advice_reference_point_from_upstream, bytecode_reduction_weights, BytecodeReductionCyclePhase,
-    ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
+    BytecodeReductionCyclePhaseChallenges, ProgramImageReductionCyclePhase,
+    TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
 #[cfg(not(feature = "akita"))]
-use super::inc_claim_reduction::IncClaimReduction;
-use super::instruction_ra_virtualization::InstructionRaVirtualization;
-use super::outputs::Stage6bSumchecks;
+use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionChallenges};
+use super::instruction_ra_virtualization::{
+    InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
+};
+use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
@@ -81,6 +87,35 @@ pub struct Stage6bBuildParts<'a, F: Field> {
     pub address_val_stages: Vec<F>,
     pub trusted_advice_reference_point: Option<Vec<F>>,
     pub untrusted_advice_reference_point: Option<Vec<F>>,
+}
+
+/// The post-6a Fiat-Shamir draws, sampled before the batch is built (the batch
+/// members carry them as constructor legs). Both fronts call
+/// [`draw`](Self::draw), so the squeeze order is single-sourced.
+pub struct Stage6bDraws<F> {
+    pub instruction_ra_gamma: F,
+    /// Base only: the packed batch has no inc claim-reduction member.
+    #[cfg(not(feature = "akita"))]
+    pub inc_gamma: F,
+    /// The bytecode claim-reduction eta, drawn exactly when the bytecode
+    /// layout is committed.
+    pub eta: Option<F>,
+}
+
+impl<F: Field> Stage6bDraws<F> {
+    pub fn draw<T: Transcript<Challenge = F>>(
+        transcript: &mut T,
+        committed_bytecode: bool,
+    ) -> Self {
+        // Field order is draw order: the struct literal evaluates in
+        // declaration order.
+        Self {
+            instruction_ra_gamma: transcript.challenge_scalar(),
+            #[cfg(not(feature = "akita"))]
+            inc_gamma: transcript.challenge_scalar(),
+            eta: committed_bytecode.then(|| transcript.challenge_scalar()),
+        }
+    }
 }
 
 impl<F: Field> Stage6bSumchecks<F> {
@@ -400,5 +435,52 @@ impl<F: Field> Stage6bSumchecks<F> {
             bytecode_reduction,
             program_image_reduction,
         })
+    }
+
+    /// The stage challenges aggregate, hand-assembled for both fronts (the
+    /// batch suppresses the generated `draw_challenges`): the bytecode gamma
+    /// shares stage 6a's squeeze and the booleanity gamma was drawn pre-6a, so
+    /// a generated per-member draw would squeeze for them at the wrong
+    /// transcript position. The `Option` member slots mirror this batch's
+    /// instance presence.
+    pub fn cycle_challenges(
+        &self,
+        carried: &Stage6aCarriedChallenges<F>,
+        draws: &Stage6bDraws<F>,
+    ) -> Stage6bChallenges<F> {
+        Stage6bChallenges {
+            bytecode_read_raf: BytecodeReadRafCyclePhaseCommittedChallenges {
+                gamma: carried.bytecode_read_raf.gamma,
+            },
+            booleanity: BooleanityCyclePhaseChallenges {
+                gamma: carried.booleanity.gamma,
+            },
+            ram_hamming_booleanity: NoChallenges::default(),
+            ram_ra_virtualization: NoChallenges::default(),
+            instruction_ra_virtualization: InstructionRaVirtualizationChallenges {
+                gamma: draws.instruction_ra_gamma,
+            },
+            #[cfg(not(feature = "akita"))]
+            inc_claim_reduction: IncClaimReductionChallenges {
+                gamma: draws.inc_gamma,
+            },
+            trusted_advice: self
+                .trusted_advice
+                .as_ref()
+                .map(|_| NoChallenges::default()),
+            untrusted_advice: self
+                .untrusted_advice
+                .as_ref()
+                .map(|_| NoChallenges::default()),
+            bytecode_reduction: self
+                .bytecode_reduction
+                .as_ref()
+                .zip(draws.eta)
+                .map(|(_, eta)| BytecodeReductionCyclePhaseChallenges { eta }),
+            program_image_reduction: self
+                .program_image_reduction
+                .as_ref()
+                .map(|_| NoChallenges::default()),
+        }
     }
 }

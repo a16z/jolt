@@ -36,6 +36,7 @@ use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_from_upstream};
+use jolt_verifier::stages::uniskip::draw_spartan_product_tau_high;
 use jolt_verifier::VerifierError;
 use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 
@@ -85,7 +86,7 @@ where
         .spartan_product_uniskip
         .prepare(session, log_t, &tau_low, witness)?;
 
-    let tau_high: F = transcript.challenge();
+    let tau_high: F = draw_spartan_product_tau_high(transcript);
     let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =

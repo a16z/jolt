@@ -22,7 +22,7 @@
 //! See `specs/prover-stage-drivers.md`.
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
+use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_kernels::{HasKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
 use jolt_sumcheck::{RecordedSumcheck, SumcheckRecorder};
@@ -147,10 +147,15 @@ where
     )?)
 }
 
-/// Mint one `Option` member's kernel when present. A present instance with an
-/// absent input, point, or challenge cell is a wiring bug, attributed to the
-/// member's relation id — silently skipping it would desynchronize the batch.
-#[expect(clippy::type_complexity)]
+/// Mint one `Option` member's kernel when present. Presence must agree across
+/// the relation and every cell: a present instance missing an input, point,
+/// or challenge cell — or an absent instance with any cell populated — is a
+/// wiring bug, attributed to the member's relation id; silently dropping
+/// either side would desynchronize the batch.
+#[expect(
+    clippy::type_complexity,
+    reason = "the conditional member's Option-wrapped cell and boxed-kernel types, spelled in full"
+)]
 pub fn prepare_optional<F, R, B>(
     kernels: &B,
     relation: Option<&R>,
@@ -174,10 +179,16 @@ where
                 kernels, relation, session, witness, claims, points, challenges,
             )?))
         }
-        (None, _, _, _) => Ok(None),
+        (None, None, None, None) => Ok(None),
         (Some(relation), _, _, _) => Err(VerifierError::StageClaimSumcheckFailed {
             stage: format!("{:?}", relation.id()),
             reason: "present instance is missing an input, point, or challenge cell for prepare"
+                .to_string(),
+        }
+        .into()),
+        (None, _, _, _) => Err(VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{:?}", R::Symbolic::id()),
+            reason: "absent instance has a populated input, point, or challenge cell for prepare"
                 .to_string(),
         }
         .into()),

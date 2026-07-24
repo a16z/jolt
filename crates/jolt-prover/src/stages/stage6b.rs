@@ -9,18 +9,18 @@
 //! the carry.
 //!
 //! Pure orchestration mirroring `stage6b::verify`: the bytecode gamma is
-//! carried from stage 6a's squeeze (no draw here), the instruction-RA and
-//! increment gammas are drawn post-6a, the batch is built by the verifier's
-//! own promoted `Stage6bSumchecks::build_from_parts` over the clear
-//! carriers, the challenges aggregate is hand-assembled (the batch
-//! suppresses the generated draw), and the driver's curation hook supplies
+//! carried from stage 6a's squeeze (no draw here), the post-6a draws and the
+//! challenges aggregate come from the verifier's promoted `Stage6bDraws::draw`
+//! and `cycle_challenges` helpers (the batch suppresses the generated draw),
+//! the batch is built by the verifier's own promoted
+//! `Stage6bSumchecks::build_from_parts` over the clear
+//! carriers, and the driver's curation hook supplies
 //! the verifier's promoted `stage6b_opening_values` — the curated order with
 //! the runtime dedup of booleanity's `BytecodeRa` claims against the
 //! bytecode read-RAF points (which fires when the bytecode address width is
 //! a multiple of the committed chunk width).
 
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
-use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
@@ -33,16 +33,10 @@ use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
-use jolt_verifier::stages::stage6b::batch::Stage6bBuildParts;
-use jolt_verifier::stages::stage6b::booleanity::BooleanityCyclePhaseChallenges;
-use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCyclePhaseCommittedChallenges;
-use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
-    advice_reference_point_from_upstream, BytecodeReductionCyclePhaseChallenges,
-};
-use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReductionChallenges;
-use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualizationChallenges;
+use jolt_verifier::stages::stage6b::batch::{Stage6bBuildParts, Stage6bDraws};
+use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
 use jolt_verifier::stages::stage6b::outputs::{
-    Stage6bChallenges, Stage6bClearOutput, Stage6bOutputClaims, Stage6bSumchecks,
+    Stage6bClearOutput, Stage6bOutputClaims, Stage6bSumchecks,
 };
 use jolt_verifier::stages::stage6b::{
     stage6b_input_points_from_upstream, stage6b_input_values_from_upstream,
@@ -97,17 +91,10 @@ where
     let chunk_bits = config.one_hot_config.committed_chunk_bits();
     let committed_program = precommitted.bytecode.is_some();
 
-    // The bytecode gamma shares stage 6a's squeeze; the post-6a draws follow
-    // the verifier's order.
+    // The bytecode gamma shares stage 6a's squeeze; the post-6a draws and the
+    // challenges aggregate are the verifier's promoted two-front helpers.
     let carried = &stage6a.challenges;
-    let instruction_ra_gamma: F = transcript.challenge_scalar();
-    let inc_gamma: F = transcript.challenge_scalar();
-    // The bytecode claim-reduction eta, drawn exactly when the bytecode
-    // layout is committed (the verifier's draw position).
-    let eta: Option<F> = precommitted
-        .bytecode
-        .as_ref()
-        .map(|_| transcript.challenge_scalar());
+    let draws = Stage6bDraws::draw(transcript, committed_program);
 
     // The batch, through the verifier's own promoted constructor over the
     // clear carriers. The full-program rows feed only the full-mode table
@@ -135,7 +122,7 @@ where
         entry_bytecode_index,
         bytecode_table_rows,
         carried,
-        eta,
+        eta: draws.eta,
         stage1_cycle_binding,
         stage2_points: &stage2.output_points,
         stage3_points: &stage3.output_points,
@@ -153,39 +140,7 @@ where
         ),
     })?;
 
-    // Hand-assembled (the generated draw is suppressed): the bytecode gamma
-    // rides from 6a, the booleanity gamma was drawn pre-6a.
-    let cycle_challenges = Stage6bChallenges {
-        bytecode_read_raf: BytecodeReadRafCyclePhaseCommittedChallenges {
-            gamma: carried.bytecode_read_raf.gamma,
-        },
-        booleanity: BooleanityCyclePhaseChallenges {
-            gamma: carried.booleanity.gamma,
-        },
-        ram_hamming_booleanity: NoChallenges::default(),
-        ram_ra_virtualization: NoChallenges::default(),
-        instruction_ra_virtualization: InstructionRaVirtualizationChallenges {
-            gamma: instruction_ra_gamma,
-        },
-        inc_claim_reduction: IncClaimReductionChallenges { gamma: inc_gamma },
-        trusted_advice: sumchecks
-            .trusted_advice
-            .as_ref()
-            .map(|_| NoChallenges::default()),
-        untrusted_advice: sumchecks
-            .untrusted_advice
-            .as_ref()
-            .map(|_| NoChallenges::default()),
-        bytecode_reduction: sumchecks
-            .bytecode_reduction
-            .as_ref()
-            .zip(eta)
-            .map(|(_, eta)| BytecodeReductionCyclePhaseChallenges { eta }),
-        program_image_reduction: sumchecks
-            .program_image_reduction
-            .as_ref()
-            .map(|_| NoChallenges::default()),
-    };
+    let cycle_challenges = sumchecks.cycle_challenges(carried, &draws);
 
     let inputs = stage6b_input_values_from_upstream(
         &sumchecks,

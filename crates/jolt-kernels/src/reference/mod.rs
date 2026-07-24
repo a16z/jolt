@@ -3,8 +3,10 @@
 //! (post-uni-skip stream rounds, prefix–suffix decompositions, staged
 //! intermediates hiding product-of-multilinear summands).
 //!
-//! Each module here implements the slot traits its top-level sibling
-//! defines; the seam (the traits, [`JoltBackend`], `ProofSession`, the wire
+//! Each module here fills its [`JoltBackend`] slot — a
+//! [`PrepareKernel`](crate::PrepareKernel) impl per sumcheck relation,
+//! resolved through [`HasKernel`](crate::HasKernel), or a bespoke slot trait
+//! impl; the seam (the traits, [`JoltBackend`], `ProofSession`, the wire
 //! types) never depends on this directory. The reference tier is the
 //! equivalence anchor optimized backends are tested against and the
 //! fallback partial backends compose over; it is eager-dense throughout — a

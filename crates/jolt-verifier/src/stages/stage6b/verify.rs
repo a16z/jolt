@@ -3,7 +3,7 @@ use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
     BytecodeClaimReductionLayout, JoltRelationId, PrecommittedReductionLayout,
 };
-use jolt_claims::{NoChallenges, OutputClaims};
+use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -12,27 +12,26 @@ use jolt_transcript::Transcript;
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
-    IncClaimReductionChallenges,
 };
 #[cfg(not(feature = "akita"))]
 use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
 use super::{
-    booleanity::{BooleanityCyclePhaseChallenges, BooleanityInputClaims},
-    bytecode_read_raf::{BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims},
+    batch::Stage6bDraws,
+    booleanity::BooleanityInputClaims,
+    bytecode_read_raf::BytecodeReadRafInputClaims,
     committed_reduction_cycle_phase::{
         program_image_reduction_cycle_phase_input_values_from_upstream,
         trusted_advice_cycle_phase_input_values_from_upstream,
         untrusted_advice_cycle_phase_input_values_from_upstream,
-        BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
+        BytecodeReductionCyclePhaseInputClaims,
     },
     instruction_ra_virtualization::{
         instruction_ra_virtualization_input_points_from_upstream,
         instruction_ra_virtualization_input_values_from_upstream,
-        InstructionRaVirtualizationChallenges,
     },
     outputs::{
-        Stage6bChallenges, Stage6bClearOutput, Stage6bInputClaims, Stage6bInputPoints,
-        Stage6bOutput, Stage6bOutputClaims, Stage6bSumchecks,
+        Stage6bClearOutput, Stage6bInputClaims, Stage6bInputPoints, Stage6bOutput,
+        Stage6bOutputClaims, Stage6bSumchecks,
     },
     ram_hamming_booleanity::RamHammingBooleanityInputClaims,
     ram_ra_virtualization::{
@@ -81,20 +80,11 @@ where
     T: Transcript<Challenge = PCS::Field>,
 {
     // The bytecode fold gamma shares stage 6a's squeeze; it and the booleanity
-    // gamma ride on the stage-6a output as typed upstream values.
+    // gamma ride on the stage-6a output as typed upstream values. The post-6a
+    // draws and the challenges aggregate are the promoted two-front helpers.
     let carried = stage6a.challenges();
-    let bytecode_gamma = carried.bytecode_read_raf.gamma;
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
-
-    // Post-6a draws: the instruction-RA virtualization gamma, the increment gamma
-    // (base only — the packed batch has no inc member), and (committed-program
-    // only) the bytecode claim-reduction eta.
-    let instruction_ra_gamma = transcript.challenge_scalar();
-    #[cfg(not(feature = "akita"))]
-    let inc_gamma = transcript.challenge_scalar();
-    let eta = bytecode_reduction_layout
-        .is_some()
-        .then(|| transcript.challenge_scalar());
+    let draws = Stage6bDraws::draw(transcript, bytecode_reduction_layout.is_some());
 
     // The batch is built after the post-6a draws, directly from the upstream stage
     // outputs; `build` derives every mode-agnostic constructor leg internally.
@@ -109,45 +99,10 @@ where
         stage4,
         stage5,
         stage6a,
-        eta,
+        draws.eta,
     )?;
 
-    // Hand-assembled (the generated `draw_challenges` is suppressed): the bytecode
-    // gamma shares stage 6a's squeeze and the booleanity gamma was drawn pre-6a
-    // where the prover's booleanity subprotocol samples it, so a generated
-    // per-member draw would squeeze for them at the wrong transcript position.
-    let cycle_challenges = Stage6bChallenges {
-        bytecode_read_raf: BytecodeReadRafCyclePhaseCommittedChallenges {
-            gamma: bytecode_gamma,
-        },
-        booleanity: BooleanityCyclePhaseChallenges {
-            gamma: carried.booleanity.gamma,
-        },
-        ram_hamming_booleanity: NoChallenges::default(),
-        ram_ra_virtualization: NoChallenges::default(),
-        instruction_ra_virtualization: InstructionRaVirtualizationChallenges {
-            gamma: instruction_ra_gamma,
-        },
-        #[cfg(not(feature = "akita"))]
-        inc_claim_reduction: IncClaimReductionChallenges { gamma: inc_gamma },
-        trusted_advice: sumchecks
-            .trusted_advice
-            .as_ref()
-            .map(|_| NoChallenges::default()),
-        untrusted_advice: sumchecks
-            .untrusted_advice
-            .as_ref()
-            .map(|_| NoChallenges::default()),
-        bytecode_reduction: sumchecks
-            .bytecode_reduction
-            .as_ref()
-            .zip(eta)
-            .map(|(_, eta)| BytecodeReductionCyclePhaseChallenges { eta }),
-        program_image_reduction: sumchecks
-            .program_image_reduction
-            .as_ref()
-            .map(|_| NoChallenges::default()),
-    };
+    let cycle_challenges = sumchecks.cycle_challenges(carried, &draws);
 
     let input_points = stage6b_input_points_from_upstream(
         &sumchecks,
@@ -192,9 +147,9 @@ where
 
         return Ok(Stage6bOutput::Zk(Stage6bZkOutput {
             challenges: Stage6bCarriedChallenges {
-                instruction_ra_gamma,
-                inc_gamma,
-                bytecode_reduction_eta: eta,
+                instruction_ra_gamma: draws.instruction_ra_gamma,
+                inc_gamma: draws.inc_gamma,
+                bytecode_reduction_eta: draws.eta,
             },
             batch_consistency: consistency,
             batch_output_claims,

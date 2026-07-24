@@ -93,9 +93,7 @@ fn byte_decode_leg<F: Field>(
 #[derive(Clone)]
 pub struct UntrustedAdviceReconstructionInstance<F: Field> {
     symbolic: UntrustedSymbolic,
-    /// The fresh reference point the booleanity/hamming kernels compare
-    /// against, drawn over the full cell domain before the instance gammas.
-    r_reference: Vec<F>,
+    _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> {
@@ -103,6 +101,21 @@ impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> 
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    /// The booleanity/hamming reference point is a full-cell-domain vector
+    /// whose width is runtime shape data, so the generic scalar-stream draw
+    /// cannot build it. This member is the batch's first, so the override's
+    /// draws (the reference vector, then the gamma) land exactly where the
+    /// pre-batch inline draw plus the generated gamma draw did.
+    fn draw_challenges<T: Transcript<Challenge = F>>(
+        &self,
+        transcript: &mut T,
+    ) -> Result<UntrustedAdviceReconstructionChallenges<F>, VerifierError> {
+        Ok(UntrustedAdviceReconstructionChallenges {
+            r_reference: transcript.challenge_vector(self.symbolic.rounds()),
+            gamma: transcript.challenge_scalar(),
+        })
     }
 
     fn derive_opening_points(
@@ -122,30 +135,31 @@ impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> 
         id: &JoltDerivedId,
         input_points: &UntrustedAdviceReconstructionInputClaims<Vec<F>>,
         output_points: &UntrustedAdviceReconstructionOutputClaims<Vec<F>>,
-        _challenges: &UntrustedAdviceReconstructionChallenges<F>,
+        challenges: &UntrustedAdviceReconstructionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::UntrustedAdviceReconstruction(public) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
+        let r_reference = &challenges.r_reference;
         let opening_point = output_points.bytes();
         // The `(byte ‖ place)` prefix of the cell layout; the word variables
         // follow it.
         let byte_place_split = word_byte_num_vars(0);
-        if opening_point.len() < byte_place_split || self.r_reference.len() != opening_point.len() {
+        if opening_point.len() < byte_place_split || r_reference.len() != opening_point.len() {
             return Err(untrusted_public_failed(format!(
                 "cell point has {} variables, reference has {}",
                 opening_point.len(),
-                self.r_reference.len()
+                r_reference.len()
             )));
         }
         let (byte_place, r_word) = opening_point.split_at(byte_place_split);
         let (r_byte, r_place) = byte_place.split_at(BYTE_BITS);
         match public {
             UntrustedAdviceReconstructionPublic::EqBytePlaceWord => {
-                try_eq_mle(opening_point, &self.r_reference).map_err(untrusted_public_failed)
+                try_eq_mle(opening_point, r_reference).map_err(untrusted_public_failed)
             }
             UntrustedAdviceReconstructionPublic::EqPlaceWord => {
-                try_eq_mle(&opening_point[BYTE_BITS..], &self.r_reference[BYTE_BITS..])
+                try_eq_mle(&opening_point[BYTE_BITS..], &r_reference[BYTE_BITS..])
                     .map_err(untrusted_public_failed)
             }
             UntrustedAdviceReconstructionPublic::ByteDecode => {
@@ -593,8 +607,9 @@ where
         layout.advice_shape().total_vars()
     };
 
-    // The untrusted booleanity/hamming reference point is drawn over the full
-    // cell domain before every instance gamma (the generated draws follow).
+    // The untrusted booleanity/hamming reference point is drawn by the
+    // member's `draw_challenges` override — the batch's first draws, so it
+    // still lands before every instance gamma.
     let untrusted = untrusted_layout
         .map(|layout| -> Result<_, VerifierError> {
             let word_vars = advice_word_vars(layout);
@@ -610,7 +625,7 @@ where
             }
             let instance = UntrustedAdviceReconstructionInstance {
                 symbolic: UntrustedSymbolic::new(AdviceReconstructionDimensions { word_vars }),
-                r_reference: transcript.challenge_vector(word_byte_num_vars(word_vars)),
+                _field: core::marker::PhantomData,
             };
             Ok((instance, word))
         })

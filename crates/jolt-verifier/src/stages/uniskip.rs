@@ -86,6 +86,31 @@ impl UniskipParams {
     }
 }
 
+/// The stage-1 outer tau — the `log_t + 2` challenges drawn before the outer
+/// uni-skip round (the Spartan outer relation's cycle variables plus the two
+/// uni-skip-collapsed row variables). Both fronts call this, so the draw is
+/// single-sourced.
+pub fn draw_spartan_outer_tau<F, T>(transcript: &mut T, log_t: usize) -> Vec<F>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    transcript.challenge_vector(log_t + 2)
+}
+
+/// The stage-2 product tau_high, drawn before the product uni-skip round.
+/// Both fronts call this, so the draw is single-sourced. MUST stay the raw
+/// `challenge()` (not `challenge_scalar()`): both decode the same 16-byte
+/// squeeze, but differently, so switching would silently change the value
+/// without changing the transcript bytes.
+pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> F
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    transcript.challenge()
+}
+
 /// The ZK uni-skip step's outputs: the committed round consistency and output
 /// claim commitments (carried downstream for BlindFold), plus the reduction
 /// challenge.
