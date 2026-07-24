@@ -144,24 +144,4 @@ If any step fails, fix the issue and re-run.
 
 </Steps>
 
-<Examples>
-<Good>
-User: "/new-invariant sumcheck_eval_consistency"
-Action: Asks what property is being checked, creates the invariant file with proper Input type, registers it, creates fuzz target, runs tests.
-Why good: Follows the full pipeline, tests pass before reporting success.
-</Good>
-
-<Bad>
-User: "/new-invariant sumcheck_eval_consistency"
-Action: Creates the invariant file but forgets to add the variant to the `dispatch!` macro.
-Why bad: Code won't compile — the dispatch macro must match all enum variants.
-</Bad>
-
-<Bad>
-User: "/new-invariant my-invariant"
-Action: Accepts the name with a hyphen.
-Why bad: Rust identifiers use underscores, not hyphens. Should reject and suggest `my_invariant`.
-</Bad>
-</Examples>
-
 Task: Implement a new invariant for jolt-eval. {{ARGUMENTS}}
