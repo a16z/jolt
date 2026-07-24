@@ -1,218 +1,145 @@
-# Akita prover/memory co-design at 2^26
+# Akita prover optimization — state and ranked opportunities at 2^26
 
-## Goal
+Branch pair: `perf/optimize-akita-prover` (jolt) + `perf/onehot-commit-sweep`
+(`~/akita`, path deps). Machine: M4 Max, 12P+4E cores, 128 GB. Workload:
+sha2-chain, T = 2^26, K = 256, 29 committed one-hot columns, root n_a = 6.
 
-On `perf/optimize-akita-prover` (jolt) + `perf/onehot-commit-sweep` (`~/akita`
-path deps), optimize the Akita packed prover at 2^26 sha2-chain on this
-machine (M4 Max, 16 cores, 128 GB) until, measured back-to-back:
+## Campaign so far (terse)
 
-- **Prove ≤ dory** (≤ 119 s), stretch **≤ 0.75× dory** (≤ 90 s).
-- **Peak RSS ≤ 1.1× dory** (≤ 40 GB), minimum bar ≤ 60 GB. RSS also gates
-  2^27 on 128 GB machines.
-- Verify stays ≤ 350 ms, proof stays within the 1% catalog slack (~100 KB),
-  and all correctness gates stay green.
+333 s → **91.93 s** prove (3.62×); dory same-branch ≈ 112-114 s → akita is
+~1.22× faster with transparent setup and ~2× faster verify. All landed
+changes transcript-identical except catalog regenerations; gates green
+throughout (muldiv host+zk, 224 akita unit tests, 38 jolt-akita, drift).
 
-Setup/preprocessing is excluded from the prove objective but must not grossly
-regress (dory pays 32 s preprocessing; akita pays ~4 s — keep it single-digit).
+| Change | Effect |
+|---|---|
+| A1 sub-block chunking (akita 30db45c8) | commit off the fallback path: 333→154 s |
+| J2+J3 decode dedupe (jolt db2d67889, df5860864) | stage1 24→8 s; shared Spartan code, sped dory up too |
+| P1 rank-aware catalogs (akita e019b7c6, jolt 7d43d3411) | root n_a 7→6 for +112 B proof; 154→136.7 s |
+| A5 fused multi-poly sweep + self-reducing accumulators + tuned tiles (akita 75d97724, 015669b9, 8a1fa829) | commit 96→~45 s; 136.7→91.9 s |
 
-## Baselines (2026-07-23/24, this machine, same harness)
+Dead ends (measured; do not revisit without new evidence): A4 lazy u128
+accumulators (NEON wide wins 1.9×); A6 fused in-register widen (re-widens per
+use, 100→131 s); merge-tile tuning beyond (64 blocks, 32 cols) — full bench
+matrix flat within 5-30%; L1 tiles under block splitting (252 s, fixed by
+self-reduction).
 
-| Config | Prove | Verify | Peak RSS | B/cycle |
-|---|---|---|---|---|
-| dory (day-1 sweep) | **119.49 s** | ~0.4 s | 36.4 GB | 543 |
-| akita @ session start (pin fc20716) | 333 s | 148 ms | 80.2 GB | 1,195 |
-| akita + A1 kernel + J2 + P1 (n_a=6) — **current** | **136.7 s** | 217 ms | 80.1 GB | 1,193 |
+Facts that bound everything below: the PIOP already runs over the 128-bit
+field (`AkitaPackedScheme::Field = AkitaFp128`, in-field challenges,
+`MONTGOMERY_R_SQUARE = 1`); commit work = P·T·n_a·D coefficient-adds with
+n_a·D security-pinned (~5.5 bits of width per +1 rank in the q128 table);
+K=256 is geometry-optimal at 2^26 (bigger K inflates K·T address space →
+rank/eval-ladder pushback).
 
-Current traced attribution (155.4 s traced ≈ 136.7 s untraced): commit 82.4 s
-(53%), opening/fold 20.0 s, stage1 14.6 s, stage6b lattice booleanity 10.9 s,
-stages 3/4/5/6a/7 ~21 s, witness+assemble ~16 s.
+## Measured attribution (98.8 s traced ≈ 92 s untraced)
 
-Landed so far: A1 sub-block chunking (333→154 s), J2 uni-skip decode dedupe
-(stage1 init 15→6.2 s), P1 rank-aware catalogs (root n_a 7→6, 154→136.7 s,
-+112 B proof), A5 fused multi-poly sweep (commit 82.4→51.4 s traced;
-124.7 s traced prove), J3 sequential decode carry (three trace scans),
-merge-tile L1 tuning (commit target ~38-40 s).
+commit 45-48 s | fold/opening 14.8 s (grind-fold 6.2 + accumulate 5.9 +
+ring-relation ~2) | stage1 8.0 | stage6b lattice 8.0 | stages 3/4/5/6a/7
+~17 | RSS 94.9 GB.
 
-## Measured campaign log (traced @2^26 unless noted)
+## Opportunities, descending by expected payoff at 2^26
 
-| Milestone | prove | commit | notes |
-|---|---|---|---|
-| session start | 333 s | ~252 s | safe-path fallback pathology |
-| A1 | 154.4 s untraced | — | |
-| A1+J2 (n_a=7) | 170.2 s | 96.0 s | stage1 init 15→6.2 s |
-| +P1 (n_a=6) | 155.4 s | 82.4 s | 136.7 s untraced; RSS 80.1 GB |
-| +A5 fused sweep | 124.7 s | 51.4 s | merge span 797 thread-s = 68 ns/accum (L2-resident tile) |
-| dory, same branch (J2+J3 shared) | 122.4 s | 38.0+26.7 (w+c / open) | untraced est ~114 s; RSS 36.6 GB |
-| +J3 +self-reducing merge kernel, L1 tiles | 100.34 s untraced | ~48.7 s | primary bar (≤119 s) cleared; RSS 94.9 GB (M2 now top item) |
-| +bench-tuned tiles (64 blocks, 32 cols) | **91.93 s untraced** | ~45 s est | **at the stretch bar (≤90 s) within noise**; 3.62× from session start, ~1.24× vs dory |
+### 1. Commit kernel gap: measured 61 ns/accum vs 26-44 ns modeled — eng, **−8 to −18 s**, medium confidence
 
-Detour recorded: naive L1 tiles regressed to 252 s — the 2^15 accumulator cap
-was silently splitting every trace-scale block 16×, so small tiles re-streamed
-A ~29×. Fixed by cap-triggered self-reduction into canonical partials
-(akita 015669b9); block splitting removed from the merge path entirely.
+Data: 11.7 G ring-accums / 45 s / 16 threads = 61 ns each. Model: per
+accumulate the kernel moves ~6 KB through L1 (2 KB widened-A read from the
+staged chunk, 2+2 KB accumulator RMW); P-core L1 sustains ~80 B/cycle →
+~26-28 ns on a P-core. Three candidate explanations for the 2.2× gap, each
+checkable and each with a distinct fix:
+(a) **E-core drag**: rayon runs 16 threads on 12P+4E; if E-cores accumulate
+at ~3× P-core cost, the aggregate lands near the measured number. Fix: pin
+the sweep pool to P-cores or weight-split the block ranges. Expected −8-12 s
+if confirmed.
+(b) Sustained-clock/L2 effects at the 64-block tile (128 KB accums slightly
+over L1). Fix: none cheap (bench matrix already flat) — this bounds the
+downside.
+(c) Entry-decode and cursor overhead per accumulate. Bounded by the bench's
+own flatness at ≤ ~15%.
+First step: run the sweep under CPU counters (Instruments) split per core
+type — one afternoon, converts this item from medium to certain either way.
 
-**PIOP verdict (traced stages @2^26):** legacy (dory) 55.4 s vs packed ~42 s
-like-for-like (≈1.3×, concentrated in stage5 1.8× and stage6b 1.6×). The
-historical "PIOP ≈2×" held against the pre-J2/J3 legacy baseline; J2+J3 are
-shared Spartan code and improved both provers (legacy stage1 24→11.9 s).
+### 2. f128 delayed-reduction coverage in PIOP hot loops — eng, **−5 to −10 s**, medium-high confidence
 
-## Cost model (the math)
+Data: on comparable work the f128 PIOP measures 1.7× faster than the Fr
+legacy PIOP (33 s vs 55.4 s after removing the ~9 s of lattice-only stages);
+pseudo-Mersenne 2-limb multiplication is 3.5-4× cheaper than 4-limb
+Montgomery CIOS at the op level, and element size halves memory traffic, so
+2-2.5× end-to-end is the arithmetic potential. The shortfall concentrates
+where the Fr stack has years of unreduced-accumulator/NEON tuning that
+`AkitaFp128` paths may not: stage5 (4.5 s), stage6b lattice booleanity
+(8.0 s), stage6a (3.3 s), `bind_parallel` (3.5 s over 3,141 calls).
+`Folded128Product` exists — the audit is whether every hot `compute_message`
+and bind path actually uses it rather than reduce-per-op.
+First step: cycle-count one stage6b inner loop; compare against mul-count ×
+6-8 ops. Fix pattern is mechanical once found (same shape as the existing
+BN254 delayed-reduction code).
 
-Shapes at 2^26/K256: P = 29 one-hot polys, T = 2^26, root n_a = 6,
-positions_per_block (ppb) = 2^21, 128 live blocks/poly → 32 blocks each of
-2^21 positions per poly; ring D = 64, coefficient = f128 (16 B), A entry =
-one ring = 1 KB.
+### 3. Committed-column virtualization — protocol, **−3 to −9 s commit + PIOP share**, needs a feasibility pass
 
-**Commit work.** One ring-accumulate per (poly, position, A-row):
-`N = P · T · n_a = 29 · 2^26 · 6 ≈ 11.7 G` accumulates.
+Data: commit cost is exactly 45 s × (columns/29) ≈ **1.55 s per column**;
+fold and booleanity also scale with P. Inventory at K256: 16 instruction
+chunks + 8 increment chunks + 1 increment MSB + ~4 bytecode/RAM chunks.
+Analysis so far: one-hot is already the cheapest *encoding* (1 accumulate
+per chunk-cycle; dense small-scalar digits cost ~3×), so the win must come
+from **not committing** columns whose values the PIOP can derive from other
+commitments via existing claims — the bytecode/RAM address chunks (addresses
+are functions of committed PC/RAM state already constrained elsewhere) and
+possibly the increment MSB. Realistic range 2-6 columns.
+First step: column-by-column dependency audit against the stage-3/4/6
+claims: for each, either name the derivation sumcheck that replaces it (and
+bound its cost — it must be ≪1.55 s equivalent) or strike it. This is the
+item that decides whether 2^26 lands under ~65 s.
 
-**Commit traffic.** Per (poly, block, A-row) the kernel streams that A row
-(width × 1 KB); accumulator tiles are L1/L2-resident (row-pass keeps one ring
-per block live). A is *identical across all 29 polys*, but the sweep runs
-per-poly, so today:
+### 4. Fold-pass fusion — eng, **−4 to −6 s**, high confidence
 
-```
-A-traffic = P · n_a · T · 1 KB ≈ 11.7 TB  → ~28 s at ~400 GB/s
-```
+Data: `fold_grind_sample` (6.2 s — a single accepted fold, no rerolls this
+run) and `onehot_accumulate` (5.9 s) are back-to-back passes that both walk
+the identical per-block entry lists applying challenge weights
+(`decompose_fold.rs` already imports `accumulate`). Fusing them into one
+entry walk halves the traversal and entry-decode cost; the arithmetic
+differs per pass but the walk dominates. Same co-design shape as A5, kernel-
+local, byte-equality testable.
 
-Fusing the sweep across polys reads each A row once per (block, row) and
-accumulates into P block-accumulators (29 × 2 KB — still L1/L2-resident):
+### 5. Stage1 residual — eng, **−2 to −3 s**, high confidence per piece
 
-```
-A-traffic(fused) = n_a · T · 1 KB ≈ 0.4 TB  → ~1 s
-```
+Post-J3 stage1 is 8.0 s: uniskip extended evals 3.1 (now dominated by the
+S64/S128 integer products, SIMD-izable), linear-stage materialise 3.1,
+claimed-inputs 1.8. Bounded but cheap; benefits dory equally (shared code).
 
-**Commit ALU floor.** Same-session kernel A/B measured the NEON wide
-accumulator at **28 ns per ring-accumulate** at a 64 KB tile:
+### 6. RSS to ≤60 GB (M2) — memory, enables 2^27; possible 1-3 s side win
 
-```
-commit(fused) ≈ 11.7 G × 28 ns / 16 threads ≈ 21 s      (from 82 s)
-```
+94.9 GB at 2^26 vs 36.6 GB dory; ~30 GB is unattributed (readings varied
+76-95 GB with phase overlap, suggesting peak-coexistence rather than one
+slab). Known: expanded A 12.6 GB, block cache 15.6 GB (droppable or
+u8-recomputable after commit — entries are recomputable from indices at
+K≥D), fold buffers ∝ ppb. First step: allocative run at 2^24; then lifetime
+fixes. Gates 2^27+ (projected ~380 GB at 2^28 otherwise).
 
-**Prove floor with everything below landed:** commit ~21-25 s + opening/fold
-~15-18 s + stage1 ~10-11 s + stages ~28-30 s + witness ~12 s ≈ **~90-100 s**
-≈ 0.75-0.85× dory. Beyond that requires protocol-level work (out of scope).
+### 7. Not at this scale (recorded to keep the ladder honest)
 
-**Memory accounting (1,193 B/cycle today).**
+- **K=2^16**: at 2^26 roughly commit −12% / PIOP −25% but rank →~9, A must
+  be seed-streamed, catalogs need nv=42; net ≈ neutral here. Becomes
+  favorable ~2^28-2^30 (P·n_a 153 vs 203 at t=30). Revisit with a planner
+  candidate-dump at nv 42 before believing my ±1 rank model.
+- **Rank-hold at nv≥35 (P3)**: n_a creeps 6→7→8 with T (+5.5 bits/rank law);
+  wider-slack candidate dumps at (36,·)/(38,·) may find n_a=6 corners.
+  Matters from 2^28 up.
+- Security-dimension or norm changes: out of scope by decision.
 
-| Component | Size @2^26 | B/cycle | Note |
-|---|---|---|---|
-| Expanded A matrix | 12.6 GB | 188 | n_a·ppb·1 KB; was 7.3 GB at ppb 2^20 |
-| One-hot block cache | 15.6 GB | 232 | SingleChunkEntry 8 B × 29 polys, held commit→stage 8 |
-| Guest trace + witness polys | shared-with-dory baseline | ~300-400? | needs measurement |
-| Unattributed (fold buffers, scatter/count, duplicates) | ~25-30 GB | ~400+ | **allocative pass required** |
+## Composed outlook at 2^26
 
-Floor estimate: trace+witness (~250-350) + indices-as-u8 (29-58) + A (188)
-≈ **~500-600 B/cycle ≈ dory parity**. The information-theoretic one-hot
-witness is 29 B/cycle — everything above that is engineering.
+92 s − (1: ~12) − (2: ~7) − (3: ~6) − (4: ~5) − (5: ~2) ≈ **~60 s ≈ 1.85×
+dory**, without protocol-security changes. Items 1-2 alone (pure
+engineering, no protocol review needed) reach ~75 s ≈ 1.5×.
 
-## Workstreams (ranked)
+## Protocol (unchanged)
 
-### A5 — Fused multi-poly column sweep (commit 82 s → ~21-25 s) [BIG]
-
-Batch all P polys' blocks through one A pass: for each (block index, A row),
-stream the A row once and accumulate into P per-poly block accumulators
-(P × 2 KB wide rings, L1-resident). Requires plumbing `commit_inner` from
-per-poly (`api/commitment.rs` cfg-iter over polys → `OneHotPoly::commit_inner`)
-to a batched entry point (`OneHotBatchView` already exists for other kernels).
-Keep per-poly output shape (t rows per poly per block) identical —
-transcript-identical. Watch: parallelization axis moves from (poly ×
-block-batch) to (block-batch × row) with an inner poly loop; keep all 16 cores
-fed (32 blocks × 6 rows = 192 units ≫ 16 ✓, and tiles can split further).
-Gate: akita unit suite (byte-equality vs per-poly path), muldiv both modes,
-then traced + untraced 2^26.
-
-### J3 — Stage1 sequential decode cache (−2-4 s)
-
-`R1CSCycleInputs::from_trace(t)` decodes `trace[t]` AND `trace[t+1]` (incl.
-two bytecode-PC map lookups); the pair loop visits t sequentially per x_out
-chunk, so every step still decodes twice. Split decode out
-(`(JoltTraceCycle, pc)`), carry the previous "next" forward within a chunk.
-Also applies to `evaluation.rs:867` (`compute_claimed_inputs`) and the
-outer-remaining path (outer.rs:861) if they scan sequentially.
-Transcript-identical; gate muldiv both modes.
-
-### M1 — Block-cache shrink or early drop (−12-15 GB)
-
-The 15.6 GB SingleChunkEntry cache is retained from commit through stage 8 but
-K=256 entries are recomputable from the OneHotTrace indices (8 B stored vs
-29 B/cycle information floor as u8 chunk indices + implicit position).
-Options: (a) drop after last use and rebuild for the fold pass, (b) store u8
-chunk indices only and synthesize entries per block on the fly, (c) keep but
-release per-poly as the fold consumes them. Requires finding every consumer
-(commit, decompose_fold, onehot_accumulate). Perf-neutrality gate: 2^26 prove
-unchanged ±2%.
-
-### M2 — Allocative attribution of the unexplained ~30 GB (then act)
-
-Run the allocative build (`RUST_LOG=debug --features allocative` flamegraph
-path) or targeted RSS checkpoints at 2^26 (or 2^24 if too slow) to attribute
-peak RSS. Known suspects: pre-folded e/fold scratch scaling with ppb,
-duplicate A forms in prepared setup, count/scatter arrays (2^21 × u32 ×
-threads), `b_input_flat` digit carriers. Then cut the top items. Target:
-−20 GB+, bringing 2^26 under 60 GB and 2^27 within reach.
-
-### O1 — Opening/fold span split + cuts (−3-6 s)
-
-Add spans inside `RingRelationProver::new` (decompose_group_e_hat exists; add
-v-rows, grind, w-build) and around `decompose_fold_batched` /
-`onehot_accumulate` internals; re-trace; cut what's engineering (the fold
-grind is protocol-mandated — don't touch its parameters).
-
-### S1 — Lattice booleanity + bind loops (−3-8 s)
-
-stage6b (10.9 s) and `MultilinearPolynomial::bind_parallel` (6.8 s across
-3,141 calls) are generic sumcheck costs; profile compute_message inner loops
-before touching. Benefits dory too where shared.
-
-### P2 — Catalog grid hardening (correctness of the P1 trade at scale)
-
-The 1% slack selection reshaped nv 35-38 roots to 1,024-4,096 live blocks;
-unrunnable on this machine but plausibly fold-heavy. Before upstreaming:
-either cap live-block growth in the rank-aware selection (prefer fewer blocks
-among equal-n_a candidates — already the tie-break via bytes; verify), or
-validate at 2^27 on a bigger box. Also re-check the K16 regime (T < 2^25).
-
-### Dead ends (documented, do not revisit without new evidence)
-
-- **A4 lazy u128 accumulators**: loses 1.9× to NEON wide (28 vs 53 ns) —
-  row-pass tiles are already L1-resident, accumulate is ALU-bound, and scalar
-  carry-correction chains lose to 8-lane i32 adds. `Fp128Lazy` + the
-  `HasCommitAccum` seam stay in-tree for probes (akita 676ef27b).
-- **A2 A-sharing via bigger tile budgets**: tile-budget insensitivity showed
-  the win isn't in accumulator tiling; the A-reuse win is across *polys* (A5).
-- **A6 fused in-register widen**: regressed 100.3→131.1 s — fusing re-widens
-  per *use* (~14× more converts than the staged chunk buffer amortizes).
-  Reverted (akita b52753b5).
-- **Merge-kernel tile tuning beyond (64 blocks, 32 cols)**: the full
-  (tile × chunk) bench matrix is flat within 5-30%; 61.4 ns/accum is the
-  practical floor at quarter-density one-hot shapes (the 28 ns dense-bench
-  figure does not transfer). Commit ≈ 45-48 s is this kernel's floor on CPU;
-  further commit cuts need work-count changes (rank/K/protocol) or GPU.
-
-## Protocol (goal mode)
-
-- Iterate at 2^22 for quick signal where possible; confirm at 2^26. Thermal
-  discipline: never compare across sessions; same-session back-to-back A/B or
-  min-of-N; a single hot e2e number is not evidence (two false alarms so far).
-- Gates per landed change: `cargo nextest run -p jolt-prover-legacy muldiv
-  --features host` and `--features host,zk`; akita
-  `cargo test -p akita-prover --release --features parallel --lib`; jolt-akita
-  suite (drift + coverage) when catalogs/planner change; clippy both modes
-  (check `pipestatus`, not `$?` after a pipe).
-- Transcript identity required except for catalog regenerations (which change
-  proofs by design and must pass the full e2e + drift suite).
-- Commit per accepted iteration (`perf(akita): …` / `perf(spartan): …`),
-  no force-push, no push without ask. Failed attempts: revert, document in
-  this spec's dead-ends section.
-- Harness: `PERF_LOG_T=N [PERF_TRACE=1] cargo nextest run --release -p
-  jolt-prover-legacy --features akita -E 'test(sha2_chain_akita_perf)'
-  --run-ignored all --no-capture`; traces land in
-  `benchmark-runs/perfetto_traces/`; peak RSS via `/usr/bin/time -l`.
-
-## Acceptance
-
-Done when prove ≤ 119 s AND RSS ≤ 60 GB at 2^26 with all gates green
-(stretch: ≤ 90 s / ≤ 40 GB), or when every workstream above is landed or
-written off with measurements — whichever comes first. Record final numbers
-in this file before upstreaming discussions.
+Iterate 2^22, confirm 2^26 cooled and process-exclusive (`ps aux | grep
+jolt_prover_legacy-` before every launch); same-session A/B or min-of-N —
+single hot e2e readings misled four times this campaign. Gates per change:
+muldiv host + host,zk; akita `--lib` suite; jolt-akita suite when catalogs
+change; clippy both modes via `pipestatus`. Harness:
+`PERF_LOG_T=26 [PERF_TRACE=1] cargo nextest run --release -p
+jolt-prover-legacy --features akita -E 'test(sha2_chain_akita_perf)'
+--run-ignored all --no-capture`. Commit per accepted iteration; failed
+attempts get reverted and recorded under dead ends.
