@@ -1,0 +1,58 @@
+#!/bin/bash
+set -u
+
+# Enforce Conventional Commits in the commit subject:
+#   <type>[optional scope][optional !]: <description>
+# Keep the regex in sync with .github/workflows/pr-title.yml
+#
+# Opt in with: git config core.hooksPath .githooks
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+message_file="${1:-}"
+
+if [ "${DISABLE_CONVENTIONAL_COMMITS:-0}" = "1" ]; then
+  exit 0
+fi
+
+if [ -z "$message_file" ] || [ ! -f "$message_file" ]; then
+  printf "%b\n" "${RED}Error: commit message file not found${NC}"
+  exit 1
+fi
+
+subject=$(
+  sed -e 's/\r$//' "$message_file" |
+    awk 'NF && $1 !~ /^#/ { print; exit }'
+)
+
+if [ -z "$subject" ]; then
+  printf "%b\n" "${RED}Commit message subject cannot be empty.${NC}"
+  exit 1
+fi
+
+# Git-generated subjects and autosquash commits should not block normal workflows.
+if [[ "$subject" =~ ^Merge[[:space:]] ]] ||
+   [[ "$subject" =~ ^Revert[[:space:]] ]] ||
+   [[ "$subject" =~ ^(fixup|squash|amend)![[:space:]] ]]; then
+  exit 0
+fi
+
+types='feat|fix|chore|docs|refactor|perf|test|build|ci|style|revert|spec'
+re="^($types)(\([a-z0-9 ,._/-]+\))?!?: .+"
+
+if [[ "$subject" =~ $re ]]; then
+  exit 0
+fi
+
+printf "%b\n" "${RED}Invalid commit message subject:${NC} $subject"
+printf "%b\n" "${YELLOW}Use Conventional Commits:${NC} <type>[optional scope][optional !]: <description>"
+printf "%s\n" "Allowed types: ${types//|/ }"
+printf "%s\n" "Examples:"
+printf "%s\n" "  feat(dory): batch tier-2 openings"
+printf "%s\n" "  fix: handle empty trace in preprocessing"
+printf "%s\n" "  refactor(claims,verifier)!: split relation claims"
+printf "%s\n" ""
+printf "%s\n" "To bypass once: DISABLE_CONVENTIONAL_COMMITS=1 git commit ..."
+exit 1
