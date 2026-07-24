@@ -876,9 +876,8 @@ impl<F: JoltField> OuterSharedState<F> {
                         let cur = carried.take().unwrap_or_else(|| {
                             DecodedCycle::new(preprocess, trace, current_step_idx)
                         });
-                        let next = (current_step_idx + 1 < trace.len()).then(|| {
-                            DecodedCycle::new(preprocess, trace, current_step_idx + 1)
-                        });
+                        let next = (current_step_idx + 1 < trace.len())
+                            .then(|| DecodedCycle::new(preprocess, trace, current_step_idx + 1));
                         cached = Some((
                             current_step_idx,
                             R1CSCycleInputs::from_decoded::<F>(&cur, next.as_ref()),

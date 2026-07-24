@@ -268,7 +268,11 @@ impl<'a> DecodedCycle<'a> {
         clippy::expect_used,
         reason = "non-Jolt trace rows are a malformed-trace invariant violation"
     )]
-    pub fn new(bytecode_preprocessing: &BytecodePreprocessing, trace: &'a [Cycle], t: usize) -> Self {
+    pub fn new(
+        bytecode_preprocessing: &BytecodePreprocessing,
+        trace: &'a [Cycle],
+        t: usize,
+    ) -> Self {
         let cycle = JoltTraceCycle::try_new(&trace[t])
             .expect("trace cycle must be backed by a final Jolt instruction row");
         let pc =

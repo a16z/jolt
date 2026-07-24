@@ -117,7 +117,10 @@ fn catalogs_match_planner_regeneration() {
 /// PROBE_NUM_VARS / PROBE_NUM_POLYS.
 #[test]
 #[ignore = "diagnostic printout for perf work"]
-#[expect(clippy::print_stdout, reason = "diagnostic printout is the test's output")]
+#[expect(
+    clippy::print_stdout,
+    reason = "diagnostic printout is the test's output"
+)]
 fn print_expanded_k256_schedule() {
     use akita_config::{policy_of, CommitmentConfig};
     use akita_planner::find_group_batch_schedule;
