@@ -31,9 +31,9 @@ jolt-r1cs = ["default", "field-inline"]
 jolt-program = ["default", "image,field-inline"]
 jolt-riscv = ["default", "field-inline"]
 jolt-verifier = [
-    "default",
-    { features = "prover-fixtures", release = true },
-    { features = "prover-fixtures,zk", release = true },
+  "default",
+  { features = "prover-fixtures", release = true },
+  { features = "prover-fixtures,zk", release = true },
 ]
 
 [floors]
