@@ -862,7 +862,7 @@ mod tests {
     #![expect(
         clippy::expect_used,
         clippy::unwrap_used,
-        reason = "tests unwrap conversions of well-formed inputs"
+        reason = "tests assert successful conversions and exact error text"
     )]
 
     use super::*;
@@ -1004,6 +1004,85 @@ mod tests {
         assert_ne!(
             mle_big_endian(&transformed, &point),
             mle_big_endian(&evals, &point),
+        );
+    }
+
+    #[test]
+    fn sparse_unit_polynomial_rejects_malformed_index_sets() {
+        let err = sparse_unit_polynomial(usize::BITS as usize, [0])
+            .expect_err("2^64 domain must overflow");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("bit width")),
+            "unexpected error: {err}"
+        );
+
+        let err =
+            sparse_unit_polynomial(3, [0]).expect_err("domain below the ring dimension rejects");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("smaller than ring dimension")),
+            "unexpected error: {err}"
+        );
+
+        let err = sparse_unit_polynomial(6, [64]).expect_err("out-of-domain index rejects");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("outside domain size 64")),
+            "unexpected error: {err}"
+        );
+
+        let err = sparse_unit_polynomial(6, [3, 3]).expect_err("duplicate index rejects");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("more than once")),
+            "unexpected error: {err}"
+        );
+    }
+
+    struct HugeDimensionPoly;
+
+    impl MultilinearPoly<AkitaField> for HugeDimensionPoly {
+        fn num_vars(&self) -> usize {
+            usize::BITS as usize
+        }
+
+        fn evaluate(&self, _point: &[AkitaField]) -> AkitaField {
+            unreachable!("the dimension check rejects before any evaluation")
+        }
+
+        fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[AkitaField])) {
+            unreachable!("the dimension check rejects before any row is streamed")
+        }
+    }
+
+    #[test]
+    fn akita_ordered_evaluations_rejects_unrepresentable_domains() {
+        let err = akita_ordered_evaluations(&HugeDimensionPoly)
+            .expect_err("2^64 evaluation domain must overflow");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("bit width")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn deserialize_akita_rejects_trailing_bytes() {
+        let shape = akita_types::LevelProofShape {
+            extension_opening_reduction: None,
+            v_coeffs: 3,
+            stage1_stages: Vec::new(),
+            stage2_sumcheck_proof: vec![3, 3],
+            stage3_sumcheck: None,
+            next_witness_binding: akita_types::NextWitnessBindingShape::TerminalInnerState,
+        };
+        let mut bytes = serialize_akita(&shape).expect("shape serializes");
+        let roundtrip: akita_types::LevelProofShape =
+            deserialize_akita(&bytes, &()).expect("exact bytes deserialize");
+        assert_eq!(roundtrip, shape);
+
+        bytes.push(0);
+        let err = deserialize_akita::<akita_types::LevelProofShape>(&bytes, &())
+            .expect_err("trailing bytes must be rejected");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")),
+            "unexpected error: {err}"
         );
     }
 }
