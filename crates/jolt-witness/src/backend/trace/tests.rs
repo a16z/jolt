@@ -905,7 +905,7 @@ fn excluded_ids_report_their_classification() {
     }
     for id in [
         JoltVirtualPolynomial::UnivariateSkip,
-        JoltVirtualPolynomial::BytecodeValStage(0),
+        JoltVirtualPolynomial::BytecodeValClaim(0),
         JoltVirtualPolynomial::BytecodeReadRafAddrClaim,
         JoltVirtualPolynomial::BooleanityAddrClaim,
         JoltVirtualPolynomial::BytecodeClaimReductionIntermediate,

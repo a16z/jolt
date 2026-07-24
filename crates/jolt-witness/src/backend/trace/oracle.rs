@@ -145,7 +145,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 | V::InstructionFlags(_) => Ok(Shape::new(self.trace_log_rows(), Dense)),
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
-                | V::BytecodeValStage(_)
+                | V::BytecodeValClaim(_)
                 | V::BytecodeReadRafAddrClaim
                 | V::BooleanityAddrClaim
                 | V::BytecodeClaimReductionIntermediate
@@ -250,7 +250,7 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
                 }
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
-                | V::BytecodeValStage(_)
+                | V::BytecodeValClaim(_)
                 | V::BytecodeReadRafAddrClaim
                 | V::BooleanityAddrClaim
                 | V::BytecodeClaimReductionIntermediate
