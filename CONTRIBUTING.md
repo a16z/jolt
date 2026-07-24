@@ -90,6 +90,18 @@ cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
 ```
 
+## PR Titles and Commit Messages
+
+PR titles must follow [Conventional Commits](https://www.conventionalcommits.org/) — CI enforces this (`.github/workflows/pr-title.yml`):
+
+```
+<type>[optional scope][optional !]: <description>
+```
+
+Allowed types: `feat` `fix` `chore` `docs` `refactor` `perf` `test` `build` `ci` `style` `revert` `spec`
+
+Since PRs are squash-merged, only the PR title is checked — individual commit messages are not.
+
 ## Code Style
 
 - `cargo fmt` + `cargo clippy` with zero warnings
