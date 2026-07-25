@@ -511,6 +511,22 @@ pub struct AkitaProverHint {
     pub(crate) polynomials: AkitaHintPolynomials,
 }
 
+impl AkitaProverHint {
+    /// Drop the one-hot polynomials' cached block storage (trace-scale, ~8
+    /// bytes per hot entry across the whole committed group). The blocks are
+    /// rebuilt from the retained hot indices when the stage-8 opening fold
+    /// next asks for them, so calling this right after commit shrinks the
+    /// standing footprint across every intermediate proving stage at the cost
+    /// of one parallel rebuild pass inside the fold.
+    pub fn drop_one_hot_block_caches(&self) {
+        if let AkitaHintPolynomials::OneHot(polys) = &self.polynomials {
+            for poly in polys.iter() {
+                poly.clear_block_cache();
+            }
+        }
+    }
+}
+
 /// Backend representation of the committed polynomials, produced at commit
 /// time and reused when opening. The variant doubles as the source-kind
 /// discriminator, so a hint can never pair one kind's metadata with another

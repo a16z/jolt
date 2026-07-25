@@ -1450,6 +1450,13 @@ impl AkitaPackedProver<'_> {
             reason: error.to_string(),
         })?;
 
+        // The commit sweep is done with the block cache; drop it here so its
+        // trace-scale footprint (~8 B per hot entry across all committed
+        // columns, ~15 GB at 2^26) does not sit under every proving stage.
+        // The stage-8 opening fold rebuilds it from the retained hot indices
+        // in one parallel pass.
+        hint.drop_one_hot_block_caches();
+
         // Absorb the packed commitment objects exactly where and how the
         // verifier's `absorb_commitments` akita arm does.
         append_length_prefixed(&mut self.transcript, b"commitment", &commitment);
