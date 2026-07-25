@@ -22,6 +22,17 @@ On `perf/optimize-akita-prover` (jolt) + `perf/onehot-commit-sweep`
 Done when: primary goal met AND every queue item is landed or written into
 the dead-end ledger with a measurement — or all items are exhausted.
 
+## Closing comparison (2026-07-25, back-to-back cooled, same-night)
+
+| scheme | prove | verify | peak RSS |
+|---|---|---|---|
+| akita packed (this branch, Q2A+Q6) | **93.55 s** | 192 ms | **87.35 GB** |
+| dory (same branch, no akita feature) | 109.46 s | 96 ms | (not sampled) |
+
+Same-night ratio **1.17×** (drift hits both legs equally; in the 91.93-era
+reference conditions the campaign's ratio was ~1.24×: ~90.3 vs 112-114).
+Dory prover preprocessing that run: 31.0 s (not counted in prove).
+
 ## State (2026-07-25, campaign closed — queue exhausted, goal not met)
 
 333 s campaign start → **~90 s** in 91.93-reference conditions (best
