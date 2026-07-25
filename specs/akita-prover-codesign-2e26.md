@@ -22,19 +22,29 @@ On `perf/optimize-akita-prover` (jolt) + `perf/onehot-commit-sweep`
 Done when: primary goal met AND every queue item is landed or written into
 the dead-end ledger with a measurement — or all items are exhausted.
 
-## State (2026-07-24, evening)
+## State (2026-07-25, campaign closed — queue exhausted, goal not met)
 
-333 s at campaign start → 90.27 s now (dory same-branch ≈ 112-114 s).
-MACHINE-DRIFT NOTE: the 91.93 record does not reproduce tonight — the
-same-code baseline re-ran at 96.31 (B1, +4.4 s ambient); accept decisions
-tonight used same-night A/B pairs + traced spans, not the stale record.
-Landed: A1 kernel chunking; J2+J3 decode dedupe (shared Spartan, sped dory
-too); P1 rank-aware catalogs (root n_a 7→6); A5 fused multi-poly sweep with
-self-reducing accumulators + bench-tuned tiles (commit 96→~45 s); Q2A
-RaIndices sharing into 6b inits (9e957dbfc, span −2.3 s, A/B 96.31→90.27).
-Attribution (95.2 s traced, tonight): commit 44.1 | fold/opening ~15.6
-(grind-fold + onehot_accumulate) | stage1 8.5 | stage6b lattice 6.0 |
-stages 3/4/5/6a/7 ~17.1 | RSS 94.7 GB.
+333 s campaign start → **~90 s** in 91.93-reference conditions (best
+same-night A/B'd reading 90.27; the evening's monotone ambient drift
++~1 s/h put late readings at 94). RSS **94.9 → 87.3 GB**. Goal ≤65 s NOT
+met: it had banked on Q1 (−8-18), Q3 (−3-9) and Q4 (−4-6), all three of
+which died under measurement (kernel already at machine rate; premise
+false; candidates circular/sub-bar — see the queue entries).
+MACHINE-DRIFT NOTE: the 91.93 record does not reproduce late-night — the
+same-code baseline re-ran at 96.31 (B1); accept decisions used same-night
+A/B pairs + traced spans, never the stale record.
+Landed this campaign: A1 kernel chunking; J2+J3 decode dedupe; P1
+rank-aware catalogs (root n_a 7→6); A5 fused multi-poly sweep (commit
+96→~44 s); **Q2A** RaIndices sharing into 6b inits (jolt 9e957dbfc, span
+−2.3 s, A/B 96.31→90.27); **Q6** block-cache drop post-commit (akita
+eee5ad1f + jolt 3706e1290, RSS −7.6 GB, perf-neutral within gate).
+Attribution (95.2 s traced, drift-era): commit 44.1 | fold/opening ~15.6
+| stage1 8.5 | stage6b 6.0 | stages 3/4/5/6a/7 ~17.1.
+Open threads, ranked: Q6 remainder to ≤60 GB (A-free + stage-3/4
+transients); Q3 note awaiting user verdict (recommendation: close; msb
+worth ~net −1 s only); Q1b resurrection diff (−1.2 s, sub-bar); Q2B
+stage-7 hamming decode reuse (RSS-gated); Q5 uniskip SIMD (~−1-1.5 s,
+shared-code risk).
 
 Facts that bound the work: PIOP already runs over the 128-bit field
 (`AkitaPackedScheme::Field = AkitaFp128`, in-field challenges); commit work
@@ -180,25 +190,47 @@ preset. Residual fold-side floor: the accumulate itself (~51 ns/entry over
 ~1.8 G entries — position-sorted streaming, already parallel) — no bounded
 idea ≥ the accept bar found.
 
-### Q5 [ENG] Stage1 residual + audited small items — expect −2 to −4 s
+### Q5 [CLOSED 2026-07-24 — audited smalls are phantoms/sub-bar; uniskip already tuned]
 
-Stage1 (8.0 s): uniskip extended evals 3.1 (S64/S128 integer products,
-SIMD candidates), materialise 3.1, claimed-inputs 1.8; shared code, muldiv
-gates mandatory. Audited smalls to bundle: `CompactPolynomial::bind_parallel`
-LowToHigh frees the old buffer synchronously each round — use
-`drop_in_background_thread` (compact_polynomial.rs:256, 3,141 calls);
-shift Phase2 serial `for j in 0..half_n` loop + reduce-per-op products
-(spartan/shift.rs:866); bytecode address-phase reduced products
-(bytecode/read_raf_checking.rs:472). Each bounded (√T/K domains).
+Span-sized against the 2^26 trace: `ShiftSumcheckProver::compute_message`
+= **0.00 s** across 26 rounds (the "serial loop" domain is tiny — the item
+was a phantom; shift's real cost is initialize 1.35 + ingest 1.23);
+bytecode address-phase products already parallel over a K/2 = 2^12 domain
+(≤0.2 s); the bind-frees are the only real small, bounded by
+`MultilinearPolynomial::bind_parallel` excl 2.21 s total ⇒ −0.3 to −0.8 s
+expected — implemented (`drop_in_background_thread` in
+CompactPolynomial::bind/bind_parallel + SmallScalar: Send + 'static) and
+REVERTED as sub-bar; diff trivially reproducible. Stage1's remaining 8 s:
+uniskip extended-evals loop verified already deep-tuned (decode-carry,
+S192 fmadd accumulation, one montgomery reduce per x_out — outer.rs:
+200-272); the "S64/S128 SIMD" residual means vectorizing the R1CSEval
+integer products — shared Spartan surface, muldiv-gated, upside ~1-1.5 s
+of the 3.3 s span, not reliably ≥ bar. No Q5 component clears the accept
+criteria alone or bundled (~-1 to -2 s combined best case, high shared-
+code risk on the only large piece).
 
-### Q6 [ENG] RSS attribution and reduction — target ≤60 GB; possible 1-3 s side win
+### Q6 [LANDED first fix 2026-07-24 — RSS 94.9→87.3 GB; target ≤60 GB not reached, remainder scoped]
 
-94.9 GB vs dory 36.6; ~30 GB unattributed (peak varied 76-95 GB with phase
-overlap). Known slabs: expanded A 12.6 GB; block cache 15.6 GB (droppable
-post-commit or rebuildable from u8 indices at K≥D); fold buffers ∝ ppb.
-First step: allocative build at 2^24 (`RUST_LOG=debug --features
-allocative`), attribute the peak, then lifetime fixes (drop/rebuild block
-cache around the fold, free A after last sweep). Perf-neutrality gate ±2%.
+Attribution done (0.5 s RSS sampler aligned to trace phases; the packed
+path has NO allocative instrumentation — pivoted): pre-prove standing
+52.7 GB (trace 4.1 → witness/setup/blocks build to 52.7 by t=15 s);
+commit window flat 67-69; **peak 87.6 GB sampled in stages 3-4**
+(stage3 ramps 70.9→81.6, stage4 spikes); 6b releases to 69.6; the fold
+DECLINES 69.6→60.5. time -l peak 94.8 (sampler misses the spike top).
+LANDED: drop the one-hot block cache (~15 GB) right after the commit
+absorb — `OneHotPoly::clear_block_cache` (akita eee5ad1f) +
+`AkitaProverHint::drop_one_hot_block_caches` + packed.rs call (jolt
+3706e1290); blocks_for transparently rebuilds inside the stage-8 fold
+(~1 s). Sampled peak 87.6→78.2, time -l 94.8→87.3/87.2 (two cooled
+runs); perf 92.96→94.39/94.06 vs adjacent pre-fix run = +1.1-1.4 s,
+inside the ±2% gate (ambient drifted ~+1 s/h all evening). REMAINING to
+≤60 GB (scoped, not implemented): (a) expanded A 12.9 GB — freed-after-
+sweep needs a setup-lifecycle API (`CpuPreparedSetup.expanded` is an
+Arc shared for potential re-proves; regen costs ~2.1 s
+derive_public_matrix_flat); (b) the stage-3/4 transient (+10-19 GB over
+standing, jolt-side val/LT/wa materializations) is now the peak owner;
+(c) pre-prove standing 52.7 GB (witness indices + setup + trace) bounds
+everything below ~53 without deeper surgery.
 
 ### Q7 [DEFERRED — do not work at 2^26]
 
