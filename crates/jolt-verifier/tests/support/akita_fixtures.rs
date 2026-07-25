@@ -146,7 +146,7 @@ fn generate_advice() -> AkitaFixtureCase {
             .expect("transparent packed setup");
     let trusted_commitment = trusted_object.commitment.clone();
     let proof = prover
-        .prove_packed(&object_setup, Some(trusted_object), None)
+        .prove_packed(&object_setup, Some(&trusted_object), None)
         .expect("packed prover");
     let preprocessing = akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
     AkitaFixtureCase {
@@ -191,7 +191,7 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
             .expect("transparent packed setup");
     let program_one_hot_commitment = program_one_hot.commitment.clone();
     let proof = prover
-        .prove_packed(&object_setup, None, Some(program_one_hot))
+        .prove_packed(&object_setup, None, Some(&program_one_hot))
         .expect("packed prover");
     let preprocessing = akita_verifier_preprocessing(
         &prover_preprocessing,
