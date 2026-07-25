@@ -51,7 +51,7 @@ For any new properties the user adds that don't map to an existing `jolt-eval` i
 Record changes to existing `jolt-eval` invariants and any new ones to add in the "Invariants" section of the template.
 
 #### Intent — Non-Goals
-Ask: "What is explicitly out of scope?" Push back if non-goals are vague — "you said 'not performance-critical', but the hot path in `poly/` multiplies across thousands of rounds. Is there a concrete budget?"
+Ask: "What is explicitly out of scope?" Push back if non-goals are vague — "you said 'not performance-critical', but the hot path in `crates/jolt-poly/` multiplies across thousands of rounds. Is there a concrete budget?"
 
 #### Evaluation — Acceptance Criteria
 Ask: "What test would prove this works? Give me concrete, checkable criteria." Each criterion must be a checkbox item. Push for specificity — "existing tests pass" is not enough; ask what NEW tests are needed.

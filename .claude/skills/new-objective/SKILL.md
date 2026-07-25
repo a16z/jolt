@@ -41,102 +41,10 @@ This skill handles all the boilerplate: creating the objective struct, implement
 
 ## Phase 3: Implement
 
-### For Static Analysis Objectives
+Create the objective file following the full template for the objective kind (both in this skill's directory):
 
-Create `jolt-eval/src/objective/code_quality/<objective_name>.rs`:
-
-```rust
-use std::path::Path;
-use crate::objective::{
-    MeasurementError, Objective, OptimizationObjective, StaticAnalysisObjective,
-};
-
-pub const <UPPER_NAME>: OptimizationObjective =
-    OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::<VariantName>(<Name>Objective {
-        target_dir: "<target_directory>",
-    }));
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct <Name>Objective {
-    pub(crate) target_dir: &'static str,
-}
-
-impl <Name>Objective {
-    pub fn collect_measurement_in(&self, repo_root: &Path) -> Result<f64, MeasurementError> {
-        let src_dir = repo_root.join(self.target_dir);
-        // Implement measurement logic
-        todo!()
-    }
-}
-
-impl Objective for <Name>Objective {
-    type Setup = ();
-
-    fn name(&self) -> &str { "<objective_name>" }
-
-    fn description(&self) -> String {
-        format!("Description of measurement in {}", self.target_dir)
-    }
-
-    fn setup(&self) {}
-
-    fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        self.collect_measurement_in(repo_root)
-    }
-
-    fn units(&self) -> Option<&str> { Some("units") }
-}
-```
-
-### For Performance Objectives
-
-Create `jolt-eval/src/objective/performance/<objective_name>.rs`:
-
-```rust
-use crate::objective::Objective;
-
-pub const <UPPER_NAME>: OptimizationObjective =
-    OptimizationObjective::Performance(PerformanceObjective::<VariantName>(<Name>Objective));
-
-pub struct <Name>Setup {
-    // Pre-computed data for each iteration
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct <Name>Objective;
-
-impl Objective for <Name>Objective {
-    type Setup = <Name>Setup;
-
-    fn name(&self) -> &str { "<objective_name>" }
-
-    fn description(&self) -> String {
-        "What is being benchmarked and at what scale".to_string()
-    }
-
-    fn setup(&self) -> <Name>Setup {
-        // Use thread_local! { static SHARED: ... } pattern for expensive one-time init
-        // that should be amortized across Criterion iterations.
-        // Return a fresh Setup that can be consumed by run().
-        todo!()
-    }
-
-    fn run(&self, setup: <Name>Setup) {
-        // The hot path that Criterion measures.
-        // Use std::hint::black_box() to prevent dead-code elimination.
-        todo!()
-    }
-
-    fn units(&self) -> Option<&str> { Some("s") }
-}
-```
-
-**Performance objective guidelines:**
-- Use `thread_local!` with a `Shared` struct for expensive setup (random data generation, etc.) that should be amortized
-- The `setup()` method is called per-iteration by Criterion — keep it cheap (clone from shared state)
-- The `run()` method is what Criterion measures — this is the hot path
-- Use `std::hint::black_box()` on the result to prevent the compiler from optimizing away the computation
+- **Static analysis**: `jolt-eval/src/objective/code_quality/<objective_name>.rs` — follow `references/static-analysis.md`
+- **Performance**: `jolt-eval/src/objective/performance/<objective_name>.rs` — follow `references/performance.md` (includes Criterion setup/run guidelines)
 
 ## Phase 4: Register in Enums
 
@@ -190,7 +98,7 @@ Edit `jolt-eval/src/objective/objective_fn/mod.rs`:
 
 ## Phase 6: Create Criterion Benchmark (performance objectives only)
 
-Create `jolt-eval/benches/<objective_name>.rs`:
+Performance objectives are measured via Criterion — without the bench file, the optimization harness can't measure them. Create `jolt-eval/benches/<objective_name>.rs`:
 
 ```rust
 use jolt_eval::objective::performance::<objective_name>::<Name>Objective;
@@ -223,25 +131,5 @@ cargo bench -p jolt-eval --bench <objective_name> -- --test
 If any step fails, fix the issue and re-run.
 
 </Steps>
-
-<Examples>
-<Good>
-User: "/new-objective cyclomatic_complexity"
-Action: Asks whether static or performance, creates the objective file, registers in all enums, adds objective function, runs tests.
-Why good: Full pipeline — every enum, dispatch method, and test count is updated.
-</Good>
-
-<Bad>
-User: "/new-objective my-objective"
-Action: Accepts the name with a hyphen.
-Why bad: Rust identifiers use underscores, not hyphens. Should reject and suggest `my_objective`.
-</Bad>
-
-<Bad>
-User: "/new-objective bind_compact"
-Action: Creates a performance objective but doesn't create the Criterion benchmark file.
-Why bad: Performance objectives are measured via Criterion — without the bench file, `cargo bench` won't find it and the optimization harness can't measure it.
-</Bad>
-</Examples>
 
 Task: Implement a new objective for jolt-eval. {{ARGUMENTS}}
