@@ -274,9 +274,11 @@ is welcome but not required.
 - [ ] `#[sumcheck(external)]`, `<Stage>ExternalMembers`, `PrepareSumcheck`,
       `SumcheckPreparer`, and `BackendPreparer` do not exist in the workspace.
 - [ ] jolt-kernels crate-root slot-trait modules reduced to the non-sumcheck set
-      (`commitment`, `opening`, plus `backend`/`error`); every batch member's kernel is
-      reachable via `HasKernel<F, R>` → `PrepareKernel<F, R>`; relation double-construction
-      is gone — kernels receive `&R`.
+      (`commitment`, `opening`, plus `backend`/`error`); the remaining crate-root modules
+      (`kernel`, `uniskip`, `committed_program`, `precommitted_reduction`) are sanctioned
+      elsewhere in this spec and serve no batch member directly; every batch member's kernel
+      is reachable via `HasKernel<F, R>` → `PrepareKernel<F, R>`; relation
+      double-construction is gone — kernels receive `&R`.
 - [ ] The stage-6b recipe contains no hand-mirrored batch legs (built by the promoted
       `build_from_parts`), and the stage-1/2 fronts hand no kernel objects to the driver —
       the remainder members mint through `PrepareKernel` from session state.
@@ -364,8 +366,8 @@ stage3_sumchecks_members!(impl_stage_prover);
 id) → `prove_batch` → `derive_opening_points` → per-member `validate_derived_tables` → typed
 `output_claims()` into the aggregate → per-member `park_residue` (cross-batch residues into
 the session; the call consumes the kernel, so it follows the borrowing extraction) →
-`validate_output_claims` → `expected_final_claim` hard check → `curate_opening_values`
-(default: generated canonical order) → `recorder.finish`.
+`curate_opening_values` (default: generated canonical order) → `validate_output_claims` →
+`expected_final_claim` hard check → `recorder.finish`.
 
 **Edge classes and their mechanisms** (the exhaustive list; v1's `external` row replaced):
 
