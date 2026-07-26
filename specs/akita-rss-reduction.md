@@ -396,6 +396,32 @@ then T3 trace compaction (−46 everywhere), M5, M6 last (entry
 compaction only nets ~15-20 B/c — val_coeff is 16 of ~48.5 B/entry and
 the first bind already produces fresh entry objects to lift into).
 
+### T2 DESIGN (2026-07-26, probe-verified — fold-block streaming)
+
+Probe (`AKITA_NTT_BUILD_BACKTRACE=1`, blocks_for instrumented): ALL fold
+block builds flow through ONE call chain — root-fold
+`fold_kernels::evaluate_claims_at_prepared_point →
+prepare_and_evaluate_opening_group → evaluate_poly_at_multiplier_point →
+OneHotView evaluate_and_fold → poly.fold_blocks/_ring` (the 7 s
+`fold_evaluate_claims` span); the tensor decompose then reuses the cache.
+Conversion (akita):
+1. `fold_blocks`/`fold_blocks_ring` (ops.rs:336-370) iterate block-major,
+   parallel, each block once — replace `blocks_for` with
+   `commit_plan_blocks_lazy` + per-block `build_range(i..i+1)`.
+2. `onehot_accumulate_tensor` (accumulate.rs:72) threads over POSITIONS
+   and visits each (block, window) once; (block b, pos [p0,p1)) = ring
+   range [b·ppb+p0, b·ppb+p1) — contiguous in the index columns, so add
+   `onehot_accumulate_tensor_lazy` building per-(block,window) entries
+   (generalize LazyOneHotBlocks to ring-range builds, keeping
+   pos_in_block absolute = ring % ppb, which the range builders already
+   do). Wire from `decompose_fold_batched_tensor_onehot`
+   (decompose_fold.rs:156). Eager fns stay untouched for small shapes.
+3. Leave `decompose_fold` single/batched non-tensor on the cache (other
+   shapes only, per probe).
+Cost: two index passes instead of build+two cached reads (~+1-2 s fold).
+Expected: fold 39.94 → ~28 GiB sampled (slope 515 → ~326); with T3
+(trace −46) the peak window lands ≤300 B/c = GOAL.
+
 ### Deferred / non-goals
 
 Trace compaction to projection arrays (~−3 GB, touches every stage);
