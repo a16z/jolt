@@ -83,6 +83,22 @@ stage-8 fold from retained indices; akita `clear_block_cache` +
   sampler agreeing on the window it came from AND prove within ±2% on the
   adjacent pair AND gates green. Else revert + ledger.
 
+## EXTENDED GOAL (2026-07-26, post-M4): ≤300 B/cycle at the peak window
+
+Primary (48 GiB) met at 47.06 GB. New bar: every window's per-cycle slope
+≤ 300 B/c, i.e. peak sampled ≤ window-fixed + 18.75 GiB at 2^26.
+Fixed-term book: commit window carries A-field 12 (its last reader);
+post-commit windows carry retained prefix 2; fold adds slots ≤5.6.
+Measured slopes at M4N: commit (43.7−12)×16 ≈ 507, fold (41.1−7.6)×16 ≈
+536, stage-4 spike (37.6−2)×16 ≈ 570 (sustained stages ~470).
+Queue to 300: M8 commit tile blocks (−158 B/c commit), M6 registers
+matrix compaction + stage-4 transients (−~150 B/c spike), M5 index dedup
+(−60 stages+fold), T2 fold-block streaming (−~158 B/c fold — reopened
+non-goal, implementation-layer only), T3 trace compaction (96→~50
+everywhere — reopened non-goal). Same guardrails; ±2% vs the 118.78 s
+M0 baseline; accept bar per item: the touched window's slope drops by
+the item's expectation within ±20% and no other window regresses >1 GiB.
+
 ## Work queue (descending expected GB, dependencies noted)
 
 ### M0 [ENG] Post-sync re-baseline — prerequisite, not an optimization
@@ -359,6 +375,26 @@ tile pass (~4 GiB in flight instead of 13.6 resident). Only matters once
 M2/M4 make the commit window the peak. The FOLD still needs all blocks
 concurrently (position-major accumulate) — out of scope here (fold-layout
 redesign is the ledgered non-goal).
+
+### M8 VERDICT (2026-07-26 evening): ACCEPT — akita 859152a9
+
+Lazy per-tile commit blocks (block-range `from_indices` variants; the
+sweep materializes one L2 tile per thread from the retained index
+columns — blocks partition the ring-element space contiguously, so
+per-tile builds sum to one pass). Peak 47.06→44.11 GB `time -l`; commit
+window 43.7→35.06 GiB sampled (−246 B/c, beat the −158 target); prove
+100.23 s (+0.9 for in-sweep builds). BONUS: every later window dropped
+~6-9 GiB — the 13.6 GiB cache's freed pages had been lingering in the
+allocator (explains Q6's historical under-delivery). Slopes now: commit
+369, stage-4 spike ~517 (gross, incl. stage-3 residue), fold **515 =
+the binder** (39.94 GiB sampled peak, full blocks rebuilt for the fold).
+Queue re-ranked for the ≤300 goal: T2 fold streaming (probe of
+`blocks_for` fold consumers in flight; the tensor-fold accumulate
+threads over positions and (block, position-window) is ALSO a
+contiguous ring range, so the M8 trick applies sliced the other way),
+then T3 trace compaction (−46 everywhere), M5, M6 last (entry
+compaction only nets ~15-20 B/c — val_coeff is 16 of ~48.5 B/entry and
+the first bind already produces fresh entry objects to lift into).
 
 ### Deferred / non-goals
 
