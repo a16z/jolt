@@ -174,6 +174,25 @@ impl AkitaProverSetup {
         self.verifier.one_hot_k
     }
 
+    /// Release the setup matrix's field form down to the prefix that still
+    /// serves post-commit consumers (slot rebuilds, small setup reads). The
+    /// commit sweep is the last full-width reader; everything after either
+    /// fits the prefix or streams per-element from the seed, so the ~10 GiB
+    /// tail (at 2^26) would otherwise sit under every remaining window. The
+    /// released tail re-derives from seed on any unexpected wide read
+    /// (correct, logged, slow) — re-proves regenerate it the same way.
+    pub fn release_setup_matrix_tails(&self, keep_ring_elements: usize) {
+        for prepared in [
+            self.prepared_backend_setup.as_deref(),
+            self.prepared_one_hot_backend_setup.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _freed = prepared.release_setup_matrix_to_prefix(keep_ring_elements);
+        }
+    }
+
     /// Drop the prepared backends' built NTT slots (the CRT-transformed
     /// copies of A — ~2.5x A's field form). Slots rebuild single-flight on
     /// their next use, so this is safe anywhere; calling it right after

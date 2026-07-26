@@ -1461,6 +1461,11 @@ impl AkitaPackedProver<'_> {
         // they don't sit under stages 1-7, and the fold's first use rebuilds
         // them in ~2 s.
         object_setup.drop_ntt_slots();
+        // And for A's field form: the commit sweep was its last full-width
+        // reader. Keep a 2^21-ring prefix for the fold's slot rebuilds and
+        // small setup reads; the ring-switch relation streams per-element
+        // from the seed, so the ~10 GB tail never has to come back.
+        object_setup.release_setup_matrix_tails(1 << 21);
 
         // Absorb the packed commitment objects exactly where and how the
         // verifier's `absorb_commitments` akita arm does.

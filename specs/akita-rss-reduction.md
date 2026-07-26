@@ -269,6 +269,28 @@ still leaves fold ~49.3 → ~53 `time -l`). Post-M7 constraints:
   window 43.7 sampled ≈ ~47.5 `time -l` → **PRIMARY met with margin**;
   M8 (commit tile blocks, −10) then chases STRETCH 35.
 
+VERDICT (2026-07-26, M4N confirming run, quiet-gated): **ACCEPT — PRIMARY
+TARGET MET**. Peak **87.71 → 47.06 GB `time -l` (−46%)** / 43.7 GiB
+sampled, prove 99.30 s (−16.4% vs baseline; +3.7 s vs pre-M4 = seed
+streaming + release cost). Peak is now the COMMIT window (43.7 sampled at
+t≈56) — stages ≤37.6, fold ≤41.1. As-built (akita 4d56bfeb + jolt):
+`SharedSetupMatrix` (seed-backed metadata, covering/full over a swappable
+Arc, release_to_prefix, `MatrixElementDeriver` with fn-ptr-captured
+derivation so no bound cascade); packed.rs releases to a 2^21-ring prefix
+after the commit absorb; relation kernels stream via `StreamedASource`;
+relation weight events read per-column slices via `SetupRowFamily`;
+setup-contribution scans cover `required` rows (covering the padded view
+length was a 12 GiB re-derive per level — found via the derive log +
+backtrace). LEDGER NOTE for user verdict: first verify per process
+2.6 s (was 0.2 s riding the prover's residency) — the verifier's
+root-level setup scan reads the full matrix, which now re-derives once
+and re-caches (later proves re-release; standalone verifiers pay full
+derivation at setup anyway). The protocol's real answer is the
+setup-prefix-slot offload, unplanned at this shape — a planner/config
+item if 2.6 s matters. Remaining queue to STRETCH (≤35 GB): M8 lazy
+commit tile blocks (−~10 on the new peak window), M5 index dedup, M6
+registers-matrix compaction.
+
 M6 allocative decomposition (2^24 flamegraphs, ×4 for 2^26):
 RegistersReadWriteCheckingProver 6.3 GiB total at 2^26 — entries vec
 (`RegistersCycleMajorEntry<Fp128, LookupTableIndex>`, gamma-folded F
