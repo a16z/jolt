@@ -242,6 +242,42 @@ NTT conversion (M2) is the sole post-commit reader, convert-then-free
 inside the same call. Mind the Arc: dropping must actually release (no
 second strong ref held by the setup contract or NTT keying).
 
+DESIGN UPDATE (2026-07-26, post-M7): **M4 is now THE decisive item** —
+after M2/M3/M7 the three windows sit within 4 GiB of each other (commit
+43.7 / stage-3-4 spike 51.0 / fold 49.3 sampled) and A-field 12 GiB is
+in ALL post-commit windows; nothing else reaches primary (M6 fully fixed
+still leaves fold ~49.3 → ~53 `time -l`). Post-M7 constraints:
+- The STREAMED relation kernels read `expanded.shared_matrix` flat at
+  FULL width per fold level (once each) — so post-commit consumers are
+  (a) slot rebuilds at prefix ≤2^21 and (b) streamed relation full-width
+  reads. (b) must switch to SEED-derivation: `derive_public_matrix_flat`
+  uses `LabeledMatrixXof::entry_rng(idx)` — per-ring-element seekable,
+  so the streamed kernels derive element `i·width+j` on the fly (XOF +
+  from_ring transform per element; the relation already pays the
+  transform, XOF adds F::random ×64 per element — measure, margin is
+  ~25 s vs the ±2% gate).
+- Then the release: `shared_matrix` is immutably shared
+  (`Arc<AkitaExpandedSetup>`, ~70 refs across 7 crates incl. verifier
+  stage3). The clean route is `RwLock<Option<FlatMatrix>>` (or
+  OnceCell-style regenerate-on-read) INSIDE AkitaExpandedSetup with a
+  guard-returning accessor + seed re-derivation for re-proves; the
+  jolt-side "swap prepared setup for a truncated-matrix twin" variant
+  dies on envelope/role-dim validation (the seed pins max_setup_len).
+  Sized: one focused file (akita-types setup.rs, 28 refs) + guard
+  plumbing at ~15 consumer sites. Do it FIRST next session, fresh.
+- Prediction once landed: stage windows −12, fold −12 → peak = commit
+  window 43.7 sampled ≈ ~47.5 `time -l` → **PRIMARY met with margin**;
+  M8 (commit tile blocks, −10) then chases STRETCH 35.
+
+M6 allocative decomposition (2^24 flamegraphs, ×4 for 2^26):
+RegistersReadWriteCheckingProver 6.3 GiB total at 2^26 — entries vec
+(`RegistersCycleMajorEntry<Fp128, LookupTableIndex>`, gamma-folded F
+values) 5.2 GiB = 82.5 B/cycle, RdInc regen (CompactPolynomial i128)
+1.0 GiB, RamValCheck 1.0 GiB; spike +11 over base = these + ~2.7 build
+transients. Fix shape: compact entry storage (u64 register values,
+lift-on-first-bind like CompactPolynomial) — halves the matrix; only
+worth doing AFTER M4 (window then sits at ~39 anyway).
+
 ### M5 [ENG] Index-layout dedup — expect −6 to −7 GB (stage windows), perf-neutral or better
 
 One SoA copy of the per-cycle chunk values serves all consumers:
@@ -267,6 +303,22 @@ not fully released before RamValCheck materializes wa/LT/inc/val. Audit
 drop points between the stage-3 batch end and stage-4 initialize; add
 explicit drops/`drop_in_background_thread` for bound-out polys. Sampler
 arbitrates (the window max is the metric).
+
+STATUS (2026-07-26, post-M7b): with the fold at 49.3, this window IS the
+global peak (51.0-51.1 sampled across M7I/M7J, ~55.0-55.8 `time -l`).
+FALSIFIED sub-hypothesis: replacing stage 3's
+`drop_in_background_thread(instances)` with a synchronous drop changed
+NOTHING (M7J: 51.00 same spike; reverted) — no Drop impl re-defers, so
+the spike is INTERNAL to stage-4's initializes over a ~40 base:
+`RegistersReadWriteCheckingProver::initialize` (RdInc witness regen +
+`ReadWriteMatrixCycleMajor::new` — per-cycle F entries) +
+`RamValCheckSumcheckProver::initialize` (prover.rs:1141-1152), settling
+at 45.0 and freeing to 34.5 at stage-5 entry. Next: allocative
+decomposition at 2^24 (in flight) to size matrix vs val-check vs
+witness-regen temporaries; the fix is inside those initializers
+(lazy/streamed entry values or staged build-drop), not at the stage
+boundary. M7b landed as 09d01635 (fold 51.3→49.3 sampled, peak-neutral
+standalone — enables this item to move the global peak).
 
 ### M7 [STRETCH] Seed-streamed A-NTT — the ≤35 GB unlock
 
