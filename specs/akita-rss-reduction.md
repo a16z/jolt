@@ -178,6 +178,58 @@ both-transforms-minus-cyc variant is a small enum addition in
 akita-types/ntt_cache.rs). If `cyc` IS used: split the slot so each
 transform materializes on first use and the unused one never does.
 
+MEASURED (2026-07-26, M3D adjacent to M2C): extent-aware
+`with_shared_ntt(extent, f)` implemented — consumers declare rows×width,
+slot builds at the rounded max request, smallest built cover reused.
+Commit-terminal build shrank 30→5 GiB (commit plateau 68.9→38.7 GiB
+sampled, commit 43.6→40.5 s; prove 99.42→97.13 s) **but the fold rebuilt
+the FULL 12.58M-ring envelope** — the root-level ring-switch relation's
+extent is n_d·e_hat.len() = 6·2^21 = the whole matrix (protocol geometry,
+frozen). Peak 81.27→81.15 GB = below the 3 GB bar standalone, so M3 is
+NOT committed alone — it rides in the M7a composite below. Deletion
+variant is dead for good: the fused relation kernel consumes cyc at
+every level (fused_quotients.rs:233).
+
+### M7a [ENG] Stream the root relation's transforms — expect −25 GB (fold window)
+
+The root relation reads each A element exactly once per prove, so its
+matrix-scale NTT cache is pure standing memory. Streamed one-shot fused
+kernel (`fused_split_eq_quotients_one_shot_streamed`): per column tile,
+transform needed elements from A's field form in-loop
+(`from_ring_cyclic_with_params` — new cyc-only constructor — for D/B,
+`from_ring_pair_with_params` for the A quotient; identical values to the
+cache fill, so results are bit-identical — equality test in cpu.rs).
+Dispatch: relation/quotient extents > 2^21 rings stream from the field
+view; smaller extents (deeper levels, digit rows) share the ≤5 GiB
+cached slot. Non-one-shot shapes fall back to the cached path. Fold
+window should drop ~30 GiB cache → ~5 GiB slot; streaming cost ≈ the
+deleted 1.9 s envelope build, net time ~0. NOTE: this pins A's FIELD
+form as a fold-window dependency — M4 must free it only after the last
+relation streams (or re-derive from seed).
+
+VERDICT (2026-07-26, M7H adjacent-night to M0A, quiet-gated): **ACCEPT**
+(akita 268a2e47, composite with M3's extent machinery). **Peak 87.71 →
+55.10 GB `time -l` (−32.6)** / 80.4 → 51.3 GiB sampled; **prove 118.78 →
+95.61 s (−19.5%)**, fold duration unchanged (21.7 s — streaming cost
+fully absorbed by the deleted builds). It took FOUR eliminations to get
+the envelope out of the fold: (1) M2 lazy registration, (2) commit_w /
+commit_terminal_w base-dim warm skip, (3) prove.rs fold-entry role +
+terminal warm skip (`ensure_fold_level_role_ntt`), (4) the quotient-only
+z-relation (wl=0 tl=0 zl=2^21 z_cap=240) needs CRT CHUNKING — one-shot
+streaming bails — so a chunked streamed z-quotient kernel mirrors the
+cached bracketing. `AKITA_NTT_BUILD_BACKTRACE=1` dumps per-build stacks
+(this is how each was found; the harness tracing::info lines land only
+in PERF_TRACE chrome traces, not stdout). New profile (sampled): commit
+43.7 / stages ≤47.3 / fold 47.9 base + 3.4 transient spike (root-level
+stage2_sumcheck, t≈107) = 51.3 peak. Remaining slabs everywhere:
+A-field 12, blocks 13.6 (fold), slots ≤5.6 (fold), trace 6.4, indices.
+M7b (next, surgical): drop built slots after the root level's products —
+deeper levels rebuild ≤0.6 GiB in ~0.04 s — should take the fold under
+48 sampled = PRIMARY. M4 (seed-streaming: `entry_rng(idx)` is
+per-element seekable, so random access is native) then removes A-field
+from all post-commit windows → commit window becomes the peak (~47.5
+time-l) and M8 opens the path to STRETCH.
+
 ### M4 [ENG] Free A's field form after the commit sweep — expect −12 GB (stage windows)
 
 Last field-form use is the root commit sweep (t≈62 s); the object lives in
