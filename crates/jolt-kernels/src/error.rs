@@ -68,6 +68,15 @@ pub enum KernelError<F: FieldCore> {
         got: usize,
     },
 
+    /// A caller-supplied opening table keyed by a consumed input claim's id.
+    /// A consumed id's wire value must be the claim echoed back at extraction
+    /// (the dual-role inference), but tables win the extraction fallback, so
+    /// the table's bound value — an evaluation at the wrong point — would
+    /// reach the wire instead. Covers the id-as-summand-leaf case too: a leaf
+    /// requires a table, which lands here.
+    #[error("table supplied for consumed input claim {id:?}")]
+    ConsumedClaimShadowed { id: JoltOpeningId },
+
     /// A capability the kernel does not implement yet. Recoverable in
     /// principle: a caller may retry the slot against a different backend.
     #[error("unsupported: {reason}")]

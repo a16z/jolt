@@ -85,8 +85,10 @@ where
     /// resolvable — each `Opening`/`Derived` factor has a table of exactly
     /// `2^rounds` evaluations, each `Challenge` factor a drawn scalar — and
     /// assemble the prover. Dual-role openings (input/output id intersection)
-    /// need no construction-time state: extraction resolves them off the
-    /// `inputs` the driver hands back.
+    /// need no construction-time state — extraction resolves them off the
+    /// `inputs` the driver hands back — but their premise is enforced here:
+    /// a table keyed by a consumed id is rejected, so extraction's
+    /// table-then-echo fallback is unambiguous.
     ///
     /// `binding_order` is part of each relation's fixed convention — the
     /// produced round polynomials depend on it, so byte parity with the
@@ -137,6 +139,20 @@ where
                     }
                 }
             }
+        }
+
+        // The dual-role premise, enforced up front: extraction resolves an
+        // output id from its table when one exists (summand leaves and bound
+        // passenger openings alike) and echoes the consumed input claim
+        // otherwise, so a table keyed by a *consumed* id would shadow the
+        // echo with an evaluation at the wrong point.
+        if let Some(id) = inputs
+            .claims
+            .canonical_order()
+            .into_iter()
+            .find(|id| opening_tables.contains_key(id))
+        {
+            return Err(KernelError::ConsumedClaimShadowed { id });
         }
 
         Ok(Self {
@@ -777,6 +793,167 @@ mod tests {
                 BindingOrder::HighToLow,
             ),
             Err(KernelError::TableSizeMismatch { .. }),
+        ));
+    }
+
+    #[test]
+    fn construction_rejects_table_for_consumed_id() {
+        let challenges =
+            ToyChallenges::from_transcript_values([Fr::from_u64(5)].into_iter()).unwrap();
+        let advice_id = JoltOpeningId::untrusted_advice(TOY_RELATION);
+        let claims = ToyInputs {
+            total: Fr::from_u64(0),
+            untrusted: Some(Fr::from_u64(4242)),
+        };
+        let points = ToyInputs {
+            total: vec![Fr::from_u64(9); ROUNDS],
+            untrusted: None,
+        };
+        let relation = ToyRelation {
+            symbolic: ToySymbolic::new(ROUNDS),
+            reference_point: reference_point(),
+        };
+
+        // A table keyed by the consumed dual-role advice id — the shadowing
+        // case: extraction would report its bound value instead of echoing
+        // the consumed claim.
+        let mut shadowing = opening_tables();
+        let _ = shadowing.insert(advice_id, dense(66));
+        assert!(matches!(
+            NaiveSumcheckProver::new(
+                &ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+                shadowing,
+                derived_tables(&reference_point()),
+                BindingOrder::HighToLow,
+            ),
+            Err(KernelError::ConsumedClaimShadowed { id }) if id == advice_id,
+        ));
+    }
+
+    /// The ambiguous-role twin of [`ToyInputs`]: its consumed id is one of
+    /// the toy summand's own leaves, so the leaf's mandatory table collides
+    /// with the consumed claim and construction must reject it.
+    #[derive(jolt_claims::InputClaims)]
+    struct ToyLeafInputs<C> {
+        #[opening(LookupOutput, from = RegistersValEvaluation)]
+        total: C,
+    }
+
+    #[derive(Clone)]
+    struct ToyLeafSymbolic(ToySymbolic);
+
+    impl SymbolicSumcheck for ToyLeafSymbolic {
+        type RelationId = JoltRelationId;
+        type OpeningId = JoltOpeningId;
+        type DerivedId = JoltDerivedId;
+        type ChallengeId = jolt_claims::protocols::jolt::JoltChallengeId;
+        type Shape = usize;
+        type Challenges<F> = ToyChallenges<F>;
+        type Inputs<C> = ToyLeafInputs<C>;
+        type Outputs<C> = ToyOutputs<C>;
+
+        fn new(shape: usize) -> Self {
+            Self(ToySymbolic::new(shape))
+        }
+
+        fn id() -> JoltRelationId {
+            TOY_RELATION
+        }
+
+        fn rounds(&self) -> usize {
+            self.0.rounds()
+        }
+
+        fn degree(&self) -> usize {
+            self.0.degree()
+        }
+
+        fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+            opening(virt(JoltVirtualPolynomial::LookupOutput))
+        }
+
+        fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+            self.0.output_expression::<F>()
+        }
+    }
+
+    #[derive(Clone)]
+    struct ToyLeafRelation<F: Field> {
+        symbolic: ToyLeafSymbolic,
+        reference_point: Vec<F>,
+    }
+
+    impl<F: Field> ConcreteSumcheck<F> for ToyLeafRelation<F> {
+        type Symbolic = ToyLeafSymbolic;
+
+        fn symbolic(&self) -> &ToyLeafSymbolic {
+            &self.symbolic
+        }
+
+        fn derive_opening_points(
+            &self,
+            sumcheck_point: &[F],
+            _input_points: &ToyLeafInputs<Vec<F>>,
+        ) -> Result<ToyOutputs<Vec<F>>, VerifierError> {
+            let point = sumcheck_point.to_vec();
+            Ok(ToyOutputs {
+                a: point.clone(),
+                b: point.clone(),
+                instruction_ra: vec![point.clone(), point.clone()],
+                c: point,
+                untrusted: None,
+            })
+        }
+
+        fn derive_output_term(
+            &self,
+            id: &JoltDerivedId,
+            _input_points: &ToyLeafInputs<Vec<F>>,
+            output_points: &ToyOutputs<Vec<F>>,
+            _challenges: &ToyChallenges<F>,
+        ) -> Result<F, VerifierError> {
+            match id {
+                JoltDerivedId::Test => {
+                    Ok(EqPolynomial::new(self.reference_point.clone()).evaluate(output_points.a()))
+                }
+                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+            }
+        }
+    }
+
+    #[test]
+    fn construction_rejects_consumed_claim_that_is_a_leaf() {
+        let challenges =
+            ToyChallenges::from_transcript_values([Fr::from_u64(5)].into_iter()).unwrap();
+        let claims = ToyLeafInputs {
+            total: Fr::from_u64(0),
+        };
+        let points = ToyLeafInputs {
+            total: vec![Fr::from_u64(9); ROUNDS],
+        };
+        let relation = ToyLeafRelation {
+            symbolic: ToyLeafSymbolic::new(ROUNDS),
+            reference_point: reference_point(),
+        };
+        let leaf_id = virt(JoltVirtualPolynomial::LookupOutput);
+        assert!(matches!(
+            NaiveSumcheckProver::new(
+                &ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+                opening_tables(),
+                derived_tables(&reference_point()),
+                BindingOrder::HighToLow,
+            ),
+            Err(KernelError::ConsumedClaimShadowed { id }) if id == leaf_id,
         ));
     }
 }
