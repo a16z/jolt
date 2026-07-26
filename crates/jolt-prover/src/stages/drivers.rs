@@ -457,6 +457,7 @@ mod twin_tests {
 
         fn output_claims(
             &mut self,
+            _inputs: &jolt_verifier::stages::relations::SumcheckInputClaims<Fr, R>,
         ) -> Result<SumcheckOutputClaims<Fr, R>, SumcheckKernelError<Fr>> {
             assert_eq!(self.evals.len(), 1, "kernel extracted before fully bound");
             let value = self.evals[0];

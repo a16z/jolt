@@ -73,8 +73,17 @@ where
     /// Extract the member's typed produced-opening values from its fully
     /// bound state. Call after the engine's round loop has ingested every
     /// challenge.
+    ///
+    /// `inputs` is the member's consumed claims — the same struct `prepare`
+    /// received. It resolves the relation's *dual-role* openings (ids shared
+    /// by the input and output claim structs, e.g. the RAM value-check advice
+    /// cells): those never bind in the round loop, so their wire output value
+    /// is the consumed input claim read back, mirroring the verifier's
+    /// one-cell-two-readers wiring. Kernels without dual-role openings ignore
+    /// it.
     fn output_claims(
         &mut self,
+        inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>>;
 
     /// Cross-check any hand-materialized `Derived` leaf tables against the

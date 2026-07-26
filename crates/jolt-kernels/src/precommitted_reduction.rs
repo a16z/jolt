@@ -57,6 +57,8 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseOutputClaims,
 };
 
+use jolt_verifier::stages::relations::SumcheckInputClaims;
+
 use crate::{KernelError, ProofSession, SumcheckKernel, SumcheckKernelError};
 
 /// The bound-table state both phase kernels drive: the summand tables, the
@@ -357,6 +359,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, TrustedAdviceCycleP
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<TrustedAdviceCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(TrustedAdviceCyclePhaseOutputClaims {
             trusted: self.scalar_claim()?,
@@ -373,6 +376,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, UntrustedAdviceCycl
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<UntrustedAdviceCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(UntrustedAdviceCyclePhaseOutputClaims {
             untrusted: self.scalar_claim()?,
@@ -389,6 +393,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReductionCy
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
         // The chunked counterpart of `scalar_claim`: an address phase stages
         // the intermediate handoff claim (chunks come later, at stage 7); a
@@ -416,6 +421,7 @@ impl<F: Field> SumcheckKernel<F> for CycleReductionKernel<F, ProgramImageReducti
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<ProgramImageReductionCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(ProgramImageReductionCyclePhaseOutputClaims {
             program_image: self.scalar_claim()?,
@@ -432,6 +438,7 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, TrustedAdviceAddr
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<TrustedAdviceAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(TrustedAdviceAddressPhaseOutputClaims {
             trusted: self.tables.final_claim()?,
@@ -444,6 +451,7 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, UntrustedAdviceAd
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<UntrustedAdviceAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(UntrustedAdviceAddressPhaseOutputClaims {
             untrusted: self.tables.final_claim()?,
@@ -456,6 +464,7 @@ impl<F: Field> SumcheckKernel<F> for AddressReductionKernel<F, BytecodeReduction
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(BytecodeReductionAddressPhaseOutputClaims {
             chunks: self.tables.final_aux_claims()?,
@@ -470,6 +479,7 @@ impl<F: Field> SumcheckKernel<F>
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<ProgramImageReductionAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(ProgramImageReductionAddressPhaseOutputClaims {
             program_image: self.tables.final_claim()?,

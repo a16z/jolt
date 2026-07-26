@@ -39,7 +39,7 @@ use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
 };
@@ -280,6 +280,7 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
             return Err(SumcheckKernelError::NotFullyBound {

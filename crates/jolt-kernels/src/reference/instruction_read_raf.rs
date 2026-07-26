@@ -42,6 +42,7 @@ use jolt_lookup_tables::tables::suffixes::SuffixEval;
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::protocols::jolt_vm::{JoltVmWitnessPlane, Stage5InstructionReadRafRow};
 
@@ -627,6 +628,7 @@ impl<F: Field> SumcheckKernel<F> for InstructionReadRafKernel<F> {
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
             return Err(SumcheckKernelError::NotFullyBound {

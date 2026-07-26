@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelation
 use jolt_field::Field;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage6a::booleanity::{
     BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims,
 };
@@ -232,6 +232,7 @@ impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
 
     fn output_claims(
         &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BooleanityAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
             return Err(SumcheckKernelError::NotFullyBound {

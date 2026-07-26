@@ -13,10 +13,10 @@
 //! dual-role openings — ids appearing on both its typed `InputClaims` and
 //! `OutputClaims` structs — are inferred, not declared: an opening id names
 //! exactly one claim cell system-wide, so a shared id *is* the same cell and
-//! the wire output value is forced to equal the consumed input claim. The
-//! consumed claims are snapshotted at construction and re-attached at typed
-//! extraction (they are never `Expr` leaves, so no table produces them). Each
-//! round message is
+//! the wire output value is forced to equal the consumed input claim. Typed
+//! extraction resolves them straight off the `inputs` the driver hands back
+//! (they are never `Expr` leaves, so no table produces them); the kernel
+//! carries no copy. Each round message is
 //! `Expr::try_evaluate` run pointwise over the remaining hypercube — cost
 //! `O((degree+1) · 2^rounds · |Expr|)` per round, a **test oracle at harness
 //! scale, never a performance path**. It is the reference implementation
@@ -69,12 +69,6 @@ where
     challenge_values: BTreeMap<JoltChallengeId, F>,
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
-    /// The member's consumed input claims, snapshotted by id at construction.
-    /// Typed extraction consults this map only for output-struct ids no
-    /// opening table serves — realizing the dual-role inference (see the
-    /// module docs): the effective carried set is the intersection of the
-    /// output struct's ids and the input struct's ids.
-    carried_input_claims: BTreeMap<JoltOpeningId, F>,
     binding_order: BindingOrder,
     rounds_bound: usize,
 }
@@ -90,10 +84,9 @@ where
     /// Validate that every leaf of the relation's output expression is
     /// resolvable — each `Opening`/`Derived` factor has a table of exactly
     /// `2^rounds` evaluations, each `Challenge` factor a drawn scalar — and
-    /// assemble the prover. The member's consumed input claims are
-    /// snapshotted off `inputs.claims` here, so extraction can re-attach the
-    /// dual-role openings (input/output id intersection) without any
-    /// relation-specific kernel code.
+    /// assemble the prover. Dual-role openings (input/output id intersection)
+    /// need no construction-time state: extraction resolves them off the
+    /// `inputs` the driver hands back.
     ///
     /// `binding_order` is part of each relation's fixed convention — the
     /// produced round polynomials depend on it, so byte parity with the
@@ -146,23 +139,11 @@ where
             }
         }
 
-        // Every present consumed claim, by id (`filter_map`, so absent
-        // `Option` cells drop out). The output-side half of the dual-role
-        // intersection is enforced at extraction: `from_opening_values`
-        // queries exactly the output struct's ids.
-        let carried_input_claims = inputs
-            .claims
-            .canonical_order()
-            .into_iter()
-            .filter_map(|id| inputs.claims.resolve_input(&id).map(|value| (id, value)))
-            .collect();
-
         Ok(Self {
             relation: relation.clone(),
             challenge_values,
             opening_tables,
             derived_tables,
-            carried_input_claims,
             binding_order,
             rounds_bound: 0,
         })
@@ -289,15 +270,19 @@ where
 {
     type Relation = R;
 
-    fn output_claims(&mut self) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>> {
+    fn output_claims(
+        &mut self,
+        inputs: &SumcheckInputClaims<F, R>,
+    ) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         let opening_tables = &self.opening_tables;
-        let carried_input_claims = &self.carried_input_claims;
+        // Ids no table serves are the dual-role openings: read the consumed
+        // input claim back (the same cell, exactly as the verifier wires it).
         SumcheckOutputClaims::<F, R>::from_opening_values(|id| {
             opening_tables
                 .get(id)
                 .map(|table| table.evals()[0])
-                .or_else(|| carried_input_claims.get(id).copied())
+                .or_else(|| inputs.resolve_input(id))
         })
         .map_err(SumcheckKernelError::from)
     }
@@ -611,7 +596,7 @@ mod tests {
         let output_points = relation
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
-        let output_claims = naive.output_claims().unwrap();
+        let output_claims = naive.output_claims(&inputs).unwrap();
         naive
             .validate_derived_tables(&relation, &input_points, &output_points, &challenges)
             .unwrap();

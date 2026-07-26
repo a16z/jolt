@@ -224,9 +224,13 @@ where
     Ok(())
 }
 
-/// Extract one `Option` member's typed output claims when present.
+/// Extract one `Option` member's typed output claims when present. The
+/// member's consumed claims ride along for the kernel's dual-role resolution;
+/// presence agreement between kernel and cells was enforced at prepare, so a
+/// present kernel with an absent input cell is a driver bug.
 pub fn extract_optional<F, R>(
     kernel: Option<&mut (dyn SumcheckKernel<F, Relation = R> + '_)>,
+    inputs: Option<&SumcheckInputClaims<F, R>>,
 ) -> Result<Option<SumcheckOutputClaims<F, R>>, SumcheckKernelError<F>>
 where
     F: Field,
@@ -235,7 +239,13 @@ where
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
-    kernel.map(|kernel| kernel.output_claims()).transpose()
+    match (kernel, inputs) {
+        (Some(kernel), Some(inputs)) => kernel.output_claims(inputs).map(Some),
+        (None, _) => Ok(None),
+        (Some(_), None) => Err(SumcheckKernelError::InvariantViolation {
+            reason: "present kernel has no input-claims cell at extraction",
+        }),
+    }
 }
 
 /// One member slot of the generated driver body, dispatched on the member's
@@ -299,11 +309,11 @@ macro_rules! __stage_member {
             $challenges.$member.as_ref(),
         )?;
     };
-    (extract required $member:ident) => {
-        $member.output_claims()?
+    (extract required $member:ident, $inputs:expr) => {
+        $member.output_claims(&$inputs.$member)?
     };
-    (extract optional $member:ident) => {
-        $crate::driver::extract_optional($member.as_deref_mut())?
+    (extract optional $member:ident, $inputs:expr) => {
+        $crate::driver::extract_optional($member.as_deref_mut(), $inputs.$member.as_ref())?
     };
     (park required $member:ident, $session:expr) => {
         ::jolt_kernels::SumcheckKernel::park_residue($member, $session);
@@ -424,7 +434,7 @@ macro_rules! impl_stage_prover {
                 );)+
 
                 let __output_claims = $output_claims {
-                    $($member: $crate::driver::__stage_member!(extract $presence $member),)+
+                    $($member: $crate::driver::__stage_member!(extract $presence $member, inputs),)+
                 };
                 $($crate::driver::__stage_member!(park $presence $member, session);)+
 
