@@ -174,6 +174,23 @@ impl AkitaProverSetup {
         self.verifier.one_hot_k
     }
 
+    /// Drop the prepared backends' built NTT slots (the CRT-transformed
+    /// copies of A — ~2.5x A's field form). Slots rebuild single-flight on
+    /// their next use, so this is safe anywhere; calling it right after
+    /// commit keeps the transforms out of the standing footprint until the
+    /// stage-8 opening fold actually pulls them back in.
+    pub fn drop_ntt_slots(&self) {
+        for prepared in [
+            self.prepared_backend_setup.as_deref(),
+            self.prepared_one_hot_backend_setup.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _freed = prepared.drop_built_ntt_slots();
+        }
+    }
+
     pub(crate) fn dense_backend(
         &self,
     ) -> Result<(&AkitaBackendProverSetup, &AkitaBackendPreparedSetup), OpeningsError> {

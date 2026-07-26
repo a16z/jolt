@@ -1456,6 +1456,11 @@ impl AkitaPackedProver<'_> {
         // The stage-8 opening fold rebuilds it from the retained hot indices
         // in one parallel pass.
         hint.drop_one_hot_block_caches();
+        // Same lifecycle for A's CRT/NTT transforms (~28 GB at this shape):
+        // the commit's terminal product just built them lazily; drop them so
+        // they don't sit under stages 1-7, and the fold's first use rebuilds
+        // them in ~2 s.
+        object_setup.drop_ntt_slots();
 
         // Absorb the packed commitment objects exactly where and how the
         // verifier's `absorb_commitments` akita arm does.

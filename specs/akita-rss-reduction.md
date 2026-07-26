@@ -94,6 +94,18 @@ phase profile as THE baseline for every accept decision below. Also log
 `CpuPreparedSetup::shared_ntt_cache_bytes()` once (accessor exists,
 cpu.rs:146) to confirm the 32.2 GB NTT figure on the synced stack.
 
+VERDICT (2026-07-26, quiet-gated traced run M0A): **prove 118.78 s, peak
+87.71 GB `time -l` / 80.36 GiB sampled** — peak inside prove_stage4 (RSS
+model confirmed on the synced stack). Phase profile (sampler GiB): commit
+plateau 68.5 (18.9→78.6 s), stage1 72.6, stage3/4 peak 80.4, fold window
+73.5 (112.9→134.6 s). First pair (118.25/123.03, 2026-07-26 pre-dawn) was
+void — foreign session compiling; quiet-gate now enforced. The post-sync
+prove regression is REAL (~118.8 traced vs ~96 pre-sync untraced record;
+traced overhead ≈5 s) — cause not yet isolated (#328 larger-d fold cost /
+catalog schedule drift candidates); tracked separately, does not gate RSS
+items (they gate on the ±2% adjacent pair). The NTT slot build measures
+only **1.9 s** at this envelope (prepare_ntt_cache span), not 8-10 s.
+
 ### M1 [ENG] Cyclic-transform usage audit — decides ±15 GB of the plan
 
 Trace which stage-8 kernels pull `neg` vs `cyc` from the prepared NTT cache
@@ -127,6 +139,36 @@ with stage 7 (spawn on the backend pool) before giving up.
 Watch: any pre-fold path that touches the slot (M1's audit lists consumers)
 turns this into a no-op — verify with the sampler that the stage-window
 plateau actually drops.
+
+INTERIM (2026-07-26, M2B adjacent to M0A): lazy-registration alone is NOT
+enough — the one-hot commit's own terminal root product (inside
+`OneHotPoly::commit_inner_group`, single `mat_vec_mul_ntt_single_i8` call
+~0.1 s at commit end) touches the slot, so it builds at t≈64.5 (1.86 s)
+and the stage-3/4 peak is untouched: prove 108.22 s (**−10.6 s!**), peak
+87.95 GB (+0.2). The commit itself ran 47 of its 49 s at a ~38-41 GiB
+plateau (−30 vs baseline) and got 10.6 s faster — consistent with macOS
+compressor pressure on the idle slab being lifted, and with M2 skipping
+4 of 6 eager `prepare_ntt_cache` builds (unused setups never build).
+COMPLETION (M2C, this commit): Q6's lifecycle applied to the slot —
+`CpuPreparedSetup::drop_built_ntt_slots()` (rebuild-on-next-use is safe
+post-M2) called from packed.rs right after the commit absorb via
+`AkitaProverSetup::drop_ntt_slots()`; the fold's first use rebuilds both
+transforms in ~1.9 s, paid from M2B's −10.6 s margin.
+
+VERDICT (2026-07-26, M2C adjacent to M0A, quiet-gated): **ACCEPT**.
+Peak **87.71 → 81.27 GB `time -l` (−6.4)** / 80.4 → 74.6 GiB sampled;
+prove **118.78 → 99.42 s (−16.3%)** — traced 99.4 ≈ the pre-sync untraced
+record, i.e. M2 recovered most of the post-sync regression (the eager
+slab was throttling the commit via compressor pressure, not just RSS).
+Stage windows collapsed as designed: stage1 72.6→42.7, stage3/4 peak
+80.4→47.7, stage7 56.0→32.3, commit 59.7→43.6 s. New peak = fold window
+(74.6 sampled: blocks rebuild + NTT rebuild + fold transients stack
+there; fold 21.7→22.2 s absorbs the rebuild). Next targets follow from
+the new profile: fold window (M5/M7/M8) is the peak; stage plateau ~42
+still carries A-field 12 GiB (M4) + index layouts (M5). NOTE for M4:
+`build_ntt_slot_for_key` reads `expanded.shared_matrix()` — the fold's
+NTT rebuild now needs A's field form at t≈91, so M4 must either free
+after that rebuild or re-derive from seed (2.1 s) inside the fold.
 
 ### M3 [ENG] Drop the unused NTT transform — expect −15 GB (fold window), conditional on M1
 
