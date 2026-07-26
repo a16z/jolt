@@ -101,8 +101,18 @@ Trace which stage-8 kernels pull `neg` vs `cyc` from the prepared NTT cache
 commit_w_level / relation paths). The ring is negacyclic (X^64+1); if `cyc`
 serves no path reachable from the packed prove at these shapes, M3 is a
 mode change; if it is used, M3 becomes per-transform laziness instead.
-Deliverable: a list of (kernel, transform used) with file:line, plus a
-one-line verdict in this spec.
+VERDICT (2026-07-26, code audit): `cyc` IS used — the ring-switch relation
+path consumes it (`CyclicRowsComputeBackend::cyclic_digit_rows` →
+`mat_vec_mul_ntt_single_i8_cyclic`, cpu.rs:648-670, and
+`fused_split_eq_quotients_prover_bounds`, kernels/linear/fused_quotients.rs
+— both via `with_shared_ntt`), interleaved per fold level with `neg` uses
+(`digit_rows` → `mat_vec_mul_ntt_single_i8`). So M3-as-deletion is dead;
+both transforms are stage-8-only though, so M2 still moves all 30 GiB out
+of the stage windows. The refined M3 question: the envelope slot is sized
+to the FULL root matrix (12.58M rings) while stage-8 products may only
+touch per-level prefixes — the width fields added to the two kernels'
+spans (single_cyclic.rs) capture the actual max prefix in the M0 trace;
+if max-used ≪ envelope, size the lazy slot from the schedule instead.
 
 ### M2 [ENG] Lazy NTT envelope slot — expect −7 to −15 GB peak
 
