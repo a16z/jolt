@@ -73,6 +73,12 @@ stage-8 fold from retained indices; akita `clear_block_cache` +
 - Measurement discipline as in the 2^26 perf spec: exclusivity check,
   prebuild + ≥120 s cooldown, adjacent cooled pairs for the perf-neutrality
   gate (ambient drifts ~±1 s/h — never compare against stale absolutes).
+- QUIET-MACHINE GATE (added 2026-07-26 after contaminated M0): the prover
+  grep is NOT enough — concurrent Claude/agent sessions build sibling
+  worktrees (rustc at 600%+ invalidated a full M0 pair and made the kernel
+  bench read 2.7× slow). Before every measured run: no foreign
+  `rustc|cargo|nextest` processes AND 1-min load average < 4, polled until
+  stable for 60 s. A reading taken while the gate was violated is void.
 - Accept an item iff: `time -l` peak improves ≥3 GB at 2^26 with the
   sampler agreeing on the window it came from AND prove within ±2% on the
   adjacent pair AND gates green. Else revert + ledger.
