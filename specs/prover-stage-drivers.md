@@ -211,7 +211,12 @@ PR strengthens #1 and adds three:
    the inert member-list token macro. Grep-enforced (see Acceptance Criteria).
 4. **Wire freeze.** Proof bytes, Fiat-Shamir conventions, fixtures, and the serialized
    `JoltProof` are byte-identical to pre-PR state. This is a pure restructuring; the
-   byte-diff harness passes with zero regenerated fixtures.
+   byte-diff harness passes with zero regenerated fixtures. The verify-side freeze is
+   behavioral, not textual: the accept/reject set is unchanged and a single-defect proof
+   reports the same `VerifierError`, but fallible-check *precedence* within a stage may
+   reorder where the window is transcript-pure — so which error a multi-defect proof
+   reports first is deliberately not frozen (stage-2/6a/6b verify hoist extraction and
+   entry-index checks ahead of the point-split checks).
 
 `jolt-eval` plan: no invariant definitions change. `legacy_proof_byte_equality` (the
 byte-diff harness) is the primary gate and must pass unmodified; `kernel_naive_equivalence`
