@@ -128,7 +128,6 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-field",
- "akita-planner",
  "akita-schedules",
  "akita-serialization",
  "akita-transcript",
@@ -172,6 +171,7 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-field",
+ "akita-schedules",
  "akita-types",
 ]
 
@@ -199,7 +199,9 @@ dependencies = [
 name = "akita-schedules"
 version = "0.1.0"
 dependencies = [
- "akita-planner",
+ "akita-challenges",
+ "akita-field",
+ "akita-types",
 ]
 
 [[package]]
@@ -3120,6 +3122,7 @@ dependencies = [
  "akita-pcs",
  "akita-planner",
  "akita-prover",
+ "akita-schedules",
  "akita-transcript",
  "akita-types",
  "criterion",

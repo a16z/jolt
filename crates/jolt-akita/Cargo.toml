@@ -17,6 +17,7 @@ akita-pcs = { workspace = true, features = ["parallel"] }
 akita-prover = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
+akita-schedules.workspace = true
 akita-transcript.workspace = true
 akita-types.workspace = true
 jolt-crypto.workspace = true

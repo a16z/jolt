@@ -291,6 +291,7 @@ akita-field = { path = "/Users/mgeorghiades/akita/crates/akita-field", default-f
 akita-pcs = { path = "/Users/mgeorghiades/akita/crates/akita-pcs", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
 akita-prover = { path = "/Users/mgeorghiades/akita/crates/akita-prover", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
 akita-planner = { path = "/Users/mgeorghiades/akita/crates/akita-planner", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
+akita-schedules = { path = "/Users/mgeorghiades/akita/crates/akita-schedules", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
 akita-challenges = { path = "/Users/mgeorghiades/akita/crates/akita-challenges", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
 akita-transcript = { path = "/Users/mgeorghiades/akita/crates/akita-transcript", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming
 akita-types = { path = "/Users/mgeorghiades/akita/crates/akita-types", default-features = false }  # LOCAL PERF ITERATION (rev fc20716) — repoint to git before upstreaming

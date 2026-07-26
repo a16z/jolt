@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Dense;
+pub(crate) type AkitaConfig = crate::configs::JoltD64Dense;
 pub(crate) type AkitaOneHotK16Config = crate::configs::JoltD64OneHotK16;
 pub(crate) type AkitaOneHotK256Config = crate::configs::JoltD64OneHotK256;
 pub(crate) const AKITA_D: usize = AkitaConfig::D;

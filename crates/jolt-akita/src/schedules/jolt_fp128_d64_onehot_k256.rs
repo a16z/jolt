@@ -2044,7 +2044,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_subfield_norm_bound: 1,
     claim_ext_degree: 1,
     chal_ext_degree: 1,
-    basis_range: (2, 6),
+    basis_range: (3, 6),
     onehot_chunk_size: 256,
     witness_chunk: ChunkedWitnessCfg { num_chunks: 1, num_activated_levels: 0 },
     recursive_setup_planning: false,

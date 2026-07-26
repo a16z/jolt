@@ -15,7 +15,8 @@
 //! table is a performance floor, never a correctness gate; catalog identity
 //! is validated against the config policy on every lookup.
 
-pub(crate) use akita_planner::generated::{
+pub(crate) use akita_planner::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
+pub(crate) use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
     GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
     GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
@@ -23,7 +24,6 @@ pub(crate) use akita_planner::generated::{
     GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition,
     PlannerCostModelId, SelectionPolicyId,
 };
-pub(crate) use akita_planner::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub(crate) use akita_types::{
     ChunkedWitnessCfg, DecompositionParams, PolynomialGroupLayout, PrecommittedGroupDescriptor,
     SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,

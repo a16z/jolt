@@ -445,13 +445,13 @@ fn akita_joint_packed_openings_roundtrip_across_two_objects() {
 
 #[test]
 fn akita_packing_and_native_batching_can_coexist_for_same_logical_claims() {
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let logical_point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let logical_point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&logical_point);
     let eval_b = poly_b.evaluate(&logical_point);
 
-    let (native_prover_setup, native_verifier_setup) = setup_for(13, 2, layout(7));
+    let (native_prover_setup, native_verifier_setup) = setup_for(16, 2, layout(7));
     let (native_commitment, native_hint) = AkitaScheme::commit_group(
         &native_prover_setup,
         layout(7),
@@ -543,7 +543,7 @@ fn akita_grouped_one_hot_members_open_in_one_batch() {
     let member_ids = [PackedId::NarrowA, PackedId::NarrowB, PackedId::Medium];
     let members: Vec<OneHotPolynomial> = (0..3u64)
         .map(|member| {
-            let indices = (0..32u64)
+            let indices = (0..256u64)
                 .map(|row| {
                     if (row + member) % 7 == 0 {
                         None
