@@ -1450,22 +1450,12 @@ impl AkitaPackedProver<'_> {
             reason: error.to_string(),
         })?;
 
-        // The commit sweep is done with the block cache; drop it here so its
-        // trace-scale footprint (~8 B per hot entry across all committed
-        // columns, ~15 GB at 2^26) does not sit under every proving stage.
-        // The stage-8 opening fold rebuilds it from the retained hot indices
-        // in one parallel pass.
-        hint.drop_one_hot_block_caches();
-        // Same lifecycle for A's CRT/NTT transforms (~28 GB at this shape):
-        // the commit's terminal product just built them lazily; drop them so
-        // they don't sit under stages 1-7, and the fold's first use rebuilds
-        // them in ~2 s.
-        object_setup.drop_ntt_slots();
-        // And for A's field form: the commit sweep was its last full-width
-        // reader. Keep a 2^21-ring prefix for the fold's slot rebuilds and
-        // small setup reads; the ring-switch relation streams per-element
-        // from the seed, so the ~10 GB tail never has to come back.
-        object_setup.release_setup_matrix_tails(1 << 21);
+        // The commit sweep is the last full-width consumer of the block
+        // cache, the built NTT slots, and the setup matrix's field form —
+        // release all three so ~35 GB (at 2^26) doesn't sit under the
+        // remaining stages; everything rebuilds or streams lazily when the
+        // stage-8 opening fold needs it.
+        object_setup.release_post_commit_residency(&hint);
 
         // Absorb the packed commitment objects exactly where and how the
         // verifier's `absorb_commitments` akita arm does.

@@ -174,39 +174,26 @@ impl AkitaProverSetup {
         self.verifier.one_hot_k
     }
 
-    /// Release the setup matrix's field form down to the prefix that still
-    /// serves post-commit consumers (slot rebuilds, small setup reads). The
-    /// commit sweep is the last full-width reader; everything after either
-    /// fits the prefix or streams per-element from the seed, so the ~10 GiB
-    /// tail (at 2^26) would otherwise sit under every remaining window. The
-    /// released tail re-derives from seed on any unexpected wide read
-    /// (correct, logged, slow) — re-proves regenerate it the same way.
-    pub fn release_setup_matrix_tails(&self, keep_ring_elements: usize) {
-        for prepared in [
+    fn prepared_backends(&self) -> impl Iterator<Item = &AkitaBackendPreparedSetup> {
+        [
             self.prepared_backend_setup.as_deref(),
             self.prepared_one_hot_backend_setup.as_deref(),
         ]
         .into_iter()
         .flatten()
-        {
-            let _freed = prepared.release_setup_matrix_to_prefix(keep_ring_elements);
-        }
     }
 
-    /// Drop the prepared backends' built NTT slots (the CRT-transformed
-    /// copies of A — ~2.5x A's field form). Slots rebuild single-flight on
-    /// their next use, so this is safe anywhere; calling it right after
-    /// commit keeps the transforms out of the standing footprint until the
-    /// stage-8 opening fold actually pulls them back in.
-    pub fn drop_ntt_slots(&self) {
-        for prepared in [
-            self.prepared_backend_setup.as_deref(),
-            self.prepared_one_hot_backend_setup.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
+    /// Release everything the commit was the last full-width consumer of:
+    /// the one-hot block caches (rebuilt lazily by the fold), the built NTT
+    /// slots (rebuilt extent-sized on next use), and the setup matrix's
+    /// field form beyond the streaming-threshold prefix (wider readers
+    /// stream per element from the seed; unexpected wide reads re-derive,
+    /// logged). Call right after the commit absorb.
+    pub fn release_post_commit_residency(&self, hint: &AkitaProverHint) {
+        hint.drop_one_hot_block_caches();
+        for prepared in self.prepared_backends() {
             let _freed = prepared.drop_built_ntt_slots();
+            let _freed = prepared.release_setup_matrix_to_streaming_prefix();
         }
     }
 

@@ -12,6 +12,22 @@
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaError;
 use akita_planner::GeneratedScheduleTable;
+
+/// Planner-DP fallback shared by runtime schedule resolution and setup
+/// sizing: both MUST plan under the same policy or envelopes drift from the
+/// schedules that later run against them.
+fn dp_planned_schedule<Cfg: akita_config::CommitmentConfig>(
+    key: &akita_types::AkitaScheduleLookupKey,
+) -> Result<akita_types::FoldSchedule, akita_pcs::AkitaError> {
+    let planned = akita_planner::find_group_batch_schedule(
+        key,
+        &akita_config::policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+    planned.schedule.validate_structure()?;
+    Ok(planned.schedule)
+}
 use akita_types::{
     setup_matrix_envelope_for_schedule, AkitaScheduleLookupKey, SetupMatrixEnvelope,
 };
@@ -125,14 +141,8 @@ macro_rules! delegate_preset {
                     )?
                     .root_final_group_layout()?,
                 );
-                let planned = akita_planner::find_group_batch_schedule(
-                    &key,
-                    &akita_config::policy_of::<Self>(),
-                    Self::ring_challenge_config,
-                    Self::fold_challenge_shape_at_level,
-                )?;
-                planned.schedule.validate_structure()?;
-                setup_matrix_envelope_for_schedule(&planned.schedule)
+                let schedule = dp_planned_schedule::<Self>(&key)?;
+                setup_matrix_envelope_for_schedule(&schedule)
             }
 
             fn basis_range() -> (u32, u32) {
@@ -179,14 +189,7 @@ macro_rules! delegate_preset {
                     // correctness gate (test-scale shapes sit below the
                     // enumerated production grid).
                     Err(akita_pcs::AkitaError::UnsupportedSchedule(_)) => {
-                        let planned = akita_planner::find_group_batch_schedule(
-                            &key,
-                            &akita_config::policy_of::<Self>(),
-                            Self::ring_challenge_config,
-                            Self::fold_challenge_shape_at_level,
-                        )?;
-                        planned.schedule.validate_structure()?;
-                        Ok(planned.schedule)
+                        dp_planned_schedule::<Self>(&key)
                     }
                     other => other,
                 }
