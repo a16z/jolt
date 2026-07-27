@@ -231,13 +231,12 @@ delegate_preset!(
 );
 
 delegate_preset!(
-    /// `D64Dense` with Jolt's DP fallbacks for shapes outside the shipped
-    /// catalog (advice/precommitted objects size to their own small shapes).
-    /// Zero slack keeps the policy identical to the upstream preset, so the
-    /// shipped dense catalog stays identity-valid.
+    /// `D64Dense` with planner-resolved schedules for Jolt's small
+    /// advice/precommitted objects. Akita's upstream generated catalogs are
+    /// not part of its Git source package, so Jolt does not enable them.
     JoltD64Dense,
     akita_config::proof_optimized::fp128::D64Dense,
-    <akita_config::proof_optimized::fp128::D64Dense as CommitmentConfig>::schedule_catalog(),
+    None,
     0
 );
 
@@ -252,13 +251,60 @@ mod tests {
     #[test]
     fn production_one_hot_trace_shapes_use_catalog_setup_sizing() {
         let k16 = crate::schedules::jolt_fp128_d64_onehot_k16_table().unwrap();
-        assert!(catalog_setup_envelope::<JoltD64OneHotK16>(k16, 28, 81)
+        assert!(catalog_setup_envelope::<JoltD64OneHotK16>(k16, 34, 1)
             .unwrap()
             .is_some());
 
         let k256 = crate::schedules::jolt_fp128_d64_onehot_k256_table().unwrap();
-        assert!(catalog_setup_envelope::<JoltD64OneHotK256>(k256, 38, 41)
+        assert!(catalog_setup_envelope::<JoltD64OneHotK256>(k256, 43, 1)
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn one_hot_policy_trades_at_most_one_percent_payload_for_root_rank() {
+        let key = AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(38, 1));
+        let rank_policy = akita_config::policy_of::<JoltD64OneHotK256>();
+        assert_eq!(
+            rank_policy.selection_policy,
+            akita_schedules::SelectionPolicyId::MinRootRankThenPayloadWithinSlack {
+                slack_permille: 10
+            }
+        );
+        let rank_plan = akita_planner::find_group_batch_schedule(
+            &key,
+            &rank_policy,
+            JoltD64OneHotK256::ring_challenge_config,
+            JoltD64OneHotK256::fold_challenge_shape_at_level,
+        )
+        .unwrap();
+        let payload_policy = akita_schedules::PlannerPolicy {
+            selection_policy: akita_schedules::SelectionPolicyId::MinEstimatedProofPayload,
+            ..rank_policy
+        };
+        let payload_plan = akita_planner::find_group_batch_schedule(
+            &key,
+            &payload_policy,
+            JoltD64OneHotK256::ring_challenge_config,
+            JoltD64OneHotK256::fold_challenge_shape_at_level,
+        )
+        .unwrap();
+        let rank_payload = rank_plan.estimate.estimated_proof_payload_bytes().unwrap() as u128;
+        let minimum_payload = payload_plan
+            .estimate
+            .estimated_proof_payload_bytes()
+            .unwrap() as u128;
+        assert!(rank_payload * 1_000 <= minimum_payload * 1_010);
+
+        let root_rank = |plan: &akita_types::PlannedFoldSchedule| {
+            plan.schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .inner_commit_matrix
+                .output_rank()
+        };
+        assert!(root_rank(&rank_plan) <= root_rank(&payload_plan));
     }
 }

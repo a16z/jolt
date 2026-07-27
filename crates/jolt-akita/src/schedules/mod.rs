@@ -2,10 +2,9 @@
 //!
 //! Tables are emitted offline by the `gen_jolt_schedules` binary (this
 //! crate) through `akita_planner::emit` — the same emitter and DP that
-//! produce akita's own shipped tables — over the `OneHotTrace` shapes reachable
-//! from Jolt: every native group width produced by the RA layout and
-//! unsigned-increment chunking across each K regime. Checked-in tables are
-//! source; regenerate with:
+//! produce akita's own shipped tables — over the prefix-packed `OneHotTrace`
+//! arities reachable from Jolt in each K regime. Checked-in tables are source;
+//! regenerate with:
 //!
 //! ```text
 //! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/src/schedules
@@ -71,28 +70,15 @@ pub mod emit {
 
     use crate::configs::{JoltD64OneHotK16, JoltD64OneHotK256};
 
-    /// `OneHotTrace` widths at K=16: 49 fixed columns (32 instruction-address
-    /// chunks, 16 unsigned-increment chunks, and the increment MSB), plus up
-    /// to 16 bytecode and 16 RAM chunks. Width one covers singleton one-hot
-    /// objects.
-    pub const K16_NUM_POLYS: &[usize] = &[
-        1, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
-        71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-    ];
-    /// Column arity is `4 + log_T`. The packed pipeline pads every trace to
-    /// `T >= 2^12` (`AkitaPackedScheme::MIN_PADDED_TRACE_LENGTH` — the
-    /// folded-only planner cannot schedule wide K=16 groups below 16
-    /// variables), and `log_T < 25` in the K=16 regime.
-    pub const K16_NUM_VARS: (usize, usize) = (16, 28);
+    /// Prefix packing always produces one physical polynomial.
+    pub const ONE_HOT_TRACE_NUM_POLYS: &[usize] = &[1];
+    /// K=16 adds six selector variables to column arity `4 + log_T`.
+    /// The packed pipeline pads to `T >= 2^12`, and `log_T < 25`.
+    pub const K16_NUM_VARS: (usize, usize) = (22, 34);
 
-    /// `OneHotTrace` widths at K=256: 25 fixed columns (16 instruction
-    /// chunks, eight unsigned-increment chunks, and the MSB), plus up to eight
-    /// bytecode and eight RAM chunks.
-    pub const K256_NUM_POLYS: &[usize] = &[
-        1, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
-    ];
-    /// Column arity is `8 + log_T`; the K=256 regime starts at `log_T = 25`.
-    pub const K256_NUM_VARS: (usize, usize) = (33, 38);
+    /// K=256 adds five selector variables to column arity `8 + log_T`;
+    /// this regime starts at `log_T = 25`.
+    pub const K256_NUM_VARS: (usize, usize) = (38, 43);
 
     /// Pure DP regeneration for `Cfg` — never consults the shipped table.
     fn regen<Cfg: CommitmentConfig>(
@@ -166,7 +152,7 @@ pub mod emit {
                 "jolt_fp128_d64_onehot_k16",
                 "JOLT_FP128_D64_ONEHOT_K16_SCHEDULES",
                 "jolt-fp128-d64-onehot-k16",
-                K16_NUM_POLYS,
+                ONE_HOT_TRACE_NUM_POLYS,
                 K16_NUM_VARS,
                 output_dir.clone(),
             ),
@@ -174,7 +160,7 @@ pub mod emit {
                 "jolt_fp128_d64_onehot_k256",
                 "JOLT_FP128_D64_ONEHOT_K256_SCHEDULES",
                 "jolt-fp128-d64-onehot-k256",
-                K256_NUM_POLYS,
+                ONE_HOT_TRACE_NUM_POLYS,
                 K256_NUM_VARS,
                 output_dir,
             ),

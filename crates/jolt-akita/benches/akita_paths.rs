@@ -25,6 +25,12 @@
 //! polynomials with two fewer variables: e.g. the `nv=20` batch case opens four
 //! `nv=18` polynomials either through Akita's native grouped opening or through
 //! one prefix-packed `nv=20` polynomial.
+//!
+//! The `trace_one_hot` groups compare Akita's already-materialized packed
+//! polynomial with Jolt's trace-derived source. The streaming source computes
+//! every semantic lane from one row and retains no per-column one-hot vectors;
+//! the materialized case is therefore a lower bound that excludes the
+//! allocation and transposition Jolt avoids.
 
 #![expect(
     clippy::unwrap_used,
@@ -32,6 +38,7 @@
 )]
 
 use std::hint::black_box;
+use std::sync::Arc;
 use std::time::Duration;
 
 use akita_config::{
@@ -51,7 +58,7 @@ use akita_types::{
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
+    AkitaScheme, AkitaSetupParams, TraceOneHotRows, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
 use jolt_field::{Field, Fr, FromPrimitiveInt};
@@ -68,7 +75,8 @@ const NUM_POLYS: usize = 1;
 const BATCH_POLYS: usize = 4;
 const BATCH_PREFIX_BITS: usize = 2;
 const DEFAULT_NUM_VARS_CASES: [usize; 3] = [15, 20, 25];
-const DEFAULT_TRACE_NUM_VARS: usize = 20;
+const DEFAULT_TRACE_COLUMN_NUM_VARS: usize = 20;
+const TRACE_COLUMN_CAPACITY: usize = 32;
 
 type BackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 type OneHotBackendScheme = AkitaCommitmentScheme<AkitaOneHotConfig>;
@@ -161,6 +169,44 @@ struct AkitaBatchCase {
     packed_claims: Vec<(BatchId, EvaluationClaim<AkitaField>)>,
 }
 
+struct SyntheticTraceRows {
+    rows: usize,
+    columns: usize,
+}
+
+impl TraceOneHotRows for SyntheticTraceRows {
+    fn num_rows(&self) -> usize {
+        self.rows
+    }
+
+    fn num_columns(&self) -> usize {
+        self.columns
+    }
+
+    fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+        for (column, lane) in hot_lanes.iter_mut().enumerate() {
+            *lane =
+                synthetic_trace_hot(row, column).map_or_else(jolt_akita::no_hot_lane, u16::from);
+        }
+    }
+}
+
+fn synthetic_trace_hot(row: usize, column: usize) -> Option<u8> {
+    (!(row + column).is_multiple_of(31))
+        .then_some(((row * (2 * column + 1) + 11 * column) % AKITA_ONE_HOT_K256) as u8)
+}
+
+fn materialized_trace_one_hot(rows: usize, num_columns: usize) -> OneHotPolynomial {
+    let packed_indices = (0..num_columns)
+        .flat_map(|column| (0..rows).map(move |row| synthetic_trace_hot(row, column)))
+        .chain(std::iter::repeat_n(
+            None,
+            (TRACE_COLUMN_CAPACITY - num_columns) * rows,
+        ))
+        .collect();
+    OneHotPolynomial::new(AKITA_ONE_HOT_K256, packed_indices)
+}
+
 fn configure_group(
     group: &mut BenchmarkGroup<'_, criterion::measurement::WallTime>,
     num_vars: usize,
@@ -214,7 +260,7 @@ fn trace_num_vars() -> usize {
     std::env::var("JOLT_AKITA_TRACE_NUM_VARS")
         .ok()
         .and_then(|raw| raw.parse().ok())
-        .unwrap_or(DEFAULT_TRACE_NUM_VARS)
+        .unwrap_or(DEFAULT_TRACE_COLUMN_NUM_VARS)
 }
 
 fn criterion_filter_matches(group_name: &str) -> bool {
@@ -737,6 +783,165 @@ fn bench_jolt_akita_commit(c: &mut Criterion) {
     }
 }
 
+fn bench_trace_one_hot_commit(c: &mut Criterion) {
+    if !criterion_filter_matches("trace_one_hot/commit") {
+        return;
+    }
+    let column_num_vars = trace_num_vars();
+    let packed_num_vars = column_num_vars + TRACE_COLUMN_CAPACITY.ilog2() as usize;
+    let num_columns = std::env::var("JOLT_AKITA_TRACE_COLUMNS")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(29);
+    assert!(num_columns <= TRACE_COLUMN_CAPACITY);
+    let rows = (1usize << column_num_vars) / AKITA_ONE_HOT_K256;
+    let packed = materialized_trace_one_hot(rows, num_columns);
+    let source = Arc::new(SyntheticTraceRows {
+        rows,
+        columns: num_columns,
+    });
+    let (setup, _) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+        packed_num_vars,
+        1,
+        LAYOUT_DIGEST,
+        AKITA_ONE_HOT_K256,
+    ))
+    .expect("trace one-hot setup");
+    let group_name = format!(
+        "trace_one_hot/commit/column_nv{column_num_vars}_packed_nv{packed_num_vars}_semantic{num_columns}"
+    );
+    let mut group = c.benchmark_group(group_name);
+    configure_group(&mut group, packed_num_vars);
+    group.bench_function("akita_pre_materialized_packed", |b| {
+        b.iter(|| {
+            black_box(
+                AkitaScheme::commit_one_hot_group(
+                    &setup,
+                    LAYOUT_DIGEST,
+                    std::slice::from_ref(&packed),
+                )
+                .expect("Akita one-hot commit"),
+            )
+        });
+    });
+    group.bench_function("materialize_and_akita_commit", |b| {
+        b.iter(|| {
+            let packed = materialized_trace_one_hot(rows, num_columns);
+            black_box(
+                AkitaScheme::commit_one_hot_group(
+                    &setup,
+                    LAYOUT_DIGEST,
+                    std::slice::from_ref(&packed),
+                )
+                .expect("Akita one-hot commit"),
+            )
+        });
+    });
+    group.bench_function("jolt_streaming_packed", |b| {
+        b.iter(|| {
+            black_box(
+                AkitaScheme::commit_trace_one_hot(
+                    &setup,
+                    LAYOUT_DIGEST,
+                    TRACE_COLUMN_CAPACITY,
+                    source.clone(),
+                )
+                .expect("Jolt streaming one-hot commit"),
+            )
+        });
+    });
+    group.finish();
+}
+
+fn bench_trace_one_hot_open(c: &mut Criterion) {
+    if !criterion_filter_matches("trace_one_hot/open") {
+        return;
+    }
+    let column_num_vars = trace_num_vars();
+    let packed_num_vars = column_num_vars + TRACE_COLUMN_CAPACITY.ilog2() as usize;
+    let num_columns = std::env::var("JOLT_AKITA_TRACE_COLUMNS")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(29);
+    assert!(num_columns <= TRACE_COLUMN_CAPACITY);
+    let rows = (1usize << column_num_vars) / AKITA_ONE_HOT_K256;
+    let packed = materialized_trace_one_hot(rows, num_columns);
+    let source = Arc::new(SyntheticTraceRows {
+        rows,
+        columns: num_columns,
+    });
+    let (setup, _) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+        packed_num_vars,
+        1,
+        LAYOUT_DIGEST,
+        AKITA_ONE_HOT_K256,
+    ))
+    .expect("trace one-hot setup");
+    let point = vec![AkitaField::from_u64(3); packed_num_vars];
+    let evaluations = [packed.evaluate(&point)];
+    let group_name = format!(
+        "trace_one_hot/open/column_nv{column_num_vars}_packed_nv{packed_num_vars}_semantic{num_columns}"
+    );
+    let mut group = c.benchmark_group(group_name);
+    configure_group(&mut group, packed_num_vars);
+    group.bench_function("akita_pre_materialized_packed", |b| {
+        b.iter_batched(
+            || {
+                AkitaScheme::commit_one_hot_group(
+                    &setup,
+                    LAYOUT_DIGEST,
+                    std::slice::from_ref(&packed),
+                )
+                .expect("Akita one-hot commit")
+                .1
+            },
+            |hint| {
+                let mut transcript = Blake2bTranscript::new(b"trace-one-hot/bench");
+                black_box(
+                    AkitaScheme::open_one_hot_group_from_hint(
+                        &point,
+                        &evaluations,
+                        &setup,
+                        hint,
+                        &mut transcript,
+                    )
+                    .expect("Akita one-hot opening"),
+                )
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("jolt_streaming_packed", |b| {
+        b.iter_batched(
+            || {
+                AkitaScheme::commit_trace_one_hot(
+                    &setup,
+                    LAYOUT_DIGEST,
+                    TRACE_COLUMN_CAPACITY,
+                    source.clone(),
+                )
+                .expect("Jolt streaming one-hot commit")
+                .1
+            },
+            |hint| {
+                let mut transcript = Blake2bTranscript::new(b"trace-one-hot/bench");
+                black_box(
+                    AkitaScheme::open_one_hot_group_from_hint(
+                        &point,
+                        &evaluations,
+                        &setup,
+                        hint,
+                        &mut transcript,
+                    )
+                    .expect("Jolt streaming one-hot opening"),
+                )
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
 fn bench_jolt_akita_open(c: &mut Criterion) {
     if !criterion_filter_matches("jolt_akita/open") {
         return;
@@ -1084,6 +1289,8 @@ criterion_group!(
     config = Criterion::default();
     targets =
         bench_jolt_akita_commit,
+        bench_trace_one_hot_commit,
+        bench_trace_one_hot_open,
         bench_jolt_akita_open,
         bench_akita_prover_commit,
         bench_akita_prover_open,

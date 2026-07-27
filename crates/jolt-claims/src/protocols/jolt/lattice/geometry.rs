@@ -41,6 +41,24 @@ pub enum LatticeGeometryError {
     ChunkWidthMisaligned { chunk_width: usize },
     #[error("unsigned inc chunk width {chunk_width} does not fit the address domain")]
     ChunkWidthTooLarge { chunk_width: usize },
+    #[error("OneHotTrace supports only 4-bit or 8-bit one-hot chunks, got {chunk_width}")]
+    UnsupportedOneHotTraceChunkWidth { chunk_width: usize },
+    #[error(
+        "OneHotTrace at K=2^{chunk_width} requires {expected} instruction columns, got {actual}"
+    )]
+    UnexpectedOneHotTraceInstructionColumns {
+        chunk_width: usize,
+        actual: usize,
+        expected: usize,
+    },
+    #[error(
+        "OneHotTrace has {actual} columns, exceeding the K=2^{chunk_width} packed capacity {capacity}"
+    )]
+    TooManyOneHotTraceColumns {
+        chunk_width: usize,
+        actual: usize,
+        capacity: usize,
+    },
     #[error("byte one-hot byte count must be nonzero")]
     ZeroByteCount,
 }
