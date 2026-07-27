@@ -42,13 +42,15 @@ fn dory_clear_graph_is_well_formed_with_committed_program() {
     );
 }
 
-// The akita cargo feature changes cfg'd constants (NUM_BYTECODE_VAL_STAGES)
-// that reshape even the Dory relations, so the Dory goldens are pinned under
-// the PIOP's canonical build only; the akita lane still runs the
-// well-formedness cells above.
-#[cfg(not(feature = "akita"))]
 #[test]
 fn dory_graph_snapshots() {
+    // The akita cargo feature changes cfg'd constants (NUM_BYTECODE_VAL_STAGES)
+    // that reshape even the Dory relations, so each build flavor pins its own
+    // goldens.
+    #[cfg(not(feature = "akita"))]
+    const FLAVOR: &str = "";
+    #[cfg(feature = "akita")]
+    const FLAVOR: &str = "_akita_build";
     for (name, config) in [
         ("dory_small", ProtocolConfig::small()),
         ("dory_small_advice", ProtocolConfig::small_with_advice()),
@@ -59,7 +61,7 @@ fn dory_graph_snapshots() {
     ] {
         let records = all_vertices(&config);
         let graph = ClaimGraph::build(Piop::Dory, &records, &config, all_aliases());
-        assert_graph_snapshot(name, &graph);
+        assert_graph_snapshot(&format!("{name}{FLAVOR}"), &graph);
     }
 }
 
