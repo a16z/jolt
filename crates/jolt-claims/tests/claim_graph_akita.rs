@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use claim_graph::graph::ClaimGraph;
 use claim_graph::registry::{all_aliases, all_vertices};
-use claim_graph::{Piop, ProtocolConfig, VertexRecord};
+use claim_graph::{assert_graph_snapshot, Piop, ProtocolConfig, VertexRecord};
 use jolt_claims::protocols::jolt::JoltRelationId;
 
 fn assert_well_formed(context: &str, config: &ProtocolConfig) {
@@ -171,4 +171,20 @@ fn dump_claim_graph() {
         "{}",
         ClaimGraph::build(Piop::Akita, &records, &config, all_aliases())
     );
+}
+
+#[test]
+fn akita_graph_snapshots() {
+    for (name, config) in [
+        ("akita_small", ProtocolConfig::small()),
+        ("akita_small_advice", ProtocolConfig::small_with_advice()),
+        (
+            "akita_small_committed",
+            ProtocolConfig::small_committed_program(),
+        ),
+    ] {
+        let records = all_vertices(&config);
+        let graph = ClaimGraph::build(Piop::Akita, &records, &config, all_aliases());
+        assert_graph_snapshot(name, &graph);
+    }
 }

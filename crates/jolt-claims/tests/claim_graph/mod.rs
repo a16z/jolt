@@ -282,3 +282,27 @@ fn short_type_name<S>() -> &'static str {
     let full = std::any::type_name::<S>();
     full.rsplit("::").next().unwrap_or(full)
 }
+
+/// Pins a graph's `Display` rendering as a golden snapshot. One format serves
+/// humans and the pinned artifact, so the renderer and snapshot cannot drift.
+/// Regenerate deliberately with `JOLT_CLAIM_GRAPH_REGENERATE_SNAPSHOTS=1` and
+/// review the diff: it is the protocol rewiring, made visible.
+pub fn assert_graph_snapshot(name: &str, graph: &graph::ClaimGraph) {
+    let rendered = graph.to_string();
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/claim_graph/snapshots")
+        .join(format!("{name}.txt"));
+    if std::env::var_os("JOLT_CLAIM_GRAPH_REGENERATE_SNAPSHOTS").is_some() {
+        std::fs::write(&path, &rendered).expect("failed to write snapshot");
+        return;
+    }
+    let expected = std::fs::read_to_string(&path).expect(
+        "missing claim-graph snapshot; generate with JOLT_CLAIM_GRAPH_REGENERATE_SNAPSHOTS=1",
+    );
+    assert_eq!(
+        rendered, expected,
+        "claim graph {name} drifted from its snapshot; if the rewiring is \
+         intentional, regenerate with JOLT_CLAIM_GRAPH_REGENERATE_SNAPSHOTS=1 \
+         and review the diff"
+    );
+}

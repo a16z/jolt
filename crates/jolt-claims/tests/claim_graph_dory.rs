@@ -8,7 +8,7 @@ mod claim_graph;
 
 use claim_graph::graph::ClaimGraph;
 use claim_graph::registry::{all_aliases, all_vertices};
-use claim_graph::{Piop, ProtocolConfig};
+use claim_graph::{assert_graph_snapshot, Piop, ProtocolConfig};
 
 fn assert_well_formed(context: &str, config: &ProtocolConfig) {
     let records = all_vertices(config);
@@ -40,6 +40,27 @@ fn dory_clear_graph_is_well_formed_with_committed_program() {
         "dory, clear, small + committed program",
         &ProtocolConfig::small_committed_program(),
     );
+}
+
+// The akita cargo feature changes cfg'd constants (NUM_BYTECODE_VAL_STAGES)
+// that reshape even the Dory relations, so the Dory goldens are pinned under
+// the PIOP's canonical build only; the akita lane still runs the
+// well-formedness cells above.
+#[cfg(not(feature = "akita"))]
+#[test]
+fn dory_graph_snapshots() {
+    for (name, config) in [
+        ("dory_small", ProtocolConfig::small()),
+        ("dory_small_advice", ProtocolConfig::small_with_advice()),
+        (
+            "dory_small_committed",
+            ProtocolConfig::small_committed_program(),
+        ),
+    ] {
+        let records = all_vertices(&config);
+        let graph = ClaimGraph::build(Piop::Dory, &records, &config, all_aliases());
+        assert_graph_snapshot(name, &graph);
+    }
 }
 
 /// On-demand terminal rendering:
