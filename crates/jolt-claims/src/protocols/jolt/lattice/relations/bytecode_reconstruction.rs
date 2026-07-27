@@ -144,6 +144,69 @@ impl<C> BytecodeChunkReconstructionOutputClaims<C> {
     }
 }
 
+impl<C> crate::ClaimAdjacency for BytecodeChunkReconstructionOutputClaims<C> {
+    type Id = JoltOpeningId;
+    /// One [`Family`](crate::ClaimArity::Family) edge per field, each
+    /// represented by its `(chunk 0, lane/flag 0)` id — the first entry of the
+    /// field's block in [`Self::opening_order`]. Hand-written because the
+    /// two-index families are outside the derive's `Vec` convention (see the
+    /// struct docs); kept in field-declaration order.
+    const EDGES: &'static [crate::ClaimEdge<JoltOpeningId>] = &[
+        crate::ClaimEdge {
+            id: JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRegisterSelector {
+                    chunk: 0,
+                    lane: BytecodeRegisterLane::Rs1,
+                },
+                JoltRelationId::BytecodeChunkReconstruction,
+            ),
+            arity: crate::ClaimArity::Family,
+        },
+        crate::ClaimEdge {
+            id: JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeCircuitFlag { chunk: 0, flag: 0 },
+                JoltRelationId::BytecodeChunkReconstruction,
+            ),
+            arity: crate::ClaimArity::Family,
+        },
+        crate::ClaimEdge {
+            id: JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeInstructionFlag { chunk: 0, flag: 0 },
+                JoltRelationId::BytecodeChunkReconstruction,
+            ),
+            arity: crate::ClaimArity::Family,
+        },
+        crate::ClaimEdge {
+            id: JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeLookupSelector { chunk: 0 },
+                JoltRelationId::BytecodeChunkReconstruction,
+            ),
+            arity: crate::ClaimArity::Family,
+        },
+        crate::ClaimEdge {
+            id: JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRafFlag { chunk: 0 },
+                JoltRelationId::BytecodeChunkReconstruction,
+            ),
+            arity: crate::ClaimArity::Family,
+        },
+        crate::ClaimEdge {
+            id: JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk: 0 },
+                JoltRelationId::BytecodeChunkReconstruction,
+            ),
+            arity: crate::ClaimArity::Family,
+        },
+        crate::ClaimEdge {
+            id: JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeImmBytes { chunk: 0 },
+                JoltRelationId::BytecodeChunkReconstruction,
+            ),
+            arity: crate::ClaimArity::Family,
+        },
+    ];
+}
+
 impl<F: jolt_field::Field> OutputClaims<F> for BytecodeChunkReconstructionOutputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         self.leaves().map(|(id, _)| id).collect()

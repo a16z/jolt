@@ -38,3 +38,15 @@ pub use ids::{
     SpartanShiftChallenge, SpartanShiftPublic, TrustedAdviceReconstructionPublic,
     UntrustedAdviceReconstructionChallenge, UntrustedAdviceReconstructionPublic,
 };
+
+// The empty claim structs contribute no claim-graph edges; these impls let
+// analyses bound on `ClaimAdjacency` treat every relation uniformly.
+impl<C> crate::ClaimAdjacency for crate::NoInputs<C> {
+    type Id = JoltOpeningId;
+    const EDGES: &'static [crate::ClaimEdge<JoltOpeningId>] = &[];
+}
+
+impl<C> crate::ClaimAdjacency for crate::NoOutputs<C> {
+    type Id = JoltOpeningId;
+    const EDGES: &'static [crate::ClaimEdge<JoltOpeningId>] = &[];
+}

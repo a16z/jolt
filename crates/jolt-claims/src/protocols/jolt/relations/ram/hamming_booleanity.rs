@@ -37,6 +37,12 @@ impl<C> Default for RamHammingBooleanityInputClaims<C> {
     }
 }
 
+impl<C> crate::ClaimAdjacency for RamHammingBooleanityInputClaims<C> {
+    type Id = JoltOpeningId;
+    /// Consumes no openings (see the hand-written [`InputClaims`] above).
+    const EDGES: &'static [crate::ClaimEdge<JoltOpeningId>] = &[];
+}
+
 impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
