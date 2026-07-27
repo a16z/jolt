@@ -49,21 +49,21 @@ use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 use super::views::{address_fold, eq_table};
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend,
-    RetainedProgram, SumcheckKernel, SumcheckKernelError,
+    SumcheckKernel, SumcheckKernelError,
 };
 
 impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltVmWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
         let relation = inputs.relation;
         // The per-row stage-value tables: the verifier's own fold over the
-        // padded bytecode (the session-resident prover-retained program).
-        let program = RetainedProgram::from_session(session)?;
+        // padded bytecode.
+        let program = witness.program_preprocessing();
         let stage_gammas = inputs.challenges.stage_gamma_powers();
         let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
             bytecode: &program.bytecode.bytecode,

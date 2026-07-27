@@ -67,15 +67,27 @@ pub use stage3::{
 pub use stage6::{JoltVmStage6Row, JoltVmStage6Rows};
 pub use streams::{JoltVmCommittedBatchStream, JoltVmCommittedStream};
 
+/// The full program preprocessing behind the witness: the kernels whose
+/// tables materialize from the program itself (the bytecode stage-value
+/// fold, the reduction chunk grids, the program-image words) read it off the
+/// witness plane inside `prepare`.
+pub trait JoltVmProgramView {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing;
+}
+
 /// The full Jolt-VM witness plane a prover kernel prepares against: the
 /// field-element oracle provider plus the typed-row accessors whose data no
 /// oracle view carries losslessly (the stage-5 lookup rows' index bits and
-/// table selection, the stage-6 rows' per-cycle bytecode indices). Kernels
-/// receive `&dyn JoltVmWitnessPlane<F>` and fetch typed rows themselves, so
-/// no stage recipe stages row vectors on the side. Blanket-implemented; the
-/// supertrait set is exactly the typed accessors kernels consume.
+/// table selection, the stage-6 rows' per-cycle bytecode indices) plus the
+/// program view. Kernels receive `&dyn JoltVmWitnessPlane<F>` and fetch typed
+/// rows themselves, so no stage recipe stages row vectors on the side.
+/// Blanket-implemented; the supertrait set is exactly the typed accessors
+/// kernels consume.
 pub trait JoltVmWitnessPlane<F>:
-    crate::WitnessProvider<F, JoltVmNamespace> + JoltVmStage5InstructionReadRafRows + JoltVmStage6Rows
+    crate::WitnessProvider<F, JoltVmNamespace>
+    + JoltVmStage5InstructionReadRafRows
+    + JoltVmStage6Rows
+    + JoltVmProgramView
 {
 }
 
@@ -83,6 +95,7 @@ impl<F, T> JoltVmWitnessPlane<F> for T where
     T: crate::WitnessProvider<F, JoltVmNamespace>
         + JoltVmStage5InstructionReadRafRows
         + JoltVmStage6Rows
+        + JoltVmProgramView
 {
 }
 
@@ -210,6 +223,12 @@ pub struct TraceBackedJoltVmWitness<'a, T: TraceSource> {
     pub trace: TraceOutput<T>,
     #[cfg(feature = "field-inline")]
     field_inline: Option<field_inline::TraceBackedFieldInlineWitness<'a>>,
+}
+
+impl<T: TraceSource> JoltVmProgramView for TraceBackedJoltVmWitness<'_, T> {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
+        self.preprocessing
+    }
 }
 
 impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {

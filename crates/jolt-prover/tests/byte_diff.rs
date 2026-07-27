@@ -528,9 +528,6 @@ mod muldiv {
         // test, against the legacy oracle computed above.
         let assert_backend_matches_legacy = |backend: &JoltBackend<Fr, DoryScheme>| {
             let mut session = backend.begin_proof();
-            // Program-data session residency, as `prove` establishes it at
-            // proof start (this harness drives the stages individually).
-            prover_preprocessing.park_program(&mut session);
             let stage0 = prove_stage0::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 backend,
                 &mut session,

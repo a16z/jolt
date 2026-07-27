@@ -27,22 +27,18 @@ use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 use super::views::eq_table;
 use crate::committed_program::{build_committed_bytecode_chunk_coeffs, chunk_index_to_lane_cycle};
 use crate::precommitted_reduction::{permute_tables, CycleReductionKernel};
-use crate::{
-    KernelError, PrepareKernel, ProofSession, ReferenceBackend, RetainedProgram, SumcheckKernel,
-};
+use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
-        session: &mut ProofSession,
-        _witness: &dyn JoltVmWitnessPlane<F>,
+        _session: &mut ProofSession,
+        witness: &dyn JoltVmWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BytecodeReductionCyclePhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReductionCyclePhase<F>>>, KernelError<F>>
     {
         let layout = inputs.relation.layout();
-        // The chunk grids materialize from the session-resident retained
-        // program (the prover keeps the full bytecode in committed mode).
-        let program = RetainedProgram::from_session(session)?;
+        let program = witness.program_preprocessing();
         Ok(Box::new(bytecode_reduction_kernel(
             layout,
             inputs.relation.weights(),

@@ -12,10 +12,10 @@
 //! (inside a `ProverInputs` bundle), so kernels read geometry off relation
 //! accessors instead of restated constructor arguments. Non-oracle data
 //! reaches a kernel through the two other channels `prepare` receives:
-//! typed witness rows off the [`JoltVmWitnessPlane`](jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane)
-//! accessors, and [`ProofSession`] carries (prover-retained program data,
-//! parked at proof start; cross-stage kernel state, parked by
-//! `SumcheckKernel::park_residue` after extraction — the two-batch
+//! typed witness rows and the full-program view off the
+//! [`JoltVmWitnessPlane`](jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane)
+//! accessors, and [`ProofSession`] carries (cross-stage kernel state, parked
+//! by `SumcheckKernel::park_residue` after extraction — the two-batch
 //! precommitted reduction family in [`precommitted_reduction`] is the
 //! carrier). Only the bespoke slots keep hand-shaped trait modules at the
 //! crate root: the uni-skip fronts ([`uniskip`]), commitment streaming, and
@@ -44,7 +44,7 @@ pub mod precommitted_reduction;
 pub mod reference;
 pub mod uniskip;
 
-pub use backend::{HasKernel, JoltBackend, PrepareKernel, ProofSession, RetainedProgram};
+pub use backend::{HasKernel, JoltBackend, PrepareKernel, ProofSession};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;

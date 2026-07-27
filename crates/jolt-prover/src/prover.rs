@@ -11,7 +11,7 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_witness::protocols::jolt_vm::{
-    JoltVmNamespace, JoltVmStage5InstructionReadRafRows, JoltVmStage6Rows,
+    JoltVmNamespace, JoltVmProgramView, JoltVmStage5InstructionReadRafRows, JoltVmStage6Rows,
 };
 use jolt_witness::CommittedWitnessProvider;
 
@@ -64,10 +64,10 @@ where
     T: Transcript<Challenge = F>,
     W: CommittedWitnessProvider<F, JoltVmNamespace>
         + JoltVmStage5InstructionReadRafRows
-        + JoltVmStage6Rows,
+        + JoltVmStage6Rows
+        + JoltVmProgramView,
 {
     let mut session = backend.begin_proof();
-    preprocessing.park_program(&mut session);
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         backend,
         &mut session,

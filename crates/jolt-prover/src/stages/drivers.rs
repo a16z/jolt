@@ -180,8 +180,8 @@ mod twin_tests {
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
     use jolt_verifier::VerifierError;
     use jolt_witness::protocols::jolt_vm::{
-        JoltVmNamespace, JoltVmStage5InstructionReadRafRows, JoltVmStage6Rows, JoltVmWitnessPlane,
-        Stage5InstructionReadRafRow,
+        JoltVmNamespace, JoltVmProgramView, JoltVmStage5InstructionReadRafRows, JoltVmStage6Rows,
+        JoltVmWitnessPlane, Stage5InstructionReadRafRow,
     };
     use jolt_witness::{
         OracleDescriptor, OracleRef, PolynomialView, ViewRequirement, WitnessError, WitnessProvider,
@@ -657,6 +657,16 @@ mod twin_tests {
             Err(WitnessError::UnsupportedView {
                 view: "toy driver twin witness",
             })
+        }
+    }
+
+    impl JoltVmProgramView for NoWitness {
+        #[expect(
+            clippy::unimplemented,
+            reason = "the accessor returns a borrow, so it cannot report the every-access error the other NoWitness accessors do; the toy kernels never read the program"
+        )]
+        fn program_preprocessing(&self) -> &jolt_program::preprocess::JoltProgramPreprocessing {
+            unimplemented!("toy driver twin witness carries no program")
         }
     }
 

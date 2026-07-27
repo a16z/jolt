@@ -10,7 +10,7 @@
 //! carried downstream in `Stage6aCarriedChallenges` for stage 6b. Both members
 //! are universal
 //! `PrepareKernel` slots: the bytecode member's stage-value fold reads the
-//! session-resident retained program, and its PC pushforward source (the
+//! witness plane's program view, and its PC pushforward source (the
 //! per-cycle bytecode indices) comes off the witness plane's typed stage-6
 //! rows — both fetched inside `prepare`, never staged here.
 

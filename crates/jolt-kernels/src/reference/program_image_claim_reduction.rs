@@ -20,22 +20,20 @@ use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
 use super::views::eq_table;
 use crate::committed_program::program_image_words_padded;
 use crate::precommitted_reduction::{permute_tables, CycleReductionKernel};
-use crate::{
-    KernelError, PrepareKernel, ProofSession, ReferenceBackend, RetainedProgram, SumcheckKernel,
-};
+use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
-        session: &mut ProofSession,
-        _witness: &dyn JoltVmWitnessPlane<F>,
+        _session: &mut ProofSession,
+        witness: &dyn JoltVmWitnessPlane<F>,
         inputs: ProverInputs<'_, F, ProgramImageReductionCyclePhase<F>>,
     ) -> Result<
         Box<dyn SumcheckKernel<F, Relation = ProgramImageReductionCyclePhase<F>>>,
         KernelError<F>,
     > {
         let layout = inputs.relation.layout();
-        let program = RetainedProgram::from_session(session)?;
+        let program = witness.program_preprocessing();
         Ok(Box::new(program_image_reduction_kernel(
             layout,
             inputs.relation.r_addr_rw(),
