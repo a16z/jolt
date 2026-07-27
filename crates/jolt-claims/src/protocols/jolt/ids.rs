@@ -548,19 +548,28 @@ impl JoltOpeningId {
         }
     }
 
-    pub fn committed(polynomial: JoltCommittedPolynomial, relation: JoltRelationId) -> Self {
-        Self::polynomial(polynomial, relation)
+    pub const fn committed(polynomial: JoltCommittedPolynomial, relation: JoltRelationId) -> Self {
+        Self::Polynomial {
+            polynomial: JoltPolynomialId::Committed(polynomial),
+            relation,
+        }
     }
 
-    pub fn virtual_polynomial(polynomial: JoltVirtualPolynomial, relation: JoltRelationId) -> Self {
-        Self::polynomial(polynomial, relation)
+    pub const fn virtual_polynomial(
+        polynomial: JoltVirtualPolynomial,
+        relation: JoltRelationId,
+    ) -> Self {
+        Self::Polynomial {
+            polynomial: JoltPolynomialId::Virtual(polynomial),
+            relation,
+        }
     }
 
-    pub fn untrusted_advice(relation: JoltRelationId) -> Self {
+    pub const fn untrusted_advice(relation: JoltRelationId) -> Self {
         Self::UntrustedAdvice { relation }
     }
 
-    pub fn trusted_advice(relation: JoltRelationId) -> Self {
+    pub const fn trusted_advice(relation: JoltRelationId) -> Self {
         Self::TrustedAdvice { relation }
     }
 }
