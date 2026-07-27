@@ -21,6 +21,20 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         self.walk_cycles(|row, next, env| W::extract(row, next, env).map(ToField::to_field))
     }
 
+    /// [`Self::materialize_cycle`] extended with one-row history for
+    /// witnesses whose value depends on the previous cycle.
+    pub(super) fn materialize_cycle_with_prev<F: Field>(
+        &self,
+        mut value: impl FnMut(
+            Option<&TraceRow>,
+            &TraceRow,
+            Option<&TraceRow>,
+            &WitnessEnv<'_>,
+        ) -> Result<F, WitnessError>,
+    ) -> Result<Vec<F>, WitnessError> {
+        self.walk_cycles_with_prev(|prev, row, next, env| value(prev, row, next, env))
+    }
+
     /// [`Self::materialize_cycle`] for indexed witness families; `index`
     /// selects the family member.
     pub(crate) fn materialize_cycle_indexed<F: Field, W: ExtractIndexed<I> + ToField, I: Copy>(
@@ -88,6 +102,34 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         for index in 0..rows {
             let next = (index + 1 < rows).then(|| trace.next_row().unwrap_or_default());
             values.push(value(&current, next.as_ref(), &env)?);
+            if let Some(row) = next {
+                current = row;
+            }
+        }
+        Ok(values)
+    }
+
+    fn walk_cycles_with_prev<V>(
+        &self,
+        mut value: impl FnMut(
+            Option<&TraceRow>,
+            &TraceRow,
+            Option<&TraceRow>,
+            &WitnessEnv<'_>,
+        ) -> Result<V, WitnessError>,
+    ) -> Result<Vec<V>, WitnessError> {
+        let rows = checked_pow2(self.config.log_t)?;
+        let env = WitnessEnv {
+            preprocessing: self.preprocessing,
+        };
+        let mut values = Vec::with_capacity(rows);
+        let mut trace = self.trace.trace.clone();
+        let mut prev: Option<TraceRow> = None;
+        let mut current = trace.next_row().unwrap_or_default();
+        for index in 0..rows {
+            let next = (index + 1 < rows).then(|| trace.next_row().unwrap_or_default());
+            values.push(value(prev.as_ref(), &current, next.as_ref(), &env)?);
+            prev = Some(current);
             if let Some(row) = next {
                 current = row;
             }

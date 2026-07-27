@@ -10,7 +10,7 @@ use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 /// Layout:
 /// - a0..a3: First operand (4 u64 limbs)
 /// - p0..p4: Partial products (5 u64 limbs)
-///           Top limb is also used as the active limb of the second operand
+///   Top limb is also used as the active limb of the second operand.
 /// - r0..r4: Rolling result window (5 u64 limbs)
 pub(crate) const NEEDED_REGISTERS: usize = INPUT_LIMBS + 2 * (INPUT_LIMBS + 1);
 

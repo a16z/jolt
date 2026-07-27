@@ -23,7 +23,7 @@ const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] =
     [1, 2, 3, 4, 5, 6, 12, 15, 18, 19];
 const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; 10] = [0, 7, 8, 9, 10, 11, 13, 14, 16, 17];
 
-pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 37] = [
+pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 38] = [
     JoltVirtualPolynomial::LeftInstructionInput,
     JoltVirtualPolynomial::RightInstructionInput,
     JoltVirtualPolynomial::Product,
@@ -44,6 +44,7 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 37] = [
     JoltVirtualPolynomial::NextIsVirtual,
     JoltVirtualPolynomial::NextIsFirstInSequence,
     JoltVirtualPolynomial::PrevRightLookupHighWord,
+    JoltVirtualPolynomial::PrevAuxContribution,
     JoltVirtualPolynomial::LookupOutput,
     JoltVirtualPolynomial::ShouldJump,
     JoltVirtualPolynomial::OpFlags(CircuitFlags::AddOperands),
@@ -481,7 +482,7 @@ mod tests {
         let dimensions = outer_dimensions();
         let plan = SpartanOuterRemainderPlan::from_dimensions(&dimensions);
 
-        assert_eq!(plan.r1cs_input_indices(), Ok(vec![4, 19]));
+        assert_eq!(plan.r1cs_input_indices(), Ok(vec![4, 21]));
 
         let unsupported =
             SpartanOuterDimensions::new(8, vec![JoltVirtualPolynomial::NextIsNoop], true).unwrap();

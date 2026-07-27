@@ -57,10 +57,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<MULC> {
                 self.register_state.rs1 as u32 as u64,
                 self.register_state.rs2 as u32 as i128,
             ),
-            64 => (
-                self.register_state.rs1,
-                self.register_state.rs2 as u64 as i128,
-            ),
+            64 => (self.register_state.rs1, self.register_state.rs2 as i128),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
@@ -77,9 +74,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<MULC> {
                 .wrapping_mul(y as u32)
                 .wrapping_add(self.instruction.prev_aux as u32)
                 .into(),
-            64 => (x as u64)
-                .wrapping_mul(y as u64)
-                .wrapping_add(self.instruction.prev_aux),
+            64 => x.wrapping_mul(y as u64).wrapping_add(self.instruction.prev_aux),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }
@@ -126,9 +121,13 @@ mod test {
             }
 
             random_cycle.instruction.trace(&mut cpu, None);
-            let cpu_result = cpu.x[normalized_operands.rd.unwrap() as usize] as u64;
             let lookup_result = LookupQuery::<XLEN>::to_lookup_output(&random_cycle);
-            assert_eq!(cpu_result, lookup_result, "{random_cycle:?}");
+            if let Some(rd) = normalized_operands.rd {
+                if rd != 0 {
+                    let cpu_result = cpu.x[rd as usize] as u64;
+                    assert_eq!(cpu_result, lookup_result, "{random_cycle:?}");
+                }
+            }
         }
     }
 }

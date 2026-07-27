@@ -130,9 +130,13 @@ mod test {
             }
 
             random_cycle.instruction.trace(&mut cpu, None);
-            let cpu_result = cpu.x[normalized_operands.rd.unwrap() as usize] as u64;
             let lookup_result = LookupQuery::<XLEN>::to_lookup_output(&random_cycle);
-            assert_eq!(cpu_result, lookup_result, "{random_cycle:?}");
+            if let Some(rd) = normalized_operands.rd {
+                if rd != 0 {
+                    let cpu_result = cpu.x[rd as usize] as u64;
+                    assert_eq!(cpu_result, lookup_result, "{random_cycle:?}");
+                }
+            }
         }
     }
 }

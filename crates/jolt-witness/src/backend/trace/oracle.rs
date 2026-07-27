@@ -8,6 +8,8 @@
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial,
 };
+use jolt_field::Field;
+use jolt_lookup_tables::LookupQuery;
 
 use super::*;
 use crate::witnesses::{
@@ -16,7 +18,7 @@ use crate::witnesses::{
     NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress,
     RamHammingWeight, RamInc, RamRaChunk, RamReadValue, RamWriteValue, RdInc, RdWriteValue,
     RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump,
-    UnexpandedPc,
+    UnexpandedPc, lookup_query, row_circuit_flags,
 };
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
@@ -42,6 +44,29 @@ fn not_served(id: JoltPolynomialId, reason: &'static str) -> WitnessError {
 }
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
+    fn materialize_prev_right_lookup_high_word<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+        self.materialize_cycle_with_prev(|prev, _row, _next, _env| {
+            let high_word = prev.map_or(0, |prev| {
+                (LookupQuery::<RV64_XLEN>::to_lookup_operands(&lookup_query(prev)).1 >> 64) as u64
+            });
+            Ok(F::from_u64(high_word))
+        })
+    }
+
+    fn materialize_prev_aux_contribution<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+        self.materialize_cycle_with_prev(|prev, row, _next, _env| {
+            let prev_high_word = prev.map_or(0, |prev| {
+                (LookupQuery::<RV64_XLEN>::to_lookup_operands(&lookup_query(prev)).1 >> 64) as u64
+            });
+            let contribution = if row_circuit_flags(row)?[jolt_riscv::CircuitFlags::UsePreviousAux] {
+                prev_high_word
+            } else {
+                0
+            };
+            Ok(F::from_u64(contribution))
+        })
+    }
+
     pub(crate) fn shape_of(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         use JoltCommittedPolynomial as C;
         use JoltVirtualPolynomial as V;
@@ -124,6 +149,8 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 | V::NextIsNoop
                 | V::NextIsVirtual
                 | V::NextIsFirstInSequence
+                | V::PrevRightLookupHighWord
+                | V::PrevAuxContribution
                 | V::LeftLookupOperand
                 | V::RightLookupOperand
                 | V::LeftInstructionInput
@@ -224,6 +251,8 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
                 V::NextIsNoop => self.materialize_cycle::<F, NextIsNoop>(),
                 V::NextIsVirtual => self.materialize_cycle::<F, NextIsVirtual>(),
                 V::NextIsFirstInSequence => self.materialize_cycle::<F, NextIsFirstInSequence>(),
+                V::PrevRightLookupHighWord => self.materialize_prev_right_lookup_high_word(),
+                V::PrevAuxContribution => self.materialize_prev_aux_contribution(),
                 V::LeftLookupOperand => self.materialize_cycle::<F, LeftLookupOperand>(),
                 V::RightLookupOperand => self.materialize_cycle::<F, RightLookupOperand>(),
                 V::LeftInstructionInput => self.materialize_cycle::<F, LeftInstructionInput>(),
