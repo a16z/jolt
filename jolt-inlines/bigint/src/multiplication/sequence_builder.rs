@@ -1,5 +1,5 @@
 use jolt_inlines_sdk::host::{
-    instruction::{add::ADD, addc::ADDC, ld::LD, mul::MUL, mulhu::MULHU, sd::SD},
+    instruction::{addc::ADDC, ld::LD, mul::MUL, mulc::MULC, sd::SD},
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
     InlineRegister, NoAdvice,
 };
@@ -9,10 +9,10 @@ use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 /// Number of virtual registers needed for BigInt multiplication
 /// Layout:
 /// - a0..a3: First operand (4 u64 limbs)
-/// - a4..a7: Second operand (4 u64 limbs)
-/// - s0..s1: Result limbs (2 u64 limbs, accumulator and carry)
-/// - t0    : Temporary for handling carry propagation
-pub(crate) const NEEDED_REGISTERS: usize = 11;
+/// - a4: Active limb of second operand (1 u64 limb)
+/// - p0..p4: Partial products (5 u64 limbs)
+/// - r0..r4: Rolling result window (5 u64 limbs)
+pub(crate) const NEEDED_REGISTERS: usize = INPUT_LIMBS + 1 + 2 * (INPUT_LIMBS + 1);
 
 /// Builds assembly sequence for 256-bit × 256-bit multiplication
 /// Expects first operand (4 u64 words) in RAM at location rs1
@@ -40,16 +40,16 @@ impl BigIntMulSequenceBuilder {
         *self.vr[i]
     }
     // RHS
-    fn b(&self, i: usize) -> u8 {
-        *self.vr[INPUT_LIMBS + i]
+    fn b(&self) -> u8 {
+        *self.vr[INPUT_LIMBS]
     }
-    // Results
-    fn s(&self, i: usize) -> u8 {
-        *self.vr[INPUT_LIMBS + INPUT_LIMBS + (i % 2)]
+    // Partial products
+    fn p(&self, i: usize) -> u8 {
+        *self.vr[INPUT_LIMBS + 1 + i]
     }
-    // Temporary for carry propagation
-    fn t(&self) -> u8 {
-        *self.vr[INPUT_LIMBS + INPUT_LIMBS + 2]
+    // Rolling result window
+    fn r(&self, i: usize) -> u8 {
+        *self.vr[INPUT_LIMBS + 1 + INPUT_LIMBS + 1 + (i % (INPUT_LIMBS + 1))]
     }
 
     /// Builds the complete multiplication sequence
@@ -59,61 +59,42 @@ impl BigIntMulSequenceBuilder {
                 .emit_ld::<LD>(self.a(i), self.operands.rs1, i as i64 * 8);
         }
 
-        for i in 0..INPUT_LIMBS {
-            self.asm
-                .emit_ld::<LD>(self.b(i), self.operands.rs2, i as i64 * 8);
+        // Seed the rolling window with a * b[0].
+        self.asm.emit_ld::<LD>(self.b(), self.operands.rs2, 0);
+        self.asm.emit_r::<MUL>(self.r(0), self.a(0), self.b());
+        for i in 1..INPUT_LIMBS {
+            self.asm.emit_r::<MULC>(self.r(i), self.a(i), self.b());
         }
+        self.asm.emit_r::<ADDC>(self.r(INPUT_LIMBS), 0, 0);
+        self.asm.emit_s::<SD>(self.operands.rs3, self.r(0), 0);
+        self.asm.emit_r::<ADDC>(self.r(INPUT_LIMBS + 1), 0, 0);
 
-        // Inline finalization ensures that s0 and s1 start at zero
-        // Thus no explicit initialization is needed
+        // Each iteration adds p << (i * 64) into the rolling window, stores limb i,
+        // then reuses that slot to hold the carry-out for the next window position.
+        for i in 1..INPUT_LIMBS {
+            self.asm
+                .emit_ld::<LD>(self.b(), self.operands.rs2, i as i64 * 8);
+            self.asm.emit_r::<MUL>(self.p(0), self.a(0), self.b());
+            for j in 1..INPUT_LIMBS {
+                self.asm.emit_r::<MULC>(self.p(j), self.a(j), self.b());
+            }
+            self.asm.emit_r::<ADDC>(self.p(INPUT_LIMBS), 0, 0);
 
-        // 0th limb is just a multiplication with no carry
-        self.asm.emit_r::<MUL>(self.s(0), self.a(0), self.b(0));
-        self.asm.emit_s::<SD>(self.operands.rs3, self.s(0), 0); // Store 0th limb immediately
-
-        // 1st limb is 0 and doesn't receive a carry from the 0th limb
-        // so initialize it with the upper half of A[0] * B[0]
-        self.asm.emit_r::<MULHU>(self.s(1), self.a(0), self.b(0));
-
-        // For each output limb R[k]
-        for k in 1..OUTPUT_LIMBS {
-            // alternate between s0 and s1 for accumulating results and carries to minimize register usage
-            // overwrite carry register on first addition, then accumulate into it for subsequent additions
-            let mut overwrite_carry = true;
-
-            for i in 0..INPUT_LIMBS {
-                for j in 0..INPUT_LIMBS {
-                    if i == 0 && j == 0 {
-                        continue; // skip the A[0] * B[0] term which is already handled
-                    }
-                    // add all lower(A[i] * B[j]) where i+j = k
-                    if i + j == k {
-                        // t = low part of A[i] * B[j]
-                        self.asm.emit_r::<MUL>(self.t(), self.a(i), self.b(j));
-                    // add all upper(A[i] * B[j]) where i+j = k-1
-                    } else if i + j == k - 1 {
-                        // t = high part of A[i] * B[j]
-                        self.asm.emit_r::<MULHU>(self.t(), self.a(i), self.b(j));
-                    }
-                    // handle carry propagation
-                    if i + j == k || i + j == k - 1 {
-                        // add product to accumulator
-                        self.asm.emit_r::<ADD>(self.s(k), self.s(k), self.t());
-                        // Pull the previous row's auxiliary high bit into the carry limb.
-                        if overwrite_carry {
-                            self.asm.emit_r::<ADDC>(self.s(k + 1), 0, 0);
-                        } else {
-                            self.asm.emit_r::<ADDC>(self.s(k + 1), self.s(k + 1), 0);
-                        }
-                        // after the first addition, we need to accumulate carries instead of overwriting them
-                        overwrite_carry = false;
-                    }
-                }
+            for j in 0..=INPUT_LIMBS {
+                self.asm
+                    .emit_r::<ADDC>(self.r(i + j), self.r(i + j), self.p(j));
             }
 
-            // store the accumulated result limb
             self.asm
-                .emit_s::<SD>(self.operands.rs3, self.s(k), k as i64 * 8);
+                .emit_s::<SD>(self.operands.rs3, self.r(i), i as i64 * 8);
+            if i + INPUT_LIMBS + 1 < OUTPUT_LIMBS {
+                self.asm.emit_r::<ADDC>(self.r(i + INPUT_LIMBS + 1), 0, 0);
+            }
+        }
+
+        for i in INPUT_LIMBS..OUTPUT_LIMBS {
+            self.asm
+                .emit_s::<SD>(self.operands.rs3, self.r(i), i as i64 * 8);
         }
 
         self.asm.release_many(self.vr);

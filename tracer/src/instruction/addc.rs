@@ -67,8 +67,8 @@ impl RISCVInstruction for ADDC {
     }
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
-        let sum = cpu.x[self.operands.rs1 as usize] as u128
-            + cpu.x[self.operands.rs2 as usize] as u128
+        let sum = (cpu.x[self.operands.rs1 as usize] as u64 as u128)
+            + (cpu.x[self.operands.rs2 as usize] as u64 as u128)
             + self.prev_aux as u128;
         cpu.write_register(
             self.operands.rd as usize,
@@ -117,5 +117,33 @@ impl From<super::SourceInstructionRow> for ADDC {
             is_first_in_sequence: false,
             is_compressed: row.is_compressed,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
+
+    use super::{FormatR, RISCVTrace, ADDC};
+
+    #[test]
+    fn addc_treats_register_operands_as_unsigned_limbs() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        cpu.x[1] = u64::MAX as i64;
+        cpu.x[2] = 1;
+        cpu.set_last_lookup_high_word(1);
+
+        ADDC {
+            operands: FormatR {
+                rd: 3,
+                rs1: 1,
+                rs2: 2,
+            },
+            ..Default::default()
+        }
+        .trace(&mut cpu, None);
+
+        assert_eq!(cpu.x[3] as u64, 1);
+        assert_eq!(cpu.last_lookup_high_word(), 1);
     }
 }
