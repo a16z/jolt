@@ -10,13 +10,13 @@
 //! | Range | Description |
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
-//! | `[1..=35]` | R1CS inputs (registers, flags, PC, lookups) |
-//! | `[36..=37]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[1..=38]` | R1CS inputs (registers, flags, PC, lookups) |
+//! | `[39..=40]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
-//! - **Eq-conditional** (rows 0–18): `guard · (left − right) = 0`
-//! - **Product** (rows 19–21): `left · right = output`
+//! - **Eq-conditional** (rows 0–19): `guard · (left − right) = 0`
+//! - **Product** (rows 20–22): `left · right = output`
 
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
@@ -40,33 +40,36 @@ pub const V_NEXT_UNEXPANDED_PC: usize = 16;
 pub const V_NEXT_PC: usize = 17;
 pub const V_NEXT_IS_VIRTUAL: usize = 18;
 pub const V_NEXT_IS_FIRST_IN_SEQUENCE: usize = 19;
-pub const V_LOOKUP_OUTPUT: usize = 20;
-pub const V_SHOULD_JUMP: usize = 21;
+pub const V_PREV_RIGHT_LOOKUP_HIGH_WORD: usize = 20;
+pub const V_PREV_AUX_CONTRIBUTION: usize = 21;
+pub const V_LOOKUP_OUTPUT: usize = 22;
+pub const V_SHOULD_JUMP: usize = 23;
 
-pub const V_FLAG_ADD_OPERANDS: usize = 22;
-pub const V_FLAG_SUBTRACT_OPERANDS: usize = 23;
-pub const V_FLAG_MULTIPLY_OPERANDS: usize = 24;
-pub const V_FLAG_LOAD: usize = 25;
-pub const V_FLAG_STORE: usize = 26;
-pub const V_FLAG_JUMP: usize = 27;
-pub const V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD: usize = 28;
-pub const V_FLAG_VIRTUAL_INSTRUCTION: usize = 29;
-pub const V_FLAG_ASSERT: usize = 30;
-pub const V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC: usize = 31;
-pub const V_FLAG_ADVICE: usize = 32;
-pub const V_FLAG_IS_COMPRESSED: usize = 33;
-pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
-pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
+pub const V_FLAG_ADD_OPERANDS: usize = 24;
+pub const V_FLAG_USE_PREVIOUS_AUX: usize = 25;
+pub const V_FLAG_SUBTRACT_OPERANDS: usize = 26;
+pub const V_FLAG_MULTIPLY_OPERANDS: usize = 27;
+pub const V_FLAG_LOAD: usize = 28;
+pub const V_FLAG_STORE: usize = 29;
+pub const V_FLAG_JUMP: usize = 30;
+pub const V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD: usize = 31;
+pub const V_FLAG_VIRTUAL_INSTRUCTION: usize = 32;
+pub const V_FLAG_ASSERT: usize = 33;
+pub const V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC: usize = 34;
+pub const V_FLAG_ADVICE: usize = 35;
+pub const V_FLAG_IS_COMPRESSED: usize = 36;
+pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 37;
+pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 38;
 
-pub const V_BRANCH: usize = 36;
-pub const V_NEXT_IS_NOOP: usize = 37;
+pub const V_BRANCH: usize = 39;
+pub const V_NEXT_IS_NOOP: usize = 40;
 
-pub const NUM_R1CS_INPUTS: usize = 35;
+pub const NUM_R1CS_INPUTS: usize = 38;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
-pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 38
-pub const NUM_EQ_CONSTRAINTS: usize = 19;
+pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 41
+pub const NUM_EQ_CONSTRAINTS: usize = 20;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 23
 
 pub const fn const_column() -> usize {
     V_CONST
@@ -266,7 +269,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
 
     let empty = || Vec::new();
 
-    // Eq-conditional constraints (0-18)
+    // Eq-conditional constraints (0-19)
     // Form: guard · (left − right) = 0  →  A=guard, B=left−right, C=0
 
     // 0: RamAddrEqRs1PlusImmIfLoadStore
@@ -346,10 +349,13 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     c_rows.push(empty());
 
     // 7: RightLookupAdd
-    //    guard = Add
+    //    guard = Add - UsePreviousAux
     //    left  = RightLookupOperand
     //    right = LeftInstructionInput + RightInstructionInput
-    a_rows.push(row::<F>(&[(V_FLAG_ADD_OPERANDS, 1)]));
+    a_rows.push(row::<F>(&[
+        (V_FLAG_ADD_OPERANDS, 1),
+        (V_FLAG_USE_PREVIOUS_AUX, -1),
+    ]));
     b_rows.push(row::<F>(&[
         (V_RIGHT_LOOKUP_OPERAND, 1),
         (V_LEFT_INSTRUCTION_INPUT, -1),
@@ -357,7 +363,20 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 8: RightLookupSub
+    // 8: RightLookupAddWithPrevAux
+    //    guard = UsePreviousAux
+    //    left  = RightLookupOperand
+    //    right = LeftInstructionInput + RightInstructionInput + PrevRightLookupHighWord
+    a_rows.push(row::<F>(&[(V_FLAG_USE_PREVIOUS_AUX, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_RIGHT_LOOKUP_OPERAND, 1),
+        (V_LEFT_INSTRUCTION_INPUT, -1),
+        (V_RIGHT_INSTRUCTION_INPUT, -1),
+        (V_PREV_RIGHT_LOOKUP_HIGH_WORD, -1),
+    ]));
+    c_rows.push(empty());
+
+    // 9: RightLookupSub
     //    guard = Sub
     //    left  = RightLookupOperand
     //    right = LeftInstructionInput − RightInstructionInput + 2^64
@@ -370,15 +389,19 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 9: RightLookupEqProductIfMul
+    // 10: RightLookupEqProductIfMul
     //    guard = Mul
     //    left  = RightLookupOperand
-    //    right = Product
+    //    right = Product + PrevAuxContribution
     a_rows.push(row::<F>(&[(V_FLAG_MULTIPLY_OPERANDS, 1)]));
-    b_rows.push(row::<F>(&[(V_RIGHT_LOOKUP_OPERAND, 1), (V_PRODUCT, -1)]));
+    b_rows.push(row::<F>(&[
+        (V_RIGHT_LOOKUP_OPERAND, 1),
+        (V_PRODUCT, -1),
+        (V_PREV_AUX_CONTRIBUTION, -1),
+    ]));
     c_rows.push(empty());
 
-    // 10: RightLookupEqRightInputOtherwise
+    // 11: RightLookupEqRightInputOtherwise
     //     guard = 1 − Add − Sub − Mul − Advice
     //     left  = RightLookupOperand
     //     right = RightInstructionInput
@@ -395,7 +418,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 11: AssertLookupOne
+    // 12: AssertLookupOne
     //     guard = Assert
     //     left  = LookupOutput
     //     right = 1
@@ -403,7 +426,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1), (V_CONST, -1)]));
     c_rows.push(empty());
 
-    // 12: RdWriteEqLookupIfWriteLookupToRd
+    // 13: RdWriteEqLookupIfWriteLookupToRd
     //     guard = WriteLookupOutputToRD
     //     left  = RdWriteValue
     //     right = LookupOutput
@@ -411,7 +434,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_RD_WRITE_VALUE, 1), (V_LOOKUP_OUTPUT, -1)]));
     c_rows.push(empty());
 
-    // 13: RdWriteEqPCPlusConstIfWritePCtoRD
+    // 14: RdWriteEqPCPlusConstIfWritePCtoRD
     //     guard = Jump
     //     left  = RdWriteValue
     //     right = UnexpandedPC + 4 − 2·IsCompressed
@@ -424,7 +447,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 14: NextUnexpPCEqLookupIfShouldJump
+    // 15: NextUnexpPCEqLookupIfShouldJump
     //     guard = ShouldJump
     //     left  = NextUnexpandedPC
     //     right = LookupOutput
@@ -435,7 +458,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 15: NextUnexpPCEqPCPlusImmIfShouldBranch
+    // 16: NextUnexpPCEqPCPlusImmIfShouldBranch
     //     guard = ShouldBranch
     //     left  = NextUnexpandedPC
     //     right = UnexpandedPC + Imm
@@ -447,7 +470,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 16: NextUnexpPCUpdateOtherwise
+    // 17: NextUnexpPCUpdateOtherwise
     //     guard = 1 − ShouldBranch − Jump
     //     left  = NextUnexpandedPC
     //     right = UnexpandedPC + 4 − 4·DoNotUpdate − 2·IsCompressed
@@ -465,7 +488,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 17: NextPCEqPCPlusOneIfInline
+    // 18: NextPCEqPCPlusOneIfInline
     //     guard = VirtualInstruction − IsLastInSequence
     //     left  = NextPC
     //     right = PC + 1
@@ -490,7 +513,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_NEXT_PC, 1), (V_PC, -1), (V_CONST, -1)]));
     c_rows.push(empty());
 
-    // 18: MustStartSequenceFromBeginning
+    // 19: MustStartSequenceFromBeginning
     //     guard = NextIsVirtual − NextIsFirstInSequence
     //     left  = 1
     //     right = DoNotUpdateUnexpandedPC
@@ -512,20 +535,20 @@ fn append_product_constraints<F: Field>(
     b_rows: &mut Vec<SparseRow<F>>,
     c_rows: &mut Vec<SparseRow<F>>,
 ) {
-    // Product constraints (19-21)
+    // Product constraints (20-22)
     // Form: left · right = output  →  A=left, B=right, C=output
 
-    // 19: Product = LeftInstructionInput × RightInstructionInput
+    // 20: Product = LeftInstructionInput × RightInstructionInput
     a_rows.push(row::<F>(&[(V_LEFT_INSTRUCTION_INPUT, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_INSTRUCTION_INPUT, 1)]));
     c_rows.push(row::<F>(&[(V_PRODUCT, 1)]));
 
-    // 20: ShouldBranch = LookupOutput × Branch
+    // 21: ShouldBranch = LookupOutput × Branch
     a_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1)]));
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    // 21: ShouldJump = Jump × (1 − NextIsNoop)
+    // 22: ShouldJump = Jump × (1 − NextIsNoop)
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
@@ -534,7 +557,7 @@ fn append_product_constraints<F: Field>(
 /// Build only the Jolt RV64 equality-conditional constraints.
 ///
 /// Returns the 19 rows with form `guard · (left - right) = 0`, over the
-/// standard 38-variable per-cycle witness layout. Product constraints are
+/// standard 41-variable per-cycle witness layout. Product constraints are
 /// intentionally excluded for consumers that handle multiplication checks in
 /// a separate protocol step.
 pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
@@ -550,12 +573,12 @@ pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F
 
 /// Build the full Jolt RV64 R1CS constraint matrices.
 ///
-/// Returns 22 constraints over 38 variables per cycle:
-/// - 19 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
+/// Returns 23 constraints over 41 variables per cycle:
+/// - 20 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
 /// - 3 product: `left · right = output` → A=left, B=right, C=output
 ///
-/// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–35,
-/// product factors at 36–37).
+/// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–38,
+/// product factors at 39–40).
 pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
@@ -606,9 +629,9 @@ mod tests {
     #[test]
     fn constraint_count() {
         let matrices = rv64_trace_constraints::<Fr>();
-        assert_eq!(matrices.a.len(), 22);
-        assert_eq!(matrices.b.len(), 22);
-        assert_eq!(matrices.c.len(), 22);
+        assert_eq!(matrices.a.len(), 23);
+        assert_eq!(matrices.b.len(), 23);
+        assert_eq!(matrices.c.len(), 23);
     }
 
     #[test]

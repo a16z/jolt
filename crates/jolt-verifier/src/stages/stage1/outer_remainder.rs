@@ -372,7 +372,7 @@ mod tests {
 
     /// The relation's expanded `expected_output` evaluates bit-identically to the
     /// factored `JoltSpartanOuterRemainder::expected_output_claim` on the production
-    /// 35-variable rv64 shape. This is the equivalence the clear stage-1 path now
+    /// 38-variable rv64 shape. This is the equivalence the clear stage-1 path now
     /// relies on (it switched from the factored matrix form to the expanded relation
     /// form); muldiv non-ZK is the end-to-end gate, this pins it at unit level.
     #[test]
@@ -380,7 +380,7 @@ mod tests {
         let log_t = 3usize;
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let variable_count = dimensions.variables().len();
-        assert_eq!(variable_count, 35);
+        assert_eq!(variable_count, 38);
 
         // `tau` has `log_t + 2` entries; the remainder challenge vector has
         // `1 + log_t` entries (so `tau.len() == remainder.len() + 1`).

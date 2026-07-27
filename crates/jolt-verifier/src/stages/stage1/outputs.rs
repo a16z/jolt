@@ -27,7 +27,7 @@ pub struct Stage1OutputClaims<F: Field> {
 /// cross-relation aliasing there is no `no_opening_values` opt-out: the
 /// generated absorb (`opening_values` / `append_output_claims` on this struct)
 /// delegates to `OuterRemainderOutputClaims` in `dimensions.variables()` order
-/// (the canonical 35 R1CS-input order), byte-identical to the previous explicit
+/// (the canonical 38 R1CS-input order), byte-identical to the previous explicit
 /// append loop.
 ///
 /// The member's `SpartanOuterPublic` coefficient table depends on the batch's own
@@ -61,7 +61,7 @@ pub struct Stage1ClearOutput<F: Field> {
     /// `.outer_remainder.<field>`.
     pub output_values: Stage1BatchOutputClaims<F>,
     /// The produced remainder opening *points*, paired field-for-field with
-    /// `output_values`. All 35 openings share the single remainder point; the raw
+    /// `output_values`. All 38 openings share the single remainder point; the raw
     /// reduction point is exposed by [`Stage1Output::remainder_point`].
     pub output_points: Stage1BatchOutputPoints<F>,
 }
@@ -93,7 +93,7 @@ impl<F: Field, C> Stage1Output<F, C> {
     /// bindings) slice and reverse this point themselves, so it must NOT be the
     /// already-reversed opening point: the clear path stores the openings at the
     /// reversed point (`derive_opening_points`), so we reverse it back here to
-    /// recover the raw reduction point the ZK `challenges()` returns directly. All 35
+    /// recover the raw reduction point the ZK `challenges()` returns directly. All 38
     /// stage-1 openings share this single reversed opening point, so `left_instruction_input`
     /// is a representative field accessor for it.
     pub fn remainder_point(&self) -> Vec<F> {

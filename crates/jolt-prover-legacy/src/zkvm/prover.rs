@@ -536,6 +536,21 @@ impl<
             self.opening_accumulator.openings.clone(),
         );
 
+        #[cfg(all(test, not(feature = "zk")))]
+        {
+            // These stage-1 outer openings only surface in the final clear-claim
+            // projection, so no later sumcheck consumes them before this test-only
+            // completeness assertion runs.
+            let _ = self.opening_accumulator.get_virtual_polynomial_opening(
+                crate::zkvm::witness::VirtualPolynomial::PrevRightLookupHighWord,
+                SumcheckId::SpartanOuter,
+            );
+            let _ = self.opening_accumulator.get_virtual_polynomial_opening(
+                crate::zkvm::witness::VirtualPolynomial::PrevAuxContribution,
+                SumcheckId::SpartanOuter,
+            );
+        }
+
         #[cfg(test)]
         {
             let missing_virtual = self.opening_accumulator.appended_virtual_openings.borrow();

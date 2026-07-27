@@ -74,7 +74,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<MULC> {
                 .wrapping_mul(y as u32)
                 .wrapping_add(self.instruction.prev_aux as u32)
                 .into(),
-            64 => x.wrapping_mul(y as u64).wrapping_add(self.instruction.prev_aux),
+            64 => x
+                .wrapping_mul(y as u64)
+                .wrapping_add(self.instruction.prev_aux),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }

@@ -67,7 +67,7 @@ pub const SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize =
 
 #[cfg(not(feature = "field-inline"))]
 pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] =
-    [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
+    [1, 2, 3, 4, 5, 6, 12, 15, 18, 19];
 
 #[cfg(feature = "field-inline")]
 pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] = [
@@ -77,10 +77,10 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
     4,
     5,
     6,
-    11,
-    14,
-    17,
+    12,
+    15,
     18,
+    19,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FADD,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FSUB,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FMUL,
@@ -89,7 +89,7 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
 
 #[cfg(not(feature = "field-inline"))]
 pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] =
-    [0, 7, 8, 9, 10, 12, 13, 15, 16];
+    [0, 7, 8, 9, 10, 11, 13, 14, 16, 17];
 
 #[cfg(feature = "field-inline")]
 pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] = [
@@ -98,10 +98,11 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     8,
     9,
     10,
-    12,
+    11,
     13,
-    15,
+    14,
     16,
+    17,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ASSERT_EQ,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_FROM_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
@@ -426,11 +427,11 @@ mod tests {
         assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
         assert_eq!(
             SPARTAN_OUTER_FIRST_GROUP_ROWS,
-            [1, 2, 3, 4, 5, 6, 11, 14, 17, 18]
+            [1, 2, 3, 4, 5, 6, 12, 15, 18, 19]
         );
         assert_eq!(
             SPARTAN_OUTER_SECOND_GROUP_ROWS,
-            [0, 7, 8, 9, 10, 12, 13, 15, 16]
+            [0, 7, 8, 9, 10, 11, 13, 14, 16, 17]
         );
         assert_eq!(
             spartan_outer_row_weights(Fr::from_u64(2), Fr::from_u64(3))

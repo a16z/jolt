@@ -13,12 +13,12 @@ use jolt_lookup_tables::LookupQuery;
 
 use super::*;
 use crate::witnesses::{
-    BytecodeRaChunk, Imm, InstructionFlag, InstructionRaChunk, InstructionRafFlag,
-    LeftInstructionInput, LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence,
-    NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress,
-    RamHammingWeight, RamInc, RamRaChunk, RamReadValue, RamWriteValue, RdInc, RdWriteValue,
-    RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump,
-    UnexpandedPc, lookup_query, row_circuit_flags,
+    lookup_query, row_circuit_flags, BytecodeRaChunk, Imm, InstructionFlag, InstructionRaChunk,
+    InstructionRafFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput, LookupTableFlag,
+    NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc,
+    Product, RamAddress, RamHammingWeight, RamInc, RamRaChunk, RamReadValue, RamWriteValue, RdInc,
+    RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch,
+    ShouldJump, UnexpandedPc,
 };
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
@@ -58,7 +58,8 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
             let prev_high_word = prev.map_or(0, |prev| {
                 (LookupQuery::<RV64_XLEN>::to_lookup_operands(&lookup_query(prev)).1 >> 64) as u64
             });
-            let contribution = if row_circuit_flags(row)?[jolt_riscv::CircuitFlags::UsePreviousAux] {
+            let contribution = if row_circuit_flags(row)?[jolt_riscv::CircuitFlags::UsePreviousAux]
+            {
                 prev_high_word
             } else {
                 0

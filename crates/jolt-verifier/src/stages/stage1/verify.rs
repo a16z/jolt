@@ -79,7 +79,7 @@ where
             1,
         )?;
 
-        // Append the 35 produced openings in canonical (declaration) order, matching
+        // Append the 38 produced openings in canonical (declaration) order, matching
         // the prover's commitment order.
         sumchecks.append_output_claims(transcript, &claims.outer);
 
