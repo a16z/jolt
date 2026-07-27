@@ -9,10 +9,10 @@ use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 /// Number of virtual registers needed for BigInt multiplication
 /// Layout:
 /// - a0..a3: First operand (4 u64 limbs)
-/// - a4: Active limb of second operand (1 u64 limb)
 /// - p0..p4: Partial products (5 u64 limbs)
+///           Top limb is also used as the active limb of the second operand
 /// - r0..r4: Rolling result window (5 u64 limbs)
-pub(crate) const NEEDED_REGISTERS: usize = INPUT_LIMBS + 1 + 2 * (INPUT_LIMBS + 1);
+pub(crate) const NEEDED_REGISTERS: usize = INPUT_LIMBS + 2 * (INPUT_LIMBS + 1);
 
 /// Builds assembly sequence for 256-bit × 256-bit multiplication
 /// Expects first operand (4 u64 words) in RAM at location rs1
@@ -41,15 +41,15 @@ impl BigIntMulSequenceBuilder {
     }
     // RHS
     fn b(&self) -> u8 {
-        *self.vr[INPUT_LIMBS]
+        *self.vr[INPUT_LIMBS + INPUT_LIMBS]
     }
     // Partial products
     fn p(&self, i: usize) -> u8 {
-        *self.vr[INPUT_LIMBS + 1 + i]
+        *self.vr[INPUT_LIMBS + i]
     }
     // Rolling result window
     fn r(&self, i: usize) -> u8 {
-        *self.vr[INPUT_LIMBS + 1 + INPUT_LIMBS + 1 + (i % (INPUT_LIMBS + 1))]
+        *self.vr[INPUT_LIMBS + INPUT_LIMBS + 1 + (i % (INPUT_LIMBS + 1))]
     }
 
     /// Builds the complete multiplication sequence
@@ -67,10 +67,10 @@ impl BigIntMulSequenceBuilder {
         }
         self.asm.emit_r::<ADDC>(self.r(INPUT_LIMBS), 0, 0);
         self.asm.emit_s::<SD>(self.operands.rs3, self.r(0), 0);
-        self.asm.emit_r::<ADDC>(self.r(INPUT_LIMBS + 1), 0, 0);
 
-        // Each iteration adds p << (i * 64) into the rolling window, stores limb i,
-        // then reuses that slot to hold the carry-out for the next window position.
+        // Each iteration adds p << (i * 64) into the rolling window and stores limb i.
+        // The highest slot in the ring has already been written back to memory, so we
+        // overwrite it on the final ADDC instead of clearing it ahead of time.
         for i in 1..INPUT_LIMBS {
             self.asm
                 .emit_ld::<LD>(self.b(), self.operands.rs2, i as i64 * 8);
@@ -80,16 +80,15 @@ impl BigIntMulSequenceBuilder {
             }
             self.asm.emit_r::<ADDC>(self.p(INPUT_LIMBS), 0, 0);
 
-            for j in 0..=INPUT_LIMBS {
+            for j in 0..INPUT_LIMBS {
                 self.asm
                     .emit_r::<ADDC>(self.r(i + j), self.r(i + j), self.p(j));
             }
+            self.asm
+                .emit_r::<ADDC>(self.r(i + INPUT_LIMBS), 0, self.p(INPUT_LIMBS));
 
             self.asm
                 .emit_s::<SD>(self.operands.rs3, self.r(i), i as i64 * 8);
-            if i + INPUT_LIMBS + 1 < OUTPUT_LIMBS {
-                self.asm.emit_r::<ADDC>(self.r(i + INPUT_LIMBS + 1), 0, 0);
-            }
         }
 
         for i in INPUT_LIMBS..OUTPUT_LIMBS {
