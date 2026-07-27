@@ -886,6 +886,9 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
         prover_witness::VirtualPolynomial::NextIsFirstInSequence => {
             JoltVirtualPolynomial::NextIsFirstInSequence
         }
+        prover_witness::VirtualPolynomial::PrevRightLookupHighWord => {
+            JoltVirtualPolynomial::PrevRightLookupHighWord
+        }
         prover_witness::VirtualPolynomial::LeftLookupOperand => {
             JoltVirtualPolynomial::LeftLookupOperand
         }
@@ -960,6 +963,9 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
 fn convert_circuit_flag(flag: prover_instruction::CircuitFlags) -> jolt_riscv::CircuitFlags {
     match flag {
         prover_instruction::CircuitFlags::AddOperands => jolt_riscv::CircuitFlags::AddOperands,
+        prover_instruction::CircuitFlags::UsePreviousAux => {
+            jolt_riscv::CircuitFlags::UsePreviousAux
+        }
         prover_instruction::CircuitFlags::SubtractOperands => {
             jolt_riscv::CircuitFlags::SubtractOperands
         }

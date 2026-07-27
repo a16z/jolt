@@ -113,9 +113,13 @@ fn spartan_outer_claims_from_openings<F: Field>(
             next_pc: outer_claim(JoltVirtualPolynomial::NextPC)?,
             next_is_virtual: outer_claim(JoltVirtualPolynomial::NextIsVirtual)?,
             next_is_first_in_sequence: outer_claim(JoltVirtualPolynomial::NextIsFirstInSequence)?,
+            prev_right_lookup_high_word: outer_claim(
+                JoltVirtualPolynomial::PrevRightLookupHighWord,
+            )?,
             lookup_output: outer_claim(JoltVirtualPolynomial::LookupOutput)?,
             should_jump: outer_claim(JoltVirtualPolynomial::ShouldJump)?,
             add_operands: flag_claim(CircuitFlags::AddOperands)?,
+            use_previous_aux: flag_claim(CircuitFlags::UsePreviousAux)?,
             subtract_operands: flag_claim(CircuitFlags::SubtractOperands)?,
             multiply_operands: flag_claim(CircuitFlags::MultiplyOperands)?,
             load: flag_claim(CircuitFlags::Load)?,

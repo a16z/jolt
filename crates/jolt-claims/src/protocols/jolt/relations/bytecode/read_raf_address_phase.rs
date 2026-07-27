@@ -47,6 +47,8 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub outer_imm: C,
     #[opening(OpFlags(CircuitFlags::AddOperands), from = SpartanOuter)]
     pub outer_add_operands: C,
+    #[opening(OpFlags(CircuitFlags::UsePreviousAux), from = SpartanOuter)]
+    pub outer_use_previous_aux: C,
     #[opening(OpFlags(CircuitFlags::SubtractOperands), from = SpartanOuter)]
     pub outer_subtract_operands: C,
     #[opening(OpFlags(CircuitFlags::MultiplyOperands), from = SpartanOuter)]

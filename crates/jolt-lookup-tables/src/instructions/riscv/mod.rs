@@ -5,6 +5,7 @@
 //! live in tracer as virtual sequences and never reach this layer.
 
 pub mod add;
+pub mod addc;
 pub mod addi;
 pub mod and;
 pub mod andi;

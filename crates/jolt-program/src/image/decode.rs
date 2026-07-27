@@ -193,6 +193,9 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
         (0b000, 0x05) => Ok(SourceInstructionKind::VirtualRev8W(
             jolt_riscv::instructions::VirtualRev8W(()),
         )),
+        (0b000, 0x06) => Ok(SourceInstructionKind::Addc(jolt_riscv::instructions::Addc(
+            (),
+        ))),
         (0b001, _) => Ok(SourceInstructionKind::VirtualAssertEQ),
         (0b010, _) => Ok(SourceInstructionKind::VirtualHostIO(
             jolt_riscv::instructions::VirtualHostIO(()),

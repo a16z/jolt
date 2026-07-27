@@ -153,10 +153,14 @@ fn claim_mut_from_spartan_outer<F: Field>(
         JoltVirtualPolynomial::NextPC => Some(&mut claims.next_pc),
         JoltVirtualPolynomial::NextIsVirtual => Some(&mut claims.next_is_virtual),
         JoltVirtualPolynomial::NextIsFirstInSequence => Some(&mut claims.next_is_first_in_sequence),
+        JoltVirtualPolynomial::PrevRightLookupHighWord => {
+            Some(&mut claims.prev_right_lookup_high_word)
+        }
         JoltVirtualPolynomial::LookupOutput => Some(&mut claims.lookup_output),
         JoltVirtualPolynomial::ShouldJump => Some(&mut claims.should_jump),
         JoltVirtualPolynomial::OpFlags(flag) => match flag {
             CircuitFlags::AddOperands => Some(&mut claims.add_operands),
+            CircuitFlags::UsePreviousAux => Some(&mut claims.use_previous_aux),
             CircuitFlags::SubtractOperands => Some(&mut claims.subtract_operands),
             CircuitFlags::MultiplyOperands => Some(&mut claims.multiply_operands),
             CircuitFlags::Load => Some(&mut claims.load),

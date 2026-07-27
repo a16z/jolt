@@ -2,8 +2,11 @@ mod bigint256_multiplication {
     use crate::multiplication::sequence_builder::BigintMul256;
     use jolt_inlines_sdk::{
         assert_edge_cases_match_reference, assert_random_cases_match_reference,
-        assert_reference_matches_harness,
+        assert_reference_matches_harness, host::InlineOp,
     };
+    use tracer::instruction::inline::INLINE;
+    use tracer::utils::inline_sequence_writer::SequenceInputs;
+    use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
     #[test]
     fn test_bigint256_mul_default() {

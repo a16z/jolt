@@ -1,5 +1,6 @@
 //! Virtual instructions synthesized by Jolt's tracer for prover-side decomposition.
 
+pub mod addc;
 pub mod advice;
 pub mod advice_lb;
 pub mod advice_ld;
@@ -38,6 +39,7 @@ pub mod xor_rotw7;
 pub mod xor_rotw8;
 pub mod zero_extend_word;
 
+pub use addc::Addc;
 pub use advice::VirtualAdvice;
 pub use advice_lb::AdviceLb;
 pub use advice_ld::AdviceLd;

@@ -214,6 +214,7 @@ pub struct Cpu {
     reservation: u64,
     is_reservation_set: bool,
     reservation_width: ReservationWidth,
+    last_lookup_high_word: u64,
     _dump_flag: bool,
     unsigned_data_mask: u64,
     // pub trace: Vec<Cycle>,
@@ -383,6 +384,7 @@ impl Cpu {
             reservation: 0,
             is_reservation_set: false,
             reservation_width: ReservationWidth::Word,
+            last_lookup_high_word: 0,
             _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
             // trace: Vec::with_capacity(1 << 24), // TODO(moodlezoup): make configurable
@@ -474,6 +476,14 @@ impl Cpu {
 
     pub fn is_reservation_set(&self) -> bool {
         self.is_reservation_set
+    }
+
+    pub fn last_lookup_high_word(&self) -> u64 {
+        self.last_lookup_high_word
+    }
+
+    pub fn set_last_lookup_high_word(&mut self, value: u64) {
+        self.last_lookup_high_word = value;
     }
 
     /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
@@ -1144,6 +1154,7 @@ impl Cpu {
             reservation: self.reservation,
             is_reservation_set: self.is_reservation_set,
             reservation_width: self.reservation_width,
+            last_lookup_high_word: self.last_lookup_high_word,
             _dump_flag: self._dump_flag,
             unsigned_data_mask: self.unsigned_data_mask,
             trace_len: self.trace_len,

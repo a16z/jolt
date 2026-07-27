@@ -105,6 +105,8 @@ impl<'a> JoltTraceCycle<'a> {
 pub enum CircuitFlags {
     /// 1 if the first lookup operand is the sum of the two instruction operands.
     AddOperands,
+    /// 1 if the previous row's auxiliary word is added into the add result.
+    UsePreviousAux,
     /// 1 if the first lookup operand is the difference between the two instruction operands.
     SubtractOperands,
     /// 1 if the first lookup operand is the product of the two instruction operands.
@@ -175,6 +177,7 @@ pub trait InterleavedBitsMarker {
 impl InterleavedBitsMarker for [bool; NUM_CIRCUIT_FLAGS] {
     fn is_interleaved_operands(&self) -> bool {
         !self[CircuitFlags::AddOperands]
+            && !self[CircuitFlags::UsePreviousAux]
             && !self[CircuitFlags::SubtractOperands]
             && !self[CircuitFlags::MultiplyOperands]
             && !self[CircuitFlags::Advice]
@@ -241,6 +244,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(match self.instruction_kind {
             JoltInstructionKind::ADD
+            | JoltInstructionKind::ADDC
             | JoltInstructionKind::ADDI
             | JoltInstructionKind::AUIPC
             | JoltInstructionKind::JAL
@@ -485,7 +489,7 @@ macro_rules! define_rv64imac_trait_impls {
 
 define_rv64imac_trait_impls! {
     instructions: [
-        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        ADD, ADDC, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
@@ -503,6 +507,7 @@ define_rv64imac_trait_impls! {
 }
 
 pub mod add;
+pub mod addc;
 pub mod addi;
 pub mod and;
 pub mod andi;

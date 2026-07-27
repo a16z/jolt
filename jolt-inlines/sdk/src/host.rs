@@ -32,6 +32,7 @@ pub mod instruction {
     }
 
     alias_instruction!(add, ADD, Add);
+    alias_instruction!(addc, ADDC, Addc);
     alias_instruction!(addi, ADDI, Addi);
     alias_instruction!(and, AND, And);
     alias_instruction!(andi, ANDI, AndI);

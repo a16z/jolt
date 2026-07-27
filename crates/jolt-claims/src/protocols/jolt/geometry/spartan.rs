@@ -18,12 +18,12 @@ use super::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 pub(crate) const OUTER_REMAINDER_DEGREE: usize = 3;
 pub(crate) const PRODUCT_REMAINDER_DEGREE: usize = 3;
 pub(crate) const SHIFT_DEGREE: usize = 2;
-const SPARTAN_OUTER_RV64_ROW_COUNT: usize = 19;
+const SPARTAN_OUTER_RV64_ROW_COUNT: usize = 20;
 const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] =
-    [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
+    [1, 2, 3, 4, 5, 6, 12, 15, 18, 19];
+const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; 10] = [0, 7, 8, 9, 10, 11, 13, 14, 16, 17];
 
-pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 35] = [
+pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 37] = [
     JoltVirtualPolynomial::LeftInstructionInput,
     JoltVirtualPolynomial::RightInstructionInput,
     JoltVirtualPolynomial::Product,
@@ -43,9 +43,11 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 35] = [
     JoltVirtualPolynomial::NextPC,
     JoltVirtualPolynomial::NextIsVirtual,
     JoltVirtualPolynomial::NextIsFirstInSequence,
+    JoltVirtualPolynomial::PrevRightLookupHighWord,
     JoltVirtualPolynomial::LookupOutput,
     JoltVirtualPolynomial::ShouldJump,
     JoltVirtualPolynomial::OpFlags(CircuitFlags::AddOperands),
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::UsePreviousAux),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::SubtractOperands),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::MultiplyOperands),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::Load),

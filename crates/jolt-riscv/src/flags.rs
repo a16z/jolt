@@ -24,6 +24,8 @@ use strum::EnumCount;
 pub enum CircuitFlags {
     /// First lookup operand is the sum of the two instruction operands.
     AddOperands,
+    /// Add the previous row's auxiliary high word into the current add.
+    UsePreviousAux,
     /// First lookup operand is the difference of the two instruction operands.
     SubtractOperands,
     /// First lookup operand is the product of the two instruction operands.
@@ -57,6 +59,7 @@ pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
 pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
     CircuitFlags::AddOperands,
+    CircuitFlags::UsePreviousAux,
     CircuitFlags::SubtractOperands,
     CircuitFlags::MultiplyOperands,
     CircuitFlags::Load,

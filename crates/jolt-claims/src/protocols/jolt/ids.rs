@@ -494,6 +494,7 @@ pub enum JoltVirtualPolynomial {
     NextIsNoop,
     NextIsVirtual,
     NextIsFirstInSequence,
+    PrevRightLookupHighWord,
     LeftLookupOperand,
     RightLookupOperand,
     LeftInstructionInput,

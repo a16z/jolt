@@ -72,12 +72,16 @@ pub struct OuterRemainderOutputClaims<C> {
     pub next_is_virtual: C,
     #[opening(NextIsFirstInSequence)]
     pub next_is_first_in_sequence: C,
+    #[opening(PrevRightLookupHighWord)]
+    pub prev_right_lookup_high_word: C,
     #[opening(LookupOutput)]
     pub lookup_output: C,
     #[opening(ShouldJump)]
     pub should_jump: C,
     #[opening(OpFlags(CircuitFlags::AddOperands))]
     pub add_operands: C,
+    #[opening(OpFlags(CircuitFlags::UsePreviousAux))]
+    pub use_previous_aux: C,
     #[opening(OpFlags(CircuitFlags::SubtractOperands))]
     pub subtract_operands: C,
     #[opening(OpFlags(CircuitFlags::MultiplyOperands))]

@@ -164,6 +164,7 @@ pub use a::ScW;
 pub use i::Csrrs;
 pub use i::Csrrw;
 pub use i::Mret;
+pub use virt::Addc;
 pub use virt::AdviceLb;
 pub use virt::AdviceLd;
 pub use virt::AdviceLh;
@@ -401,6 +402,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualXorRotW12(VirtualXorRotW12<T>),
     VirtualXorRotW8(VirtualXorRotW8<T>),
     VirtualXorRotW7(VirtualXorRotW7<T>),
+    Addc(Addc<T>),
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
@@ -603,6 +605,7 @@ impl_jolt_instructions_flags! {
     VirtualXorRotW12 => VirtualXORROTW12,
     VirtualXorRotW8 => VirtualXORROTW8,
     VirtualXorRotW7 => VirtualXORROTW7,
+    Addc => ADDC,
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,

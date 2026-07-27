@@ -50,6 +50,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
         outer_unexpanded_pc: outer.unexpanded_pc,
         outer_imm: outer.imm,
         outer_add_operands: outer.add_operands,
+        outer_use_previous_aux: outer.use_previous_aux,
         outer_subtract_operands: outer.subtract_operands,
         outer_multiply_operands: outer.multiply_operands,
         outer_load: outer.load,

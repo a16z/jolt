@@ -205,7 +205,8 @@ impl BzFirstGroup {
 #[derive(Clone, Copy, Debug)]
 pub struct AzSecondGroup {
     pub load_or_store: bool,          // Load || Store
-    pub add: bool,                    // Add
+    pub add: bool,                    // Add without previous auxiliary word
+    pub add_with_prev_aux: bool,      // Add with previous auxiliary word
     pub sub: bool,                    // Sub
     pub mul: bool,                    // Mul
     pub not_add_sub_mul_advice: bool, // !(Add || Sub || Mul || Advice)
@@ -227,13 +228,14 @@ impl AzSecondGroup {
     ) {
         acc.fmadd(&w[0], &self.load_or_store);
         acc.fmadd(&w[1], &self.add);
-        acc.fmadd(&w[2], &self.sub);
-        acc.fmadd(&w[3], &self.mul);
-        acc.fmadd(&w[4], &self.not_add_sub_mul_advice);
-        acc.fmadd(&w[5], &self.write_lookup_to_rd);
-        acc.fmadd(&w[6], &self.write_pc_to_rd);
-        acc.fmadd(&w[7], &self.should_branch);
-        acc.fmadd(&w[8], &self.not_jump_or_branch);
+        acc.fmadd(&w[2], &self.add_with_prev_aux);
+        acc.fmadd(&w[3], &self.sub);
+        acc.fmadd(&w[4], &self.mul);
+        acc.fmadd(&w[5], &self.not_add_sub_mul_advice);
+        acc.fmadd(&w[6], &self.write_lookup_to_rd);
+        acc.fmadd(&w[7], &self.write_pc_to_rd);
+        acc.fmadd(&w[8], &self.should_branch);
+        acc.fmadd(&w[9], &self.not_jump_or_branch);
     }
 }
 
@@ -242,6 +244,7 @@ impl AzSecondGroup {
 pub struct BzSecondGroup {
     pub ram_addr_minus_rs1_plus_imm: i128, // RamAddress - (Rs1 + Imm)
     pub right_lookup_minus_add_result: S160, // RightLookup - (Left + Right)
+    pub right_lookup_minus_add_with_prev_aux_result: S160, // RightLookup - (Left + Right + PrevAux)
     pub right_lookup_minus_sub_result: S160, // RightLookup - (Left - Right + 2^64)
     pub right_lookup_minus_product: S160,  // RightLookup - Product
     pub right_lookup_minus_right_input: S160, // RightLookup - RightInput
@@ -263,13 +266,14 @@ impl BzSecondGroup {
     ) {
         acc.fmadd(&w[0], &self.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &self.right_lookup_minus_add_result);
-        acc.fmadd(&w[2], &self.right_lookup_minus_sub_result);
-        acc.fmadd(&w[3], &self.right_lookup_minus_product);
-        acc.fmadd(&w[4], &self.right_lookup_minus_right_input);
-        acc.fmadd(&w[5], &self.rd_write_minus_lookup_output);
-        acc.fmadd(&w[6], &self.rd_write_minus_pc_plus_const);
-        acc.fmadd(&w[7], &self.next_unexp_pc_minus_pc_plus_imm);
-        acc.fmadd(&w[8], &self.next_unexp_pc_minus_expected);
+        acc.fmadd(&w[2], &self.right_lookup_minus_add_with_prev_aux_result);
+        acc.fmadd(&w[3], &self.right_lookup_minus_sub_result);
+        acc.fmadd(&w[4], &self.right_lookup_minus_product);
+        acc.fmadd(&w[5], &self.right_lookup_minus_right_input);
+        acc.fmadd(&w[6], &self.rd_write_minus_lookup_output);
+        acc.fmadd(&w[7], &self.rd_write_minus_pc_plus_const);
+        acc.fmadd(&w[8], &self.next_unexp_pc_minus_pc_plus_imm);
+        acc.fmadd(&w[9], &self.next_unexp_pc_minus_expected);
     }
 }
 
@@ -542,6 +546,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     #[inline]
     pub fn eval_az_second_group(&self) -> AzSecondGroup {
         let flags = &self.row.flags;
+        let add_with_prev_aux = flags[CircuitFlags::UsePreviousAux];
         let not_add_sub_mul_advice = !(flags[CircuitFlags::AddOperands]
             || flags[CircuitFlags::SubtractOperands]
             || flags[CircuitFlags::MultiplyOperands]
@@ -554,7 +559,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
         AzSecondGroup {
             load_or_store: (flags[CircuitFlags::Load] || flags[CircuitFlags::Store]),
-            add: flags[CircuitFlags::AddOperands],
+            add: flags[CircuitFlags::AddOperands] && !add_with_prev_aux,
+            add_with_prev_aux,
             sub: flags[CircuitFlags::SubtractOperands],
             mul: flags[CircuitFlags::MultiplyOperands],
             not_add_sub_mul_advice,
@@ -577,11 +583,15 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
 
         // RightLookupAdd / Sub / Product / RightInput
         let right_add_expected = (self.row.left_input as i128) + self.row.right_input.to_i128();
+        let right_add_with_prev_aux_expected =
+            right_add_expected + self.row.prev_right_lookup_high_word as i128;
         let right_sub_expected =
             (self.row.left_input as i128) - self.row.right_input.to_i128() + (1i128 << 64);
 
         let right_lookup_minus_add_result =
             S160::from(self.row.right_lookup) - S160::from(right_add_expected);
+        let right_lookup_minus_add_with_prev_aux_result =
+            S160::from(self.row.right_lookup) - S160::from(right_add_with_prev_aux_expected);
         let right_lookup_minus_sub_result =
             S160::from(self.row.right_lookup) - S160::from(right_sub_expected);
         let right_lookup_minus_product =
@@ -621,6 +631,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         BzSecondGroup {
             ram_addr_minus_rs1_plus_imm,
             right_lookup_minus_add_result,
+            right_lookup_minus_add_with_prev_aux_result,
             right_lookup_minus_sub_result,
             right_lookup_minus_product,
             right_lookup_minus_right_input,
@@ -638,13 +649,14 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let mut acc: SmallAccumU<F> = SmallAccumU::zero();
         acc.fmadd(&w[0], &az.load_or_store);
         acc.fmadd(&w[1], &az.add);
-        acc.fmadd(&w[2], &az.sub);
-        acc.fmadd(&w[3], &az.mul);
-        acc.fmadd(&w[4], &az.not_add_sub_mul_advice);
-        acc.fmadd(&w[5], &az.write_lookup_to_rd);
-        acc.fmadd(&w[6], &az.write_pc_to_rd);
-        acc.fmadd(&w[7], &az.should_branch);
-        acc.fmadd(&w[8], &az.not_jump_or_branch);
+        acc.fmadd(&w[2], &az.add_with_prev_aux);
+        acc.fmadd(&w[3], &az.sub);
+        acc.fmadd(&w[4], &az.mul);
+        acc.fmadd(&w[5], &az.not_add_sub_mul_advice);
+        acc.fmadd(&w[6], &az.write_lookup_to_rd);
+        acc.fmadd(&w[7], &az.write_pc_to_rd);
+        acc.fmadd(&w[8], &az.should_branch);
+        acc.fmadd(&w[9], &az.not_jump_or_branch);
         acc.barrett_reduce()
     }
 
@@ -655,13 +667,14 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let mut acc = WideAccumS::<F>::zero();
         acc.fmadd(&w[0], &bz.ram_addr_minus_rs1_plus_imm);
         acc.fmadd(&w[1], &bz.right_lookup_minus_add_result);
-        acc.fmadd(&w[2], &bz.right_lookup_minus_sub_result);
-        acc.fmadd(&w[3], &bz.right_lookup_minus_product);
-        acc.fmadd(&w[4], &bz.right_lookup_minus_right_input);
-        acc.fmadd(&w[5], &bz.rd_write_minus_lookup_output);
-        acc.fmadd(&w[6], &bz.rd_write_minus_pc_plus_const);
-        acc.fmadd(&w[7], &bz.next_unexp_pc_minus_pc_plus_imm);
-        acc.fmadd(&w[8], &bz.next_unexp_pc_minus_expected);
+        acc.fmadd(&w[2], &bz.right_lookup_minus_add_with_prev_aux_result);
+        acc.fmadd(&w[3], &bz.right_lookup_minus_sub_result);
+        acc.fmadd(&w[4], &bz.right_lookup_minus_product);
+        acc.fmadd(&w[5], &bz.right_lookup_minus_right_input);
+        acc.fmadd(&w[6], &bz.rd_write_minus_lookup_output);
+        acc.fmadd(&w[7], &bz.rd_write_minus_pc_plus_const);
+        acc.fmadd(&w[8], &bz.next_unexp_pc_minus_pc_plus_imm);
+        acc.fmadd(&w[9], &bz.next_unexp_pc_minus_expected);
         acc.barrett_reduce()
     }
 
@@ -708,52 +721,59 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         }
 
         let c2 = coeffs_i32[2];
-        if az.sub {
+        if az.add_with_prev_aux {
             az_eval_i32 += c2;
         } else {
-            bz_eval_s192.fmadd(&c2, &bz.right_lookup_minus_sub_result);
+            bz_eval_s192.fmadd(&c2, &bz.right_lookup_minus_add_with_prev_aux_result);
         }
 
         let c3 = coeffs_i32[3];
-        if az.mul {
+        if az.sub {
             az_eval_i32 += c3;
         } else {
-            bz_eval_s192.fmadd(&c3, &bz.right_lookup_minus_product);
+            bz_eval_s192.fmadd(&c3, &bz.right_lookup_minus_sub_result);
         }
 
         let c4 = coeffs_i32[4];
-        if az.not_add_sub_mul_advice {
+        if az.mul {
             az_eval_i32 += c4;
         } else {
-            bz_eval_s192.fmadd(&c4, &bz.right_lookup_minus_right_input);
+            bz_eval_s192.fmadd(&c4, &bz.right_lookup_minus_product);
         }
 
         let c5 = coeffs_i32[5];
-        if az.write_lookup_to_rd {
+        if az.not_add_sub_mul_advice {
             az_eval_i32 += c5;
         } else {
-            bz_eval_s192.fmadd(&c5, &bz.rd_write_minus_lookup_output);
+            bz_eval_s192.fmadd(&c5, &bz.right_lookup_minus_right_input);
         }
 
         let c6 = coeffs_i32[6];
-        if az.write_pc_to_rd {
+        if az.write_lookup_to_rd {
             az_eval_i32 += c6;
         } else {
-            bz_eval_s192.fmadd(&c6, &bz.rd_write_minus_pc_plus_const);
+            bz_eval_s192.fmadd(&c6, &bz.rd_write_minus_lookup_output);
         }
 
         let c7 = coeffs_i32[7];
-        if az.should_branch {
+        if az.write_pc_to_rd {
             az_eval_i32 += c7;
         } else {
-            bz_eval_s192.fmadd(&c7, &bz.next_unexp_pc_minus_pc_plus_imm);
+            bz_eval_s192.fmadd(&c7, &bz.rd_write_minus_pc_plus_const);
         }
 
         let c8 = coeffs_i32[8];
-        if az.not_jump_or_branch {
+        if az.should_branch {
             az_eval_i32 += c8;
         } else {
-            bz_eval_s192.fmadd(&c8, &bz.next_unexp_pc_minus_expected);
+            bz_eval_s192.fmadd(&c8, &bz.next_unexp_pc_minus_pc_plus_imm);
+        }
+
+        let c9 = coeffs_i32[9];
+        if az.not_jump_or_branch {
+            az_eval_i32 += c9;
+        } else {
+            bz_eval_s192.fmadd(&c9, &bz.next_unexp_pc_minus_expected);
         }
 
         let az_eval_s64 = S64::from_i64(az_eval_i32 as i64);
@@ -784,30 +804,35 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             bz.ram_addr_minus_rs1_plus_imm == 0i128,
         );
         self.assert_constraint_second_group(1, az.add, bz.right_lookup_minus_add_result.is_zero());
-        self.assert_constraint_second_group(2, az.sub, bz.right_lookup_minus_sub_result.is_zero());
-        self.assert_constraint_second_group(3, az.mul, bz.right_lookup_minus_product.is_zero());
         self.assert_constraint_second_group(
-            4,
+            2,
+            az.add_with_prev_aux,
+            bz.right_lookup_minus_add_with_prev_aux_result.is_zero(),
+        );
+        self.assert_constraint_second_group(3, az.sub, bz.right_lookup_minus_sub_result.is_zero());
+        self.assert_constraint_second_group(4, az.mul, bz.right_lookup_minus_product.is_zero());
+        self.assert_constraint_second_group(
+            5,
             az.not_add_sub_mul_advice,
             bz.right_lookup_minus_right_input.is_zero(),
         );
         self.assert_constraint_second_group(
-            5,
+            6,
             az.write_lookup_to_rd,
             bz.rd_write_minus_lookup_output.is_zero(),
         );
         self.assert_constraint_second_group(
-            6,
+            7,
             az.write_pc_to_rd,
             bz.rd_write_minus_pc_plus_const.is_zero(),
         );
         self.assert_constraint_second_group(
-            7,
+            8,
             az.should_branch,
             bz.next_unexp_pc_minus_pc_plus_imm == 0,
         );
         self.assert_constraint_second_group(
-            8,
+            9,
             az.not_jump_or_branch,
             bz.next_unexp_pc_minus_expected.is_zero(),
         );

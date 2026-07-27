@@ -209,9 +209,11 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
             next_pc: opening_point.clone(),
             next_is_virtual: opening_point.clone(),
             next_is_first_in_sequence: opening_point.clone(),
+            prev_right_lookup_high_word: opening_point.clone(),
             lookup_output: opening_point.clone(),
             should_jump: opening_point.clone(),
             add_operands: opening_point.clone(),
+            use_previous_aux: opening_point.clone(),
             subtract_operands: opening_point.clone(),
             multiply_operands: opening_point.clone(),
             load: opening_point.clone(),
@@ -275,7 +277,7 @@ mod tests {
         assert_eq!(relation_form.canonical_order(), expected);
     }
 
-    /// Fill all 35 produced opening *values* with the given values (in canonical
+    /// Fill all produced opening *values* with the given values (in canonical
     /// field / `SPARTAN_OUTER_R1CS_INPUTS` order).
     fn output_values_from(values: &[Fr]) -> OuterRemainderOutputClaims<Fr> {
         let mut iter = values.iter().copied();
@@ -300,9 +302,11 @@ mod tests {
             next_pc: next(),
             next_is_virtual: next(),
             next_is_first_in_sequence: next(),
+            prev_right_lookup_high_word: next(),
             lookup_output: next(),
             should_jump: next(),
             add_operands: next(),
+            use_previous_aux: next(),
             subtract_operands: next(),
             multiply_operands: next(),
             load: next(),
@@ -319,7 +323,7 @@ mod tests {
         }
     }
 
-    /// All 35 produced opening *points* sharing a single opening point.
+    /// All produced opening *points* sharing a single opening point.
     fn output_points_at(point: &[Fr]) -> OuterRemainderOutputClaims<Vec<Fr>> {
         let next = || point.to_vec();
         OuterRemainderOutputClaims {
@@ -342,9 +346,11 @@ mod tests {
             next_pc: next(),
             next_is_virtual: next(),
             next_is_first_in_sequence: next(),
+            prev_right_lookup_high_word: next(),
             lookup_output: next(),
             should_jump: next(),
             add_operands: next(),
+            use_previous_aux: next(),
             subtract_operands: next(),
             multiply_operands: next(),
             load: next(),

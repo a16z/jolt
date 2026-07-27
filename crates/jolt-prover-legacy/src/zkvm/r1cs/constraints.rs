@@ -161,6 +161,7 @@ pub enum R1CSConstraintLabel {
     LeftLookupZeroUnlessAddSubMul,
     LeftLookupEqLeftInputOtherwise,
     RightLookupAdd,
+    RightLookupAddWithPrevAux,
     RightLookupSub,
     RightLookupEqProductIfMul,
     RightLookupEqRightInputOtherwise,
@@ -285,12 +286,17 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
         => ( { JoltR1CSInputs::LeftLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } )
     ),
     // If AddOperands {
-    //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
+    //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput + (UsePreviousAux * PrevRightLookupHighWord))
     // }
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::RightLookupAdd,
-        if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } }
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } - { JoltR1CSInputs::OpFlags(CircuitFlags::UsePreviousAux) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } + { JoltR1CSInputs::RightInstructionInput } )
+    ),
+    r1cs_eq_conditional!(
+        label: R1CSConstraintLabel::RightLookupAddWithPrevAux,
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::UsePreviousAux) } }
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } + { JoltR1CSInputs::RightInstructionInput } + { JoltR1CSInputs::PrevRightLookupHighWord } )
     ),
     // If SubtractOperands {
     //     assert!(RightLookupOperand == LeftInstructionInput - RightInstructionInput)

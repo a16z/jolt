@@ -1,5 +1,5 @@
 use jolt_inlines_sdk::host::{
-    instruction::{add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU},
+    instruction::{add::ADD, addc::ADDC, ld::LD, mul::MUL, mulhu::MULHU, sd::SD},
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
     InlineRegister, NoAdvice,
 };
@@ -99,13 +99,11 @@ impl BigIntMulSequenceBuilder {
                     if i + j == k || i + j == k - 1 {
                         // add product to accumulator
                         self.asm.emit_r::<ADD>(self.s(k), self.s(k), self.t());
-                        // test for a carry and either set or accumulate it
+                        // Pull the previous row's auxiliary high bit into the carry limb.
                         if overwrite_carry {
-                            self.asm.emit_r::<SLTU>(self.s(k + 1), self.s(k), self.t());
+                            self.asm.emit_r::<ADDC>(self.s(k + 1), 0, 0);
                         } else {
-                            self.asm.emit_r::<SLTU>(self.t(), self.s(k), self.t());
-                            self.asm
-                                .emit_r::<ADD>(self.s(k + 1), self.t(), self.s(k + 1));
+                            self.asm.emit_r::<ADDC>(self.s(k + 1), self.s(k + 1), 0);
                         }
                         // after the first addition, we need to accumulate carries instead of overwriting them
                         overwrite_carry = false;

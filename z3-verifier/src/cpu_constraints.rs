@@ -95,6 +95,7 @@ struct JoltState<T = Int> {
     next_pc: T,
     unexpanded_pc: T,
     next_unexpanded_pc: T,
+    prev_right_lookup_high_word: T,
     imm: T,
     flags: [T; NUM_CIRCUIT_FLAGS],
     instruction_flags: [T; NUM_INSTRUCTION_FLAGS],
@@ -125,6 +126,9 @@ impl JoltState {
             next_pc: Int::new_const(format!("{prefix}_next_pc")),
             unexpanded_pc: Int::new_const(format!("{prefix}_unexpanded_pc")),
             next_unexpanded_pc: Int::new_const(format!("{prefix}_next_unexpanded_pc")),
+            prev_right_lookup_high_word: Int::new_const(format!(
+                "{prefix}_prev_right_lookup_high_word"
+            )),
             imm: Int::new_const(format!("{prefix}_imm")),
             flags: array::from_fn(|i| Int::new_const(format!("{prefix}_flag_{i}"))),
             instruction_flags: array::from_fn(|i| {
@@ -162,9 +166,11 @@ impl JoltState {
             &self.next_pc,
             &self.next_is_virtual,
             &self.next_is_first_in_sequence,
+            &self.prev_right_lookup_high_word,
             &self.lookup_output,
             &self.should_jump,
             &self.flags[CircuitFlags::AddOperands as usize],
+            &self.flags[CircuitFlags::UsePreviousAux as usize],
             &self.flags[CircuitFlags::SubtractOperands as usize],
             &self.flags[CircuitFlags::MultiplyOperands as usize],
             &self.flags[CircuitFlags::Load as usize],
@@ -367,6 +373,7 @@ impl JoltState {
             next_pc: eval(&self.next_pc)?,
             unexpanded_pc: eval(&self.unexpanded_pc)?,
             next_unexpanded_pc: eval(&self.next_unexpanded_pc)?,
+            prev_right_lookup_high_word: eval(&self.prev_right_lookup_high_word)?,
             imm: eval(&self.imm)?,
             flags,
             instruction_flags,

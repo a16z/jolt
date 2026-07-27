@@ -16,8 +16,10 @@ pub const FUNCT7_ADVICE_LW: u32 = 0x02; // Load word from advice tape
 pub const FUNCT7_ADVICE_LD: u32 = 0x03; // Load doubleword from advice tape
 pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get remaining bytes in advice tape
 pub const FUNCT7_VIRTUAL_REV8W: u32 = 0x05; // Reverse bytes in a word
+pub const FUNCT7_ADDC: u32 = 0x06; // Add with previous row auxiliary high word
 
 use add::ADD;
+use addc::ADDC;
 use addi::ADDI;
 use addiw::ADDIW;
 use addw::ADDW;
@@ -189,6 +191,7 @@ pub(crate) fn fill_virtual_advice(sequence: &mut [Instruction], values: &[u64]) 
 }
 
 pub mod add;
+pub mod addc;
 pub mod addi;
 pub mod addiw;
 pub mod addw;
@@ -389,6 +392,10 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
 
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
+    fn aux_input_word(&self) -> u64 {
+        0
+    }
+
     fn has_side_effects(&self) -> bool {
         self.source_kind().has_side_effects()
     }
@@ -409,10 +416,59 @@ where
         self.execute(cpu, &mut cycle.ram_access);
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
+        cpu.set_last_lookup_high_word(trace_lookup_high_word(&cycle));
         if let Some(trace_vec) = trace {
             trace_vec.push(cycle.into());
         }
     }
+}
+
+pub(crate) fn trace_lookup_high_word<T: RISCVInstruction>(cycle: &RISCVCycle<T>) -> u64 {
+    use jolt_riscv::{Flags as _, InstructionFlags, JoltInstruction};
+
+    let concrete: Instruction = cycle.instruction.into();
+    let Ok(row) = concrete.try_jolt_instruction_row() else {
+        return 0;
+    };
+    let Ok(jolt_instruction) = JoltInstruction::try_from(row) else {
+        return 0;
+    };
+    let instruction_flags = jolt_instruction.instruction_flags();
+    let circuit_flags = jolt_instruction.circuit_flags();
+
+    let left_input = if instruction_flags[InstructionFlags::LeftOperandIsPC] {
+        row.address as u64
+    } else if instruction_flags[InstructionFlags::LeftOperandIsRs1Value] {
+        cycle.register_state.rs1_value().unwrap_or_default()
+    } else {
+        0
+    };
+    let right_input = if instruction_flags[InstructionFlags::RightOperandIsImm] {
+        row.operands.imm
+    } else if instruction_flags[InstructionFlags::RightOperandIsRs2Value] {
+        cycle.register_state.rs2_value().unwrap_or_default() as i128
+    } else {
+        0
+    };
+    let aux_input = if circuit_flags[jolt_riscv::CircuitFlags::UsePreviousAux] {
+        cycle.instruction.aux_input_word()
+    } else {
+        0
+    };
+
+    let right_lookup = if circuit_flags[jolt_riscv::CircuitFlags::AddOperands] {
+        left_input as u128 + right_input as u64 as u128 + aux_input as u128
+    } else if circuit_flags[jolt_riscv::CircuitFlags::SubtractOperands] {
+        (left_input as u128)
+            .wrapping_sub(right_input as u64 as u128)
+            .wrapping_add(0x1_0000_0000_0000_0000u128)
+    } else if circuit_flags[jolt_riscv::CircuitFlags::MultiplyOperands] {
+        left_input as u128 * right_input as u64 as u128
+    } else {
+        0
+    };
+
+    (right_lookup >> 64) as u64
 }
 
 macro_rules! define_rv64imac_enums {
@@ -934,6 +990,21 @@ macro_rules! impl_final_jolt_row_data {
 
     (@from_row VirtualAdvice) => {};
 
+    (@from_row ADDC) => {
+        impl From<JoltInstructionRow> for ADDC {
+            fn from(row: JoltInstructionRow) -> Self {
+                Self {
+                    address: row.address as u64,
+                    operands: row.operands.into(),
+                    prev_aux: 0,
+                    virtual_sequence_remaining: row.virtual_sequence_remaining,
+                    is_first_in_sequence: row.is_first_in_sequence,
+                    is_compressed: row.is_compressed,
+                }
+            }
+        }
+    };
+
     (@from_row $instr:ident) => {
         impl From<JoltInstructionRow> for $instr {
             fn from(row: JoltInstructionRow) -> Self {
@@ -1294,6 +1365,7 @@ impl Instruction {
                         FUNCT7_VIRTUAL_REV8W => {
                             Ok(VirtualRev8W::new(instr, address, true, compressed).into())
                         }
+                        FUNCT7_ADDC => Ok(ADDC::new(instr, address, true, compressed).into()),
                         _ => Err("Invalid funct7 for virtual R-type instruction"),
                     }
                 } else if funct3 == FUNCT3_VIRTUAL_ASSERT_EQ {
