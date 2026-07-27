@@ -14,6 +14,10 @@ akita = []
 field-inline = []
 test-utils = []
 
+[[test]]
+name = "claim_graph_akita"
+required-features = ["akita"]
+
 [dependencies]
 blake2.workspace = true
 derive_more.workspace = true

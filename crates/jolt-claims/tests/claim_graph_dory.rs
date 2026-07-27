@@ -7,47 +7,38 @@
 mod claim_graph;
 
 use claim_graph::graph::ClaimGraph;
-use claim_graph::registry::{
-    all_aliases, all_relation_ids, all_vertices, registration, Registration,
-};
+use claim_graph::registry::{all_aliases, all_vertices};
 use claim_graph::{Piop, ProtocolConfig};
 
-/// Every relation id is carried by a registered vertex, and every registered
-/// vertex's relation id is classified `Registered`.
-#[test]
-fn vertex_set_is_exhaustive() {
-    let config = ProtocolConfig::small();
-    let records = all_vertices(&config);
-    let covered: std::collections::BTreeSet<_> =
-        records.iter().map(|record| record.relation).collect();
-    let mut missing = Vec::new();
-    for id in all_relation_ids() {
-        match registration(id) {
-            Registration::Registered => {
-                assert!(
-                    covered.contains(&id),
-                    "{id:?} is classified Registered but no manifest vertex carries it"
-                );
-            }
-            Registration::Pending => missing.push(id),
-        }
-    }
+fn assert_well_formed(context: &str, config: &ProtocolConfig) {
+    let records = all_vertices(config);
+    let graph = ClaimGraph::build(Piop::Dory, &records, config, all_aliases());
+    let violations = graph.check();
     assert!(
-        missing.is_empty(),
-        "unregistered relations (add ProtocolVertex impls and manifest entries): {missing:?}"
+        violations.is_empty(),
+        "[{context}] claim-graph violations:\n  {}\n\ngraph:\n{graph}",
+        violations.join("\n  ")
     );
 }
 
 #[test]
 fn dory_clear_graph_is_well_formed() {
-    let config = ProtocolConfig::small();
-    let records = all_vertices(&config);
-    let graph = ClaimGraph::build(Piop::Dory, &records, &config, all_aliases());
-    let violations = graph.check();
-    assert!(
-        violations.is_empty(),
-        "claim-graph violations:\n  {}\n\ngraph:\n{graph}",
-        violations.join("\n  ")
+    assert_well_formed("dory, clear, small", &ProtocolConfig::small());
+}
+
+#[test]
+fn dory_clear_graph_is_well_formed_with_advice() {
+    assert_well_formed(
+        "dory, clear, small + trusted/untrusted advice",
+        &ProtocolConfig::small_with_advice(),
+    );
+}
+
+#[test]
+fn dory_clear_graph_is_well_formed_with_committed_program() {
+    assert_well_formed(
+        "dory, clear, small + committed program",
+        &ProtocolConfig::small_committed_program(),
     );
 }
 

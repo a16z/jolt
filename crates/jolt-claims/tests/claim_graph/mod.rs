@@ -83,6 +83,26 @@ impl ProtocolConfig {
             program_image_len_words: 0,
         }
     }
+
+    /// [`Self::small`] with both advice kinds present.
+    pub fn small_with_advice() -> Self {
+        Self {
+            trusted_advice: true,
+            untrusted_advice: true,
+            ..Self::small()
+        }
+    }
+
+    /// [`Self::small`] in committed-program mode: the trusted bytecode image
+    /// is committed as 4 chunks (1024 padded rows / 4 = 256 rows per chunk, a
+    /// valid power-of-two chunking) alongside a nonzero program image.
+    pub fn small_committed_program() -> Self {
+        Self {
+            committed_program_chunks: Some(4),
+            program_image_len_words: 1024,
+            ..Self::small()
+        }
+    }
 }
 
 /// A relation's place in the claim graph: how it instantiates into concrete
@@ -105,6 +125,13 @@ pub struct VertexRecord {
     pub degree: usize,
     pub in_edges: BTreeSet<JoltOpeningId>,
     pub out_edges: BTreeSet<JoltOpeningId>,
+    /// Out-edges produced through the finalize-at-cycle-handoff substitution:
+    /// a two-phase precommitted reduction with no active address rounds emits
+    /// the downstream terminus id (which embeds the address-phase relation) in
+    /// place of its struct-declared intermediate handoff opening. See
+    /// [`edge_union`]; the resolution check accepts the relation mismatch for
+    /// exactly these ids.
+    pub terminus_out_edges: BTreeSet<JoltOpeningId>,
     pub struct_in_edges: &'static [ClaimEdge<JoltOpeningId>],
     pub struct_out_edges: &'static [ClaimEdge<JoltOpeningId>],
 }
@@ -129,14 +156,18 @@ where
             let relation = S::new(shape);
             let struct_in_edges = <S::Inputs<()> as ClaimAdjacency>::EDGES;
             let struct_out_edges = <S::Outputs<()> as ClaimAdjacency>::EDGES;
+            let (in_edges, _) = edge_union(&relation.input_expression::<Fr>(), struct_in_edges);
+            let (out_edges, terminus_out_edges) =
+                edge_union(&relation.output_expression::<Fr>(), struct_out_edges);
             VertexRecord {
                 name: short_type_name::<S>(),
                 relation: S::id(),
                 graphs,
                 rounds: relation.rounds(),
                 degree: relation.degree(),
-                in_edges: edge_union(&relation.input_expression::<Fr>(), struct_in_edges),
-                out_edges: edge_union(&relation.output_expression::<Fr>(), struct_out_edges),
+                in_edges,
+                out_edges,
+                terminus_out_edges,
                 struct_in_edges,
                 struct_out_edges,
             }
@@ -168,6 +199,7 @@ where
         degree: 0,
         in_edges: BTreeSet::new(),
         out_edges: BTreeSet::new(),
+        terminus_out_edges: BTreeSet::new(),
         struct_in_edges: <S::Inputs<()> as ClaimAdjacency>::EDGES,
         struct_out_edges: <S::Outputs<()> as ClaimAdjacency>::EDGES,
     }
@@ -179,17 +211,59 @@ where
 /// constrained downstream (see `wire_output_openings` in jolt-verifier's
 /// `stages/relations.rs`, which documents the product remainder's flags as
 /// the canonical example).
+///
+/// One exception, returned as the second set: the *finalize-at-cycle-handoff*
+/// substitution. A two-phase precommitted reduction whose layout has no active
+/// address rounds finalizes at the cycle phase ("otherwise the reduction
+/// finalizes at the cycle-phase handoff" — `geometry/claim_reductions/
+/// precommitted.rs`, `has_address_phase`): its output expression emits the
+/// downstream terminus id directly (the `has_address_phase` branch in
+/// `relations/claim_reductions/advice/cycle_phase.rs` and its bytecode /
+/// program-image counterparts), and the struct-declared intermediate handoff
+/// opening does not exist under such a configuration. When the expression
+/// carries the same polynomial under a different relation, the struct edge is
+/// therefore dropped rather than unioned, and the substituting expression ids
+/// are reported so the resolution check can accept their embedded-relation
+/// mismatch.
 fn edge_union(
     expr: &JoltExpr<Fr>,
     struct_edges: &'static [ClaimEdge<JoltOpeningId>],
-) -> BTreeSet<JoltOpeningId> {
-    let mut ids = opening_ids(expr);
+) -> (BTreeSet<JoltOpeningId>, BTreeSet<JoltOpeningId>) {
+    let expression_ids = opening_ids(expr);
+    let mut ids = expression_ids.clone();
+    let mut terminus = BTreeSet::new();
     for edge in struct_edges {
-        if edge.arity != jolt_claims::ClaimArity::Family {
-            let _ = ids.insert(edge.id);
+        if edge.arity == jolt_claims::ClaimArity::Family {
+            continue;
         }
+        if !expression_ids.contains(&edge.id) {
+            let substitutes: Vec<JoltOpeningId> = expression_ids
+                .iter()
+                .filter(|id| same_polynomial(id, &edge.id))
+                .copied()
+                .collect();
+            if !substitutes.is_empty() {
+                terminus.extend(substitutes);
+                continue;
+            }
+        }
+        let _ = ids.insert(edge.id);
     }
-    ids
+    (ids, terminus)
+}
+
+/// Whether two opening ids name the same polynomial (ignoring the embedded
+/// producer relation).
+pub fn same_polynomial(a: &JoltOpeningId, b: &JoltOpeningId) -> bool {
+    match (a, b) {
+        (
+            JoltOpeningId::Polynomial { polynomial: a, .. },
+            JoltOpeningId::Polynomial { polynomial: b, .. },
+        ) => a == b,
+        (JoltOpeningId::TrustedAdvice { .. }, JoltOpeningId::TrustedAdvice { .. })
+        | (JoltOpeningId::UntrustedAdvice { .. }, JoltOpeningId::UntrustedAdvice { .. }) => true,
+        _ => false,
+    }
 }
 
 /// The opening ids referenced by an expression, in factor position.

@@ -827,6 +827,34 @@ pub fn all_relation_ids() -> Vec<JoltRelationId> {
     ]
 }
 
+/// Every relation id is carried by a registered vertex, and every registered
+/// vertex's relation id is classified `Registered`. Lives in the shared
+/// module so the backstop runs in every test target that builds the graph
+/// (the Dory and Akita targets compile under different feature sets).
+#[test]
+fn vertex_set_is_exhaustive() {
+    let config = ProtocolConfig::small();
+    let records = all_vertices(&config);
+    let covered: std::collections::BTreeSet<_> =
+        records.iter().map(|record| record.relation).collect();
+    let mut missing = Vec::new();
+    for id in all_relation_ids() {
+        match registration(id) {
+            Registration::Registered => {
+                assert!(
+                    covered.contains(&id),
+                    "{id:?} is classified Registered but no manifest vertex carries it"
+                );
+            }
+            Registration::Pending => missing.push(id),
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "unregistered relations (add ProtocolVertex impls and manifest entries): {missing:?}"
+    );
+}
+
 /// The wire-copy alias pairs `(aliased, source)`, assembled from the same
 /// jolt-claims geometry functions the verifier's `aliased_output_openings`
 /// declarations use (stage2/instruction_claim_reduction.rs,

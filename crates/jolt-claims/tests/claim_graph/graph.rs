@@ -1,26 +1,34 @@
 //! The claim graph and its checks.
-#![expect(
-    clippy::zero_sized_map_values,
-    reason = "SinkKind is single-variant until the zk and akita sink kinds land"
-)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use super::{Piop, ProtocolConfig, VertexRecord};
+use jolt_claims::protocols::jolt::geometry::claim_reductions::program_image as program_image_geometry;
 use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_id, final_opening_polynomial_order,
 };
-use jolt_claims::protocols::jolt::{
-    JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltVirtualPolynomial,
+use jolt_claims::protocols::jolt::lattice::packing::{
+    advice_bytes_packing, one_hot_trace_columns, precommitted_packing, OneHotTraceShape,
+    PrecommittedPackingShape,
 };
+use jolt_claims::protocols::jolt::{
+    BytecodeRegisterLane, CommitmentMatrixShape, JoltAdviceKind, JoltCommittedPolynomial,
+    JoltOpeningId, JoltPolynomialId, JoltVirtualPolynomial,
+};
+use jolt_field::{FixedByteSize, Fr};
+use jolt_poly::math::Math;
 
 /// How a terminal claim is discharged. Extended as first-run triage discovers
 /// further discharge mechanisms (see the spec's dangling-claims section).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SinkKind {
-    /// Opened against its commitment in the stage-8 joint PCS batch.
+    /// Opened against its commitment in the Dory stage-8 joint PCS batch.
     PcsOpened,
+    /// Opened against its commitment by the Akita stage-8 packed opening: the
+    /// native same-point `OneHotTrace` batch, or an auxiliary `PrefixPacking`
+    /// reduction (advice byte columns, `ProgramOneHot` lanes).
+    PackedOpened,
 }
 
 pub struct ClaimGraph {
@@ -49,7 +57,7 @@ impl ClaimGraph {
             .collect();
         let sinks = match piop {
             Piop::Dory => dory_sinks(config),
-            Piop::Akita => BTreeMap::new(), // populated in the akita slice
+            Piop::Akita => akita_sinks(config),
         };
         Self {
             piop,
@@ -96,7 +104,11 @@ impl ClaimGraph {
         produced
     }
 
-    /// Every consumed id is produced by the relation embedded in the id.
+    /// Every consumed id is produced by the relation embedded in the id. The
+    /// one accepted mismatch is the finalize-at-cycle-handoff substitution
+    /// (see `terminus_out_edges` on [`VertexRecord`]): a cycle phase with no
+    /// active address rounds produces the terminus id embedding its
+    /// address-phase sibling's relation.
     fn check_resolution(
         &self,
         produced: &BTreeMap<JoltOpeningId, usize>,
@@ -111,7 +123,9 @@ impl ClaimGraph {
                     )),
                     Some(&producer) => {
                         let producer = &self.vertices[producer];
-                        if producer.relation != id_relation(id) {
+                        if producer.relation != id_relation(id)
+                            && !producer.terminus_out_edges.contains(id)
+                        {
                             violations.push(format!(
                                 "producer mismatch: {id:?} names relation {:?} but is produced by {} ({:?})",
                                 id_relation(id),
@@ -187,21 +201,19 @@ impl ClaimGraph {
         }
     }
 
-    /// The PCS sink accepts only committed-polynomial and advice ids: virtual
-    /// claims have no commitments and must reach committed claims through the
-    /// reduction chain.
+    /// Sinks accept only committed-polynomial and advice ids (both kinds are
+    /// PCS openings against a commitment): virtual claims have no commitments
+    /// and must reach committed claims through the reduction chain.
     fn check_sink_typing(&self, violations: &mut Vec<String>) {
-        for (id, kind) in &self.sinks {
-            if *kind == SinkKind::PcsOpened {
-                if let JoltOpeningId::Polynomial {
-                    polynomial: JoltPolynomialId::Virtual(virtual_polynomial),
-                    ..
-                } = id
-                {
-                    violations.push(format!(
-                        "sink typing: virtual polynomial {virtual_polynomial:?} cannot be PCS-opened"
-                    ));
-                }
+        for id in self.sinks.keys() {
+            if let JoltOpeningId::Polynomial {
+                polynomial: JoltPolynomialId::Virtual(virtual_polynomial),
+                ..
+            } = id
+            {
+                violations.push(format!(
+                    "sink typing: virtual polynomial {virtual_polynomial:?} cannot be PCS-opened"
+                ));
             }
         }
     }
@@ -279,6 +291,20 @@ impl ClaimGraph {
                 let struct_ids: BTreeSet<JoltOpeningId> =
                     structural.iter().map(|edge| edge.id).collect();
                 for id in expression.difference(&struct_ids) {
+                    // Finalize-at-cycle-handoff: the struct declares the
+                    // intermediate handoff id, and the expression substitutes
+                    // the same polynomial's downstream terminus under this
+                    // configuration (see `edge_union` in the module root) —
+                    // not struct/algebra drift.
+                    if struct_ids
+                        .iter()
+                        .any(|declared| super::same_polynomial(declared, id))
+                    {
+                        continue;
+                    }
+                    if direction == "out" && wire_only_output(vertex.relation, *id) {
+                        continue;
+                    }
                     violations.push(format!(
                         "adjacency drift: {} {direction}-edge {id:?} appears in the expression but not the claim struct",
                         vertex.name
@@ -324,6 +350,35 @@ pub fn family_representative(id: JoltOpeningId) -> JoltOpeningId {
             JoltCommittedPolynomial::UnsignedIncChunk(_) => {
                 JoltCommittedPolynomial::UnsignedIncChunk(0)
             }
+            // The two-index bytecode lane families collapse to their
+            // `(chunk 0, lane/flag 0)` member — the representative the
+            // hand-written `ClaimAdjacency` impl declares per family (see
+            // `BytecodeChunkReconstructionOutputClaims::EDGES` in
+            // `lattice/relations/bytecode_reconstruction.rs`).
+            JoltCommittedPolynomial::BytecodeRegisterSelector { .. } => {
+                JoltCommittedPolynomial::BytecodeRegisterSelector {
+                    chunk: 0,
+                    lane: BytecodeRegisterLane::Rs1,
+                }
+            }
+            JoltCommittedPolynomial::BytecodeCircuitFlag { .. } => {
+                JoltCommittedPolynomial::BytecodeCircuitFlag { chunk: 0, flag: 0 }
+            }
+            JoltCommittedPolynomial::BytecodeInstructionFlag { .. } => {
+                JoltCommittedPolynomial::BytecodeInstructionFlag { chunk: 0, flag: 0 }
+            }
+            JoltCommittedPolynomial::BytecodeLookupSelector { .. } => {
+                JoltCommittedPolynomial::BytecodeLookupSelector { chunk: 0 }
+            }
+            JoltCommittedPolynomial::BytecodeRafFlag { .. } => {
+                JoltCommittedPolynomial::BytecodeRafFlag { chunk: 0 }
+            }
+            JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. } => {
+                JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk: 0 }
+            }
+            JoltCommittedPolynomial::BytecodeImmBytes { .. } => {
+                JoltCommittedPolynomial::BytecodeImmBytes { chunk: 0 }
+            }
             other => other,
         }),
     };
@@ -331,6 +386,29 @@ pub fn family_representative(id: JoltOpeningId) -> JoltOpeningId {
         polynomial,
         relation,
     }
+}
+
+/// Expression out-edges that legitimately have no claim-struct counterpart:
+/// the committed bytecode read-raf cycle output references the staged
+/// `BytecodeValClaim` wire openings, which cross stages through the
+/// verifier's stage-6a staging rather than any `OutputClaims` struct.
+/// Documented in jolt-verifier: `stages/stage6a/bytecode_read_raf.rs`,
+/// `wire_output_openings` ("Committed-program mode absorbs the staged
+/// `BytecodeValClaim` columns beyond the output-`Expr` set; their
+/// constraining fold happens in stage 6b's bytecode claim reduction") and the
+/// INVARIANT comment in `stages/stage6b/bytecode_read_raf.rs` ("the committed
+/// output `Expr` references the staged `BytecodeValClaim` openings, which the
+/// full mode never produces").
+fn wire_only_output(
+    relation: jolt_claims::protocols::jolt::JoltRelationId,
+    family: JoltOpeningId,
+) -> bool {
+    relation == jolt_claims::protocols::jolt::JoltRelationId::BytecodeReadRaf
+        && family
+            == JoltOpeningId::virtual_polynomial(
+                JoltVirtualPolynomial::BytecodeValClaim(0),
+                jolt_claims::protocols::jolt::JoltRelationId::BytecodeReadRaf,
+            )
 }
 
 fn id_relation(id: &JoltOpeningId) -> jolt_claims::protocols::jolt::JoltRelationId {
@@ -341,6 +419,15 @@ fn id_relation(id: &JoltOpeningId) -> jolt_claims::protocols::jolt::JoltRelation
     }
 }
 
+/// The Dory sink set is mode-independent: it also covers the (Dory, zk) cell
+/// at id granularity. The verifier's stage 8 assembles the same
+/// `final_opening_polynomial_order` / `final_opening_id` batch entries before
+/// branching on `checked.zk` (jolt-verifier `stages/stage8/verify.rs`,
+/// `batch_entries` and the shared `opening_ids` above the branch), and
+/// BlindFold binds that same id list value-level via
+/// `builder.final_opening(input.stage8.opening_ids, ..)`
+/// (`stages/zk/blindfold/mod.rs`) — zk mode hides claim *values*, never ids,
+/// so there is no separate zk graph cell.
 fn dory_sinks(config: &ProtocolConfig) -> BTreeMap<JoltOpeningId, SinkKind> {
     final_opening_polynomial_order(
         config.formula.ra_layout,
@@ -351,6 +438,72 @@ fn dory_sinks(config: &ProtocolConfig) -> BTreeMap<JoltOpeningId, SinkKind> {
     .into_iter()
     .map(|polynomial| (final_opening_id(polynomial), SinkKind::PcsOpened))
     .collect()
+}
+
+/// The Akita sink set: everything the stage-8 packed opening discharges
+/// (jolt-verifier `stages/stage8/packed.rs`), assembled from the same
+/// jolt-claims packing functions the verifier resolves its leaf claims
+/// against — `one_hot_trace_columns` for the native `OneHotTrace` batch,
+/// `advice_bytes_packing` / `precommitted_packing` for the auxiliary packed
+/// objects — with each column's producing relation supplied by
+/// `final_opening_id` (the lattice arms of
+/// `committed_openings::final_opening_relation`, the single owner of the
+/// polynomial→relation map per `specs/lattice-claims.md`).
+fn akita_sinks(config: &ProtocolConfig) -> BTreeMap<JoltOpeningId, SinkKind> {
+    let one_hot_trace = OneHotTraceShape {
+        ra_layout: config.formula.ra_layout,
+        log_t: config.log_t,
+        log_k_chunk: config.log_k_chunk,
+    };
+    let mut sinks: BTreeMap<JoltOpeningId, SinkKind> = one_hot_trace_columns(&one_hot_trace)
+        .expect("small one-hot trace shape is valid")
+        .into_iter()
+        .map(|polynomial| (final_opening_id(polynomial), SinkKind::PackedOpened))
+        .collect();
+
+    // Advice byte columns are their own single-slot packed objects
+    // (`stage8/packed.rs`, `advice_object`); the word-variable count comes
+    // from the advice commitment shape, matching the reconstruction relation's
+    // shape in the registry.
+    let advice_word_vars =
+        CommitmentMatrixShape::advice_from_max_bytes(config.advice_max_bytes).total_vars();
+    for (present, kind) in [
+        (config.untrusted_advice, JoltAdviceKind::Untrusted),
+        (config.trusted_advice, JoltAdviceKind::Trusted),
+    ] {
+        if !present {
+            continue;
+        }
+        let packing =
+            advice_bytes_packing(kind, advice_word_vars).expect("advice byte packing is valid");
+        sinks.extend(
+            packing
+                .iter()
+                .map(|(polynomial, _slot)| (final_opening_id(*polynomial), SinkKind::PackedOpened)),
+        );
+    }
+
+    // Committed-program mode adds the `ProgramOneHot` packed object: the
+    // per-chunk bytecode lane columns and the program-image byte column
+    // (`stage8/packed.rs`, the `precommitted_packing` arm).
+    if let Some(chunk_count) = config.committed_program_chunks {
+        let bytecode_len = 1usize << config.formula.bytecode_read_raf.log_k();
+        let packing = precommitted_packing(&PrecommittedPackingShape {
+            bytecode_chunks: chunk_count,
+            log_bytecode_rows: (bytecode_len / chunk_count).log_2(),
+            imm_byte_width: <Fr as FixedByteSize>::NUM_BYTES,
+            program_image_log_words: Some(program_image_geometry::precommitted_candidate(
+                config.program_image_len_words,
+            )),
+        })
+        .expect("committed-program packing is valid");
+        sinks.extend(
+            packing
+                .iter()
+                .map(|(polynomial, _slot)| (final_opening_id(*polynomial), SinkKind::PackedOpened)),
+        );
+    }
+    sinks
 }
 
 impl fmt::Display for ClaimGraph {
@@ -397,12 +550,12 @@ impl fmt::Display for ClaimGraph {
                     writeln!(f, "    <- {}", render_id(id))?;
                 }
                 for id in &vertex.out_edges {
-                    let sink = self
-                        .sinks
-                        .get(&family_representative(*id))
-                        .map_or("", |kind| match kind {
-                            SinkKind::PcsOpened => "  [PcsOpened]",
-                        });
+                    // Sinks hold exact ids (the stage-8 batch opens each
+                    // family member), so no family collapse on lookup.
+                    let sink = self.sinks.get(id).map_or("", |kind| match kind {
+                        SinkKind::PcsOpened => "  [PcsOpened]",
+                        SinkKind::PackedOpened => "  [PackedOpened]",
+                    });
                     writeln!(f, "    -> {}{sink}", render_id(id))?;
                 }
             }
@@ -449,6 +602,7 @@ mod planted {
             degree: 1,
             in_edges: in_edges.iter().copied().collect(),
             out_edges: out_edges.iter().copied().collect(),
+            terminus_out_edges: BTreeSet::new(),
             struct_in_edges: &[],
             struct_out_edges: &[],
         }
@@ -512,6 +666,28 @@ mod planted {
         let violations = graph.check();
         assert!(
             violations
+                .iter()
+                .any(|violation| violation.contains("producer mismatch")),
+            "{violations:?}"
+        );
+    }
+
+    /// The finalize-at-cycle-handoff substitution: a produced id embedding
+    /// another relation is accepted by the resolution check exactly when the
+    /// producer records it in `terminus_out_edges`; `detects_producer_mismatch`
+    /// above pins the unrecorded case.
+    #[test]
+    fn terminus_substitution_accepts_the_producer_relation_mismatch() {
+        let id = opening(JoltRelationId::SpartanShift);
+        let mut producer = vertex("a", JoltRelationId::SpartanOuter, &[], &[id]);
+        let _ = producer.terminus_out_edges.insert(id);
+        let graph = graph(vec![
+            producer,
+            vertex("b", JoltRelationId::SpartanShift, &[id], &[]),
+        ]);
+        let violations = graph.check();
+        assert!(
+            !violations
                 .iter()
                 .any(|violation| violation.contains("producer mismatch")),
             "{violations:?}"
