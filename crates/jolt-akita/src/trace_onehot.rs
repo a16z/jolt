@@ -342,6 +342,64 @@ fn visit_segment_ring_range<const D: usize>(
     Ok(())
 }
 
+/// Visits K<D ring elements as the raw lanes for the D/K trace rows packed
+/// into each ring. This avoids expanding the row buffer into contribution
+/// tuples when a kernel can consume lanes directly.
+fn visit_segment_ring_lane_range<const D: usize>(
+    source: &TracePackedOneHot,
+    ring_start: usize,
+    ring_end: usize,
+    mut visit: impl FnMut(usize, &[u16]),
+) -> Result<(), AkitaError> {
+    validate_dimension::<D>(source.one_hot_k)?;
+    if source.one_hot_k >= D {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot raw-lane traversal requires K={} < D={D}",
+            source.one_hot_k
+        )));
+    }
+    let segment_rings = source.segment_ring_elems::<D>()?;
+    if ring_start > ring_end || ring_end > segment_rings {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot ring range {ring_start}..{ring_end} exceeds segment size {segment_rings}"
+        )));
+    }
+    let rows_per_ring = D / source.one_hot_k;
+    let num_columns = source.rows.num_columns();
+    if !source.rows.num_rows().is_multiple_of(rows_per_ring) {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot row count {} is not aligned to {rows_per_ring} rows per D={D} ring",
+            source.rows.num_rows()
+        )));
+    }
+    let lane_count = num_columns.checked_mul(rows_per_ring).ok_or_else(|| {
+        AkitaError::InvalidInput("trace one-hot raw-lane buffer size overflow".to_string())
+    })?;
+    let mut lanes = vec![NO_HOT_LANE; lane_count];
+    for ring in ring_start..ring_end {
+        let mut populated_rows = 0;
+        for row_offset in 0..rows_per_ring {
+            let row = ring * rows_per_ring + row_offset;
+            if row >= source.rows.num_rows() {
+                break;
+            }
+            let row_lanes = &mut lanes[row_offset * num_columns..(row_offset + 1) * num_columns];
+            source.rows.fill_row(row, row_lanes);
+            for &hot in row_lanes.iter() {
+                if hot != NO_HOT_LANE && usize::from(hot) >= source.one_hot_k {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "trace one-hot lane {hot} is outside K={}",
+                        source.one_hot_k
+                    )));
+                }
+            }
+            populated_rows += 1;
+        }
+        visit(ring, &lanes[..populated_rows * num_columns]);
+    }
+    Ok(())
+}
+
 fn flush_wide<const D: usize>(
     wide: &mut [WideCyclotomicRing<<AkitaField as HasWide>::Wide, D>],
     reduced: &mut [CyclotomicRing<AkitaField, D>],
@@ -461,32 +519,67 @@ fn commit_packed<const D: usize>(
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
                 let mut budget = 0usize;
-                visit_segment_ring_range::<D>(
-                    source,
-                    ring_start,
-                    ring_end,
-                    |ring, contributions| {
-                        if contributions.is_empty() {
-                            return;
-                        }
-                        let position = ring - block_ring_start;
-                        let a_col = position * plan.num_digits_inner;
-                        for (a, a_row) in a_rows.iter().enumerate() {
-                            let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
-                            for &(column, coefficient) in contributions {
-                                a_wide.shift_accumulate_into(
-                                    &mut wide[column * plan.n_a + a],
-                                    coefficient,
-                                );
+                if source.one_hot_k < D {
+                    let rows_per_ring = D / source.one_hot_k;
+                    let num_columns = source.rows.num_columns();
+                    visit_segment_ring_lane_range::<D>(
+                        source,
+                        ring_start,
+                        ring_end,
+                        |ring, lanes| {
+                            let position = ring - block_ring_start;
+                            let a_col = position * plan.num_digits_inner;
+                            for (a, a_row) in a_rows.iter().enumerate() {
+                                let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
+                                for (row_offset, row_lanes) in
+                                    lanes.chunks_exact(num_columns).enumerate()
+                                {
+                                    let coefficient_base = row_offset * source.one_hot_k;
+                                    for (column, &hot) in row_lanes.iter().enumerate() {
+                                        if hot != NO_HOT_LANE {
+                                            a_wide.shift_accumulate_into(
+                                                &mut wide[column * plan.n_a + a],
+                                                coefficient_base + usize::from(hot),
+                                            );
+                                        }
+                                    }
+                                }
                             }
-                        }
-                        budget += max_per_ring;
-                        if budget >= MAX_WIDE_ACCUMULATIONS {
-                            flush_wide(&mut wide, &mut reduced);
-                            budget = 0;
-                        }
-                    },
-                )?;
+                            budget += rows_per_ring;
+                            if budget >= MAX_WIDE_ACCUMULATIONS {
+                                flush_wide(&mut wide, &mut reduced);
+                                budget = 0;
+                            }
+                        },
+                    )?;
+                } else {
+                    visit_segment_ring_range::<D>(
+                        source,
+                        ring_start,
+                        ring_end,
+                        |ring, contributions| {
+                            if contributions.is_empty() {
+                                return;
+                            }
+                            let position = ring - block_ring_start;
+                            let a_col = position * plan.num_digits_inner;
+                            for (a, a_row) in a_rows.iter().enumerate() {
+                                let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
+                                for &(column, coefficient) in contributions {
+                                    a_wide.shift_accumulate_into(
+                                        &mut wide[column * plan.n_a + a],
+                                        coefficient,
+                                    );
+                                }
+                            }
+                            budget += max_per_ring;
+                            if budget >= MAX_WIDE_ACCUMULATIONS {
+                                flush_wide(&mut wide, &mut reduced);
+                                budget = 0;
+                            }
+                        },
+                    )?;
+                }
                 flush_wide(&mut wide, &mut reduced);
                 Ok::<_, AkitaError>(reduced)
             })
@@ -603,32 +696,83 @@ fn opening_fold_packed<const D: usize>(
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
                 let mut folded = vec![CyclotomicRing::zero(); source.column_capacity];
-                visit_segment_ring_range::<D>(
-                    source,
-                    ring_start,
-                    ring_end,
-                    |ring, contributions| {
-                        let position = ring - block_ring_start;
-                        match plan {
-                            OpeningFoldPlan::Base {
-                                position_weights, ..
-                            } => {
-                                let weight = position_weights[position];
-                                for &(column, coefficient) in contributions {
-                                    folded[column].coeffs[coefficient] += weight;
+                if source.one_hot_k < D {
+                    let num_columns = source.rows.num_columns();
+                    visit_segment_ring_lane_range::<D>(
+                        source,
+                        ring_start,
+                        ring_end,
+                        |ring, lanes| {
+                            let position = ring - block_ring_start;
+                            match plan {
+                                OpeningFoldPlan::Base {
+                                    position_weights, ..
+                                } => {
+                                    let weight = position_weights[position];
+                                    for (row_offset, row_lanes) in
+                                        lanes.chunks_exact(num_columns).enumerate()
+                                    {
+                                        let coefficient_base = row_offset * source.one_hot_k;
+                                        for (column, &hot) in row_lanes.iter().enumerate() {
+                                            if hot != NO_HOT_LANE {
+                                                folded[column].coeffs
+                                                    [coefficient_base + usize::from(hot)] += weight;
+                                            }
+                                        }
+                                    }
+                                }
+                                OpeningFoldPlan::Ring {
+                                    position_weights, ..
+                                } => {
+                                    let weight = position_weights[position];
+                                    for (row_offset, row_lanes) in
+                                        lanes.chunks_exact(num_columns).enumerate()
+                                    {
+                                        let coefficient_base = row_offset * source.one_hot_k;
+                                        for (column, &hot) in row_lanes.iter().enumerate() {
+                                            if hot != NO_HOT_LANE {
+                                                weight.shift_accumulate_into(
+                                                    &mut folded[column],
+                                                    coefficient_base + usize::from(hot),
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            OpeningFoldPlan::Ring {
-                                position_weights, ..
-                            } => {
-                                let weight = position_weights[position];
-                                for &(column, coefficient) in contributions {
-                                    weight.shift_accumulate_into(&mut folded[column], coefficient);
+                        },
+                    )?;
+                } else {
+                    visit_segment_ring_range::<D>(
+                        source,
+                        ring_start,
+                        ring_end,
+                        |ring, contributions| {
+                            let position = ring - block_ring_start;
+                            match plan {
+                                OpeningFoldPlan::Base {
+                                    position_weights, ..
+                                } => {
+                                    let weight = position_weights[position];
+                                    for &(column, coefficient) in contributions {
+                                        folded[column].coeffs[coefficient] += weight;
+                                    }
+                                }
+                                OpeningFoldPlan::Ring {
+                                    position_weights, ..
+                                } => {
+                                    let weight = position_weights[position];
+                                    for &(column, coefficient) in contributions {
+                                        weight.shift_accumulate_into(
+                                            &mut folded[column],
+                                            coefficient,
+                                        );
+                                    }
                                 }
                             }
-                        }
-                    },
-                )?;
+                        },
+                    )?;
+                }
                 Ok::<_, AkitaError>(folded)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -758,22 +902,49 @@ fn decompose_fold_packed<const D: usize>(
                 for trace_block in 0..blocks_per_column {
                     let ring_start = trace_block * num_positions + position_start;
                     let ring_end = trace_block * num_positions + position_end;
-                    visit_segment_ring_range::<D>(
-                        source,
-                        ring_start,
-                        ring_end,
-                        |ring, contributions| {
-                            let position = ring - trace_block * num_positions;
-                            for &(column, coefficient) in contributions {
-                                let block = column * blocks_per_column + trace_block;
-                                add_rotated_sparse(
-                                    &mut compressed[position - position_start],
-                                    &challenges[block],
-                                    coefficient,
-                                );
-                            }
-                        },
-                    )?;
+                    if source.one_hot_k < D {
+                        let num_columns = source.rows.num_columns();
+                        visit_segment_ring_lane_range::<D>(
+                            source,
+                            ring_start,
+                            ring_end,
+                            |ring, lanes| {
+                                let position = ring - trace_block * num_positions;
+                                for (row_offset, row_lanes) in
+                                    lanes.chunks_exact(num_columns).enumerate()
+                                {
+                                    let coefficient_base = row_offset * source.one_hot_k;
+                                    for (column, &hot) in row_lanes.iter().enumerate() {
+                                        if hot != NO_HOT_LANE {
+                                            let block = column * blocks_per_column + trace_block;
+                                            add_rotated_sparse(
+                                                &mut compressed[position - position_start],
+                                                &challenges[block],
+                                                coefficient_base + usize::from(hot),
+                                            );
+                                        }
+                                    }
+                                }
+                            },
+                        )?;
+                    } else {
+                        visit_segment_ring_range::<D>(
+                            source,
+                            ring_start,
+                            ring_end,
+                            |ring, contributions| {
+                                let position = ring - trace_block * num_positions;
+                                for &(column, coefficient) in contributions {
+                                    let block = column * blocks_per_column + trace_block;
+                                    add_rotated_sparse(
+                                        &mut compressed[position - position_start],
+                                        &challenges[block],
+                                        coefficient,
+                                    );
+                                }
+                            },
+                        )?;
+                    }
                 }
                 Ok::<_, AkitaError>(compressed)
             })
@@ -1142,6 +1313,7 @@ mod tests {
     #[test]
     fn blockwise_opening_kernels_match_materialized_onehot() {
         assert_opening_kernels_match_materialized::<64>(256, 32, 16);
+        assert_opening_kernels_match_materialized::<64>(16, 32, 4);
         assert_opening_kernels_match_materialized::<512>(16, 32, 1);
     }
 }
