@@ -46,6 +46,9 @@ macro_rules! source_extension_for_marker {
     (Addc) => {
         Some(SourceExtension::JoltCustom)
     };
+    (Mulc) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (Addi) => {
         Some(SourceExtension::Rv64I)
     };
@@ -643,6 +646,9 @@ macro_rules! source_side_effects_for_marker {
     (Addc) => {
         false
     };
+    (Mulc) => {
+        false
+    };
     (Addi) => {
         false
     };
@@ -917,6 +923,9 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::IntegerCore)
     };
     (Addc) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (Mulc) => {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (Addi) => {
@@ -1211,6 +1220,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (Addc) => {
+        false
+    };
+    (Mulc) => {
         false
     };
     (Addi) => {

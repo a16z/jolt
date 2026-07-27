@@ -39,6 +39,7 @@ use tracer::instruction::{
     ld::LD,
     lui::LUI,
     mul::MUL,
+    mulc::MULC,
     mulhu::MULHU,
     or::OR,
     ori::ORI,
@@ -96,6 +97,7 @@ struct JoltState<T = Int> {
     unexpanded_pc: T,
     next_unexpanded_pc: T,
     prev_right_lookup_high_word: T,
+    prev_aux_contribution: T,
     imm: T,
     flags: [T; NUM_CIRCUIT_FLAGS],
     instruction_flags: [T; NUM_INSTRUCTION_FLAGS],
@@ -129,6 +131,7 @@ impl JoltState {
             prev_right_lookup_high_word: Int::new_const(format!(
                 "{prefix}_prev_right_lookup_high_word"
             )),
+            prev_aux_contribution: Int::new_const(format!("{prefix}_prev_aux_contribution")),
             imm: Int::new_const(format!("{prefix}_imm")),
             flags: array::from_fn(|i| Int::new_const(format!("{prefix}_flag_{i}"))),
             instruction_flags: array::from_fn(|i| {
@@ -167,6 +170,7 @@ impl JoltState {
             &self.next_is_virtual,
             &self.next_is_first_in_sequence,
             &self.prev_right_lookup_high_word,
+            &self.prev_aux_contribution,
             &self.lookup_output,
             &self.should_jump,
             &self.flags[CircuitFlags::AddOperands as usize],
@@ -374,6 +378,7 @@ impl JoltState {
             unexpanded_pc: eval(&self.unexpanded_pc)?,
             next_unexpanded_pc: eval(&self.next_unexpanded_pc)?,
             prev_right_lookup_high_word: eval(&self.prev_right_lookup_high_word)?,
+            prev_aux_contribution: eval(&self.prev_aux_contribution)?,
             imm: eval(&self.imm)?,
             flags,
             instruction_flags,
@@ -509,6 +514,7 @@ test_instruction_constraints!(JALR, FormatI);
 test_instruction_constraints!(LD, FormatLoad);
 test_instruction_constraints!(LUI, FormatU);
 test_instruction_constraints!(MUL, FormatR);
+test_instruction_constraints!(MULC, FormatR, prev_aux: 1);
 test_instruction_constraints!(MULHU, FormatR);
 test_instruction_constraints!(OR, FormatR);
 test_instruction_constraints!(ORI, FormatI);

@@ -25,6 +25,7 @@ macro_rules! for_each_instruction_kind {
             instructions: [
                 ADD => Add => "rv64.add",
                 ADDC => Addc => "jolt.addc",
+                MULC => Mulc => "jolt.mulc",
                 ADDI => Addi => "rv64.addi",
                 AND => And => "rv64.and",
                 ANDI => AndI => "rv64.andi",
@@ -253,6 +254,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualXORROTW8 => VirtualXorRotW8 => (0x0087, "jolt.virtual.xorrotw8"),
                 VirtualXORROTW7 => VirtualXorRotW7 => (0x0088, "jolt.virtual.xorrotw7"),
                 ADDC => Addc => (0x0089, "jolt.addc"),
+                MULC => Mulc => (0x008a, "jolt.mulc"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

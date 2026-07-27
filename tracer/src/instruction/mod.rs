@@ -17,6 +17,7 @@ pub const FUNCT7_ADVICE_LD: u32 = 0x03; // Load doubleword from advice tape
 pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get remaining bytes in advice tape
 pub const FUNCT7_VIRTUAL_REV8W: u32 = 0x05; // Reverse bytes in a word
 pub const FUNCT7_ADDC: u32 = 0x06; // Add with previous row auxiliary high word
+pub const FUNCT7_MULC: u32 = 0x07; // Unsigned multiply with previous row auxiliary high word
 
 use add::ADD;
 use addc::ADDC;
@@ -86,6 +87,7 @@ use lw::LW;
 use lwu::LWU;
 use mret::MRET;
 use mul::MUL;
+use mulc::MULC;
 use mulh::MULH;
 use mulhsu::MULHSU;
 use mulhu::MULHU;
@@ -253,6 +255,7 @@ pub mod lw;
 pub mod lwu;
 pub mod mret;
 pub mod mul;
+pub mod mulc;
 pub mod mulh;
 pub mod mulhsu;
 pub mod mulhu;
@@ -463,7 +466,7 @@ pub(crate) fn trace_lookup_high_word<T: RISCVInstruction>(cycle: &RISCVCycle<T>)
             .wrapping_sub(right_input as u64 as u128)
             .wrapping_add(0x1_0000_0000_0000_0000u128)
     } else if circuit_flags[jolt_riscv::CircuitFlags::MultiplyOperands] {
-        left_input as u128 * right_input as u64 as u128
+        left_input as u128 * right_input as u64 as u128 + aux_input as u128
     } else {
         0
     };
@@ -1005,6 +1008,21 @@ macro_rules! impl_final_jolt_row_data {
         }
     };
 
+    (@from_row MULC) => {
+        impl From<JoltInstructionRow> for MULC {
+            fn from(row: JoltInstructionRow) -> Self {
+                Self {
+                    address: row.address as u64,
+                    operands: row.operands.into(),
+                    prev_aux: 0,
+                    virtual_sequence_remaining: row.virtual_sequence_remaining,
+                    is_first_in_sequence: row.is_first_in_sequence,
+                    is_compressed: row.is_compressed,
+                }
+            }
+        }
+    };
+
     (@from_row $instr:ident) => {
         impl From<JoltInstructionRow> for $instr {
             fn from(row: JoltInstructionRow) -> Self {
@@ -1366,6 +1384,7 @@ impl Instruction {
                             Ok(VirtualRev8W::new(instr, address, true, compressed).into())
                         }
                         FUNCT7_ADDC => Ok(ADDC::new(instr, address, true, compressed).into()),
+                        FUNCT7_MULC => Ok(MULC::new(instr, address, true, compressed).into()),
                         _ => Err("Invalid funct7 for virtual R-type instruction"),
                     }
                 } else if funct3 == FUNCT3_VIRTUAL_ASSERT_EQ {

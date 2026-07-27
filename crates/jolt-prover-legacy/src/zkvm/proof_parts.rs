@@ -352,6 +352,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::NextIsVirtual => 5u8.serialize_with_mode(&mut writer, compress),
             Self::NextIsFirstInSequence => 6u8.serialize_with_mode(&mut writer, compress),
             Self::PrevRightLookupHighWord => 7u8.serialize_with_mode(&mut writer, compress),
+            Self::PrevAuxContribution => 45u8.serialize_with_mode(&mut writer, compress),
             Self::LeftLookupOperand => 8u8.serialize_with_mode(&mut writer, compress),
             Self::RightLookupOperand => 9u8.serialize_with_mode(&mut writer, compress),
             Self::LeftInstructionInput => 10u8.serialize_with_mode(&mut writer, compress),
@@ -419,6 +420,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::NextIsVirtual
             | Self::NextIsFirstInSequence
             | Self::PrevRightLookupHighWord
+            | Self::PrevAuxContribution
             | Self::LeftLookupOperand
             | Self::RightLookupOperand
             | Self::LeftInstructionInput
@@ -482,6 +484,7 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 5 => Self::NextIsVirtual,
                 6 => Self::NextIsFirstInSequence,
                 7 => Self::PrevRightLookupHighWord,
+                45 => Self::PrevAuxContribution,
                 8 => Self::LeftLookupOperand,
                 9 => Self::RightLookupOperand,
                 10 => Self::LeftInstructionInput,

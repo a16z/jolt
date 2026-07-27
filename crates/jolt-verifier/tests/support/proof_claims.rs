@@ -156,6 +156,7 @@ fn claim_mut_from_spartan_outer<F: Field>(
         JoltVirtualPolynomial::PrevRightLookupHighWord => {
             Some(&mut claims.prev_right_lookup_high_word)
         }
+        JoltVirtualPolynomial::PrevAuxContribution => Some(&mut claims.prev_aux_contribution),
         JoltVirtualPolynomial::LookupOutput => Some(&mut claims.lookup_output),
         JoltVirtualPolynomial::ShouldJump => Some(&mut claims.should_jump),
         JoltVirtualPolynomial::OpFlags(flag) => match flag {

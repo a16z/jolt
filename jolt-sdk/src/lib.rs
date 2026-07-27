@@ -23,6 +23,8 @@ pub const FUNCT7_ADVICE_LD: u32 = 0x03; // Load doubleword from advice tape
 pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get number of remaining bytes in advice tape
 #[doc(hidden)]
 pub const FUNCT7_ADDC: u32 = 0x06; // Add with previous row auxiliary high word
+#[doc(hidden)]
+pub const FUNCT7_MULC: u32 = 0x07; // Unsigned multiply with previous row auxiliary high word
 
 #[doc(hidden)]
 pub const FIELD_INLINE_OPCODE: u32 = 0x7b;
@@ -143,29 +145,6 @@ macro_rules! field_assert_eq {
         ))
     };
 }
-
-/*#[macro_export]
-macro_rules! addc {
-    ($rd:literal, $rs1:literal, $rs2:literal) => {{
-        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-        unsafe {
-            core::arch::asm!(
-                ".insn r {opcode}, {funct3}, {funct7}, x{rd}, x{rs1}, x{rs2}",
-                opcode = const $crate::CUSTOM_OPCODE,
-                funct3 = const $crate::FUNCT3_VIRTUAL_R,
-                funct7 = const $crate::FUNCT7_ADDC,
-                rd = const $rd,
-                rs1 = const $rs1,
-                rs2 = const $rs2,
-                options(nostack)
-            );
-        }
-        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-        {
-            let _ = ($rd, $rs1, $rs2);
-        }
-    }};
-}*/
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;

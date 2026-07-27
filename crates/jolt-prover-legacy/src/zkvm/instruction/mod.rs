@@ -250,6 +250,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstructionKind::JAL
             | JoltInstructionKind::LUI
             | JoltInstructionKind::MUL
+            | JoltInstructionKind::MULC
             | JoltInstructionKind::SUB
             | JoltInstruction::VirtualAdvice(_)
             | JoltInstruction::VirtualAdviceLen(_)
@@ -490,7 +491,7 @@ macro_rules! define_rv64imac_trait_impls {
 define_rv64imac_trait_impls! {
     instructions: [
         ADD, ADDC, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
-        EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
+        EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULC, MULHU, OR, ORI,
         SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment,
@@ -527,6 +528,7 @@ pub mod jalr;
 pub mod ld;
 pub mod lui;
 pub mod mul;
+pub mod mulc;
 pub mod mulhu;
 pub mod or;
 pub mod ori;

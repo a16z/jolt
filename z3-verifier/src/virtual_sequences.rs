@@ -19,6 +19,7 @@ use tracer::{
         format::{format_i::FormatI, format_r::FormatR, normalize_imm},
         lui::LUI,
         mul::MUL,
+        mulc::MULC,
         mulh::MULH,
         mulhsu::MULHSU,
         mulhu::MULHU,
@@ -246,6 +247,15 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 * rs2));
+        }
+        Instruction::MULC(MULC {
+            operands, prev_aux, ..
+        }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            let product = rs1.zero_ext(cpu.bv_bits) * rs2.zero_ext(cpu.bv_bits)
+                + cpu.bv_u64(*prev_aux).zero_ext(cpu.bv_bits);
+            cpu.x[operands.rd as usize] = product.extract(cpu.bv_bits - 1, 0);
         }
         Instruction::MULHU(MULHU { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
@@ -736,6 +746,19 @@ test_sequence!(
 // test_sequence!(LHU, FormatLoad);
 // test_sequence!(LW, FormatLoad);
 // test_sequence!(LWU, FormatLoad);
+test_sequence!(
+    #[ignore = "solver-heavy under the default 64-bit Z3 model"]
+    MULC,
+    FormatR,
+    |instr: &MULC, cpu| {
+        let rs1 = &cpu.x[instr.operands.rs1 as usize];
+        let rs2 = &cpu.x[instr.operands.rs2 as usize];
+        let product = rs1.zero_ext(cpu.bv_bits) * rs2.zero_ext(cpu.bv_bits)
+            + cpu.bv_u64(instr.prev_aux).zero_ext(cpu.bv_bits);
+        cpu.x[instr.operands.rd as usize] = product.extract(cpu.bv_bits - 1, 0);
+    },
+    prev_aux: 1u64
+);
 test_sequence!(
     #[ignore = "solver-heavy under the default 64-bit Z3 model"]
     MULH,

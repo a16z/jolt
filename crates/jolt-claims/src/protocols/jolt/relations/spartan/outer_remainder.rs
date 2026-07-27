@@ -74,6 +74,8 @@ pub struct OuterRemainderOutputClaims<C> {
     pub next_is_first_in_sequence: C,
     #[opening(PrevRightLookupHighWord)]
     pub prev_right_lookup_high_word: C,
+    #[opening(PrevAuxContribution)]
+    pub prev_aux_contribution: C,
     #[opening(LookupOutput)]
     pub lookup_output: C,
     #[opening(ShouldJump)]

@@ -246,7 +246,7 @@ pub struct BzSecondGroup {
     pub right_lookup_minus_add_result: S160, // RightLookup - (Left + Right)
     pub right_lookup_minus_add_with_prev_aux_result: S160, // RightLookup - (Left + Right + PrevAux)
     pub right_lookup_minus_sub_result: S160, // RightLookup - (Left - Right + 2^64)
-    pub right_lookup_minus_product: S160,  // RightLookup - Product
+    pub right_lookup_minus_product: S160,  // RightLookup - (Product + PrevAuxContribution)
     pub right_lookup_minus_right_input: S160, // RightLookup - RightInput
     pub rd_write_minus_lookup_output: S64, // RdWrite - LookupOutput
     pub rd_write_minus_pc_plus_const: S64, // RdWrite - (UnexpandedPC + const)
@@ -594,8 +594,9 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             S160::from(self.row.right_lookup) - S160::from(right_add_with_prev_aux_expected);
         let right_lookup_minus_sub_result =
             S160::from(self.row.right_lookup) - S160::from(right_sub_expected);
-        let right_lookup_minus_product =
-            S160::from(self.row.right_lookup) - S160::from(self.row.product);
+        let right_lookup_minus_product = S160::from(self.row.right_lookup)
+            - S160::from(self.row.product)
+            - S160::from(self.row.prev_aux_contribution as i128);
         let right_lookup_minus_right_input =
             S160::from(self.row.right_lookup) - S160::from(self.row.right_input);
 
@@ -881,6 +882,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 let mut acc_sj_flag: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_next_is_virtual: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_next_is_first_in_sequence: SmallAccumU<F> = SmallAccumU::zero();
+                let mut acc_prev_right_lookup_high_word: MedAccumU<F> = MedAccumU::zero();
+                let mut acc_prev_aux_contribution: MedAccumU<F> = MedAccumU::zero();
                 let mut acc_flags: Vec<SmallAccumU<F>> = (0..NUM_CIRCUIT_FLAGS)
                     .map(|_| SmallAccumU::zero())
                     .collect();
@@ -914,6 +917,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     acc_sj_flag.fmadd(&e_in, &row.should_jump);
                     acc_next_is_virtual.fmadd(&e_in, &row.next_is_virtual);
                     acc_next_is_first_in_sequence.fmadd(&e_in, &row.next_is_first_in_sequence);
+                    acc_prev_right_lookup_high_word.fmadd(&e_in, &row.prev_right_lookup_high_word);
+                    acc_prev_aux_contribution.fmadd(&e_in, &row.prev_aux_contribution);
                     for flag in CircuitFlags::iter() {
                         acc_flags[flag as usize].fmadd(&e_in, &row.flags[flag as usize]);
                     }
@@ -963,6 +968,10 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     eq1_val.mul_to_product_accum(acc_next_is_virtual.barrett_reduce());
                 out_unr[JoltR1CSInputs::NextIsFirstInSequence.to_index()] =
                     eq1_val.mul_to_product_accum(acc_next_is_first_in_sequence.barrett_reduce());
+                out_unr[JoltR1CSInputs::PrevRightLookupHighWord.to_index()] =
+                    eq1_val.mul_to_product_accum(acc_prev_right_lookup_high_word.barrett_reduce());
+                out_unr[JoltR1CSInputs::PrevAuxContribution.to_index()] =
+                    eq1_val.mul_to_product_accum(acc_prev_aux_contribution.barrett_reduce());
                 for flag in CircuitFlags::iter() {
                     let idx = JoltR1CSInputs::OpFlags(flag).to_index();
                     let f_idx = flag as usize;

@@ -116,6 +116,7 @@ fn spartan_outer_claims_from_openings<F: Field>(
             prev_right_lookup_high_word: outer_claim(
                 JoltVirtualPolynomial::PrevRightLookupHighWord,
             )?,
+            prev_aux_contribution: outer_claim(JoltVirtualPolynomial::PrevAuxContribution)?,
             lookup_output: outer_claim(JoltVirtualPolynomial::LookupOutput)?,
             should_jump: outer_claim(JoltVirtualPolynomial::ShouldJump)?,
             add_operands: flag_claim(CircuitFlags::AddOperands)?,

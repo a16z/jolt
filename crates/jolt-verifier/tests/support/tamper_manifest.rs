@@ -1291,6 +1291,7 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     next_is_virtual: zero,
                     next_is_first_in_sequence: zero,
                     prev_right_lookup_high_word: zero,
+                    prev_aux_contribution: zero,
                     lookup_output: zero,
                     should_jump: zero,
                     add_operands: zero,

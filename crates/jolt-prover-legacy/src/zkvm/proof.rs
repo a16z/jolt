@@ -889,6 +889,9 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
         prover_witness::VirtualPolynomial::PrevRightLookupHighWord => {
             JoltVirtualPolynomial::PrevRightLookupHighWord
         }
+        prover_witness::VirtualPolynomial::PrevAuxContribution => {
+            JoltVirtualPolynomial::PrevAuxContribution
+        }
         prover_witness::VirtualPolynomial::LeftLookupOperand => {
             JoltVirtualPolynomial::LeftLookupOperand
         }

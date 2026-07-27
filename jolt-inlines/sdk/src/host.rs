@@ -41,6 +41,7 @@ pub mod instruction {
     alias_instruction!(lui, LUI, Lui);
     alias_instruction!(lw, LW, Lw);
     alias_instruction!(mul, MUL, Mul);
+    alias_instruction!(mulc, MULC, Mulc);
     alias_instruction!(mulhu, MULHU, MulHU);
     alias_instruction!(or, OR, Or);
     alias_instruction!(sd, SD, Sd);

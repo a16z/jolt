@@ -310,7 +310,7 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::RightLookupEqProductIfMul,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
-        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } )
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } + { JoltR1CSInputs::PrevAuxContribution } )
     ),
     // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice) {
     //     assert!(RightLookupOperand == RightInstructionInput)

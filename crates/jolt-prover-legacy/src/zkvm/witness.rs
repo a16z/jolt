@@ -251,6 +251,7 @@ pub enum VirtualPolynomial {
     NextIsVirtual,
     NextIsFirstInSequence,
     PrevRightLookupHighWord,
+    PrevAuxContribution,
     LeftLookupOperand,
     RightLookupOperand,
     LeftInstructionInput,

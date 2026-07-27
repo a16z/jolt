@@ -25,6 +25,7 @@ pub mod jalr;
 pub mod ld;
 pub mod lui;
 pub mod mul;
+pub mod mulc;
 pub mod mulhu;
 pub mod or;
 pub mod ori;

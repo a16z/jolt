@@ -51,6 +51,7 @@ pub enum JoltR1CSInputs {
     NextIsVirtual,           // (shift sumcheck)
     NextIsFirstInSequence,   // (shift sumcheck)
     PrevRightLookupHighWord, // (previous-row auxiliary view)
+    PrevAuxContribution,     // (previous-row auxiliary contribution when enabled)
     LookupOutput,            // (instruction rv)
     ShouldJump,              // (product virtualization)
     OpFlags(CircuitFlags),
@@ -59,7 +60,7 @@ pub enum JoltR1CSInputs {
 pub const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 37] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 38] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -80,6 +81,7 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 37] = [
     JoltR1CSInputs::NextIsVirtual,
     JoltR1CSInputs::NextIsFirstInSequence,
     JoltR1CSInputs::PrevRightLookupHighWord,
+    JoltR1CSInputs::PrevAuxContribution,
     JoltR1CSInputs::LookupOutput,
     JoltR1CSInputs::ShouldJump,
     JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands),
@@ -134,23 +136,24 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::NextIsVirtual => 17,
             JoltR1CSInputs::NextIsFirstInSequence => 18,
             JoltR1CSInputs::PrevRightLookupHighWord => 19,
-            JoltR1CSInputs::LookupOutput => 20,
-            JoltR1CSInputs::ShouldJump => 21,
-            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 22,
-            JoltR1CSInputs::OpFlags(CircuitFlags::UsePreviousAux) => 23,
-            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 24,
-            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 25,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 26,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 27,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 28,
-            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 29,
-            JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) => 30,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 31,
-            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 32,
-            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 33,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 34,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence) => 35,
-            JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) => 36,
+            JoltR1CSInputs::PrevAuxContribution => 20,
+            JoltR1CSInputs::LookupOutput => 21,
+            JoltR1CSInputs::ShouldJump => 22,
+            JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) => 23,
+            JoltR1CSInputs::OpFlags(CircuitFlags::UsePreviousAux) => 24,
+            JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) => 25,
+            JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) => 26,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Load) => 27,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Store) => 28,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Jump) => 29,
+            JoltR1CSInputs::OpFlags(CircuitFlags::WriteLookupOutputToRD) => 30,
+            JoltR1CSInputs::OpFlags(CircuitFlags::VirtualInstruction) => 31,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Assert) => 32,
+            JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) => 33,
+            JoltR1CSInputs::OpFlags(CircuitFlags::Advice) => 34,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 35,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence) => 36,
+            JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) => 37,
         }
     }
 }
@@ -173,6 +176,7 @@ impl From<&JoltR1CSInputs> for VirtualPolynomial {
             JoltR1CSInputs::NextUnexpandedPC => VirtualPolynomial::NextUnexpandedPC,
             JoltR1CSInputs::NextPC => VirtualPolynomial::NextPC,
             JoltR1CSInputs::PrevRightLookupHighWord => VirtualPolynomial::PrevRightLookupHighWord,
+            JoltR1CSInputs::PrevAuxContribution => VirtualPolynomial::PrevAuxContribution,
             JoltR1CSInputs::LookupOutput => VirtualPolynomial::LookupOutput,
             JoltR1CSInputs::ShouldJump => VirtualPolynomial::ShouldJump,
             JoltR1CSInputs::ShouldBranch => VirtualPolynomial::ShouldBranch,
@@ -240,6 +244,8 @@ pub struct R1CSCycleInputs {
     pub next_unexpanded_pc: u64,
     /// High 64 bits of the previous row's `RightLookupOperand`, or 0 for the first row.
     pub prev_right_lookup_high_word: u64,
+    /// Previous-row auxiliary contribution consumed by carry-aware instructions, or 0 otherwise.
+    pub prev_aux_contribution: u64,
 
     /// Immediate operand as signed-magnitude `S64`.
     pub imm: S64,
@@ -338,6 +344,11 @@ impl R1CSCycleInputs {
         let prev_right_lookup_high_word = prev_cycle.as_ref().map_or(0, |prev_cycle| {
             (LookupQuery::<XLEN>::to_lookup_operands(prev_cycle).1 >> 64) as u64
         });
+        let prev_aux_contribution = if flags_view[CircuitFlags::UsePreviousAux] {
+            prev_right_lookup_high_word
+        } else {
+            0
+        };
 
         // Immediate
         let imm_i128 = norm.operands.imm;
@@ -388,6 +399,7 @@ impl R1CSCycleInputs {
             unexpanded_pc,
             next_unexpanded_pc,
             prev_right_lookup_high_word,
+            prev_aux_contribution,
             imm,
             flags,
             next_is_noop,
@@ -421,6 +433,7 @@ impl R1CSCycleInputs {
             JoltR1CSInputs::NextIsVirtual => self.next_is_virtual as i128,
             JoltR1CSInputs::NextIsFirstInSequence => self.next_is_first_in_sequence as i128,
             JoltR1CSInputs::PrevRightLookupHighWord => self.prev_right_lookup_high_word as i128,
+            JoltR1CSInputs::PrevAuxContribution => self.prev_aux_contribution as i128,
             JoltR1CSInputs::LookupOutput => self.lookup_output as i128,
             JoltR1CSInputs::ShouldJump => self.should_jump as i128,
             JoltR1CSInputs::OpFlags(flag) => self.flags[flag] as i128,
@@ -606,6 +619,7 @@ mod tests {
                     JoltR1CSInputs::PrevRightLookupHighWord,
                     JoltR1CSInputs::PrevRightLookupHighWord,
                 ) => true,
+                (JoltR1CSInputs::PrevAuxContribution, JoltR1CSInputs::PrevAuxContribution) => true,
                 (JoltR1CSInputs::LookupOutput, JoltR1CSInputs::LookupOutput) => true,
                 (JoltR1CSInputs::ShouldJump, JoltR1CSInputs::ShouldJump) => true,
                 (JoltR1CSInputs::OpFlags(flag1), JoltR1CSInputs::OpFlags(flag2)) => {
