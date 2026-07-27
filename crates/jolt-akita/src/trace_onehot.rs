@@ -31,6 +31,7 @@ use crate::AkitaField;
 
 const NO_HOT_LANE: u16 = u16::MAX;
 const MAX_WIDE_ACCUMULATIONS: usize = 1 << 15;
+const TASKS_PER_RAYON_WORKER: usize = 4;
 
 /// Row-major source for the semantic columns packed into `OneHotTrace`.
 ///
@@ -288,7 +289,6 @@ fn visit_segment_ring_range<const D: usize>(
         let row_end = ring_end.div_ceil(rings_per_row);
         let mut buckets = vec![Vec::new(); rings_per_row];
         for row in row_start..row_end.min(source.rows.num_rows()) {
-            lanes.fill(NO_HOT_LANE);
             source.rows.fill_row(row, &mut lanes);
             for bucket in &mut buckets {
                 bucket.clear();
@@ -322,7 +322,6 @@ fn visit_segment_ring_range<const D: usize>(
                 if row >= source.rows.num_rows() {
                     break;
                 }
-                lanes.fill(NO_HOT_LANE);
                 source.rows.fill_row(row, &mut lanes);
                 for (column, &hot) in lanes.iter().enumerate() {
                     if hot == NO_HOT_LANE {
@@ -368,12 +367,48 @@ fn validate_block_geometry(
     Ok((total_rings, total_rings.div_ceil(num_positions)))
 }
 
+fn trace_block_task_parts<const D: usize>(
+    one_hot_k: usize,
+    num_positions: usize,
+    blocks_per_column: usize,
+) -> usize {
+    let ring_alignment = (one_hot_k / D).max(1);
+    debug_assert_eq!(num_positions % ring_alignment, 0);
+    let max_parts = num_positions / ring_alignment;
+    let target_tasks = rayon::current_num_threads()
+        .saturating_mul(TASKS_PER_RAYON_WORKER)
+        .max(1);
+    target_tasks.div_ceil(blocks_per_column).clamp(1, max_parts)
+}
+
+fn trace_block_part_range(
+    num_positions: usize,
+    ring_alignment: usize,
+    part: usize,
+    parts: usize,
+) -> (usize, usize) {
+    debug_assert_eq!(num_positions % ring_alignment, 0);
+    let aligned_positions = num_positions / ring_alignment;
+    (
+        part * aligned_positions / parts * ring_alignment,
+        (part + 1) * aligned_positions / parts * ring_alignment,
+    )
+}
+
 fn commit_packed<const D: usize>(
     backend: &CpuBackend,
     prepared: &<CpuBackend as ComputeBackendSetup<AkitaField>>::PreparedSetup,
     source: &TracePackedOneHot,
     plan: CommitInnerPlan,
 ) -> Result<CommitInnerWitness<AkitaField>, AkitaError> {
+    let _span = tracing::info_span!(
+        "TracePackedOneHot::commit_inner",
+        ring_dimension = D,
+        rows = source.rows.num_rows(),
+        columns = source.rows.num_columns(),
+        column_capacity = source.column_capacity,
+    )
+    .entered();
     let segment_rings = source.segment_ring_elems::<D>()?;
     let (_, num_blocks) = validate_block_geometry(
         segment_rings,
@@ -397,13 +432,34 @@ fn commit_packed<const D: usize>(
             blocks_per_column * plan.num_positions_per_block,
             segment_rings
         );
-        let by_trace_block = (0..blocks_per_column)
+        let parts = trace_block_task_parts::<D>(
+            source.one_hot_k,
+            plan.num_positions_per_block,
+            blocks_per_column,
+        );
+        let ring_alignment = (source.one_hot_k / D).max(1);
+        let _accumulate_span = tracing::info_span!(
+            "trace_onehot_commit_accumulate",
+            blocks_per_column,
+            task_parts = parts,
+        )
+        .entered();
+        let partials = (0..blocks_per_column * parts)
             .into_par_iter()
-            .map(|trace_block| {
+            .map(|task| {
+                let trace_block = task / parts;
+                let part = task % parts;
                 let mut wide = vec![WideCyclotomicRing::zero(); source.column_capacity * plan.n_a];
                 let mut reduced = vec![CyclotomicRing::zero(); source.column_capacity * plan.n_a];
-                let ring_start = trace_block * plan.num_positions_per_block;
-                let ring_end = ring_start + plan.num_positions_per_block;
+                let block_ring_start = trace_block * plan.num_positions_per_block;
+                let (part_start, part_end) = trace_block_part_range(
+                    plan.num_positions_per_block,
+                    ring_alignment,
+                    part,
+                    parts,
+                );
+                let ring_start = block_ring_start + part_start;
+                let ring_end = block_ring_start + part_end;
                 let mut budget = 0usize;
                 visit_segment_ring_range::<D>(
                     source,
@@ -413,7 +469,7 @@ fn commit_packed<const D: usize>(
                         if contributions.is_empty() {
                             return;
                         }
-                        let position = ring - ring_start;
+                        let position = ring - block_ring_start;
                         let a_col = position * plan.num_digits_inner;
                         for (a, a_row) in a_rows.iter().enumerate() {
                             let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
@@ -435,11 +491,21 @@ fn commit_packed<const D: usize>(
                 Ok::<_, AkitaError>(reduced)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        drop(_accumulate_span);
         let mut rows = vec![vec![CyclotomicRing::zero(); plan.n_a]; num_blocks];
-        for (trace_block, block_rows) in by_trace_block.into_iter().enumerate() {
+        for (task, block_rows) in partials.into_iter().enumerate() {
+            let trace_block = task / parts;
+            let part = task % parts;
             for column in 0..source.column_capacity {
-                rows[column * blocks_per_column + trace_block]
-                    .copy_from_slice(&block_rows[column * plan.n_a..(column + 1) * plan.n_a]);
+                let dst = &mut rows[column * blocks_per_column + trace_block];
+                let src = &block_rows[column * plan.n_a..(column + 1) * plan.n_a];
+                if part == 0 {
+                    dst.copy_from_slice(src);
+                } else {
+                    for (dst, src) in dst.iter_mut().zip(src) {
+                        *dst += *src;
+                    }
+                }
             }
         }
         rows
@@ -471,6 +537,7 @@ fn commit_packed<const D: usize>(
             .collect()
     };
 
+    let _decompose_span = tracing::info_span!("trace_onehot_commit_decompose").entered();
     let digits = decompose_commit_blocks_into::<AkitaField, D>(
         &rows,
         plan.num_digits_outer,
@@ -483,6 +550,14 @@ fn opening_fold_packed<const D: usize>(
     source: &TracePackedOneHot,
     plan: OpeningFoldPlan<'_, AkitaField, D>,
 ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
+    let _span = tracing::info_span!(
+        "TracePackedOneHot::evaluate_and_fold",
+        ring_dimension = D,
+        rows = source.rows.num_rows(),
+        columns = source.rows.num_columns(),
+        column_capacity = source.column_capacity,
+    )
+    .entered();
     let num_positions = match plan {
         OpeningFoldPlan::Base {
             num_positions_per_block,
@@ -515,18 +590,25 @@ fn opening_fold_packed<const D: usize>(
     }
     let folded = if segment_rings >= num_positions {
         let blocks_per_column = segment_rings / num_positions;
-        let by_trace_block = (0..blocks_per_column)
+        let parts = trace_block_task_parts::<D>(source.one_hot_k, num_positions, blocks_per_column);
+        let ring_alignment = (source.one_hot_k / D).max(1);
+        let partials = (0..blocks_per_column * parts)
             .into_par_iter()
-            .map(|trace_block| {
-                let ring_start = trace_block * num_positions;
-                let ring_end = ring_start + num_positions;
+            .map(|task| {
+                let trace_block = task / parts;
+                let part = task % parts;
+                let block_ring_start = trace_block * num_positions;
+                let (part_start, part_end) =
+                    trace_block_part_range(num_positions, ring_alignment, part, parts);
+                let ring_start = block_ring_start + part_start;
+                let ring_end = block_ring_start + part_end;
                 let mut folded = vec![CyclotomicRing::zero(); source.column_capacity];
                 visit_segment_ring_range::<D>(
                     source,
                     ring_start,
                     ring_end,
                     |ring, contributions| {
-                        let position = ring - ring_start;
+                        let position = ring - block_ring_start;
                         match plan {
                             OpeningFoldPlan::Base {
                                 position_weights, ..
@@ -551,9 +633,16 @@ fn opening_fold_packed<const D: usize>(
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut folded = vec![CyclotomicRing::zero(); num_blocks];
-        for (trace_block, trace_folded) in by_trace_block.into_iter().enumerate() {
+        for (task, trace_folded) in partials.into_iter().enumerate() {
+            let trace_block = task / parts;
+            let part = task % parts;
             for column in 0..source.column_capacity {
-                folded[column * blocks_per_column + trace_block] = trace_folded[column];
+                let dst = &mut folded[column * blocks_per_column + trace_block];
+                if part == 0 {
+                    *dst = trace_folded[column];
+                } else {
+                    *dst += trace_folded[column];
+                }
             }
         }
         folded
@@ -623,6 +712,16 @@ fn decompose_fold_packed<const D: usize>(
     num_positions: usize,
     num_digits: usize,
 ) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
+    let _span = tracing::info_span!(
+        "TracePackedOneHot::decompose_fold",
+        ring_dimension = D,
+        rows = source.rows.num_rows(),
+        columns = source.rows.num_columns(),
+        column_capacity = source.column_capacity,
+        num_positions,
+        num_digits,
+    )
+    .entered();
     if num_digits == 0 {
         return Err(AkitaError::InvalidInput(
             "trace one-hot decompose fold requires at least one digit".to_string(),
