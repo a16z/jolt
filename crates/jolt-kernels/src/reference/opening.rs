@@ -9,8 +9,7 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::dense_view;
 use crate::commitment::CommitmentGrid;
@@ -21,7 +20,7 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,

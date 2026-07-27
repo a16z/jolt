@@ -44,6 +44,7 @@ temp_file
 # act executable
 bin/act
 .notes/
+/notes/
 
 # Inline Traces
 *.joltinline

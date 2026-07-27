@@ -17,8 +17,7 @@ use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerive
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{address_fold, eq_table};
 use crate::instruction_ra_virtualization::InstructionRaVirtualizationProver;
@@ -33,7 +32,7 @@ impl<F: Field> InstructionRaVirtualizationProver<F> for ReferenceBackend {
         instruction_r_cycle: &[F],
         committed_chunk_bits: usize,
         challenges: &InstructionRaVirtualizationChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
     {
         let relation = InstructionRaVirtualization::new(

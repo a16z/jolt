@@ -1,0 +1,14 @@
+[package]
+name = "jolt-lean-gen"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Generates Lean expansion programs from the Jolt bytecode expander"
+
+[lints]
+workspace = true
+
+[dependencies]
+common = { workspace = true }
+jolt-program = { workspace = true, features = ["std", "serialization"] }
+jolt-riscv = { workspace = true }

@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::InstructionRaVirtualiza
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationChallenges;
 use jolt_field::Field;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -23,6 +22,6 @@ pub trait InstructionRaVirtualizationProver<F: Field> {
         instruction_r_cycle: &[F],
         committed_chunk_bits: usize,
         challenges: &InstructionRaVirtualizationChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>;
 }

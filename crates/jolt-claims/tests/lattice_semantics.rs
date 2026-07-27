@@ -1,8 +1,7 @@
 //! Semantic integration tests for the lattice module: build concrete one-hot
-//! witness data, pack it, and check the *identities* the relations claim —
-//! sizes, slot placement, the fused-inc chunk reconstruction, and the
-//! advice/bytecode/program-image decode identities behind the reconstruction
-//! relations — against real multilinear evaluations.
+//! witness data and check the identities the relations claim — native OneHotTrace
+//! member shape, fused-inc chunk reconstruction, and auxiliary
+//! advice/bytecode/program-image decodes — against real multilinear evaluations.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     committed_lane_vars, BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY,
@@ -11,7 +10,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::geometry::{byte_decode_weight, selector_block_weight};
 use jolt_claims::protocols::jolt::lattice::{
-    proof_packing, ProofPackingShape, UnsignedIncChunking,
+    one_hot_trace_columns, OneHotTraceShape, UnsignedIncChunking,
 };
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_field::{Fr, FromPrimitiveInt, RingCore};
@@ -79,87 +78,53 @@ fn byte_decode_sum(partials: &[Fr], place_bits: usize) -> Fr {
     sum
 }
 
-/// Every logical polynomial, packed at its assigned slot, must satisfy
-/// `P_i(x) = W(prefix_i ‖ x)` — this pins the slot placement, the index
-/// convention, and the declared variable counts end to end.
+/// Every OneHotTrace column is a full `K x T` one-hot polynomial in the canonical
+/// native-batch order, including the MSB member at address zero or one.
 #[test]
 #[expect(clippy::unwrap_used)]
-fn packed_witness_slots_reproduce_every_logical_polynomial() {
+fn one_hot_trace_columns_are_uniform_native_one_hot_polynomials() {
     let log_t = 3;
     let log_k_chunk = 4;
-    let word_vars = 2;
-    let shape = ProofPackingShape {
+    let shape = OneHotTraceShape {
         ra_layout: JoltRaPolynomialLayout::new(1, 1, 1).unwrap(),
         log_t,
         log_k_chunk,
-        untrusted_advice_word_vars: Some(word_vars),
     };
-    let packing = proof_packing(&shape).unwrap();
+    let members = one_hot_trace_columns(&shape).unwrap();
 
-    // Size accounting: 3 Ra + 16 chunk polynomials at 2^7 entries, the msb
-    // at 2^3, the advice bytes at 2^13; 2432 + 8 + 8192 = 10632 entries
-    // round up to a 2^14 packed hypercube.
+    // Size accounting: 3 Ra + 16 chunk polynomials + the MSB polynomial,
+    // all represented as 4-address-bit one-hot matrices over 3 cycle bits.
     let chunk_count = UnsignedIncChunking::new(log_k_chunk).unwrap().chunk_count();
     assert_eq!(chunk_count, 16);
-    let total_entries: usize = packing
-        .iter()
-        .map(|(_, slot)| 1usize << slot.num_vars)
-        .sum();
-    assert_eq!(total_entries, 19 * (1 << 7) + (1 << 3) + (1 << 13));
-    assert_eq!(packing.packed_num_vars, 14);
-    for (_, slot) in &packing {
-        assert_eq!(slot.prefix.len(), 14 - slot.num_vars);
-    }
+    assert_eq!(members.len(), 20);
+    assert_eq!(members[0], JoltCommittedPolynomial::InstructionRa(0));
+    assert_eq!(
+        members.last(),
+        Some(&JoltCommittedPolynomial::UnsignedIncMsb)
+    );
 
-    // Concrete witness data per polynomial.
-    let mut polynomial_data: Vec<(JoltCommittedPolynomial, Vec<Fr>)> = Vec::new();
-    for (index, (polynomial, slot)) in packing.iter().enumerate() {
-        let data = match polynomial {
-            JoltCommittedPolynomial::UnsignedIncMsb => {
-                (0..1 << log_t).map(|t| fr((t % 2) as u64)).collect()
-            }
-            JoltCommittedPolynomial::UntrustedAdviceBytes => {
-                word_byte_evals(&[0x0123_4567_89ab_cdef, 42, 0, u64::MAX], word_vars)
-            }
-            _ => {
-                let hot: Vec<usize> = (0..1 << log_t)
-                    .map(|t| (7 * t + 3 * index + 1) % (1 << log_k_chunk))
-                    .collect();
-                one_hot_evals(log_k_chunk, log_t, &hot)
-            }
+    for (index, polynomial) in members.iter().enumerate() {
+        let hot = if *polynomial == JoltCommittedPolynomial::UnsignedIncMsb {
+            (0..1 << log_t).map(|t| t % 2).collect::<Vec<_>>()
+        } else {
+            (0..1 << log_t)
+                .map(|t| (7 * t + 3 * index + 1) % (1 << log_k_chunk))
+                .collect::<Vec<_>>()
         };
-        assert_eq!(
-            data.len(),
-            1 << slot.num_vars,
-            "declared variable count must match the data"
-        );
-        polynomial_data.push((*polynomial, data));
-    }
-
-    // Assemble the packed witness through the slot API: local index of a
-    // slot lands at `slot.packed_index(local)`.
-    let mut packed = vec![fr(0); 1 << packing.packed_num_vars];
-    for (polynomial, data) in &polynomial_data {
-        let base = packing[polynomial].packed_index(0);
-        packed[base..base + data.len()].copy_from_slice(data);
-    }
-
-    for (index, (polynomial, data)) in polynomial_data.iter().enumerate() {
-        let slot = &packing[polynomial];
-        let x = point(slot.num_vars, index as u64);
-        let mut packed_point: Vec<Fr> = slot.prefix.iter().map(|bit| fr(u64::from(*bit))).collect();
-        packed_point.extend_from_slice(&x);
-        assert_eq!(
-            eval_mle(data, &x),
-            eval_mle(&packed, &packed_point),
-            "{polynomial:?} must be readable through its packed slot"
-        );
+        let data = one_hot_evals(log_k_chunk, log_t, &hot);
+        assert_eq!(data.len(), 1 << (log_k_chunk + log_t));
+        for cycle in 0..1 << log_t {
+            let hamming_weight = (0..1 << log_k_chunk)
+                .map(|address| data[(address << log_t) | cycle])
+                .sum::<Fr>();
+            assert_eq!(hamming_weight, fr(1), "{polynomial:?}, cycle {cycle}");
+        }
     }
 }
 
 /// The inc-chain identities over a concrete trace of signed increments:
-/// per-row hamming weight, and the reconstruction
-/// `Σ_j place_j · Σ_a id(a) · chunk_j(a, r_cycle) = FusedInc + 2^64·(1 − msb)`
+/// per-row hamming weight, and the shifted decode
+/// `Σ_j place_j · Σ_a id(a) · chunk_j(a, r_cycle) + 2^64·msb = FusedInc + 2^64`
 /// — including the padding subtlety that a zero increment encodes as msb = 1
 /// with all chunks hot at value 0 (an all-zero or msb-cold padding row would
 /// falsify both legs).
@@ -239,7 +204,7 @@ fn chunk_decomposition_reconstructs_signed_increments() {
 
     let fused = eval_mle(&fused_data, &r_cycle);
     let msb = eval_mle(&msb_data, &r_cycle);
-    assert_eq!(reconstructed, fused + Fr::pow2(64) * (fr(1) - msb));
+    assert_eq!(reconstructed + Fr::pow2(64) * msb, fused + Fr::pow2(64));
 }
 
 /// The bytecode chunk decode identity behind `BytecodeChunkReconstruction`: a

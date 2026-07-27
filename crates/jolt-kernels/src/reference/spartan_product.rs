@@ -31,8 +31,7 @@ use jolt_poly::lagrange::{
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
 use crate::spartan_product::{SpartanProductInstance, SpartanProductProver};
@@ -44,7 +43,7 @@ impl<F: Field> SpartanProductProver<F> for ReferenceBackend {
         _session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn SpartanProductInstance<F>>, KernelError<F>> {
         Ok(Box::new(SpartanProductKernel::prepare(
             log_t, tau_low, witness,
@@ -73,7 +72,7 @@ impl<F: Field> SpartanProductKernel<F> {
     pub fn prepare(
         log_t: usize,
         tau_low: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Self, KernelError<F>> {
         Ok(Self {
             log_t,

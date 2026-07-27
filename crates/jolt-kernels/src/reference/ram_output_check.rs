@@ -23,8 +23,7 @@ use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
 use crate::ram_output_check::RamOutputCheckProver;
@@ -38,7 +37,7 @@ impl<F: Field> RamOutputCheckProver<F> for ReferenceBackend {
         ram_log_k: usize,
         output_address_challenges: &[F],
         public_memory: PublicIoMemory,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamOutputCheck<F>>>, KernelError<F>> {
         if dimensions.output_check_rounds() != ram_log_k {
             return Err(KernelError::Unsupported {

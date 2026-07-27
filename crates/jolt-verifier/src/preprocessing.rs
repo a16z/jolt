@@ -19,13 +19,29 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub meta: ProgramMetadata,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
+    #[cfg(not(feature = "akita"))]
     pub bytecode_chunk_commitments: Vec<PCS::Output>,
+    #[cfg(not(feature = "akita"))]
     pub program_image_commitment: PCS::Output,
+    /// The one packed `ProgramOneHot` commitment covering every bytecode lane
+    /// sub-column and the program image bytes (the per-chunk/image commitment
+    /// pair does not exist on the packed path).
+    #[cfg(feature = "akita")]
+    pub program_one_hot_commitment: PCS::Output,
+    #[cfg(feature = "akita")]
+    pub bytecode_chunk_count: usize,
 }
 
 impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
     pub fn bytecode_chunk_count(&self) -> usize {
-        self.bytecode_chunk_commitments.len()
+        #[cfg(not(feature = "akita"))]
+        {
+            self.bytecode_chunk_commitments.len()
+        }
+        #[cfg(feature = "akita")]
+        {
+            self.bytecode_chunk_count
+        }
     }
 }
 
@@ -120,8 +136,18 @@ where
 {
     pub program: ProgramPreprocessing<PCS>,
     pub preprocessing_digest: [u8; 32],
+    /// The main PCS setup: every per-polynomial opening on the homomorphic
+    /// build, the `OneHotTrace` object on the `akita` build (whose remaining
+    /// objects carry their own shape-exact setups below).
     pub pcs_setup: PCS::VerifierSetup,
     pub vc_setup: Option<VC::Setup>,
+    #[cfg(feature = "akita")]
+    pub untrusted_advice_setup: Option<PCS::VerifierSetup>,
+    #[cfg(feature = "akita")]
+    pub trusted_advice_setup: Option<PCS::VerifierSetup>,
+    /// Committed-program mode: the `ProgramOneHot` object setup.
+    #[cfg(feature = "akita")]
+    pub program_one_hot_setup: Option<PCS::VerifierSetup>,
 }
 
 impl<PCS, VC> JoltVerifierPreprocessing<PCS, VC>
@@ -140,6 +166,12 @@ where
             preprocessing_digest,
             pcs_setup,
             vc_setup,
+            #[cfg(feature = "akita")]
+            untrusted_advice_setup: None,
+            #[cfg(feature = "akita")]
+            trusted_advice_setup: None,
+            #[cfg(feature = "akita")]
+            program_one_hot_setup: None,
         }
     }
 }

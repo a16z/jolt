@@ -1,15 +1,21 @@
 use super::program::Program;
 use crate::curve::Bn254Curve;
+#[cfg(not(feature = "akita"))]
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+#[cfg(not(feature = "akita"))]
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
 use crate::poly::commitment::dory::DoryCommitmentScheme;
+#[cfg(not(feature = "akita"))]
 use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::PreprocessingError;
 use crate::zkvm::program::ProgramPreprocessing;
+#[cfg(not(feature = "akita"))]
 use crate::zkvm::proof::{ProofCommitmentScheme, ProofCurve, ProofField};
 use crate::zkvm::prover::JoltProverPreprocessing;
+#[cfg(not(feature = "akita"))]
 use crate::zkvm::ProverDebugInfo;
 use common::jolt_device::MemoryLayout;
+#[cfg(not(feature = "akita"))]
 use tracer::JoltDevice;
 
 #[cfg(feature = "prover")]
@@ -38,7 +44,7 @@ pub fn preprocess(
     clippy::too_many_arguments,
     reason = "SDK generated prover API mirrors guest arguments and advice channels"
 )]
-#[cfg(feature = "prover")]
+#[cfg(all(feature = "prover", not(feature = "akita")))]
 pub fn prove<
     F: ProofField,
     C: ProofCurve<F>,

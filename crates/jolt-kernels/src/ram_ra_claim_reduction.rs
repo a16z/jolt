@@ -7,8 +7,7 @@ use jolt_claims::protocols::jolt::relations::ram::{
 use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_field::Field;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -21,6 +20,6 @@ pub trait RamRaClaimReductionProver<F: Field> {
         ram_log_k: usize,
         input_points: &RamRaClaimReductionInputClaims<Vec<F>>,
         challenges: &RamRaClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRaClaimReduction<F>>>, KernelError<F>>;
 }

@@ -16,8 +16,7 @@ use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
 use crate::ram_hamming_booleanity::RamHammingBooleanityProver;
@@ -30,7 +29,7 @@ impl<F: Field> RamHammingBooleanityProver<F> for ReferenceBackend {
         trace_dimensions: TraceDimensions,
         stage1_cycle_binding: &[F],
         challenges: &NoChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>> {
         if stage1_cycle_binding.len() != trace_dimensions.log_t() {
             return Err(KernelError::InvariantViolation {

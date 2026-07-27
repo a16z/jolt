@@ -1,7 +1,10 @@
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
-use jolt_riscv::{JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow};
+use jolt_riscv::{
+    CircuitFlags, Flags, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
+    JoltInstructionRow,
+};
 
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldInlineBytecodeMetadata;
@@ -39,6 +42,7 @@ impl BytecodePreprocessing {
                     instruction.instruction_kind,
                 ));
             }
+            check_store_rd_disjoint(instruction)?;
         }
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
@@ -202,6 +206,28 @@ impl BytecodePCMapper {
     }
 }
 
+/// The store/rd-write disjointness check on the public bytecode: a
+/// `Store`-flagged instruction must not name an rd destination. This is the
+/// offline half of the lattice fused-inc soundness argument (one committed
+/// increment stream serves both RAM and rd because no cycle increments both
+/// — see `specs/lattice-claims.md`); the trace-level converse (a RAM write
+/// only ever comes from a `Store`-flagged row) is asserted during witness
+/// generation.
+fn check_store_rd_disjoint(instruction: &JoltInstructionRow) -> Result<(), PreprocessingError> {
+    let decoded = JoltInstruction::try_from(*instruction).unwrap_or(JoltInstruction::Noop(
+        jolt_riscv::instructions::Noop(*instruction),
+    ));
+    match instruction.operands.rd {
+        Some(rd) if decoded.circuit_flags()[CircuitFlags::Store] => {
+            Err(PreprocessingError::StoreWritesRd {
+                address: instruction.address,
+                rd,
+            })
+        }
+        _ => Ok(()),
+    }
+}
+
 const fn noop_instruction() -> JoltInstructionRow {
     JoltInstructionRow {
         instruction_kind: JoltInstructionKind::NoOp,
@@ -331,6 +357,41 @@ mod tests {
             is_first_in_sequence: virtual_sequence_remaining == Some(2),
             is_compressed: false,
         }
+    }
+
+    #[test]
+    fn rejects_store_rows_that_write_rd() {
+        let mut row = instruction(0x8000_0000, None);
+        row.instruction_kind = JoltInstructionKind::SD;
+        row.operands = NormalizedOperands {
+            rd: Some(5),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        };
+
+        let err =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::StoreWritesRd {
+                address: 0x8000_0000,
+                rd: 5,
+            }
+        );
+
+        // The same store without an rd destination passes.
+        let mut clean = instruction(0x8000_0000, None);
+        clean.instruction_kind = JoltInstructionKind::SD;
+        clean.operands = NormalizedOperands {
+            rd: None,
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        };
+        let preprocessed =
+            BytecodePreprocessing::preprocess(vec![clean], 0x8000_0000, RV64IMAC_JOLT).unwrap();
+        assert_eq!(preprocessed.code_size, 2);
     }
 
     #[test]

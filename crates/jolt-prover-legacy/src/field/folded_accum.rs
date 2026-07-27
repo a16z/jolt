@@ -273,6 +273,22 @@ impl_addassign_folded_trunc!(Folded256Product, Folded256MulU64, 5);
 impl_addassign_folded_trunc!(Folded256Product, Folded256MulU128, 6);
 impl_addassign_folded_trunc!(Folded256ProductAccum, Folded256Product, 8);
 
+// Folded accumulators sized for 128-bit fields (Akita fp128, NUM_LIMBS = 2).
+// The slot count equals the normalized limb count so that `Sub` — which only
+// covers min(slots, out_limbs) limbs — is exact over the full normalized
+// value, as required by the signed pos/neg accumulators in
+// `utils::accumulation`. Capacity: MulU64 totals < 2^256 and Product totals
+// < 2^320, i.e. at least 2^64 accumulated products at each tier.
+impl_folded_core_traits!(Folded128MulU64, 4, 4);
+impl_folded_core_traits!(Folded128Product, 5, 5);
+
+impl_addassign_bigint_trunc!(Folded128MulU64, 2);
+impl_addassign_bigint_trunc!(Folded128Product, 2);
+
+impl_add_bigint_trunc!(Folded128MulU64, 2);
+
+impl_addassign_folded_trunc!(Folded128Product, Folded128MulU64, 4);
+
 /// Folded 4x4 limb multiplication into 8 positional slots.
 ///
 /// This keeps all per-product operations independent (no inter-slot carry chain)

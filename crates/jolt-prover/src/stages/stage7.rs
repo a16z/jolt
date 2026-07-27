@@ -34,8 +34,7 @@ use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::stage7_hammin
 use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -61,7 +60,7 @@ pub fn prove_stage7<F, PCS, VC, C, T>(
     mut untrusted_advice_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
     mut bytecode_reduction_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
     mut program_image_member: Option<Box<dyn PrecommittedReductionProver<F>>>,
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     transcript: &mut T,
 ) -> Result<Stage7ProverOutput<F, C>, ProverError<F>>
 where

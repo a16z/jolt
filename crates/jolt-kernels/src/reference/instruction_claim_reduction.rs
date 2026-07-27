@@ -21,8 +21,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
 use crate::instruction_claim_reduction::InstructionClaimReductionProver;
@@ -35,7 +34,7 @@ impl<F: Field> InstructionClaimReductionProver<F> for ReferenceBackend {
         trace_dimensions: TraceDimensions,
         tau_low: &[F],
         challenges: &InstructionClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
     {
         let ids = [

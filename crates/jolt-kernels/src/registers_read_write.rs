@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteChalle
 use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::Field;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -17,6 +16,6 @@ pub trait RegistersReadWriteProver<F: Field> {
         dimensions: ReadWriteDimensions,
         r_cycle: &[F],
         challenges: &RegistersReadWriteChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>;
 }

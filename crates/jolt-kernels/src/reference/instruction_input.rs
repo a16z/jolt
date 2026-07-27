@@ -18,8 +18,7 @@ use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId, TraceD
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
 use crate::instruction_input::InstructionInputProver;
@@ -32,7 +31,7 @@ impl<F: Field> InstructionInputProver<F> for ReferenceBackend {
         trace_dimensions: TraceDimensions,
         product_remainder_point: &[F],
         challenges: &InstructionInputChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let ids = [
             left_operand_is_rs1(),

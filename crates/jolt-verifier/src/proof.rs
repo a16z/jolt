@@ -15,6 +15,32 @@ use crate::{
     VerifierError,
 };
 
+/// The proof-carried polynomial commitments on the homomorphic build: one
+/// commitment per committed polynomial.
+#[cfg(not(feature = "akita"))]
+pub type ProofCommitments<PCS> = JoltCommitments<<PCS as Commitment>::Output>;
+/// The proof-carried polynomial commitments on the `akita` build: the single
+/// packed `OneHotTrace` commitment carrying every per-proof column.
+#[cfg(feature = "akita")]
+pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
+
+/// The final-opening discharge on the homomorphic build: one RLC-batched PCS
+/// opening proof at the unified point.
+#[cfg(not(feature = "akita"))]
+pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
+/// The Akita OneHotTrace opening is native and same-point. Only auxiliary packed
+/// objects retain the generic reduction proof.
+#[cfg(feature = "akita")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AkitaJointOpeningProof<F, P> {
+    pub one_hot_trace: P,
+    pub auxiliary: Option<jolt_openings::PackedOpeningProof<F, P>>,
+}
+
+#[cfg(feature = "akita")]
+pub type JointOpeningProof<PCS> =
+    AkitaJointOpeningProof<<PCS as CommitmentScheme>::Field, <PCS as CommitmentScheme>::Proof>;
+
 #[expect(
     non_snake_case,
     reason = "Matches current jolt-prover-legacy proof field name."
@@ -33,9 +59,9 @@ pub struct JoltProof<
     VC: VectorCommitment<Field = PCS::Field>,
 {
     pub protocol: JoltProtocolConfig,
-    pub commitments: JoltCommitments<PCS::Output>,
+    pub commitments: ProofCommitments<PCS>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
-    pub joint_opening_proof: PCS::Proof,
+    pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
@@ -57,6 +83,7 @@ where
         }
     }
 
+    #[cfg(not(feature = "akita"))]
     pub(crate) fn blindfold_proof(&self) -> Result<&ZkProof, VerifierError> {
         match &self.claims {
             JoltProofClaims::Clear(_) => Err(VerifierError::MissingBlindFoldProof),
@@ -129,6 +156,10 @@ pub struct ClearProofClaims<F: Field> {
     pub stage6a: stage6a::outputs::Stage6aOutputClaims<F>,
     pub stage6b: stage6b::outputs::Stage6bOutputClaims<F>,
     pub stage7: stage7::outputs::Stage7OutputClaims<F>,
+    /// The reconstruction phase's claims, at the head of the stage-8 region;
+    /// cells are present exactly when advice or a committed program is.
+    #[cfg(feature = "akita")]
+    pub reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,4 +182,8 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    /// The reconstruction phase, at the head of the stage-8 region; present
+    /// exactly when advice or a committed program is.
+    #[cfg(feature = "akita")]
+    pub reconstruction_sumcheck_proof: Option<SumcheckProof<F, VC::Output>>,
 }

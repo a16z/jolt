@@ -21,8 +21,7 @@ use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::cycle_fold;
 use crate::ram_raf_evaluation::RamRafEvaluationProver;
@@ -37,7 +36,7 @@ impl<F: Field> RamRafEvaluationProver<F> for ReferenceBackend {
         ram_log_k: usize,
         lowest_address: u64,
         tau_low: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
         if dimensions.raf_evaluation_rounds() != ram_log_k {
             return Err(KernelError::Unsupported {

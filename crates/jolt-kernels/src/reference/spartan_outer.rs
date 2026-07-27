@@ -30,8 +30,7 @@ use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, replicate_stream_lsb, stream_pair_lsb};
 use crate::spartan_outer::{SpartanOuterInstance, SpartanOuterProver};
@@ -43,7 +42,7 @@ impl<F: Field> SpartanOuterProver<F> for ReferenceBackend {
         _session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn SpartanOuterInstance<F>>, KernelError<F>> {
         Ok(Box::new(SpartanOuterKernel::prepare(log_t, tau, witness)?))
     }
@@ -75,7 +74,7 @@ impl<F: Field> SpartanOuterKernel<F> {
     pub fn prepare(
         log_t: usize,
         tau: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Self, KernelError<F>> {
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let input_tables = materialize_input_tables(witness, &dimensions)?;
@@ -255,7 +254,7 @@ impl<F: Field> SpartanOuterInstance<F> for SpartanOuterKernel<F> {
 /// Materialize the 35 R1CS input polynomials (cycle-indexed, big-endian) in
 /// the relation's variable order.
 fn materialize_input_tables<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     dimensions: &SpartanOuterDimensions,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
     dimensions

@@ -410,7 +410,9 @@ impl ExpansionBuilder {
 }
 
 /// Instructions that exist only in decoded source and must be expanded into target-legal sequences.
-pub(super) fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
+// Exposed (pub) so the Lean generator can gate on the same expand-vs-native
+// decision the expander itself uses in `dispatch_source`.
+pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
         SourceInstructionKind::Inline

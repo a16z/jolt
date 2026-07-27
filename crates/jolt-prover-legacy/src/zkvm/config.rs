@@ -171,17 +171,11 @@ pub struct OneHotConfig {
 
 impl OneHotConfig {
     /// Create a OneHotConfig with default values based on trace length.
+    ///
     pub fn new(log_T: usize) -> Self {
-        let log_k_chunk = if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-            4
-        } else {
-            8
-        };
-        let lookups_ra_virtual_log_k_chunk = if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-            LOG_K / 8
-        } else {
-            LOG_K / 4
-        };
+        let large = log_T >= ONEHOT_CHUNK_THRESHOLD_LOG_T;
+        let log_k_chunk = if large { 8 } else { 4 };
+        let lookups_ra_virtual_log_k_chunk = if large { LOG_K / 4 } else { LOG_K / 8 };
 
         Self {
             log_k_chunk: log_k_chunk as u8,
@@ -346,5 +340,23 @@ impl OneHotParams {
             .collect();
 
         r_address_chunks
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_hot_chunk_size_uses_trace_length_threshold() {
+        assert_eq!(OneHotConfig::new(20).log_k_chunk, 4);
+        assert_eq!(
+            OneHotConfig::new(ONEHOT_CHUNK_THRESHOLD_LOG_T - 1).log_k_chunk,
+            4
+        );
+        assert_eq!(
+            OneHotConfig::new(ONEHOT_CHUNK_THRESHOLD_LOG_T).log_k_chunk,
+            8
+        );
     }
 }

@@ -72,6 +72,28 @@
 //! `(c-1)/|F|` over `α`, a sumcheck on a false claim survives with
 //! probability at most `2n/|F|`, and the final evaluation of `f` is bound by
 //! the PCS opening.
+//!
+//! # Joint opening across commitment objects
+//!
+//! A statement may span several packed commitments ("objects") of different
+//! sizes — e.g. one per trust domain — with no homomorphism available to
+//! combine them. [`prove_packed_openings`]/[`verify_packed_openings`] settle
+//! all of them with ONE reduction sumcheck plus one native PCS opening per
+//! object. After each object's within-object batching above (its `α` powers),
+//! the verifier draws one cross-object coefficient `β_k` per object and runs
+//! a single `n_max`-round sumcheck for
+//!
+//! ```text
+//! Σ_k β_k · 2^(n_max − n_k) · Σ_i α_{k,i} · v_{k,i}
+//!     = Σ_{z ∈ {0,1}^(n_max)} Σ_k β_k · E_k(z_suffix) · f_k(z_suffix),
+//! ```
+//!
+//! where object `k`'s integrand ignores the leading `n_max − n_k` padding
+//! variables (equivalently, its polynomial is extended as a constant in
+//! them — hence the `2^(n_max − n_k)` scale on its input claim). An object
+//! is inert until the rounds reach its own variables, so its bound point is
+//! the suffix of the shared challenge point, at which its claimed evaluation
+//! is absorbed and opened natively against its own commitment and setup.
 
 use std::{
     collections::{btree_map::Iter, BTreeMap, BTreeSet},
@@ -79,12 +101,13 @@ use std::{
     ops::Index,
 };
 
-use jolt_field::Field;
+use jolt_field::{Field, FromPrimitiveInt, MulPow2};
 use jolt_poly::{
     boolean_bits_msb, eq_index_msb, math::Math, thread::unsafe_allocate_zero_vec, EqPolynomial,
-    Polynomial,
+    MultilinearPoly, Polynomial,
 };
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{CommitmentScheme, EvaluationClaim, OpeningsError};
@@ -144,7 +167,7 @@ impl PrefixSlot {
 /// equivalent to `W(b_i || point_i) = v_i`, i.e. the Boolean-cube sum
 /// `v_i = Σ_z eq(z, b_i || point_i) · W(z)`. Batch openings prove all such
 /// sums with one claim-reduction sumcheck (see
-/// [`PackedBatchProof`]), reducing every logical claim — at arbitrary,
+/// [`verify_packed_openings`]), reducing every logical claim — at arbitrary,
 /// mutually independent points — to a single opening of `W` at a point made
 /// entirely of fresh verifier challenges.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,7 +306,7 @@ where
         Ok(packed_point[slot.prefix.len()..].to_vec())
     }
 
-    pub(crate) fn prepare_statement<'a, F, C>(
+    pub fn prepare_statement<'a, F, C>(
         &'a self,
         statement: &'a PrefixPackedStatement<F, Id, C>,
     ) -> Result<PreparedPrefixPackedStatement<'a, F, C>, OpeningsError>
@@ -376,7 +399,7 @@ impl<F, Id, C> PrefixPackedStatement<F, Id, C> {
     }
 }
 
-pub(crate) struct PreparedPrefixPackedStatement<'a, F: Field, C> {
+pub struct PreparedPrefixPackedStatement<'a, F: Field, C> {
     packed_num_vars: usize,
     pub(crate) commitment: &'a C,
     ordered_claims: Vec<(&'a EvaluationClaim<F>, &'a PrefixSlot)>,
@@ -386,12 +409,12 @@ impl<F, C> PreparedPrefixPackedStatement<'_, F, C>
 where
     F: Field,
 {
-    pub(crate) fn num_claims(&self) -> usize {
+    pub fn num_claims(&self) -> usize {
         self.ordered_claims.len()
     }
 
     /// Batched sumcheck input claim `Σ_i α_i · v_i`.
-    pub(crate) fn batched_claim(&self, alpha: &[F]) -> F {
+    pub fn batched_claim(&self, alpha: &[F]) -> F {
         debug_assert_eq!(self.ordered_claims.len(), alpha.len());
         self.ordered_claims
             .iter()
@@ -419,7 +442,7 @@ where
     }
 
     /// Evaluates the batched selector `E` at an arbitrary packed point.
-    pub(crate) fn selector_eval(&self, alpha: &[F], packed_point: &[F]) -> F {
+    pub fn selector_eval(&self, alpha: &[F], packed_point: &[F]) -> F {
         debug_assert_eq!(self.ordered_claims.len(), alpha.len());
         self.ordered_claims.iter().zip(alpha).fold(
             F::zero(),
@@ -473,82 +496,796 @@ where
     }
 }
 
-/// Proof of a prefix-packed batch opening: the claim-reduction sumcheck plus
-/// one native PCS opening at its challenge point (see the [module
-/// docs](self) for the protocol).
+const PARALLEL_MIN_CHUNK: usize = 1 << 12;
+
+/// The dense round fold shared by the dense object path and the sparse
+/// stepper's dense tail: `[Σ s_lo·w_lo, Σ s_hi·w_hi, Σ (s_hi−s_lo)(w_hi−w_lo)]`.
+fn dense_round_evaluations<F: Field>(
+    selector_low: &[F],
+    selector_high: &[F],
+    witness_low: &[F],
+    witness_high: &[F],
+) -> [F; 3] {
+    selector_low
+        .par_iter()
+        .zip(selector_high.par_iter())
+        .zip(witness_low.par_iter().zip(witness_high.par_iter()))
+        .with_min_len(PARALLEL_MIN_CHUNK)
+        .fold(
+            || [F::zero(); 3],
+            |mut acc, ((s_low, s_high), (w_low, w_high))| {
+                acc[0] += *s_low * *w_low;
+                acc[1] += *s_high * *w_high;
+                acc[2] += (*s_high - *s_low) * (*w_high - *w_low);
+                acc
+            },
+        )
+        .reduce(
+            || [F::zero(); 3],
+            |left, right| [left[0] + right[0], left[1] + right[1], left[2] + right[2]],
+        )
+}
+
+/// Factored per-slot state of the batched selector during the sparse
+/// reduction sumcheck.
+///
+/// Slot `i`'s selector segment is `α_i · eq(z, b_i || γ_i)`, a product of
+/// per-variable factors, so binding the most-significant variable to `r`
+/// leaves the same shape one variable shorter: a prefix bit multiplies the
+/// scalar by `r` or `1 - r`, a logical variable by `(1-r)(1-γ) + r·γ`. The
+/// eq factors over the unbound variables stay symbolic.
+struct SparseSelectorSlot<'a, F> {
+    scalar: F,
+    prefix: &'a [bool],
+    prefix_value: usize,
+    point: &'a [F],
+}
+
+impl<'a, F: Field> SparseSelectorSlot<'a, F> {
+    fn new(alpha: F, slot: &'a PrefixSlot, point: &'a [F]) -> Self {
+        Self {
+            scalar: alpha,
+            prefix: &slot.prefix,
+            prefix_value: slot.prefix_index(),
+            point,
+        }
+    }
+
+    /// Coverage after `bound` rounds: the slot's selector is
+    /// `scalar · eq(local, point)` on remaining-domain indices `j` with
+    /// `j >> point.len() == block`, and zero elsewhere. Once every prefix bit
+    /// is bound the slot covers the whole remaining domain — slots that were
+    /// disjoint may then overlap, so contributions must always be summed.
+    fn remaining(&self, bound: usize, remaining_vars: usize) -> (usize, &'a [F]) {
+        if bound < self.prefix.len() {
+            let block = self.prefix_value & ((1usize << (self.prefix.len() - bound)) - 1);
+            (block, self.point)
+        } else {
+            debug_assert_eq!(self.prefix.len() + self.point.len() - bound, remaining_vars);
+            (0, &self.point[bound - self.prefix.len()..])
+        }
+    }
+
+    fn bind(&mut self, bound: usize, r: F) {
+        if bound < self.prefix.len() {
+            self.scalar *= if self.prefix[bound] { r } else { F::one() - r };
+        } else {
+            let gamma = self.point[bound - self.prefix.len()];
+            self.scalar *= (F::one() - r) * (F::one() - gamma) + r * gamma;
+        }
+    }
+}
+
+/// Split-eq lookup for one slot at one sumcheck round: `O(1)` evaluation of
+/// the slot's selector at any remaining-domain index, from two half tables of
+/// combined size `O(2^{L/2})` for a length-`L` remaining logical point.
+struct RoundSelectorSlot<F> {
+    block: usize,
+    logical_vars: usize,
+    low_vars: usize,
+    high: Vec<F>,
+    low: Vec<F>,
+}
+
+impl<F: Field> RoundSelectorSlot<F> {
+    fn new(slot: &SparseSelectorSlot<'_, F>, bound: usize, remaining_vars: usize) -> Self {
+        let (block, point) = slot.remaining(bound, remaining_vars);
+        let low_vars = point.len() / 2;
+        let split = point.len() - low_vars;
+        Self {
+            block,
+            logical_vars: point.len(),
+            low_vars,
+            high: EqPolynomial::evals(&point[..split], Some(slot.scalar)),
+            low: EqPolynomial::evals(&point[split..], None),
+        }
+    }
+}
+
+/// Direct-indexed slot resolution for one sumcheck round: slots grouped by
+/// remaining logical length, each group a `block -> slot ids` table (size
+/// `2^{rem - L}`), so a probe touches one bucket per distinct length instead
+/// of scanning every slot. Buckets hold multiple ids once bound rounds
+/// truncate distinct prefixes onto the same block (the dyadic-nesting case),
+/// so contributions are still summed.
+struct GroupedRoundSelector<'a, F> {
+    groups: Vec<(usize, Vec<Vec<u32>>)>,
+    slots: &'a [RoundSelectorSlot<F>],
+}
+
+impl<'a, F: Field> GroupedRoundSelector<'a, F> {
+    fn new(slots: &'a [RoundSelectorSlot<F>], remaining_vars: usize) -> Self {
+        let mut groups: Vec<(usize, Vec<Vec<u32>>)> = Vec::new();
+        for (slot_index, slot) in slots.iter().enumerate() {
+            let position = groups
+                .iter()
+                .position(|(logical_vars, _)| *logical_vars == slot.logical_vars)
+                .unwrap_or_else(|| {
+                    groups.push((
+                        slot.logical_vars,
+                        vec![Vec::new(); 1usize << (remaining_vars - slot.logical_vars)],
+                    ));
+                    groups.len() - 1
+                });
+            groups[position].1[slot.block].push(slot_index as u32);
+        }
+        Self { groups, slots }
+    }
+
+    #[inline]
+    fn value_at(&self, index: usize) -> F {
+        let mut acc = F::zero();
+        for (logical_vars, table) in &self.groups {
+            for &slot_index in &table[index >> logical_vars] {
+                let slot = &self.slots[slot_index as usize];
+                let local = index & ((1usize << slot.logical_vars) - 1);
+                acc += slot.high[local >> slot.low_vars]
+                    * slot.low[local & ((1usize << slot.low_vars) - 1)];
+            }
+        }
+        acc
+    }
+}
+
+/// Dense remaining-domain selector and witness tables for the delegated tail
+/// rounds of the sparse stepper.
+fn materialize_remaining<F: Field>(
+    slots: &[SparseSelectorSlot<'_, F>],
+    positions: &[usize],
+    bound_weights: &[F],
+    bound: usize,
+    remaining_vars: usize,
+) -> (Vec<F>, Vec<F>) {
+    let size = 1usize << remaining_vars;
+    let round_slots: Vec<RoundSelectorSlot<F>> = slots
+        .iter()
+        .map(|slot| RoundSelectorSlot::new(slot, bound, remaining_vars))
+        .collect();
+    let grouped = GroupedRoundSelector::new(&round_slots, remaining_vars);
+    let mut selector: Vec<F> = unsafe_allocate_zero_vec(size);
+    selector
+        .par_iter_mut()
+        .enumerate()
+        .with_min_len(PARALLEL_MIN_CHUNK)
+        .for_each(|(index, cell)| *cell = grouped.value_at(index));
+    let mut witness: Vec<F> = unsafe_allocate_zero_vec(size);
+    for &index in positions {
+        witness[index & (size - 1)] += bound_weights[index >> remaining_vars];
+    }
+    (selector, witness)
+}
+
+/// One object's claim-reduction sumcheck as a round-stepped instance over a
+/// unit-sparse witness's one-positions: `round_evaluations` / `bind` per
+/// round, `final_eval` after the last round. Produces the same field values
+/// as the dense selector/witness tables without materializing the `2^n`
+/// domain.
+///
+/// Sparse-to-dense switchover: once the remaining domain is no larger than
+/// the number of one-positions, the (now small) selector/witness tables are
+/// materialized and later rounds run dense. The check happens at the start
+/// of `round_evaluations`.
+struct SparseReductionInstance<'a, F: Field> {
+    slots: Vec<SparseSelectorSlot<'a, F>>,
+    positions: Vec<usize>,
+    /// Bound challenges (msb-first). A position's accumulated weight is
+    /// `eq(bound_challenges, its top bits)` — looked up in `bound_weights`
+    /// (a `2^bound` eq table) instead of stored per position, so binding
+    /// never rewrites the position list.
+    bound_challenges: Vec<F>,
+    bound_weights: Vec<F>,
+    num_vars: usize,
+    bound: usize,
+    dense: Option<(Polynomial<F>, Polynomial<F>)>,
+}
+
+impl<'a, F: Field> SparseReductionInstance<'a, F> {
+    #[tracing::instrument(
+        skip_all,
+        name = "SparseReductionInstance::new",
+        fields(
+            num_vars = statement.packed_num_vars,
+            slots = statement.ordered_claims.len(),
+            positions = one_positions.len(),
+        )
+    )]
+    fn new(
+        statement: &'a PreparedPrefixPackedStatement<'a, F, impl Sized>,
+        alpha: &[F],
+        one_positions: Vec<usize>,
+    ) -> Self {
+        debug_assert_eq!(statement.ordered_claims.len(), alpha.len());
+        debug_assert!(one_positions
+            .iter()
+            .all(|index| index >> statement.packed_num_vars == 0));
+        let slots = statement
+            .ordered_claims
+            .iter()
+            .zip(alpha)
+            .map(|((evaluation, slot), alpha_i)| {
+                SparseSelectorSlot::new(*alpha_i, slot, evaluation.point.as_slice())
+            })
+            .collect();
+        Self {
+            slots,
+            positions: one_positions,
+            bound_challenges: Vec::new(),
+            bound_weights: vec![F::one()],
+            num_vars: statement.packed_num_vars,
+            bound: 0,
+            dense: None,
+        }
+    }
+
+    fn remaining_vars(&self) -> usize {
+        self.num_vars - self.bound
+    }
+
+    /// The current round's `[Σ E·W at 0, Σ E·W at 1, Σ ΔE·ΔW]`. Does not
+    /// bind; call [`bind`](Self::bind) with the drawn challenge afterwards.
+    fn round_evaluations(&mut self) -> [F; 3] {
+        let remaining_vars = self.remaining_vars();
+        debug_assert!(remaining_vars > 0, "instance is fully bound");
+        if self.dense.is_none() && (1usize << remaining_vars) <= self.positions.len() {
+            let _span = tracing::info_span!("SparseReductionInstance::materialize_dense").entered();
+            let (selector, witness) = materialize_remaining(
+                &self.slots,
+                &self.positions,
+                &self.bound_weights,
+                self.bound,
+                remaining_vars,
+            );
+            self.dense = Some((Polynomial::new(selector), Polynomial::new(witness)));
+        }
+
+        if let Some((selector, witness)) = &self.dense {
+            let half = selector.evaluations().len() / 2;
+            let (selector_low, selector_high) = selector.evaluations().split_at(half);
+            let (witness_low, witness_high) = witness.evaluations().split_at(half);
+            return dense_round_evaluations(selector_low, selector_high, witness_low, witness_high);
+        }
+
+        let _span = tracing::info_span!("SparseReductionInstance::sparse_round").entered();
+        let half = 1usize << (remaining_vars - 1);
+        let round_slots: Vec<RoundSelectorSlot<F>> = self
+            .slots
+            .iter()
+            .map(|slot| RoundSelectorSlot::new(slot, self.bound, remaining_vars))
+            .collect();
+        let selector = GroupedRoundSelector::new(&round_slots, remaining_vars);
+        let weight_shift = remaining_vars;
+        let bound_weights = &self.bound_weights;
+
+        self.positions
+            .par_iter()
+            .with_min_len(PARALLEL_MIN_CHUNK)
+            .fold(
+                || [F::zero(); 3],
+                |mut acc, &index| {
+                    let weight = bound_weights[index >> weight_shift];
+                    let low_index = index & (half - 1);
+                    let selector_low = selector.value_at(low_index);
+                    let selector_high = selector.value_at(low_index | half);
+                    let cross = weight * (selector_high - selector_low);
+                    if index & half == 0 {
+                        acc[0] += weight * selector_low;
+                        acc[2] -= cross;
+                    } else {
+                        acc[1] += weight * selector_high;
+                        acc[2] += cross;
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || [F::zero(); 3],
+                |left, right| [left[0] + right[0], left[1] + right[1], left[2] + right[2]],
+            )
+    }
+
+    /// Bind the round's drawn challenge, consuming one variable.
+    fn bind(&mut self, challenge: F) {
+        if let Some((selector, witness)) = &mut self.dense {
+            selector.bind(challenge);
+            witness.bind(challenge);
+            self.bound += 1;
+            return;
+        }
+        for slot in &mut self.slots {
+            slot.bind(self.bound, challenge);
+        }
+        self.bound_challenges.push(challenge);
+        self.bound_weights = EqPolynomial::evals(&self.bound_challenges, None);
+        self.bound += 1;
+    }
+
+    /// The packed witness's evaluation at the fully bound point.
+    fn final_eval(&self) -> F {
+        debug_assert_eq!(self.bound, self.num_vars, "instance is not fully bound");
+        if let Some((_, witness)) = &self.dense {
+            return witness.evaluations()[0];
+        }
+        self.positions.iter().fold(F::zero(), |acc, &index| {
+            acc + self.bound_weights[index >> self.remaining_vars()]
+        })
+    }
+}
+
+/// Proof of a joint packed opening: the cross-object claim-reduction
+/// sumcheck, then per commitment object its claimed packed-witness evaluation
+/// and one native PCS opening (see the [module docs](self) for the protocol).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "F: Serialize, P: Serialize",
     deserialize = "F: Deserialize<'de>, P: Deserialize<'de>"
 ))]
 #[serde(deny_unknown_fields)]
-pub struct PackedBatchProof<F, P> {
-    /// Coefficients `[c_0, c_1, c_2]` of each round polynomial
-    /// `g_j(X) = c_0 + c_1·X + c_2·X²`, one per packed variable.
+pub struct PackedOpeningProof<F, P> {
+    /// Coefficients `[c_0, c_1, c_2]` of each reduction round polynomial
+    /// `g_j(X) = c_0 + c_1·X + c_2·X²`, one per packed variable of the widest
+    /// object.
     pub round_polynomials: Vec<[F; 3]>,
-    /// Claimed evaluation of the packed polynomial at the sumcheck point.
-    pub opening_eval: F,
-    /// Native PCS opening proof for `opening_eval`.
-    pub pcs_proof: P,
+    /// Per-object claimed evaluation of its packed polynomial at its bound
+    /// point (the suffix of the reduction point), in object order.
+    pub evaluations: Vec<F>,
+    /// Per-object native PCS opening proof for the claimed evaluation.
+    pub openings: Vec<P>,
 }
 
-/// Runs the claim-reduction sumcheck over `Σ_z E(z)·W(z)`, binding the
-/// most-significant packed variable each round.
-///
-/// Returns the round polynomials, the opening point (high-to-low), and
-/// `W(point)`.
-pub(crate) fn prove_reduction_sumcheck<F, T>(
-    selector: Vec<F>,
-    witness: Vec<F>,
+/// One commitment object of a joint packed opening, verifier side: the
+/// packing, the public statement (commitment plus one claim per slot), and
+/// the PCS setup the object's native opening verifies against.
+pub struct PackedVerifierObject<'a, PCS: CommitmentScheme, Id> {
+    pub packing: &'a PrefixPacking<Id>,
+    pub statement: &'a PrefixPackedStatement<PCS::Field, Id, PCS::Output>,
+    pub setup: &'a PCS::VerifierSetup,
+}
+
+/// One commitment object of a joint packed opening, prover side: the
+/// verifier-side statement data plus the packed witness polynomial. The
+/// commit-time hint its native opening reuses lives on the object's
+/// [`PackedProverGroup`], which owns the opening.
+pub struct PackedProverObject<'a, PCS: CommitmentScheme, Id> {
+    pub packing: &'a PrefixPacking<Id>,
+    pub statement: &'a PrefixPackedStatement<PCS::Field, Id, PCS::Output>,
+    pub polynomial: &'a (dyn MultilinearPoly<PCS::Field> + 'a),
+    pub setup: &'a PCS::ProverSetup,
+}
+
+/// A contiguous run of packed objects opened by one native proof: singleton
+/// runs open via [`CommitmentScheme::open`], longer runs are the members of
+/// one commitment group and open together via
+/// [`CommitmentScheme::open_batch`] at their shared suffix point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PackedObjectGroup {
+    pub start: usize,
+    pub len: usize,
+}
+
+impl PackedObjectGroup {
+    pub fn singleton(start: usize) -> Self {
+        Self { start, len: 1 }
+    }
+}
+
+/// A [`PackedObjectGroup`] plus the commit-time hint its native opening
+/// reuses: the group commit's hint for a member group, the object's own for
+/// a singleton (`None` recommits).
+pub struct PackedProverGroup<H> {
+    pub start: usize,
+    pub len: usize,
+    pub hint: Option<H>,
+}
+
+impl<H> PackedProverGroup<H> {
+    pub fn singleton(start: usize, hint: Option<H>) -> Self {
+        Self {
+            start,
+            len: 1,
+            hint,
+        }
+    }
+
+    fn span(&self) -> PackedObjectGroup {
+        PackedObjectGroup {
+            start: self.start,
+            len: self.len,
+        }
+    }
+}
+
+/// Checks that `groups` is an in-order contiguous partition of
+/// `0..num_objects`.
+fn validate_groups(groups: &[PackedObjectGroup], num_objects: usize) -> Result<(), OpeningsError> {
+    let mut next = 0usize;
+    for group in groups {
+        if group.start != next || group.len == 0 {
+            return Err(OpeningsError::InvalidBatch(format!(
+                "packed object groups must contiguously partition {num_objects} objects, got {groups:?}"
+            )));
+        }
+        next += group.len;
+    }
+    if next != num_objects {
+        return Err(OpeningsError::InvalidBatch(format!(
+            "packed object groups cover {next} of {num_objects} objects"
+        )));
+    }
+    Ok(())
+}
+
+/// Absorbs every object's prepared statement, then draws each object's
+/// within-object claim-batching `α` powers and its cross-object coefficient
+/// `β`, all in object order.
+fn packed_opening_challenges<F, C, T>(
+    prepared: &[PreparedPrefixPackedStatement<'_, F, C>],
     transcript: &mut T,
-) -> (Vec<[F; 3]>, Vec<F>, F)
+) -> (Vec<Vec<F>>, Vec<F>)
 where
     F: Field,
+    C: AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    debug_assert_eq!(selector.len(), witness.len());
-    debug_assert!(selector.len().is_power_of_two());
-    let mut selector = Polynomial::new(selector);
-    let mut witness = Polynomial::new(witness);
-    let num_rounds = selector.num_vars();
-    let mut round_polynomials = Vec::with_capacity(num_rounds);
-    let mut point = Vec::with_capacity(num_rounds);
+    for statement in prepared {
+        statement.append_to_transcript(transcript);
+    }
+    let alphas = prepared
+        .iter()
+        .map(|statement| transcript.challenge_scalar_powers(statement.num_claims()))
+        .collect();
+    let coefficients = prepared
+        .iter()
+        .map(|_| transcript.challenge_scalar())
+        .collect();
+    (alphas, coefficients)
+}
 
-    for _ in 0..num_rounds {
-        let half = selector.evaluations().len() / 2;
-        let (selector_low, selector_high) = selector.evaluations().split_at(half);
-        let (witness_low, witness_high) = witness.evaluations().split_at(half);
+/// Proves a joint packed opening: one reduction sumcheck across all objects,
+/// then one native PCS opening per object group.
+pub fn prove_packed_openings<PCS, Id, T>(
+    objects: Vec<PackedProverObject<'_, PCS, Id>>,
+    groups: Vec<PackedProverGroup<PCS::OpeningHint>>,
+    transcript: &mut T,
+) -> Result<PackedOpeningProof<PCS::Field, PCS::Proof>, OpeningsError>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: AppendToTranscript,
+    Id: Clone + Debug + Ord,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    if objects.is_empty() {
+        return Err(OpeningsError::InvalidBatch(
+            "packed opening requires at least one object".to_owned(),
+        ));
+    }
+    let spans: Vec<PackedObjectGroup> = groups.iter().map(PackedProverGroup::span).collect();
+    validate_groups(&spans, objects.len())?;
+    let prepared = objects
+        .iter()
+        .map(|object| object.packing.prepare_statement(object.statement))
+        .collect::<Result<Vec<_>, _>>()?;
+    for object in &objects {
+        if object.polynomial.num_vars() != object.packing.packed_num_vars {
+            return Err(OpeningsError::InvalidBatch(format!(
+                "packed polynomial has {} variables but its prefix packing has {}",
+                object.polynomial.num_vars(),
+                object.packing.packed_num_vars
+            )));
+        }
+    }
+    let (alphas, coefficients) = packed_opening_challenges(&prepared, transcript);
+    let max_num_vars = objects
+        .iter()
+        .map(|object| object.packing.packed_num_vars)
+        .max()
+        .unwrap_or(0);
 
-        let mut eval_zero = F::zero();
-        let mut eval_one = F::zero();
-        let mut quadratic = F::zero();
-        for ((s_low, s_high), (w_low, w_high)) in selector_low
-            .iter()
-            .zip(selector_high)
-            .zip(witness_low.iter().zip(witness_high))
-        {
-            eval_zero += *s_low * *w_low;
-            eval_one += *s_high * *w_high;
-            quadratic += (*s_high - *s_low) * (*w_high - *w_low);
+    // Per-object sumcheck state: dense β-and-α-scaled selector/witness tables
+    // for arbitrary witnesses, or the sparse round stepper for unit-sparse
+    // (one-hot) witnesses — same field values, no `2^n` materialization —
+    // plus the rounds to wait before the object's variables bind and its
+    // total `Σ_z E(z)·W(z)` (the constant while padded).
+    enum ObjectState<'a, F: Field> {
+        Dense {
+            selector: Polynomial<F>,
+            witness: Polynomial<F>,
+        },
+        Sparse(SparseReductionInstance<'a, F>),
+    }
+    struct ObjectProver<'a, F: Field> {
+        state: ObjectState<'a, F>,
+        padding_rounds: usize,
+        total: F,
+    }
+    let construction_span = tracing::info_span!("prove_packed_openings::build_tables").entered();
+    let mut tables = prepared
+        .iter()
+        .zip(&alphas)
+        .zip(&coefficients)
+        .zip(&objects)
+        .map(|(((statement, alpha), coefficient), object)| {
+            let scaled_alpha: Vec<PCS::Field> =
+                alpha.iter().map(|alpha| *alpha * *coefficient).collect();
+            // `Σ_z E(z)·W(z)` over honest tables is exactly the (β-scaled)
+            // batched claim — O(claims), not an O(2^n) dot product. A false
+            // claimed value still fails verification at the object's first
+            // bound round.
+            let total = statement.batched_claim(&scaled_alpha);
+            let padding_rounds = max_num_vars - object.packing.packed_num_vars;
+            let state = if object.polynomial.is_one_hot() {
+                let mut positions =
+                    Vec::with_capacity(object.polynomial.one_hot_indices().map_or(0, <[_]>::len));
+                object
+                    .polynomial
+                    .for_each_one(&mut |position| positions.push(position));
+                ObjectState::Sparse(SparseReductionInstance::new(
+                    statement,
+                    &scaled_alpha,
+                    positions,
+                ))
+            } else {
+                ObjectState::Dense {
+                    selector: Polynomial::new(statement.selector_table(&scaled_alpha)),
+                    witness: Polynomial::new(object.polynomial.to_dense().into_owned()),
+                }
+            };
+            ObjectProver {
+                state,
+                padding_rounds,
+                total,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    drop(construction_span);
+
+    let rounds_span = tracing::info_span!("prove_packed_openings::rounds").entered();
+    let mut round_polynomials = Vec::with_capacity(max_num_vars);
+    let mut point: Vec<PCS::Field> = Vec::with_capacity(max_num_vars);
+    for round in 0..max_num_vars {
+        let mut eval_zero = PCS::Field::from_u64(0);
+        let mut eval_one = PCS::Field::from_u64(0);
+        let mut quadratic = PCS::Field::from_u64(0);
+        for table in &mut tables {
+            if table.padding_rounds > round {
+                // Still padded: constant in the bound variable, halving each
+                // padding round.
+                let constant = table.total.mul_pow_2(table.padding_rounds - round - 1);
+                eval_zero += constant;
+                eval_one += constant;
+                continue;
+            }
+            let [object_zero, object_one, object_quadratic] = match &mut table.state {
+                ObjectState::Dense { selector, witness } => {
+                    let half = selector.evaluations().len() / 2;
+                    let (selector_low, selector_high) = selector.evaluations().split_at(half);
+                    let (witness_low, witness_high) = witness.evaluations().split_at(half);
+                    dense_round_evaluations(selector_low, selector_high, witness_low, witness_high)
+                }
+                ObjectState::Sparse(instance) => instance.round_evaluations(),
+            };
+            eval_zero += object_zero;
+            eval_one += object_one;
+            quadratic += object_quadratic;
         }
         let coefficients = [eval_zero, eval_one - eval_zero - quadratic, quadratic];
         append_round_polynomial(&coefficients, transcript);
-        let challenge: F = transcript.challenge_scalar();
+        let challenge: PCS::Field = transcript.challenge_scalar();
         point.push(challenge);
-        selector.bind(challenge);
-        witness.bind(challenge);
+        for table in &mut tables {
+            if table.padding_rounds <= round {
+                match &mut table.state {
+                    ObjectState::Dense { selector, witness } => {
+                        selector.bind(challenge);
+                        witness.bind(challenge);
+                    }
+                    ObjectState::Sparse(instance) => instance.bind(challenge),
+                }
+            }
+        }
         round_polynomials.push(coefficients);
     }
 
-    let opening_eval = witness.evaluations()[0];
-    (round_polynomials, point, opening_eval)
+    drop(rounds_span);
+
+    let evaluations: Vec<PCS::Field> = tables
+        .iter()
+        .map(|table| match &table.state {
+            ObjectState::Dense { witness, .. } => witness.evaluations()[0],
+            ObjectState::Sparse(instance) => instance.final_eval(),
+        })
+        .collect();
+    for (table, evaluation) in tables.iter().zip(&evaluations) {
+        let suffix = &point[table.padding_rounds..];
+        EvaluationClaim::new(suffix.to_vec(), *evaluation).append_to_transcript(transcript);
+    }
+    let mut openings = Vec::with_capacity(groups.len());
+    for group in groups {
+        let members = group.start..group.start + group.len;
+        if group.len == 1 {
+            let object = &objects[group.start];
+            openings.push(PCS::open(
+                object.polynomial,
+                &point[tables[group.start].padding_rounds..],
+                evaluations[group.start],
+                object.setup,
+                group.hint,
+                transcript,
+            )?);
+            continue;
+        }
+        let padding = tables[group.start].padding_rounds;
+        if members
+            .clone()
+            .any(|index| tables[index].padding_rounds != padding)
+        {
+            return Err(OpeningsError::InvalidBatch(
+                "packed object group members must share one opening point arity".to_owned(),
+            ));
+        }
+        let hint = group.hint.ok_or_else(|| {
+            OpeningsError::InvalidBatch(
+                "packed object group is missing its group commit hint".to_owned(),
+            )
+        })?;
+        let polynomials: Vec<&dyn MultilinearPoly<PCS::Field>> = members
+            .clone()
+            .map(|index| objects[index].polynomial)
+            .collect();
+        openings.push(PCS::open_batch(
+            &polynomials,
+            &point[padding..],
+            &evaluations[members.clone()],
+            objects[group.start].setup,
+            hint,
+            transcript,
+        )?);
+    }
+
+    Ok(PackedOpeningProof {
+        round_polynomials,
+        evaluations,
+        openings,
+    })
+}
+
+/// Verifies a joint packed opening against the objects' statements.
+pub fn verify_packed_openings<PCS, Id, T>(
+    objects: &[PackedVerifierObject<'_, PCS, Id>],
+    groups: &[PackedObjectGroup],
+    proof: &PackedOpeningProof<PCS::Field, PCS::Proof>,
+    transcript: &mut T,
+) -> Result<(), OpeningsError>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: AppendToTranscript,
+    Id: Clone + Debug + Ord,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    if objects.is_empty() {
+        return Err(OpeningsError::InvalidBatch(
+            "packed opening requires at least one object".to_owned(),
+        ));
+    }
+    validate_groups(groups, objects.len())?;
+    if proof.evaluations.len() != objects.len() || proof.openings.len() != groups.len() {
+        return Err(OpeningsError::InvalidBatch(format!(
+            "packed opening proof carries {} evaluations and {} openings for {} objects in {} groups",
+            proof.evaluations.len(),
+            proof.openings.len(),
+            objects.len(),
+            groups.len()
+        )));
+    }
+    let prepared = objects
+        .iter()
+        .map(|object| object.packing.prepare_statement(object.statement))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (alphas, coefficients) = packed_opening_challenges(&prepared, transcript);
+    let max_num_vars = objects
+        .iter()
+        .map(|object| object.packing.packed_num_vars)
+        .max()
+        .unwrap_or(0);
+
+    // Each object's batched claim joins scaled by 2^(padding rounds): its
+    // integrand is constant in the leading variables it does not use.
+    let input_claim = prepared
+        .iter()
+        .zip(&alphas)
+        .zip(&coefficients)
+        .zip(objects)
+        .fold(
+            PCS::Field::from_u64(0),
+            |acc, (((statement, alpha), coefficient), object)| {
+                let padding = max_num_vars - object.packing.packed_num_vars;
+                acc + *coefficient * statement.batched_claim(alpha).mul_pow_2(padding)
+            },
+        );
+    let (point, final_claim) = verify_reduction_sumcheck(
+        &proof.round_polynomials,
+        max_num_vars,
+        input_claim,
+        transcript,
+    )?;
+
+    // Absorb each object's claimed evaluation at its suffix point, then check
+    // the reduced claim `Σ_k β_k · E_k(suffix_k) · W_k(suffix_k)`.
+    let mut expected_final_claim = PCS::Field::from_u64(0);
+    for (((statement, alpha), coefficient), (object, evaluation)) in prepared
+        .iter()
+        .zip(&alphas)
+        .zip(&coefficients)
+        .zip(objects.iter().zip(&proof.evaluations))
+    {
+        let suffix = &point[max_num_vars - object.packing.packed_num_vars..];
+        EvaluationClaim::new(suffix.to_vec(), *evaluation).append_to_transcript(transcript);
+        expected_final_claim += *coefficient * statement.selector_eval(alpha, suffix) * *evaluation;
+    }
+    if final_claim != expected_final_claim {
+        return Err(OpeningsError::VerificationFailed);
+    }
+
+    for (group, opening) in groups.iter().zip(&proof.openings) {
+        let members = group.start..group.start + group.len;
+        let first = &objects[group.start];
+        let suffix = &point[max_num_vars - first.packing.packed_num_vars..];
+        if group.len == 1 {
+            PCS::verify(
+                &first.statement.commitment,
+                suffix,
+                proof.evaluations[group.start],
+                opening,
+                first.setup,
+                transcript,
+            )?;
+            continue;
+        }
+        if members
+            .clone()
+            .any(|index| objects[index].packing.packed_num_vars != first.packing.packed_num_vars)
+        {
+            return Err(OpeningsError::InvalidBatch(
+                "packed object group members must share one opening point arity".to_owned(),
+            ));
+        }
+        PCS::verify_batch(
+            &first.statement.commitment,
+            suffix,
+            &proof.evaluations[members],
+            opening,
+            first.setup,
+            transcript,
+        )?;
+    }
+    Ok(())
 }
 
 /// Verifies the claim-reduction sumcheck rounds against `input_claim`.
 ///
 /// Returns the opening point and the final claim, which the caller must check
-/// against `E(point) · W(point)`.
-pub(crate) fn verify_reduction_sumcheck<F, T>(
+/// against the batched selector-times-witness evaluation.
+fn verify_reduction_sumcheck<F, T>(
     round_polynomials: &[[F; 3]],
     num_rounds: usize,
     input_claim: F,
@@ -560,7 +1297,7 @@ where
 {
     if round_polynomials.len() != num_rounds {
         return Err(OpeningsError::InvalidBatch(format!(
-            "packed reduction proof has {} round polynomials but packing has {num_rounds} variables",
+            "packed reduction proof has {} round polynomials but the widest packing has {num_rounds} variables",
             round_polynomials.len()
         )));
     }
@@ -591,25 +1328,6 @@ where
     }
 }
 
-/// Prover setup for opening a prefix-packed witness with a concrete PCS.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrefixPackedProverSetup<PCS: CommitmentScheme, Id = u64> {
-    pub pcs: PCS::ProverSetup,
-    pub packing: PrefixPacking<Id>,
-}
-
-/// Verifier setup for opening a prefix-packed witness with a concrete PCS.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "PCS::VerifierSetup: Serialize, Id: Serialize",
-    deserialize = "PCS::VerifierSetup: Deserialize<'de>, Id: Ord + Deserialize<'de>"
-))]
-#[serde(deny_unknown_fields)]
-pub struct PrefixPackedVerifierSetup<PCS: CommitmentScheme, Id = u64> {
-    pub pcs: PCS::VerifierSetup,
-    pub packing: PrefixPacking<Id>,
-}
-
 fn coefficient_count(num_vars: usize) -> Result<usize, OpeningsError> {
     if num_vars >= usize::BITS as usize {
         return Err(OpeningsError::InvalidSetup(format!(
@@ -617,4 +1335,104 @@ fn coefficient_count(num_vars: usize) -> Result<usize, OpeningsError> {
         )));
     }
     Ok(1usize << num_vars)
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn field(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    type OracleClaims = Vec<(u64, EvaluationClaim<Fr>)>;
+
+    /// A statement with mixed-arity slots, its dense selector/witness tables,
+    /// and the one-positions of the (unit-sparse) witness.
+    fn oracle_fixture() -> (PrefixPacking<u64>, OracleClaims, Vec<usize>) {
+        // Three logical polynomials: two 16-cell columns and one 4-cell
+        // column packed into 2^6 = 64 cells (mirrors the mixed-arity shape
+        // of the real packings).
+        let packing = PrefixPacking::<u64>::new([
+            PackedPolynomial::from((0u64, 4usize)),
+            (1u64, 4usize).into(),
+            (2u64, 2usize).into(),
+        ])
+        .unwrap();
+        let positions: Vec<usize> = vec![
+            packing[&0].packed_index(3),
+            packing[&0].packed_index(9),
+            packing[&1].packed_index(0),
+            packing[&1].packed_index(7),
+            packing[&1].packed_index(15),
+            packing[&2].packed_index(2),
+        ];
+        let mut witness = vec![field(0); 1 << packing.packed_num_vars];
+        for &position in &positions {
+            witness[position] = field(1);
+        }
+        let claims: OracleClaims = [0u64, 1, 2]
+            .into_iter()
+            .map(|id| {
+                let slot = &packing[&id];
+                let point: Vec<Fr> = (0..slot.num_vars)
+                    .map(|i| field(3 + 7 * (id + 1) * (i as u64 + 1)))
+                    .collect();
+                let mut packed_point: Vec<Fr> = slot
+                    .prefix
+                    .iter()
+                    .map(|bit| field(u64::from(*bit)))
+                    .collect();
+                packed_point.extend(point.iter().copied());
+                let value = Polynomial::new(witness.clone()).evaluate(&packed_point);
+                (id, EvaluationClaim::new(point, value))
+            })
+            .collect();
+        (packing, claims, positions)
+    }
+
+    /// The sparse round stepper must produce the same field values as the
+    /// dense selector/witness tables at every round — including across its
+    /// sparse-to-dense switchover — and the same final witness evaluation.
+    #[test]
+    fn sparse_stepper_matches_the_dense_tables() {
+        let (packing, claims, positions) = oracle_fixture();
+        let statement = PrefixPackedStatement::new((), claims);
+        let prepared = packing.prepare_statement(&statement).unwrap();
+        let alpha: Vec<Fr> = (0..prepared.num_claims())
+            .map(|i| field(11 + 5 * i as u64))
+            .collect();
+
+        let mut dense_selector = Polynomial::new(prepared.selector_table(&alpha));
+        let mut dense_witness = {
+            let mut table = vec![field(0); 1 << packing.packed_num_vars];
+            for &position in &positions {
+                table[position] = field(1);
+            }
+            Polynomial::new(table)
+        };
+        let mut instance = SparseReductionInstance::new(&prepared, &alpha, positions);
+
+        for round in 0..packing.packed_num_vars {
+            let half = dense_selector.evaluations().len() / 2;
+            let (selector_low, selector_high) = dense_selector.evaluations().split_at(half);
+            let (witness_low, witness_high) = dense_witness.evaluations().split_at(half);
+            let dense =
+                dense_round_evaluations(selector_low, selector_high, witness_low, witness_high);
+            let sparse = instance.round_evaluations();
+            assert_eq!(sparse, dense, "round {round} evaluations diverge");
+
+            let challenge = field(101 + 13 * round as u64);
+            dense_selector.bind(challenge);
+            dense_witness.bind(challenge);
+            instance.bind(challenge);
+        }
+        assert_eq!(
+            instance.final_eval(),
+            dense_witness.evaluations()[0],
+            "final witness evaluations diverge"
+        );
+    }
 }

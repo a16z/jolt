@@ -19,8 +19,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic, TraceDimen
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, EqPlusOnePolynomial, Polynomial};
 use jolt_verifier::stages::stage3::outputs::SpartanShift;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::dense_view;
 use crate::spartan_shift::SpartanShiftProver;
@@ -34,7 +33,7 @@ impl<F: Field> SpartanShiftProver<F> for ReferenceBackend {
         product_uniskip_tau_low: &[F],
         product_remainder_point: &[F],
         challenges: &SpartanShiftChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = SpartanShift<F>>>, KernelError<F>> {
         let ids = [
             unexpanded_pc_shift(),

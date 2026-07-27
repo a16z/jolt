@@ -27,7 +27,7 @@ The new proving-system surface is:
 - `ProgramMode::{Full, Committed}` in `jolt-prover-legacy/src/zkvm/config.rs`.
 - `ProgramPreprocessing::{Full, Committed}` in `jolt-prover-legacy/src/zkvm/program.rs`.
 - `CommittedPolynomial::BytecodeChunk(i)` and `CommittedPolynomial::ProgramImageInit` in `jolt-prover-legacy/src/zkvm/witness.rs`.
-- `VirtualPolynomial::BytecodeValStage(i)`, `VirtualPolynomial::BytecodeClaimReductionIntermediate`, and `VirtualPolynomial::ProgramImageInitContributionRw`.
+- `VirtualPolynomial::BytecodeValClaim(i)`, `VirtualPolynomial::BytecodeClaimReductionIntermediate`, and `VirtualPolynomial::ProgramImageInitContributionRw`.
 - `SumcheckId::{BytecodeReadRafAddressPhase, BooleanityAddressPhase, BytecodeClaimReductionCyclePhase, BytecodeClaimReduction, ProgramImageClaimReductionCyclePhase, ProgramImageClaimReduction}`.
 - Shared precommitted scheduling through `PrecommittedClaimReduction` in `jolt-prover-legacy/src/zkvm/claim_reductions/precommitted.rs`.
 
@@ -75,7 +75,7 @@ New `jolt-eval` invariants for committed-program equivalence and Stage 8 opening
 - [x] Stage 4 caches `ProgramImageInitContributionRw` as a virtual opening when committed program mode is active.
 - [x] Stage 6a verifies address-phase bytecode read-RAF and booleanity claims without needing full bytecode materialization on the verifier path.
 - [x] Stage 6b includes bytecode and program-image claim reduction instances only in committed mode.
-- [x] Stage 6b bytecode claim reduction converts staged `BytecodeValStage(i)` claims into committed bytecode chunk openings.
+- [x] Stage 6b bytecode claim reduction converts staged `BytecodeValClaim(i)` claims into committed bytecode chunk openings.
 - [x] Stage 6b program-image claim reduction converts `ProgramImageInitContributionRw` into a committed `ProgramImageInit` opening.
 - [x] Stage 7 address-phase reductions resume from the cycle-phase intermediate claims for all precommitted reductions that have address rounds.
 - [x] Stage 8 includes bytecode chunks and program image in the random linear combination exactly when `ProgramMode::Committed` is used.
@@ -282,7 +282,7 @@ Stage 6 is split into `stage6a` and `stage6b`.
 Stage 6a handles address-phase work for bytecode read-RAF and booleanity.
 
 In committed mode, bytecode read-RAF verifier construction does not require full bytecode preprocessing.
-Instead, address-phase bytecode read-RAF stages the `BytecodeValStage(i)` virtual claims that summarize the bytecode value columns needed later.
+Instead, address-phase bytecode read-RAF stages the `BytecodeValClaim(i)` virtual claims that summarize the bytecode value columns needed later.
 These staged values become the input claims to `BytecodeClaimReduction`.
 
 #### Stage 6b: Cycle-Phase Work And Precommitted Claim Reductions
@@ -306,7 +306,7 @@ When committed program mode is active, Stage 6b also includes:
 `BytecodeClaimReduction` input in cycle phase is:
 
 ```text
-sum_i eta^i * BytecodeValStage(i)
+sum_i eta^i * BytecodeValClaim(i)
 ```
 
 where `eta` is sampled from the transcript.

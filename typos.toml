@@ -19,3 +19,7 @@ extend-exclude = ["patches/*.patch"]
 "useed" = "useed"
 "sseed" = "sseed"
 "mis" = "mis"
+# "tru"/"unt" are the trusted/untrusted advice commitment-object shorthands
+# (A_tru, A_unt) in the packed (Akita) prove path docs.
+"tru" = "tru"
+"unt" = "unt"

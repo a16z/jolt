@@ -10,10 +10,12 @@ workspace = true
 
 [features]
 default = []
+akita = []
 field-inline = []
 test-utils = []
 
 [dependencies]
+blake2.workspace = true
 derive_more.workspace = true
 jolt-claims-derive.workspace = true
 jolt-field.workspace = true

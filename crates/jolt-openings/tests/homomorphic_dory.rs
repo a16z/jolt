@@ -38,7 +38,7 @@ fn dory_homomorphic_batch_roundtrip_clear_many_polynomials() {
     let mut verifier_transcript = Blake2bTranscript::new(b"dory-batch");
     <HomomorphicDoryBatch as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
-        claims,
+        &claims,
         &proof,
         &mut verifier_transcript,
     )
@@ -70,7 +70,7 @@ fn dory_homomorphic_batch_rejects_tampered_value() {
     let mut verifier_transcript = Blake2bTranscript::new(b"dory-batch-tamper");
     let result = <HomomorphicDoryBatch as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
-        tampered,
+        &tampered,
         &proof,
         &mut verifier_transcript,
     );

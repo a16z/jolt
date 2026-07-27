@@ -64,16 +64,13 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let jolt_verifier::PreStage1VerifierState {
-        checked,
-        mut transcript,
-    } = jolt_verifier::verify_until_stage1::<PCS, VC, T, ZkProof>(
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment,
-        true,
-    )?;
+    let (checked, mut transcript) =
+        jolt_verifier::validate_and_seed_transcript::<PCS, VC, T, ZkProof>(
+            preprocessing,
+            public_io,
+            proof,
+            trusted_advice_commitment,
+        )?;
 
     let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
         proof,

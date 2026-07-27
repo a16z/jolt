@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::Field;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -18,6 +17,6 @@ pub trait RamOutputCheckProver<F: Field> {
         ram_log_k: usize,
         output_address_challenges: &[F],
         public_memory: PublicIoMemory,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = RamOutputCheck<F>>>, KernelError<F>>;
 }

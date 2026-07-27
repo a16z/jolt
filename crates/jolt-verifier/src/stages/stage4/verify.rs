@@ -106,7 +106,7 @@ where
     let (r_address, _r_cycle) = ram_read_write_opening_point.split_at(log_k);
     if ram_output_check_opening_point != r_address {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::RamValCheck,
+            stage: format!("{:?}", JoltRelationId::RamValCheck),
             left: ram::ram_val(),
             right: ram::ram_val_final(),
         });
@@ -135,7 +135,48 @@ where
     // override replays the separator at its exact transcript position).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if checked.zk {
+    if !checked.zk {
+        let claims = &proof.clear_claims()?.stage4;
+        let stage2 = stage2.clear()?;
+        let stage3 = stage3.clear()?;
+        sumchecks.validate_output_claims(claims)?;
+        // Attaches the claimed advice / program-image opening values (consumed by the
+        // input wiring and carried downstream for the stage-6/7 address-phase
+        // reductions); presence against the init structure is validated by the
+        // generated `validate_output_claims` above and re-checked here.
+        let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, claims)?;
+
+        let input_values = stage4_input_values_from_upstream(
+            &stage2.output_values,
+            &stage3.output_values,
+            &ram_val_check_init,
+        );
+        let input_points = stage4_input_points_from_upstream(
+            &stage2.output_points,
+            &stage3.output_points,
+            &init_structure,
+        );
+
+        let output_points = sumchecks.verify_clear(
+            &input_values,
+            &input_points,
+            &challenges,
+            claims,
+            &proof.stages.stage4_sumcheck_proof,
+            transcript,
+            4,
+        )?;
+
+        claims.append_to_transcript(transcript);
+
+        return Ok(Stage4Output::Clear(Stage4ClearOutput {
+            output_values: claims.clone(),
+            output_points,
+            ram_val_check_init,
+        }));
+    }
+
+    {
         let consistency = sumchecks.verify_zk(&proof.stages.stage4_sumcheck_proof, transcript)?;
         let batch_output_claims = committed::verify_output_claim_commitments(
             checked,
@@ -157,64 +198,14 @@ where
         let output_points =
             sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
 
-        return Ok(Stage4Output::Zk(Stage4ZkOutput {
+        Ok(Stage4Output::Zk(Stage4ZkOutput {
             challenges,
             batch_consistency: consistency,
             batch_output_claims,
             ram_val_check_public_eval,
             output_points,
-        }));
+        }))
     }
-
-    let stage2 = stage2.clear()?;
-    let stage3 = stage3.clear()?;
-    let claims = &proof.clear_claims()?.stage4;
-    sumchecks.validate_output_claims(claims)?;
-    // Attaches the claimed advice / program-image opening values (consumed by the
-    // input wiring and carried downstream for the stage-6/7 address-phase
-    // reductions); presence against the init structure is validated by the
-    // generated `validate_output_claims` above and re-checked here.
-    let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, claims)?;
-
-    let input_values = stage4_input_values_from_upstream(
-        &stage2.output_values,
-        &stage3.output_values,
-        &ram_val_check_init,
-    );
-    let input_points = stage4_input_points_from_upstream(
-        &stage2.output_points,
-        &stage3.output_points,
-        &init_structure,
-    );
-
-    let batch = sumchecks.verify_clear(
-        &input_values,
-        &challenges,
-        &proof.stages.stage4_sumcheck_proof,
-        transcript,
-    )?;
-
-    let output_points =
-        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
-
-    let expected_final_claim = sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &input_points,
-        claims,
-        &output_points,
-        &challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 4 });
-    }
-
-    claims.append_to_transcript(transcript);
-
-    Ok(Stage4Output::Clear(Stage4ClearOutput {
-        output_values: claims.clone(),
-        output_points,
-        ram_val_check_init,
-    }))
 }
 
 pub fn public_initial_ram_evaluation<PCS, VC>(

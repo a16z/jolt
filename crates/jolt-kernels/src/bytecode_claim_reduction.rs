@@ -1,5 +1,5 @@
 //! The committed-bytecode claim-reduction slot (stage 6b cycle phase →
-//! stage 7 address phase): reduces the five staged `BytecodeValStage(i)`
+//! stage 7 address phase): reduces the five staged `BytecodeValClaim(i)`
 //! claims into per-chunk `BytecodeChunk(i)` openings.
 
 use jolt_claims::protocols::jolt::BytecodeClaimReductionLayout;

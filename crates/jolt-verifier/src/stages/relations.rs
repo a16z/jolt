@@ -202,7 +202,7 @@ where
     fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
         batch_num_vars.checked_sub(self.rounds()).ok_or_else(|| {
             VerifierError::StageClaimSumcheckFailed {
-                stage: self.id(),
+                stage: format!("{:?}", self.id()),
                 reason: format!(
                     "batch challenge vector has {batch_num_vars} entries, fewer than the \
                      instance's {} rounds",
@@ -224,7 +224,7 @@ where
             .checked_add(rounds)
             .and_then(|end| batch_point.get(offset..end))
             .ok_or(VerifierError::StageClaimSumcheckFailed {
-                stage: self.id(),
+                stage: format!("{:?}", self.id()),
                 reason: format!(
                     "instance point [{offset}, {offset} + {rounds}) exceeds the batch \
                      challenge vector ({} entries)",
@@ -404,7 +404,7 @@ where
             resolve_source(&source).ok_or(VerifierError::MissingOpeningClaim { id: source })?;
         if target != source_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: member.id(),
+                stage: format!("{:?}", member.id()),
                 left: aliased,
                 right: source,
             });
@@ -1599,14 +1599,25 @@ mod engine_twin_tests {
             .finish(&output_values, &mut prover_transcript)
             .unwrap();
 
-        // Verifier: draw → generated verify_clear → output-claim absorbs.
+        // Verifier: draw → begin_batch → verify_compressed_boolean → output-claim
+        // absorbs (the low-level clear path the composed `verify_clear` wraps).
         let mut verifier_transcript = Blake2bTranscript::new(b"engine-twin");
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-        let verified = sumchecks
-            .verify_clear(
+        let mut verifier_recorder = ClearSumcheckRecorder::<Fr, Bn254G1>::new();
+        let (verifier_batch, verifier_coefficients) = sumchecks
+            .begin_batch(
                 &inputs,
                 &verifier_challenges,
-                &recorded.proof,
+                &mut verifier_recorder,
+                &mut verifier_transcript,
+            )
+            .unwrap();
+        let reduction = recorded
+            .proof
+            .verify_compressed_boolean(
+                verifier_batch.max_num_vars,
+                verifier_batch.max_degree,
+                verifier_batch.claimed_sum,
                 &mut verifier_transcript,
             )
             .unwrap();
@@ -1614,12 +1625,9 @@ mod engine_twin_tests {
             verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
         }
 
-        assert_eq!(verified.reduction.value, proved.final_claim);
-        assert_eq!(
-            verified.reduction.point.as_slice(),
-            proved.challenges.as_slice()
-        );
-        assert_eq!(verified.coefficients, prover_coefficients);
+        assert_eq!(reduction.value, proved.final_claim);
+        assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
+        assert_eq!(verifier_coefficients, prover_coefficients);
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
     }
 

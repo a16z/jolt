@@ -9,9 +9,12 @@
 //! witness-commitment kernel; only the absorbs happen here.
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_kernels::bytecode_read_raf::BytecodeReadRafWitness;
+use jolt_kernels::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment};
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -20,8 +23,7 @@ use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
     absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::CommittedWitnessProvider;
+use jolt_witness::{validate_servable, JoltWitnessOracle, RowSource, WitnessBundle};
 
 use crate::config::advice_total_vars;
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
@@ -56,13 +58,13 @@ where
 /// (main, untrusted advice, trusted advice, then the preprocessing-held
 /// committed-program chunk/image commitments — the verifier's own absorb
 /// order).
-pub fn prove_stage0<F, PCS, VC, T>(
+pub fn prove_stage0<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
-    witness: &dyn CommittedWitnessProvider<F, JoltVmNamespace>,
+    witness: &W,
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
@@ -71,6 +73,7 @@ where
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
+    W: JoltWitnessOracle<F> + RowSource,
 {
     // Committed-program mode needs the prover-retained full program + hints;
     // require presence to agree with the verifier preprocessing's mode.
@@ -155,7 +158,7 @@ where
     );
 
     let ids: Vec<JoltCommittedPolynomial> = witness
-        .committed_oracle_order()?
+        .committed_order()?
         .into_iter()
         .filter(|id| {
             !matches!(
@@ -164,6 +167,16 @@ where
             )
         })
         .collect();
+    // Stage-0 validation: every id the proof will request — the committed
+    // set and each bundle's annotated set — must be servable by the backend
+    // before witness generation starts.
+    let requested = ids
+        .iter()
+        .map(|&id| JoltPolynomialId::Committed(id))
+        .chain(InstructionReadRafWitness::annotated_ids())
+        .chain(BytecodeReadRafWitness::annotated_ids());
+    validate_servable(witness as &dyn JoltWitnessOracle<F>, requested)?;
+
     let grid = CommitmentGrid {
         total_vars: config.commitment_total_vars(
             &public_io.memory_layout,
@@ -175,10 +188,13 @@ where
         log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         order: config.trace_polynomial_order,
     };
-    let committed =
-        backend
-            .commit
-            .commit_witness(session, witness, &ids, grid, &preprocessing.pcs_setup)?;
+    let committed = backend.commit.commit_witness(
+        session,
+        witness as &dyn RowSource,
+        &ids,
+        grid,
+        &preprocessing.pcs_setup,
+    )?;
     let (commitments, mut hints) = assemble_commitments::<PCS>(committed)?;
 
     // The untrusted advice polynomial is committed at prove time in its OWN
@@ -193,16 +209,13 @@ where
             // Advice grids always place cycle-major — see `CommitmentGrid`.
             order: TracePolynomialOrder::CycleMajor,
         };
-        let mut advice = backend.commit.commit_witness(
+        let advice = backend.commit.commit_advice(
             session,
-            witness,
-            &[JoltCommittedPolynomial::UntrustedAdvice],
+            witness as &dyn JoltWitnessOracle<F>,
+            JoltCommittedPolynomial::UntrustedAdvice,
             advice_grid,
             &preprocessing.pcs_setup,
         )?;
-        let advice = advice.pop().ok_or(ProverError::InvariantViolation {
-            reason: "the commit slot produced no untrusted-advice commitment",
-        })?;
         hints.push((advice.id, advice.hint));
         Some(advice.commitment)
     } else {

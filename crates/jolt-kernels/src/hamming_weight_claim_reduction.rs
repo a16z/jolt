@@ -4,8 +4,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::Ha
 use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use jolt_field::Field;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::{KernelError, ProofSession, ProveSumcheck};
 
@@ -26,6 +25,6 @@ pub trait HammingWeightClaimReductionProver<F: Field> {
         r_address: &[F],
         virtualization_points: &[Vec<F>],
         challenges: &HammingWeightClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>;
 }

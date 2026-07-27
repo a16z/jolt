@@ -32,4 +32,5 @@ thiserror.workspace = true
 
 [dev-dependencies]
 jolt-claims = { workspace = true, features = ["test-utils"] }
+jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true

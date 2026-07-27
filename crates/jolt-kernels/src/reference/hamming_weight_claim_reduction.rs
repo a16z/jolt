@@ -21,8 +21,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{cycle_fold, eq_table};
 use crate::hamming_weight_claim_reduction::HammingWeightClaimReductionProver;
@@ -37,7 +36,7 @@ impl<F: Field> HammingWeightClaimReductionProver<F> for ReferenceBackend {
         r_address: &[F],
         virtualization_points: &[Vec<F>],
         challenges: &HammingWeightClaimReductionChallenges<F>,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Box<dyn ProveSumcheck<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
     {
         if r_address.len() != dimensions.log_k_chunk
