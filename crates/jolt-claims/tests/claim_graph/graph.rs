@@ -696,11 +696,11 @@ mod planted {
 
     #[test]
     fn detects_cycle() {
-        let ab = opening(JoltRelationId::SpartanOuter);
-        let ba = opening(JoltRelationId::SpartanShift);
+        let forward = opening(JoltRelationId::SpartanOuter);
+        let backward = opening(JoltRelationId::SpartanShift);
         let graph = graph(vec![
-            vertex("a", JoltRelationId::SpartanOuter, &[ba], &[ab]),
-            vertex("b", JoltRelationId::SpartanShift, &[ab], &[ba]),
+            vertex("a", JoltRelationId::SpartanOuter, &[backward], &[forward]),
+            vertex("b", JoltRelationId::SpartanShift, &[forward], &[backward]),
         ]);
         let violations = graph.check();
         assert!(
