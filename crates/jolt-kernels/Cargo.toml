@@ -22,7 +22,6 @@ jolt-kernels-derive.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
-jolt-program.workspace = true
 jolt-riscv.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck.workspace = true
