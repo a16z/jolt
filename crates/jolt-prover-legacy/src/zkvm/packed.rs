@@ -99,7 +99,7 @@ pub type AkitaPackedStatement = PrefixPackedStatement<
 
 struct JoltOneHotTraceRows {
     trace: Arc<Vec<Cycle>>,
-    fused_inc: Arc<Vec<FusedIncValue>>,
+    fused_inc_one_hot: Vec<Arc<Vec<Option<u8>>>>,
     num_columns: usize,
     ranges: OneHotTraceColumnRanges,
     params: crate::zkvm::config::OneHotParams,
@@ -126,7 +126,6 @@ impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
         let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
         let pc = crate::zkvm::bytecode::get_pc_for_cycle(&self.bytecode, cycle);
         let ram_address = remap_address(cycle.ram_access().address() as u64, &self.memory_layout);
-        let inc = &self.fused_inc[row];
         for (index, hot_lane) in hot_lanes[self.ranges.instruction.clone()]
             .iter_mut()
             .enumerate()
@@ -148,9 +147,14 @@ impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
             .iter_mut()
             .enumerate()
         {
-            *hot_lane = inc.chunk_hot_lane_bits(self.params.log_k_chunk, index) as u16;
+            *hot_lane =
+                self.fused_inc_one_hot[index][row].map_or_else(jolt_akita::no_hot_lane, u16::from);
         }
-        hot_lanes[self.ranges.unsigned_inc_msb] = u16::from(inc.msb());
+        hot_lanes[self.ranges.unsigned_inc_msb] = self
+            .fused_inc_one_hot
+            .last()
+            .and_then(|column| column[row])
+            .map_or_else(jolt_akita::no_hot_lane, u16::from);
     }
 }
 
@@ -719,11 +723,11 @@ impl AkitaPackedProver<'_> {
     fn one_hot_trace_rows(
         &self,
         plan: &OneHotTraceLayoutPlan,
-        fused_inc: Arc<Vec<FusedIncValue>>,
+        fused_inc_one_hot: Vec<Arc<Vec<Option<u8>>>>,
     ) -> Arc<dyn jolt_akita::TraceOneHotRows> {
         Arc::new(JoltOneHotTraceRows {
             trace: Arc::clone(&self.trace),
-            fused_inc,
+            fused_inc_one_hot,
             num_columns: plan.columns.len(),
             ranges: plan.ranges.clone(),
             params: self.one_hot_params.clone(),
@@ -1454,7 +1458,8 @@ impl AkitaPackedProver<'_> {
         let plan = ONE_HOT_TRACE_LAYOUT
             .plan(&self.one_hot_trace_shape())
             .expect("canonical OneHotTrace layout must exist");
-        let one_hot_trace_rows = self.one_hot_trace_rows(&plan, Arc::clone(&fused_cycles));
+        let one_hot_trace_rows = self.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
+        drop(fused_cycles);
         let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
             object_setup,
             object_setup.default_layout_digest(),
