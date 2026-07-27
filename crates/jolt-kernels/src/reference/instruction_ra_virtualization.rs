@@ -15,7 +15,7 @@ use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerive
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::{address_fold, eq_table};
 use crate::{
@@ -26,7 +26,7 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for ReferenceBac
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
     {

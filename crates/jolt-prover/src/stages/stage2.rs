@@ -38,7 +38,7 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking
 use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_from_upstream};
 use jolt_verifier::stages::uniskip::draw_spartan_product_tau_high;
 use jolt_verifier::VerifierError;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::{ProverConfig, ProverError, StageProver as _};
 
@@ -58,7 +58,7 @@ pub fn prove_stage2<F, PCS, C, T>(
     config: &ProverConfig,
     public_io: &JoltDevice,
     stage1: &Stage1ClearOutput<F>,
-    witness: &dyn JoltVmWitnessPlane<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage2ProverOutput<F, C>, ProverError<F>>
 where

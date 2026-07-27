@@ -37,16 +37,16 @@ enum PackedId {
 
 fn packed_polynomials() -> Vec<(PackedId, Polynomial<AkitaField>)> {
     vec![
-        (PackedId::Wide, polynomial(3, 1)),
-        (PackedId::Medium, polynomial(2, 40)),
-        (PackedId::NarrowB, polynomial(1, 80)),
-        (PackedId::NarrowA, polynomial(1, 120)),
+        (PackedId::Wide, polynomial(12, 1)),
+        (PackedId::Medium, polynomial(11, 40)),
+        (PackedId::NarrowB, polynomial(10, 80)),
+        (PackedId::NarrowA, polynomial(10, 120)),
         (PackedId::Constant, Polynomial::new(vec![f(200)])),
     ]
 }
 
 fn packed_point() -> Vec<AkitaField> {
-    vec![f(3), f(5), f(7), f(11), f(13)]
+    (0..14).map(|i| f(3 + 2 * i)).collect()
 }
 
 fn build_packed(
@@ -113,10 +113,10 @@ fn assert_packed_verify_rejects(
 fn akita_prefix_packed_batch_roundtrips_mixed_arities() {
     let polynomials = packed_polynomials();
     let packed = build_packed(&polynomials);
-    assert_eq!(packed.packing.packed_num_vars, 5);
+    assert_eq!(packed.packing.packed_num_vars, 14);
     assert_eq!((&packed.packing).into_iter().count(), 5);
-    assert_eq!(packed.packing[&PackedId::Wide].num_vars, 3);
-    assert_eq!(packed.packing[&PackedId::Medium].num_vars, 2);
+    assert_eq!(packed.packing[&PackedId::Wide].num_vars, 12);
+    assert_eq!(packed.packing[&PackedId::Medium].num_vars, 11);
 
     let (prover_setup, verifier_setup) = packed_setup(packed.packing.packed_num_vars, layout(7));
     let (commitment, hint) = AkitaScheme::commit(&packed.polynomial, &prover_setup).unwrap();
@@ -280,7 +280,8 @@ fn akita_prefix_packed_batch_rejects_tampered_verifier_inputs() {
         b"akita-packed-tamper",
     );
 
-    let wrong_point = vec![f(3), f(5), f(17), f(11), f(13)];
+    let mut wrong_point = packed_point();
+    wrong_point[2] += f(1);
     let wrong_point_claims = packed_claims(&polynomials, &packed.packing, &wrong_point);
     assert_packed_verify_rejects(
         &packed.packing,
@@ -307,10 +308,10 @@ fn akita_prefix_packed_batch_rejects_tampered_verifier_inputs() {
     );
 
     let other_packed = build_packed(&[
-        (PackedId::Wide, polynomial(3, 500)),
-        (PackedId::Medium, polynomial(2, 540)),
-        (PackedId::NarrowB, polynomial(1, 580)),
-        (PackedId::NarrowA, polynomial(1, 620)),
+        (PackedId::Wide, polynomial(12, 500)),
+        (PackedId::Medium, polynomial(11, 540)),
+        (PackedId::NarrowB, polynomial(10, 580)),
+        (PackedId::NarrowA, polynomial(10, 620)),
         (PackedId::Constant, Polynomial::new(vec![f(700)])),
     ]);
     let (other_commitment, _) =
@@ -332,7 +333,7 @@ fn akita_prefix_packed_batch_rejects_wrong_witness_dimension() {
     let (commitment, hint) = AkitaScheme::commit(&packed.polynomial, &prover_setup).unwrap();
     let point = packed_point();
     let statement = statement_for(&packed, &polynomials, commitment, &point);
-    let wrong_witness = polynomial(4, 900);
+    let wrong_witness = polynomial(12, 900);
 
     let result = prove_single(
         &packed.packing,
@@ -353,12 +354,12 @@ fn akita_joint_packed_openings_roundtrip_across_two_objects() {
     let wide_polynomials = packed_polynomials();
     let wide = build_packed(&wide_polynomials);
     let narrow_polynomials = vec![
-        (PackedId::Medium, polynomial(2, 300)),
-        (PackedId::NarrowA, polynomial(1, 340)),
+        (PackedId::Medium, polynomial(12, 300)),
+        (PackedId::NarrowA, polynomial(11, 340)),
     ];
     let narrow = materialize_packed(&narrow_polynomials).expect("narrow object should build");
-    assert_eq!(wide.packing.packed_num_vars, 5);
-    assert_eq!(narrow.packing.packed_num_vars, 3);
+    assert_eq!(wide.packing.packed_num_vars, 14);
+    assert_eq!(narrow.packing.packed_num_vars, 13);
 
     let (wide_prover, wide_verifier) = packed_setup(wide.packing.packed_num_vars, layout(7));
     let (narrow_prover, narrow_verifier) = packed_setup(narrow.packing.packed_num_vars, layout(9));
@@ -367,11 +368,12 @@ fn akita_joint_packed_openings_roundtrip_across_two_objects() {
         AkitaScheme::commit(&narrow.polynomial, &narrow_prover).unwrap();
 
     let wide_statement = statement_for(&wide, &wide_polynomials, wide_commitment, &packed_point());
+    let narrow_point: Vec<_> = (0..13).map(|i| f(17 + 2 * i)).collect();
     let narrow_statement = statement_for(
         &narrow,
         &narrow_polynomials,
         narrow_commitment,
-        &[f(17), f(19), f(23)],
+        &narrow_point,
     );
 
     let mut prover_transcript = Blake2bTranscript::new(b"akita-joint-two-objects");
@@ -443,13 +445,13 @@ fn akita_joint_packed_openings_roundtrip_across_two_objects() {
 
 #[test]
 fn akita_packing_and_native_batching_can_coexist_for_same_logical_claims() {
-    let poly_a = polynomial(4, 1);
-    let poly_b = polynomial(4, 20);
-    let logical_point = vec![f(2), f(3), f(5), f(7)];
+    let poly_a = polynomial(13, 1);
+    let poly_b = polynomial(13, 20);
+    let logical_point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&logical_point);
     let eval_b = poly_b.evaluate(&logical_point);
 
-    let (native_prover_setup, native_verifier_setup) = setup_for(4, 2, layout(7));
+    let (native_prover_setup, native_verifier_setup) = setup_for(13, 2, layout(7));
     let (native_commitment, native_hint) = AkitaScheme::commit_group(
         &native_prover_setup,
         layout(7),
@@ -539,14 +541,20 @@ fn akita_packing_and_native_batching_can_coexist_for_same_logical_claims() {
 fn akita_grouped_one_hot_members_open_in_one_batch() {
     const K: usize = 256;
     let member_ids = [PackedId::NarrowA, PackedId::NarrowB, PackedId::Medium];
-    let members: Vec<OneHotPolynomial> = [
-        vec![Some(3u8), Some(200), None, Some(17)],
-        vec![Some(0), Some(0), Some(255), None],
-        vec![None, Some(42), Some(42), Some(1)],
-    ]
-    .into_iter()
-    .map(|indices| OneHotPolynomial::new(K, indices))
-    .collect();
+    let members: Vec<OneHotPolynomial> = (0..3u64)
+        .map(|member| {
+            let indices = (0..32u64)
+                .map(|row| {
+                    if (row + member) % 7 == 0 {
+                        None
+                    } else {
+                        Some(((row * 11 + member * 3) % K as u64) as u8)
+                    }
+                })
+                .collect();
+            OneHotPolynomial::new(K, indices)
+        })
+        .collect();
     let num_vars = members[0].num_vars();
     let (prover_setup, verifier_setup) = setup_for(num_vars, member_ids.len(), layout(9));
     let (commitment, hint) = AkitaScheme::commit_one_hot_group(&prover_setup, layout(9), &members)

@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, LtPolynomial, Polynomial};
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::{address_fold, dense_view};
 use crate::{
@@ -29,7 +29,7 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for ReferenceBackend 
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersValEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
     {

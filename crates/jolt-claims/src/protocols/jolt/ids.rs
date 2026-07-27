@@ -156,7 +156,7 @@ pub enum BytecodeReadRafChallenge {
 pub enum BytecodeReadRafPublic {
     StageValue(usize),
     /// Committed program mode: `eq(stage_cycle_point_s, r_cycle)` factor
-    /// multiplying the staged `BytecodeValStage(s)` opening. In full mode this
+    /// multiplying the staged `BytecodeValClaim(s)` opening. In full mode this
     /// factor is folded into `StageValue(s)` instead.
     StageCycleEq(usize),
     SpartanOuterRaf,
@@ -492,7 +492,7 @@ pub enum JoltVirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
-    BytecodeValStage(usize),
+    BytecodeValClaim(usize),
     BytecodeReadRafAddrClaim,
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
@@ -527,6 +527,20 @@ pub enum JoltOpeningId {
 }
 
 impl JoltOpeningId {
+    /// The polynomial this opening refers to; advice openings resolve to
+    /// their committed advice polynomials.
+    pub const fn polynomial_id(self) -> JoltPolynomialId {
+        match self {
+            Self::Polynomial { polynomial, .. } => polynomial,
+            Self::TrustedAdvice { .. } => {
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::TrustedAdvice)
+            }
+            Self::UntrustedAdvice { .. } => {
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::UntrustedAdvice)
+            }
+        }
+    }
+
     pub fn polynomial(polynomial: impl Into<JoltPolynomialId>, relation: JoltRelationId) -> Self {
         Self::Polynomial {
             polynomial: polynomial.into(),

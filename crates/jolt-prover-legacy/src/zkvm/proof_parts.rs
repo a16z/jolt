@@ -278,6 +278,43 @@ impl CanonicalSerialize for CommittedPolynomial {
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
             Self::ProgramImageInit => 8u8.serialize_with_mode(writer, compress),
+            Self::UnsignedIncChunk(i) => {
+                9u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::UnsignedIncMsb => 10u8.serialize_with_mode(writer, compress),
+            Self::BytecodeRegisterSelector(chunk, lane) => {
+                11u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*chunk).unwrap()).serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*lane).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::BytecodeCircuitFlag(chunk, flag) => {
+                12u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*chunk).unwrap()).serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*flag).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::BytecodeInstructionFlag(chunk, flag) => {
+                13u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*chunk).unwrap()).serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*flag).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::BytecodeLookupSelector(chunk) => {
+                14u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*chunk).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::BytecodeRafFlag(chunk) => {
+                15u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*chunk).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::BytecodeUnexpandedPcBytes(chunk) => {
+                16u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*chunk).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::BytecodeImmBytes(chunk) => {
+                17u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*chunk).unwrap()).serialize_with_mode(writer, compress)
+            }
+            Self::ProgramImageBytes => 18u8.serialize_with_mode(writer, compress),
         }
     }
 
@@ -287,11 +324,21 @@ impl CanonicalSerialize for CommittedPolynomial {
             | Self::RamInc
             | Self::TrustedAdvice
             | Self::UntrustedAdvice
-            | Self::ProgramImageInit => 1,
+            | Self::ProgramImageInit
+            | Self::UnsignedIncMsb
+            | Self::ProgramImageBytes => 1,
             Self::InstructionRa(_)
             | Self::BytecodeRa(_)
             | Self::RamRa(_)
-            | Self::BytecodeChunk(_) => 2,
+            | Self::BytecodeChunk(_)
+            | Self::UnsignedIncChunk(_)
+            | Self::BytecodeLookupSelector(_)
+            | Self::BytecodeRafFlag(_)
+            | Self::BytecodeUnexpandedPcBytes(_)
+            | Self::BytecodeImmBytes(_) => 2,
+            Self::BytecodeRegisterSelector(..)
+            | Self::BytecodeCircuitFlag(..)
+            | Self::BytecodeInstructionFlag(..) => 3,
         }
     }
 }
@@ -331,6 +378,43 @@ impl CanonicalDeserialize for CommittedPolynomial {
                     Self::BytecodeChunk(i as usize)
                 }
                 8 => Self::ProgramImageInit,
+                9 => {
+                    let i = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::UnsignedIncChunk(i as usize)
+                }
+                10 => Self::UnsignedIncMsb,
+                11 => {
+                    let chunk = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let lane = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeRegisterSelector(chunk as usize, lane as usize)
+                }
+                12 => {
+                    let chunk = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let flag = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeCircuitFlag(chunk as usize, flag as usize)
+                }
+                13 => {
+                    let chunk = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+                    let flag = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeInstructionFlag(chunk as usize, flag as usize)
+                }
+                14 => {
+                    let chunk = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeLookupSelector(chunk as usize)
+                }
+                15 => {
+                    let chunk = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeRafFlag(chunk as usize)
+                }
+                16 => {
+                    let chunk = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeUnexpandedPcBytes(chunk as usize)
+                }
+                17 => {
+                    let chunk = u8::deserialize_with_mode(reader, compress, validate)?;
+                    Self::BytecodeImmBytes(chunk as usize)
+                }
+                18 => Self::ProgramImageBytes,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -397,7 +481,7 @@ impl CanonicalSerialize for VirtualPolynomial {
             }
             Self::BytecodeReadRafAddrClaim => 39u8.serialize_with_mode(&mut writer, compress),
             Self::BooleanityAddrClaim => 40u8.serialize_with_mode(&mut writer, compress),
-            Self::BytecodeValStage(i) => {
+            Self::BytecodeValClaim(i) => {
                 41u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*i).unwrap()).serialize_with_mode(&mut writer, compress)
             }
@@ -405,6 +489,7 @@ impl CanonicalSerialize for VirtualPolynomial {
                 42u8.serialize_with_mode(&mut writer, compress)
             }
             Self::ProgramImageInitContributionRw => 43u8.serialize_with_mode(&mut writer, compress),
+            Self::FusedInc => 44u8.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -448,12 +533,13 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::BytecodeReadRafAddrClaim
             | Self::BooleanityAddrClaim
             | Self::BytecodeClaimReductionIntermediate
-            | Self::ProgramImageInitContributionRw => 1,
+            | Self::ProgramImageInitContributionRw
+            | Self::FusedInc => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
             | Self::LookupTableFlag(_)
-            | Self::BytecodeValStage(_) => 2,
+            | Self::BytecodeValClaim(_) => 2,
         }
     }
 }
@@ -531,12 +617,224 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 40 => Self::BooleanityAddrClaim,
                 41 => {
                     let i = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-                    Self::BytecodeValStage(i as usize)
+                    Self::BytecodeValClaim(i as usize)
                 }
                 42 => Self::BytecodeClaimReductionIntermediate,
                 43 => Self::ProgramImageInitContributionRw,
+                44 => Self::FusedInc,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn roundtrip<T>(value: &T)
+    where
+        T: CanonicalSerialize + CanonicalDeserialize + PartialEq + std::fmt::Debug,
+    {
+        let mut bytes = Vec::new();
+        value
+            .serialize_with_mode(&mut bytes, Compress::Yes)
+            .unwrap();
+        assert_eq!(
+            bytes.len(),
+            value.serialized_size(Compress::Yes),
+            "serialized_size disagrees with the encoding for {value:?}"
+        );
+        let decoded = T::deserialize_with_mode(bytes.as_slice(), Compress::Yes, Validate::Yes)
+            .unwrap_or_else(|error| panic!("decode failed for {value:?}: {error:?}"));
+        assert_eq!(&decoded, value);
+    }
+
+    /// One instance of every variant. The exhaustive match below makes adding
+    /// a `CommittedPolynomial` variant without extending this list a compile
+    /// error.
+    fn all_committed() -> Vec<CommittedPolynomial> {
+        fn coverage_witness(polynomial: CommittedPolynomial) {
+            match polynomial {
+                CommittedPolynomial::RdInc
+                | CommittedPolynomial::RamInc
+                | CommittedPolynomial::InstructionRa(_)
+                | CommittedPolynomial::BytecodeRa(_)
+                | CommittedPolynomial::RamRa(_)
+                | CommittedPolynomial::TrustedAdvice
+                | CommittedPolynomial::UntrustedAdvice
+                | CommittedPolynomial::BytecodeChunk(_)
+                | CommittedPolynomial::ProgramImageInit
+                | CommittedPolynomial::UnsignedIncChunk(_)
+                | CommittedPolynomial::UnsignedIncMsb
+                | CommittedPolynomial::BytecodeRegisterSelector(..)
+                | CommittedPolynomial::BytecodeCircuitFlag(..)
+                | CommittedPolynomial::BytecodeInstructionFlag(..)
+                | CommittedPolynomial::BytecodeLookupSelector(_)
+                | CommittedPolynomial::BytecodeRafFlag(_)
+                | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
+                | CommittedPolynomial::BytecodeImmBytes(_)
+                | CommittedPolynomial::ProgramImageBytes => {}
+            }
+        }
+        let all = vec![
+            CommittedPolynomial::RdInc,
+            CommittedPolynomial::RamInc,
+            CommittedPolynomial::InstructionRa(3),
+            CommittedPolynomial::BytecodeRa(2),
+            CommittedPolynomial::RamRa(1),
+            CommittedPolynomial::TrustedAdvice,
+            CommittedPolynomial::UntrustedAdvice,
+            CommittedPolynomial::BytecodeChunk(4),
+            CommittedPolynomial::ProgramImageInit,
+            CommittedPolynomial::UnsignedIncChunk(5),
+            CommittedPolynomial::UnsignedIncMsb,
+            CommittedPolynomial::BytecodeRegisterSelector(1, 2),
+            CommittedPolynomial::BytecodeCircuitFlag(0, 7),
+            CommittedPolynomial::BytecodeInstructionFlag(1, 3),
+            CommittedPolynomial::BytecodeLookupSelector(0),
+            CommittedPolynomial::BytecodeRafFlag(1),
+            CommittedPolynomial::BytecodeUnexpandedPcBytes(0),
+            CommittedPolynomial::BytecodeImmBytes(1),
+            CommittedPolynomial::ProgramImageBytes,
+        ];
+        all.iter().copied().for_each(coverage_witness);
+        all
+    }
+
+    /// One instance of every variant, same compile-time coverage pattern as
+    /// [`all_committed`].
+    fn all_virtual() -> Vec<VirtualPolynomial> {
+        fn coverage_witness(polynomial: VirtualPolynomial) {
+            match polynomial {
+                VirtualPolynomial::PC
+                | VirtualPolynomial::UnexpandedPC
+                | VirtualPolynomial::NextPC
+                | VirtualPolynomial::NextUnexpandedPC
+                | VirtualPolynomial::NextIsNoop
+                | VirtualPolynomial::NextIsVirtual
+                | VirtualPolynomial::NextIsFirstInSequence
+                | VirtualPolynomial::LeftLookupOperand
+                | VirtualPolynomial::RightLookupOperand
+                | VirtualPolynomial::LeftInstructionInput
+                | VirtualPolynomial::RightInstructionInput
+                | VirtualPolynomial::Product
+                | VirtualPolynomial::ShouldJump
+                | VirtualPolynomial::ShouldBranch
+                | VirtualPolynomial::Rd
+                | VirtualPolynomial::Imm
+                | VirtualPolynomial::Rs1Value
+                | VirtualPolynomial::Rs2Value
+                | VirtualPolynomial::RdWriteValue
+                | VirtualPolynomial::Rs1Ra
+                | VirtualPolynomial::Rs2Ra
+                | VirtualPolynomial::RdWa
+                | VirtualPolynomial::LookupOutput
+                | VirtualPolynomial::InstructionRaf
+                | VirtualPolynomial::InstructionRafFlag
+                | VirtualPolynomial::InstructionRa(_)
+                | VirtualPolynomial::RegistersVal
+                | VirtualPolynomial::RamAddress
+                | VirtualPolynomial::RamRa
+                | VirtualPolynomial::RamReadValue
+                | VirtualPolynomial::RamWriteValue
+                | VirtualPolynomial::RamVal
+                | VirtualPolynomial::RamValInit
+                | VirtualPolynomial::RamValFinal
+                | VirtualPolynomial::RamHammingWeight
+                | VirtualPolynomial::UnivariateSkip
+                | VirtualPolynomial::OpFlags(_)
+                | VirtualPolynomial::InstructionFlags(_)
+                | VirtualPolynomial::LookupTableFlag(_)
+                | VirtualPolynomial::BytecodeReadRafAddrClaim
+                | VirtualPolynomial::BooleanityAddrClaim
+                | VirtualPolynomial::BytecodeValClaim(_)
+                | VirtualPolynomial::BytecodeClaimReductionIntermediate
+                | VirtualPolynomial::ProgramImageInitContributionRw
+                | VirtualPolynomial::FusedInc => {}
+            }
+        }
+        let all = vec![
+            VirtualPolynomial::PC,
+            VirtualPolynomial::UnexpandedPC,
+            VirtualPolynomial::NextPC,
+            VirtualPolynomial::NextUnexpandedPC,
+            VirtualPolynomial::NextIsNoop,
+            VirtualPolynomial::NextIsVirtual,
+            VirtualPolynomial::NextIsFirstInSequence,
+            VirtualPolynomial::LeftLookupOperand,
+            VirtualPolynomial::RightLookupOperand,
+            VirtualPolynomial::LeftInstructionInput,
+            VirtualPolynomial::RightInstructionInput,
+            VirtualPolynomial::Product,
+            VirtualPolynomial::ShouldJump,
+            VirtualPolynomial::ShouldBranch,
+            VirtualPolynomial::Rd,
+            VirtualPolynomial::Imm,
+            VirtualPolynomial::Rs1Value,
+            VirtualPolynomial::Rs2Value,
+            VirtualPolynomial::RdWriteValue,
+            VirtualPolynomial::Rs1Ra,
+            VirtualPolynomial::Rs2Ra,
+            VirtualPolynomial::RdWa,
+            VirtualPolynomial::LookupOutput,
+            VirtualPolynomial::InstructionRaf,
+            VirtualPolynomial::InstructionRafFlag,
+            VirtualPolynomial::InstructionRa(6),
+            VirtualPolynomial::RegistersVal,
+            VirtualPolynomial::RamAddress,
+            VirtualPolynomial::RamRa,
+            VirtualPolynomial::RamReadValue,
+            VirtualPolynomial::RamWriteValue,
+            VirtualPolynomial::RamVal,
+            VirtualPolynomial::RamValInit,
+            VirtualPolynomial::RamValFinal,
+            VirtualPolynomial::RamHammingWeight,
+            VirtualPolynomial::UnivariateSkip,
+            VirtualPolynomial::OpFlags(CircuitFlags::Store),
+            VirtualPolynomial::InstructionFlags(InstructionFlags::from_repr(0).unwrap()),
+            VirtualPolynomial::LookupTableFlag(7),
+            VirtualPolynomial::BytecodeReadRafAddrClaim,
+            VirtualPolynomial::BooleanityAddrClaim,
+            VirtualPolynomial::BytecodeValClaim(1),
+            VirtualPolynomial::BytecodeClaimReductionIntermediate,
+            VirtualPolynomial::ProgramImageInitContributionRw,
+            VirtualPolynomial::FusedInc,
+        ];
+        all.iter().copied().for_each(coverage_witness);
+        all
+    }
+
+    fn all_sumchecks() -> impl Iterator<Item = SumcheckId> {
+        (0..SumcheckId::COUNT).map(|i| SumcheckId::from_u8(u8::try_from(i).unwrap()).unwrap())
+    }
+
+    #[test]
+    fn committed_polynomial_codec_roundtrips_every_variant() {
+        for polynomial in all_committed() {
+            roundtrip(&polynomial);
+        }
+    }
+
+    #[test]
+    fn virtual_polynomial_codec_roundtrips_every_variant() {
+        for polynomial in all_virtual() {
+            roundtrip(&polynomial);
+        }
+    }
+
+    #[test]
+    fn opening_id_codec_roundtrips_every_variant_and_sumcheck() {
+        for sumcheck in all_sumchecks() {
+            roundtrip(&OpeningId::UntrustedAdvice(sumcheck));
+            roundtrip(&OpeningId::TrustedAdvice(sumcheck));
+            for polynomial in all_committed() {
+                roundtrip(&OpeningId::committed(polynomial, sumcheck));
+            }
+            for polynomial in all_virtual() {
+                roundtrip(&OpeningId::virt(polynomial, sumcheck));
+            }
+        }
     }
 }

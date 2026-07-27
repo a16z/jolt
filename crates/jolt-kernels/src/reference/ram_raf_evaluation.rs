@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::cycle_fold;
 use crate::{
@@ -30,7 +30,7 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
         let relation = inputs.relation;

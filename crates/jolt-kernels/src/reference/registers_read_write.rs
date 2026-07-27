@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::{dense_view, eq_table, tile};
 use crate::{
@@ -31,7 +31,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for ReferenceBack
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {

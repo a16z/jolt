@@ -55,7 +55,7 @@ pub fn native_setup() -> (
     <AkitaScheme as CommitmentScheme>::ProverSetup,
     <AkitaScheme as CommitmentScheme>::VerifierSetup,
 ) {
-    setup_for(4, 2, layout(7))
+    setup_for(13, 2, layout(7))
 }
 
 /// PCS setup pair sized for one packed commitment object.

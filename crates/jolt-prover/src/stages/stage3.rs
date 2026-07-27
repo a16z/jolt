@@ -21,7 +21,7 @@ use jolt_verifier::stages::stage3::outputs::{
     Stage3Sumchecks,
 };
 use jolt_verifier::stages::stage3::stage3_input_values_from_upstream;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::{ProverConfig, ProverError, StageProver as _};
 
@@ -41,7 +41,7 @@ pub fn prove_stage3<F, PCS, C, T>(
     config: &ProverConfig,
     stage1: &Stage1ClearOutput<F>,
     stage2: &Stage2ClearOutput<F>,
-    witness: &dyn JoltVmWitnessPlane<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage3ProverOutput<F, C>, ProverError<F>>
 where

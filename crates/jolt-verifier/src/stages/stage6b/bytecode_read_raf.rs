@@ -399,14 +399,14 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
     pub stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES],
     pub entry_bytecode_index: usize,
     pub committed_chunk_bits: usize,
-    /// The staged `BytecodeValStage` opening values from the address phase.
+    /// The staged `BytecodeValClaim` opening values from the address phase.
     /// Clear-only (empty in ZK, where `expected_output` never runs).
     pub val_stages: Vec<F>,
 }
 
 /// The stage-6b bytecode read-RAF cycle phase, committed-program mode.
 ///
-/// Mirrors [`BytecodeReadRaf`] but folds the staged `BytecodeValStage` openings
+/// Mirrors [`BytecodeReadRaf`] but folds the staged `BytecodeValClaim` openings
 /// into the output expression and draws its publics from a committed bytecode
 /// evaluation (`read_raf_committed_public_values`) rather than the full bytecode
 /// table. Like the full-mode relation it OVERRIDES
@@ -582,7 +582,7 @@ impl<F: Field> BytecodeReadRafCycle<F> {
     }
 
     /// The address-only bytecode-table fold at `r_address` — the constant
-    /// `BytecodeValStage` values the cycle kernel's tables carry. Full mode
+    /// `BytecodeValClaim` values the cycle kernel's tables carry. Full mode
     /// computes the fold at construction (clear only); committed mode's
     /// constants ARE the stage-6a staged raw values.
     pub fn stage_values_at_r_address(&self) -> Result<[F; NUM_BYTECODE_VAL_STAGES], VerifierError> {
@@ -614,7 +614,7 @@ impl<F: Field> BytecodeReadRafCycle<F> {
 /// `derive_opening_points` — is overridden to dispatch per variant, converting
 /// the anchor's `Challenges` into the full variant's. It stays sound only while
 /// those overrides stand and the batch keeps `no_output_shape` (the
-/// committed output `Expr` references the staged `BytecodeValStage` openings,
+/// committed output `Expr` references the staged `BytecodeValClaim` openings,
 /// which the full mode never produces).
 impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
     type Symbolic = CycleSymbolicCommitted;

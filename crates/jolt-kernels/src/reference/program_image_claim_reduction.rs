@@ -15,7 +15,7 @@ use jolt_field::Field;
 
 use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::ProgramImageReductionCyclePhase;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::eq_table;
 use crate::committed_program::program_image_words_padded;
@@ -26,7 +26,7 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Referenc
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, ProgramImageReductionCyclePhase<F>>,
     ) -> Result<
         Box<dyn SumcheckKernel<F, Relation = ProgramImageReductionCyclePhase<F>>>,

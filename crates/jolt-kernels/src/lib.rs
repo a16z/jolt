@@ -13,7 +13,7 @@
 //! accessors instead of restated constructor arguments. Non-oracle data
 //! reaches a kernel through the two other channels `prepare` receives:
 //! typed witness rows and the full-program view off the
-//! [`JoltVmWitnessPlane`](jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane)
+//! [`JoltWitnessPlane`](jolt_witness::JoltWitnessPlane)
 //! accessors, and [`ProofSession`] carries (cross-stage kernel state, parked
 //! by `SumcheckKernel::park_residue` after extraction — the two-batch
 //! precommitted reduction family in [`precommitted_reduction`] is the

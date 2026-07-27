@@ -33,7 +33,7 @@ use jolt_verifier::stages::stage4::{
     VerifiedRamValCheckAdviceContribution,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
@@ -55,7 +55,7 @@ pub fn prove_stage4<F, PCS, VC, C, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage2: &Stage2ClearOutput<F>,
     stage3: &Stage3ClearOutput<F>,
-    witness: &dyn JoltVmWitnessPlane<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage4ProverOutput<F, C>, ProverError<F>>
 where

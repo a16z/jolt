@@ -23,7 +23,7 @@ use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
 use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::{ProverError, StageProver as _};
 
@@ -41,7 +41,7 @@ pub fn prove_stage1<F, PCS, C, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     log_t: usize,
-    witness: &dyn JoltVmWitnessPlane<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, C>, ProverError<F>>
 where

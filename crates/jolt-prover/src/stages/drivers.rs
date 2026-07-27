@@ -179,12 +179,9 @@ mod twin_tests {
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
     use jolt_verifier::VerifierError;
-    use jolt_witness::protocols::jolt_vm::{
-        JoltVmNamespace, JoltVmProgramView, JoltVmStage5InstructionReadRafRows, JoltVmStage6Rows,
-        JoltVmWitnessPlane, Stage5InstructionReadRafRow,
-    };
     use jolt_witness::{
-        OracleDescriptor, OracleRef, PolynomialView, ViewRequirement, WitnessError, WitnessProvider,
+        ChunkVisitor, JoltWitnessOracle, JoltWitnessPlane, ProgramSource, RowSource, Shape,
+        WitnessError,
     };
 
     use crate::driver::{impl_stage_prover, Proved};
@@ -510,7 +507,7 @@ mod twin_tests {
                 fn prepare(
                     &self,
                     session: &mut ProofSession,
-                    _witness: &dyn JoltVmWitnessPlane<Fr>,
+                    _witness: &dyn JoltWitnessPlane<Fr>,
                     inputs: ProverInputs<'_, Fr, $relation<Fr>>,
                 ) -> Result<
                     Box<dyn SumcheckKernel<Fr, Relation = $relation<Fr>>>,
@@ -541,7 +538,7 @@ mod twin_tests {
         fn prepare(
             &self,
             session: &mut ProofSession,
-            _witness: &dyn JoltVmWitnessPlane<Fr>,
+            _witness: &dyn JoltWitnessPlane<Fr>,
             inputs: ProverInputs<'_, Fr, ToyDelta<Fr>>,
         ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = ToyDelta<Fr>>>, KernelError<Fr>> {
             log_prepare(session, "delta");
@@ -564,7 +561,7 @@ mod twin_tests {
         fn prepare(
             &self,
             session: &mut ProofSession,
-            _witness: &dyn JoltVmWitnessPlane<Fr>,
+            _witness: &dyn JoltWitnessPlane<Fr>,
             _inputs: ProverInputs<'_, Fr, ToyGamma<Fr>>,
         ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = ToyGamma<Fr>>>, KernelError<Fr>> {
             log_prepare(session, "gamma");
@@ -610,57 +607,49 @@ mod twin_tests {
     /// A witness plane the toy kernels never read: every access errors.
     struct NoWitness;
 
-    impl WitnessProvider<Fr, JoltVmNamespace> for NoWitness {
-        fn describe_oracle(
-            &self,
-            _oracle: OracleRef<JoltVmNamespace>,
-        ) -> Result<OracleDescriptor<JoltVmNamespace>, WitnessError> {
-            Err(WitnessError::UnsupportedView {
-                view: "toy driver twin witness",
-            })
-        }
-
-        fn view_requirements(
-            &self,
-            _oracle: OracleRef<JoltVmNamespace>,
-        ) -> Result<Vec<ViewRequirement<JoltVmNamespace>>, WitnessError> {
-            Err(WitnessError::UnsupportedView {
-                view: "toy driver twin witness",
-            })
-        }
-
-        fn oracle_view(
-            &self,
-            _requirement: ViewRequirement<JoltVmNamespace>,
-        ) -> Result<PolynomialView<'_, Fr, JoltVmNamespace>, WitnessError> {
-            Err(WitnessError::UnsupportedView {
-                view: "toy driver twin witness",
-            })
+    impl NoWitness {
+        fn unavailable() -> WitnessError {
+            WitnessError::UnavailableView {
+                label: "toy driver twin witness",
+            }
         }
     }
 
-    impl JoltVmStage5InstructionReadRafRows for NoWitness {
-        fn stage5_instruction_read_raf_rows(
+    impl JoltWitnessOracle<Fr> for NoWitness {
+        fn shape(
             &self,
-            _log_t: usize,
-        ) -> Result<Vec<Stage5InstructionReadRafRow>, WitnessError> {
-            Err(WitnessError::UnsupportedView {
-                view: "toy driver twin witness",
-            })
+            _id: jolt_claims::protocols::jolt::JoltPolynomialId,
+        ) -> Result<Shape, WitnessError> {
+            Err(Self::unavailable())
+        }
+
+        fn oracle_table(
+            &self,
+            _id: jolt_claims::protocols::jolt::JoltPolynomialId,
+        ) -> Result<Vec<Fr>, WitnessError> {
+            Err(Self::unavailable())
+        }
+
+        fn committed_order(
+            &self,
+        ) -> Result<Vec<jolt_claims::protocols::jolt::JoltCommittedPolynomial>, WitnessError>
+        {
+            Err(Self::unavailable())
         }
     }
 
-    impl JoltVmStage6Rows for NoWitness {
-        fn stage6_rows(
+    impl RowSource for NoWitness {
+        fn visit_chunks(
             &self,
-        ) -> Result<Vec<jolt_witness::protocols::jolt_vm::JoltVmStage6Row>, WitnessError> {
-            Err(WitnessError::UnsupportedView {
-                view: "toy driver twin witness",
-            })
+            _range: std::ops::Range<usize>,
+            _chunk_size: usize,
+            _visitor: &mut ChunkVisitor<'_>,
+        ) -> Result<(), WitnessError> {
+            Err(Self::unavailable())
         }
     }
 
-    impl JoltVmProgramView for NoWitness {
+    impl ProgramSource for NoWitness {
         #[expect(
             clippy::unimplemented,
             reason = "the accessor returns a borrow, so it cannot report the every-access error the other NoWitness accessors do; the toy kernels never read the program"

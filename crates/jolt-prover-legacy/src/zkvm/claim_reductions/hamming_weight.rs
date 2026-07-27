@@ -89,7 +89,9 @@ use crate::field::JoltField;
 #[cfg(feature = "prover")]
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 #[cfg(feature = "prover")]
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::poly::multilinear_polynomial::{
+    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+};
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "prover")]
@@ -153,6 +155,12 @@ pub struct HammingWeightClaimReductionParams<F: JoltField> {
     pub log_k_chunk: usize,
     /// Polynomial labels: InstructionRa(0..d), BytecodeRa(0..d), RamRa(0..d)
     pub polynomial_types: Vec<CommittedPolynomial>,
+    /// Lattice-only increment one-hot Booleanity claims, chunks followed by MSB.
+    pub inc_booleanity_claims: Vec<F>,
+    /// Lattice-only shifted fused-increment claim.
+    pub fused_inc_claim: Option<F>,
+    /// Place weights for the increment columns, chunks followed by `2^64` for MSB.
+    pub inc_weights: Vec<F>,
 }
 
 impl<F: JoltField> HammingWeightClaimReductionParams<F> {
@@ -259,7 +267,59 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             claims_virt,
             log_k_chunk,
             polynomial_types,
+            inc_booleanity_claims: Vec::new(),
+            fused_inc_claim: None,
+            inc_weights: Vec::new(),
         }
+    }
+
+    pub fn new_lattice(
+        one_hot_params: &OneHotParams,
+        accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        let mut params = Self::new(one_hot_params, accumulator, transcript);
+        let chunk_count = 64 / one_hot_params.log_k_chunk;
+        params.inc_booleanity_claims = (0..chunk_count)
+            .map(|index| {
+                accumulator
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::UnsignedIncChunk(index),
+                        SumcheckId::Booleanity,
+                    )
+                    .1
+            })
+            .chain(core::iter::once(
+                accumulator
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::UnsignedIncMsb,
+                        SumcheckId::Booleanity,
+                    )
+                    .1,
+            ))
+            .collect();
+        params.fused_inc_claim = Some(
+            accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::FusedInc,
+                    SumcheckId::BytecodeReadRaf,
+                )
+                .1,
+        );
+        params.inc_weights = (0..chunk_count)
+            .map(|index| F::from_u128(1u128 << (one_hot_params.log_k_chunk * index)))
+            .chain(core::iter::once(F::from_u128(1u128 << 64)))
+            .collect();
+
+        let gamma = params.gamma_powers[1];
+        let total_powers =
+            3 * params.polynomial_types.len() + 2 * params.inc_booleanity_claims.len() + 1;
+        let mut power = params.gamma_powers.last().copied().unwrap_or(F::one()) * gamma;
+        while params.gamma_powers.len() < total_powers {
+            params.gamma_powers.push(power);
+            power *= gamma;
+        }
+        params
     }
 }
 
@@ -271,6 +331,15 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
             claim += self.gamma_powers[3 * i] * self.claims_hw[i];
             claim += self.gamma_powers[3 * i + 1] * self.claims_bool[i];
             claim += self.gamma_powers[3 * i + 2] * self.claims_virt[i];
+        }
+        let offset = 3 * self.polynomial_types.len();
+        for (index, booleanity) in self.inc_booleanity_claims.iter().enumerate() {
+            claim += self.gamma_powers[offset + 2 * index];
+            claim += self.gamma_powers[offset + 2 * index + 1] * *booleanity;
+        }
+        if let Some(fused_inc) = self.fused_inc_claim {
+            claim += self.gamma_powers[offset + 2 * self.inc_booleanity_claims.len()]
+                * (fused_inc + F::from_u128(1u128 << 64));
         }
         claim
     }
@@ -426,6 +495,7 @@ pub struct HammingWeightClaimReductionProver<F: JoltField> {
     eq_bool: MultilinearPolynomial<F>,
     /// eq(r_addr_virt_i, ·) for each ra polynomial (N total)
     eq_virt: Vec<MultilinearPolynomial<F>>,
+    identity: Option<crate::poly::identity_poly::IdentityPolynomial<F>>,
     #[allocative(skip)]
     pub params: HammingWeightClaimReductionParams<F>,
 }
@@ -477,8 +547,46 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
             G,
             eq_bool,
             eq_virt,
+            identity: None,
             params,
         }
+    }
+
+    #[cfg(feature = "akita")]
+    pub fn initialize_lattice<C, PCS>(
+        params: HammingWeightClaimReductionParams<F>,
+        trace: &[Cycle],
+        preprocessing: &JoltProverPreprocessing<F, C, PCS>,
+        one_hot_params: &OneHotParams,
+        one_hot_columns: &[std::sync::Arc<Vec<Option<u8>>>],
+    ) -> Self
+    where
+        C: JoltCurve<F = F>,
+        PCS: CommitmentScheme<Field = F>,
+    {
+        // `params.r_cycle` is BIG_ENDIAN, so the head half of the point
+        // indexes the high cycle bits: eq(r, j) = e_hi[j >> lo] · e_lo[j & mask].
+        let lo_bits = params.r_cycle.len() / 2;
+        let hi_bits = params.r_cycle.len() - lo_bits;
+        let (r_hi, r_lo) = params.r_cycle.split_at(hi_bits);
+        let (e_hi, e_lo) = rayon::join(
+            || EqPolynomial::<F>::evals(r_hi),
+            || EqPolynomial::<F>::evals(r_lo),
+        );
+        let increment_g = crate::subprotocols::booleanity::one_hot_pushforwards(
+            one_hot_columns,
+            &e_hi,
+            &e_lo,
+            1usize << params.log_k_chunk,
+        )
+        .into_iter()
+        .map(MultilinearPolynomial::from);
+        let mut prover = Self::initialize(params, trace, preprocessing, one_hot_params);
+        prover.G.extend(increment_g);
+        prover.identity = Some(crate::poly::identity_poly::IdentityPolynomial::new(
+            one_hot_params.log_k_chunk,
+        ));
+        prover
     }
 }
 
@@ -522,6 +630,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                         * (gamma_hw + gamma_bool * eq_b_evals[k] + gamma_virt * eq_v_evals[k]);
                 }
             }
+
+            if let Some(identity) = &self.identity {
+                let id_evals = identity.sumcheck_evals(j, DEGREE_BOUND, BindingOrder::LowToHigh);
+                let offset = 3 * N;
+                let decode =
+                    self.params.gamma_powers[offset + 2 * self.params.inc_booleanity_claims.len()];
+                for index in 0..self.params.inc_booleanity_claims.len() {
+                    let g_evals = self.G[N + index]
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let hamming = self.params.gamma_powers[offset + 2 * index];
+                    let booleanity = self.params.gamma_powers[offset + 2 * index + 1];
+                    let weight = self.params.inc_weights[index];
+                    for evaluation in 0..DEGREE_BOUND {
+                        evals[evaluation] += g_evals[evaluation]
+                            * (hamming
+                                + booleanity * eq_b_evals[evaluation]
+                                + decode * weight * id_evals[evaluation]);
+                    }
+                }
+            }
         }
 
         // `from_evals_and_hint` expects [S(0), S(2), ...] (S(1) is reconstructed from the hint).
@@ -536,6 +664,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 self.G.par_iter_mut().for_each(|g| {
                     g.bind_parallel(r_j, BindingOrder::LowToHigh);
                 });
+            });
+            s.spawn(|_| {
+                if let Some(identity) = self.identity.as_mut() {
+                    identity.bind_parallel(r_j, BindingOrder::LowToHigh);
+                }
             });
             s.spawn(|_| {
                 // Single eq_bool polynomial (shared across all families)
@@ -572,6 +705,25 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 r_address.clone(),
                 self.params.r_cycle.clone(),
                 vec![claim],
+            );
+        }
+        let chunk_count = self.params.inc_booleanity_claims.len().saturating_sub(1);
+        for index in 0..chunk_count {
+            accumulator.append_sparse(
+                vec![CommittedPolynomial::UnsignedIncChunk(index)],
+                SumcheckId::HammingWeightClaimReduction,
+                r_address.clone(),
+                self.params.r_cycle.clone(),
+                vec![self.G[N + index].final_sumcheck_claim()],
+            );
+        }
+        if !self.params.inc_booleanity_claims.is_empty() {
+            accumulator.append_sparse(
+                vec![CommittedPolynomial::UnsignedIncMsb],
+                SumcheckId::HammingWeightClaimReduction,
+                r_address,
+                self.params.r_cycle.clone(),
+                vec![self.G[N + chunk_count].final_sumcheck_claim()],
             );
         }
     }

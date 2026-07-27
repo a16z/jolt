@@ -19,7 +19,7 @@
 //! The raw `Val_s` tables and the `Int` identity table bind SEPARATELY (the
 //! per-round extension is linear, so the split computes field-identical
 //! messages to a pre-folded table): committed-program mode stages the five
-//! raw bound `Val_s` values as `BytecodeValStage` wire claims, which the
+//! raw bound `Val_s` values as `BytecodeValClaim` wire claims, which the
 //! folded table cannot produce.
 
 use std::collections::BTreeMap;
@@ -44,7 +44,8 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::witnesses::BytecodePc;
+use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
 use super::views::{address_fold, eq_table};
 use crate::{
@@ -52,11 +53,18 @@ use crate::{
     SumcheckKernel, SumcheckKernelError,
 };
 
+/// The per-cycle witness of the bytecode read+RAF address phase: the PC
+/// pushforward source (no-ops and unmapped rows land on slot 0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
+pub struct BytecodeReadRafWitness {
+    pub bytecode_pc: BytecodePc,
+}
+
 impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
@@ -77,13 +85,11 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBac
             stage4_gammas: &stage_gammas[3],
             stage5_gammas: &stage_gammas[4],
         });
-        // The PC pushforward source: the per-cycle bytecode indices from the
-        // typed stage-6 rows.
-        let bytecode_indices: Vec<usize> = witness
-            .stage6_rows()?
-            .iter()
-            .map(|row| row.bytecode_index)
-            .collect();
+        // The PC pushforward source: the per-cycle bytecode indices,
+        // collected as typed bundles off the witness plane's row source.
+        let rows: Vec<BytecodeReadRafWitness> =
+            collect_bundles(witness, 1 << relation.dimensions().log_t())?;
+        let bytecode_indices: Vec<usize> = rows.iter().map(|row| row.bytecode_pc.0).collect();
         Ok(Box::new(BytecodeReadRafAddressKernel::new(
             relation,
             relation.dimensions(),
@@ -312,7 +318,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
     {

@@ -13,7 +13,7 @@ use jolt_field::Field;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::precommitted_reduction::{AddressReductionKernel, PrecommittedReductionCarry};
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
@@ -49,7 +49,7 @@ where
     fn prepare(
         &self,
         session: &mut ProofSession,
-        _witness: &dyn JoltVmWitnessPlane<F>,
+        _witness: &dyn JoltWitnessPlane<F>,
         _inputs: ProverInputs<'_, F, R>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>> {
         let carry = session.take::<PrecommittedReductionCarry<F, R>>().ok_or(

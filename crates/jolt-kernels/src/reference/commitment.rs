@@ -1,26 +1,36 @@
-//! The reference witness-commitment kernel: streaming.
+//! The reference witness-commitment kernel: a consumer of the witness
+//! stream.
 //!
-//! Under the cycle-major order, dense polynomials stream row-by-row through
-//! [`StreamingCommitment::feed`]-family calls and one-hot polynomials stream
-//! per-cycle hot indices through the column-major one-hot path (a `(K × T)`
-//! matrix whose rows interleave address and cycle-chunk exactly as the
-//! legacy prover's tiered commit did).
+//! Under the cycle-major order every committed column is fed from ONE fused
+//! pass over the trace: the commit consumer implements [`StreamConsumer`]
+//! over the [`CommittedColumnsWitness`] fact bundle, holds every column's
+//! partial commitment state (the runtime arity lives here, in the consumer),
+//! and per row window feeds dense columns through the
+//! [`StreamingCommitment::feed`] family and one-hot columns through the
+//! column-major one-hot path — the same per-column call sequences as
+//! committing each polynomial separately, so the commitments are identical.
 //!
-//! Under the address-major order every polynomial's coefficients scatter
+//! The materializing modes run one pass per column to keep peak memory at
+//! one grid table: under the address-major order coefficients scatter
 //! cycle-block-strided across the whole grid (`index = t · cycle_stride +
-//! k · one_hot_stride`, dense polynomials at address slot zero), so no
-//! cycle-contiguous stream exists; this implementation materializes the
-//! full grid table and feeds dense rows — the same per-row MSMs legacy's
-//! materialized address-major commit runs, full matrix height included (its
-//! trailing identity rows are part of the wire hint).
+//! k · one_hot_stride`, dense polynomials at address slot zero) and a
+//! widened grid (committed-program candidates) packs multiple `k`-blocks of
+//! the flat `(K × T)` one-hot matrix per committed row — both feed the
+//! materialized table's rows, the same per-row MSMs legacy's materialized
+//! commits run, full matrix height included (its trailing identity rows are
+//! part of the wire hint).
 
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+use jolt_claims::protocols::jolt::{
+    JoltCommittedPolynomial, JoltPolynomialId, TracePolynomialOrder,
+};
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::{OracleRef, PolynomialChunk, PolynomialEncoding, WitnessProvider};
+use jolt_witness::witnesses::RaChunkSelector;
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 
-use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
+use crate::commitment::{
+    CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
+};
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
 impl<F, PCS> CommitWitness<F, PCS> for ReferenceBackend
@@ -31,14 +41,47 @@ where
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        source: &dyn RowSource,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
-        ids.iter()
-            .map(|&id| {
-                let (commitment, hint) = commit_one::<F, PCS>(witness, id, grid, setup)?;
+        let kinds = column_kinds(ids, grid)?;
+        let cycles = 1usize << grid.log_t;
+        let row_width = grid.num_columns();
+
+        if grid.order == TracePolynomialOrder::CycleMajor && row_width <= cycles {
+            // The streaming-friendly mode: one fused pass feeds every column.
+            let mut consumers = (FusedColumns::<F, PCS>::begin(
+                &kinds, row_width, grid, setup,
+            ),);
+            stream_witnesses(source, 0..cycles, row_width, &mut consumers)?;
+            return Ok(consumers
+                .0
+                .finish(setup)
+                .into_iter()
+                .zip(ids)
+                .map(|((commitment, hint), &id)| WitnessCommitment {
+                    id,
+                    commitment,
+                    hint,
+                })
+                .collect());
+        }
+
+        // Materializing modes: one pass and one grid table per column.
+        kinds
+            .into_iter()
+            .zip(ids)
+            .map(|(kind, &id)| {
+                let mut consumers = (MaterializedColumn::<F>::begin(kind, grid),);
+                stream_witnesses(source, 0..cycles, row_width, &mut consumers)?;
+                let table = consumers.0.table;
+                let mut partial = PCS::begin(setup);
+                for row in table.chunks(row_width) {
+                    PCS::feed(&mut partial, row, setup);
+                }
+                let (commitment, hint) = PCS::finish_with_hint(partial, setup);
                 Ok(WitnessCommitment {
                     id,
                     commitment,
@@ -47,283 +90,290 @@ where
             })
             .collect()
     }
-}
 
-fn commit_one<F, PCS>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
-    id: JoltCommittedPolynomial,
-    grid: CommitmentGrid,
-    setup: &PCS::ProverSetup,
-) -> Result<(PCS::Output, PCS::OpeningHint), KernelError<F>>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
-{
-    let descriptor = witness.describe_oracle(OracleRef::<JoltVmNamespace>::Committed(id))?;
-    let row_width = grid.num_columns();
-    let mut stream = witness.committed_stream(id, row_width)?;
-
-    if grid.order == TracePolynomialOrder::AddressMajor {
-        // No cycle-contiguous stream exists in this order (see the module
-        // doc): materialize the strided grid table and feed dense rows.
-        let table = materialize_address_major::<F>(&mut stream, descriptor.encoding, grid, id)?;
+    fn commit_advice(
+        &self,
+        _session: &mut ProofSession,
+        witness: &dyn JoltWitnessOracle<F>,
+        id: JoltCommittedPolynomial,
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        // Advice grids are cycle-major with no one-hot placement, and the
+        // column is small: materialize it and feed dense rows.
+        let values = witness.oracle_table(JoltPolynomialId::Committed(id))?;
         let mut partial = PCS::begin(setup);
-        for row in table.chunks(row_width) {
+        for row in values.chunks(grid.num_columns()) {
             PCS::feed(&mut partial, row, setup);
         }
-        return Ok(PCS::finish_with_hint(partial, setup));
+        let (commitment, hint) = PCS::finish_with_hint(partial, setup);
+        Ok(WitnessCommitment {
+            id,
+            commitment,
+            hint,
+        })
+    }
+}
+
+/// A committed column's derivation from the fact bundle: the increments
+/// directly, the one-hots through the consumer-held chunk selector.
+#[derive(Clone, Copy, Debug)]
+enum ColumnKind {
+    RdInc,
+    RamInc,
+    InstructionRa(RaChunkSelector),
+    BytecodeRa(RaChunkSelector),
+    RamRa(RaChunkSelector),
+}
+
+impl ColumnKind {
+    const fn is_one_hot(self) -> bool {
+        matches!(
+            self,
+            Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_)
+        )
     }
 
-    match descriptor.encoding {
-        PolynomialEncoding::OneHot if row_width > (1usize << grid.log_t) => {
-            // A precommitted candidate widened the grid columns past the
-            // trace length, so one committed row packs multiple `k`-blocks of
-            // the flat `(K × T)` matrix — inexpressible through the
-            // column-major one-hot stream. Materialize the flat table and
-            // feed dense rows (the same MSM legacy's materialized path runs).
-            let flat = materialize_one_hot_flat::<F>(
-                &mut stream,
-                descriptor.dimensions.rows(),
-                1usize << grid.log_t,
-            )?;
-            let mut partial = PCS::begin(setup);
-            for row in flat.chunks(row_width) {
-                PCS::feed(&mut partial, row, setup);
+    fn increment(self, row: &CommittedColumnsWitness) -> i128 {
+        match self {
+            Self::RdInc => row.rd_inc.0,
+            Self::RamInc => row.ram_inc.0,
+            Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_) => {
+                unreachable!("one-hot columns go through hot_address")
             }
-            Ok(PCS::finish_with_hint(partial, setup))
         }
-        PolynomialEncoding::OneHot => {
-            // The one-hot `(K × T)` matrix: `K = 2^(log_rows − log_t)` and the
-            // stream yields `row_width` cycles of hot addresses per chunk.
-            let log_k = descriptor
-                .dimensions
-                .log_rows
-                .checked_sub(grid.log_t)
-                .ok_or_else(|| KernelError::InvalidGeometry {
-                    reason: format!("one-hot polynomial {id:?} has fewer variables than log_t"),
-                })?;
-            let one_hot_k =
-                1usize
-                    .checked_shl(log_k as u32)
-                    .ok_or_else(|| KernelError::InvalidGeometry {
-                        reason: format!("one-hot K overflow for {id:?}"),
-                    })?;
-            let mut context = PCS::begin_one_hot_column_major_stream(setup, row_width);
-            let mut chunk_commitments = Vec::new();
-            while let Some(chunk) = stream.next_chunk()? {
-                let PolynomialChunk::OneHot(indices) = chunk else {
-                    return Err(KernelError::UnsupportedChunk {
-                        reason: format!("one-hot polynomial {id:?} streamed a non-one-hot chunk"),
-                    });
-                };
-                chunk_commitments.push(PCS::process_one_hot_chunk(
-                    &mut context,
-                    setup,
-                    one_hot_k,
-                    &indices,
-                ));
-            }
-            Ok(PCS::finish_one_hot_column_major_chunks(
-                setup,
-                one_hot_k,
-                &chunk_commitments,
-            ))
-        }
-        PolynomialEncoding::Dense | PolynomialEncoding::Compact => {
-            let mut partial = PCS::begin(setup);
-            while let Some(chunk) = stream.next_chunk()? {
-                feed_dense_chunk::<F, PCS>(&mut partial, chunk, row_width, id, setup)?;
-            }
-            Ok(PCS::finish_with_hint(partial, setup))
+    }
+
+    fn hot_address(self, row: &CommittedColumnsWitness) -> Option<usize> {
+        match self {
+            Self::InstructionRa(selector) => Some(selector.chunk_u128(row.lookup_index.0)),
+            Self::BytecodeRa(selector) => row.bytecode_pc.0.map(|pc| selector.chunk_usize(pc)),
+            Self::RamRa(selector) => row
+                .ram_address
+                .0
+                .map(|address| selector.chunk_usize(address as usize)),
+            Self::RdInc | Self::RamInc => unreachable!("increments go through increment"),
         }
     }
 }
 
-/// Drain a committed stream into the full `2^total_vars` address-major grid
-/// table: cycle `t`'s coefficients occupy the block at `t · cycle_stride` — a
-/// one-hot's hot address lands at `t · cycle_stride + k · one_hot_stride`, a
-/// dense coefficient at the block's address slot zero (legacy's
-/// `scaled_index = cycle · dense_stride + k · one_hot_stride`). Eager-dense
-/// like the stage-8 joint-opening slot: a reference-tier trade-off.
-fn materialize_address_major<F: Field>(
-    stream: &mut Box<dyn jolt_witness::PolynomialStream<F> + '_>,
-    encoding: PolynomialEncoding,
+/// Resolve `ids` to column derivations. Family sizes come from the ids
+/// themselves (the committed order carries whole families); the chunk width
+/// is the grid's.
+fn column_kinds<F: Field>(
+    ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
-    id: JoltCommittedPolynomial,
-) -> Result<Vec<F>, KernelError<F>> {
-    let cycle_stride = grid.cycle_stride();
-    let one_hot_stride = grid.one_hot_stride();
-    let one_hot_k = 1usize << grid.log_k_chunk;
-    let cycles = 1usize << grid.log_t;
-    let mut table = vec![F::zero(); 1usize << grid.total_vars];
-    let mut cycle = 0usize;
-    let overrun = || KernelError::UnsupportedChunk {
-        reason: format!("stream for {id:?} ran past the trace length"),
+) -> Result<Vec<ColumnKind>, KernelError<F>> {
+    let family_size = |matches: fn(JoltCommittedPolynomial) -> bool| {
+        ids.iter().copied().filter(|&id| matches(id)).count()
     };
-    while let Some(chunk) = stream.next_chunk()? {
-        match chunk {
-            PolynomialChunk::OneHot(indices) => {
-                if encoding != PolynomialEncoding::OneHot {
-                    return Err(KernelError::UnsupportedChunk {
-                        reason: format!("dense polynomial {id:?} streamed a one-hot chunk"),
-                    });
-                }
-                if cycle + indices.len() > cycles {
-                    return Err(overrun());
-                }
-                for hot in indices {
-                    if let Some(k) = hot {
-                        if k >= one_hot_k {
-                            return Err(KernelError::UnsupportedChunk {
-                                reason: format!(
-                                    "one-hot address for {id:?} outside its cycle block"
-                                ),
-                            });
-                        }
-                        table[cycle * cycle_stride + k * one_hot_stride] = F::one();
-                    }
-                    cycle += 1;
-                }
+    let instruction_chunks =
+        family_size(|id| matches!(id, JoltCommittedPolynomial::InstructionRa(_)));
+    let bytecode_chunks = family_size(|id| matches!(id, JoltCommittedPolynomial::BytecodeRa(_)));
+    let ram_chunks = family_size(|id| matches!(id, JoltCommittedPolynomial::RamRa(_)));
+    let selector = |index: usize, chunks: usize| {
+        RaChunkSelector::new(index, chunks, grid.log_k_chunk).map_err(KernelError::from)
+    };
+    ids.iter()
+        .map(|&id| match id {
+            JoltCommittedPolynomial::RdInc => Ok(ColumnKind::RdInc),
+            JoltCommittedPolynomial::RamInc => Ok(ColumnKind::RamInc),
+            JoltCommittedPolynomial::InstructionRa(index) => Ok(ColumnKind::InstructionRa(
+                selector(index, instruction_chunks)?,
+            )),
+            JoltCommittedPolynomial::BytecodeRa(index) => {
+                Ok(ColumnKind::BytecodeRa(selector(index, bytecode_chunks)?))
             }
-            // A zero run's unit is COEFFICIENTS (the dense consumers' reading);
-            // one cycle = one dense coefficient here, but a one-hot cycle is a
-            // K-wide block — reject like every cycle-major one-hot path.
-            PolynomialChunk::Zeros(len) => {
-                if encoding == PolynomialEncoding::OneHot {
-                    return Err(KernelError::UnsupportedChunk {
-                        reason: format!("one-hot polynomial {id:?} streamed a non-one-hot chunk"),
-                    });
-                }
-                if cycle + len > cycles {
-                    return Err(overrun());
-                }
-                cycle += len;
+            JoltCommittedPolynomial::RamRa(index) => {
+                Ok(ColumnKind::RamRa(selector(index, ram_chunks)?))
             }
-            chunk => {
-                if encoding == PolynomialEncoding::OneHot {
-                    return Err(KernelError::UnsupportedChunk {
-                        reason: format!("one-hot polynomial {id:?} streamed a non-one-hot chunk"),
-                    });
-                }
-                let values = dense_chunk_values(chunk, id)?;
-                if cycle + values.len() > cycles {
-                    return Err(overrun());
-                }
-                for value in values {
-                    table[cycle * cycle_stride] = value;
-                    cycle += 1;
-                }
-            }
-        }
-    }
-    Ok(table)
+            _ => Err(KernelError::InvalidGeometry {
+                reason: format!(
+                    "{id:?} is not a trace-derived column (advice commits through commit_advice)"
+                ),
+            }),
+        })
+        .collect()
 }
 
-/// Promote a dense-typed chunk's coefficients to field elements. One-hot and
-/// zero-run chunks are the caller's business (its match arms consume them
-/// before reaching this).
-fn dense_chunk_values<F: Field>(
-    chunk: PolynomialChunk<F>,
-    id: JoltCommittedPolynomial,
-) -> Result<Vec<F>, KernelError<F>> {
-    Ok(match chunk {
-        PolynomialChunk::Dense(values) => values,
-        PolynomialChunk::U64(values) => values.into_iter().map(F::from_u64).collect(),
-        PolynomialChunk::U8(values) => values.into_iter().map(F::from_u8).collect(),
-        PolynomialChunk::U16(values) => values.into_iter().map(F::from_u16).collect(),
-        PolynomialChunk::U32(values) => values.into_iter().map(F::from_u32).collect(),
-        PolynomialChunk::I64(values) => values.into_iter().map(F::from_i64).collect(),
-        PolynomialChunk::I128(values) => values.into_iter().map(F::from_i128).collect(),
-        PolynomialChunk::Zeros(_) | PolynomialChunk::OneHot(_) => {
-            return Err(KernelError::UnsupportedChunk {
-                reason: format!("non-dense chunk for {id:?} reached the dense promotion"),
-            });
-        }
-    })
+/// The fused cycle-major commit consumer: every column's in-progress
+/// commitment, advanced per row window.
+struct FusedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> {
+    columns: Vec<ColumnCommitState<PCS>>,
+    one_hot_k: usize,
+    setup: &'a PCS::ProverSetup,
+    /// Scratch buffers for one row window's column values, reused across
+    /// windows and columns to avoid per-chunk allocation.
+    increments: Vec<i128>,
+    hot_addresses: Vec<Option<usize>>,
 }
 
-/// Drain a one-hot stream (per-cycle hot addresses) into the flat `(K × T)`
-/// 0/1 table (`flat[k · T + cycle]`), `total = K · T` entries long.
-fn materialize_one_hot_flat<F: Field>(
-    stream: &mut Box<dyn jolt_witness::PolynomialStream<F> + '_>,
-    total: usize,
-    cycles: usize,
-) -> Result<Vec<F>, KernelError<F>> {
-    let mut flat = vec![F::zero(); total];
-    let mut cycle = 0usize;
-    while let Some(chunk) = stream.next_chunk()? {
-        let PolynomialChunk::OneHot(indices) = chunk else {
-            return Err(KernelError::UnsupportedChunk {
-                reason: "one-hot polynomial streamed a non-one-hot chunk".to_owned(),
-            });
-        };
-        for hot in indices {
-            if cycle >= cycles {
-                return Err(KernelError::UnsupportedChunk {
-                    reason: "one-hot stream ran past the trace length".to_owned(),
-                });
-            }
-            if let Some(k) = hot {
-                let index = k * cycles + cycle;
-                if index >= total {
-                    return Err(KernelError::UnsupportedChunk {
-                        reason: "one-hot address outside the (K × T) grid".to_owned(),
-                    });
-                }
-                flat[index] = F::one();
-            }
-            cycle += 1;
-        }
-    }
-    Ok(flat)
+/// One column's in-progress commitment: dense columns accumulate a partial
+/// commitment through the `feed` family; one-hot columns accumulate
+/// per-window chunk commitments through the column-major one-hot stream.
+enum ColumnCommitState<PCS: StreamingCommitment> {
+    Increment {
+        kind: ColumnKind,
+        partial: PCS::PartialCommitment,
+    },
+    OneHot {
+        kind: ColumnKind,
+        context: PCS::OneHotStreamContext,
+        chunk_commitments: Vec<PCS::OneHotChunkCommitment>,
+    },
 }
 
-fn feed_dense_chunk<F, PCS>(
-    partial: &mut PCS::PartialCommitment,
-    chunk: PolynomialChunk<F>,
-    row_width: usize,
-    id: JoltCommittedPolynomial,
-    setup: &PCS::ProverSetup,
-) -> Result<(), KernelError<F>>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
+    FusedColumns<'a, F, PCS>
 {
-    match chunk {
-        PolynomialChunk::Dense(values) => PCS::feed(partial, &values, setup),
-        PolynomialChunk::U64(values) => PCS::feed_u64(partial, &values, setup),
-        PolynomialChunk::I128(values) => PCS::feed_i128(partial, &values, setup),
-        PolynomialChunk::U8(values) => {
-            let values: Vec<u64> = values.into_iter().map(u64::from).collect();
-            PCS::feed_u64(partial, &values, setup);
-        }
-        PolynomialChunk::U16(values) => {
-            let values: Vec<u64> = values.into_iter().map(u64::from).collect();
-            PCS::feed_u64(partial, &values, setup);
-        }
-        PolynomialChunk::U32(values) => {
-            let values: Vec<u64> = values.into_iter().map(u64::from).collect();
-            PCS::feed_u64(partial, &values, setup);
-        }
-        PolynomialChunk::I64(values) => {
-            let values: Vec<i128> = values.into_iter().map(i128::from).collect();
-            PCS::feed_i128(partial, &values, setup);
-        }
-        PolynomialChunk::Zeros(len) => {
-            if len % row_width != 0 {
-                return Err(KernelError::UnsupportedChunk {
-                    reason: format!(
-                        "zero run of {len} for {id:?} is not a whole number of {row_width}-wide rows"
-                    ),
-                });
-            }
-            PCS::feed_zeros(partial, row_width, len / row_width, setup);
-        }
-        PolynomialChunk::OneHot(_) => {
-            return Err(KernelError::UnsupportedChunk {
-                reason: format!("dense polynomial {id:?} streamed a one-hot chunk"),
-            });
+    fn begin(
+        kinds: &[ColumnKind],
+        row_width: usize,
+        grid: CommitmentGrid,
+        setup: &'a PCS::ProverSetup,
+    ) -> Self {
+        let columns = kinds
+            .iter()
+            .map(|&kind| {
+                if kind.is_one_hot() {
+                    ColumnCommitState::OneHot {
+                        kind,
+                        context: PCS::begin_one_hot_column_major_stream(setup, row_width),
+                        chunk_commitments: Vec::new(),
+                    }
+                } else {
+                    ColumnCommitState::Increment {
+                        kind,
+                        partial: PCS::begin(setup),
+                    }
+                }
+            })
+            .collect();
+        Self {
+            columns,
+            one_hot_k: 1usize << grid.log_k_chunk,
+            setup,
+            increments: Vec::with_capacity(row_width),
+            hot_addresses: Vec::with_capacity(row_width),
         }
     }
-    Ok(())
+
+    fn finish(self, setup: &PCS::ProverSetup) -> Vec<(PCS::Output, PCS::OpeningHint)> {
+        let one_hot_k = self.one_hot_k;
+        self.columns
+            .into_iter()
+            .map(|column| match column {
+                ColumnCommitState::Increment { partial, .. } => {
+                    PCS::finish_with_hint(partial, setup)
+                }
+                ColumnCommitState::OneHot {
+                    chunk_commitments, ..
+                } => PCS::finish_one_hot_column_major_chunks(setup, one_hot_k, &chunk_commitments),
+            })
+            .collect()
+    }
+}
+
+impl<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamConsumer
+    for FusedColumns<'_, F, PCS>
+{
+    type Witness = CommittedColumnsWitness;
+
+    fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
+        for column in &mut self.columns {
+            match column {
+                ColumnCommitState::Increment { kind, partial } => {
+                    self.increments.clear();
+                    self.increments
+                        .extend(chunk.iter().map(|row| kind.increment(row)));
+                    PCS::feed_i128(partial, &self.increments, self.setup);
+                }
+                ColumnCommitState::OneHot {
+                    kind,
+                    context,
+                    chunk_commitments,
+                } => {
+                    self.hot_addresses.clear();
+                    self.hot_addresses
+                        .extend(chunk.iter().map(|row| kind.hot_address(row)));
+                    chunk_commitments.push(PCS::process_one_hot_chunk(
+                        context,
+                        self.setup,
+                        self.one_hot_k,
+                        &self.hot_addresses,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// A materializing per-column consumer: scatters one column into its full
+/// grid table (address-major strides, or the flat `(K × T)` layout on
+/// widened cycle-major grids), fed row-by-row afterwards.
+struct MaterializedColumn<F> {
+    kind: ColumnKind,
+    table: Vec<F>,
+    cycle: usize,
+    cycle_stride: usize,
+    one_hot_stride: usize,
+    flat_cycles: Option<usize>,
+}
+
+impl<F: Field> MaterializedColumn<F> {
+    fn begin(kind: ColumnKind, grid: CommitmentGrid) -> Self {
+        // Widened cycle-major grids materialize one-hots as the flat (K × T)
+        // matrix and dense columns in the plain cycle-major layout;
+        // address-major grids materialize the full strided table.
+        let (table_len, flat_cycles) = if grid.order == TracePolynomialOrder::CycleMajor {
+            if kind.is_one_hot() {
+                (
+                    (1usize << grid.log_k_chunk) << grid.log_t,
+                    Some(1usize << grid.log_t),
+                )
+            } else {
+                (1usize << grid.log_t, None)
+            }
+        } else {
+            (1usize << grid.total_vars, None)
+        };
+        Self {
+            kind,
+            table: vec![F::zero(); table_len],
+            cycle: 0,
+            cycle_stride: if grid.order == TracePolynomialOrder::AddressMajor {
+                grid.cycle_stride()
+            } else {
+                1
+            },
+            one_hot_stride: if grid.order == TracePolynomialOrder::AddressMajor {
+                grid.one_hot_stride()
+            } else {
+                0
+            },
+            flat_cycles,
+        }
+    }
+}
+
+impl<F: Field> StreamConsumer for MaterializedColumn<F> {
+    type Witness = CommittedColumnsWitness;
+
+    fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
+        for row in chunk {
+            if self.kind.is_one_hot() {
+                if let Some(k) = self.kind.hot_address(row) {
+                    // Selector masks bound k below the grid's chunk width.
+                    let index = match self.flat_cycles {
+                        Some(cycles) => k * cycles + self.cycle,
+                        None => self.cycle * self.cycle_stride + k * self.one_hot_stride,
+                    };
+                    self.table[index] = F::one();
+                }
+            } else {
+                self.table[self.cycle * self.cycle_stride] = F::from_i128(self.kind.increment(row));
+            }
+            self.cycle += 1;
+        }
+    }
 }

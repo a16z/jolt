@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::{cycle_fold, eq_table};
 use crate::{
@@ -31,7 +31,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBac
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
     {

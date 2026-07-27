@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 akita-config = { workspace = true, features = [
-  "schedules-fp128-d64-full",
+  "schedules-fp128-d64-dense",
   "schedules-fp128-d64-onehot",
 ] }
 akita-pcs = { workspace = true, features = ["parallel"] }
@@ -24,6 +24,7 @@ jolt-field = { workspace = true, features = ["akita"] }
 jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-transcript.workspace = true
+rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 

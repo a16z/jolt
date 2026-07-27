@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, EqPlusOnePolynomial, Polynomial};
 use jolt_verifier::stages::stage3::outputs::SpartanShift;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::dense_view;
 use crate::{
@@ -30,7 +30,7 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, SpartanShift<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = SpartanShift<F>>>, KernelError<F>> {
         let relation = inputs.relation;

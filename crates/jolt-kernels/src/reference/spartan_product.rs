@@ -30,8 +30,7 @@ use jolt_poly::lagrange::{
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
 use crate::uniskip::UniskipKernel;
@@ -39,7 +38,7 @@ use crate::ProverInputs;
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
@@ -50,7 +49,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
         session.park(SpartanProductKernel::prepare(log_t, tau_low, witness)?);
         Ok(())
@@ -83,7 +82,7 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRemaind
     fn prepare(
         &self,
         session: &mut ProofSession,
-        _witness: &dyn JoltVmWitnessPlane<F>,
+        _witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, ProductRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
         session
@@ -115,7 +114,7 @@ impl<F: Field> SpartanProductKernel<F> {
     pub fn prepare(
         log_t: usize,
         tau_low: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Self, KernelError<F>> {
         Ok(Self {
             log_t,

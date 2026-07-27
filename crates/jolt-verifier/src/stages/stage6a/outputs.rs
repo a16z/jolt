@@ -28,7 +28,7 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// canonical Fiat-Shamir order.
 ///
 /// The bytecode read-RAF member's wire set extends its output `Expr` with the
-/// committed-program-only staged `BytecodeValStage` openings (see its
+/// committed-program-only staged `BytecodeValClaim` openings (see its
 /// `wire_output_openings` override), so the generated output-shape
 /// count/validator cover the val-stage presence and count.
 ///
@@ -75,7 +75,7 @@ impl<F: Field> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6aClearOutput<F: Field> {
     /// The produced address-phase opening *values* (the staged intermediates
-    /// and, in committed-program mode, the `BytecodeValStage` claims), read by
+    /// and, in committed-program mode, the `BytecodeValClaim` claims), read by
     /// stage 6b as its bytecode/booleanity input claims.
     pub output_values: Stage6aOutputClaims<F>,
     /// The produced address-phase opening *points*, read by stage 6b to construct

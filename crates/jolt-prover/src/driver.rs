@@ -32,7 +32,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::ProverError;
 
@@ -62,7 +62,7 @@ pub trait StageProver<F: Field>: Sized {
         &self,
         kernels: &B,
         session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: &Self::InputClaims,
         input_points: &Self::InputPoints,
         challenges: &Self::Challenges,
@@ -98,7 +98,7 @@ pub trait KernelSource<F: Field, S: StageProver<F>> {
         &self,
         batch: &S,
         session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: &S::InputClaims,
         input_points: &S::InputPoints,
         challenges: &S::Challenges,
@@ -122,7 +122,7 @@ pub fn prepare_required<F, R, B>(
     kernels: &B,
     relation: &R,
     session: &mut ProofSession,
-    witness: &dyn JoltVmWitnessPlane<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     claims: &SumcheckInputClaims<F, R>,
     points: &SumcheckInputPoints<F, R>,
     challenges: &ConcreteSumcheckChallenges<F, R>,
@@ -160,7 +160,7 @@ pub fn prepare_optional<F, R, B>(
     kernels: &B,
     relation: Option<&R>,
     session: &mut ProofSession,
-    witness: &dyn JoltVmWitnessPlane<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     claims: Option<&SumcheckInputClaims<F, R>>,
     points: Option<&SumcheckInputPoints<F, R>>,
     challenges: Option<&ConcreteSumcheckChallenges<F, R>>,
@@ -387,7 +387,7 @@ macro_rules! impl_stage_prover {
                 &self,
                 kernels: &B,
                 session: &mut ::jolt_kernels::ProofSession,
-                witness: &dyn ::jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane<F>,
+                witness: &dyn ::jolt_witness::JoltWitnessPlane<F>,
                 inputs: &Self::InputClaims,
                 input_points: &Self::InputPoints,
                 challenges: &Self::Challenges,
@@ -491,7 +491,7 @@ macro_rules! impl_stage_prover {
                 &self,
                 batch: &$batch<F>,
                 session: &mut ::jolt_kernels::ProofSession,
-                witness: &dyn ::jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane<F>,
+                witness: &dyn ::jolt_witness::JoltWitnessPlane<F>,
                 inputs: &$input_claims<F>,
                 input_points: &$input_points<F>,
                 challenges: &$challenges_ty<F>,

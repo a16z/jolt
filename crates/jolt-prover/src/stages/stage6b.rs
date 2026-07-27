@@ -42,7 +42,7 @@ use jolt_verifier::stages::stage6b::{
     stage6b_input_points_from_upstream, stage6b_input_values_from_upstream,
 };
 use jolt_verifier::CheckedInputs;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
@@ -70,7 +70,7 @@ pub fn prove_stage6b<F, PCS, VC, C, T>(
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
     stage6a: &Stage6aClearOutput<F>,
-    witness: &dyn JoltVmWitnessPlane<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage6bProverOutput<F, C>, ProverError<F>>
 where

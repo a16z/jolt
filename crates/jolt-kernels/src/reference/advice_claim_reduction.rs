@@ -15,14 +15,13 @@ use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedReductionLayout,
 };
 use jolt_field::Field;
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessOracle;
 
 use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::{dense_view, eq_table};
 use crate::opening::AdviceOpeningEvaluation;
@@ -37,7 +36,7 @@ impl<F: Field> AdviceOpeningEvaluation<F> for ReferenceBackend {
         _session: &mut ProofSession,
         kind: JoltAdviceKind,
         point: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<F, KernelError<F>> {
         let table = advice_table(witness, kind, point.len())?;
         let eq = eq_table(point);
@@ -53,7 +52,7 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for ReferenceBackend
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, TrustedAdviceCyclePhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = TrustedAdviceCyclePhase<F>>>, KernelError<F>>
     {
@@ -78,7 +77,7 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for ReferenceBacke
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, UntrustedAdviceCyclePhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = UntrustedAdviceCyclePhase<F>>>, KernelError<F>>
     {
@@ -109,7 +108,7 @@ fn advice_reduction_kernel<F: Field, R>(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
     r_val: &[F],
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessPlane<F>,
 ) -> Result<CycleReductionKernel<F, R>, KernelError<F>> {
     let reduction = layout.precommitted().clone();
     let permutation = reduction.poly_opening_round_permutation_be();
@@ -139,7 +138,7 @@ fn advice_reduction_kernel<F: Field, R>(
 }
 
 fn advice_table<F: Field>(
-    witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+    witness: &dyn JoltWitnessOracle<F>,
     kind: JoltAdviceKind,
     expected_vars: usize,
 ) -> Result<Vec<F>, KernelError<F>> {

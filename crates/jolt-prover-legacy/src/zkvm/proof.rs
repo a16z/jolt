@@ -4,15 +4,18 @@
 )]
 //! Native proof construction for prover outputs accepted by `jolt-verifier`.
 
-#[cfg(not(feature = "zk"))]
+#[cfg(not(any(feature = "zk", feature = "akita")))]
 use crate::zkvm::clear_claims::build_clear_claims;
 pub use jolt_verifier::VerifierError;
+#[cfg(not(feature = "akita"))]
 use jolt_verifier::{
     config::JoltProtocolConfig,
-    preprocessing::{
-        CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
-    },
-    proof::{JoltCommitments, JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder},
+    preprocessing::CommittedProgramPreprocessing,
+    proof::{JoltCommitments, JoltProofClaims, JoltStageProofs},
+};
+use jolt_verifier::{
+    preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing},
+    proof::{JoltProof, TracePolynomialOrder},
 };
 
 #[cfg(not(feature = "zk"))]
@@ -28,15 +31,20 @@ use jolt_crypto::{
 };
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field as VerifierFieldTrait, Fr as VerifierFr};
+#[cfg(not(feature = "akita"))]
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
+use jolt_program::preprocess::JoltProgramPreprocessing;
+#[cfg(not(feature = "akita"))]
+use jolt_program::preprocess::ProgramMetadata;
 use jolt_sumcheck::{
     ClearProof, ClearSumcheckProof, CommittedOutputClaims, CommittedRound, CommittedSumcheckProof,
     CompressedSumcheckProof, SumcheckProof,
 };
 
+#[cfg(not(feature = "akita"))]
+use crate::zkvm::proof_parts::JoltProofParts as ProverProofParts;
 use crate::{
     curve::{Bn254Curve, JoltCurve},
     field::JoltField,
@@ -54,7 +62,6 @@ use crate::{
         config::{OneHotConfig as ProverOneHotConfig, ReadWriteConfig as ProverReadWriteConfig},
         preprocessing::{BlindfoldSetup, JoltSharedPreprocessing},
         program::ProgramPreprocessing as ProverProgramPreprocessing,
-        proof_parts::JoltProofParts as ProverProofParts,
         prover::JoltProverPreprocessing,
     },
 };
@@ -203,6 +210,7 @@ where
                 max_padded_trace_length: shared.max_padded_trace_length,
             })
         }
+        #[cfg(not(feature = "akita"))]
         ProverProgramPreprocessing::Committed(committed) => {
             ProgramPreprocessing::Committed(CommittedProgramPreprocessing {
                 meta: ProgramMetadata {
@@ -228,6 +236,12 @@ where
                         .clone(),
                 ),
             })
+        }
+        // The packed committed-program preprocessing (one ProgramOneHot commitment
+        // plus its chunk count) is assembled by the akita prove path.
+        #[cfg(feature = "akita")]
+        ProverProgramPreprocessing::Committed(_) => {
+            unimplemented!("packed committed-program preprocessing lands with the akita prove path")
         }
     }
 }
@@ -298,7 +312,7 @@ where
     ))
 }
 
-fn convert_read_write_config(config: ProverReadWriteConfig) -> JoltReadWriteConfig {
+pub(crate) fn convert_read_write_config(config: ProverReadWriteConfig) -> JoltReadWriteConfig {
     JoltReadWriteConfig {
         ram_rw_phase1_num_rounds: config.ram_rw_phase1_num_rounds,
         ram_rw_phase2_num_rounds: config.ram_rw_phase2_num_rounds,
@@ -307,7 +321,7 @@ fn convert_read_write_config(config: ProverReadWriteConfig) -> JoltReadWriteConf
     }
 }
 
-fn convert_one_hot_config(config: ProverOneHotConfig) -> JoltOneHotConfig {
+pub(crate) fn convert_one_hot_config(config: ProverOneHotConfig) -> JoltOneHotConfig {
     JoltOneHotConfig {
         log_k_chunk: config.log_k_chunk,
         lookups_ra_virtual_log_k_chunk: config.lookups_ra_virtual_log_k_chunk,
@@ -321,6 +335,7 @@ fn convert_trace_polynomial_order(layout: ProverDoryLayout) -> TracePolynomialOr
     }
 }
 
+#[cfg(not(feature = "akita"))]
 fn convert_proof_commitments<F, PCS>(
     commitments: Vec<PCS::Commitment>,
     one_hot_config: JoltOneHotConfig,
@@ -355,6 +370,7 @@ fn ceil_log_2(value: usize) -> usize {
     }
 }
 
+#[cfg(not(feature = "akita"))]
 fn commitments_from_proof_payload_order<C>(
     commitments: Vec<C>,
     instruction_ra_count: usize,
@@ -397,7 +413,7 @@ fn commitments_from_proof_payload_order<C>(
     ))
 }
 
-#[cfg(not(feature = "zk"))]
+#[cfg(not(any(feature = "zk", feature = "akita")))]
 #[expect(
     clippy::type_complexity,
     reason = "private converter returns the verifier-native proof with projected backend types"
@@ -508,7 +524,7 @@ where
     })
 }
 
-fn convert_uniskip<F, C, FS>(
+pub(crate) fn convert_uniskip<F, C, FS>(
     proof: UniSkipFirstRoundProofVariant<F, C, FS>,
 ) -> SumcheckProof<F::VerifierField, C::VerifierRoundCommitment>
 where
@@ -532,7 +548,7 @@ where
     }
 }
 
-fn convert_sumcheck<F, C, FS>(
+pub(crate) fn convert_sumcheck<F, C, FS>(
     proof: SumcheckInstanceProof<F, C, FS>,
 ) -> SumcheckProof<F::VerifierField, C::VerifierRoundCommitment>
 where
@@ -731,7 +747,7 @@ where
         .collect()
 }
 
-#[cfg(not(feature = "zk"))]
+#[cfg(not(any(feature = "zk", feature = "akita")))]
 #[expect(
     clippy::expect_used,
     reason = "standard prover proofs are expected to carry a complete clear-claim payload"
@@ -756,11 +772,26 @@ where
 }
 
 #[cfg(not(feature = "zk"))]
-fn convert_opening_id(id: prover_opening::OpeningId) -> JoltOpeningId {
+pub(crate) fn convert_opening_id(id: prover_opening::OpeningId) -> JoltOpeningId {
     match id {
         prover_opening::OpeningId::Polynomial(poly, sumcheck) => {
             JoltOpeningId::polynomial(convert_polynomial_id(poly), convert_sumcheck_id(sumcheck))
         }
+        // The packed byte-column reconstructions produce COMMITTED byte-lane
+        // openings; the advice accumulator slot is just where the legacy
+        // prover carries them.
+        prover_opening::OpeningId::UntrustedAdvice(
+            prover_opening::SumcheckId::UntrustedAdviceReconstruction,
+        ) => JoltOpeningId::committed(
+            JoltCommittedPolynomial::UntrustedAdviceBytes,
+            JoltRelationId::UntrustedAdviceReconstruction,
+        ),
+        prover_opening::OpeningId::TrustedAdvice(
+            prover_opening::SumcheckId::TrustedAdviceReconstruction,
+        ) => JoltOpeningId::committed(
+            JoltCommittedPolynomial::TrustedAdviceBytes,
+            JoltRelationId::TrustedAdviceReconstruction,
+        ),
         prover_opening::OpeningId::UntrustedAdvice(sumcheck) => {
             JoltOpeningId::untrusted_advice(convert_sumcheck_id(sumcheck))
         }
@@ -783,7 +814,7 @@ fn convert_polynomial_id(id: prover_opening::PolynomialId) -> JoltPolynomialId {
 }
 
 #[cfg(not(feature = "zk"))]
-fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelationId {
+pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelationId {
     match id {
         prover_opening::SumcheckId::SpartanOuter => JoltRelationId::SpartanOuter,
         prover_opening::SumcheckId::SpartanProductVirtualization => {
@@ -840,6 +871,18 @@ fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelationId {
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
         }
+        prover_opening::SumcheckId::UntrustedAdviceReconstruction => {
+            JoltRelationId::UntrustedAdviceReconstruction
+        }
+        prover_opening::SumcheckId::TrustedAdviceReconstruction => {
+            JoltRelationId::TrustedAdviceReconstruction
+        }
+        prover_opening::SumcheckId::BytecodeChunkReconstruction => {
+            JoltRelationId::BytecodeChunkReconstruction
+        }
+        prover_opening::SumcheckId::ProgramImageReconstruction => {
+            JoltRelationId::ProgramImageReconstruction
+        }
     }
 }
 
@@ -869,6 +912,50 @@ fn convert_committed_polynomial(
         prover_witness::CommittedPolynomial::ProgramImageInit => {
             JoltCommittedPolynomial::ProgramImageInit
         }
+        prover_witness::CommittedPolynomial::UnsignedIncChunk(index) => {
+            JoltCommittedPolynomial::UnsignedIncChunk(index)
+        }
+        prover_witness::CommittedPolynomial::UnsignedIncMsb => {
+            JoltCommittedPolynomial::UnsignedIncMsb
+        }
+        prover_witness::CommittedPolynomial::BytecodeRegisterSelector(chunk, lane) => {
+            JoltCommittedPolynomial::BytecodeRegisterSelector {
+                chunk,
+                lane: convert_register_lane(lane),
+            }
+        }
+        prover_witness::CommittedPolynomial::BytecodeCircuitFlag(chunk, flag) => {
+            JoltCommittedPolynomial::BytecodeCircuitFlag { chunk, flag }
+        }
+        prover_witness::CommittedPolynomial::BytecodeInstructionFlag(chunk, flag) => {
+            JoltCommittedPolynomial::BytecodeInstructionFlag { chunk, flag }
+        }
+        prover_witness::CommittedPolynomial::BytecodeLookupSelector(chunk) => {
+            JoltCommittedPolynomial::BytecodeLookupSelector { chunk }
+        }
+        prover_witness::CommittedPolynomial::BytecodeRafFlag(chunk) => {
+            JoltCommittedPolynomial::BytecodeRafFlag { chunk }
+        }
+        prover_witness::CommittedPolynomial::BytecodeUnexpandedPcBytes(chunk) => {
+            JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { chunk }
+        }
+        prover_witness::CommittedPolynomial::BytecodeImmBytes(chunk) => {
+            JoltCommittedPolynomial::BytecodeImmBytes { chunk }
+        }
+        prover_witness::CommittedPolynomial::ProgramImageBytes => {
+            JoltCommittedPolynomial::ProgramImageBytes
+        }
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+fn convert_register_lane(lane: usize) -> jolt_claims::protocols::jolt::BytecodeRegisterLane {
+    use jolt_claims::protocols::jolt::BytecodeRegisterLane;
+    match lane {
+        0 => BytecodeRegisterLane::Rs1,
+        1 => BytecodeRegisterLane::Rs2,
+        2 => BytecodeRegisterLane::Rd,
+        _ => panic!("register selector lane index {lane} out of range (rs1, rs2, rd)"),
     }
 }
 
@@ -938,8 +1025,8 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
         prover_witness::VirtualPolynomial::LookupTableFlag(index) => {
             JoltVirtualPolynomial::LookupTableFlag(index)
         }
-        prover_witness::VirtualPolynomial::BytecodeValStage(stage) => {
-            JoltVirtualPolynomial::BytecodeValStage(stage)
+        prover_witness::VirtualPolynomial::BytecodeValClaim(stage) => {
+            JoltVirtualPolynomial::BytecodeValClaim(stage)
         }
         prover_witness::VirtualPolynomial::BytecodeReadRafAddrClaim => {
             JoltVirtualPolynomial::BytecodeReadRafAddrClaim
@@ -953,6 +1040,7 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
         prover_witness::VirtualPolynomial::ProgramImageInitContributionRw => {
             JoltVirtualPolynomial::ProgramImageInitContributionRw
         }
+        prover_witness::VirtualPolynomial::FusedInc => JoltVirtualPolynomial::FusedInc,
     }
 }
 

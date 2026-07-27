@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedI
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::{dense_view, eq_table};
 use crate::{
@@ -30,7 +30,7 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for ReferenceBacke
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
     {

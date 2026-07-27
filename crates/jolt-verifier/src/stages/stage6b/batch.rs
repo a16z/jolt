@@ -82,7 +82,7 @@ pub struct Stage6bBuildParts<'a, F: Field> {
     pub stage4_points: &'a Stage4OutputPoints<F>,
     pub stage5_points: &'a Stage5OutputPoints<F>,
     pub stage6a_points: &'a Stage6aOutputPoints<F>,
-    /// The staged `BytecodeValStage` openings (clear committed-program mode;
+    /// The staged `BytecodeValClaim` openings (clear committed-program mode;
     /// empty otherwise).
     pub address_val_stages: Vec<F>,
     pub trusted_advice_reference_point: Option<Vec<F>>,

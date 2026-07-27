@@ -17,8 +17,7 @@ use jolt_poly::UnivariatePoly;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
-use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
-use jolt_witness::WitnessProvider;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::{KernelError, ProofSession};
 
@@ -41,7 +40,7 @@ where
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
-        witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+        witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>>;
 
     /// The uni-skip first-round polynomial. `late_tau` carries the challenges

@@ -1,6 +1,6 @@
 //! The committed-bytecode claim-reduction kernel (stage 6b cycle phase;
 //! stage 7's address phase resumes from the parked carry): reduces the five
-//! staged `BytecodeValStage(i)` claims into per-chunk `BytecodeChunk(i)`
+//! staged `BytecodeValClaim(i)` claims into per-chunk `BytecodeChunk(i)`
 //! openings over the shared precommitted schedule.
 //!
 //! The shared [`CycleReductionKernel`](crate::precommitted_reduction) runs
@@ -22,7 +22,7 @@ use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 
 use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhase;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use super::views::eq_table;
 use crate::committed_program::{build_committed_bytecode_chunk_coeffs, chunk_index_to_lane_cycle};
@@ -33,7 +33,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for ReferenceBac
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BytecodeReductionCyclePhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReductionCyclePhase<F>>>, KernelError<F>>
     {

@@ -3,7 +3,7 @@
 //!
 //! In committed program mode the bytecode value columns are committed as dense
 //! chunk polynomials instead of being evaluated directly by the verifier. The
-//! address phase of bytecode read-RAF stages five `BytecodeValStage(i)` claims;
+//! address phase of bytecode read-RAF stages five `BytecodeValClaim(i)` claims;
 //! this reduction batches them with powers of `eta` and reduces the batch into
 //! openings of `BytecodeChunk(i)` over the shared precommitted schedule.
 //! Mirrors `jolt-prover-legacy`'s `zkvm/claim_reductions/bytecode.rs` and the
@@ -30,7 +30,7 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Number of staged `BytecodeValStage(i)` claims batched into the reduction:
+/// Number of staged `BytecodeValClaim(i)` claims batched into the reduction:
 /// the five base flag stages, plus (akita) the `OpFlags(Store)` stage the
 /// `IncVirtualization` phase consumes as its destination selector.
 #[cfg(not(feature = "akita"))]
@@ -524,7 +524,7 @@ pub fn cycle_phase_output_openings(
 
 pub fn bytecode_val_stage_opening(stage: usize) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::BytecodeValStage(stage),
+        JoltVirtualPolynomial::BytecodeValClaim(stage),
         JoltRelationId::BytecodeReadRaf,
     )
 }

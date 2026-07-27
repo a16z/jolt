@@ -50,7 +50,7 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::protocols::jolt_vm::JoltVmWitnessPlane;
+use jolt_witness::JoltWitnessPlane;
 
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
@@ -82,7 +82,7 @@ where
     fn prepare(
         &self,
         session: &mut ProofSession,
-        witness: &dyn JoltVmWitnessPlane<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, R>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>;
 }
@@ -254,7 +254,7 @@ mod kernel_slots_derive_tests {
         fn prepare(
             &self,
             _session: &mut ProofSession,
-            _witness: &dyn JoltVmWitnessPlane<Fr>,
+            _witness: &dyn JoltWitnessPlane<Fr>,
             _inputs: ProverInputs<'_, Fr, SpartanShift<Fr>>,
         ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = SpartanShift<Fr>>>, KernelError<Fr>>
         {
