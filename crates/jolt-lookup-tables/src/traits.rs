@@ -245,7 +245,8 @@ mod tests {
     use super::*;
     use jolt_riscv::{
         instructions::{Add, Ld, Noop},
-        JoltInstructionRow, NormalizedOperands,
+        Flags, InterleavedBitsMarker, JoltInstructionRow, JoltInstructionRowData,
+        NormalizedOperands,
     };
 
     #[derive(Clone, Copy, Debug)]
@@ -255,6 +256,27 @@ mod tests {
         rs2: Option<u64>,
         rd: Option<(u64, u64)>,
     }
+
+    impl From<TestCycle> for JoltInstructionRow {
+        fn from(cycle: TestCycle) -> Self {
+            cycle.instruction
+        }
+    }
+
+    // `JoltInstructionRowData` requires `TryFrom<JoltInstructionRow>`; the blanket
+    // impl over `Into` supplies it.
+    impl From<JoltInstructionRow> for TestCycle {
+        fn from(instruction: JoltInstructionRow) -> Self {
+            Self {
+                instruction,
+                rs1: None,
+                rs2: None,
+                rd: None,
+            }
+        }
+    }
+
+    impl JoltInstructionRowData for TestCycle {}
 
     impl JoltCycle for TestCycle {
         type Instruction = JoltInstructionRow;
@@ -287,6 +309,85 @@ mod tests {
             None
         }
     }
+
+    macro_rules! assert_canonical_lookup_indices {
+        (
+            instructions: [$($(#[$meta:meta])* $kind:ident => $variant:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        ) => {
+            /// Registry invariant: no non-interleaved instruction may produce a
+            /// lookup index whose upper `XLEN` bits are all ones.
+            ///
+            /// Non-interleaved instructions (the `AddOperands` / `SubtractOperands`
+            /// / `MultiplyOperands` / `Advice` families) are bound to
+            /// `RightLookupOperand` through the *identity* RAF leg, which pins the
+            /// committed 2·XLEN-bit address only modulo the field characteristic.
+            /// Instruction read-RAF closes the resulting fp128 alias by forcing
+            /// that upper limb to be non-all-ones, so an honest index carrying one
+            /// would be unprovable under akita.
+            ///
+            /// This guards the *registry*, not today's opcode set: a new
+            /// non-interleaved instruction that can reach `high(k) == u64::MAX`
+            /// fails here rather than in a stage-5 sumcheck mismatch.
+            #[test]
+            fn non_interleaved_lookup_indices_are_canonical() {
+                use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+                let mut rng = StdRng::seed_from_u64(0xA11A5);
+                let mut checked = 0usize;
+                for _ in 0..256 {
+                    // Immediates are drawn from `[0, 2^64)`: every format feeding a
+                    // non-interleaved lookup (I / U / J / Assert) stores `imm` as a
+                    // `u64`, so a negative normalized immediate is unreachable.
+                    let operands = NormalizedOperands {
+                        rd: Some(1),
+                        rs1: Some(2),
+                        rs2: Some(3),
+                        imm: rng.next_u64() as i128,
+                    };
+                    let rs1 = rng.next_u64();
+                    let rs2 = rng.next_u64();
+                    let rd = rng.next_u64();
+                    $(
+                        $(#[$meta])*
+                        {
+                            // `$variant` is the concrete newtype, so flags and the
+                            // index come from the type; the row only supplies
+                            // operands.
+                            let cycle = TestCycle {
+                                instruction: JoltInstructionRow {
+                                    operands,
+                                    ..Default::default()
+                                },
+                                rs1: Some(rs1),
+                                rs2: Some(rs2),
+                                rd: Some((0, rd)),
+                            };
+                            let instruction = jolt_riscv::instructions::$variant(cycle);
+                            if !Flags::circuit_flags(&instruction).is_interleaved_operands() {
+                                let index = LookupQuery::<64>::to_lookup_index(&instruction);
+                                assert_ne!(
+                                    (index >> 64) as u64,
+                                    u64::MAX,
+                                    "{}: non-interleaved lookup index {index:#034x} has an \
+                                     all-ones upper limb; instruction read-RAF rejects it \
+                                     (rs1={rs1:#x}, rs2={rs2:#x}, imm={:#x})",
+                                    $canonical_name,
+                                    operands.imm,
+                                );
+                                checked += 1;
+                            }
+                        }
+                    )*
+                }
+                // Guard against the assertion silently covering nothing.
+                assert!(
+                    checked > 0,
+                    "no non-interleaved instruction was exercised"
+                );
+            }
+        };
+    }
+    jolt_riscv::for_each_jolt_instruction_kind!(assert_canonical_lookup_indices);
 
     #[test]
     fn aggregate_instruction_dispatches_lookup_table() {

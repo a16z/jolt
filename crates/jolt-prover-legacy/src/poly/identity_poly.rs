@@ -171,6 +171,133 @@ impl<F: JoltField> SuffixPolynomial<F> for ShiftHalfSuffixPolynomial {
     }
 }
 
+/// `U(k) = ∏_{i < num_vars/2} k_i` — the indicator that the upper half of a
+/// lookup index is all ones. Already multilinear, so this *is* its own MLE.
+///
+/// Instruction read-RAF folds `U` in to force identity-RAF addresses to be
+/// canonical. Over a field with `p < 2^num_vars` the identity leg pins the
+/// committed address only modulo `p`, so `k` and `k + p` are interchangeable;
+/// every such alias has an all-ones upper half, and conversely `U(k) = 0`
+/// implies `k < 2^num_vars - 2^(num_vars/2) < p`, which is canonical. See
+/// `jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS`.
+///
+/// WARNING: the upper half is the *leading* half of the coordinate vector —
+/// `r[0]` is the most significant bit, matching [`IdentityPolynomial`]. Taking
+/// the trailing half would both miss every alias and reject honest cycles:
+/// `SUB(2^64-1, 0)` has index `0x1_FFFF_FFFF_FFFF_FFFF`, whose *low* limb is
+/// all ones.
+#[derive(Clone, Copy, Debug, Allocative)]
+pub struct UpperHalfAllOnesPolynomial {
+    num_vars: usize,
+}
+
+impl UpperHalfAllOnesPolynomial {
+    pub fn new(num_vars: usize) -> Self {
+        debug_assert!(num_vars.is_even());
+        Self { num_vars }
+    }
+
+    /// How many of a suffix's coordinates fall in the upper half. Zero once the
+    /// bound prefix has passed the midpoint, after which `U` is determined.
+    fn suffix_upper_bits(&self, suffix_len: usize) -> usize {
+        suffix_len.saturating_sub(self.num_vars / 2)
+    }
+}
+
+impl<F: JoltField> PolynomialEvaluation<F> for UpperHalfAllOnesPolynomial {
+    fn evaluate<C>(&self, r: &[C]) -> F
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
+        debug_assert_eq!(r.len(), self.num_vars);
+        r[..self.num_vars / 2]
+            .iter()
+            .fold(F::one(), |acc, coordinate| acc * (*coordinate).into())
+    }
+
+    fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
+        F: FieldChallengeOps<C>,
+    {
+        unimplemented!("Currently unused")
+    }
+
+    fn sumcheck_evals(&self, _index: usize, _degree: usize, _order: BindingOrder) -> Vec<F> {
+        unimplemented!("Only reached through PrefixSuffixDecomposition")
+    }
+}
+
+impl<F: JoltField> SuffixPolynomial<F> for UpperHalfAllOnesPolynomial {
+    fn suffix_mle(&self, b: LookupBits) -> u128 {
+        let upper_bits = self.suffix_upper_bits(b.len());
+        if upper_bits == 0 {
+            // No upper-half coordinates left in the suffix: `U` no longer
+            // depends on the unbound variables, so the suffix contributes 1
+            // and the checkpoint carries the whole value.
+            return 1;
+        }
+        let leading = u128::from(b) >> (b.len() - upper_bits);
+        u128::from(leading == (1u128 << upper_bits) - 1)
+    }
+}
+
+impl<F: JoltField> PrefixPolynomial<F> for UpperHalfAllOnesPolynomial {
+    fn prefix_polynomial(
+        &self,
+        checkpoints: &PrefixCheckpoints<F>,
+        chunk_len: usize,
+        phase: usize,
+    ) -> CachedPolynomial<F> {
+        // WARNING: the empty product is ONE. Unlike the arithmetic prefixes, an
+        // unset checkpoint here means "no upper-half bits bound yet", not zero —
+        // defaulting to zero would make `U` vanish identically and silently turn
+        // the canonical-address check into a no-op.
+        let bound_value = checkpoints[Prefix::UpperHalfAllOnes].unwrap_or(F::one());
+        let bound_bits = phase * chunk_len;
+        let chunk_upper_bits = (self.num_vars / 2)
+            .saturating_sub(bound_bits)
+            .min(chunk_len);
+
+        let evals: Vec<F> = (0..chunk_len.pow2())
+            .map(|i| {
+                // Vacuously true once binding has passed the midpoint, where the
+                // chunk carries no upper-half coordinates and `U` is already fixed.
+                let chunk_all_ones = chunk_upper_bits == 0
+                    || (i >> (chunk_len - chunk_upper_bits)) == (1 << chunk_upper_bits) - 1;
+                if chunk_all_ones {
+                    bound_value
+                } else {
+                    F::zero()
+                }
+            })
+            .collect();
+
+        CachedPolynomial::new(MultilinearPolynomial::from(evals), (chunk_len - 1).pow2())
+    }
+}
+
+impl<F: JoltField> PrefixSuffixPolynomial<F, 1> for UpperHalfAllOnesPolynomial {
+    fn suffixes(&self) -> [Box<dyn SuffixPolynomial<F> + Sync>; 1] {
+        [Box::new(*self)]
+    }
+
+    fn prefixes(
+        &self,
+        chunk_len: usize,
+        phase: usize,
+        registry: &mut PrefixRegistry<F>,
+    ) -> [Option<Arc<RwLock<CachedPolynomial<F>>>>; 1] {
+        if registry[Prefix::UpperHalfAllOnes].is_none() {
+            registry[Prefix::UpperHalfAllOnes] = Some(Arc::new(RwLock::new(
+                self.prefix_polynomial(&registry.checkpoints, chunk_len, phase),
+            )));
+        }
+        [registry[Prefix::UpperHalfAllOnes].clone()]
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperandSide {
     Left,
@@ -511,6 +638,108 @@ mod tests {
         prefix_suffix_decomposition_test::<8, 2, 2, _>(
             IdentityPolynomial::new(8),
             Prefix::Identity,
+        );
+    }
+
+    #[test]
+    fn upper_half_all_ones_matches_predicate_on_hypercube() {
+        const NUM_VARS: usize = 8;
+        let poly = UpperHalfAllOnesPolynomial::new(NUM_VARS);
+
+        for i in 0u128..(1 << NUM_VARS) {
+            // `evaluate` reads its point most-significant-coordinate first.
+            let point: Vec<Fr> = (0..NUM_VARS)
+                .map(|j| {
+                    if (i >> (NUM_VARS - 1 - j)) & 1 == 1 {
+                        Fr::ONE
+                    } else {
+                        Fr::ZERO
+                    }
+                })
+                .collect();
+            let half = NUM_VARS / 2;
+            let expected = if (i >> half) == (1 << half) - 1 {
+                Fr::ONE
+            } else {
+                Fr::ZERO
+            };
+            assert_eq!(
+                PolynomialEvaluation::<Fr>::evaluate(&poly, &point),
+                expected,
+                "index {i:#x}"
+            );
+        }
+    }
+
+    /// The predicate must read the *leading* half. `SUB(2^64-1, 0)` produces
+    /// lookup index `0x1_FFFF_FFFF_FFFF_FFFF`, whose low limb is all ones and
+    /// whose high limb is 1 — reading the trailing half would reject it.
+    #[test]
+    fn upper_half_all_ones_ignores_an_all_ones_low_limb() {
+        const NUM_VARS: usize = 128;
+        let poly = UpperHalfAllOnesPolynomial::new(NUM_VARS);
+        let bit_point = |k: u128| -> Vec<Fr> {
+            (0..NUM_VARS)
+                .map(|j| {
+                    if (k >> (NUM_VARS - 1 - j)) & 1 == 1 {
+                        Fr::ONE
+                    } else {
+                        Fr::ZERO
+                    }
+                })
+                .collect()
+        };
+
+        // SUB(x = 2^64-1, y = 0) => x + 2^64 - y.
+        let sub_max = (u64::MAX as u128) + (1u128 << 64);
+        assert_eq!(sub_max, 0x1_FFFF_FFFF_FFFF_FFFF);
+        assert_eq!(
+            PolynomialEvaluation::<Fr>::evaluate(&poly, &bit_point(sub_max)),
+            Fr::ZERO,
+            "honest SUB boundary must not be flagged"
+        );
+
+        // MUL(2^64-1, 2^64-1) — the largest honest index; high limb is 2^64-2.
+        let mul_max = (u64::MAX as u128) * (u64::MAX as u128);
+        assert_eq!(mul_max >> 64, (u64::MAX - 1) as u128);
+        assert_eq!(
+            PolynomialEvaluation::<Fr>::evaluate(&poly, &bit_point(mul_max)),
+            Fr::ZERO,
+            "honest MUL boundary must not be flagged"
+        );
+
+        // The fp128 aliases `k = r + p` for r in {0, 1, c-1}, c = 2^32 - 22537.
+        let p = (1u128 << 127) + ((1u128 << 127) - (1u128 << 32) + 22537);
+        let c = (1u128 << 32) - 22537;
+        for r in [0u128, 1, c - 1] {
+            let alias = p.wrapping_add(r);
+            assert_eq!(alias >> 64, u64::MAX as u128, "alias r={r} shape");
+            assert_eq!(
+                PolynomialEvaluation::<Fr>::evaluate(&poly, &bit_point(alias)),
+                Fr::ONE,
+                "alias r={r} must be flagged"
+            );
+        }
+    }
+
+    #[test]
+    fn upper_half_all_ones_prefix_suffix_decomposition() {
+        // Chunk strictly inside each half.
+        prefix_suffix_decomposition_test::<8, 2, 1, _>(
+            UpperHalfAllOnesPolynomial::new(8),
+            Prefix::UpperHalfAllOnes,
+        );
+        // Chunk boundary exactly on the midpoint — the production shape, where
+        // `log_m` (8 or 16) divides the 64-bit half.
+        prefix_suffix_decomposition_test::<8, 4, 1, _>(
+            UpperHalfAllOnesPolynomial::new(8),
+            Prefix::UpperHalfAllOnes,
+        );
+        // A single chunk straddling the midpoint, so `chunk_upper_bits` is a
+        // proper fraction of the chunk.
+        prefix_suffix_decomposition_test::<8, 8, 1, _>(
+            UpperHalfAllOnesPolynomial::new(8),
+            Prefix::UpperHalfAllOnes,
         );
     }
 

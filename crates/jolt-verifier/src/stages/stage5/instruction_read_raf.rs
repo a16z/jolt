@@ -12,8 +12,10 @@ pub use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafChallenges, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::instruction::InstructionReadRafDimensions, InstructionReadRafPublic, JoltDerivedId,
-    JoltRelationId,
+    geometry::instruction::{
+        upper_half_all_ones, InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
+    },
+    InstructionReadRafPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -152,6 +154,16 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         let eq_reduction =
             try_eq_mle(input_points.lookup_output(), r_cycle).map_err(public_input_failed)?;
         let address_bits = self.dimensions.instruction_address_bits();
+        // `upper_half_all_ones` below slices the leading half of this point, so a
+        // reconstruction of the wrong length would silently guard the wrong bits
+        // rather than fail. The point is verifier-derived, but the mis-slice is
+        // invisible if that ever stops being true.
+        if r_address.len() != address_bits {
+            return Err(public_input_failed(format!(
+                "instruction address point has {} coordinates, expected {address_bits}",
+                r_address.len()
+            )));
+        }
         let left = || OperandPolynomial::new(address_bits, OperandSide::Left).evaluate(&r_address);
         let right =
             || OperandPolynomial::new(address_bits, OperandSide::Right).evaluate(&r_address);
@@ -172,7 +184,18 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
             }
             InstructionReadRafPublic::EqRafFlag => {
                 let identity = IdentityPolynomial::new(address_bits).evaluate(&r_address);
-                Ok(eq_reduction * (gamma2 * identity - gamma * left() - gamma2 * right()))
+                let mut raf = gamma2 * identity - gamma * left() - gamma2 * right();
+                if CANONICAL_INSTRUCTION_ADDRESS {
+                    // The input claim carries no γ³ term, so the sumcheck can only
+                    // close if Σ_j eq(r_red,j)·RafFlag_j·U(k_j) = 0 — i.e. no
+                    // identity-RAF cycle has an all-ones upper address half. Every
+                    // fp128 alias `k = r + p < 2^128` has exactly that shape, and
+                    // `U(k) = 0` implies `k < 2^128 - 2^64 < p`, so the surviving
+                    // address is the canonical representative of `k mod p` and the
+                    // identity leg pins it exactly. See `CANONICAL_INSTRUCTION_ADDRESS`.
+                    raf += gamma2 * gamma * upper_half_all_ones(&r_address);
+                }
+                Ok(eq_reduction * raf)
             }
         }
     }
@@ -184,7 +207,7 @@ mod tests {
     use crate::stages::relations::ConcreteSumcheck;
     use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
     use jolt_claims::SymbolicSumcheck;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt as _};
 
     /// Locks the `expected_output_openings` invariant for the one stage-5 relation
     /// with a size-parameter-dependent shape: the openings the read-RAF output `Expr`
@@ -210,5 +233,85 @@ mod tests {
                 .expected_output_openings::<Fr>(),
             expected,
         );
+    }
+
+    /// Pins the canonical-address term inside `EqRafFlag`.
+    ///
+    /// The term is what forces `Σ_j eq(r_red,j)·RafFlag_j·U(k_j) = 0`, and it is
+    /// invisible in the symbolic relation — it rides inside a derived public. A
+    /// refactor that dropped it would still typecheck, still produce a
+    /// well-formed proof, and silently reopen the fp128 alias. Asserting the
+    /// closed form (rather than just "nonzero") also pins the γ *power* and the
+    /// leading-half slice, the two transposition traps.
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn eq_raf_flag_carries_the_canonical_address_term() {
+        const LOG_T: usize = 5;
+        const ADDRESS_BITS: usize = 128;
+
+        let dimensions = InstructionReadRafDimensions::try_from((LOG_T, ADDRESS_BITS, 4)).unwrap();
+        let relation = InstructionReadRaf::<Fr>::new(dimensions);
+
+        // Distinct non-Boolean coordinates, so no factor can vanish by accident.
+        let sumcheck_point: Vec<Fr> = (0..ADDRESS_BITS + LOG_T)
+            .map(|i| Fr::from_u64(i as u64 + 2))
+            .collect();
+        let opening = dimensions.opening_point(&sumcheck_point).unwrap();
+
+        let input_points = InstructionReadRafInputClaims {
+            lookup_output: opening.r_cycle.clone(),
+            left_lookup_operand: opening.r_cycle.clone(),
+            right_lookup_operand: opening.r_cycle.clone(),
+        };
+        let output_points = relation
+            .derive_opening_points(&sumcheck_point, &input_points)
+            .unwrap();
+        let gamma = Fr::from_u64(7);
+        let challenges = InstructionReadRafChallenges { gamma };
+
+        let actual = relation
+            .derive_output_term(
+                &JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqRafFlag),
+                &input_points,
+                &output_points,
+                &challenges,
+            )
+            .unwrap();
+
+        let r_address = reconstruct_r_address(&output_points, opening.r_cycle.len());
+        assert_eq!(r_address.len(), ADDRESS_BITS);
+        let gamma2 = gamma * gamma;
+        let baseline = gamma2 * IdentityPolynomial::new(ADDRESS_BITS).evaluate(&r_address)
+            - gamma * OperandPolynomial::new(ADDRESS_BITS, OperandSide::Left).evaluate(&r_address)
+            - gamma2
+                * OperandPolynomial::new(ADDRESS_BITS, OperandSide::Right).evaluate(&r_address);
+
+        // Computed independently of `upper_half_all_ones`: the product of the
+        // *leading* half of the address point.
+        let canonical_term = r_address[..ADDRESS_BITS / 2]
+            .iter()
+            .fold(Fr::from_u64(1), |acc, coordinate| acc * *coordinate);
+        assert_ne!(
+            canonical_term,
+            Fr::from_u64(0),
+            "test point must exercise a nonzero canonical term"
+        );
+
+        // Note `eq(x, x) != 1` at a non-Boolean point, so the shared reduction
+        // point still contributes a factor.
+        let eq_reduction = try_eq_mle(&opening.r_cycle, &opening.r_cycle).unwrap();
+        if CANONICAL_INSTRUCTION_ADDRESS {
+            assert_eq!(
+                actual,
+                eq_reduction * (baseline + gamma2 * gamma * canonical_term)
+            );
+            assert_ne!(
+                actual,
+                eq_reduction * baseline,
+                "the canonical-address term was dropped"
+            );
+        } else {
+            assert_eq!(actual, eq_reduction * baseline);
+        }
     }
 }

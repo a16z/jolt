@@ -350,6 +350,12 @@ pub struct InstructionReadRafSumcheckProver<F: JoltField> {
     left_operand_ps: PrefixSuffixDecomposition<F, 2>,
     /// Prefix-suffix decomposition for the instruction-identity path (RAF flag path).
     identity_ps: PrefixSuffixDecomposition<F, 2>,
+    /// Prefix-suffix decomposition for the canonical-address term `U(k)`,
+    /// accumulated over the identity path only so that it carries the
+    /// `raf_flag` mask. Present only when the field can alias 128-bit
+    /// addresses; see `CANONICAL_INSTRUCTION_ADDRESS`.
+    #[cfg(feature = "akita")]
+    upper_all_ones_ps: PrefixSuffixDecomposition<F, 1>,
 
     /// Gruen-split equality polynomial over cycle vars. Present only in the last log(T) rounds.
     eq_r_reduction: GruenSplitEqPolynomial<F>,
@@ -388,6 +394,14 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
         let left_operand_ps =
             PrefixSuffixDecomposition::new(Box::new(left_operand_poly), log_m, LOG_K);
         let identity_ps = PrefixSuffixDecomposition::new(Box::new(identity_poly), log_m, LOG_K);
+        #[cfg(feature = "akita")]
+        let upper_all_ones_ps = PrefixSuffixDecomposition::new(
+            Box::new(crate::poly::identity_poly::UpperHalfAllOnesPolynomial::new(
+                LOG_K,
+            )),
+            log_m,
+            LOG_K,
+        );
         drop(_guard);
         drop(span);
 
@@ -500,6 +514,8 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             right_operand_ps,
             left_operand_ps,
             identity_ps,
+            #[cfg(feature = "akita")]
+            upper_all_ones_ps,
 
             // State for last log(T) rounds
             ra_polys: None,
@@ -542,6 +558,8 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             &mut self.left_operand_ps,
             &mut self.right_operand_ps,
             &mut self.identity_ps,
+            #[cfg(feature = "akita")]
+            &mut self.upper_all_ones_ps,
             &self.u_evals,
             &self.lookup_indices,
             &self.is_interleaved_operands,
@@ -552,6 +570,8 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
         self.identity_ps.init_P(&mut self.prefix_registry);
         self.right_operand_ps.init_P(&mut self.prefix_registry);
         self.left_operand_ps.init_P(&mut self.prefix_registry);
+        #[cfg(feature = "akita")]
+        self.upper_all_ones_ps.init_P(&mut self.prefix_registry);
 
         self.v[phase].reset(F::one());
     }
@@ -784,7 +804,17 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             let right_prefix = self.prefix_registry.checkpoints[Prefix::RightOperand].unwrap();
             let identity_prefix = self.prefix_registry.checkpoints[Prefix::Identity].unwrap();
             let raf_interleaved = gamma * left_prefix + gamma_sqr * right_prefix;
+            // The identity branch is exactly the `raf_flag == 1` branch, so
+            // folding γ³·U(r_address) in here applies the mask for free — no
+            // extra cycle-indexed polynomial is needed.
+            #[cfg(not(feature = "akita"))]
             let raf_identity = gamma_sqr * identity_prefix;
+            #[cfg(feature = "akita")]
+            let raf_identity = gamma_sqr * identity_prefix
+                + gamma_sqr
+                    * gamma
+                    * self.prefix_registry.checkpoints[Prefix::UpperHalfAllOnes]
+                        .expect("upper-half-all-ones checkpoint is set by every address phase");
 
             // At this point we've finished all LOG_K address rounds, so the lookup-table suffix
             // variable set is empty. That means every suffix MLE is evaluated on an empty bitstring,
@@ -934,6 +964,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 s.spawn(|_| self.identity_ps.bind(r_j));
                 s.spawn(|_| self.right_operand_ps.bind(r_j));
                 s.spawn(|_| self.left_operand_ps.bind(r_j));
+                #[cfg(feature = "akita")]
+                s.spawn(|_| self.upper_all_ones_ps.bind(r_j));
                 s.spawn(|_| self.v[phase].update(r_j));
             });
             {
@@ -1096,7 +1128,8 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                     ]
                 },
             );
-        [
+        #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
+        let mut msg = [
             F::reduce_product_accum(
                 F::reduce_mul_u64(left_0).mul_to_product_accum(self.params.gamma)
                     + F::reduce_mul_u64(right_0).mul_to_product_accum(self.params.gamma_sqr),
@@ -1105,7 +1138,25 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 F::reduce_mul_u64(left_2).mul_to_product_accum(self.params.gamma)
                     + F::reduce_mul_u64(right_2).mul_to_product_accum(self.params.gamma_sqr),
             ),
-        ]
+        ];
+
+        // Canonical-address term at γ³. Its Q was accumulated over identity rows
+        // only, so this carries the `raf_flag` mask without a separate factor.
+        #[cfg(feature = "akita")]
+        {
+            let (upper_0, upper_2) = (0..len / 2)
+                .into_par_iter()
+                .map(|b| self.upper_all_ones_ps.sumcheck_evals(b))
+                .reduce(
+                    || (F::zero(), F::zero()),
+                    |running, new| (running.0 + new.0, running.1 + new.1),
+                );
+            let gamma_cub = self.params.gamma_sqr * self.params.gamma;
+            msg[0] += gamma_cub * upper_0;
+            msg[1] += gamma_cub * upper_2;
+        }
+
+        msg
     }
 
     /// Read-checking part for address rounds.
@@ -1385,9 +1436,20 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
             .map(|(claim, val)| claim * val)
             .sum::<F>();
 
+        // NOTE: `raf_claim` is multiplied by an outer γ below, so the identity
+        // leg sits at γ² and the canonical-address term at γ² here is γ³ overall
+        // — matching the verifier's `EqRafFlag` and the prover's `prover_msg_raf`.
+        #[cfg(not(feature = "akita"))]
+        let identity_leg = self.params.gamma * identity_poly_eval;
+        #[cfg(feature = "akita")]
+        let identity_leg = self.params.gamma * identity_poly_eval
+            + self.params.gamma_sqr
+                * crate::poly::identity_poly::UpperHalfAllOnesPolynomial::new(LOG_K)
+                    .evaluate(&r_address_prime.r);
+
         let raf_claim = (F::one() - raf_flag_claim)
             * (left_operand_eval + self.params.gamma * right_operand_eval)
-            + raf_flag_claim * self.params.gamma * identity_poly_eval;
+            + raf_flag_claim * identity_leg;
 
         eq_eval_r_reduction * ra_claim * (val_claim + self.params.gamma * raf_claim)
     }
