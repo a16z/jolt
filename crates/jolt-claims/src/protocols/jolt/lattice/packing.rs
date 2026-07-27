@@ -1,8 +1,9 @@
-//! Canonical auxiliary-object packings and the native `OneHotTrace` column registry.
+//! Canonical auxiliary-object packings and the packed `OneHotTrace` registry.
 //!
 //! `jolt-openings::PrefixPacking` is the single source of truth for slot
-//! assignment within auxiliary advice and committed-program objects. `OneHotTrace`
-//! is not prefix-packed: [`one_hot_trace_columns`] returns its exact ordered columns.
+//! assignment within auxiliary advice and committed-program objects.
+//! [`one_hot_trace_columns`] defines the semantic order within `OneHotTrace`'s
+//! protocol-fixed selector capacity.
 
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_openings::PrefixPacking;
@@ -15,6 +16,11 @@ use super::super::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial
 use super::geometry::{
     byte_num_vars, word_byte_num_vars, LatticeGeometryError, UnsignedIncChunking,
 };
+
+/// Fixed selector capacity of the packed trace polynomial at K=16.
+pub const ONE_HOT_TRACE_K16_CAPACITY: usize = 64;
+/// Fixed selector capacity of the packed trace polynomial at K=256.
+pub const ONE_HOT_TRACE_K256_CAPACITY: usize = 32;
 
 /// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
 /// `Ra` families, unsigned-inc chunks, and MSB — as semantic columns of one
@@ -50,10 +56,36 @@ pub fn one_hot_trace_columns(
     shape: &OneHotTraceShape,
 ) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
     let chunking = UnsignedIncChunking::new(shape.log_k_chunk)?;
-    let mut polynomials = shape.ra_layout.committed_polynomials().collect::<Vec<_>>();
+    let _ = one_hot_trace_column_capacity(shape.log_k_chunk)?;
+    let instruction_columns = 2 * XLEN / shape.log_k_chunk;
+    if shape.ra_layout.instruction() != instruction_columns {
+        return Err(
+            LatticeGeometryError::UnexpectedOneHotTraceInstructionColumns {
+                chunk_width: shape.log_k_chunk,
+                actual: shape.ra_layout.instruction(),
+                expected: instruction_columns,
+            },
+        );
+    }
+    let mut polynomials = (0..instruction_columns)
+        .map(JoltCommittedPolynomial::InstructionRa)
+        .collect::<Vec<_>>();
     polynomials.extend((0..chunking.chunk_count()).map(JoltCommittedPolynomial::UnsignedIncChunk));
     polynomials.push(JoltCommittedPolynomial::UnsignedIncMsb);
+    polynomials.extend((0..shape.ra_layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa));
+    polynomials.extend((0..shape.ra_layout.ram()).map(JoltCommittedPolynomial::RamRa));
     Ok(polynomials)
+}
+
+/// Protocol-fixed number of selector slots in the packed `OneHotTrace`.
+pub const fn one_hot_trace_column_capacity(
+    log_k_chunk: usize,
+) -> Result<usize, LatticeGeometryError> {
+    match log_k_chunk {
+        4 => Ok(ONE_HOT_TRACE_K16_CAPACITY),
+        8 => Ok(ONE_HOT_TRACE_K256_CAPACITY),
+        chunk_width => Err(LatticeGeometryError::UnsupportedOneHotTraceChunkWidth { chunk_width }),
+    }
 }
 
 /// Registers the canonical precommitted polynomial ordering and returns the
@@ -136,7 +168,7 @@ mod tests {
 
     fn one_hot_trace_shape() -> OneHotTraceShape {
         OneHotTraceShape {
-            ra_layout: JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
+            ra_layout: JoltRaPolynomialLayout::new(16, 1, 1).unwrap(),
             log_t: 5,
             log_k_chunk: 8,
         }
@@ -155,14 +187,11 @@ mod tests {
     fn one_hot_trace_columns_cover_every_committed_lattice_polynomial() {
         let columns = one_hot_trace_columns(&one_hot_trace_shape()).unwrap();
 
-        // 4 Ra polynomials + 8 inc chunks + msb.
-        assert_eq!(columns.len(), 4 + 8 + 1);
+        // 16 instruction Ra + 8 inc chunks + msb + 2 variable Ra.
+        assert_eq!(columns.len(), 16 + 8 + 1 + 2);
         assert_eq!(columns[0], JoltCommittedPolynomial::InstructionRa(0));
         assert!(columns.contains(&JoltCommittedPolynomial::UnsignedIncChunk(7)));
-        assert_eq!(
-            columns.last(),
-            Some(&JoltCommittedPolynomial::UnsignedIncMsb)
-        );
+        assert_eq!(columns.last(), Some(&JoltCommittedPolynomial::RamRa(0)));
     }
 
     /// Each advice byte column is its own commitment object: a single-slot

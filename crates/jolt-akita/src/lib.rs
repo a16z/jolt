@@ -10,6 +10,7 @@ mod native_batching;
 pub mod schedules;
 mod scheme;
 mod shape_guard;
+mod trace_onehot;
 
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
@@ -20,6 +21,7 @@ pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
 pub use scheme::AkitaScheme;
+pub use trace_onehot::{no_hot_lane, TraceOneHotRows, TracePackedOneHot};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.

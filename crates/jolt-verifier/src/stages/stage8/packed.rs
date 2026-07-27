@@ -1,9 +1,10 @@
 //! The Akita final opening.
 //!
-//! `OneHotTrace` is one native group of uniform one-hot columns, all opened
-//! directly at one canonical point. Optional advice and committed-program
-//! objects have distinct domains and are discharged separately through
-//! [`jolt_openings::verify_packed_openings`].
+//! `OneHotTrace` prefix-packs its uniform semantic columns into one physical
+//! one-hot polynomial. Their same-point claims are reduced at a random
+//! selector prefix before the single PCS opening. Optional advice and
+//! committed-program objects have distinct domains and are discharged
+//! separately through [`jolt_openings::verify_packed_openings`].
 
 use std::collections::BTreeMap;
 
@@ -47,8 +48,8 @@ fn validate_one_hot_trace_metadata<C, S>(
     commitment: &C,
     setup: &S,
     canonical_digest: [u8; 32],
-    column_arity: usize,
-    column_count: usize,
+    packed_arity: usize,
+    physical_poly_count: usize,
     one_hot_k: usize,
 ) -> Result<(), VerifierError>
 where
@@ -70,16 +71,16 @@ where
             "OneHotTrace commitment has a noncanonical layout digest",
         ));
     }
-    if commitment.num_vars() != column_arity || setup.max_num_vars() != column_arity {
+    if commitment.num_vars() != packed_arity || setup.max_num_vars() != packed_arity {
         return Err(batch_failed(format!(
-            "OneHotTrace commitment/setup arity must equal canonical arity {column_arity}"
+            "OneHotTrace commitment/setup arity must equal canonical packed arity {packed_arity}"
         )));
     }
-    if commitment.poly_count() != column_count
-        || setup.max_num_polys_per_commitment_group() != column_count
+    if commitment.poly_count() != physical_poly_count
+        || setup.max_num_polys_per_commitment_group() != physical_poly_count
     {
         return Err(batch_failed(format!(
-            "OneHotTrace commitment/setup column count must equal canonical count {column_count}"
+            "OneHotTrace commitment/setup physical polynomial count must equal {physical_poly_count}"
         )));
     }
     if setup.default_layout_digest() != canonical_digest {
@@ -161,9 +162,9 @@ where
     T: Transcript<Challenge = PCS::Field>,
 {
     // Per-object packings, commitments, and setups in canonical object order:
-    // `OneHotTrace` is one native group of uniform one-hot columns, followed
-    // by the optional auxiliary commitment objects. The shared layout is the
-    // same one the prover committed under.
+    // `OneHotTrace` is one prefix-packed physical polynomial, followed by the
+    // optional auxiliary commitment objects. The shared layout is the same
+    // one the prover committed under.
     // Optional objects join exactly when their reconstruction outputs exist;
     // presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
@@ -180,14 +181,15 @@ where
         .map_err(batch_failed)?;
     let OneHotTraceLayoutPlan {
         columns,
-        column_arity,
+        packed_arity,
+        ..
     } = &plan;
     validate_one_hot_trace_metadata(
         one_hot_trace_commitment,
         &preprocessing.pcs_setup,
         canonical_digest,
-        *column_arity,
-        columns.len(),
+        *packed_arity,
+        1,
         1 << chunk_width,
     )?;
     let leaves = leaf_claims(stage7, reconstruction);
@@ -214,10 +216,19 @@ where
         evaluations.push(claim.value);
     }
     let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
+    transcript.append_values(b"one_hot_trace_point", &common_point);
+    transcript.append_values(b"one_hot_trace_evals", &evaluations);
+    let selector = transcript.challenge_vector(plan.selector_bits);
+    let packed_point = plan
+        .packed_point(&selector, &common_point)
+        .map_err(batch_failed)?;
+    let packed_evaluation = plan
+        .packed_evaluation(&selector, &evaluations)
+        .map_err(batch_failed)?;
     PCS::verify_batch(
         one_hot_trace_commitment,
-        &common_point,
-        &evaluations,
+        &packed_point,
+        std::slice::from_ref(&packed_evaluation),
         &proof.one_hot_trace,
         &preprocessing.pcs_setup,
         transcript,
@@ -595,17 +606,17 @@ mod tests {
         let commitment = CommitmentMetadata {
             one_hot: true,
             digest,
-            num_vars: 12,
-            poly_count: 17,
+            num_vars: 18,
+            poly_count: 1,
             one_hot_k: 256,
         };
         let setup = SetupMetadata {
             digest,
-            num_vars: 12,
-            poly_count: 17,
+            num_vars: 18,
+            poly_count: 1,
             one_hot_k: 256,
         };
-        assert!(validate_one_hot_trace_metadata(&commitment, &setup, digest, 12, 17, 256).is_ok());
+        assert!(validate_one_hot_trace_metadata(&commitment, &setup, digest, 18, 1, 256).is_ok());
 
         for invalid in [
             CommitmentMetadata {
@@ -617,11 +628,11 @@ mod tests {
                 ..commitment
             },
             CommitmentMetadata {
-                num_vars: 13,
+                num_vars: 19,
                 ..commitment
             },
             CommitmentMetadata {
-                poly_count: 18,
+                poly_count: 2,
                 ..commitment
             },
             CommitmentMetadata {
@@ -629,9 +640,7 @@ mod tests {
                 ..commitment
             },
         ] {
-            assert!(
-                validate_one_hot_trace_metadata(&invalid, &setup, digest, 12, 17, 256).is_err()
-            );
+            assert!(validate_one_hot_trace_metadata(&invalid, &setup, digest, 18, 1, 256).is_err());
         }
         for invalid in [
             SetupMetadata {
@@ -639,11 +648,11 @@ mod tests {
                 ..setup
             },
             SetupMetadata {
-                num_vars: 13,
+                num_vars: 19,
                 ..setup
             },
             SetupMetadata {
-                poly_count: 18,
+                poly_count: 2,
                 ..setup
             },
             SetupMetadata {
@@ -652,8 +661,7 @@ mod tests {
             },
         ] {
             assert!(
-                validate_one_hot_trace_metadata(&commitment, &invalid, digest, 12, 17, 256)
-                    .is_err()
+                validate_one_hot_trace_metadata(&commitment, &invalid, digest, 18, 1, 256).is_err()
             );
         }
     }

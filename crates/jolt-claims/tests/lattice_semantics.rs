@@ -78,30 +78,29 @@ fn byte_decode_sum(partials: &[Fr], place_bits: usize) -> Fr {
     sum
 }
 
-/// Every OneHotTrace column is a full `K x T` one-hot polynomial in the canonical
-/// native-batch order, including the MSB member at address zero or one.
+/// Every OneHotTrace column is a full `K x T` one-hot polynomial in the
+/// canonical fixed-prefix order, including the MSB member at address zero or
+/// one.
 #[test]
 #[expect(clippy::unwrap_used)]
 fn one_hot_trace_columns_are_uniform_native_one_hot_polynomials() {
     let log_t = 3;
     let log_k_chunk = 4;
     let shape = OneHotTraceShape {
-        ra_layout: JoltRaPolynomialLayout::new(1, 1, 1).unwrap(),
+        ra_layout: JoltRaPolynomialLayout::new(32, 1, 1).unwrap(),
         log_t,
         log_k_chunk,
     };
     let members = one_hot_trace_columns(&shape).unwrap();
 
-    // Size accounting: 3 Ra + 16 chunk polynomials + the MSB polynomial,
-    // all represented as 4-address-bit one-hot matrices over 3 cycle bits.
+    // Size accounting: 32 instruction Ra + 16 chunk polynomials + MSB + two
+    // variable Ra, all represented as 4-address-bit one-hot matrices.
     let chunk_count = UnsignedIncChunking::new(log_k_chunk).unwrap().chunk_count();
     assert_eq!(chunk_count, 16);
-    assert_eq!(members.len(), 20);
+    assert_eq!(members.len(), 51);
     assert_eq!(members[0], JoltCommittedPolynomial::InstructionRa(0));
-    assert_eq!(
-        members.last(),
-        Some(&JoltCommittedPolynomial::UnsignedIncMsb)
-    );
+    assert_eq!(members[48], JoltCommittedPolynomial::UnsignedIncMsb);
+    assert_eq!(members.last(), Some(&JoltCommittedPolynomial::RamRa(0)));
 
     for (index, polynomial) in members.iter().enumerate() {
         let hot = if *polynomial == JoltCommittedPolynomial::UnsignedIncMsb {
