@@ -39,6 +39,11 @@ where
     F: Field,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
+    #[tracing::instrument(
+        skip_all,
+        name = "commit_witness",
+        fields(columns = ids.len(), total_vars = grid.total_vars)
+    )]
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
@@ -92,6 +97,7 @@ where
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "commit_advice", fields(id = ?id))]
     fn commit_advice(
         &self,
         _session: &mut ProofSession,

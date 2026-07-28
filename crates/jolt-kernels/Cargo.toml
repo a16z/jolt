@@ -32,6 +32,7 @@ jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 jolt-claims = { workspace = true, features = ["test-utils"] }

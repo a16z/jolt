@@ -87,6 +87,7 @@ fn for_each_active_lane_value<F: Field>(
 
 /// Build the per-chunk committed bytecode coefficient grids, interleaved by
 /// the proof's trace order.
+#[tracing::instrument(skip_all, name = "build_committed_bytecode_chunk_coeffs")]
 pub fn build_committed_bytecode_chunk_coeffs<F: Field>(
     instructions: &[JoltInstructionRow],
     chunk_count: usize,

@@ -37,7 +37,12 @@ akita = [
   "jolt-verifier/akita",
 ]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
-host = ["prover", "dep:jolt-inlines-sha2", "dep:jolt-inlines-keccak256"]
+host = [
+  "prover",
+  "dep:jolt-inlines-sha2",
+  "dep:jolt-inlines-keccak256",
+  "dep:jolt-profiling",
+]
 prover = [
   "minimal",
   "ark-ec/parallel",
@@ -114,6 +119,7 @@ derive_more.workspace = true
 dory.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
+jolt-profiling = { workspace = true, optional = true }
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-akita = { workspace = true, optional = true }

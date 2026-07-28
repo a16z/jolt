@@ -31,6 +31,7 @@ jolt-program.workspace = true
 jolt-riscv.workspace = true
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 common.workspace = true
