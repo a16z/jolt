@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785273545098,
+  "lastUpdate": 1785275450148,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -128398,6 +128398,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 872932,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4679b5d281407ea1588caac38fc4ceabc950854",
+          "message": "fix(akita): fp128 lookup address alias (#1708)\n\n* fix(tracer): wrap the alignment-assert immediate to u64\n\nVirtualAssertWordAlignment and VirtualAssertHalfwordAlignment carry\nAddOperands, so their lookup index is rs1 + imm and the R1CS row\nRightLookupOperand == LeftInstructionInput + RightInstructionInput\ncompares it against the normalized imm as a field element. FormatAssert\nstored a *signed* imm, unlike FormatI/FormatU/FormatJ which all store\nu64, so a negative effective address produced an index of\n2^128 - |rs1 + imm| -- unequal to rs1 + imm in any field, hence\nunprovable. Its only satisfying representative, p - |rs1 + imm|, lands\nin the Akita fp128 alias band, where it was accepted.\n\nStore the immediate as u64 in FormatAssert, and wrap it in\nexpand_address via format_i_imm, matching the expand_i call on the very\nnext line of every load/store recipe. Both halves are needed: the format\nchange alone leaves the bytecode Imm column disagreeing with the trace\noperands, which surfaces as a \"Stage 1 mismatch\" in *bytecode* read-RAF\n-- stdlib_e2e_dory catches that; muldiv does not.\n\nRe-baselines 16 of 360 expansion golden hashes: exactly the imm = -8\ncases for LH/LHU/LW/LWU/SH/SW, the accesses that emit an alignment\nassert. Byte accesses emit none, and non-negative offsets wrap to\nthemselves, so both are unchanged.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* fix(instruction-lookups): pin akita lookup addresses to a canonical representative\n\nThe Akita fp128 modulus p = 2^128 - 2^32 + 22537 is below 2^128, so the\nidentity-RAF leg -- which ties the committed 128-bit lookup address k to\nRightLookupOperand only through Identity(k) = k mod p -- no longer\ndetermines k. Every honest index r < 2^32 - 22537 has a second\ncommittable preimage r + p that satisfies every existing constraint,\nwhile the lookup table reads the low XLEN bits and returns a different\nvalue. Booleanity, Hamming weight, the R1CS operand rows and commitment\nbinding are all satisfied exactly; no probabilistic step is involved.\n\nFold gamma^3 * U(r_address) into read-RAF's EqRafFlag derived public,\nwhere U is the multilinear indicator that the address's upper half is\nall ones. The input claim gains no gamma^3 term, so Schwartz-Zippel in\ngamma forces sum_j eq(r_red,j) * RafFlag_j * U(k_j) = 0 -- no\nidentity-RAF cycle may carry an all-ones upper limb. Every alias\nr + p < 2^128 has exactly that shape, and conversely U(k) = 0 implies\nk < 2^128 - 2^64 < p, so a surviving address is the canonical\nrepresentative outright. That direction is what makes a bound on\nRightLookupOperand unnecessary, which matters because advice rows set\nRafFlag but have no R1CS constraint on their right operand at all.\n\nGated on jolt-claims' CANONICAL_INSTRUCTION_ADDRESS, a const derived\nfrom the akita feature. jolt-kernels has no akita feature of its own, so\na local cfg! there would silently be false and desynchronize the prover\nfrom the verifier. BN254 is unaffected: an aliased address there needs\n254 address variables and only 128 exist.\n\nWARNING for future edits: the legacy prover and the reference kernel\nmultiply the whole RAF bracket by an outer gamma, so the new term is\nwritten gamma^2 at those two sites and gamma^3 only in the verifier.\n\nTests: brute-force the new prefix/suffix decomposition against direct\nMLE evaluation at three chunk geometries (chunk inside a half, on the\nmidpoint, straddling it); a registry invariant that no non-interleaved\ninstruction can reach an all-ones upper limb; and a test pinning the\ngamma^3 term inside EqRafFlag, which rides in a derived public where a\nrefactor could drop it with nothing failing to compile.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(instruction-lookups): share one upper-half suffix predicate\n\nThe canonical-address suffix predicate existed twice: once as\nUpperHalfAllOnesPolynomial's SuffixPolynomial impl, and once inline in\nPrefixSuffixDecomposition::init_Q_raf's fused trace scan. Only the second\none runs. The generic init_Q path -- the only caller of suffix_mle -- is\nreached exclusively from a #[cfg(test)] helper, so the brute-force test\nupper_half_all_ones_prefix_suffix_decomposition was validating a copy the\nprover never executes, while the copy it does execute had no coverage at\nall. A divergence between them would have left that test green.\n\nPut both on one definition. Folding the two predicates together also\nmakes the existing decomposition test meaningful for the production\npath, since the fused scan now computes the same function it checks.\n\nKept as free fns rather than routing init_Q_raf through the trait: the\nsuffixes are Box<dyn SuffixPolynomial>, so a per-row trait call would put\ndynamic dispatch in the scan's hot loop. pub(crate) and #[inline] keep\nthe arithmetic monomorphic and the crate's public API unchanged.\n\nBehavior-preserving; both expressions are transcribed unchanged. Verified\nby mutating each copy separately -- before this change, mutating only\nidentity_poly.rs left init_Q_raf disagreeing and the akita read-RAF\nsumcheck failing to close, which is exactly the silent drift removed here.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-07-28T13:58:18-07:00",
+          "tree_id": "f9add1904c67d45276a7019a2094e870ac3d45cd",
+          "url": "https://github.com/a16z/jolt/commit/e4679b5d281407ea1588caac38fc4ceabc950854"
+        },
+        "date": 1785275446810,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.4436,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 860728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.0986,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 509208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 502072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 502488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6033,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.4873,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 511116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.5208,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.0352,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 204116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.1894,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 862428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.457,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 509360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3799,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 17.6038,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 507212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.371,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 497380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 25.3883,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1053820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 11.4719,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 633968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 86.0333,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2125736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.2323,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 504688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2806,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 12.0053,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864336,
             "unit": "KB",
             "extra": ""
           }
