@@ -104,7 +104,6 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -116,7 +115,6 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-field",
  "akita-transcript",
@@ -127,7 +125,6 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -141,7 +138,6 @@ dependencies = [
 [[package]]
 name = "akita-field"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-serialization",
  "num-traits",
@@ -153,7 +149,6 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -173,7 +168,6 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -184,7 +178,6 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -205,7 +198,6 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -215,7 +207,6 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -223,7 +214,6 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -237,7 +227,6 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-algebra",
  "akita-field",
@@ -249,7 +238,6 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -260,7 +248,6 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -279,7 +266,6 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/quangvdao/akita?rev=0d38c1263cb72430a4a0ec011413d78a99cbc9be#0d38c1263cb72430a4a0ec011413d78a99cbc9be"
 dependencies = [
  "akita-algebra",
  "akita-challenges",

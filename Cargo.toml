@@ -286,16 +286,16 @@ dory = { package = "dory-pcs", version = "0.4.0", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-algebra = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-config = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-field = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-pcs = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-prover = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-planner = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-schedules = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-challenges = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-transcript = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
-akita-types = { git = "https://github.com/quangvdao/akita", rev = "0d38c1263cb72430a4a0ec011413d78a99cbc9be", default-features = false }
+akita-algebra = { path = "/Users/mgeorghiades/akita/crates/akita-algebra", default-features = false }
+akita-config = { path = "/Users/mgeorghiades/akita/crates/akita-config", default-features = false }
+akita-field = { path = "/Users/mgeorghiades/akita/crates/akita-field", default-features = false }
+akita-pcs = { path = "/Users/mgeorghiades/akita/crates/akita-pcs", default-features = false }
+akita-prover = { path = "/Users/mgeorghiades/akita/crates/akita-prover", default-features = false }
+akita-planner = { path = "/Users/mgeorghiades/akita/crates/akita-planner", default-features = false }
+akita-schedules = { path = "/Users/mgeorghiades/akita/crates/akita-schedules", default-features = false }
+akita-challenges = { path = "/Users/mgeorghiades/akita/crates/akita-challenges", default-features = false }
+akita-transcript = { path = "/Users/mgeorghiades/akita/crates/akita-transcript", default-features = false }
+akita-types = { path = "/Users/mgeorghiades/akita/crates/akita-types", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }

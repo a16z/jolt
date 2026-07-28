@@ -1483,12 +1483,10 @@ impl AkitaPackedProver<'_> {
             reason: error.to_string(),
         })?;
 
-        // The commit sweep is the last full-width consumer of the block
-        // cache, the built NTT slots, and the setup matrix's field form —
-        // release all three so ~35 GB (at 2^26) doesn't sit under the
-        // remaining stages; everything rebuilds or streams lazily when the
-        // stage-8 opening fold needs it.
-        object_setup.release_post_commit_residency(&hint);
+        // The commit sweep is the last full-width consumer of the built NTT
+        // slots and the setup matrix's field form. Release both before the
+        // remaining proving stages; stage 8 rebuilds or streams them lazily.
+        object_setup.release_post_commit_residency();
 
         // Absorb the packed commitment objects exactly where and how the
         // verifier's `absorb_commitments` akita arm does.

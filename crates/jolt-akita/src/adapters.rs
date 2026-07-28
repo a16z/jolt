@@ -185,14 +185,9 @@ impl AkitaProverSetup {
         .flatten()
     }
 
-    /// Release everything the commit was the last full-width consumer of:
-    /// the one-hot block caches (rebuilt lazily by the fold), the built NTT
-    /// slots (rebuilt extent-sized on next use), and the setup matrix's
-    /// field form beyond the streaming-threshold prefix (wider readers
-    /// stream per element from the seed; unexpected wide reads re-derive,
-    /// logged). Call right after the commit absorb.
-    pub fn release_post_commit_residency(&self, hint: &AkitaProverHint) {
-        hint.drop_one_hot_block_caches();
+    /// Release the built NTT slots and the setup matrix's field form beyond
+    /// the streaming-threshold prefix after the commit's last full-width read.
+    pub fn release_post_commit_residency(&self) {
         for prepared in self.prepared_backends() {
             let _freed = prepared.drop_built_ntt_slots();
             let _freed = prepared.release_setup_matrix_to_streaming_prefix();
