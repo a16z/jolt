@@ -22,6 +22,10 @@ pub enum Prefix {
     RightOperand,
     LeftOperand,
     Identity,
+    /// Running product of the bound upper-half address bits, for the
+    /// canonical-address term in instruction read-RAF. Its empty value is
+    /// ONE, not zero — see `UpperHalfAllOnesPolynomial::prefix_polynomial`.
+    UpperHalfAllOnes,
 }
 
 /// Array storing prefix polynomial evaluations, indexed by Prefix enum variants.
@@ -455,6 +459,7 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         left: &mut PrefixSuffixDecomposition<F, 2>,
         right: &mut PrefixSuffixDecomposition<F, 2>,
         identity: &mut PrefixSuffixDecomposition<F, 2>,
+        #[cfg(feature = "akita")] upper_all_ones: &mut PrefixSuffixDecomposition<F, 1>,
         u_evals: &[F],
         lookup_bits: &[LookupBits],
         is_interleaved_operands: &[bool],
@@ -485,9 +490,23 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         let chunk_size = lookup_bits.len().div_ceil(num_threads).max(1);
 
         type U7<F> = <F as JoltField>::UnreducedMulU128Accum;
-        let total_len = 5 * poly_len;
 
-        // Single allocation for all 5 accumulators (layout: [sh | l | r | sf | id]).
+        // Identity-path bucket for the canonical-address term: the mass of
+        // rows whose *unbound* upper-half address bits are all ones. Once the
+        // suffix no longer reaches into the upper half this is vacuously true
+        // for every identity row, so the bucket coincides with `shift_full`'s
+        // unscaled mass; it is accumulated separately anyway to keep the two
+        // decompositions independent.
+        #[cfg(feature = "akita")]
+        let upper_suffix_bits =
+            crate::poly::identity_poly::upper_half_suffix_bits(suffix_len, left.total_len);
+        #[cfg(feature = "akita")]
+        const NUM_ACCUMULATORS: usize = 6;
+        #[cfg(not(feature = "akita"))]
+        const NUM_ACCUMULATORS: usize = 5;
+        let total_len = NUM_ACCUMULATORS * poly_len;
+
+        // Single allocation for all accumulators (layout: [sh | l | r | sf | id | uo]).
         // This reduces allocator overhead and helps explain any delay before per-chunk spans fire.
         let rows: Vec<U7<F>> = lookup_bits
             .par_chunks(chunk_size)
@@ -549,6 +568,18 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                                 if id != 0 {
                                     acc[id_idx] += u.mul_u128_unreduced(id);
                                 }
+                            }
+
+                            // Canonical-address path, identity rows only: being
+                            // inside this branch is what realizes the `raf_flag`
+                            // mask on `B = F · U`.
+                            #[cfg(feature = "akita")]
+                            if crate::poly::identity_poly::upper_half_suffix_all_ones(
+                                suffix_bits.into(),
+                                suffix_len,
+                                upper_suffix_bits,
+                            ) {
+                                acc[5 * poly_len + r_index] += u.to_unreduced();
                             }
                         }
                     }
@@ -654,6 +685,16 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
             DensePolynomial::new(q_shift_full),
             DensePolynomial::new(q_identity),
         ];
+
+        #[cfg(feature = "akita")]
+        {
+            let q_upper_all_ones = rows[5 * poly_len..6 * poly_len]
+                .par_iter()
+                .copied()
+                .map(F::reduce_mul_u128_accum)
+                .collect::<Vec<F>>();
+            upper_all_ones.Q = [DensePolynomial::new(q_upper_all_ones)];
+        }
     }
 }
 
