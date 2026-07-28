@@ -44,6 +44,7 @@ members = [
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
+  "crates/jolt-field-two",
   "crates/jolt-prover-legacy",
   "tracer",
   "common",
