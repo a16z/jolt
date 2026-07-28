@@ -107,6 +107,14 @@ struct JoltOneHotTraceRows {
     memory_layout: common::jolt_device::MemoryLayout,
 }
 
+fn committed_nonzero_lane(lane: usize) -> u16 {
+    if lane == 0 {
+        jolt_akita::no_hot_lane()
+    } else {
+        lane as u16
+    }
+}
+
 impl JoltOneHotTraceRows {
     fn fill_row_into(&self, row: usize, hot_lanes: &mut [u16]) {
         use crate::zkvm::instruction::LookupQuery;
@@ -122,31 +130,37 @@ impl JoltOneHotTraceRows {
             .iter_mut()
             .enumerate()
         {
-            *hot_lane = self.params.lookup_index_chunk(lookup_index, index) as u16;
+            *hot_lane = committed_nonzero_lane(
+                self.params.lookup_index_chunk(lookup_index, index) as usize
+            );
         }
         for (index, hot_lane) in hot_lanes[self.ranges.bytecode.clone()]
             .iter_mut()
             .enumerate()
         {
-            *hot_lane = self.params.bytecode_pc_chunk(pc, index) as u16;
+            *hot_lane = committed_nonzero_lane(self.params.bytecode_pc_chunk(pc, index) as usize);
         }
         for (index, hot_lane) in hot_lanes[self.ranges.ram.clone()].iter_mut().enumerate() {
             *hot_lane = ram_address.map_or_else(jolt_akita::no_hot_lane, |address| {
-                self.params.ram_address_chunk(address, index) as u16
+                committed_nonzero_lane(self.params.ram_address_chunk(address, index) as usize)
             });
         }
         for (index, hot_lane) in hot_lanes[self.ranges.unsigned_inc.clone()]
             .iter_mut()
             .enumerate()
         {
-            *hot_lane =
-                self.fused_inc_one_hot[index][row].map_or_else(jolt_akita::no_hot_lane, u16::from);
+            *hot_lane = self.fused_inc_one_hot[index][row]
+                .map_or_else(jolt_akita::no_hot_lane, |lane| {
+                    committed_nonzero_lane(lane as usize)
+                });
         }
         hot_lanes[self.ranges.unsigned_inc_msb] = self
             .fused_inc_one_hot
             .last()
             .and_then(|column| column[row])
-            .map_or_else(jolt_akita::no_hot_lane, u16::from);
+            .map_or_else(jolt_akita::no_hot_lane, |lane| {
+                committed_nonzero_lane(lane as usize)
+            });
     }
 }
 
@@ -773,14 +787,14 @@ impl AkitaPackedProver<'_> {
                 Arc::new(
                     fused_cycles
                         .par_iter()
-                        .map(|cycle| Some(cycle.chunk_hot_lane_bits(width, index) as u8))
+                        .map(|cycle| Some(cycle.balanced_chunk_hot_lane_bits(width, index) as u8))
                         .collect(),
                 )
             })
             .chain(core::iter::once(Arc::new(
                 fused_cycles
                     .par_iter()
-                    .map(|cycle| Some(u8::from(cycle.msb())))
+                    .map(|cycle| Some(cycle.balanced_carry_hot_lane_bits(width) as u8))
                     .collect(),
             )))
             .collect();
@@ -1855,7 +1869,7 @@ mod tests {
         verify(&proof).expect("packed verifier should accept the packed proof");
 
         // Live tampers on the fused-inc pipeline's claim wires: the fused
-        // increment's reduced claim and the hamming-reduction chunk/msb
+        // increment's reduced claim and the hamming-reduction digit/carry
         // finals each participate in a batched output fold — an offset on
         // any of them must be rejected.
         let tamper = |mutate: &dyn Fn(&mut jolt_verifier::proof::ClearProofClaims<AkitaField>)| {
@@ -1889,7 +1903,7 @@ mod tests {
                 .hamming_weight_claim_reduction
                 .unsigned_inc_msb += one))
             .is_err(),
-            "tampered unsigned-inc msb final must be rejected"
+            "tampered increment carry final must be rejected"
         );
     }
 

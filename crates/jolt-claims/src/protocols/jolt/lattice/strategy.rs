@@ -1,6 +1,7 @@
 //! The canonical native-Akita `OneHotTrace` commitment layout. Its semantic
-//! columns are prefix-packed into one strict `K x (capacity · T)` one-hot
-//! polynomial and reduced to one opening at a random selector point.
+//! columns use an implicit public lane zero, are prefix-packed into one
+//! `K x (capacity · T)` polynomial, and reduce to one opening at a random
+//! selector point.
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::Field;
@@ -114,7 +115,7 @@ impl OneHotTraceLayout {
             ranges: _,
         } = self.plan(shape)?;
         let mut hasher = Blake2b::<U32>::new();
-        hasher.update(b"jolt/akita/one_hot_trace/prefix-packed/v4");
+        hasher.update(b"jolt/akita/one_hot_trace/implicit-zero-balanced-inc/v5");
         append_usize(&mut hasher, column_arity);
         append_usize(&mut hasher, packed_arity);
         append_usize(&mut hasher, column_capacity);
@@ -217,8 +218,8 @@ impl OneHotTraceLayoutPlan {
         Ok(point)
     }
 
-    /// Evaluates the selector MLE of the semantic claims, with unused packed
-    /// slots fixed to zero.
+    /// Evaluates the selector MLE of the sparse committed claims, with unused
+    /// packed slots fixed to zero.
     pub fn packed_evaluation<F: Field>(
         &self,
         selector_point: &[F],

@@ -10,10 +10,9 @@ use thiserror::Error;
 
 use super::super::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 
-/// Bit width of the unsigned fused increment (`FusedInc + 2^64` fits in 65
-/// bits: the chunk polynomials carry the low 64,
-/// [`UnsignedIncMsb`](crate::protocols::jolt::JoltCommittedPolynomial::UnsignedIncMsb)
-/// the top bit).
+/// Bit width covered by the balanced fused-increment digits. The compatibility
+/// names `UnsignedIncChunk` and `UnsignedIncMsb` denote centered digits and
+/// their signed carry in this protocol version.
 pub const UNSIGNED_INC_BITS: usize = 64;
 
 /// Bytecode read-raf val stages in lattice mode: the base stages plus one
@@ -179,6 +178,14 @@ pub fn selector_block_weight<F: Field>(
         .sum()
 }
 
+/// The multilinear extension of the centered lane value used by balanced
+/// increment digits: unsigned identity minus `K` when the address MSB is set.
+pub fn balanced_inc_value<F: Field>(address_point: &[F]) -> F {
+    let unsigned = IdentityPolynomial::new(address_point.len()).evaluate(address_point);
+    let msb = address_point.first().copied().unwrap_or_else(F::zero);
+    unsigned - F::pow2(address_point.len()) * msb
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -213,6 +220,24 @@ mod tests {
             acc + chunking.place_value::<Fr>(index) * Fr::from_u64(chunk)
         });
         assert_eq!(reconstructed, Fr::from_u64(value));
+    }
+
+    #[test]
+    fn balanced_inc_value_matches_centered_boolean_lanes() {
+        for width in [4, 8] {
+            let radix = 1usize << width;
+            for lane in 0..radix {
+                let expected = if lane < radix / 2 {
+                    lane as i128
+                } else {
+                    lane as i128 - radix as i128
+                };
+                assert_eq!(
+                    balanced_inc_value(&boolean_point_msb::<Fr>(width, lane)),
+                    Fr::from_i128(expected)
+                );
+            }
+        }
     }
 
     #[test]

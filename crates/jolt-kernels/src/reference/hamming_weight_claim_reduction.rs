@@ -51,6 +51,7 @@ impl<F: Field> HammingWeightClaimReductionProver<F> for ReferenceBackend {
             r_cycle.to_vec(),
             r_address.to_vec(),
             virtualization_points.to_vec(),
+            None,
         );
 
         let mut opening_tables = BTreeMap::new();

@@ -23,8 +23,8 @@ pub const ONE_HOT_TRACE_K16_CAPACITY: usize = 64;
 pub const ONE_HOT_TRACE_K256_CAPACITY: usize = 32;
 
 /// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
-/// `Ra` families, unsigned-inc chunks, and MSB — as semantic columns of one
-/// packed one-hot polynomial.
+/// `Ra` families, balanced increment chunks, and signed carry — as semantic
+/// columns of one packed polynomial with public lane zero omitted.
 /// Advice byte columns are their own commitment objects
 /// ([`advice_bytes_packing`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

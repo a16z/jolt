@@ -6,6 +6,8 @@
 //! `EqBooleanity` / `EqVirtualization` public-value computation.
 
 #[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
+#[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::relations::hamming_weight as lattice_hamming;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
@@ -114,6 +116,10 @@ pub struct HammingWeightClaimReduction<F: Field> {
     /// The per-RA virtualization address chunks (one per layout polynomial, in
     /// canonical order) that `EqVirtualization(i)` compares against.
     virtualization_points: Vec<Vec<F>>,
+    /// Clear Stage 6 RAM activation used by Akita's implicit-default recentering.
+    /// The value is already transcript-bound as the Stage 6 input opening.
+    #[cfg(feature = "akita")]
+    ram_hamming_weight: Option<F>,
 }
 
 impl<F: Field> HammingWeightClaimReduction<F> {
@@ -122,13 +128,18 @@ impl<F: Field> HammingWeightClaimReduction<F> {
         r_cycle: Vec<F>,
         r_address: Vec<F>,
         virtualization_points: Vec<Vec<F>>,
+        ram_hamming_weight: Option<F>,
     ) -> Self {
+        #[cfg(not(feature = "akita"))]
+        let _ = ram_hamming_weight;
         Self {
             symbolic: HammingSymbolic::new(dimensions),
             dimensions,
             r_cycle,
             r_address,
             virtualization_points,
+            #[cfg(feature = "akita")]
+            ram_hamming_weight,
         }
     }
 
@@ -215,9 +226,17 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let rho_rev = self.rho_reversed(output_points)?;
+        let eq_default = |point: &[F]| {
+            point.iter().fold(F::one(), |accumulator, value| {
+                accumulator * (F::one() - *value)
+            })
+        };
         match public_id {
             HammingWeightClaimReductionPublic::EqBooleanity => {
                 try_eq_mle(rho_rev, &self.r_address).map_err(public_input_failed)
+            }
+            HammingWeightClaimReductionPublic::EqBooleanityAtDefault => {
+                Ok(eq_default(&self.r_address))
             }
             HammingWeightClaimReductionPublic::EqVirtualization(index) => {
                 let point = self.virtualization_points.get(*index).ok_or_else(|| {
@@ -227,16 +246,33 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 })?;
                 try_eq_mle(rho_rev, point).map_err(public_input_failed)
             }
-            HammingWeightClaimReductionPublic::IdentityAtAddress => {
+            HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(index) => {
+                let point = self.virtualization_points.get(*index).ok_or_else(|| {
+                    public_input_failed(format!(
+                        "missing HammingWeight virtualization point for index {index}"
+                    ))
+                })?;
+                Ok(eq_default(point))
+            }
+            HammingWeightClaimReductionPublic::EqDefault => Ok(eq_default(rho_rev)),
+            HammingWeightClaimReductionPublic::RamHammingWeight => {
                 #[cfg(feature = "akita")]
                 {
-                    let mut value = F::zero();
-                    let mut weight = F::one();
-                    for challenge in rho_rev.iter().rev() {
-                        value += weight * *challenge;
-                        weight = weight + weight;
-                    }
-                    Ok(value)
+                    self.ram_hamming_weight.ok_or_else(|| {
+                        public_input_failed(
+                            "missing clear RAM hamming-weight value for implicit-default reduction",
+                        )
+                    })
+                }
+                #[cfg(not(feature = "akita"))]
+                {
+                    Err(VerifierError::MissingStageClaimDerived { id: *id })
+                }
+            }
+            HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
+                #[cfg(feature = "akita")]
+                {
+                    Ok(balanced_inc_value(rho_rev))
                 }
                 #[cfg(not(feature = "akita"))]
                 {
