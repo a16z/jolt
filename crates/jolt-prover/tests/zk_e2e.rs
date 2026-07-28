@@ -15,25 +15,27 @@ mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_claims::protocols::jolt::geometry::claim_reductions::{bytecode, program_image};
     use jolt_claims::protocols::jolt::geometry::dimensions::CommitmentMatrixShape;
-    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_kernels::committed_program::{
         build_committed_bytecode_chunk_coeffs, program_image_words_padded,
     };
+    use jolt_kernels::CommitmentGrid;
     use jolt_openings::{CommitmentScheme, StreamingCommitment, ZkStreamingCommitment};
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_prover::ProverConfig;
+    use jolt_prover::stages::stage0::TrustedAdviceCommitment;
+    use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::JoltVerifierPreprocessing;
-    use jolt_witness::JoltVmWitnessConfig;
+    use jolt_witness::{JoltVmWitnessConfig, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
     pub const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
@@ -55,9 +57,14 @@ mod support {
         pub elf_contents: Vec<u8>,
     }
 
-    pub fn legacy_guest(program: &mut host::Program, inputs: &[u8]) -> LegacyGuest {
+    pub fn legacy_guest(
+        program: &mut host::Program,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+    ) -> LegacyGuest {
         let (bytecode, init_memory_state, _, entry_address) = program.decode();
-        let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
+        let (_, _, _, io_device) = program.trace(inputs, untrusted_advice, trusted_advice);
         let elf_contents = program.get_elf_contents().expect("elf contents");
         let preprocessed =
             LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
@@ -75,6 +82,8 @@ mod support {
         program: &JoltProgram,
         memory_layout: &MemoryLayout,
         inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
     ) -> TraceOutput<OwnedTrace> {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
@@ -90,8 +99,8 @@ mod support {
                 program,
                 TraceInputs {
                     inputs: inputs.to_vec(),
-                    untrusted_advice: Vec::new(),
-                    trusted_advice: Vec::new(),
+                    untrusted_advice: untrusted_advice.to_vec(),
+                    trusted_advice: trusted_advice.to_vec(),
                     memory_config,
                 },
             )
@@ -232,13 +241,49 @@ mod support {
         preprocessing: &VerifierPreprocessing,
         public_io: &JoltDevice,
         proof: &Proof,
+        trusted_advice_commitment: Option<&DoryCommitment>,
     ) -> Result<(), jolt_verifier::VerifierError> {
         jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             preprocessing,
             public_io,
             proof,
-            None,
+            trusted_advice_commitment,
         )
+    }
+
+    /// The ZK trusted-advice preprocessing commit: the modular backend's
+    /// `commit_advice` finishes hiding under the `zk` feature, so the
+    /// commitment is randomized — it stands in for the transparent
+    /// preprocessing-time one, and the returned hint carries the blind the
+    /// stage-8 opening needs.
+    pub fn commit_trusted_advice_zk(
+        backend: &JoltBackend<Fr, DoryScheme>,
+        witness: &TraceBackend<'_, OwnedTrace>,
+        memory_layout: &MemoryLayout,
+        setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
+    ) -> TrustedAdviceCommitment<DoryScheme> {
+        let mut session = backend.begin_proof();
+        let advice_grid = CommitmentGrid {
+            total_vars: advice_vars(memory_layout.max_trusted_advice_size),
+            log_t: 0,
+            log_k_chunk: 0,
+            // Advice grids always place cycle-major — see `CommitmentGrid`.
+            order: TracePolynomialOrder::CycleMajor,
+        };
+        let entry = backend
+            .commit
+            .commit_advice(
+                &mut session,
+                witness,
+                JoltCommittedPolynomial::TrustedAdvice,
+                advice_grid,
+                setup,
+            )
+            .expect("trusted advice commit");
+        TrustedAdviceCommitment::<DoryScheme> {
+            commitment: entry.commitment,
+            hint: entry.hint,
+        }
     }
 
     /// BlindFold verification (and the prover's replay of it) recurses over
@@ -287,7 +332,7 @@ mod zk {
 
         // Legacy host preprocessing carries the program metadata and — under
         // the zk feature — the BlindFold vector-commitment setup.
-        let guest = support::legacy_guest(&mut program, &inputs);
+        let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
         let io_device = guest.io_device.clone();
         let shared = JoltSharedPreprocessing::new(
             guest.program,
@@ -304,7 +349,7 @@ mod zk {
 
         let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
         let memory_layout = io_device.memory_layout.clone();
-        let trace_output = support::trace_modular(&jolt_program, &memory_layout, &inputs);
+        let trace_output = support::trace_modular(&jolt_program, &memory_layout, &inputs, &[], &[]);
         let public_io = trace_output.device.clone();
         let program_preprocessing = verifier_preprocessing
             .program
@@ -341,7 +386,7 @@ mod zk {
         support::with_zk_stack(|| {
             let (preprocessing, public_io, proof) = prove_muldiv_zk();
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
-            support::verify_modular(&preprocessing, &public_io, &proof)
+            support::verify_modular(&preprocessing, &public_io, &proof, None)
                 .expect("modular ZK proof must verify");
         });
     }
@@ -355,9 +400,96 @@ mod zk {
             };
             blindfold_proof.random_u += Fr::from(1u64);
             assert!(
-                support::verify_modular(&preprocessing, &public_io, &proof).is_err(),
+                support::verify_modular(&preprocessing, &public_io, &proof, None).is_err(),
                 "a tampered BlindFold proof must be rejected",
             );
+        });
+    }
+
+    /// ZK × advice: the hiding `commit_advice` finishes (trusted at
+    /// preprocessing time, untrusted at prove time) and the advice
+    /// claim-reduction constraints through BlindFold — the claim family the
+    /// clear-mode advice tests pin, exercised here in the ZK envelope.
+    #[test]
+    fn zk_advice_consumer_modular_proof_is_accepted() {
+        support::with_zk_stack(|| {
+            let mut program = host::Program::new("advice-consumer-guest");
+            let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
+            let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+            let trusted_advice = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
+
+            let guest =
+                support::legacy_guest(&mut program, &inputs, &untrusted_advice, &trusted_advice);
+            let io_device = guest.io_device.clone();
+            let shared = JoltSharedPreprocessing::new(
+                guest.program,
+                guest.io_device.memory_layout.clone(),
+                support::MAX_PADDED_TRACE_LENGTH,
+            );
+            let legacy_preprocessing: support::LegacyPreprocessing =
+                LegacyProverPreprocessing::new(shared);
+            let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+
+            let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+            let memory_layout = io_device.memory_layout.clone();
+            let trace_output = support::trace_modular(
+                &jolt_program,
+                &memory_layout,
+                &inputs,
+                &untrusted_advice,
+                &trusted_advice,
+            );
+            let public_io = trace_output.device.clone();
+            let program_preprocessing = verifier_preprocessing
+                .program
+                .as_full()
+                .expect("full program preprocessing")
+                .clone();
+            let config =
+                support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
+            let padded_output = support::pad_trace(trace_output, config.trace_length);
+            let witness = TraceBackend::new(
+                support::witness_config(&config)
+                    .include_trusted_advice(true)
+                    .include_untrusted_advice(true),
+                JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+            );
+
+            let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+                verifier: verifier_preprocessing,
+                pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(&memory_layout, &[])),
+                committed_program: None,
+            };
+            let backend = JoltBackend::<Fr, DoryScheme>::reference();
+            let trusted = support::commit_trusted_advice_zk(
+                &backend,
+                &witness,
+                &memory_layout,
+                &prover_preprocessing.pcs_setup,
+            );
+
+            let proof =
+                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                    &backend,
+                    &prover_preprocessing,
+                    &config,
+                    Some(&trusted),
+                    &witness,
+                    &public_io,
+                )
+                .expect("modular ZK advice prove");
+            assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
+            assert!(
+                proof.untrusted_advice_commitment.is_some(),
+                "untrusted advice must be committed (hiding) in the proof",
+            );
+            support::verify_modular(
+                &prover_preprocessing.verifier,
+                &public_io,
+                &proof,
+                Some(&trusted.commitment),
+            )
+            .expect("modular ZK advice proof must verify");
         });
     }
 
@@ -369,7 +501,7 @@ mod zk {
             let mut program = host::Program::new("muldiv-guest");
             let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
 
-            let guest = support::legacy_guest(&mut program, &inputs);
+            let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
             let io_device = guest.io_device.clone();
             let (shared, committed_program_prover_data, generators) =
                 JoltSharedPreprocessing::new_committed(
@@ -402,7 +534,8 @@ mod zk {
                 max_padded_trace_length: support::MAX_PADDED_TRACE_LENGTH,
             };
             let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
-            let trace_output = support::trace_modular(&jolt_program, &memory_layout, &inputs);
+            let trace_output =
+                support::trace_modular(&jolt_program, &memory_layout, &inputs, &[], &[]);
             let public_io = trace_output.device.clone();
             let config =
                 support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
@@ -463,7 +596,7 @@ mod zk {
                     &public_io,
                 )
                 .expect("modular committed ZK prove");
-            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof)
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None)
                 .expect("modular committed ZK proof must verify");
         });
     }
