@@ -5,7 +5,7 @@
 //!
 //! Each module here fills its [`JoltBackend`] slot — a
 //! [`PrepareKernel`](crate::PrepareKernel) impl per sumcheck relation,
-//! resolved through [`HasKernel`](crate::HasKernel), or a bespoke slot trait
+//! resolved through the slot's delegating [`PrepareKernel`](crate::PrepareKernel) impl, or a bespoke slot trait
 //! impl; the seam (the traits, [`JoltBackend`], `ProofSession`, the wire
 //! types) never depends on this directory. The reference tier is the
 //! equivalence anchor optimized backends are tested against and the

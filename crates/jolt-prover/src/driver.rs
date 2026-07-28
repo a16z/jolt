@@ -7,7 +7,7 @@
 //! presence is ever restated on the prove side. One recorder-generic
 //! [`prove`](StageProver::prove) runs the whole body: `begin_batch` (the
 //! generated shared head) → per-member kernel `prepare` in declaration order
-//! (through [`KernelSource`], the per-stage `HasKernel` bound collector) →
+//! (through [`KernelSource`], the per-stage `PrepareKernel` bound collector) →
 //! the engine round loop → derived opening points → per-member
 //! `validate_derived_tables` → typed extraction into the stage's
 //! `OutputClaims` aggregate → per-member `park_residue` (cross-batch residues
@@ -24,7 +24,9 @@
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::Field;
-use jolt_kernels::{HasKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
+use jolt_kernels::{
+    PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 use jolt_sumcheck::{RecordedSumcheck, SumcheckRecorder};
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::{
@@ -87,8 +89,8 @@ pub trait StageProver<F: Field>: Sized {
 }
 
 /// The per-stage kernel-source bound collector: [`impl_stage_prover!`] emits
-/// one blanket impl per stage — over any `B` carrying `HasKernel<F, R>` for
-/// exactly that stage's member relations — so [`StageProver::prove`]'s `B`
+/// one blanket impl per stage — over any `B` carrying `PrepareKernel<F, R>`
+/// for exactly that stage's member relations — so [`StageProver::prove`]'s `B`
 /// bound stays uniform while each stage demands exactly its members' slots.
 /// `prepare_members` mints the typed kernel bundle in declaration order
 /// (`Option` members gated on presence, mismatched presence attributed to the
@@ -117,7 +119,8 @@ pub struct Proved<F: Field, S: StageProver<F>, C> {
     pub final_claim: F,
 }
 
-/// Mint one required member's kernel through the source's [`HasKernel`] slot.
+/// Mint one required member's kernel through the source's [`PrepareKernel`]
+/// slot.
 pub fn prepare_required<F, R, B>(
     kernels: &B,
     relation: &R,
@@ -130,12 +133,12 @@ pub fn prepare_required<F, R, B>(
 where
     F: Field,
     R: ConcreteSumcheck<F>,
-    B: HasKernel<F, R> + ?Sized,
+    B: PrepareKernel<F, R> + ?Sized,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
-    Ok(kernels.kernel().prepare(
+    Ok(kernels.prepare(
         session,
         witness,
         ProverInputs {
@@ -168,7 +171,7 @@ pub fn prepare_optional<F, R, B>(
 where
     F: Field,
     R: ConcreteSumcheck<F>,
-    B: HasKernel<F, R> + ?Sized,
+    B: PrepareKernel<F, R> + ?Sized,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
@@ -486,7 +489,7 @@ macro_rules! impl_stage_prover {
 
         impl<F: ::jolt_field::Field, B> $crate::driver::KernelSource<F, $batch<F>> for B
         where
-            B: ?Sized $(+ ::jolt_kernels::HasKernel<F, $relation<F>>)+,
+            B: ?Sized $(+ ::jolt_kernels::PrepareKernel<F, $relation<F>>)+,
         {
             fn prepare_members(
                 &self,

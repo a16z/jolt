@@ -102,18 +102,20 @@ Key abstractions introduced or modified:
   `SumcheckKernelError`: with the driver generated into jolt-prover, nothing in
   jolt-verifier needs to name it. Kernels own no relation copy — the stage's relation is the
   single source of geometry, threaded back through `validate_derived_tables`.
-- **`HasKernel<F, R>`** (jolt-kernels): type-indexed slot resolution on the backend —
-  `fn kernel(&self) -> &dyn PrepareKernel<F, R>`. Macro expansion is syntactic and cannot
-  match a backend field by relation type; trait resolution is the only by-type lookup Rust
-  has, so this trait is what keeps the consumer-macro invocations argument-free. Its impls
-  are never written by hand: `JoltBackend` stays a **plainly declared struct** carrying
-  `#[derive(KernelSlots)]` (new proc-macro crate `jolt-kernels-derive`, following the
-  `jolt-claims-derive`/`jolt-verifier-derive` pattern), which emits one `HasKernel<F, R>`
-  impl per field of type `Box<dyn PrepareKernel<F, R>>` and skips all other fields
-  (`commit`, `joint_opening`, the fronts). The field's own type IS the relation→slot
-  mapping — declared once, restated nowhere; a missing or mis-typed slot surfaces as a
-  missing-`HasKernel` bound error at the stage impl. This replaces v1's `BackendPreparer`,
-  and any other registry (a partial backend, a test double) implements `HasKernel` by hand.
+- **Slot resolution** (jolt-kernels): the backend registry is reached by relation type
+  through `PrepareKernel<F, R>` itself — no separate lookup trait. Macro expansion is
+  syntactic and cannot match a backend field by relation type; trait resolution is the
+  only by-type lookup Rust has, so per-relation `PrepareKernel` impls on the registry are
+  what keep the consumer-macro invocations argument-free. `JoltBackend`'s impls are never
+  written by hand: it stays a **plainly declared struct** carrying `#[derive(KernelSlots)]`
+  (proc-macro crate `jolt-kernels-derive`, following the
+  `jolt-claims-derive`/`jolt-verifier-derive` pattern), which emits one delegating
+  `PrepareKernel<F, R>` impl per field of type `Box<dyn PrepareKernel<F, R>>` and skips
+  all other fields (`commit`, `joint_opening`, the fronts). The field's own type IS the
+  relation→slot mapping — declared once, restated nowhere; a missing or mis-typed slot
+  surfaces as a missing-`PrepareKernel` bound error at the stage impl. This replaces v1's
+  `BackendPreparer` (and the interim `HasKernel` lookup trait, folded into `PrepareKernel`);
+  any other registry (a partial backend, a test double) implements `PrepareKernel` by hand.
 - **`StageProver<F>`** (jolt-prover): the driver trait, implemented for each stage batch
   struct (local trait, foreign type — orphan-rule clean):
   ```rust
@@ -136,8 +138,9 @@ Key abstractions introduced or modified:
   assembly, BlindFold witness carry) lives in the stage fronts and is PR C's scope.
   `KernelSource<F, S>` is the per-stage bound collector: the consumer macro emits one
   blanket impl per stage — `impl<B> KernelSource<F, Stage3Sumchecks<F>> for B where
-  B: HasKernel<F, SpartanShift<F>> + HasKernel<F, InstructionInput<F>> + ...` — so the
-  trait method's `B` bound is uniform while each stage demands exactly its members' slots.
+  B: PrepareKernel<F, SpartanShift<F>> + PrepareKernel<F, InstructionInput<F>> + ...` — so
+  the trait method's `B` bound is uniform while each stage demands exactly its members'
+  slots.
   `Proved<F, S, C>` is one generic carrier in jolt-prover
   `{ recorded, output_claims: S::OutputClaims, output_points: S::OutputPoints, final_claim }`
   (replaces v1's per-stage generated `ProvedStageN`).
@@ -157,7 +160,7 @@ Key abstractions introduced or modified:
   consumer `macro_rules! impl_stage_prover` expands the `StageProver` + `KernelSource`
   impls from it, so no stage's member list, order, or presence is ever restated. The
   invocations are argument-free — `stage3_sumchecks_members!(impl_stage_prover);` — because
-  slot resolution rides on the `HasKernel` bounds the compiler discharges; only 6b's
+  slot resolution rides on the `PrepareKernel` bounds the compiler discharges; only 6b's
   invocation carries its curation override block. The derive
   emits **no other prover-facing code**: v1's `prove_clear`, `ProvedStageN`, and
   `<Stage>ExternalMembers` emissions are removed. Escalation path: if the consumer outgrows
@@ -277,7 +280,7 @@ is welcome but not required.
       (`commitment`, `opening`, plus `backend`/`error`); the remaining crate-root modules
       (`kernel`, `uniskip`, `committed_program`, `precommitted_reduction`) are sanctioned
       elsewhere in this spec and serve no batch member directly; every batch member's kernel
-      is reachable via `HasKernel<F, R>` → `PrepareKernel<F, R>`; relation
+      is reachable via a delegating `PrepareKernel<F, R>` impl; relation
       double-construction is gone — kernels receive `&R`.
 - [ ] The stage-6b recipe contains no hand-mirrored batch legs (built by the promoted
       `build_from_parts`), and the stage-1/2 fronts hand no kernel objects to the driver —
@@ -333,7 +336,7 @@ jolt-verifier        ConcreteSumcheck + relations (with accessor blocks),
                      generated begin_batch + verify_clear + aggregates +
                      member-list callback macros                            [protocol; prover-free]
 jolt-kernels         SumcheckKernel, ProverInputs, PrepareKernel,
-                     HasKernel, plain JoltBackend + #[derive(KernelSlots)]
+                     plain JoltBackend + #[derive(KernelSlots)]
                      (jolt-kernels-derive), ProofSession,
                      commit/joint_opening slots, reference/ impls           [compute]
 jolt-prover          StageProver + KernelSource + Proved + consumer macro
@@ -359,9 +362,9 @@ stage3_sumchecks_members!(impl_stage_prover);
 ```
 
 `impl_stage_prover` expands: the `KernelSource<F, Stage3Sumchecks<F>>` blanket impl
-(collecting `HasKernel` bounds), and `impl StageProver<F> for Stage3Sumchecks<F>` whose
+(collecting `PrepareKernel` bounds), and `impl StageProver<F> for Stage3Sumchecks<F>` whose
 `prove` runs: `begin_batch` (existing generated head) → per-member
-`kernels.kernel::<R>().prepare(session, witness, ProverInputs { .. })` in declaration order
+`PrepareKernel::<F, R>::prepare(kernels, session, witness, ProverInputs { .. })` in declaration order
 (`Option` members gated on presence, mismatched presence attributed to the member's relation
 id) → `prove_batch` → `derive_opening_points` → per-member `validate_derived_tables` → typed
 `output_claims()` into the aggregate → per-member `park_residue` (cross-batch residues into
@@ -424,8 +427,8 @@ the session; the call consumes the kernel, so it follows the borrowing extractio
   F-valued instance data kernels need (bound points, carried challenge vectors, public
   inputs), and extending it would break the one-symbolic-object-any-field property.
 - **Slot resolution via a generated `StageNSlots` struct.** Rejected in v0 and still: the
-  struct would be filled field-by-field per recipe. `HasKernel` derives the field spelling
-  from the field declaration itself.
+  struct would be filled field-by-field per recipe. The `KernelSlots` derive takes the
+  field spelling from the field declaration itself.
 - **`jolt_backend_registry!` declaration macro** (implemented mid-v2, rejected): a
   `macro_rules!` wrapping the `JoltBackend` declaration to emit field + `HasKernel` impl
   pairs. Rejected: the backend struct must stay a plainly declared, readable struct;
@@ -469,7 +472,7 @@ Update `book/` prover-architecture material added by #1669 to describe the `Stag
 driver, the member-list callback handoff, and `PrepareKernel`.
 `specs/clean-slate-prover.md` §Design gains a one-paragraph pointer here (its "begin_batch
 generates the head" statement becomes "head and driver"). Crate-level rustdoc: `jolt-kernels`
-(`PrepareKernel`, `HasKernel`, session-carry conventions), `jolt-verifier-derive` (member-list
+(`PrepareKernel`, session-carry conventions), `jolt-verifier-derive` (member-list
 emission), `jolt-prover` (`StageProver`, consumer macro), `jolt-sumcheck` (`ProveRounds`
 contract, done in v1); `jolt-kernels-derive` (`KernelSlots`).
 

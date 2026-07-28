@@ -44,7 +44,7 @@ pub mod precommitted_reduction;
 pub mod reference;
 pub mod uniskip;
 
-pub use backend::{HasKernel, JoltBackend, PrepareKernel, ProofSession};
+pub use backend::{JoltBackend, PrepareKernel, ProofSession};
 pub use commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;

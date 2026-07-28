@@ -576,7 +576,7 @@ mod twin_tests {
     }
 
     // The toy registry, resolved exactly like `JoltBackend`: one derived
-    // `HasKernel` impl per `Box<dyn PrepareKernel<..>>` slot.
+    // delegating `PrepareKernel` impl per `Box<dyn PrepareKernel<..>>` slot.
     #[derive(KernelSlots)]
     struct ToyKernels {
         alpha: Box<dyn PrepareKernel<Fr, ToyAlpha<Fr>>>,

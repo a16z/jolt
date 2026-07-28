@@ -2,17 +2,18 @@
 //!
 //! [`macro@KernelSlots`] turns a plainly declared kernel registry — a struct
 //! whose sumcheck slots are `Box<dyn PrepareKernel<F, R>>` fields — into its
-//! type-indexed resolution: one `jolt_kernels::HasKernel<F, R>` impl per slot,
-//! returning `&*self.<field>`. The field's own type IS the relation→slot
-//! mapping — declared once, restated nowhere. Every other field (bespoke
-//! slots such as commitment streaming or the joint opening) is skipped
-//! silently, so a mis-declared slot surfaces as a missing-`HasKernel` bound
-//! error at the consuming stage impl, never as a derive error. The emitted
-//! impls reference `HasKernel`/`PrepareKernel` through the crate path from
-//! the serde-style `#[kernel_slots(crate = "...")]` override — absolute
-//! `::jolt_kernels` by default (external registries need nothing);
-//! `jolt-kernels` itself passes `crate = "crate"` — and reuse the struct's
-//! own generics and where-clause verbatim.
+//! type-indexed resolution: one `jolt_kernels::PrepareKernel<F, R>` impl per
+//! slot, delegating `prepare` to `self.<field>`. The field's own type IS the
+//! relation→slot mapping — declared once, restated nowhere. Every other
+//! field (bespoke slots such as commitment streaming or the joint opening)
+//! is skipped silently, so a mis-declared slot surfaces as a
+//! missing-`PrepareKernel` bound error at the consuming stage impl, never as
+//! a derive error. The emitted impls reference `PrepareKernel` and its
+//! signature types through the crate path from the serde-style
+//! `#[kernel_slots(crate = "...")]` override — absolute `::jolt_kernels` by
+//! default (external registries need nothing); `jolt-kernels` itself passes
+//! `crate = "crate"` — and reuse the struct's own generics and where-clause
+//! verbatim.
 //!
 //! See `specs/prover-stage-drivers.md`.
 
@@ -24,11 +25,12 @@ use syn::{
     TypeParamBound,
 };
 
-/// Emit one `jolt_kernels::HasKernel<F, R>` impl per `Box<dyn PrepareKernel<F,
-/// R>>` field of the registry struct, resolving to that field. Fields of any
-/// other type are skipped silently. `#[kernel_slots(crate = "...")]` overrides
-/// the `::jolt_kernels` path the impls name the trait crate by (the defining
-/// crate passes `"crate"`). See the crate-level docs.
+/// Emit one `jolt_kernels::PrepareKernel<F, R>` impl per `Box<dyn
+/// PrepareKernel<F, R>>` field of the registry struct, delegating `prepare`
+/// to that field. Fields of any other type are skipped silently.
+/// `#[kernel_slots(crate = "...")]` overrides the `::jolt_kernels` path the
+/// impls name the trait crate by (the defining crate passes `"crate"`). See
+/// the crate-level docs.
 #[proc_macro_derive(KernelSlots, attributes(kernel_slots))]
 pub fn derive_kernel_slots(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -64,11 +66,19 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         let ident = field.ident.as_ref()?;
         let (f, r) = prepare_kernel_args(&field.ty)?;
         Some(quote! {
-            impl #impl_generics #krate::HasKernel<#f, #r> for #name #ty_generics
+            impl #impl_generics #krate::PrepareKernel<#f, #r> for #name #ty_generics
             #where_clause
             {
-                fn kernel(&self) -> &dyn #krate::PrepareKernel<#f, #r> {
-                    &*self.#ident
+                fn prepare(
+                    &self,
+                    session: &mut #krate::ProofSession,
+                    witness: &dyn ::jolt_witness::JoltWitnessPlane<#f>,
+                    inputs: #krate::ProverInputs<'_, #f, #r>,
+                ) -> ::core::result::Result<
+                    ::std::boxed::Box<dyn #krate::SumcheckKernel<#f, Relation = #r>>,
+                    #krate::KernelError<#f>,
+                > {
+                    self.#ident.prepare(session, witness, inputs)
                 }
             }
         })

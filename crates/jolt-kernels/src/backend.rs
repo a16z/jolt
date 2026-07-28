@@ -71,6 +71,19 @@ use crate::KernelError;
 /// (`PrepareKernel`) → execution ([`SumcheckKernel`]). Bespoke slots (uni-skip
 /// fronts, typed-row witnesses, precommitted phase spans, commit, joint
 /// opening) keep hand-shaped traits in their own modules.
+///
+/// Also the registry seam: `jolt-prover`'s generated stage drivers bound
+/// their kernel source `B` by one `PrepareKernel<F, R>` per batch member, so
+/// a registry is any type implementing it per slot. Never implemented by
+/// hand for [`JoltBackend`]: `#[derive(KernelSlots)]` emits one impl per
+/// `Box<dyn PrepareKernel<F, R>>` field, delegating to that field, so the
+/// field's own type is the relation→slot mapping and registry and resolution
+/// cannot diverge. A relation with no slot is a missing-`PrepareKernel`
+/// bound error at the consuming stage impl, and so is a slot mis-declared
+/// past the derive's syntactic match (a non-`Box<dyn PrepareKernel<..>>`
+/// field yields no impl). That match is single-bound: a `Box<dyn
+/// PrepareKernel<F, R> + Send>` (any extra bound) is silently skipped and
+/// surfaces the same distant way.
 pub trait PrepareKernel<F, R>
 where
     F: Field,
@@ -87,41 +100,15 @@ where
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>;
 }
 
-/// Type-indexed slot resolution on a kernel registry: the one place a
-/// registry's field names are reached from generic driver code. `jolt-prover`'s
-/// generated stage drivers bound their kernel source `B` by one `HasKernel<F,
-/// R>` per batch member, then fetch each member's [`PrepareKernel`] through
-/// [`kernel`](Self::kernel). Never implemented by hand for [`JoltBackend`]:
-/// `#[derive(KernelSlots)]` emits one impl per `Box<dyn PrepareKernel<F, R>>`
-/// field, so the field's own type is the relation→slot mapping and registry
-/// and resolution cannot diverge. Any other registry — a partial backend, a
-/// test double — implements it the same way, derived or by hand.
-///
-/// A relation with no slot is a missing-`HasKernel` bound error at the
-/// consuming stage impl, and so is a slot mis-declared past the derive's
-/// syntactic match (a non-`Box<dyn PrepareKernel<..>>` field yields no impl).
-/// That match is single-bound: a `Box<dyn PrepareKernel<F, R> + Send>` (any
-/// extra bound) is silently skipped and surfaces the same distant way.
-pub trait HasKernel<F, R>
-where
-    F: Field,
-    R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
-{
-    fn kernel(&self) -> &dyn PrepareKernel<F, R>;
-}
-
 /// The kernel registry: one independently swappable slot per kernel entry.
 ///
 /// `F` and `PCS` are deployment constants, not swap targets — the PCS traits
 /// are structurally non-object-safe and their associated types are wire
 /// types, so they stay type parameters. Every batch member's slot is a
-/// `Box<dyn PrepareKernel<F, R>>`, resolved by type through the
-/// `#[derive(KernelSlots)]`-emitted [`HasKernel`] impls; the remaining slots
-/// are the bespoke non-sumcheck duties (commit streaming, the uni-skip
-/// fronts, the advice opening evaluation, the joint opening).
+/// `Box<dyn PrepareKernel<F, R>>`, reached by type through the
+/// `#[derive(KernelSlots)]`-emitted delegating [`PrepareKernel`] impls; the
+/// remaining slots are the bespoke non-sumcheck duties (commit streaming, the
+/// uni-skip fronts, the advice opening evaluation, the joint opening).
 #[derive(KernelSlots)]
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
@@ -264,8 +251,13 @@ mod kernel_slots_derive_tests {
         }
     }
 
-    // Compiling proves the derive skipped the non-kernel fields: an impl
-    // emitted for them would not type-check.
+    // Compiling proves the derive's wiring end to end: the generic bound
+    // resolves (a delegating impl exists for the kernel field) and the
+    // non-kernel fields were skipped (an impl emitted for them would not
+    // type-check). No behavioral probe is needed: the emitted body delegates
+    // to the one field of the matching slot type, and a second slot for the
+    // same relation would be a conflicting-impl error, so a mis-wired
+    // delegation is unrepresentable.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
     struct ToyRegistry<F: Field> {
@@ -274,19 +266,8 @@ mod kernel_slots_derive_tests {
         slot_count: usize,
     }
 
-    fn slot<R, B>(registry: &B) -> &dyn PrepareKernel<Fr, R>
-    where
-        R: ConcreteSumcheck<Fr>,
-        B: HasKernel<Fr, R>,
-        SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-        SumcheckOutputClaims<Fr, R>: OutputClaims<Fr>,
-        ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
-    {
-        registry.kernel()
-    }
-
     #[test]
-    fn derived_has_kernel_resolves_the_declared_slot() {
+    fn derived_slots_resolve_by_relation_type() {
         let registry = ToyRegistry::<Fr> {
             label: "toy".to_string(),
             shift: Box::new(StubPrepare),
@@ -294,9 +275,5 @@ mod kernel_slots_derive_tests {
         };
         assert_eq!(registry.label, "toy");
         assert_eq!(registry.slot_count, 1);
-
-        let resolved: *const () = std::ptr::from_ref(slot::<SpartanShift<Fr>, _>(&registry)).cast();
-        let field: *const () = std::ptr::from_ref(&*registry.shift).cast();
-        assert_eq!(resolved, field);
     }
 }
