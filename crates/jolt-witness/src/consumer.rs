@@ -113,6 +113,11 @@ pub trait RowSource {
 
 /// The fused pass: walk `range` once and deliver each chunk to every
 /// consumer in the set.
+#[tracing::instrument(
+    skip_all,
+    name = "stream_witnesses",
+    fields(cycles = range.end.saturating_sub(range.start))
+)]
 pub fn stream_witnesses<S: RowSource + ?Sized, C: ConsumerSet>(
     source: &S,
     range: Range<usize>,
@@ -137,6 +142,11 @@ const BUNDLE_PASS_CHUNK: usize = 1 << 12;
 /// object-safe counterpart of [`crate::BundleSource::bundles`] — `&dyn
 /// RowSource` consumers (kernels behind the witness plane) collect their
 /// typed rows through this.
+#[tracing::instrument(
+    skip_all,
+    name = "collect_bundles",
+    fields(bundle = core::any::type_name::<B>(), cycles)
+)]
 pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,

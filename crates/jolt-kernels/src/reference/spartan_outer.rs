@@ -40,6 +40,7 @@ use crate::{
 use jolt_witness::JoltWitnessPlane;
 
 impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
+    #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::prepare")]
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -51,6 +52,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::first_round_poly")]
     fn first_round_poly(
         &self,
         session: &mut ProofSession,

@@ -3471,6 +3471,7 @@ dependencies = [
  "jolt-witness",
  "rayon",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -3573,6 +3574,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "inferno 0.12.6",
+ "libc",
  "memory-stats",
  "pprof",
  "prost 0.14.4",
@@ -3601,15 +3603,20 @@ dependencies = [
 name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
+ "clap",
  "common",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
  "jolt-kernels",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-sumcheck",
@@ -3621,6 +3628,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -3660,6 +3668,7 @@ dependencies = [
  "jolt-openings",
  "jolt-optimizations",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-program",
  "jolt-riscv",
  "jolt-sumcheck",
@@ -3836,6 +3845,7 @@ dependencies = [
  "jolt-witness-derive",
  "rayon",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

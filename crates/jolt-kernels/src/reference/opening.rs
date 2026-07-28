@@ -17,6 +17,11 @@ use crate::opening::JointOpeningPolynomials;
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
 impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
+    #[tracing::instrument(
+        skip_all,
+        name = "JointOpeningPolynomials::prepare",
+        fields(polynomials = polynomials.len(), total_vars = grid.total_vars)
+    )]
     fn prepare(
         &self,
         _session: &mut ProofSession,

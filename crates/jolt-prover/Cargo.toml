@@ -31,11 +31,23 @@ jolt-transcript.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+bincode.workspace = true
+clap.workspace = true
 jolt-dory.workspace = true
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+jolt-profiling.workspace = true
 jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 postcard = { workspace = true, features = ["use-std"] }
 rand_core = { workspace = true, features = ["getrandom"] }
 serde = { workspace = true, features = ["derive"] }
 tracer.workspace = true
+
+# The end-to-end benchmark harness needs the legacy host toolchain (guest
+# compilation) behind the same feature gate as the byte-diff tests.
+[[example]]
+name = "modular_benchmark"
+required-features = ["prover-fixtures"]

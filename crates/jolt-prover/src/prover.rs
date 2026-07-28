@@ -44,6 +44,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// `preprocessing.committed_program` — the prover-retained full program and
 /// chunk/image hints). Dominant advice returns
 /// [`ProverError::Unsupported`] at stage 0.
+#[tracing::instrument(skip_all, name = "prove", fields(trace_length = config.trace_length))]
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,

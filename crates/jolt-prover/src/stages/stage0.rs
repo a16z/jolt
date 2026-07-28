@@ -58,6 +58,7 @@ where
 /// (main, untrusted advice, trusted advice, then the preprocessing-held
 /// committed-program chunk/image commitments — the verifier's own absorb
 /// order).
+#[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
