@@ -53,8 +53,9 @@
 //!   `BatchingCoefficients`.
 //! - `<snake_case_struct>_members` — an inert, `#[macro_export]`ed callback
 //!   macro carrying the batch declaration as a structured token list (member
-//!   names, generics-stripped relation paths, presence, aggregate type names,
-//!   output-shape flag), forwarded to a caller-chosen macro. The derive's
+//!   names, generics-stripped relation paths, presence, the stage's
+//!   error-attribution label, aggregate type names, output-shape flag),
+//!   forwarded to a caller-chosen macro. The derive's
 //!   ONLY prover-facing emission — the single-sourcing handoff from which
 //!   `jolt-prover`'s `impl_stage_prover` expands the prove-side stage-driver
 //!   impls (`StageProver`/`KernelSource`), so no stage's member list, order,
@@ -313,34 +314,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: self.#id.draw_challenges(transcript)?)
         }
     });
-    // The representative relation id used in a batch-level sumcheck error: the first
-    // non-`Option` member (the batch's leading instance), matching the hand-written
-    // stages' choice. An all-optional batch has no instance to read at runtime, so
-    // it falls back to the first member's type-level id (the default
-    // `ConcreteSumcheck::id` body, which no impl overrides).
-    let stage_id_body = plans.iter().find(|plan| !plan.is_option).map_or_else(
-        || {
-            let instance = &plans[0].instance;
-            quote! {
-                <<#instance as #relations::ConcreteSumcheck<#f>>::Symbolic
-                    as ::jolt_claims::SymbolicSumcheck>::id()
-            }
-        },
-        |plan| {
-            let id = &plan.ident;
-            quote!(#relations::ConcreteSumcheck::id(&self.#id))
-        },
-    );
-    let stage_relation_id_method = quote! {
-        /// The batch's representative relation id for batch-level error
-        /// attribution: the first non-`Option` member's relation id. Consumed
-        /// only by `jolt-prover`'s `impl_stage_prover!` expansion; the
-        /// generated verify drivers do not read it.
-        pub fn stage_relation_id(&self) -> ::jolt_claims::protocols::jolt::JoltRelationId {
-            #stage_id_body
-        }
-    };
-
     // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
     // max_degree)` — the front-loaded batching layout's combined dimensions. Reused
     // by both the clear and ZK drivers, so it is a closure re-invoked per block (a
@@ -1039,10 +1012,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // The prover-facing single-sourcing handoff: an inert, exported callback
     // macro carrying this batch's declaration — member names, relation paths
     // (generics stripped; the consumer re-applies its own field parameter),
-    // presence, the aggregate type names, and the output-shape flag — as a
-    // structured token list forwarded to a caller-chosen macro. `jolt-prover`'s
-    // `impl_stage_prover` expands its `StageProver`/`KernelSource` impls from
-    // it, so no stage's member list, order, or presence is ever restated.
+    // presence, the stage's error-attribution label (the same `#base_lit` the
+    // generated verify drivers use, so both fronts attribute batch-level
+    // sumcheck errors identically), the aggregate type names, and the
+    // output-shape flag — as a structured token list forwarded to a
+    // caller-chosen macro. `jolt-prover`'s `impl_stage_prover` expands its
+    // `StageProver`/`KernelSource` impls from it, so no stage's member list,
+    // order, or presence is ever restated.
     // Tokens resolve at the consumer's invocation site (which imports the
     // batch's relation and aggregate names); extra invocation tokens (e.g. a
     // curation override) are forwarded ahead of the list.
@@ -1051,8 +1027,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         let macro_doc = format!(
             "The member-list callback macro for [`{name}`], emitted by \
              `#[derive(SumcheckBatch)]`: forwards the batch's declaration (member names, \
-             relation paths, presence, aggregate names, output-shape flag) to a caller-chosen \
-             macro. See `specs/prover-stage-drivers.md`."
+             relation paths, presence, stage label, aggregate names, output-shape flag) to a \
+             caller-chosen macro. See `specs/prover-stage-drivers.md`."
         );
         let shape = if options.no_output_shape {
             format_ident!("unchecked")
@@ -1082,6 +1058,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     $cb! {
                         $($extra)*
                         batch = #name,
+                        label = #base_lit,
                         aggregates = {
                             input_claims = #input_claims_name,
                             input_points = #input_points_name,
@@ -1101,7 +1078,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
-            #stage_relation_id_method
             #draw_challenges_method
 
             #begin_batch_method

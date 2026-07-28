@@ -363,6 +363,7 @@ macro_rules! impl_stage_prover {
     (
         curate = |$curate_batch:ident, $curate_claims:ident, $curate_points:ident| $curate_body:block,
         batch = $batch:ident,
+        label = $label:literal,
         aggregates = {
             input_claims = $input_claims:ident,
             input_points = $input_points:ident,
@@ -452,7 +453,7 @@ macro_rules! impl_stage_prover {
                 if __expected != __proved.final_claim {
                     return ::core::result::Result::Err(
                         ::jolt_verifier::VerifierError::StageClaimSumcheckFailed {
-                            stage: ::std::format!("{:?}", self.stage_relation_id()),
+                            stage: $label.to_string(),
                             reason: ::std::format!(
                                 "prover final claim {:?} disagrees with the expected output fold {:?}",
                                 __proved.final_claim,
