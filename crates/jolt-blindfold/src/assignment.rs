@@ -314,6 +314,18 @@ fn solve_products<F: Field>(
         if *coefficient != F::one() || witness.get(*target).is_none_or(|slot| slot.is_some()) {
             continue;
         }
+        // The emission-order contract this pass rests on, asserted where it
+        // is consumed: `multiply` allocates `v` after its operands, so a
+        // definition never reads forward. A single-entry-C equality *check*
+        // over a later-allocated variable would trip this before being
+        // silently solved as a definition.
+        debug_assert!(
+            a_row
+                .iter()
+                .chain(b_row.iter())
+                .all(|&(index, _)| index < *target),
+            "constraint {constraint} defines witness {target} from a later-allocated operand"
+        );
         let Some(product) = evaluate_sparse(a_row, witness)
             .zip(evaluate_sparse(b_row, witness))
             .map(|(a_value, b_value)| a_value * b_value)

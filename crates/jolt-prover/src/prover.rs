@@ -28,7 +28,8 @@ use crate::stages::stage8::prove_stage8;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and
-/// backend session, and assemble the clear-mode [`JoltProof`].
+/// backend session, and assemble the [`JoltProof`] in the compiled proof
+/// mode — clear claims without the `zk` feature, the BlindFold tail with it.
 ///
 /// `config` is the derived proof shape (its five wire fields are copied into
 /// the proof verbatim), `witness` the trace-backed provider the kernels read,
@@ -40,7 +41,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// polynomial is committed at prove time from the witness when
 /// `public_io.untrusted_advice` is non-empty.
 ///
-/// Supported envelope: transparent (clear) proofs in either trace layout,
+/// Supported envelope: either trace layout,
 /// with or without trusted/untrusted advice (non-dominant: the advice grid
 /// must not exceed the main commitment grid) and with or without
 /// committed-program preprocessing (which requires

@@ -123,11 +123,15 @@ where
         shell,
         trusted_advice_commitment,
     )?;
-    debug_assert_eq!(
-        transcript.state(),
-        forward_state,
-        "the verifier replay diverged from the prover's forward transcript",
-    );
+    // A 32-byte compare guarding the exact seam the design rests on: the
+    // replay landing on the prover's forward transcript bytes. Hard error
+    // (not debug-only) so release provers diagnose drift here rather than
+    // as a downstream BlindFold verification failure.
+    if transcript.state() != forward_state {
+        return Err(ProverError::InvariantViolation {
+            reason: "the verifier replay diverged from the prover's forward transcript",
+        });
+    }
 
     let assigned = protocol.assign_witness(
         &STAGE_DOMAINS,
