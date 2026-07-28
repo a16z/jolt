@@ -470,11 +470,17 @@ fn commit_packed<const D: usize>(
     let _span = tracing::info_span!(
         "TracePackedOneHot::commit_inner",
         ring_dimension = D,
+        one_hot_k = source.one_hot_k,
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
         column_capacity = source.column_capacity,
+        n_a = plan.n_a,
+        positions_per_block = plan.num_positions_per_block,
+        inner_digits = plan.num_digits_inner,
+        outer_digits = plan.num_digits_outer,
     )
     .entered();
+    let _prepare_span = tracing::info_span!("trace_onehot_commit_prepare").entered();
     let segment_rings = source.segment_ring_elems::<D>()?;
     let (_, num_blocks) = validate_block_geometry(
         segment_rings,
@@ -491,6 +497,7 @@ fn commit_packed<const D: usize>(
         .ring_view::<D>(plan.n_a, active_cols)?;
     let a_rows = a_view.rows().collect::<Vec<_>>();
     let max_per_ring = (D / source.one_hot_k).max(1);
+    drop(_prepare_span);
 
     let rows = if segment_rings >= plan.num_positions_per_block {
         let blocks_per_column = segment_rings / plan.num_positions_per_block;
@@ -507,8 +514,13 @@ fn commit_packed<const D: usize>(
         let num_columns = source.rows.num_columns();
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate",
+            num_blocks,
             blocks_per_column,
             task_parts = parts,
+            tasks = blocks_per_column * parts,
+            active_columns = num_columns,
+            rows_per_ring = D / source.one_hot_k,
+            fused_four_shifts = D == 64 && source.one_hot_k == 16,
         )
         .entered();
         let partials = (0..blocks_per_column * parts)
@@ -635,6 +647,15 @@ fn commit_packed<const D: usize>(
             })
             .collect::<Result<Vec<_>, _>>()?;
         drop(_accumulate_span);
+        let _merge_span = tracing::info_span!(
+            "trace_onehot_commit_merge_partials",
+            num_blocks,
+            blocks_per_column,
+            task_parts = parts,
+            active_columns = num_columns,
+            n_a = plan.n_a,
+        )
+        .entered();
         let mut rows = vec![vec![CyclotomicRing::zero(); plan.n_a]; num_blocks];
         for (task, block_rows) in partials.into_iter().enumerate() {
             let trace_block = task / parts;
@@ -653,6 +674,13 @@ fn commit_packed<const D: usize>(
         }
         rows
     } else {
+        let _accumulate_span = tracing::info_span!(
+            "trace_onehot_commit_accumulate_flat",
+            num_blocks,
+            segment_rings,
+            n_a = plan.n_a,
+        )
+        .entered();
         let mut wide = vec![WideCyclotomicRing::zero(); num_blocks * plan.n_a];
         let mut reduced = vec![CyclotomicRing::zero(); num_blocks * plan.n_a];
         let mut budget = 0usize;
@@ -682,7 +710,14 @@ fn commit_packed<const D: usize>(
             .collect()
     };
 
-    let _decompose_span = tracing::info_span!("trace_onehot_commit_decompose").entered();
+    let _decompose_span = tracing::info_span!(
+        "trace_onehot_commit_decompose",
+        num_blocks,
+        n_a = plan.n_a,
+        outer_digits = plan.num_digits_outer,
+        outer_log_basis = plan.log_basis_outer,
+    )
+    .entered();
     let digits = decompose_commit_blocks_into::<AkitaField, D>(
         &rows,
         plan.num_digits_outer,
@@ -695,14 +730,6 @@ fn opening_fold_packed<const D: usize>(
     source: &TracePackedOneHot,
     plan: OpeningFoldPlan<'_, AkitaField, D>,
 ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
-    let _span = tracing::info_span!(
-        "TracePackedOneHot::evaluate_and_fold",
-        ring_dimension = D,
-        rows = source.rows.num_rows(),
-        columns = source.rows.num_columns(),
-        column_capacity = source.column_capacity,
-    )
-    .entered();
     let num_positions = match plan {
         OpeningFoldPlan::Base {
             num_positions_per_block,
@@ -713,6 +740,21 @@ fn opening_fold_packed<const D: usize>(
             ..
         } => num_positions_per_block,
     };
+    let weight_kind = match plan {
+        OpeningFoldPlan::Base { .. } => "base",
+        OpeningFoldPlan::Ring { .. } => "ring",
+    };
+    let _span = tracing::info_span!(
+        "TracePackedOneHot::evaluate_and_fold",
+        ring_dimension = D,
+        one_hot_k = source.one_hot_k,
+        rows = source.rows.num_rows(),
+        columns = source.rows.num_columns(),
+        column_capacity = source.column_capacity,
+        positions_per_block = num_positions,
+        weight_kind,
+    )
+    .entered();
     let segment_rings = source.segment_ring_elems::<D>()?;
     let (_, num_blocks) =
         validate_block_geometry(segment_rings, source.column_capacity, num_positions)?;
@@ -738,6 +780,17 @@ fn opening_fold_packed<const D: usize>(
         let parts = trace_block_task_parts::<D>(source.one_hot_k, num_positions, blocks_per_column);
         let ring_alignment = (source.one_hot_k / D).max(1);
         let num_columns = source.rows.num_columns();
+        let _accumulate_span = tracing::info_span!(
+            "trace_onehot_evaluate_fold_accumulate",
+            num_blocks,
+            blocks_per_column,
+            task_parts = parts,
+            tasks = blocks_per_column * parts,
+            active_columns = num_columns,
+            rows_per_ring = (D / source.one_hot_k).max(1),
+            weight_kind,
+        )
+        .entered();
         let partials = (0..blocks_per_column * parts)
             .into_par_iter()
             .map(|task| {
@@ -828,6 +881,15 @@ fn opening_fold_packed<const D: usize>(
                 Ok::<_, AkitaError>(folded)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        drop(_accumulate_span);
+        let _merge_span = tracing::info_span!(
+            "trace_onehot_evaluate_fold_merge_partials",
+            num_blocks,
+            blocks_per_column,
+            task_parts = parts,
+            active_columns = num_columns,
+        )
+        .entered();
         let mut folded = vec![CyclotomicRing::zero(); num_blocks];
         for (task, trace_folded) in partials.into_iter().enumerate() {
             let trace_block = task / parts;
@@ -843,6 +905,13 @@ fn opening_fold_packed<const D: usize>(
         }
         folded
     } else {
+        let _accumulate_span = tracing::info_span!(
+            "trace_onehot_evaluate_fold_accumulate_flat",
+            num_blocks,
+            segment_rings,
+            weight_kind,
+        )
+        .entered();
         let mut folded = vec![CyclotomicRing::zero(); num_blocks];
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
@@ -866,6 +935,12 @@ fn opening_fold_packed<const D: usize>(
         })?;
         folded
     };
+    let _reduce_span = tracing::info_span!(
+        "trace_onehot_evaluate_fold_reduce_blocks",
+        num_blocks,
+        weight_kind,
+    )
+    .entered();
     let eval = match plan {
         OpeningFoldPlan::Base {
             live_block_weights, ..
@@ -978,7 +1053,21 @@ fn decompose_fold_packed<const D: usize>(
     for challenge in challenges {
         challenge.validate::<D>()?;
     }
+    let rotation_table_bytes = challenges
+        .len()
+        .saturating_mul(D)
+        .saturating_mul(std::mem::size_of::<[i16; D]>());
+    let rotation_span = tracing::info_span!(
+        "trace_onehot_decompose_prepare_rotations",
+        challenge_blocks = challenges.len(),
+        rotation_table_bytes,
+        table_budget_bytes = D64_ROTATED_CHALLENGE_TABLE_BUDGET,
+        dense = tracing::field::Empty,
+    );
+    let rotation_guard = rotation_span.enter();
     let dense_rotated = dense_rotated_challenges::<D>(challenges);
+    let _ = rotation_span.record("dense", dense_rotated.is_some());
+    drop(rotation_guard);
     let dense_rotated = dense_rotated.as_deref();
     let compressed = if segment_rings >= num_positions {
         let blocks_per_column = segment_rings / num_positions;
@@ -991,6 +1080,16 @@ fn decompose_fold_packed<const D: usize>(
         let position_starts = (0..num_positions)
             .step_by(position_chunk)
             .collect::<Vec<_>>();
+        let _compress_span = tracing::info_span!(
+            "trace_onehot_decompose_accumulate",
+            mode = "position_parallel",
+            num_blocks,
+            blocks_per_column,
+            position_tasks = position_starts.len(),
+            position_chunk,
+            dense_rotations = dense_rotated.is_some(),
+        )
+        .entered();
         position_starts
             .into_par_iter()
             .map(|position_start| {
@@ -1054,6 +1153,14 @@ fn decompose_fold_packed<const D: usize>(
             .flatten()
             .collect()
     } else {
+        let _compress_span = tracing::info_span!(
+            "trace_onehot_decompose_accumulate",
+            mode = "flat",
+            num_blocks,
+            segment_rings,
+            dense_rotations = dense_rotated.is_some(),
+        )
+        .entered();
         let mut compressed = vec![[0i32; D]; num_positions];
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
@@ -1070,12 +1177,25 @@ fn decompose_fold_packed<const D: usize>(
         })?;
         compressed
     };
+    let _expand_span = tracing::info_span!(
+        "trace_onehot_decompose_expand_digits",
+        num_positions,
+        num_digits,
+    )
+    .entered();
     let mut expanded = Vec::with_capacity(num_positions.saturating_mul(num_digits));
     for coeffs in compressed {
         expanded.push(coeffs);
         expanded.extend((1..num_digits).map(|_| [0i32; D]));
     }
+    drop(_expand_span);
     let modulus = (-AkitaField::one()).to_canonical_u128() + 1;
+    let _witness_span = tracing::info_span!(
+        "trace_onehot_decompose_build_witness",
+        num_positions,
+        num_digits,
+    )
+    .entered();
     Ok(build_decompose_fold_witness::<AkitaField, D>(
         expanded, modulus,
     ))
