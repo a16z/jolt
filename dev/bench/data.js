@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785167832211,
+  "lastUpdate": 1785273545098,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -128146,6 +128146,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861048,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bf30e7d8d7e8ffe81d1ce965a7948b6e976ec923",
+          "message": "feat(jolt-prover): generated stage drivers via prover-owned StageProver and universal PrepareKernel (#1686)\n\n* docs(specs): add prover-stage-drivers spec\n\n* refactor(jolt-sumcheck): fuse round API into prove_round/finish_rounds\n\n* refactor(jolt-verifier): move ProveSumcheck to stages::relations as SumcheckKernel\n\nAdds the prove-side seam the generated drivers will name: SumcheckKernel\n(typed extraction, kernel-crate-free error vocabulary), ProverInputs, and\nthe dependency-inverted PrepareSumcheck/SumcheckPreparer bounds.\njolt-kernels re-exports SumcheckKernel for downstream stability.\n\n* feat(jolt-kernels): universal PrepareKernel trait\n\nReplaces the ~20 naive-served per-relation slot-trait files with one\nPrepareKernel<F, R> whose typed request is the relation instance itself\n(ProverInputs); relations gain the accessors their kernels read, so\nrecipe/kernel double-construction is gone. The stage-6b recipe-level\nbytecode stage-value fold moves behind the cycle relation's accessor\n(both cycle-phase slots audited universal; both address phases stay\nbespoke). Crate-root slot-trait files: 27 -> 8. Adds jolt-prover's\nBackendPreparer, the one place backend slot names are spelled.\n\n* feat(jolt-verifier-derive): emit the generated prove_clear stage driver\n\nbegin_batch -> per-member prepare (declaration order, Option-gated) ->\nprove_batch -> derive_opening_points -> validate_derived_tables -> typed\nextraction -> shape validation -> expected_final_claim hard check ->\nrecorder.finish. Recorder-generic; #[sumcheck(external)] fields become the\ncaller-supplied typed kernel bundle; no_opening_values swaps the finish\nvalues for a curation hook. Adds toy-stage prove_clear twins (Option\nabsent/present, external member, committed-recorder type check).\n\n* refactor(jolt-prover): migrate stage 3 to generated prove_clear\n\n* refactor(jolt-prover): migrate stage 5 to generated prove_clear\n\nThe instruction read+RAF slot's typed rows ride the Stage5PrepareContext\ninto its PrepareSumcheck bridge; the relation gains a dimensions accessor.\n\n* refactor(jolt-prover): migrate stage 4 to generated prove_clear\n\nThe staged advice/program-image attach and the hand-ordered absorb become\nthe driver's curation hook (the stage's no_opening_values opt-out).\n\n* refactor(jolt-prover): migrate stage 1 to generated prove_clear\n\nThe uni-skip remainder joins the batch as the first #[sumcheck(external)]\nmember (minted by the pre-phase handoff, caller-supplied to the driver).\n\n* refactor(jolt-prover): migrate stage 2 to generated prove_clear\n\nThe product remainder joins as an external member; the tau_low derivation\nis promoted into jolt-verifier (product_tau_low + the Stage1ClearOutput\nremainder-point/cycle-binding helpers) so the recipe's inline copy is gone.\n\n* refactor(jolt-prover): migrate stage 6a to generated prove_clear\n\nBoth address-phase slots stay bespoke (non-oracle witness channels) and are\nbridged through Stage6aPrepareContext; the slot traits take the stage's\nrelation instance, ending the kernels' internal relation reconstruction.\n\n* refactor(jolt-prover): migrate stage 7 to generated prove_clear\n\nThe four precommitted address phases join as typed external members via\nPrecommittedKernelAdapter (the per-phase wire-claim curation moves into the\nadapter's output_claims); PrecommittedReductionProver's typed-extraction\nerrors move to the kernel-seam vocabulary.\n\n* refactor(jolt-prover): migrate stage 6b to generated prove_clear\n\nStage6bSumchecks::build gains a promoted build_from_parts leg-assembly core\nover the clear carriers, consumed by both verify and the recipe (the ~170\nmirrored batch legs are gone); bytecode_stage_points is promoted alongside\nand replaces the prover's inline copy in stages 6a/6b. The precommitted\ncycle phases join as typed external members; the curated absorb rides the\ndriver's curation hook.\n\n* refactor(jolt-prover): sweep — single-source the stage-6 folds and adapters\n\nRead the committed-bytecode reduction weights back off the batch member\n(build_from_parts' fold) instead of re-deriving them in the recipe; move\nthe stage-6a per-row stage-value fold into the bytecode address bridge;\ncollapse the scalar precommitted adapters onto one helper; drop the dead\nFinalClaimMismatch variant; refresh jolt-kernels crate docs and the parent\nspec's head-and-driver pointer.\n\n* refactor(jolt-kernels): uni-skip remainder handoffs take the stage's relation\n\ninto_remainder receives the batch's OuterRemainder/ProductRemainder\ninstance instead of re-deriving it from loose challenge scalars — the last\nrecipe/kernel relation double-construction.\n\n* docs(specs): revise prover-stage-drivers — prover-owned driver, universal kernels\n\n* refactor(jolt-kernels): stage-6a address slots on the universal PrepareKernel\n\nThe stage-6a bytecode read+RAF and booleanity address phases move off their\nbespoke slot traits onto PrepareKernel<F, R>. Non-oracle data now reaches\nthe kernels through the channels prepare already receives: the prover-\nretained program is parked in the ProofSession at proof start\n(RetainedProgram), the per-cycle bytecode indices come off the witness\nplane's typed stage-6 rows (PrepareKernel's witness parameter widens to the\nnew JoltVmWitnessPlane), the upstream cycle/register points and entry index\nride on the BytecodeReadRafAddressPhase relation (full geometry at\nconstruction, both sides), and the booleanity reference draws attach to the\nrelation post-draw (the stage-2 setter idiom). Deletes the booleanity and\nbytecode_read_raf slot-trait modules and Stage6aPrepareContext; ProofSession\ngains park/take for cross-stage carries.\n\nGates: byte-diff harness 10/10 with untouched fixtures; clippy clean under\nhost and host,zk; jolt-verifier/kernels/witness nextest green.\n\n* refactor(jolt-kernels): instruction read+RAF on the universal PrepareKernel\n\nThe stage-5 instruction read+RAF slot moves off its bespoke trait onto\nPrepareKernel<F, InstructionReadRaf<F>>: the typed per-cycle lookup rows are\nfetched inside prepare off the witness plane's stage-5 accessor, the\ndimensions and reduction point come off the relation and the ProverInputs\npoints cell. Deletes the instruction_read_raf slot-trait module and\nStage5PrepareContext; stage 5's recipe is a plain forward_prepare stage.\n\nGates: byte-diff harness 10/10 with untouched fixtures; clippy clean under\nhost and host,zk.\n\n* refactor(jolt-kernels): uni-skip remainders mint through PrepareKernel from session carries\n\nThe stage-1/2 fronts park their uni-skip-bound instance in the ProofSession\n(ParkedOuterInstance / ParkedProductInstance); the remainder batch members\nflip from #[sumcheck(external)] to regular members whose PrepareKernel slot\n(SessionCarriedKernels — the backend-agnostic slot server for carry-backed\nmembers) reclaims the instance and calls into_remainder against the stage's\nrelation. JoltBackend gains outer_remainder / product_remainder slots; the\ngenerated prove_clear for stages 1-2 loses its ExternalMembers bundle.\n\nGates: byte-diff harness 10/10 with untouched fixtures; clippy clean under\nhost and host,zk.\n\n* refactor(jolt-kernels): precommitted 6b→7 members on PrepareKernel with session carries\n\nThe four precommitted claim-reduction members flip from\n#[sumcheck(external)] to regular members in both stages. Each stage-6b cycle\nkernel wraps the two-phase reduction prover in a shared handle, parks it in\nthe ProofSession (Parked{Trusted,Untrusted}AdviceReduction /\nParkedBytecodeReduction / ParkedProgramImageReduction), and resolves the\nintermediate-vs-final wire claim inside output_claims() from the schedule\ncaptured off the relation's layout; stage 7's address-phase members reclaim\nthe carry through SessionCarriedKernels and flip the phase inside prepare.\nThe wire-claim assembly is single-sourced in jolt-kernels'\nprecommitted_reduction module (SharedReductionKernel + per-member builders),\nreplacing jolt-prover's PrecommittedKernelAdapter. The advice/bytecode/\nprogram-image slot traits are deleted; the stage-4 advice opening evaluation\nsurvives as the non-sumcheck AdviceOpeningEvaluation slot (opening module).\nCycle relations gain layout/reference-point accessors (the kernel read\npath); JoltBackend carries one PrepareKernel slot per phase member.\n\nGates: byte-diff harness 10/10 with untouched fixtures; clippy clean under\nhost and host,zk.\n\n* feat(jolt-verifier-derive): emit member-list callback macros; drop #[sumcheck(external)]\n\nEach #[derive(SumcheckBatch)] batch now also emits an inert #[macro_export]\nmacro_rules! <snake_case_struct>_members that forwards the batch declaration\n— member names, generics-stripped relation paths, presence, aggregate type\nnames, and the output-shape flag — to a caller-chosen macro (jolt-prover's\nimpl_stage_prover). This is the prover-facing single-sourcing handoff. With\nno member external anymore, the #[sumcheck(external)] field attribute and\nthe <Stage>ExternalMembers emission are deleted; prove_clear keeps its\npreparer-only shape until the consumer-macro driver replaces it. The toy\nprove_clear twins' gamma member flips to a regular prepared member ahead of\nits step-4 relocation.\n\nGates: byte-diff harness 10/10 with untouched fixtures; clippy clean under\nhost and host,zk; jolt-verifier nextest green.\n\n* docs(specs): slot resolution via #[derive(KernelSlots)] on the plain backend struct\n\n* feat(jolt-kernels): resolve backend slots via #[derive(KernelSlots)] on the plain JoltBackend\n\nJoltBackend stays a plainly declared struct (v1 declaration style); the new\njolt-kernels-derive crate's #[derive(KernelSlots)] walks its fields and emits\none HasKernel<F, R> impl per Box<dyn PrepareKernel<F, R>> slot, skipping all\nother fields silently. HasKernel is the type-indexed slot resolution the\nprover's generated stage drivers bound their kernel source by; a mis-declared\nslot surfaces as a missing-HasKernel bound error at the stage impl. Adds\nextern crate self so the derive's absolute ::jolt_kernels:: paths resolve\nin-crate (the jolt-claims convention), a derive test (toy registry with\nkernel and non-kernel fields), and a compile_fail doctest for the\nmis-declared-slot negative.\n\nGates: cargo clippy -p jolt-kernels -p jolt-kernels-derive --all-targets clean;\ncargo nextest run -p jolt-kernels green; byte-diff harness 10/10 with zero\nfixture regeneration.\n\n* feat(jolt-prover): prover-owned StageProver driver; migrate stage 3\n\nThe driver module: StageProver (ONE recorder-generic prove — no clear/zk\nsplit; the recorder is the seam, as in begin_batch), KernelSource (the\nper-stage HasKernel bound collector), the generic Proved<F, S, C> carrier,\nand the impl_stage_prover consumer macro that expands both impls from a\nbatch's derive-emitted member-list callback macro. The prove body runs\nbegin_batch → per-member prepare in declaration order → prove_batch →\nderive_opening_points → validate_derived_tables → typed extraction →\ncurate_opening_values (default: the generated canonical absorb order) →\nshape check → the expected_final_claim hard check → recorder.finish.\nStage 3 is the first consumer: stage3_sumchecks_members!(impl_stage_prover)\nplus prove_stage3 calling prove directly on the backend.\n\nGates: cargo clippy -p jolt-prover --all-targets clean; byte-diff harness\n10/10 with zero fixture regeneration.\n\n* refactor(jolt-prover): migrate stage 5 to the StageProver driver\n\nstage5_sumchecks_members!(impl_stage_prover) plus prove_stage5 calling prove\non the backend directly; drops the stage's BackendPreparer.\n\nGates: cargo clippy -p jolt-prover --all-targets clean; byte-diff harness\n10/10 with zero fixture regeneration.\n\n* refactor(jolt-prover): migrate stage 4 to the StageProver driver\n\nThe invocation is argument-free like every uncurated stage: the staged\nVal_init openings (advice, program image) now ride in from the RAM\nvalue-check kernel — they equal the member's own consumed input claims (the\nrelation's documented dual-role openings), so prepare captures them off the\nProverInputs bundle and output_claims re-attaches them — and Stage4Sumchecks\ngains the hand-written opening_values replacement for its no_opening_values\nopt-out (delegating to the claims aggregate's interleaved order), which the\ndriver's default curation calls.\n\nGates: cargo clippy -p jolt-prover -p jolt-kernels -p jolt-verifier\n--all-targets clean; byte-diff harness 10/10 (the advice ratchets exercise\nthe staged-openings path) with zero fixture regeneration.\n\n* refactor(jolt-prover): migrate stages 1 and 2 to the StageProver driver\n\nBoth uni-skip fronts keep their hand choreography (tau draws, uni-skip round,\nparking the bound instance) and hand the batch to the generated prove; the\nremainder members mint through their PrepareKernel slots from the session\ncarries, so no kernel objects cross the driver boundary. The driver macro's\nengine-facing rounds vector is now collected from a per-member Option array\n(the declaration-order flatten) instead of init-then-push.\n\nGates: cargo clippy -p jolt-prover --all-targets clean; byte-diff harness\n10/10 after each stage with zero fixture regeneration.\n\n* refactor(jolt-prover): migrate stages 6a and 7 to the StageProver driver\n\nMechanical prove_clear-to-prove flips: 6a keeps its reference-draw front\nchoreography, and 7's Option address-phase members mint through their\nPrepareKernel slots from the stage-6b session carries.\n\nGates: cargo clippy -p jolt-prover --all-targets clean; byte-diff harness\n10/10 after each stage with zero fixture regeneration.\n\n* refactor(jolt-prover): migrate stage 6b to the StageProver driver\n\nThe only curated invocation: stage6b_sumchecks_members!(impl_stage_prover\ncurate = ..) supplies the promoted stage6b_opening_values (the runtime\nbooleanity-vs-bytecode point dedup) as the curate_opening_values override;\neverything else in prove_stage6b is unchanged front choreography.\n\nGates: cargo clippy -p jolt-prover --all-targets clean; byte-diff harness\n10/10 with zero fixture regeneration.\n\n* refactor: prover-free jolt-verifier — kernel seam moves to jolt-kernels\n\nSumcheckKernel, SumcheckKernelError, and ProverInputs move from\njolt-verifier's relations module to jolt-kernels (new kernel module): with\nthe stage driver generated into jolt-prover, nothing in the verifier crate\nneeds to name them. The derive's prove_clear/ProvedStageN emission is gone —\nthe member-list callback macro is its only prover-facing output — and the\ndependency-inversion apparatus it existed for (PrepareSumcheck,\nSumcheckPreparer, jolt-prover's BackendPreparer) is deleted outright. The v1\nprove_clear twin tests and the engine twin tests leave relations.rs (moved\nto jolt-prover in the next commit).\n\nGates: cargo clippy on jolt-verifier{,-derive}/jolt-kernels/jolt-prover\n--all-targets clean; byte-diff harness 10/10 with zero fixture regeneration;\nthe prover-free grep (SumcheckKernel|ProverInputs|PrepareKernel|\nPrepareSumcheck|SumcheckPreparer|ProveRounds) has zero hits in\ncrates/jolt-verifier/src.\n\n* test(jolt-prover): relocate the driver and engine twins to the prove side\n\nThe SumcheckBatch derive becomes cross-crate (extern crate self as\njolt_verifier; emissions use absolute ::jolt_verifier:: paths, the\njolt-claims convention), so toy batches can be declared where their twins\nrun. The v1 prove_clear twins are re-expressed against the consumer macro in\njolt-prover: a hand-rolled three-member toy stage (plain, Option, and a\nsession-carried member replacing v1's external fixture — with a\nmissing-carry failure test), a KernelSlots-derived toy registry, and the\ncommitted-recorder compile witness for prove's recorder-generality. The\nbatched engine twins (clear + committed vs the generated verify drivers)\nmove to a jolt-prover integration test; the uni-skip prover twin stays with\njolt-verifier's uniskip module, whose clear verifier it locks.\n\nGates: cargo clippy on jolt-prover/jolt-verifier{,-derive} --all-targets\nclean; new twins green under cargo nextest -p jolt-prover -p jolt-kernels;\nbyte-diff harness 10/10 with zero fixture regeneration.\n\n* refactor(jolt-prover): single-source the formula-dimensions construction\n\nStages 5, 6a, 6b, and 7 hand-copied the verifier-shaped\nJoltFormulaDimensions construction (one-hot config → dimensions → try_from →\nper-stage error attribution) four times; one stages-level helper replaces\nthem.\n\nGates: cargo clippy -p jolt-prover --all-targets clean; byte-diff harness\n10/10 with zero fixture regeneration.\n\n* docs(specs): v2.1 post-review corrections\n\n* refactor(jolt-kernels): route RamValCheck dual-role openings through input_carried_outputs\n\nThe RamValCheckKernel wrapper captured the staged advice / program-image\nvalues off ProverInputs.claims at prepare and re-attached them in\noutput_claims() — a per-backend restatement of relation structure. Replace\nwith the declarative mechanism: ConcreteSumcheck::input_carried_outputs()\n(associated fn, default empty, aliased_output_openings' shape) declares the\ndual-role pairs once on the relation, and NaiveSumcheckProver snapshots the\ndeclared values off the consumed claims at construction (new() now takes the\nProverInputs bundle) and attaches them in the from_opening_values fallback at\ntyped extraction. RamValCheck declares its three pairs; the wrapper is\ndeleted and the slot returns to the plain naive-served path. The uni-skip\ninto_remainder handoffs thread the bundle instead of a bare relation.\n\nStage-4 audit: the no_opening_values opt-out and the hand-written\nStage4Sumchecks::opening_values replacement stay — the stage-4 Fiat-Shamir\nappend order interleaves the RAM member's staged openings BEFORE the register\nmember's (advice + program-image, then registers, then ram_ra/ram_inc), which\nthe derive's member-declaration-order concatenation cannot express. The\nopt-out is about absorb order, not the wire-claim attach this commit\nmechanizes.\n\nGates: byte-diff harness 15/15 with zero fixture changes; cargo nextest\n-p jolt-prover -p jolt-kernels -p jolt-verifier 85 passed.\n\n* refactor(derives): serde-style crate-path override replaces extern crate self\n\njolt-verifier and jolt-kernels aliased themselves (extern crate self) so\ntheir derives' absolute ::jolt_verifier / ::jolt_kernels emissions would\nresolve in the defining crate — a workaround where an explicit knob exists.\nBoth derives now take a serde-style override: #[sumcheck_batch(crate = ...)]\nand #[kernel_slots(crate = ...)], a string-literal path parsed like serde's\ncrate attribute. Default emission stays absolute, so external deriving\ncrates (jolt-prover's fixtures included) need nothing; the defining crates\npass crate = \"crate\" at every in-crate derive site (all eight stage batch\nstructs, JoltBackend, and the test fixtures) and drop their self-aliases.\n\nThe emitted member-list callback macros are deliberately NOT routed through\nthe override: their tokens resolve at the consumer's invocation site in\njolt-prover (which imports the batch's relation and aggregate names), so\nthey stay crate-path-free and work cross-crate regardless of the attribute.\njolt-claims' pre-existing self-alias predates this branch and is out of\nscope.\n\nGates: byte-diff harness 15/15 with zero fixture changes; cargo nextest\n-p jolt-prover -p jolt-kernels -p jolt-verifier 85 passed; clippy clean.\n\n* test(jolt-prover): relocate the uni-skip twin out of jolt-verifier\n\nThe uniskip_twin_tests module called jolt_sumcheck::prove_uniskip_clear from\ninside jolt-verifier — prover logic in the verifier crate, forbidden by the\nprover-free invariant (spec invariant 3). The twin now lives with the other\nengine twins in crates/jolt-prover/tests/engine_twins.rs, driving\njolt-verifier's public verify surface: stages::uniskip is promoted to a pub\nmodule, with UniskipParams (both stage constructors plus degree()/\ndomain_size() accessors, so the test needs no jolt-r1cs constants) and\nverify_clear made pub and documented as protocol API. verify_zk/UniskipZk\nstay pub(crate) — no external consumer.\n\nThe strengthened prover-free grep\n(SumcheckKernel|ProverInputs|PrepareKernel|PrepareSumcheck|SumcheckPreparer|\nProveRounds|prove_batch|prove_uniskip over crates/jolt-verifier/src) now\ncomes back clean.\n\nGates: byte-diff harness 16/16 (moved twin included) with zero fixture\nchanges; cargo nextest -p jolt-prover -p jolt-kernels -p jolt-verifier 85\npassed; clippy clean.\n\n* refactor(jolt-kernels): expand precommitted_member! into plain per-kind impls\n\nThe precommitted_member! macro stamped, per kind, two SumcheckKernel impls,\na cycle builder, an address builder, and a SessionCarriedKernels\nPrepareKernel impl, with the wire-claim assembly passed as closures —\nunreadable without mental macro expansion. Replaced with plain Rust: two\nrelation-generic phase views (CycleReductionKernel / AddressReductionKernel,\none ProveRounds delegation each) plus, per kind, a SumcheckKernel impl per\nphase with DIRECT extraction bodies (the boxed-closure ReductionExtract\nindirection is gone), a cycle builder, and a stage-7 PrepareKernel impl\nreclaiming the kind's carry. The SharedPrecommittedReduction Rc<RefCell>\ncarry, the session park/take flow, and the single-sourced\nintermediate-vs-final resolution (has_address_phase, via scalar_claim for\nthe scalar kinds; spelled out in the bytecode kind's chunked impl) are kept\nunchanged. No other macro_rules-stamped impl family exists in jolt-kernels.\n\nGates: byte-diff harness 16/16 with zero fixture changes; cargo nextest\n-p jolt-prover -p jolt-kernels -p jolt-verifier 85 passed; clippy clean.\n\n* refactor(jolt-kernels): store the relation on the naive prover\n\n* refactor(jolt-prover): expand the MemberKernel alias at its use sites\n\n* refactor(jolt-kernels): drop dead KernelError variants and the compile_fail doctest\n\n* refactor(jolt-verifier): single-source the formula-dimensions constructor\n\n* refactor(derives): emit the stage id the driver and verify sides both read\n\n* refactor(jolt-prover): route extraction errors through KernelError\n\n* refactor(jolt-kernels): infer dual-role openings from the claim-id intersection\n\n* refactor(jolt-verifier): move the reference draws into the challenges aggregates\n\n* refactor(jolt-kernels): unify the uniskip slots and retire SessionCarriedKernels\n\n* refactor(jolt-verifier): draw the booleanity reference challenges through the generated aggregate\n\nStage 6a's hand pre-batch draw block (duplicated verbatim across both\nfronts) moves into BooleanityAddressPhase::draw_challenges: the relation\nnow carries the stage-5 instruction address/cycle points as construction\ngeometry and derives the reference vectors inside the override (the\nstage-2 RamOutputCheck precedent), so Stage6aSumchecks drops\nno_draw_challenges and both fronts call the generated aggregate draw.\nStage6bSumchecks is now the flag's only production user. Transcript\nbyte stream unchanged; schedule pinned by new draw-recording tests.\n\n* refactor(jolt-kernels): park plain-data residues via SumcheckKernel::park_residue\n\n* refactor(jolt-verifier): collapse the stage-1/entry extractions into checked accessors\n\ncycle_binding_checked on the stage-1 outputs and\nentry_bytecode_index_checked on the program preprocessing replace the\nfour hand-rolled ok_or_else extractions each; the prover fronts now\nroute these failures through VerifierError uniformly instead of mixing\nin ProverError::InvariantViolation. The stage-6b prover front also\nmoves the retained-program unwrap under the committed gate — the rows\nfeed only the full-mode table fold, so a committed-program prover no\nlonger requires full preprocessing here.\n\n* refactor(jolt-verifier): source the stage-6b build aux from the upstream carriers\n\nThe stage-5 instruction address leaves Stage6bBuildParts —\nbuild_from_parts reconstructs it from the stage-5 output points both\nfronts already pass, dropping a to_vec/clone from each. The advice\nreference-point mapping is promoted next to its value-half twins as\nadvice_reference_point_from_upstream and reused by build, the prover\nfront, and stage 7. build now reads the staged val_stages off the\nstage-6a output carrier like the prover, removing its last\nproof.clear_claims() reach (the proof parameter now supplies only\none_hot_config).\n\n* refactor(jolt-verifier): harden the stage-6b batch assembly against leg drift\n\nBytecodeStagePoints gains named accessors for the two register cycle\nlegs, replacing the positional stage_cycle_points[3]/[4] indexing that\nwas coupled to the array-literal order in bytecode_stage_points (the\ninc_cycle_points array and its re-destructure fold away with it). The\nbytecode-reduction weights fold now hard-errors on a committed layout\nwithout the eta draw (and the inverse) instead of silently yielding an\nabsent member — a front that missed the draw previously surfaced only\nas a downstream transcript mismatch.\n\n* docs(jolt-verifier): correct the stage-6b batch module notes\n\nThe module doc's fallible-check-precedence claim no longer holds since\nthe extraction order moved relative to the fork base; drop it. Scope\nthe bytecode_stage_points no-drift claim to the clear-mode paths and\nnote that the BlindFold ZK input derivation assembles its own legs.\n\n* test(jolt-prover): drop the removed zk flag at the byte-diff verify calls\n\n* fix(jolt-verifier): make the akita feature build under the relation supertraits\n\n* docs: add branch review findings\n\n* chore(jolt-verifier): drop the stale rand_core dev-dependency\n\nThe engine twin tests — the only rand_core::OsRng users — moved to\njolt-prover with the stage-driver relocation, which added the dev-dep\nthere but left this one behind. cargo machete --with-metadata (the CI\njob) flags it; genuinely unused, so remove rather than ignore.\n\n* refactor: fold the jolt-prover simplification pass into the branch\n\nSquash of feat/jolt-prover-simplified (bccfbb89a, 5 commits):\n\n- jolt-kernels: hoist head-aligned round driving onto PrecommittedTables,\n  derive has_address_phase from the schedule, collapse the four reference\n  stage-7 slot servers into relation-generic ReferencePrecommittedAddress,\n  add RetainedProgram::from_session as the shared session fetch\n- jolt-verifier: promote the stage-6a batch build (Stage6aSumchecks::\n  build_from_parts) and BytecodeStagePoints/bytecode_stage_points up to\n  stages::mod so both fronts single-source the member legs; replace the\n  flattened booleanity carrier fields with nested\n  BooleanityAddressPhaseChallenges plus a From conversion\n- jolt-verifier: drop the dead OuterRemainder::tau accessor, fold split\n  inherent impl blocks\n- jolt-prover: build stage 6a through the promoted constructor, move\n  program parking into JoltProverPreprocessing::park_program shared by\n  prove and the byte-diff harness, narrow curate_opening_values to\n  &OutputClaims\n- specs: repoint the driver update note at the recorder-generic prove\n\n* refactor: promote shared transcript draws into verifier helpers, apply review fixes\n\nDraw promotion: stage-1 tau via draw_spartan_outer_tau, stage-6b post-6a\ndraws and challenge aggregate via Stage6bDraws::draw/cycle_challenges\n(replacing the prover's hand-assembled Stage6bChallenges literal), and\nthe advice-reconstruction reference point via a draw_challenges override.\n\nReview fixes: ChallengeDrawError becomes an enum with honest\nStreamExhausted/NotStreamConstructible variants, ProofSession::take gets\nthe annotated infallible-downcast expect, prepare_optional errors on\npopulated cells for an absent member (+ test), HasKernel documents the\nmulti-bound Box derive skip, reference module doc reworded, and\ntype_complexity expects carry reasons.\n\n* test(jolt-prover): cover the head-aligned driver path; fix review nits\n\n- twin-lock the generated stage driver on a head-aligned toy member: a\n  shorter member at offset 0 alongside a full-window member, exercising\n  the engine's delayed finish_rounds delivery through prepare ->\n  extraction -> park_residue, byte-compared against verify_clear\n- stage_relation_id doc: only jolt-prover's impl_stage_prover! expansion\n  reads it, not the generated verify drivers\n- cycle_binding_checked: ok_or_else so the error String is not built on\n  the success path\n\n* fix(dory): serialize the URS disk-cache critical section with a file lock\n\ndory-pcs's setup() does load-or-generate-or-save against one cache file\n(~/Library/Caches/dory/dory_N.urs) with a plain truncating File::create\nand no locking. Concurrent processes (nextest is process-per-test, plus\nparallel suite invocations sharing $HOME) each generate a different\nOsRng-random SRS and last-writer-wins. Each byte-diff test calls setup\ntwice — legacy side, then modular side — so a process could commit its\nlegacy side under its own SRS A, then load a sibling's SRS B for the\nmodular side, making the GT commitments legitimately diverge and the\nbyte-diff asserts fire.\n\nFix: hold an exclusive advisory lock (std File::lock, no new deps) on\n<cache_dir>/dory.lock across the whole load-or-generate-or-save call, in\nour two setup wrappers. The lock path is derived from the same env vars\ndory's get_storage_path reads (LOCALAPPDATA, then HOME with macOS/XDG\ndetection), so it always lands next to the URS files it guards, and it\nreleases on process death, so no staleness handling is needed.\n\nAn advisory lock is deliberately the whole scope: dory's URS semantics\n(random generation, disk persistence, canonical sizing) stay untouched,\nand unlike serializing the tests, it also covers concurrent invocations\nfrom separate checkouts sharing one cache. The helper is duplicated in\njolt-dory and jolt-prover-legacy because the legacy dory module also\ncompiles in minimal builds, where jolt-dory is absent.\n\n* refactor(jolt-kernels): pass consumed claims into output_claims, drop the carried snapshot\n\nDual-role openings now resolve straight off the inputs the driver hands\nback at extraction, mirroring the verifier's one-cell-two-readers wiring.\n\n* feat(jolt-kernels): reject tables keyed by consumed input claims\n\nThe naive prover's dual-role premise, enforced at construction: extraction\nresolves output ids table-first, so a table keyed by a consumed id would\nshadow the input echo with an evaluation at the wrong point. Passenger\ntables (bound for the wire but absent from the summand, e.g. the Spartan\nproduct remainder's two unbatched op flags) remain legal.\n\n* docs(specs): scope the wire freeze to bytes + single-defect verify errors\n\nMulti-defect error precedence is deliberately unfrozen: stage-2/6a/6b\nverify hoist transcript-pure checks, changing only which VerifierError a\nmulti-defect proof reports first (review finding 3).\n\n* docs(specs): fix the driver curation order; name the sanctioned crate-root survivors\n\nCuration runs before the shape check and final-claim fold (review nit);\nkernel/uniskip/committed_program/precommitted_reduction stay at the\njolt-kernels root by design (review 3.3).\n\n* refactor(jolt-witness): serve the program through the witness plane, drop the session channel\n\nJoltVmProgramView exposes the program preprocessing borrow the plane\nimplementor already holds; the three stage-6 table-fold kernels read it\noff their witness parameter. Deletes RetainedProgram/park_program and the\nper-proof program deep-clone (review finding 2) — park/take stays for the\nreal cross-stage residues.\n\n* docs: drop the branch review findings — all resolved\n\n* chore(jolt-kernels): drop the unused jolt-program dependency\n\nThe merge moved the program view behind jolt_witness::ProgramSource, so\nno kernel names jolt_program types directly anymore; cargo-machete\nflags the leftover dependency edge.\n\n* refactor(booleanity): move the reference cycle off the challenges struct\n\nThe address-phase reference cycle is not a Fiat-Shamir challenge — it is\nconstruction geometry (the reversed stage-5 instruction cycle, no draw of\nits own) that was riding in BooleanityAddressPhaseChallenges. Store it as\ninstance state instead, the pattern the stage-6b monolith already uses:\nthe stage-6a member exposes reference_cycle(), the kernel reads it off\nProverInputs.relation, and stage 6b / BlindFold rederive it from the\nstage-5 point they already hold. The challenges struct now carries only\ngenuine draws (the padded reference address and the gamma).\n\nTranscript-neutral by construction (the field was a deterministic copy,\nzero squeezes); pinned by the byte-diff harness (18/18) and the stage-6a\ndraw-schedule tests.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(derives): drop stage_relation_id; attribute batch errors by stage label\n\nThe generated stage_relation_id (first non-Option member's relation id,\nwith a type-level fallback for all-optional batches) existed only so\nimpl_stage_prover! could label its batch-level final-claim error — and it\nlabeled the stage differently from the generated verify drivers, which\nbake the #base_lit stage label (\"Stage5\") into theirs. The members\ncallback macro now carries that label as a `label = \"...\"` token, the\nconsumer matcher binds it, and the error uses it — so both fronts\nattribute batch-level sumcheck errors identically, and the members macro\nis now truly the derive's only prover-facing emission. Member-level\nerrors (prepare_optional) keep their per-relation attribution.\n\nGates: clippy host and host,zk clean; nextest jolt-verifier/-kernels/\n-prover 101 passed, byte-diff 18/18.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-kernels): fold HasKernel into PrepareKernel\n\nHasKernel was a pure indirection: a lookup trait whose only method\nreturned the slot you immediately called prepare() on. KernelSlots now\nemits one delegating PrepareKernel impl per Box<dyn PrepareKernel<F, R>>\nfield instead, so the registry seam and the factory are one trait — the\ndriver bounds become B: PrepareKernel<F, R> and the kernel().prepare()\nhop disappears. The field's type is still the relation-to-slot mapping,\nand a mis-wired delegation is now unrepresentable (a second slot for the\nsame relation is a conflicting-impl error), so the derive test drops the\npointer-identity probe for a compile-resolution one. Spec updated where\nit states the living contract; the v1/rejected-alternatives history keeps\nits HasKernel mentions.\n\nGates: clippy host and host,zk clean; nextest jolt-verifier/-kernels/\n-prover 101 passed, byte-diff 18/18.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(jolt-verifier): move the bytecode stage points into stage6a\n\nBytecodeStagePoints/bytecode_stage_points landed in stages/mod.rs when\nboth the 6a and 6b batch builds came to need them, but the stages root is\nfor stage-global items and this is bytecode-read-RAF wiring — relation\ndata for the one relation that spans 6a/6b by construction. Move it next\nto BytecodeReadRafAddressPhase (which stores the struct as a field);\nstage 6b imports it through the stage6a dependency edge it already has.\nstage6_checked_split stays in stages/mod.rs — stage 6b splits its RAM\nlegs with it independently of bytecode.\n\nGates: clippy host, host,zk, and jolt-verifier akita clean; nextest\njolt-verifier/-kernels/-prover 101 passed, byte-diff 18/18.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-07-28T13:08:41-07:00",
+          "tree_id": "d9d804a5459909691de1f07c87377bb5f3086f98",
+          "url": "https://github.com/a16z/jolt/commit/bf30e7d8d7e8ffe81d1ce965a7948b6e976ec923"
+        },
+        "date": 1785273540550,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9669,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 871204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3476,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 509308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 501168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7239,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5869,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.0576,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 506788,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9488,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 199132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4904,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 871696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5555,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4602,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 509024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.9491,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 511148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.0102,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 507000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 31.3842,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1056516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.9631,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 645028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 96.7256,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2133192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4971,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500564,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5259,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.8096,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 872932,
             "unit": "KB",
             "extra": ""
           }
