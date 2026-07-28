@@ -35,6 +35,7 @@ const TASKS_PER_RAYON_WORKER: usize = 4;
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 26;
 const D64_K16_SHIFT_KEY_SPACE: usize = 1 << 16;
 const SHARED_SHIFT_MIN_COLUMNS: u8 = 3;
+const D64_K256_ROW_BATCH: usize = 1 << 13;
 
 type AkitaWideRing<const D: usize> = WideCyclotomicRing<<AkitaField as HasWide>::Wide, D>;
 
@@ -547,6 +548,18 @@ fn flush_wide<const D: usize>(
     }
 }
 
+fn flush_wide_rank<const D: usize>(
+    wide: &mut [AkitaWideRing<D>],
+    reduced: &mut [CyclotomicRing<AkitaField, D>],
+    n_a: usize,
+    a: usize,
+) {
+    for (column, wide) in wide.iter_mut().enumerate() {
+        let index = column * n_a + a;
+        reduced[index] += std::mem::replace(wide, WideCyclotomicRing::zero()).reduce();
+    }
+}
+
 #[inline(always)]
 fn full_row_coefficients<const N: usize>(
     lanes: &[u16],
@@ -722,7 +735,6 @@ fn commit_packed<const D: usize>(
             .map(|task| {
                 let trace_block = task / parts;
                 let part = task % parts;
-                let mut wide = vec![WideCyclotomicRing::zero(); num_columns * plan.n_a];
                 let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
                 let block_ring_start = trace_block * plan.num_positions_per_block;
                 let (part_start, part_end) = trace_block_part_range(
@@ -733,6 +745,13 @@ fn commit_packed<const D: usize>(
                 );
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
+                let rank_tiled_k256 =
+                    D == 64 && source.one_hot_k == 256 && num_columns <= u32::BITS as usize;
+                let mut wide = if rank_tiled_k256 {
+                    Vec::new()
+                } else {
+                    vec![WideCyclotomicRing::zero(); num_columns * plan.n_a]
+                };
                 let mut budget = 0usize;
                 if source.one_hot_k < D {
                     let rows_per_ring = D / source.one_hot_k;
@@ -837,6 +856,64 @@ fn commit_packed<const D: usize>(
                             }
                         },
                     )?;
+                } else if rank_tiled_k256 {
+                    // Stream one A rank at a time so the active wide accumulators stay in cache.
+                    let rings_per_row = source.one_hot_k / D;
+                    debug_assert_eq!(rings_per_row, 4);
+                    debug_assert_eq!(ring_start % rings_per_row, 0);
+                    debug_assert_eq!(ring_end % rings_per_row, 0);
+                    let row_start = ring_start / rings_per_row;
+                    let row_end = ring_end / rings_per_row;
+                    let mut lanes = vec![NO_HOT_LANE; num_columns];
+                    let mut hot_values = vec![0u8; D64_K256_ROW_BATCH * num_columns];
+                    let mut quarter_masks = vec![[0u32; 4]; D64_K256_ROW_BATCH];
+                    let mut rank_wide = vec![WideCyclotomicRing::zero(); num_columns];
+                    for tile_start in (row_start..row_end).step_by(D64_K256_ROW_BATCH) {
+                        let tile_len = (row_end - tile_start).min(D64_K256_ROW_BATCH);
+                        for row_offset in 0..tile_len {
+                            source.rows.fill_row(tile_start + row_offset, &mut lanes);
+                            let masks = &mut quarter_masks[row_offset];
+                            *masks = [0; 4];
+                            for (column, &hot) in lanes.iter().enumerate() {
+                                if hot == NO_HOT_LANE {
+                                    continue;
+                                }
+                                if usize::from(hot) >= source.one_hot_k {
+                                    return Err(AkitaError::InvalidInput(format!(
+                                        "trace one-hot lane {hot} is outside K={}",
+                                        source.one_hot_k
+                                    )));
+                                }
+                                hot_values[row_offset * num_columns + column] = hot as u8;
+                                masks[usize::from(hot) / D] |= 1 << column;
+                            }
+                        }
+                        for (a, a_row) in a_rows.iter().enumerate() {
+                            for row_offset in 0..tile_len {
+                                let trace_row = tile_start + row_offset;
+                                for (quarter, &mask) in quarter_masks[row_offset].iter().enumerate()
+                                {
+                                    if mask == 0 {
+                                        continue;
+                                    }
+                                    let ring = trace_row * rings_per_row + quarter;
+                                    let position = ring - block_ring_start;
+                                    let a_col = position * plan.num_digits_inner;
+                                    let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
+                                    let mut remaining = mask;
+                                    while remaining != 0 {
+                                        let column = remaining.trailing_zeros() as usize;
+                                        remaining &= remaining - 1;
+                                        let hot =
+                                            hot_values[row_offset * num_columns + column] as usize;
+                                        a_wide
+                                            .shift_accumulate_into(&mut rank_wide[column], hot % D);
+                                    }
+                                }
+                            }
+                            flush_wide_rank(&mut rank_wide, &mut reduced, plan.n_a, a);
+                        }
+                    }
                 } else {
                     visit_segment_ring_range::<D>(
                         source,
@@ -1227,18 +1304,196 @@ fn dense_rotated_challenges<const D: usize>(
     Some(rotated)
 }
 
+fn dense_rotated_trace_challenges<const D: usize>(
+    challenges: &[SparseChallenge],
+    blocks_per_column: usize,
+    num_columns: usize,
+) -> Option<Vec<[i16; D]>> {
+    let active_blocks = blocks_per_column.checked_mul(num_columns)?;
+    let table_bytes = active_blocks
+        .checked_mul(D)?
+        .checked_mul(std::mem::size_of::<[i16; D]>())?;
+    if table_bytes > ROTATED_CHALLENGE_TABLE_BUDGET || active_blocks > challenges.len() {
+        return None;
+    }
+    let mut rotated = vec![[0i16; D]; active_blocks * D];
+    rotated
+        .par_chunks_mut(num_columns * D)
+        .enumerate()
+        .for_each(|(trace_block, trace_tables)| {
+            for column in 0..num_columns {
+                let block = column * blocks_per_column + trace_block;
+                let table = &mut trace_tables[column * D..(column + 1) * D];
+                fill_rotated_challenge(table, &challenges[block]);
+            }
+        });
+    Some(rotated)
+}
+
 #[inline(always)]
 fn add_rotated<const D: usize>(
     dst: &mut [i32; D],
     challenges: &[SparseChallenge],
     dense_rotated: Option<&[[i16; D]]>,
-    block: usize,
+    challenge_block: usize,
+    dense_block: usize,
     coefficient: usize,
 ) {
     if let Some(dense_rotated) = dense_rotated {
-        add_rotated_dense(dst, &dense_rotated[block * D + coefficient]);
+        add_rotated_dense(dst, &dense_rotated[dense_block * D + coefficient]);
     } else {
-        add_rotated_sparse(dst, &challenges[block], coefficient);
+        add_rotated_sparse(dst, &challenges[challenge_block], coefficient);
+    }
+}
+
+#[inline(always)]
+fn add_rotated_dense_tables<const D: usize, const N: usize>(
+    dst: &mut [i32; D],
+    tables: [&[i16; D]; N],
+) {
+    for coefficient in 0..D {
+        let mut sum = 0;
+        for table in tables {
+            sum += i32::from(table[coefficient]);
+        }
+        dst[coefficient] += sum;
+    }
+}
+
+#[inline(always)]
+fn add_rotated_dense_array<const D: usize, const N: usize>(
+    dst: &mut [i32; D],
+    dense_rotated: &[[i16; D]],
+    dense_block: usize,
+    coefficients: &[usize; N],
+) {
+    let tables = coefficients.map(|coefficient| &dense_rotated[dense_block * D + coefficient]);
+    add_rotated_dense_tables(dst, tables);
+}
+
+#[inline(always)]
+fn add_rotated_rows<const D: usize>(
+    dst: &mut [i32; D],
+    challenges: &[SparseChallenge],
+    dense_rotated: Option<&[[i16; D]]>,
+    challenge_block: usize,
+    dense_block: usize,
+    coefficients: &[usize; 4],
+    count: usize,
+) {
+    if let Some(dense_rotated) = dense_rotated {
+        match count {
+            0 => {}
+            1 => add_rotated_dense(dst, &dense_rotated[dense_block * D + coefficients[0]]),
+            2 => add_rotated_dense_array(
+                dst,
+                dense_rotated,
+                dense_block,
+                &[coefficients[0], coefficients[1]],
+            ),
+            3 => add_rotated_dense_array(
+                dst,
+                dense_rotated,
+                dense_block,
+                &[coefficients[0], coefficients[1], coefficients[2]],
+            ),
+            4 => add_rotated_dense_array(dst, dense_rotated, dense_block, coefficients),
+            _ => unreachable!("at most four trace rows are fused"),
+        }
+    } else {
+        for &coefficient in &coefficients[..count] {
+            add_rotated_sparse(dst, &challenges[challenge_block], coefficient);
+        }
+    }
+}
+
+#[inline(always)]
+fn add_rotated_contributions<const D: usize>(
+    dst: &mut [i32; D],
+    contributions: &[(usize, usize)],
+    challenges: &[SparseChallenge],
+    dense_rotated: Option<&[[i16; D]]>,
+    blocks_per_column: usize,
+    trace_block: usize,
+    num_columns: usize,
+) {
+    if let Some(dense_rotated) = dense_rotated {
+        let table = |&(column, coefficient): &(usize, usize)| {
+            &dense_rotated[(trace_block * num_columns + column) * D + coefficient]
+        };
+        let mut remaining = contributions;
+        // Fixed-width tiles stream rotated rows while amortizing each destination sweep.
+        while remaining.len() >= 8 {
+            add_rotated_dense_tables(
+                dst,
+                [
+                    table(&remaining[0]),
+                    table(&remaining[1]),
+                    table(&remaining[2]),
+                    table(&remaining[3]),
+                    table(&remaining[4]),
+                    table(&remaining[5]),
+                    table(&remaining[6]),
+                    table(&remaining[7]),
+                ],
+            );
+            remaining = &remaining[8..];
+        }
+        match remaining {
+            [] => {}
+            [entry0] => add_rotated_dense(dst, table(entry0)),
+            [entry0, entry1] => {
+                add_rotated_dense_tables(dst, [table(entry0), table(entry1)]);
+            }
+            [entry0, entry1, entry2] => {
+                add_rotated_dense_tables(dst, [table(entry0), table(entry1), table(entry2)]);
+            }
+            [entry0, entry1, entry2, entry3] => add_rotated_dense_tables(
+                dst,
+                [table(entry0), table(entry1), table(entry2), table(entry3)],
+            ),
+            [entry0, entry1, entry2, entry3, entry4] => add_rotated_dense_tables(
+                dst,
+                [
+                    table(entry0),
+                    table(entry1),
+                    table(entry2),
+                    table(entry3),
+                    table(entry4),
+                ],
+            ),
+            [entry0, entry1, entry2, entry3, entry4, entry5] => add_rotated_dense_tables(
+                dst,
+                [
+                    table(entry0),
+                    table(entry1),
+                    table(entry2),
+                    table(entry3),
+                    table(entry4),
+                    table(entry5),
+                ],
+            ),
+            [entry0, entry1, entry2, entry3, entry4, entry5, entry6] => {
+                add_rotated_dense_tables(
+                    dst,
+                    [
+                        table(entry0),
+                        table(entry1),
+                        table(entry2),
+                        table(entry3),
+                        table(entry4),
+                        table(entry5),
+                        table(entry6),
+                    ],
+                );
+            }
+            _ => unreachable!("eight-entry batches leave at most seven contributions"),
+        }
+    } else {
+        for &(column, coefficient) in contributions {
+            let challenge_block = column * blocks_per_column + trace_block;
+            add_rotated_sparse(dst, &challenges[challenge_block], coefficient);
+        }
     }
 }
 
@@ -1275,8 +1530,11 @@ fn decompose_fold_packed<const D: usize>(
     for challenge in challenges {
         challenge.validate::<D>()?;
     }
-    let rotation_table_bytes = challenges
-        .len()
+    let blocks_per_column = (segment_rings >= num_positions).then(|| segment_rings / num_positions);
+    let rotation_blocks = blocks_per_column.map_or(challenges.len(), |blocks_per_column| {
+        blocks_per_column * source.rows.num_columns()
+    });
+    let rotation_table_bytes = rotation_blocks
         .saturating_mul(D)
         .saturating_mul(std::mem::size_of::<[i16; D]>());
     let rotation_span = tracing::info_span!(
@@ -1287,7 +1545,16 @@ fn decompose_fold_packed<const D: usize>(
         dense = tracing::field::Empty,
     );
     let rotation_guard = rotation_span.enter();
-    let dense_rotated = dense_rotated_challenges::<D>(challenges);
+    let dense_rotated = blocks_per_column.map_or_else(
+        || dense_rotated_challenges::<D>(challenges),
+        |blocks_per_column| {
+            dense_rotated_trace_challenges::<D>(
+                challenges,
+                blocks_per_column,
+                source.rows.num_columns(),
+            )
+        },
+    );
     let _ = rotation_span.record("dense", dense_rotated.is_some());
     drop(rotation_guard);
     let dense_rotated = dense_rotated.as_deref();
@@ -1295,53 +1562,91 @@ fn decompose_fold_packed<const D: usize>(
         let blocks_per_column = segment_rings / num_positions;
         debug_assert_eq!(blocks_per_column * num_positions, segment_rings);
         let row_alignment = (source.one_hot_k / D).max(1);
-        let target_tasks = rayon::current_num_threads().min(num_positions).max(1);
+        let target_tasks = rayon::current_num_threads()
+            .saturating_mul(TASKS_PER_RAYON_WORKER)
+            .min(num_positions)
+            .max(1);
         let position_chunk = num_positions
             .div_ceil(target_tasks)
             .next_multiple_of(row_alignment);
-        let position_starts = (0..num_positions)
-            .step_by(position_chunk)
-            .collect::<Vec<_>>();
+        let position_tasks = num_positions.div_ceil(position_chunk);
         let _compress_span = tracing::info_span!(
             "trace_onehot_decompose_accumulate",
             mode = "position_parallel",
             num_blocks,
             blocks_per_column,
-            position_tasks = position_starts.len(),
+            position_tasks,
             position_chunk,
             dense_rotations = dense_rotated.is_some(),
         )
         .entered();
-        position_starts
-            .into_par_iter()
-            .map(|position_start| {
-                let position_end = (position_start + position_chunk).min(num_positions);
-                let mut compressed = vec![[0i32; D]; position_end - position_start];
+        let mut compressed = vec![[0i32; D]; num_positions];
+        compressed
+            .par_chunks_mut(position_chunk)
+            .enumerate()
+            .try_for_each(|(position_task, compressed)| {
+                let position_start = position_task * position_chunk;
+                let position_end = position_start + compressed.len();
                 for trace_block in 0..blocks_per_column {
                     let ring_start = trace_block * num_positions + position_start;
                     let ring_end = trace_block * num_positions + position_end;
                     if source.one_hot_k < D {
                         let num_columns = source.rows.num_columns();
+                        let rows_per_ring = D / source.one_hot_k;
                         visit_segment_ring_lane_range::<D>(
                             source,
                             ring_start,
                             ring_end,
                             |ring, lanes| {
                                 let position = ring - trace_block * num_positions;
-                                for (row_offset, row_lanes) in
-                                    lanes.chunks_exact(num_columns).enumerate()
-                                {
-                                    let coefficient_base = row_offset * source.one_hot_k;
-                                    for (column, &hot) in row_lanes.iter().enumerate() {
-                                        if hot != NO_HOT_LANE {
-                                            let block = column * blocks_per_column + trace_block;
-                                            add_rotated(
-                                                &mut compressed[position - position_start],
-                                                challenges,
-                                                dense_rotated,
-                                                block,
-                                                coefficient_base + usize::from(hot),
-                                            );
+                                let dst = &mut compressed[position - position_start];
+                                if rows_per_ring <= 4 {
+                                    for column in 0..num_columns {
+                                        let mut coefficients = [0; 4];
+                                        let mut count = 0;
+                                        for (row_offset, row_lanes) in
+                                            lanes.chunks_exact(num_columns).enumerate()
+                                        {
+                                            let hot = row_lanes[column];
+                                            if hot != NO_HOT_LANE {
+                                                coefficients[count] = row_offset * source.one_hot_k
+                                                    + usize::from(hot);
+                                                count += 1;
+                                            }
+                                        }
+                                        let challenge_block =
+                                            column * blocks_per_column + trace_block;
+                                        let dense_block = trace_block * num_columns + column;
+                                        add_rotated_rows(
+                                            dst,
+                                            challenges,
+                                            dense_rotated,
+                                            challenge_block,
+                                            dense_block,
+                                            &coefficients,
+                                            count,
+                                        );
+                                    }
+                                } else {
+                                    for (row_offset, row_lanes) in
+                                        lanes.chunks_exact(num_columns).enumerate()
+                                    {
+                                        let coefficient_base = row_offset * source.one_hot_k;
+                                        for (column, &hot) in row_lanes.iter().enumerate() {
+                                            if hot != NO_HOT_LANE {
+                                                let challenge_block =
+                                                    column * blocks_per_column + trace_block;
+                                                let dense_block =
+                                                    trace_block * num_columns + column;
+                                                add_rotated(
+                                                    dst,
+                                                    challenges,
+                                                    dense_rotated,
+                                                    challenge_block,
+                                                    dense_block,
+                                                    coefficient_base + usize::from(hot),
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -1354,26 +1659,22 @@ fn decompose_fold_packed<const D: usize>(
                             ring_end,
                             |ring, contributions| {
                                 let position = ring - trace_block * num_positions;
-                                for &(column, coefficient) in contributions {
-                                    let block = column * blocks_per_column + trace_block;
-                                    add_rotated(
-                                        &mut compressed[position - position_start],
-                                        challenges,
-                                        dense_rotated,
-                                        block,
-                                        coefficient,
-                                    );
-                                }
+                                add_rotated_contributions(
+                                    &mut compressed[position - position_start],
+                                    contributions,
+                                    challenges,
+                                    dense_rotated,
+                                    blocks_per_column,
+                                    trace_block,
+                                    source.rows.num_columns(),
+                                );
                             },
                         )?;
                     }
                 }
-                Ok::<_, AkitaError>(compressed)
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect()
+                Ok::<_, AkitaError>(())
+            })?;
+        compressed
     } else {
         let _compress_span = tracing::info_span!(
             "trace_onehot_decompose_accumulate",
@@ -1393,6 +1694,7 @@ fn decompose_fold_packed<const D: usize>(
                     challenges,
                     dense_rotated,
                     block,
+                    block,
                     coefficient,
                 );
             }
@@ -1405,11 +1707,16 @@ fn decompose_fold_packed<const D: usize>(
         num_digits,
     )
     .entered();
-    let mut expanded = Vec::with_capacity(num_positions.saturating_mul(num_digits));
-    for coeffs in compressed {
-        expanded.push(coeffs);
-        expanded.extend((1..num_digits).map(|_| [0i32; D]));
-    }
+    let expanded = if num_digits == 1 {
+        compressed
+    } else {
+        let mut expanded = Vec::with_capacity(num_positions.saturating_mul(num_digits));
+        for coeffs in compressed {
+            expanded.push(coeffs);
+            expanded.extend((1..num_digits).map(|_| [0i32; D]));
+        }
+        expanded
+    };
     drop(_expand_span);
     let modulus = (-AkitaField::one()).to_canonical_u128() + 1;
     let _witness_span = tracing::info_span!(
