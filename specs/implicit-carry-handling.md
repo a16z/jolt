@@ -5,7 +5,7 @@
 | Author(s) | @zachdestefano |
 | Created | 2026-07-28 |
 | Status | proposed |
-| PR | |
+| PR | #1710 |
 
 ## Summary
 
@@ -44,8 +44,8 @@ The carry policy is fixed as follows:
 
 - `Carry(0) = 0`
 - For carry-producing instructions (`ADD`, `MUL`, `ADDC`, `MULC`), `NextCarry` is the high 64 bits of the true 128-bit arithmetic result.
-- For all other instructions, `NextCarry = 0`
-- Therefore, `ADDC` and `MULC` following a non-carry-producing instruction consume `0`
+- For all other instructions, `NextCarry = 0`.
+- Therefore, `ADDC` and `MULC` following a non-carry-producing instruction consume `0`.
 
 This policy is preferred because it is simple, total, easy to document, and compatible with the existing forward-shift proof structure.
 
@@ -81,7 +81,7 @@ The implementation must preserve the following properties:
 - [ ] Randomized tests over all `{ADD, MUL} -> {ADDC, MULC}` pairings produce correct low 64-bit outputs and carry propagation.
 - [ ] Proof generation and verification succeed for those pairings in standard mode (`--features host`) and ZK mode (`--features host,zk`).
 - [ ] Proof verification fails if one tampers with any claimed carry value.
-- [ ] Documentation explains the carry model, the zero-default policy, and the intended expert/manual use of `ADDC` and `MULC`.
+- [ ] Documentation explains the carry model, the zero-default policy, the row-0 initialization rule, and the intended expert/manual use of `ADDC` and `MULC`.
 
 ### Testing Strategy
 
@@ -95,9 +95,15 @@ New tests required:
 - Randomized correctness tests covering every `{ADD, MUL} -> {ADDC, MULC}` pairing.
 - End-to-end proof acceptance tests for those pairings in both standard and ZK modes.
 - Negative tests that mutate the incoming or outgoing carry and assert verification failure.
-- Unit tests for any new lookup semantics, witness extraction, shift relation changes, and outer-claim field ordering changes.
+- Unit tests for the new lookup semantics, witness extraction, row-0 carry initialization, shift relation changes, and outer-claim field ordering changes.
 
 No dedicated acceptance tests are required for `ADDC` or `MULC` after non-carry-producing instructions beyond documenting that the consumed carry is `0`.
+
+Trace-tail assumption:
+
+- The shift relation treats the next row after the last executed row as the padded default row, whose carry is `0`.
+- Therefore a raw trace whose final executed row is carry-producing with nonzero carry-out is unsatisfiable under this design.
+- This is acceptable because real program traces terminate through a non-carry-producing termination sequence, and acceptance tests should use full guest executions rather than hand-truncated raw traces.
 
 ### Performance
 
@@ -122,9 +128,9 @@ The central architectural decision is:
 
 This is necessary because the modern stack is organized around current-row values plus `Next*` relations:
 
-- [crates/jolt-witness/src/witnesses/mod.rs](jolt/crates/jolt-witness/src/witnesses/mod.rs) exposes `Extract::extract(row, next, env)` but no previous-row accessor.
-- [crates/jolt-witness/src/backend/trace/cycle.rs](jolt/crates/jolt-witness/src/backend/trace/cycle.rs) streams rows with a one-row lookahead window only.
-- [crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs](jolt/crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs) is a forward shift relation over `Next*` openings.
+- `crates/jolt-witness/src/witnesses/mod.rs` exposes `Extract::extract(row, next, env)` but no previous-row accessor.
+- `crates/jolt-witness/src/backend/trace/cycle.rs` streams rows with a one-row lookahead window only.
+- `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs` is a forward shift relation over `Next*` openings.
 
 Therefore the implementation should materialize the incoming carry as current-row data and constrain it against the prior row's `NextCarry` through the existing shift-style mechanism.
 
@@ -153,16 +159,18 @@ The runtime execution model should distinguish between:
 
 Recommended behavior:
 
-- Add an emulator-local `carry: u64` field to `Cpu`
+- Add an emulator-local `carry: u64` field to `Cpu`.
 - For each executed instruction:
-  - record the current `cpu.carry` into the row's `carry` field
-  - execute the instruction
-  - update `cpu.carry` to the instruction's carry-out if it is `ADD`, `MUL`, `ADDC`, or `MULC`
-  - otherwise set `cpu.carry = 0`
+  - record the current `cpu.carry` into the row's `carry` field,
+  - execute the instruction,
+  - update `cpu.carry` to the instruction's carry-out if it is `ADD`, `MUL`, `ADDC`, or `MULC`,
+  - otherwise set `cpu.carry = 0`.
 
 This keeps the carry non-architectural while still making it available to the witness backend as ordinary current-row data.
 
-### Instruction Semantics
+`Cpu::save_state_with_empty_memory` in `tracer/src/emulator/cpu.rs` must also preserve or intentionally reset the emulator-local carry field consistently with the chosen semantics.
+
+### Instruction Semantics and Flagging
 
 The new instructions are final Jolt instructions:
 
@@ -171,128 +179,180 @@ The new instructions are final Jolt instructions:
 
 They should be treated as ordinary two-register instructions from a decoding and row-shape perspective. The carry is not encoded as a third operand or stored in a register.
 
-Add one new circuit flag:
+Add two new circuit flags:
 
-- `UsesCarry`
+- `UsesCarry`: set on instructions that consume `Carry`
+- `ProducesCarry`: set on instructions whose arithmetic result is split into low 64 bits and high 64-bit `NextCarry`
 
 Flag policy:
 
-- `ADD`: `AddOperands`, `WriteLookupOutputToRD`
-- `MUL`: `MultiplyOperands`, `WriteLookupOutputToRD`
-- `ADDC`: `AddOperands`, `UsesCarry`, `WriteLookupOutputToRD`
-- `MULC`: `MultiplyOperands`, `UsesCarry`, `WriteLookupOutputToRD`
+- `ADD`: `AddOperands`, `WriteLookupOutputToRD`, `ProducesCarry`
+- `MUL`: `MultiplyOperands`, `WriteLookupOutputToRD`, `ProducesCarry`
+- `ADDC`: `AddOperands`, `WriteLookupOutputToRD`, `UsesCarry`, `ProducesCarry`
+- `MULC`: `MultiplyOperands`, `WriteLookupOutputToRD`, `UsesCarry`, `ProducesCarry`
+
+All other instructions, including existing `AddOperands` and `MultiplyOperands` users such as `ADDI`, `LUI`, `AUIPC`, `JAL`, `JALR`, `VirtualMULI`, `MULHU`, and assert/virtual helper instructions, must leave `ProducesCarry = 0`.
+
+This separation is required because:
+
+- `AddOperands` and `MultiplyOperands` are already used by many instructions whose lookup semantics do **not** split into low/high 64-bit halves.
+- In particular, gating the split constraint on `AddOperands || MultiplyOperands` would over-constrain `MULHU`, `ADDI`, `JAL`, and similar rows.
+
+Packing note:
+
+- Today `CircuitFlagSet` in `crates/jolt-riscv/src/flags.rs` uses `u16`.
+- Adding both `UsesCarry` and `ProducesCarry` brings the flag count to exactly 16 variants, which still fits.
 
 `InstructionFlags` do not need a new operand-routing bit for carry if carry is handled as a dedicated virtual column rather than by expanding the existing left/right operand routing.
+
+### Guest Encoding and Test Emission
+
+Default assumption:
+
+- `ADDC` and `MULC` are guest-emittable custom final instructions following the same general pattern as `VirtualRev8W`.
+- They should use custom opcode `0x5B`, `funct3 = 0b000`, and the next free `funct7` slots after the currently claimed `0x00..0x05` range in `crates/jolt-program/src/image/decode.rs`.
+- Unless another collision appears during implementation, the default assignment is:
+  - `ADDC`: `funct7 = 0x06`
+  - `MULC`: `funct7 = 0x07`
+
+Tests that need to emit these instructions directly should do so via raw `.insn r` guest assembly.
 
 ### Exact File-Level Code Change Suggestions
 
 #### Shared instruction universe
 
-- [crates/jolt-riscv/src/lib.rs](jolt/crates/jolt-riscv/src/lib.rs)
-  - Add `ADDC` and `MULC` to `for_each_instruction_kind!`
-  - Add `ADDC` and `MULC` to `for_each_jolt_instruction_kind!`
-  - Assign stable Jolt opcodes
-- [crates/jolt-riscv/src/flags.rs](jolt/crates/jolt-riscv/src/flags.rs)
-  - Add `CircuitFlags::UsesCarry`
-  - Extend `NUM_CIRCUIT_FLAGS`, `CIRCUIT_FLAGS`, and any exclusivity tests as needed
-- [crates/jolt-riscv/src/instructions/mod.rs](jolt/crates/jolt-riscv/src/instructions/mod.rs)
-  - Add instruction definitions and tests for `ADDC` and `MULC`
+- `crates/jolt-riscv/src/lib.rs`
+  - Add `ADDC` and `MULC` to `for_each_instruction_kind!`.
+  - Add `ADDC` and `MULC` to `for_each_jolt_instruction_kind!`.
+  - Assign stable Jolt tags/opcodes.
+- `crates/jolt-riscv/src/flags.rs`
+  - Add `CircuitFlags::UsesCarry`.
+  - Add `CircuitFlags::ProducesCarry`.
+  - Extend `NUM_CIRCUIT_FLAGS`, `CIRCUIT_FLAGS`, and flag exclusivity tests.
+- `crates/jolt-riscv/src/kind.rs`
+  - Add metadata arms for the new instruction kinds.
+- `crates/jolt-riscv/src/instructions/mod.rs`
+  - Register the new instruction variants in the hand-written `JoltInstruction` enum expansion area.
+  - Add instruction definitions and tests for `ADDC` and `MULC`.
 
-#### Tracer and execution trace
+#### Tracer and decoding
 
-- [tracer/src/emulator/cpu.rs](jolt/tracer/src/emulator/cpu.rs)
-  - Add emulator-local `carry: u64`
-- [tracer/src/instruction/mod.rs](jolt/tracer/src/instruction/mod.rs)
-  - Register `addc` and `mulc` modules
-  - Ensure trace rows preserve incoming carry
-- [tracer/src/instruction/add.rs](jolt/tracer/src/instruction/add.rs)
-  - Update execution to compute carry-out
-- [tracer/src/instruction/mul.rs](jolt/tracer/src/instruction/mul.rs)
-  - Update execution to compute carry-out
+- `tracer/src/emulator/cpu.rs`
+  - Add emulator-local `carry: u64`.
+  - Update `save_state_with_empty_memory`.
+- `tracer/src/instruction/mod.rs`
+  - Register `addc` and `mulc` modules.
+  - Add decode, execute, trace, and Jolt-row conversion support.
+  - Extend the custom-instruction decode table for the chosen `funct7` assignments.
+- `tracer/src/instruction/add.rs`
+  - Update execution to compute carry-out.
+- `tracer/src/instruction/mul.rs`
+  - Update execution to compute carry-out.
 - New files:
   - `tracer/src/instruction/addc.rs`
   - `tracer/src/instruction/mulc.rs`
-- [crates/jolt-program/src/execution/trace.rs](jolt/crates/jolt-program/src/execution/trace.rs)
-  - Add `carry: u64` to `TraceRow`
+- `crates/jolt-program/src/image/decode.rs`
+  - Extend `decode_custom`.
+- `crates/jolt-program/src/execution/trace.rs`
+  - Add `carry: u64` to `TraceRow`.
 
 #### Lookup semantics
 
-- [crates/jolt-lookup-tables/src/instructions/riscv/add.rs](jolt/crates/jolt-lookup-tables/src/instructions/riscv/add.rs)
-  - keep as template for `ADDC`
-- [crates/jolt-lookup-tables/src/instructions/riscv/mul.rs](jolt/crates/jolt-lookup-tables/src/instructions/riscv/mul.rs)
-  - keep as template for `MULC`
+- `crates/jolt-lookup-tables/src/instructions/riscv/add.rs`
+  - Keep as the template for `ADDC`.
+- `crates/jolt-lookup-tables/src/instructions/riscv/mul.rs`
+  - Keep as the template for `MULC`.
 - New files:
   - `crates/jolt-lookup-tables/src/instructions/riscv/addc.rs`
   - `crates/jolt-lookup-tables/src/instructions/riscv/mulc.rs`
 
 Recommended semantics:
 
-- `ADDC` lookup operand should be `rs1 + rs2 + carry`
-- `MULC` lookup operand should be `rs1 * rs2 + carry`
-- Lookup output remains the low 64 bits
+- `ADDC` lookup operand should be `rs1 + rs2 + carry`.
+- `MULC` lookup operand should be `rs1 * rs2 + carry`.
+- Lookup output remains the low 64 bits.
 
 #### Legacy zkVM instruction layer
 
-- [crates/jolt-prover-legacy/src/zkvm/instruction/mod.rs](jolt/crates/jolt-prover-legacy/src/zkvm/instruction/mod.rs)
-  - Add `CircuitFlags::UsesCarry`
-  - Add `ADDC` and `MULC`
+- `crates/jolt-prover-legacy/src/zkvm/instruction/mod.rs`
+  - Add `CircuitFlags::UsesCarry`.
+  - Add `CircuitFlags::ProducesCarry`.
+  - Add `ADDC` and `MULC`.
 - New files:
   - `crates/jolt-prover-legacy/src/zkvm/instruction/addc.rs`
   - `crates/jolt-prover-legacy/src/zkvm/instruction/mulc.rs`
 
 #### Legacy witness and proof conversion
 
-- [crates/jolt-prover-legacy/src/zkvm/witness.rs](jolt/crates/jolt-prover-legacy/src/zkvm/witness.rs)
-  - Add `VirtualPolynomial::Carry`
-  - Add `VirtualPolynomial::NextCarry`
-- [crates/jolt-prover-legacy/src/zkvm/proof.rs](jolt/crates/jolt-prover-legacy/src/zkvm/proof.rs)
-  - Extend `convert_virtual_polynomial` for `Carry` and `NextCarry`
+- `crates/jolt-prover-legacy/src/zkvm/witness.rs`
+  - Add `VirtualPolynomial::Carry`.
+  - Add `VirtualPolynomial::NextCarry`.
+- `crates/jolt-prover-legacy/src/zkvm/proof.rs`
+  - Extend `convert_virtual_polynomial` for `Carry` and `NextCarry`.
 
 #### Legacy outer inputs and typed row views
 
-- [crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs](jolt/crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs)
-  - Add `Carry` and `NextCarry` to `JoltR1CSInputs`
-  - Append them to `ALL_R1CS_INPUTS`
-  - Extend `to_index`, `from_index`, `From<&JoltR1CSInputs> for VirtualPolynomial`, and `OpeningId`
-  - Add `carry: u64` and `next_carry: u64` to `R1CSCycleInputs`
-  - Populate them from the current and next trace rows
-  - Extend `get_input_value`
+- `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs`
+  - Add `Carry` and `NextCarry` to `JoltR1CSInputs`.
+  - Append them to `ALL_R1CS_INPUTS`.
+  - Extend `to_index`, `from_index`, `From<&JoltR1CSInputs> for VirtualPolynomial`, and `OpeningId`.
+  - Add `carry: u64` and `next_carry: u64` to `R1CSCycleInputs`.
+  - Populate them from the current and next trace rows.
+  - Extend `get_input_value`.
+- `crates/jolt-prover-legacy/src/zkvm/spartan/outer.rs`
+  - Update any fixed-size `[F; NUM_R1CS_INPUTS]` arrays and related helpers.
 
-#### Legacy R1CS constraints
+#### Legacy shift sumcheck
 
-- [crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs](jolt/crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs)
-  - Add new labels and constraints described below
-- [crates/jolt-prover-legacy/src/zkvm/r1cs/evaluation.rs](jolt/crates/jolt-prover-legacy/src/zkvm/r1cs/evaluation.rs)
-  - Update typed evaluators and remainder planning to match the new outer inputs and constraints
+- `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs`
+  - Extend the shift payload to include carry.
+  - Increase `gamma_powers` from length 5 to length 6 for the extra carry-batching term.
+  - Update the prover and verifier formulas.
+  - Update the four `#[cfg(feature = "zk")]` BlindFold claim/constraint synchronization functions accordingly.
+
+#### Legacy R1CS constraints and groupings
+
+- `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs`
+  - Add new labels and constraints described below.
+  - Recompute `NUM_R1CS_CONSTRAINTS`.
+  - Re-sync `R1CS_CONSTRAINTS_FIRST_GROUP_LABELS`.
+  - Default policy: keep the existing first-group labels unchanged and place all new carry-related rows in the second group unless profiling justifies a different split.
+- `crates/jolt-prover-legacy/src/zkvm/r1cs/evaluation.rs`
+  - Update typed evaluators and remainder planning to match the new outer inputs and constraints.
 
 #### Modern witness / claims / verifier stack
 
-- [crates/jolt-witness/src/witnesses/mod.rs](jolt/crates/jolt-witness/src/witnesses/mod.rs)
-  - Export new carry witnesses
+- `crates/jolt-witness/src/witnesses/mod.rs`
+  - Export new carry witnesses.
 - New file:
   - `crates/jolt-witness/src/witnesses/carry.rs`
-- [crates/jolt-witness/src/backend/trace/oracle.rs](jolt/crates/jolt-witness/src/backend/trace/oracle.rs)
-  - Add materialization for `Carry` and `NextCarry`
-- [crates/jolt-claims/src/protocols/jolt/ids.rs](jolt/crates/jolt-claims/src/protocols/jolt/ids.rs)
-  - Add `Carry` and `NextCarry` ids
-- [crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs](jolt/crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs)
-  - Add `Carry` and `NextCarry` to `SPARTAN_OUTER_R1CS_INPUTS`
-- [crates/jolt-claims/src/protocols/jolt/relations/spartan/outer_remainder.rs](jolt/crates/jolt-claims/src/protocols/jolt/relations/spartan/outer_remainder.rs)
-  - Extend canonical output-claim structs/order
-- [crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs](jolt/crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs)
-  - Extend shift inputs/outputs and symbolic relation with carry
-- [crates/jolt-verifier/src/stages/stage1/outputs.rs](jolt/crates/jolt-verifier/src/stages/stage1/outputs.rs)
-  - Extend stage-1 output claims
-- [crates/jolt-verifier/src/stages/stage1/verify.rs](jolt/crates/jolt-verifier/src/stages/stage1/verify.rs)
-  - Update field ordering assumptions
-- [crates/jolt-verifier/src/stages/stage3/spartan_shift.rs](jolt/crates/jolt-verifier/src/stages/stage3/spartan_shift.rs)
-  - Verify the added carry shift relation
+- `crates/jolt-witness/src/backend/trace/oracle.rs`
+  - Add materialization for `Carry` and `NextCarry`.
+- `crates/jolt-claims/src/protocols/jolt/ids.rs`
+  - Add `Carry` and `NextCarry` ids.
+- `crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs`
+  - Add `Carry` and `NextCarry` to `SPARTAN_OUTER_R1CS_INPUTS`.
+  - Re-sync `SPARTAN_OUTER_FIRST_GROUP_ROWS` and `SPARTAN_OUTER_SECOND_GROUP_ROWS`.
+- `crates/jolt-claims/src/protocols/jolt/relations/spartan/outer_remainder.rs`
+  - Extend canonical output-claim structs and field ordering.
+- `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs`
+  - Extend shift inputs/outputs and symbolic relation with carry.
+  - Add a row-0 carry initialization public term as described below.
+- `crates/jolt-verifier/src/stages/stage1/outputs.rs`
+  - Extend stage-1 output claims.
+- `crates/jolt-verifier/src/stages/stage1/verify.rs`
+  - Update field ordering assumptions.
+- `crates/jolt-verifier/src/stages/stage3/spartan_shift.rs`
+  - Verify the added carry shift relation.
+
+#### Modern constraint table
+
+- `crates/jolt-r1cs/src/constraints/jolt.rs`
+  - Re-sync outer column count, opening columns, row groups, and any compile-time dimensions affected by the extra outer inputs and carry-related rows.
 
 ### Detailed R1CS Changes
 
-The current relevant outer constraints live in:
-
-- [crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs](jolt/crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs)
+The current relevant outer constraints live in `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs`.
 
 Today the arithmetic path is:
 
@@ -320,17 +380,17 @@ Add the following `R1CSConstraintLabel` entries:
 - `RightLookupMulNoCarry`
 - `RightLookupMulWithCarry`
 - `LookupSplitsIntoOutputAndNextCarry`
-- `NextCarryZeroIfNotCarryArithmetic`
+- `NextCarryZeroIfNotProducesCarry`
 
-`RightLookupAdd` and `RightLookupEqProductIfMul` should be replaced or split rather than overloaded implicitly.
+`RightLookupAdd` and `RightLookupEqProductIfMul` should be replaced by the split forms above rather than overloaded implicitly.
 
 #### Proposed constraints
 
-Use `UsesCarry` to distinguish carry-consuming arithmetic from ordinary arithmetic.
+Use `UsesCarry` to distinguish carry-consuming arithmetic from non-carry-consuming arithmetic, and use `ProducesCarry` to distinguish rows whose wide arithmetic result is split into low/high halves.
 
 1. Ordinary add:
 
-`if AddOperands && !UsesCarry => RightLookupOperand == LeftInstructionInput + RightInstructionInput`
+`if AddOperands && ProducesCarry && !UsesCarry => RightLookupOperand == LeftInstructionInput + RightInstructionInput`
 
 2. Add-with-carry:
 
@@ -338,7 +398,7 @@ Use `UsesCarry` to distinguish carry-consuming arithmetic from ordinary arithmet
 
 3. Ordinary mul:
 
-`if MultiplyOperands && !UsesCarry => RightLookupOperand == Product`
+`if MultiplyOperands && ProducesCarry && !UsesCarry => RightLookupOperand == Product`
 
 4. Mul-with-carry:
 
@@ -346,7 +406,7 @@ Use `UsesCarry` to distinguish carry-consuming arithmetic from ordinary arithmet
 
 5. Split wide result into low and high halves:
 
-`if AddOperands || MultiplyOperands => RightLookupOperand == LookupOutput + 2^64 * NextCarry`
+`if ProducesCarry => RightLookupOperand == LookupOutput + 2^64 * NextCarry`
 
 This is the key carry-out constraint. It forces:
 
@@ -357,9 +417,20 @@ because `LookupOutput` is already constrained by the instruction lookup table to
 
 6. Zero carry for all other instructions:
 
-`if !(AddOperands || MultiplyOperands) => NextCarry == 0`
+`if !ProducesCarry => NextCarry == 0`
 
-This enforces the zero-default policy for rows that are not in the arithmetic carry family.
+This enforces the zero-default policy for rows that are outside the carry-producing arithmetic family.
+
+#### Why `ProducesCarry` is required
+
+`AddOperands` and `MultiplyOperands` alone are not sufficient guards because they are already reused by other instructions.
+
+Two concrete examples from the current codebase:
+
+- `MULHU` uses `MultiplyOperands`, but its lookup output is the upper word, so constraining `RightLookupOperand == LookupOutput + 2^64 * NextCarry` on `MULHU` would reject honest rows.
+- `ADDI`, `JAL`, `JALR`, `AUIPC`, `LUI`, and several virtual helper instructions use `AddOperands`, but the intended policy for them is `NextCarry = 0`, not “the true high 64 bits of the internal add.”
+
+`ProducesCarry` is therefore mandatory for soundness and honest-prover completeness.
 
 #### Existing constraints that remain valid
 
@@ -371,7 +442,7 @@ These constraints should continue to hold unchanged:
 - `RightLookupEqRightInputOtherwise`
 - `RdWriteEqLookupIfWriteLookupToRd`
 
-`RdWriteEqLookupIfWriteLookupToRd` is especially important because it already connects `LookupOutput` to `rd`, so once `LookupOutput + 2^64 * NextCarry = RightLookupOperand` is enforced, the arithmetic split is fully constrained.
+`RdWriteEqLookupIfWriteLookupToRd` remains especially important because it already connects `LookupOutput` to `rd`, so once `LookupOutput + 2^64 * NextCarry = RightLookupOperand` is enforced, the arithmetic split is fully constrained.
 
 #### Typed row implications
 
@@ -382,7 +453,7 @@ These constraints should continue to hold unchanged:
 
 and so `get_input_value()` reflects those additions.
 
-The typed row builder in [crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs](jolt/crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs) should populate:
+The typed row builder in `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs` should populate:
 
 - `carry` from the current row's stored incoming carry
 - `next_carry` from the next row's stored incoming carry, or `0` on padded/final rows
@@ -391,11 +462,7 @@ This matches the intended relation `NextCarry(t) = Carry(t + 1)`.
 
 ### Shift Relation Changes
 
-The existing shift relation in:
-
-- [crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs](jolt/crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs)
-
-currently threads:
+The existing shift relation in `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs` currently threads:
 
 - `NextUnexpandedPC`
 - `NextPC`
@@ -405,15 +472,36 @@ currently threads:
 
 Extend it to also thread:
 
-- input opening: `NextCarry` from stage 1 outer outputs
+- input opening: `NextCarry` from stage-1 outer outputs
 - output opening: shifted `Carry`
 
 Conceptually:
 
-- add `gamma^k * next_carry_outer` to the shift input expression
-- add `gamma^k * carry_shift` to the shift output expression
+- add a new batched carry term to the shift input expression
+- add the matching shifted carry term to the shift output expression
 
-with a new exponent `k` after the existing terms, preserving the existing ordering discipline everywhere that consumes those openings.
+This requires the legacy shift sumcheck in `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs` to extend its `gamma_powers` batching and its ZK constraint mirrors.
+
+### Row-0 Carry Initialization
+
+The invariant `Carry(0) = 0` is **not** enforced by the existing `EqPlusOne` machinery alone, because `EqPlusOne` constrains `f(j + 1)` against `Next*` values and does not constrain row 0 of the shifted column.
+
+Therefore the shift design must add an explicit row-0 initialization mechanism.
+
+Chosen mechanism:
+
+- Extend the shift relation with an `eq(0...0, r_cycle)`-weighted public term, mirroring the `Entry` pattern already used by bytecode.
+- Add a new shift public value, e.g. `CarryInit`, whose evaluation is the row-0 selector at the shift opening point.
+- Include a term forcing `Carry(0) = 0` in both the symbolic relation and the legacy sumcheck verifier/prover logic.
+
+This should be mirrored in:
+
+- `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs`
+- `crates/jolt-claims/src/protocols/jolt/ids.rs`
+- `crates/jolt-verifier/src/stages/stage3/spartan_shift.rs`
+- `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs`
+
+This option is preferred over weakening the invariant because it preserves the intended total semantics and avoids depending on program-entry discipline for soundness.
 
 ### Witness Extraction Strategy
 
@@ -445,36 +533,47 @@ Rejected as the first implementation path because it is substantially more invas
 
 Rejected because the total policy `NextCarry = 0` off the arithmetic family is simpler, safer, and easier to test and document.
 
+5. Weaken `Carry(0) = 0` to “unconstrained but harmless.”
+
+Rejected because the spec wants defined semantics, and an explicit initialization term is available.
+
 ## Documentation
 
 Update the Jolt book in two places:
 
-- [book/src/how/architecture/registers.md](jolt/book/src/how/architecture/registers.md)
-  - Add a dedicated paragraph explaining that implicit carry is proof-level state, not part of the memory-checked register file
-- [book/src/how/optimizations/inlines.md](jolt/book/src/how/optimizations/inlines.md)
-  - Document `ADDC` and `MULC`
-  - Explain the zero-default carry policy
-  - State that these instructions are intended for expert/manual use
+- `book/src/how/architecture/registers.md`
+  - Add a dedicated paragraph explaining that implicit carry is proof-level state, not part of the memory-checked register file.
+- `book/src/how/optimizations/inlines.md`
+  - Document `ADDC` and `MULC`.
+  - Explain the zero-default carry policy.
+  - State that these instructions are intended for expert/manual use.
+  - Mention the expected custom-instruction encoding pattern for direct guest use.
 
 ## Execution
 
 Recommended implementation order:
 
-1. Add instruction kinds and tracer semantics for `ADDC` and `MULC`.
-2. Add `carry` to `TraceRow`.
-3. Add lookup semantics and legacy witness support for `Carry` and `NextCarry`.
-4. Extend legacy outer inputs and implement the new R1CS constraints.
-5. Extend modular witness, claims, and verifier carry plumbing.
-6. Add randomized positive and negative tests in standard and ZK modes.
-7. Update documentation.
+1. Add instruction kinds, custom decode support, and tracer semantics for `ADDC` and `MULC`.
+2. Add `carry` to `TraceRow` and preserve it through trace production.
+3. Add lookup semantics and witness support for `Carry` and `NextCarry`.
+4. Extend legacy outer inputs and implement the new R1CS constraints with `UsesCarry` and `ProducesCarry`.
+5. Extend the shift relation with carry transport and explicit row-0 initialization.
+6. Extend modern witness, claims, verifier, and `jolt-r1cs` geometry plumbing.
+7. Add randomized positive and negative tests in standard and ZK modes.
+8. Update documentation.
 
 This ordering front-loads semantic execution correctness and makes the proof-layer plumbing easier to validate incrementally.
 
 ## References
 
-- [crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs](jolt/crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs)
-- [crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs](jolt/crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs)
-- [crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs](jolt/crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs)
-- [crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs](jolt/crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs)
-- [crates/jolt-witness/src/witnesses/mod.rs](jolt/crates/jolt-witness/src/witnesses/mod.rs)
-- [crates/jolt-program/src/execution/trace.rs](jolt/crates/jolt-program/src/execution/trace.rs)
+- `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs`
+- `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs`
+- `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs`
+- `crates/jolt-r1cs/src/constraints/jolt.rs`
+- `crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs`
+- `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs`
+- `crates/jolt-witness/src/witnesses/mod.rs`
+- `crates/jolt-program/src/execution/trace.rs`
+- `crates/jolt-program/src/image/decode.rs`
+- `crates/jolt-riscv/src/kind.rs`
+- `crates/jolt-riscv/src/instructions/mod.rs`
