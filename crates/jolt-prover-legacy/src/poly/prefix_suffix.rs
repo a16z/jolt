@@ -498,7 +498,8 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
         // unscaled mass; it is accumulated separately anyway to keep the two
         // decompositions independent.
         #[cfg(feature = "akita")]
-        let upper_suffix_bits = suffix_len.saturating_sub(left.total_len / 2);
+        let upper_suffix_bits =
+            crate::poly::identity_poly::upper_half_suffix_bits(suffix_len, left.total_len);
         #[cfg(feature = "akita")]
         const NUM_ACCUMULATORS: usize = 6;
         #[cfg(not(feature = "akita"))]
@@ -569,18 +570,16 @@ impl<F: JoltField> PrefixSuffixDecomposition<F, 2> {
                                 }
                             }
 
-                            // Canonical-address path, identity rows only: this
-                            // realizes the `raf_flag` mask on `B = F · U`.
+                            // Canonical-address path, identity rows only: being
+                            // inside this branch is what realizes the `raf_flag`
+                            // mask on `B = F · U`.
                             #[cfg(feature = "akita")]
-                            {
-                                let suffix_all_ones = upper_suffix_bits == 0 || {
-                                    let bits: u128 = suffix_bits.into();
-                                    (bits >> (suffix_len - upper_suffix_bits))
-                                        == (1u128 << upper_suffix_bits) - 1
-                                };
-                                if suffix_all_ones {
-                                    acc[5 * poly_len + r_index] += u.to_unreduced();
-                                }
+                            if crate::poly::identity_poly::upper_half_suffix_all_ones(
+                                suffix_bits.into(),
+                                suffix_len,
+                                upper_suffix_bits,
+                            ) {
+                                acc[5 * poly_len + r_index] += u.to_unreduced();
                             }
                         }
                     }

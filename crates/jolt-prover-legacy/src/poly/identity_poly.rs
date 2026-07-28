@@ -200,8 +200,35 @@ impl UpperHalfAllOnesPolynomial {
     /// How many of a suffix's coordinates fall in the upper half. Zero once the
     /// bound prefix has passed the midpoint, after which `U` is determined.
     fn suffix_upper_bits(&self, suffix_len: usize) -> usize {
-        suffix_len.saturating_sub(self.num_vars / 2)
+        upper_half_suffix_bits(suffix_len, self.num_vars)
     }
+}
+
+/// How many of a suffix's coordinates fall in the address's upper half.
+///
+/// Shared with `PrefixSuffixDecomposition::init_Q_raf`, which accumulates this
+/// polynomial's `Q` in its fused trace scan rather than through
+/// [`SuffixPolynomial::suffix_mle`]. Keep the two on this one definition: the
+/// generic `init_Q` path is only reached from tests, so a divergence here would
+/// leave the brute-force decomposition test green while the prover computed
+/// something else.
+#[inline]
+pub(crate) fn upper_half_suffix_bits(suffix_len: usize, num_vars: usize) -> usize {
+    suffix_len.saturating_sub(num_vars / 2)
+}
+
+/// Whether a suffix leaves the upper half's still-unbound coordinates all ones.
+///
+/// Vacuously true once the suffix no longer reaches into the upper half, where
+/// the bound prefix carries the whole value. See [`upper_half_suffix_bits`] for
+/// why this is shared rather than written out at each call site.
+#[inline]
+pub(crate) fn upper_half_suffix_all_ones(
+    suffix_bits: u128,
+    suffix_len: usize,
+    upper_bits: usize,
+) -> bool {
+    upper_bits == 0 || (suffix_bits >> (suffix_len - upper_bits)) == (1u128 << upper_bits) - 1
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for UpperHalfAllOnesPolynomial {
@@ -231,15 +258,14 @@ impl<F: JoltField> PolynomialEvaluation<F> for UpperHalfAllOnesPolynomial {
 
 impl<F: JoltField> SuffixPolynomial<F> for UpperHalfAllOnesPolynomial {
     fn suffix_mle(&self, b: LookupBits) -> u128 {
+        // `upper_bits == 0` contributes 1: `U` no longer depends on the unbound
+        // variables, and the checkpoint carries the whole value.
         let upper_bits = self.suffix_upper_bits(b.len());
-        if upper_bits == 0 {
-            // No upper-half coordinates left in the suffix: `U` no longer
-            // depends on the unbound variables, so the suffix contributes 1
-            // and the checkpoint carries the whole value.
-            return 1;
-        }
-        let leading = u128::from(b) >> (b.len() - upper_bits);
-        u128::from(leading == (1u128 << upper_bits) - 1)
+        u128::from(upper_half_suffix_all_ones(
+            u128::from(b),
+            b.len(),
+            upper_bits,
+        ))
     }
 }
 
