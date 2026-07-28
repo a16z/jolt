@@ -117,6 +117,7 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
 
     // Boundary RSS sampling for the `prove_stage*` spans — the same layer the
     // modular harness installs, so per-stage memory tables line up.
+    #[cfg(not(target_arch = "wasm32"))]
     layers.push(jolt_profiling::StageMemoryLayer.boxed());
 
     tracing_subscriber::registry().with(layers).init();
