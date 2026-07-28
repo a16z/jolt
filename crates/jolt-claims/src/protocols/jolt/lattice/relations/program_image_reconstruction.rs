@@ -41,6 +41,7 @@ pub struct ProgramImageReconstructionInputClaims<C> {
     pub word: C,
 }
 
+#[derive(Clone)]
 pub struct ProgramImageReconstruction;
 
 impl SymbolicSumcheck for ProgramImageReconstruction {

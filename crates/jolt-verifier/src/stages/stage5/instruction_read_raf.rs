@@ -56,6 +56,7 @@ pub fn instruction_read_raf_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionReadRaf<F: Field> {
     symbolic: relations::instruction::ReadRaf,
     dimensions: InstructionReadRafDimensions,
@@ -91,6 +92,12 @@ pub(crate) fn reconstruct_r_address<F: Field>(
         .iter()
         .flat_map(|point| point[..point.len() - cycle_len].iter().copied())
         .collect()
+}
+
+impl<F: Field> InstructionReadRaf<F> {
+    pub fn dimensions(&self) -> InstructionReadRafDimensions {
+        self.dimensions
+    }
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {

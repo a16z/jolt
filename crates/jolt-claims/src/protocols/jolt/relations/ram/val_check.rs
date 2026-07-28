@@ -99,6 +99,7 @@ pub struct RamValCheckChallenges<F> {
 /// `Public` symbols resolved by the verifier — value-preserving versus the prior
 /// baked coefficients (BlindFold bakes `Public` factors as matrix coefficients),
 /// so the relation stays field-independent. See `specs/symbolic-sumcheck.md` §4.1.
+#[derive(Clone)]
 pub struct RamValCheck {
     shape: RamValCheckShape,
 }

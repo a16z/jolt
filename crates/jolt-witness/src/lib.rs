@@ -37,9 +37,14 @@ mod shape;
 #[cfg(any(test, feature = "test-utils"))]
 pub use backend::fixed::FixedBackend;
 pub use backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
-pub use backend::{validate_servable, BundleSource, JoltWitnessOracle};
+pub use backend::{
+    validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, ProgramSource,
+};
 pub use bundle::WitnessBundle;
-pub use consumer::{stream_witnesses, CollectBundles, ConsumerSet, RowSource, StreamConsumer};
+pub use consumer::{
+    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RowSource,
+    StreamConsumer,
+};
 pub use error::WitnessError;
 pub use shape::{PolynomialEncoding, Shape};
 

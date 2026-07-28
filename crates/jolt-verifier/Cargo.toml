@@ -50,5 +50,4 @@ bincode.workspace = true
 jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
-rand_core = { workspace = true, features = ["getrandom"] }
 serde_json = { workspace = true, features = ["std"] }

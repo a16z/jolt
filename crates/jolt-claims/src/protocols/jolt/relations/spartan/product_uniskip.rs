@@ -46,6 +46,7 @@ pub struct ProductUniskipOutputClaims<C> {
 
 /// The Spartan product univariate-skip sumcheck (first round). A standalone
 /// centered-integer sumcheck whose reduced opening feeds the product remainder.
+#[derive(Clone)]
 pub struct ProductUniskip;
 
 impl SymbolicSumcheck for ProductUniskip {

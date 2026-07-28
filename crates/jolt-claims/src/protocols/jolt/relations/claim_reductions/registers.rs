@@ -56,6 +56,7 @@ pub struct RegistersClaimReductionChallenges<F> {
 /// Batches the Spartan-outer register openings (`RdWriteValue`, `Rs1Value`,
 /// `Rs2Value`) by `gamma` and reduces them to the registers-claim-reduction
 /// openings weighted by the `EqSpartan` public.
+#[derive(Clone)]
 pub struct ClaimReduction {
     shape: TraceDimensions,
 }

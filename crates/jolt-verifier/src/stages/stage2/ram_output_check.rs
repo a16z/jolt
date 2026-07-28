@@ -9,49 +9,36 @@
 
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
-    RamOutputCheckInputClaims, RamOutputCheckOutputClaims,
+    RamOutputCheckChallenges, RamOutputCheckInputClaims, RamOutputCheckOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamOutputCheckPublic,
 };
-use jolt_claims::{NoChallenges, SymbolicSumcheck};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
+use jolt_transcript::Transcript;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
+#[derive(Clone)]
 pub struct RamOutputCheck<F: Field> {
     symbolic: relations::ram::OutputCheck,
     read_write_dimensions: ReadWriteDimensions,
-    output_address_challenges: Vec<F>,
     public_memory: PublicIoMemory,
+    _field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field> RamOutputCheck<F> {
-    pub fn new(
-        read_write_dimensions: ReadWriteDimensions,
-        output_address_challenges: Vec<F>,
-        public_memory: PublicIoMemory,
-    ) -> Self {
+    pub fn new(read_write_dimensions: ReadWriteDimensions, public_memory: PublicIoMemory) -> Self {
         Self {
             symbolic: relations::ram::OutputCheck::new(read_write_dimensions),
             read_write_dimensions,
-            output_address_challenges,
             public_memory,
+            _field: core::marker::PhantomData,
         }
-    }
-
-    /// Complete a two-phase construction: the output-check address reference point
-    /// is drawn AFTER the batch's member gammas, so the stage-2 verifier builds
-    /// this instance with a placeholder and injects the drawn point here, right
-    /// after the draw. Sound because this relation draws no challenges of its own
-    /// (`NoChallenges`) and `rounds()`/`degree()` are dims-only, so the placeholder
-    /// is never read before injection; a premature `derive_output_term` on the
-    /// placeholder fails loudly (`try_eq_mle` length mismatch).
-    pub fn set_output_address_challenges(&mut self, output_address_challenges: Vec<F>) {
-        self.output_address_challenges = output_address_challenges;
     }
 }
 
@@ -105,11 +92,40 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+impl<F: Field> RamOutputCheck<F> {
+    pub fn read_write_dimensions(&self) -> ReadWriteDimensions {
+        self.read_write_dimensions
+    }
+
+    pub fn public_memory(&self) -> &PublicIoMemory {
+        &self.public_memory
+    }
+}
+
 impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
     type Symbolic = relations::ram::OutputCheck;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    /// Draws the output-check address reference point: one challenge per RAM
+    /// address variable. This member is declared last in `Stage2BatchSumchecks`,
+    /// so the generated aggregate draw lands the vector exactly where the legacy
+    /// stage front drew it — after both batch gammas.
+    ///
+    /// MUST stay `challenge()` (not `challenge_scalar()`): both decode the same
+    /// 16-byte squeeze, but differently, so switching would silently change the
+    /// address point values without changing the transcript bytes.
+    fn draw_challenges<T: Transcript<Challenge = F>>(
+        &self,
+        transcript: &mut T,
+    ) -> Result<RamOutputCheckChallenges<F>, VerifierError> {
+        Ok(RamOutputCheckChallenges {
+            output_address: (0..self.read_write_dimensions.log_k())
+                .map(|_| transcript.challenge())
+                .collect(),
+        })
     }
 
     /// Delegates to [`super::phase1_instance_point_offset`] (the phase-1 sub-point
@@ -135,14 +151,14 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         id: &JoltDerivedId,
         _input_points: &RamOutputCheckInputClaims<Vec<F>>,
         output_points: &RamOutputCheckOutputClaims<Vec<F>>,
-        _challenges: &NoChallenges<F>,
+        challenges: &RamOutputCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamOutputCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let (eq_address, io_mask, val_io) = ram_output_check_publics(
             &self.public_memory,
-            &self.output_address_challenges,
+            &challenges.output_address,
             output_points.val_final(),
         )?;
         match public_id {
@@ -172,7 +188,7 @@ mod tests {
                 ..Default::default()
             }))
             .unwrap();
-            let relation = RamOutputCheck::<Fr>::new(dimensions, Vec::new(), public_memory);
+            let relation = RamOutputCheck::<Fr>::new(dimensions, public_memory);
             // The real batch has `log_t + log_k` variables (the RAM read-write
             // leader); also probe a padded vector.
             for batch_num_vars in [log_t + log_k, log_t + log_k + 5] {

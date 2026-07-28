@@ -20,16 +20,22 @@ use thiserror::Error;
 
 use crate::protocols::jolt::{JoltChallengeId, JoltOpeningId};
 
-/// A `Challenges` struct could not be built from a drawn-value stream because the
-/// stream ran dry before every required (scalar) field was populated. Surfaced by
-/// [`SumcheckChallenges::from_transcript_values`]; a relation that draws challenges
-/// but does not override `ConcreteSumcheck::draw_challenges` (so the draw-nothing
-/// default feeds it an empty stream) is the typical cause.
+/// A `Challenges` struct could not be built from a drawn-value stream. Surfaced
+/// by [`SumcheckChallenges::from_transcript_values`]; a relation that draws
+/// challenges but does not override `ConcreteSumcheck::draw_challenges` (so the
+/// draw-nothing default feeds it an empty stream) is the typical cause.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
-#[error("challenge value stream exhausted: only {populated} of {required} required challenge field(s) populated")]
-pub struct ChallengeDrawError {
-    pub required: usize,
-    pub populated: usize,
+pub enum ChallengeDrawError {
+    /// The stream ran dry before every required (scalar) field was populated.
+    #[error("challenge value stream exhausted: only {populated} of {required} required challenge field(s) populated")]
+    StreamExhausted { required: usize, populated: usize },
+
+    /// The struct holds vector challenges, so no per-field scalar stream can
+    /// populate it; the relation must override `draw_challenges`.
+    #[error(
+        "challenge struct holds vector challenges that no per-field scalar stream can populate"
+    )]
+    NotStreamConstructible,
 }
 
 /// A produced opening's value could not be resolved while assembling a claims
@@ -252,7 +258,7 @@ mod sumcheck_challenges_tests {
         let result = MultiChallenge::<Fr>::from_transcript_values([fr(1)].into_iter());
         assert_eq!(
             result.err(),
-            Some(ChallengeDrawError {
+            Some(ChallengeDrawError::StreamExhausted {
                 required: 2,
                 populated: 1,
             }),

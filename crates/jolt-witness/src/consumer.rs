@@ -130,6 +130,22 @@ pub fn stream_witnesses<S: RowSource + ?Sized, C: ConsumerSet>(
     })
 }
 
+/// The chunk size of a single-consumer bundle-collection pass.
+const BUNDLE_PASS_CHUNK: usize = 1 << 12;
+
+/// Materialize one bundle type over `0..cycles` from a row source. The
+/// object-safe counterpart of [`crate::BundleSource::bundles`] — `&dyn
+/// RowSource` consumers (kernels behind the witness plane) collect their
+/// typed rows through this.
+pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
+    source: &(impl RowSource + ?Sized),
+    cycles: usize,
+) -> Result<Vec<B>, WitnessError> {
+    let mut consumers = (CollectBundles::<B>::default(),);
+    stream_witnesses(source, 0..cycles, BUNDLE_PASS_CHUNK, &mut consumers)?;
+    Ok(consumers.0.into_rows())
+}
+
 /// The collecting consumer: accumulates one bundle type across the pass.
 /// Backends materialize bundle vectors through this, so the pass driver is
 /// the live path, not speculative API.
