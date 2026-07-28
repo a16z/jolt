@@ -107,16 +107,8 @@ struct JoltOneHotTraceRows {
     memory_layout: common::jolt_device::MemoryLayout,
 }
 
-impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
-    fn num_rows(&self) -> usize {
-        self.trace.len()
-    }
-
-    fn num_columns(&self) -> usize {
-        self.num_columns
-    }
-
-    fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+impl JoltOneHotTraceRows {
+    fn fill_row_into(&self, row: usize, hot_lanes: &mut [u16]) {
         use crate::zkvm::instruction::LookupQuery;
         use crate::zkvm::ram::remap_address;
         use common::constants::XLEN;
@@ -155,6 +147,27 @@ impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
             .last()
             .and_then(|column| column[row])
             .map_or_else(jolt_akita::no_hot_lane, u16::from);
+    }
+}
+
+impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
+    fn num_rows(&self) -> usize {
+        self.trace.len()
+    }
+
+    fn num_columns(&self) -> usize {
+        self.num_columns
+    }
+
+    fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+        self.fill_row_into(row, hot_lanes);
+    }
+
+    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u16]) {
+        debug_assert_eq!(hot_lanes.len() % self.num_columns, 0);
+        for (row_offset, row_lanes) in hot_lanes.chunks_exact_mut(self.num_columns).enumerate() {
+            self.fill_row_into(row_start + row_offset, row_lanes);
+        }
     }
 }
 
