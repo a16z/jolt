@@ -31,6 +31,7 @@ use crate::precommitted_reduction::{
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: Field> AdviceOpeningEvaluation<F> for ReferenceBackend {
+    #[tracing::instrument(skip_all, name = "AdviceOpeningEvaluation::evaluate", fields(kind = ?kind))]
     fn evaluate(
         &self,
         _session: &mut ProofSession,

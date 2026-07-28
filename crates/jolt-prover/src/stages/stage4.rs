@@ -47,6 +47,7 @@ pub struct Stage4ProverOutput<F: Field, C> {
 
 /// Prove stage 4 on `transcript` (positioned at the stage-3 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
+#[tracing::instrument(skip_all)]
 pub fn prove_stage4<F, PCS, VC, C, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
