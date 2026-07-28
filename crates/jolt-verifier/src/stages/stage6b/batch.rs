@@ -54,9 +54,10 @@ use crate::stages::stage4::outputs::Stage4OutputPoints;
 use crate::stages::stage4::Stage4Output;
 use crate::stages::stage5::outputs::Stage5OutputPoints;
 use crate::stages::stage5::Stage5Output;
+use crate::stages::stage6a::bytecode_read_raf::bytecode_stage_points;
 use crate::stages::stage6a::outputs::{Stage6aCarriedChallenges, Stage6aOutputPoints};
 use crate::stages::stage6a::Stage6aOutput;
-use crate::stages::{bytecode_stage_points, stage6_checked_split, PrecommittedSchedule};
+use crate::stages::{stage6_checked_split, PrecommittedSchedule};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 

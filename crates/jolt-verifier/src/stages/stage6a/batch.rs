@@ -12,9 +12,8 @@ use jolt_claims::protocols::jolt::geometry::{
 use jolt_field::Field;
 
 use super::booleanity::BooleanityAddressPhase;
-use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
+use super::bytecode_read_raf::{bytecode_stage_points, BytecodeReadRafAddressPhase};
 use super::outputs::Stage6aSumchecks;
-use crate::stages::bytecode_stage_points;
 use crate::stages::stage2::Stage2BatchOutputPoints;
 use crate::stages::stage3::outputs::Stage3OutputPoints;
 use crate::stages::stage4::outputs::Stage4OutputPoints;

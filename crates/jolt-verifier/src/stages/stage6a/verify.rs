@@ -161,13 +161,12 @@ where
 mod tests {
     use super::super::booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims};
     use super::super::bytecode_read_raf::{
-        BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims,
+        BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims, BytecodeStagePoints,
     };
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
     use crate::stages::relations::append_recording::RecordingTranscript;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
-    use crate::stages::BytecodeStagePoints;
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
