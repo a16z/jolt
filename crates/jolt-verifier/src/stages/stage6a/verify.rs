@@ -259,7 +259,7 @@ mod tests {
             inline_reference_address
         );
         assert_eq!(
-            challenges.booleanity.reference_cycle,
+            sumchecks.booleanity.reference_cycle(),
             cycle.iter().rev().copied().collect::<Vec<_>>()
         );
         assert_eq!(challenges.booleanity.gamma, inline_gamma);
@@ -282,7 +282,7 @@ mod tests {
         );
         let reversed: Vec<Fr> = address.iter().rev().copied().collect();
         assert_eq!(challenges.booleanity.reference_address, reversed[1..]);
-        assert_eq!(challenges.booleanity.reference_cycle, vec![fr(21)]);
+        assert_eq!(sumchecks.booleanity.reference_cycle(), vec![fr(21)]);
         assert_eq!(challenges.booleanity.gamma, fr(7));
     }
 

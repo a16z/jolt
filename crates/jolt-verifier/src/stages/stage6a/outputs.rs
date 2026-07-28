@@ -58,8 +58,10 @@ pub struct Stage6aCarriedChallenges<F: Field> {
     /// per-stage gammas), verbatim. Consumers folding with power vectors expand
     /// them via `stage_gamma_powers`.
     pub bytecode_read_raf: BytecodeReadRafAddressPhaseChallenges<F>,
-    /// The booleanity address-phase draws (the reference address/cycle vectors
-    /// and the gamma), verbatim.
+    /// The booleanity address-phase draws (the reference address vector and
+    /// the gamma), verbatim. The reference cycle is not carried: it is
+    /// construction geometry (the reversed stage-5 instruction cycle, no draw
+    /// of its own), rederived by its consumers from the stage-5 point.
     pub booleanity: BooleanityAddressPhaseChallenges<F>,
 }
 

@@ -55,7 +55,7 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend 
             relation,
             relation.dimensions(),
             &challenges.reference_address,
-            &challenges.reference_cycle,
+            &relation.reference_cycle(),
             challenges.gamma,
             witness,
         )?))

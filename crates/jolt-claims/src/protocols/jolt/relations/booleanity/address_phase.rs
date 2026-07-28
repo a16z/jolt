@@ -49,24 +49,25 @@ impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<F> {
     }
 }
 
-/// The hand pre-batch draws the booleanity subprotocol consumes: the
-/// little-endian reference address (the reversed stage-5 instruction address,
-/// padded with fresh draws or truncated to the committed chunk width), the
-/// little-endian reference cycle (the reversed stage-5 instruction cycle, no
-/// draw of its own), and the batching gamma. The stage-6a fronts perform the
-/// draws between the bytecode member's `draw_challenges` and the batch (the
-/// frozen wire schedule) and hand-assemble the stage challenge aggregate; the
-/// address-phase kernel reads the values off `ProverInputs.challenges`.
+/// The booleanity address-phase Fiat-Shamir draws: the little-endian
+/// reference address (the reversed stage-5 instruction address, padded with
+/// fresh draws or truncated to the committed chunk width) and the batching
+/// gamma. The concrete member's `draw_challenges` override performs the draws
+/// at the frozen wire positions; the address-phase kernel reads the values
+/// off `ProverInputs.challenges`. The reference *cycle* the legs also compare
+/// against is deliberately NOT here: it is the reversed stage-5 instruction
+/// cycle — construction geometry with no draw of its own — carried by the
+/// concrete instances (the stage-6a member's `reference_cycle()`, the
+/// stage-6b monolith's field), not a challenge.
 ///
-/// The vector fields rule out the `SumcheckChallenges` derive, so the impl is
-/// hand-written: the vectors are not challenge-id-resolvable (they never
-/// appear as `Expr` leaves; the scalar gamma resolves as a derive would), and
-/// the struct cannot be built from a per-field scalar stream —
-/// `from_transcript_values` fails rather than fabricate reference points.
+/// The vector field rules out the `SumcheckChallenges` derive, so the impl is
+/// hand-written: the reference address is not challenge-id-resolvable (it
+/// never appears as an `Expr` leaf; the scalar gamma resolves as a derive
+/// would), and the struct cannot be built from a per-field scalar stream —
+/// `from_transcript_values` fails rather than fabricate a reference point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BooleanityAddressPhaseChallenges<F> {
     pub reference_address: Vec<F>,
-    pub reference_cycle: Vec<F>,
     pub gamma: F,
 }
 

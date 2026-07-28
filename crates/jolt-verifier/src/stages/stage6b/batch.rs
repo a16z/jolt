@@ -382,11 +382,15 @@ impl<F: Field> Stage6bSumchecks<F> {
                 stage: JoltRelationId::Booleanity,
                 reason: error.to_string(),
             })?;
+        // The little-endian reference cycle is construction geometry (the
+        // reversed stage-5 instruction cycle, no draw of its own), so it is
+        // rederived from the stage-5 point rather than carried with the
+        // stage-6a draws.
         let booleanity = Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address,
             carried.booleanity.reference_address.clone(),
-            carried.booleanity.reference_cycle.clone(),
+            stage5_instruction_cycle.iter().rev().copied().collect(),
         );
         let ram_hamming_booleanity =
             RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding);

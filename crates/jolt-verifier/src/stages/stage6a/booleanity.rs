@@ -23,9 +23,11 @@ pub struct BooleanityAddressPhase<F: Field> {
     symbolic: relations::booleanity::BooleanityAddressPhase,
     dimensions: BooleanityDimensions,
     /// The stage-5 instruction read-RAF opening points (big-endian) the
-    /// reference draws derive from: `draw_challenges` reverses them into the
-    /// little-endian reference address/cycle (the same construction-geometry
-    /// idiom as `BytecodeReadRafAddressPhase`'s `BytecodeStagePoints`).
+    /// reference points derive from: `draw_challenges` reverses the address
+    /// into the little-endian reference address,
+    /// [`reference_cycle`](Self::reference_cycle) the cycle (the same
+    /// construction-geometry idiom as `BytecodeReadRafAddressPhase`'s
+    /// `BytecodeStagePoints`).
     instruction_r_address: Vec<F>,
     instruction_r_cycle: Vec<F>,
 }
@@ -47,6 +49,15 @@ impl<F: Field> BooleanityAddressPhase<F> {
     pub fn dimensions(&self) -> BooleanityDimensions {
         self.dimensions
     }
+
+    /// The little-endian reference cycle the booleanity legs compare against:
+    /// the reversed stage-5 instruction cycle. Pure construction geometry (no
+    /// draw of its own), so it lives on the instance rather than in the
+    /// challenges struct; the address-phase kernel and the stage-6b monolith
+    /// consume it.
+    pub fn reference_cycle(&self) -> Vec<F> {
+        self.instruction_r_cycle.iter().rev().copied().collect()
+    }
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
@@ -59,10 +70,9 @@ impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
     /// Draws the booleanity pre-batch challenges at the frozen wire positions:
     /// the reference address is the reversed stage-5 instruction address,
     /// padded with a fresh `challenge_vector` draw or truncated to the
-    /// committed chunk width (`log_k_chunk`); the reference cycle is the
-    /// reversed stage-5 instruction cycle (no draw of its own); then the
-    /// batching gamma. This member is declared after the bytecode read-RAF one
-    /// in `Stage6aSumchecks`, so the generated aggregate draw lands these
+    /// committed chunk width (`log_k_chunk`); then the batching gamma. This
+    /// member is declared after the bytecode read-RAF one in
+    /// `Stage6aSumchecks`, so the generated aggregate draw lands these
     /// squeezes exactly where the hand pre-batch block drew them — after the
     /// bytecode member's six gammas.
     ///
@@ -85,7 +95,6 @@ impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
         }
         Ok(BooleanityAddressPhaseChallenges {
             reference_address,
-            reference_cycle: self.instruction_r_cycle.iter().rev().copied().collect(),
             gamma: transcript.challenge(),
         })
     }
