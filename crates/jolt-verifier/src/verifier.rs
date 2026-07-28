@@ -89,6 +89,7 @@ where
     )?;
     let stage6a = stage6a::verify(
         &checked,
+        preprocessing,
         proof,
         &formula_dimensions,
         &mut transcript,
@@ -223,6 +224,7 @@ where
     )?;
     let stage6a = stage6a::verify(
         &checked,
+        preprocessing,
         proof,
         &formula_dimensions,
         &mut transcript,

@@ -46,6 +46,7 @@ pub fn instruction_ra_virtualization_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionRaVirtualization<F: Field> {
     symbolic: relations::instruction::RaVirtualization,
     dimensions: InstructionRaVirtualizationDimensions,
@@ -78,6 +79,24 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::InstructionRaVirtualization,
         reason: reason.to_string(),
+    }
+}
+
+impl<F: Field> InstructionRaVirtualization<F> {
+    pub fn dimensions(&self) -> InstructionRaVirtualizationDimensions {
+        self.dimensions
+    }
+
+    pub fn instruction_address(&self) -> &[F] {
+        &self.instruction_address
+    }
+
+    pub fn instruction_read_raf_cycle(&self) -> &[F] {
+        &self.instruction_read_raf_cycle
+    }
+
+    pub fn committed_chunk_bits(&self) -> usize {
+        self.committed_chunk_bits
     }
 }
 

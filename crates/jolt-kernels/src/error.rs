@@ -1,3 +1,4 @@
+use crate::SumcheckKernelError;
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use jolt_claims::MissingOpeningValue;
 use jolt_field::FieldCore;
@@ -25,6 +26,11 @@ pub enum KernelError<F: FieldCore> {
 
     #[error(transparent)]
     MissingOpeningValue(#[from] MissingOpeningValue<JoltOpeningId>),
+
+    /// Extraction/self-check failures from the typed kernel seam
+    /// (`SumcheckKernel::{output_claims, validate_derived_tables}`).
+    #[error(transparent)]
+    SumcheckKernel(#[from] SumcheckKernelError<F>),
 
     #[error(transparent)]
     CenteredDomain(#[from] jolt_poly::lagrange::CenteredIntegerDomainError),
@@ -62,19 +68,14 @@ pub enum KernelError<F: FieldCore> {
         got: usize,
     },
 
-    /// Final values were requested before every round was bound.
-    #[error("final table values requested with {remaining} unbound rounds")]
-    NotFullyBound { remaining: usize },
-
-    /// A bound derived table's final value disagrees with the verifier's
-    /// `derive_output_term` at the bound point — the hand-written table
-    /// resolver drifted from the relation's scalar path.
-    #[error("derived table {id:?} bound to {got}, but derive_output_term gives {expected}")]
-    DerivedTableDrift {
-        id: JoltDerivedId,
-        expected: F,
-        got: F,
-    },
+    /// A caller-supplied opening table keyed by a consumed input claim's id.
+    /// A consumed id's wire value must be the claim echoed back at extraction
+    /// (the dual-role inference), but tables win the extraction fallback, so
+    /// the table's bound value — an evaluation at the wrong point — would
+    /// reach the wire instead. Covers the id-as-summand-leaf case too: a leaf
+    /// requires a table, which lands here.
+    #[error("table supplied for consumed input claim {id:?}")]
+    ConsumedClaimShadowed { id: JoltOpeningId },
 
     /// A capability the kernel does not implement yet. Recoverable in
     /// principle: a caller may retry the slot against a different backend.

@@ -66,6 +66,7 @@ pub struct InstructionInputChallenges<F> {
 /// The instruction input-virtualization sumcheck: relates the left/right
 /// instruction-input products from the product sumcheck to the per-operand
 /// flag/value openings, folded by `gamma` and weighted by the `EqProduct` public.
+#[derive(Clone)]
 pub struct InputVirtualization {
     shape: TraceDimensions,
 }

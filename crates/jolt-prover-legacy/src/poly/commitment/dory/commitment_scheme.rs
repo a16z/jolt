@@ -130,7 +130,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
         #[cfg(test)]
         DoryGlobals::configure_test_cache_root();
         #[cfg(not(target_arch = "wasm32"))]
-        let setup = ArkworksProverSetup::new_from_urs(canonical_max_num_vars);
+        let setup = {
+            // dory persists a freshly OsRng-generated URS with an unlocked
+            // truncating write, so concurrent processes generate different
+            // random SRS and last-writer-wins. A single run calls setup more
+            // than once, so it can commit under its own SRS and then load a
+            // sibling process's, diverging the generators mid-proof.
+            let _urs_lock = super::urs_lock::lock_urs_cache();
+            ArkworksProverSetup::new_from_urs(canonical_max_num_vars)
+        };
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 

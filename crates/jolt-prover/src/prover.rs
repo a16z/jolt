@@ -10,7 +10,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
-use jolt_witness::{BundleSource, JoltWitnessOracle, RowSource};
+use jolt_witness::JoltWitnessPlane;
 
 use crate::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
 use crate::stages::stage1::prove_stage1;
@@ -59,7 +59,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessOracle<F> + BundleSource + RowSource,
+    W: JoltWitnessPlane<F>,
 {
     let mut session = backend.begin_proof();
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
@@ -111,7 +111,7 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T, W>(
+    let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T>(
         backend,
         &mut session,
         &checked,
@@ -122,7 +122,7 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage6a = prove_stage6a::<F, PCS, VC, VC::Output, T, W>(
+    let stage6a = prove_stage6a::<F, PCS, VC, VC::Output, T>(
         backend,
         &mut session,
         &checked,
@@ -159,10 +159,6 @@ where
         preprocessing,
         &stage4.clear_output,
         &stage6b.clear_output,
-        stage6b.trusted_advice_member,
-        stage6b.untrusted_advice_member,
-        stage6b.bytecode_reduction_member,
-        stage6b.program_image_member,
         witness,
         &mut transcript,
     )?;

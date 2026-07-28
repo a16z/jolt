@@ -29,7 +29,7 @@ where
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = SpartanOuterDimensions::rv64(log_t);
-    let tau = transcript.challenge_vector(log_t + 2);
+    let tau = uniskip::draw_spartan_outer_tau(transcript, log_t);
 
     if !checked.zk {
         let claims = &proof.clear_claims()?.stage1;

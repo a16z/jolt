@@ -6,11 +6,7 @@ use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
 use std::ops::Range;
 
-use crate::{stream_witnesses, BundleSource, CollectBundles, RowSource, WitnessBundle};
-
-/// Chunk size of backend-internal passes; a buffering detail, invisible in
-/// the materialized values.
-const BUNDLE_PASS_CHUNK: usize = 1 << 12;
+use crate::{BundleSource, RowSource, WitnessBundle};
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     /// Materializes one cycle-domain witness column by walking the trace
@@ -145,9 +141,6 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
 
 impl<T: TraceSource + Clone> BundleSource for TraceBackend<'_, T> {
     fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
-        let total = checked_pow2(self.config.log_t)?;
-        let mut consumers = (CollectBundles::<B>::default(),);
-        stream_witnesses(self, 0..total, BUNDLE_PASS_CHUNK, &mut consumers)?;
-        Ok(consumers.0.into_rows())
+        crate::collect_bundles(self, checked_pow2(self.config.log_t)?)
     }
 }

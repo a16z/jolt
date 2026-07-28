@@ -36,4 +36,6 @@ thiserror.workspace = true
 jolt-dory.workspace = true
 jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 postcard = { workspace = true, features = ["use-std"] }
+rand_core = { workspace = true, features = ["getrandom"] }
+serde = { workspace = true, features = ["derive"] }
 tracer.workspace = true

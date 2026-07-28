@@ -1,5 +1,5 @@
 use jolt_field::FieldCore;
-use jolt_kernels::KernelError;
+use jolt_kernels::{KernelError, SumcheckKernelError};
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
 use thiserror::Error;
@@ -23,15 +23,6 @@ pub enum ProverError<F: FieldCore> {
     #[error(transparent)]
     Witness(#[from] jolt_witness::WitnessError),
 
-    /// A stage's final running claim disagrees with the verifier's
-    /// `expected_final_claim` fold over the produced openings.
-    #[error("{stage}: final claim {got} != expected {expected}")]
-    FinalClaimMismatch {
-        stage: &'static str,
-        expected: F,
-        got: F,
-    },
-
     /// A capability the modular prover does not implement yet, or an input
     /// regime it rejects up front. Recoverable in principle: the caller may
     /// fall back to another prover.
@@ -43,4 +34,14 @@ pub enum ProverError<F: FieldCore> {
     /// retrying with different inputs or another backend.
     #[error("prover invariant violated: {reason}")]
     InvariantViolation { reason: &'static str },
+}
+
+/// Route the typed kernel seam's extraction/self-check failures through
+/// [`ProverError::Kernel`] — [`KernelError`] already wraps
+/// [`SumcheckKernelError`] transparently, so a dedicated variant would surface
+/// the same failure under two names depending on path.
+impl<F: FieldCore> From<SumcheckKernelError<F>> for ProverError<F> {
+    fn from(error: SumcheckKernelError<F>) -> Self {
+        Self::Kernel(error.into())
+    }
 }

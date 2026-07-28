@@ -103,6 +103,7 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
     Ok(points)
 }
 
+#[derive(Clone)]
 pub struct HammingWeightClaimReduction<F: Field> {
     symbolic: HammingSymbolic,
     dimensions: HammingDimensions,
@@ -158,6 +159,22 @@ impl<F: Field> HammingWeightClaimReduction<F> {
                     self.dimensions.log_k_chunk
                 ))
             })
+    }
+
+    pub fn dimensions(&self) -> HammingDimensions {
+        self.dimensions
+    }
+
+    pub fn r_cycle(&self) -> &[F] {
+        &self.r_cycle
+    }
+
+    pub fn r_address(&self) -> &[F] {
+        &self.r_address
+    }
+
+    pub fn virtualization_points(&self) -> &[Vec<F>] {
+        &self.virtualization_points
     }
 }
 
@@ -247,11 +264,14 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
     }
 }
 
+/// The relation's shape under the active PCS: the base claim-reduction
+/// dimensions, or (akita) the lattice variant. Public because the kernel seam
+/// reads it off the relation (`Self::dimensions`).
 #[cfg(not(feature = "akita"))]
-pub(crate) type HammingDimensions =
+pub type HammingDimensions =
     jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
 #[cfg(feature = "akita")]
-pub(crate) type HammingDimensions = lattice_hamming::LatticeHammingWeightClaimReductionDimensions;
+pub type HammingDimensions = lattice_hamming::LatticeHammingWeightClaimReductionDimensions;
 
 #[cfg(not(feature = "akita"))]
 type HammingSymbolic = relations::claim_reductions::hamming_weight::ClaimReduction;
