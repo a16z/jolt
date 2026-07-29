@@ -159,6 +159,16 @@ impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
         self.num_columns
     }
 
+    fn always_present_mask(&self) -> u64 {
+        self.ranges
+            .instruction
+            .clone()
+            .chain(self.ranges.bytecode.clone())
+            .chain(self.ranges.unsigned_inc.clone())
+            .chain(core::iter::once(self.ranges.unsigned_inc_msb))
+            .fold(0, |mask, column| mask | (1 << column))
+    }
+
     fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
         self.fill_row_into(row, hot_lanes);
     }

@@ -36,6 +36,7 @@ const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 26;
 const D64_K16_SHIFT_KEY_SPACE: usize = 1 << 16;
 const SHARED_SHIFT_MIN_COLUMNS: u8 = 3;
 const D64_K256_ROW_BATCH: usize = 1 << 13;
+const D64_K256_ROW_FUSION: usize = 4;
 
 type AkitaWideRing<const D: usize> = WideCyclotomicRing<<AkitaField as HasWide>::Wide, D>;
 
@@ -173,6 +174,11 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
     fn num_rows(&self) -> usize;
     fn num_columns(&self) -> usize;
     fn fill_row(&self, row: usize, hot_lanes: &mut [u16]);
+
+    /// Bit `column` is set when that column has one hot lane in every row.
+    fn always_present_mask(&self) -> u64 {
+        0
+    }
 
     /// Fills consecutive rows in row-major order, overwriting the entire buffer.
     fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u16]) {
@@ -661,6 +667,279 @@ fn trace_block_part_range(
     )
 }
 
+#[inline(always)]
+fn shift_accumulate_distinct_sources<const D: usize, const N: usize>(
+    sources: &[AkitaWideRing<D>],
+    source_indices: &[usize; N],
+    shifts: &[usize; N],
+    dst: &mut AkitaWideRing<D>,
+) {
+    debug_assert!(N >= 2);
+    for (coefficient, dst) in dst.coeffs_mut().iter_mut().enumerate() {
+        // Two independent chains hide vector-add latency before the final merge.
+        let shift0 = shifts[0];
+        let source0 = sources[source_indices[0]].coeffs();
+        let mut sum0 = if coefficient >= shift0 {
+            source0[coefficient - shift0]
+        } else {
+            -source0[D + coefficient - shift0]
+        };
+        let shift1 = shifts[1];
+        let source1 = sources[source_indices[1]].coeffs();
+        let mut sum1 = if coefficient >= shift1 {
+            source1[coefficient - shift1]
+        } else {
+            -source1[D + coefficient - shift1]
+        };
+        for entry in 2..N {
+            let shift = shifts[entry];
+            let source = sources[source_indices[entry]].coeffs();
+            if coefficient >= shift {
+                if entry.is_multiple_of(2) {
+                    sum0 += source[coefficient - shift];
+                } else {
+                    sum1 += source[coefficient - shift];
+                }
+            } else if entry.is_multiple_of(2) {
+                sum0 -= source[D + coefficient - shift];
+            } else {
+                sum1 -= source[D + coefficient - shift];
+            }
+        }
+        sum0 += sum1;
+        *dst += sum0;
+    }
+}
+
+#[inline(always)]
+fn shift_accumulate_source_batch<const D: usize>(
+    sources: &[AkitaWideRing<D>],
+    source_indices: &[usize; D64_K256_ROW_FUSION],
+    shifts: &[usize; D64_K256_ROW_FUSION],
+    count: usize,
+    dst: &mut AkitaWideRing<D>,
+) {
+    macro_rules! accumulate {
+        ($count:literal) => {
+            shift_accumulate_distinct_sources::<D, $count>(
+                sources,
+                &std::array::from_fn(|index| source_indices[index]),
+                &std::array::from_fn(|index| shifts[index]),
+                dst,
+            )
+        };
+    }
+    match count {
+        0 => {}
+        1 => sources[source_indices[0]].shift_accumulate_into(dst, shifts[0]),
+        2 => accumulate!(2),
+        3 => accumulate!(3),
+        4 => accumulate!(4),
+        _ => unreachable!("K=256 row fusion emits at most four contributions"),
+    }
+}
+
+/// Batches four consecutive trace rows for columns that are known to be present in every row.
+/// This is isolated from the dimension-generic fallback because its source tile assumes K/D = 4.
+fn commit_d64_k256_hybrid<const D: usize>(
+    source: &TracePackedOneHot,
+    a_rows: &[&[CyclotomicRing<AkitaField, D>]],
+    plan: CommitInnerPlan,
+    segment_rings: usize,
+    num_blocks: usize,
+) -> Result<Vec<Vec<CyclotomicRing<AkitaField, D>>>, AkitaError> {
+    debug_assert_eq!(D, 64);
+    debug_assert_eq!(source.one_hot_k, 256);
+    let rings_per_row = source.one_hot_k / D;
+    debug_assert_eq!(rings_per_row, 4);
+    let blocks_per_column = segment_rings / plan.num_positions_per_block;
+    let rows_per_block = plan.num_positions_per_block / rings_per_row;
+    let num_columns = source.rows.num_columns();
+    let block_batch = 1;
+    let row_batch = D64_K256_ROW_BATCH;
+    let row_fusion = D64_K256_ROW_FUSION;
+    let active_columns_mask = if num_columns == u32::BITS as usize {
+        u32::MAX
+    } else {
+        (1u32 << num_columns) - 1
+    };
+    let always_present_mask = source.rows.always_present_mask();
+    if always_present_mask >> num_columns != 0 {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace always-present mask has columns outside the declared {num_columns} columns"
+        )));
+    }
+    let dense_mask = always_present_mask as u32;
+    let sparse_mask = active_columns_mask & !dense_mask;
+    let block_groups = blocks_per_column.div_ceil(block_batch);
+    let parts =
+        trace_block_task_parts::<D>(source.one_hot_k, plan.num_positions_per_block, block_groups);
+    let _accumulate_span = tracing::info_span!(
+        "trace_onehot_commit_accumulate",
+        num_blocks,
+        blocks_per_column,
+        block_batch,
+        row_batch,
+        row_fusion,
+        block_groups,
+        task_parts = parts,
+        tasks = block_groups * parts,
+        active_columns = num_columns,
+        dense_columns = dense_mask.count_ones(),
+        sparse_columns = sparse_mask.count_ones(),
+        rows_per_ring = D / source.one_hot_k,
+        fused_dense_rows = true,
+    )
+    .entered();
+    let partials = (0..block_groups * parts)
+        .into_par_iter()
+        .map(|task| {
+            let block_group = task / parts;
+            let part = task % parts;
+            let block_start = block_group * block_batch;
+            let group_len = (blocks_per_column - block_start).min(block_batch);
+            let (part_start, part_end) =
+                trace_block_part_range(plan.num_positions_per_block, rings_per_row, part, parts);
+            let row_start = part_start / rings_per_row;
+            let row_end = part_end / rings_per_row;
+            let mut reduced = vec![CyclotomicRing::zero(); group_len * num_columns * plan.n_a];
+            let mut rank_wide = vec![AkitaWideRing::<D>::zero(); group_len * num_columns];
+            let mut lanes = vec![NO_HOT_LANE; num_columns];
+            let mut hot_values = vec![0u8; group_len * row_batch * num_columns];
+            let mut present_masks = vec![0u32; group_len * row_batch];
+            let mut source_tile = vec![AkitaWideRing::<D>::zero(); row_fusion * rings_per_row];
+            let mut source_indices = [0usize; D64_K256_ROW_FUSION];
+            let mut shifts = [0usize; D64_K256_ROW_FUSION];
+
+            for tile_start in (row_start..row_end).step_by(row_batch) {
+                let tile_len = (row_end - tile_start).min(row_batch);
+                for block_offset in 0..group_len {
+                    let trace_block = block_start + block_offset;
+                    let trace_row_start = trace_block * rows_per_block + tile_start;
+                    for row_offset in 0..tile_len {
+                        source
+                            .rows
+                            .fill_row(trace_row_start + row_offset, &mut lanes);
+                        let staged_row = block_offset * row_batch + row_offset;
+                        present_masks[staged_row] = 0;
+                        for (column, &hot) in lanes.iter().enumerate() {
+                            if hot == NO_HOT_LANE {
+                                if dense_mask & (1 << column) != 0 {
+                                    return Err(AkitaError::InvalidInput(format!(
+                                        "trace column {column} was declared always present but row {} has no hot lane",
+                                        trace_row_start + row_offset
+                                    )));
+                                }
+                                continue;
+                            }
+                            if usize::from(hot) >= source.one_hot_k {
+                                return Err(AkitaError::InvalidInput(format!(
+                                    "trace one-hot lane {hot} is outside K={}",
+                                    source.one_hot_k
+                                )));
+                            }
+                            hot_values[staged_row * num_columns + column] = hot as u8;
+                            present_masks[staged_row] |= 1 << column;
+                        }
+                    }
+                }
+
+                for (a, a_row) in a_rows.iter().enumerate() {
+                    for fusion_start in (0..tile_len).step_by(row_fusion) {
+                        let fusion_len = (tile_len - fusion_start).min(row_fusion);
+                        for row_offset in 0..fusion_len {
+                            let tile_row = fusion_start + row_offset;
+                            for quarter in 0..rings_per_row {
+                                let position = (tile_start + tile_row) * rings_per_row + quarter;
+                                let a_col = position * plan.num_digits_inner;
+                                source_tile[row_offset * rings_per_row + quarter] =
+                                    WideCyclotomicRing::from_ring(&a_row[a_col]);
+                            }
+                        }
+                        for block_offset in 0..group_len {
+                            let mut remaining_dense = dense_mask;
+                            while remaining_dense != 0 {
+                                let column = remaining_dense.trailing_zeros() as usize;
+                                remaining_dense &= remaining_dense - 1;
+                                for row_offset in 0..fusion_len {
+                                    let staged_row =
+                                        block_offset * row_batch + fusion_start + row_offset;
+                                    let hot =
+                                        hot_values[staged_row * num_columns + column] as usize;
+                                    source_indices[row_offset] =
+                                        row_offset * rings_per_row + hot / D;
+                                    shifts[row_offset] = hot % D;
+                                }
+                                shift_accumulate_source_batch(
+                                    &source_tile,
+                                    &source_indices,
+                                    &shifts,
+                                    fusion_len,
+                                    &mut rank_wide[block_offset * num_columns + column],
+                                );
+                            }
+                            for row_offset in 0..fusion_len {
+                                let staged_row =
+                                    block_offset * row_batch + fusion_start + row_offset;
+                                let mut remaining = present_masks[staged_row] & sparse_mask;
+                                while remaining != 0 {
+                                    let column = remaining.trailing_zeros() as usize;
+                                    remaining &= remaining - 1;
+                                    let hot =
+                                        hot_values[staged_row * num_columns + column] as usize;
+                                    source_tile[row_offset * rings_per_row + hot / D]
+                                        .shift_accumulate_into(
+                                            &mut rank_wide[block_offset * num_columns + column],
+                                            hot % D,
+                                        );
+                                }
+                            }
+                        }
+                    }
+                    flush_wide_rank(&mut rank_wide, &mut reduced, plan.n_a, a);
+                }
+            }
+            Ok::<_, AkitaError>(reduced)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(_accumulate_span);
+
+    let _merge_span = tracing::info_span!(
+        "trace_onehot_commit_merge_partials",
+        num_blocks,
+        blocks_per_column,
+        block_batch,
+        block_groups,
+        task_parts = parts,
+        active_columns = num_columns,
+        n_a = plan.n_a,
+    )
+    .entered();
+    let mut rows = vec![vec![CyclotomicRing::zero(); plan.n_a]; num_blocks];
+    for (task, block_rows) in partials.into_iter().enumerate() {
+        let block_group = task / parts;
+        let part = task % parts;
+        let block_start = block_group * block_batch;
+        let group_len = (blocks_per_column - block_start).min(block_batch);
+        for block_offset in 0..group_len {
+            let trace_block = block_start + block_offset;
+            for column in 0..num_columns {
+                let dst = &mut rows[column * blocks_per_column + trace_block];
+                let src_index = (block_offset * num_columns + column) * plan.n_a;
+                let src = &block_rows[src_index..src_index + plan.n_a];
+                if part == 0 {
+                    dst.copy_from_slice(src);
+                } else {
+                    for (dst, src) in dst.iter_mut().zip(src) {
+                        *dst += *src;
+                    }
+                }
+            }
+        }
+    }
+    Ok(rows)
+}
+
 fn commit_packed<const D: usize>(
     backend: &CpuBackend,
     prepared: &<CpuBackend as ComputeBackendSetup<AkitaField>>::PreparedSetup,
@@ -699,7 +978,14 @@ fn commit_packed<const D: usize>(
     let max_per_ring = (D / source.one_hot_k).max(1);
     drop(_prepare_span);
 
-    let rows = if segment_rings >= plan.num_positions_per_block {
+    let rows = if segment_rings >= plan.num_positions_per_block
+        && D == 64
+        && source.one_hot_k == 256
+        && source.rows.num_columns() <= u32::BITS as usize
+        && source.rows.always_present_mask() != 0
+    {
+        commit_d64_k256_hybrid(source, &a_rows, plan, segment_rings, num_blocks)?
+    } else if segment_rings >= plan.num_positions_per_block {
         let blocks_per_column = segment_rings / plan.num_positions_per_block;
         debug_assert_eq!(
             blocks_per_column * plan.num_positions_per_block,
