@@ -25,7 +25,7 @@
 //!
 //! Each module documents its own port; [`JoltBackend::optimized`] wires them.
 
-use jolt_field::{Field, RingAccumulator};
+use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::JoltBackend;
@@ -76,12 +76,10 @@ where
 {
     /// The optimized backend: [`JoltBackend::reference`] with every slot this
     /// module tree ports overwritten by its optimized kernel. Same
-    /// construction bounds as the reference backend, plus the accumulator
-    /// bound the registers and shift kernels' compact-scalar walks need.
+    /// construction bounds as the reference backend.
     pub fn optimized() -> Self
     where
         PCS: StreamingCommitment,
-        F::Accumulator: RingAccumulator,
     {
         let mut backend = Self::reference();
 

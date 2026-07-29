@@ -362,9 +362,7 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
         acc: &mut [F::Accumulator; 2],
         ra_lut: &CoeffLut<F>,
         wa_lut: &CoeffLut<F>,
-    ) where
-        F::Accumulator: RingAccumulator,
-    {
+    ) {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert_eq!(even.col, odd.col);
@@ -555,11 +553,7 @@ fn split_pair_group<F, C>(
 
 pub struct OptimizedRegistersReadWrite;
 
-impl<F> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite
-where
-    F: Field,
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -800,7 +794,6 @@ fn sparse_quadratic<F, C>(
 where
     F: Field,
     C: OneHotCoeff<F>,
-    F::Accumulator: RingAccumulator,
 {
     let e_in_len = e_in.len();
     let in_bits = if e_in_len <= 1 {
@@ -913,10 +906,7 @@ where
     }
 }
 
-impl<F: Field> ReadWriteKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> ReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's
     /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
     /// into the exact cubic by `gruen_poly_deg_3`.
@@ -1164,10 +1154,7 @@ fn one_hot_operand_claims<F: Field>(
     (claims[0], claims[1])
 }
 
-impl<F: Field> ProveRounds<F> for ReadWriteKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t + self.log_k
     }
@@ -1194,10 +1181,7 @@ where
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
     type Relation = RegistersReadWriteChecking<F>;
 
     fn output_claims(

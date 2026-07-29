@@ -462,7 +462,7 @@ impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, reason = "test module: fail loudly")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::ram_ra_claim_reduction;

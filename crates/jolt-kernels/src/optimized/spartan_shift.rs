@@ -86,11 +86,7 @@ fn fmadd_u64_split<F: Field>(
 
 pub struct OptimizedSpartanShift;
 
-impl<F> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift
-where
-    F: Field,
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -366,10 +362,7 @@ impl<F: Field> ShiftKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ShiftKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> ProveRounds<F> for ShiftKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -451,10 +444,7 @@ where
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ShiftKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
     type Relation = SpartanShift<F>;
 
     fn output_claims(

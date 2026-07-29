@@ -61,10 +61,7 @@ impl ChunkIndexSource for RamAddressIndices {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -130,10 +127,7 @@ impl<F: Field> RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamValCheckKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -195,10 +189,7 @@ where
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
     type Relation = RamValCheck<F>;
 
     fn output_claims(
@@ -238,7 +229,7 @@ where
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, reason = "test module: fail loudly")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra_val_check, RamValCheckInit};

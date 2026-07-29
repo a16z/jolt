@@ -89,11 +89,7 @@ fn fmadd_u64_split<F: Field>(
 
 pub struct OptimizedRegistersClaimReduction;
 
-impl<F> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegistersClaimReduction
-where
-    F: Field,
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegistersClaimReduction {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -283,10 +279,7 @@ impl<F: Field> ClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ClaimReductionKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> ProveRounds<F> for ClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -347,10 +340,7 @@ where
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
     type Relation = RegistersClaimReduction<F>;
 
     fn output_claims(

@@ -82,9 +82,8 @@ impl InstructionOperandRow {
 /// `instruction_claim_reduction` slot.
 pub struct OptimizedInstructionClaimReduction;
 
-impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for OptimizedInstructionClaimReduction
-where
-    F::Accumulator: RingAccumulator,
+impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>>
+    for OptimizedInstructionClaimReduction
 {
     fn prepare(
         &self,
@@ -121,10 +120,7 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
         tau_low: &[F],
         rows: Vec<InstructionOperandRow>,
         gamma: F,
-    ) -> Result<Self, KernelError<F>>
-    where
-        F::Accumulator: RingAccumulator,
-    {
+    ) -> Result<Self, KernelError<F>> {
         let log_t = tau_low.len();
         if rows.len() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {

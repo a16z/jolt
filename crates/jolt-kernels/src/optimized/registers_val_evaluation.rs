@@ -106,11 +106,7 @@ impl<F: Field> WaState<F> {
 
 pub struct OptimizedRegistersValEvaluation;
 
-impl<F> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation
-where
-    F: Field,
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -184,10 +180,7 @@ impl<F: Field> ValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -255,10 +248,7 @@ where
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F>
-where
-    F::Accumulator: RingAccumulator,
-{
+impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F> {
     type Relation = RegistersValEvaluation<F>;
 
     fn output_claims(
