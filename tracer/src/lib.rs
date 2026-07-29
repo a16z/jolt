@@ -37,45 +37,25 @@ use crate::emulator::{
     Emulator,
 };
 
-/// Executes a RISC-V program and generates its execution trace along with emulator state checkpoints.
+/// Initial trace capacity: covers the standard 2^23-cycle proving scale
+/// without Vec regrowth (each doubling past the hundreds of MB memcpys the
+/// whole trace). Reserved address space is only faulted in as rows are pushed.
+const TRACE_CAPACITY_RESERVE: usize = 1 << 24;
+
+/// Executes a RISC-V program to completion and materializes its execution
+/// trace.
 ///
-/// # Details
-/// The function performs these steps:
-/// 1. Sets up an emulator with the provided program and configuration
-/// 2. Runs the program to completion while:
-///    - Collecting execution traces of each instruction
-///    - Optionally saving periodic checkpoints of the emulator state
-///
-/// # Arguments
-///
-/// * `elf_contents`
-/// * `inputs`
-/// * `memory_config`
-/// * `checkpoint_interval` - Number of Cycle at which to save emulator checkpoints
-///                          If None, no checkpoints will be saved
-///
-/// # Returns
-///
-/// Returns a tuple containing:
-/// * `Vec<Cycle>` - Complete execution trace
-/// * `JoltDevice`
-/// * `Option<Vec<LazyTraceIterator>>` - If checkpoint_interval is not None, contains emulator
-///                                      checkpoints every n Cycle. Otherwise None.
-///
-/// # Example Usage
-///
-/// let (execution_trace, checkpoints) = trace(elf_contents, inputs, memory_config, Some(5));
-///
-/// let full_execution_trace = checkpoints.as_ref().unwrap()[0].clone().collect::Vec<Cycle>();
-/// assert!(execution_trace == full_execution_trace);
-///
-/// let trace_from_checkpoint_1 = checkpoints.as_ref().unwrap()[1].clone().collect::Vec<Cycle>();
-/// assert!(trace_from_checkpoint_1 == execution_trace[n..])
-///
-/// let trace_from_checkpoint_2 = checkpoints.as_ref().unwrap()[2].clone().collect::Vec<Cycle>();
-/// assert!(trace_from_checkpoint_2 == execution_trace[2*n..])
-///
+/// Returns:
+/// * `LazyTraceIterator` — an unexecuted iterator over the same program,
+///   observing the pristine pre-execution state (the streaming-commitment
+///   prover re-executes the program through it)
+/// * `Vec<Cycle>` — the complete execution trace
+/// * `Memory` — final guest memory state
+/// * `JoltDevice` — final I/O device state
+/// * `AdviceTape` — the populated advice tape
+
 #[tracing::instrument(skip_all)]
+#[expect(clippy::expect_used)]
 pub fn trace(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
@@ -91,7 +71,7 @@ pub fn trace(
     JoltDevice,
     cpu::AdviceTape,
 ) {
-    let mut lazy_trace_iter = trace_lazy(
+    let mut emulator = setup_emulator_with_backtraces(
         elf_contents,
         elf_path,
         inputs,
@@ -100,21 +80,53 @@ pub fn trace(
         memory_config,
         advice_tape,
     );
-    let lazy_trace_iter_ = lazy_trace_iter.clone();
-    let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
+    // The returned iterator must observe the pristine pre-execution state:
+    // the streaming-commitment prover re-executes the program from it.
+    let lazy_trace_iter = LazyTraceIterator::new(CheckpointingTracer::new(emulator.clone()));
 
-    // Extract the populated advice tape before moving lazy_tracer
-    let advice_tape_result = lazy_trace_iter.lazy_tracer.take_advice_tape();
+    // Drive the emulator straight into the output vec, bypassing the lazy
+    // iterator's per-cycle buffer/reverse/pop round-trip. Termination matches
+    // the lazy path: stop on the first step that emits no rows (PC stall or
+    // a trap that produced no trace).
+    let mut trace: Vec<Cycle> = Vec::with_capacity(TRACE_CAPACITY_RESERVE);
+    let mut prev_pc: u64 = 0;
+    loop {
+        let rows_before = trace.len();
+        step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace));
+        if trace.len() == rows_before {
+            break;
+        }
+    }
 
-    let final_memory_state =
-        std::mem::take(&mut lazy_trace_iter.lazy_tracer.final_memory_state).unwrap();
-    let jolt_device = lazy_trace_iter.lazy_tracer.get_jolt_device();
+    if emulator
+        .get_cpu()
+        .mmu
+        .jolt_device
+        .as_ref()
+        .expect("JoltDevice was not initialized")
+        .panic
+    {
+        error!(
+            "Guest program terminated due to panic after {} cycles.",
+            emulator.get_cpu().trace_len
+        );
+        utils::panic::display_panic_backtrace(&emulator);
+    }
+
+    let advice_tape_result = emulator.take_advice_tape();
+    let cpu = emulator.get_mut_cpu();
+    let final_memory_state = cpu.mmu.memory.memory.take_memory();
+    let jolt_device = cpu
+        .get_mut_mmu()
+        .jolt_device
+        .take()
+        .expect("JoltDevice was not initialized");
     (
-        lazy_trace_iter_, // Return the clone since lazy_tracer was moved
+        lazy_trace_iter,
         trace,
         final_memory_state,
         jolt_device,
-        advice_tape_result, // Return the populated advice tape
+        advice_tape_result,
     )
 }
 
