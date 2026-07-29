@@ -189,7 +189,7 @@ impl From<&JoltR1CSInputs> for OpeningId {
 /// Fully materialized, typed view of all R1CS inputs for a single row (cycle).
 /// Filled once and reused to evaluate all constraints without re-reading the trace.
 /// Total size: 208 bytes, alignment: 16 bytes
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct R1CSCycleInputs {
     /// Left instruction input as a u64 bit-pattern.
     /// Typically `Rs1Value` or the current `UnexpandedPC`, depending on `CircuitFlags`.

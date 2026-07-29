@@ -1836,10 +1836,22 @@ pub fn akita_verifier_preprocessing(
 mod tests {
     use super::*;
     use crate::host;
+    use crate::zkvm::config::OneHotConfig;
     use crate::zkvm::preprocessing::JoltSharedPreprocessing;
     use crate::zkvm::program::ProgramPreprocessing;
     use crate::zkvm::prover::JoltProverPreprocessing;
     use serial_test::serial;
+
+    fn set_test_one_hot_config(prover: &mut AkitaPackedProver<'_>, config: OneHotConfig) {
+        config
+            .validate()
+            .expect("forced one-hot config must be valid");
+        prover.one_hot_params = crate::zkvm::config::OneHotParams::from_config(
+            &config,
+            prover.preprocessing.shared.bytecode_size(),
+            prover.one_hot_params.ram_k,
+        );
+    }
 
     /// Proves and verifies muldiv end to end over the packed (Akita) stack:
     /// the full-program packed pipeline, one `OneHotTrace` commitment object, and
@@ -2109,7 +2121,6 @@ mod tests {
             }
         }
     }
-
 }
 
 #[cfg(all(test, feature = "host"))]
