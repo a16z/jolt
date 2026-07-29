@@ -219,9 +219,9 @@ fn prove_example(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
-    let (_lazy_trace, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
+    let (lazy_trace, trace, final_memory_state, program_io) =
+        program.trace(&serialized_input, &[], &[]);
     let padded_trace_len = (trace.len() + 1).next_power_of_two();
-    drop(trace);
 
     let task = move || {
         let program_data =
@@ -233,17 +233,14 @@ fn prove_example(
         );
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
-        let elf_contents_opt = program.get_elf_contents();
-        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = RV64IMACProver::gen_from_elf(
+        let prover = RV64IMACProver::gen_from_trace(
             &preprocessing,
-            elf_contents,
-            &serialized_input,
-            &[],
-            &[],
+            lazy_trace,
+            trace,
+            program_io,
             None,
             None,
-            None,
+            final_memory_state,
         );
         let program_io = prover.program_io.clone();
         let (jolt_proof, _) = prover
@@ -289,10 +286,12 @@ fn prove_example_with_trace(
 ) -> (std::time::Duration, usize, usize, usize) {
     let mut program = host::Program::new(example_name);
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
-    let (_, trace, _, program_io) = program.trace(&serialized_input, &[], &[]);
+    let (lazy_trace, trace, final_memory_state, program_io) =
+        program.trace(&serialized_input, &[], &[]);
+    let trace_length = trace.len();
 
     assert!(
-        trace.len().next_power_of_two() <= max_trace_length,
+        trace_length.next_power_of_two() <= max_trace_length,
         "Trace is longer than expected"
     );
 
@@ -301,24 +300,21 @@ fn prove_example_with_trace(
     let shared_preprocessing = JoltSharedPreprocessing::new(
         program_data,
         program_io.memory_layout.clone(),
-        trace.len().next_power_of_two(),
+        trace_length.next_power_of_two(),
     );
     let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
-    let elf_contents_opt = program.get_elf_contents();
-    let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-
     let span = tracing::info_span!("E2E").entered();
-    let prover = RV64IMACProver::gen_from_elf(
+    let prover = RV64IMACProver::gen_from_trace(
         &preprocessing,
-        elf_contents,
-        &serialized_input,
-        &[],
-        &[],
+        lazy_trace,
+        trace,
+        program_io,
         None,
         None,
-        None,
+        final_memory_state,
     );
+    let program_io = prover.program_io.clone();
     let now = Instant::now();
     let (proof, _) = prover
         .prove()
@@ -338,5 +334,5 @@ fn prove_example_with_trace(
     >(&verifier_preprocessing, &program_io, &proof, None)
     .unwrap();
 
-    (prove_duration, proof_size, proof_size, trace.len())
+    (prove_duration, proof_size, proof_size, trace_length)
 }
