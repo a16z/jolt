@@ -102,16 +102,8 @@ pub type AkitaPackedStatement = PrefixPackedStatement<
 struct JoltOneHotTraceRows {
     num_rows: usize,
     num_columns: usize,
-    hot_lanes: Vec<u16>,
+    lanes: Vec<u8>,
     ra_indices: Arc<Vec<RaIndices>>,
-}
-
-fn committed_nonzero_lane(lane: usize) -> u16 {
-    if lane == 0 {
-        jolt_akita::no_hot_lane()
-    } else {
-        lane as u16
-    }
 }
 
 impl JoltOneHotTraceRows {
@@ -128,59 +120,49 @@ impl JoltOneHotTraceRows {
         use rayon::prelude::*;
 
         let num_rows = trace.len();
-        let mut hot_lanes = unsafe_allocate_zero_vec(num_rows * num_columns);
+        let mut lanes = unsafe_allocate_zero_vec(num_rows * num_columns);
         let mut ra_indices = unsafe_allocate_zero_vec(num_rows);
         ra_indices
             .par_iter_mut()
-            .zip(hot_lanes.par_chunks_exact_mut(num_columns))
+            .zip(lanes.par_chunks_exact_mut(num_columns))
             .enumerate()
-            .for_each(|(row, (ra_index, row_lanes))| {
+            .for_each(|(row, (ra_index, lanes))| {
                 *ra_index = RaIndices::from_cycle(&trace[row], bytecode, memory_layout, params);
-                Self::fill_row_from_indices(row_lanes, row, ra_index, fused_inc_one_hot, ranges);
+                Self::fill_row_from_indices(lanes, row, ra_index, fused_inc_one_hot, ranges);
             });
 
         Self {
             num_rows,
             num_columns,
-            hot_lanes,
+            lanes,
             ra_indices: Arc::new(ra_indices),
         }
     }
 
     fn fill_row_from_indices(
-        hot_lanes: &mut [u16],
+        lanes: &mut [u8],
         row: usize,
         ra_indices: &RaIndices,
         fused_inc_one_hot: &[Arc<Vec<Option<u8>>>],
         ranges: &OneHotTraceColumnRanges,
     ) {
-        debug_assert_eq!(hot_lanes.len(), ranges.ram.end);
-        for (index, hot_lane) in hot_lanes[ranges.instruction.clone()].iter_mut().enumerate() {
-            *hot_lane = committed_nonzero_lane(ra_indices.instruction[index] as usize);
+        debug_assert_eq!(lanes.len(), ranges.ram.end);
+        for (index, lane) in lanes[ranges.instruction.clone()].iter_mut().enumerate() {
+            *lane = ra_indices.instruction[index];
         }
-        for (index, hot_lane) in hot_lanes[ranges.bytecode.clone()].iter_mut().enumerate() {
-            *hot_lane = committed_nonzero_lane(ra_indices.bytecode[index] as usize);
+        for (index, lane) in lanes[ranges.bytecode.clone()].iter_mut().enumerate() {
+            *lane = ra_indices.bytecode[index];
         }
-        for (index, hot_lane) in hot_lanes[ranges.ram.clone()].iter_mut().enumerate() {
-            *hot_lane = ra_indices.ram[index].map_or_else(jolt_akita::no_hot_lane, |lane| {
-                committed_nonzero_lane(lane as usize)
-            });
+        for (index, lane) in lanes[ranges.ram.clone()].iter_mut().enumerate() {
+            *lane = ra_indices.ram[index].unwrap_or(0);
         }
-        for (index, hot_lane) in hot_lanes[ranges.unsigned_inc.clone()]
-            .iter_mut()
-            .enumerate()
-        {
-            *hot_lane = fused_inc_one_hot[index][row]
-                .map_or_else(jolt_akita::no_hot_lane, |lane| {
-                    committed_nonzero_lane(lane as usize)
-                });
+        for (index, lane) in lanes[ranges.unsigned_inc.clone()].iter_mut().enumerate() {
+            *lane = fused_inc_one_hot[index][row].unwrap_or(0);
         }
-        hot_lanes[ranges.unsigned_inc_msb] = fused_inc_one_hot
+        lanes[ranges.unsigned_inc_msb] = fused_inc_one_hot
             .last()
             .and_then(|column| column[row])
-            .map_or_else(jolt_akita::no_hot_lane, |lane| {
-                committed_nonzero_lane(lane as usize)
-            });
+            .unwrap_or(0);
     }
 
     fn ra_indices(&self) -> Arc<Vec<RaIndices>> {
@@ -197,15 +179,15 @@ impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
         self.num_columns
     }
 
-    fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+    fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
         let start = row * self.num_columns;
-        hot_lanes.copy_from_slice(&self.hot_lanes[start..start + self.num_columns]);
+        hot_lanes.copy_from_slice(&self.lanes[start..start + self.num_columns]);
     }
 
-    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u16]) {
+    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u8]) {
         debug_assert_eq!(hot_lanes.len() % self.num_columns, 0);
         let start = row_start * self.num_columns;
-        hot_lanes.copy_from_slice(&self.hot_lanes[start..start + hot_lanes.len()]);
+        hot_lanes.copy_from_slice(&self.lanes[start..start + hot_lanes.len()]);
     }
 }
 
@@ -1843,6 +1825,10 @@ mod tests {
     use crate::zkvm::prover::JoltProverPreprocessing;
     use serial_test::serial;
 
+    fn committed_nonzero_lane(lane: usize) -> u8 {
+        u8::try_from(lane).unwrap()
+    }
+
     fn set_test_one_hot_config(prover: &mut AkitaPackedProver<'_>, config: OneHotConfig) {
         config
             .validate()
@@ -2058,8 +2044,8 @@ mod tests {
 
             let bytecode = &prover.preprocessing.materialized_program().bytecode;
             let memory_layout = &prover.preprocessing.shared.memory_layout;
-            let mut expected = vec![0u16; plan.columns.len()];
-            let mut actual = vec![0u16; plan.columns.len()];
+            let mut expected = vec![0u8; plan.columns.len()];
+            let mut actual = vec![0u8; plan.columns.len()];
             for (row, cycle) in prover.trace.iter().enumerate() {
                 let reference_indices =
                     RaIndices::from_cycle(cycle, bytecode, memory_layout, &prover.one_hot_params);

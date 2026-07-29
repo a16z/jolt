@@ -1,8 +1,10 @@
 //! Streaming kernels for Jolt's prefix-packed trace one-hot polynomial.
 //!
-//! A trace row produces every semantic hot lane. Jolt's kernels consume that
-//! row-major source directly and lay the columns out as consecutive `K * T`
-//! segments inside one physical polynomial. Padding selector slots are zero.
+//! A trace row produces each committed nonzero hot lane. Logical lane zero is
+//! virtualized, so byte zero denotes a row with no stored coefficient. Jolt's
+//! kernels consume that row-major source directly and lay the columns out as
+//! consecutive `K * T` segments inside one physical polynomial. Padding
+//! selector slots are zero.
 
 use std::fmt;
 use std::sync::Arc;
@@ -29,7 +31,7 @@ use rayon::prelude::*;
 
 use crate::AkitaField;
 
-const NO_HOT_LANE: u16 = u16::MAX;
+const NO_HOT_LANE: u8 = 0;
 const MAX_WIDE_ACCUMULATIONS: usize = 1 << 15;
 const TASKS_PER_RAYON_WORKER: usize = 4;
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 26;
@@ -66,7 +68,7 @@ impl D64K16ShiftGroups {
         })
     }
 
-    fn build(&mut self, lanes: &[u16], num_columns: usize) -> bool {
+    fn build(&mut self, lanes: &[u8], num_columns: usize) -> bool {
         for key in self.touched_keys.drain(..) {
             self.group_by_key[usize::from(key)] = u8::MAX;
         }
@@ -85,7 +87,10 @@ impl D64K16ShiftGroups {
                 self.partial_columns.push(column as u8);
                 continue;
             }
-            let key = hot0 | (hot1 << 4) | (hot2 << 8) | (hot3 << 12);
+            let key = u16::from(hot0)
+                | (u16::from(hot1) << 4)
+                | (u16::from(hot2) << 8)
+                | (u16::from(hot3) << 12);
             let mut group = self.group_by_key[usize::from(key)];
             if group == u8::MAX {
                 group = self.num_groups;
@@ -114,7 +119,7 @@ impl D64K16ShiftGroups {
         dst: &mut [AkitaWideRing<D>],
         a: usize,
         n_a: usize,
-        lanes: &[u16],
+        lanes: &[u8],
         num_columns: usize,
     ) {
         for group in 0..self.num_groups {
@@ -168,15 +173,15 @@ impl D64K16ShiftGroups {
 
 /// Row-major source for the semantic columns packed into `OneHotTrace`.
 ///
-/// `fill_row` must overwrite all of `hot_lanes`. Use [`no_hot_lane`] when a
-/// semantic column has no nonzero entry in that row.
+/// `fill_row` must overwrite all of `hot_lanes`. Byte zero means that the
+/// semantic column has no committed nonzero entry in that row.
 pub trait TraceOneHotRows: Send + Sync + 'static {
     fn num_rows(&self) -> usize;
     fn num_columns(&self) -> usize;
-    fn fill_row(&self, row: usize, hot_lanes: &mut [u16]);
+    fn fill_row(&self, row: usize, hot_lanes: &mut [u8]);
 
     /// Fills consecutive rows in row-major order, overwriting the entire buffer.
-    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u16]) {
+    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u8]) {
         let num_columns = self.num_columns();
         debug_assert_eq!(hot_lanes.len() % num_columns, 0);
         for (row_offset, row_lanes) in hot_lanes.chunks_exact_mut(num_columns).enumerate() {
@@ -185,9 +190,9 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
     }
 }
 
-/// Sentinel written by [`TraceOneHotRows::fill_row`] for an empty one-hot row.
+/// Value written by [`TraceOneHotRows::fill_row`] for an empty one-hot row.
 #[must_use]
-pub const fn no_hot_lane() -> u16 {
+pub const fn no_hot_lane() -> u8 {
     NO_HOT_LANE
 }
 
@@ -224,9 +229,9 @@ impl TracePackedOneHot {
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
     ) -> Result<Self, AkitaError> {
-        if !one_hot_k.is_power_of_two() || one_hot_k > usize::from(u16::MAX) {
+        if !one_hot_k.is_power_of_two() || one_hot_k > 256 {
             return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot K={one_hot_k} must be a power of two fitting u16 lanes below the empty sentinel"
+                "trace one-hot K={one_hot_k} must be a power of two fitting byte lanes"
             )));
         }
         if construction_ring_d == 0 || !construction_ring_d.is_power_of_two() {
@@ -491,7 +496,7 @@ fn visit_segment_ring_lane_range<const D: usize>(
     source: &TracePackedOneHot,
     ring_start: usize,
     ring_end: usize,
-    mut visit: impl FnMut(usize, &[u16]),
+    mut visit: impl FnMut(usize, &[u8]),
 ) -> Result<(), AkitaError> {
     validate_dimension::<D>(source.one_hot_k)?;
     if source.one_hot_k >= D {
@@ -563,7 +568,7 @@ fn flush_wide_rank<const D: usize>(
 
 #[inline(always)]
 fn full_row_coefficients<const N: usize>(
-    lanes: &[u16],
+    lanes: &[u8],
     num_columns: usize,
     column: usize,
     one_hot_k: usize,
@@ -585,7 +590,7 @@ fn full_row_coefficients<const N: usize>(
 fn shift_accumulate_full_rows<const D: usize, const N: usize>(
     src: &AkitaWideRing<D>,
     dst: &mut AkitaWideRing<D>,
-    lanes: &[u16],
+    lanes: &[u8],
     num_columns: usize,
     column: usize,
     one_hot_k: usize,
@@ -602,7 +607,7 @@ fn shift_accumulate_full_rows<const D: usize, const N: usize>(
 fn try_shift_accumulate_full_rows<const D: usize>(
     src: &AkitaWideRing<D>,
     dst: &mut AkitaWideRing<D>,
-    lanes: &[u16],
+    lanes: &[u8],
     num_columns: usize,
     column: usize,
     one_hot_k: usize,
@@ -885,7 +890,7 @@ fn commit_packed<const D: usize>(
                                         source.one_hot_k
                                     )));
                                 }
-                                hot_values[row_offset * num_columns + column] = hot as u8;
+                                hot_values[row_offset * num_columns + column] = hot;
                                 masks[usize::from(hot) / D] |= 1 << column;
                             }
                         }
@@ -2072,9 +2077,9 @@ mod tests {
             self.columns
         }
 
-        fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+        fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
             for (column, hot) in hot_lanes.iter_mut().enumerate() {
-                *hot = ((row * (2 * column + 1) + column) % self.k) as u16;
+                *hot = ((row * (2 * column + 1) + column) % self.k) as u8;
             }
         }
     }
@@ -2103,7 +2108,10 @@ mod tests {
         .unwrap();
         let expected = (0..rows)
             .flat_map(|row| {
-                (0..3).map(move |column| (column, row * k + (row * (2 * column + 1) + column) % k))
+                (0..3).filter_map(move |column| {
+                    let lane = (row * (2 * column + 1) + column) % k;
+                    (lane != 0).then_some((column, row * k + lane))
+                })
             })
             .collect::<Vec<_>>();
         actual.sort_unstable();
@@ -2157,7 +2165,8 @@ mod tests {
         let packed_indices = (0..CAPACITY)
             .flat_map(|column| {
                 (0..rows).map(move |row| {
-                    (column < COLUMNS).then_some(((row * (2 * column + 1) + column) % k) as u8)
+                    let lane = ((row * (2 * column + 1) + column) % k) as u8;
+                    (column < COLUMNS && lane != 0).then_some(lane)
                 })
             })
             .collect();

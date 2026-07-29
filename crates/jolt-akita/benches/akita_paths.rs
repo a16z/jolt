@@ -191,17 +191,17 @@ impl TraceOneHotRows for SyntheticTraceRows {
         self.columns
     }
 
-    fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+    fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
         for (column, lane) in hot_lanes.iter_mut().enumerate() {
             *lane = synthetic_trace_hot(row, column, self.one_hot_k)
-                .map_or_else(jolt_akita::no_hot_lane, u16::from);
+                .unwrap_or_else(jolt_akita::no_hot_lane);
         }
     }
 }
 
 fn synthetic_trace_hot(row: usize, column: usize, one_hot_k: usize) -> Option<u8> {
-    (!(row + column).is_multiple_of(31))
-        .then_some(((row * (2 * column + 1) + 11 * column) % one_hot_k) as u8)
+    let lane = ((row * (2 * column + 1) + 11 * column) % one_hot_k) as u8;
+    (!(row + column).is_multiple_of(31) && lane != 0).then_some(lane)
 }
 
 fn materialized_trace_one_hot(

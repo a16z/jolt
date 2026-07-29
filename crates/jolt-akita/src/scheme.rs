@@ -693,11 +693,11 @@ mod tests {
             self.columns
         }
 
-        fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+        fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
             let _ = self.row_reads.fetch_add(1, Ordering::Relaxed);
             for (column, lane) in hot_lanes.iter_mut().enumerate() {
                 *lane = synthetic_trace_hot(row, column, self.one_hot_k)
-                    .map_or_else(crate::no_hot_lane, u16::from);
+                    .unwrap_or_else(crate::no_hot_lane);
             }
         }
     }
@@ -706,7 +706,8 @@ mod tests {
         if (row + column) % 17 == 2 {
             None
         } else {
-            Some(((row * (2 * column + 1) + column) % one_hot_k) as u8)
+            let lane = ((row * (2 * column + 1) + column) % one_hot_k) as u8;
+            (lane != 0).then_some(lane)
         }
     }
 
