@@ -238,6 +238,67 @@ inline G1Jac g1_madd(G1Jac acc, G1AffinePt q) {
     return out;
 }
 
+// --- Stage-8 hint combination (W3b) -----------------------------------------
+//
+// combined[r] = Σ_p scalar_p · P_{p,r} over the batch opening's ragged hint
+// matrix — per row an independent small MSM whose SCALARS are shared by
+// every row. One thread per row runs a single high-to-low double-and-add
+// across ALL of its live hints, so the ~254 doublings amortize over the
+// row's whole point set and the per-bit branches are warp-uniform (the bit
+// pattern is the same for every row). Hints arrive sorted by row count
+// descending, making each row's live set a PREFIX of the hint order —
+// raggedness is one uniform `break`, not a gather structure. Points are
+// affine (host batch-normalizes), hint-major, so lane-adjacent rows load
+// adjacent points; a (0, 0) coordinate pair — never on y² = x³ + 3 — is the
+// host's sentinel for an identity row and contributes nothing.
+struct G1CombineParams {
+    uint num_rows;
+    uint num_hints;
+    uint start_bit;  // highest set bit across all scalars
+};
+
+kernel void jk_g1_combine_rows(
+    device const uint* points [[buffer(0)]],   // affine, stride JK_G1_AFFINE_STRIDE
+    device const uint* scalars [[buffer(1)]],  // num_hints × FR_LIMBS CANONICAL (integer) LE limbs
+    device const uint* lens [[buffer(2)]],     // num_hints row counts, nonincreasing
+    device const uint* offsets [[buffer(3)]],  // num_hints starts into `points`
+    device uint* out [[buffer(4)]],            // num_rows Jacobian results
+    constant G1CombineParams& p [[buffer(5)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= p.num_rows) {
+        return;
+    }
+    G1Jac acc = g1_identity();
+    for (int bit = (int)p.start_bit; bit >= 0; bit--) {
+        acc = g1_dbl(acc);
+        uint word_index = (uint)bit >> 5;
+        uint bit_index = (uint)bit & 31u;
+        for (uint h = 0; h < p.num_hints; h++) {
+            // Nonincreasing lens: every later hint is shorter too.
+            if (gid >= lens[h]) {
+                break;
+            }
+            if ((scalars[h * FR_LIMBS + word_index] >> bit_index) & 1u) {
+                G1AffinePt q = g1_load_base(points, offsets[h] + gid);
+                if (!(fq_is_zero(q.x) && fq_is_zero(q.y))) {
+                    acc = g1_madd(acc, q);
+                }
+            }
+        }
+    }
+    device uint* dst = out + gid * (3u * FR_LIMBS);
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        dst[i] = acc.x.v[i];
+    }
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        dst[FR_LIMBS + i] = acc.y.v[i];
+    }
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        dst[2u * FR_LIMBS + i] = acc.z.v[i];
+    }
+}
+
 // One thread per segment: sum the selected bases into a Jacobian point.
 //   bases      — host G1Affine array (stride JK_G1_AFFINE_STRIDE u32s)
 //   indices    — base indices, all segments concatenated

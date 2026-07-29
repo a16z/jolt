@@ -103,14 +103,18 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
     }
 }
 
+/// Commit-time auxiliary data reused when opening: the tier-1 row
+/// commitments and the tier-2 blind. Fields are public for the
+/// `combine_hints` device hook (`hint_hook`), which recombines rows outside
+/// this crate.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DoryHint {
-    pub(crate) row_commitments: Vec<Bn254G1>,
-    pub(crate) commit_blind: Fr,
+    pub row_commitments: Vec<Bn254G1>,
+    pub commit_blind: Fr,
 }
 
 impl DoryHint {
-    pub(crate) fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
+    pub fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
         Self {
             row_commitments,
             commit_blind,

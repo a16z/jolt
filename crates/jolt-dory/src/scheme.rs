@@ -290,6 +290,15 @@ impl AdditivelyHomomorphic for DoryScheme {
         assert_eq!(hints.len(), scalars.len());
         assert!(!hints.is_empty(), "combine_hints: empty hint set");
 
+        // A device backend may have installed an accelerated combiner
+        // (group-equal results by construction); it declines calls it cannot
+        // serve and this path remains the arithmetic of record.
+        if let Some(hook) = crate::hint_hook::combine_hints_hook() {
+            if let Some(combined) = hook(&hints, scalars) {
+                return combined;
+            }
+        }
+
         // Hints may be ragged: a polynomial narrower than the shared
         // commitment grid commits fewer rows, and its zero-embedding's
         // missing rows are identity commitments — combine over the widest

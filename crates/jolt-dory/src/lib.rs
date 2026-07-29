@@ -25,6 +25,7 @@
 //! - [`DoryPartialCommitment`] — intermediate state for streaming commitment.
 //! - [`DoryHint`] — row commitments and commitment blind reusable as opening proof hint.
 
+mod hint_hook;
 mod routines;
 mod scheme;
 mod streaming;
@@ -34,6 +35,7 @@ mod types;
 #[cfg(not(target_arch = "wasm32"))]
 mod urs_lock;
 
+pub use hint_hook::{install_combine_hints_hook, CombineHintsFn, CombineHintsHookGuard};
 pub use scheme::DoryScheme;
 pub use tier2::{one_hot_output_from_rows, DoryTier2Prep, Tier2Accumulator};
 pub use types::{

@@ -116,6 +116,19 @@ impl JointOpeningPolynomials<Fr> for MetalJointOpening {
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<Fr>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<Fr>>>, KernelError<Fr>> {
+        // Stage 8's hint combination follows this prepare inside the PCS
+        // batch opening, where no backend value flows — install the device
+        // combiner for the rest of the proof whenever the device is live
+        // (the guard parks in the session, uninstalling when the proof's
+        // session drops). The hook declines undersized or failed calls, so
+        // installation is tier-selection only; it needs none of the fold
+        // engine's geometry, hence its place ahead of the placement gate.
+        if MetalContext::global().is_ok() {
+            session.park(jolt_dory::install_combine_hints_hook(
+                crate::metal::hint_combine::combine_hints_device,
+            ));
+        }
+
         let cycles = 1usize << grid.log_t;
         if grid.order != TracePolynomialOrder::CycleMajor || !metal_gate(KIND, cycles) {
             return self

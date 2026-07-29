@@ -58,12 +58,13 @@ pub enum KernelId {
     TablePairsRound,
     HammingRound,
     G1SegSum,
+    G1CombineRows,
     OpeningFoldDense,
     OpeningFoldOneHot,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -75,6 +76,7 @@ impl KernelId {
         Self::TablePairsRound,
         Self::HammingRound,
         Self::G1SegSum,
+        Self::G1CombineRows,
         Self::OpeningFoldDense,
         Self::OpeningFoldOneHot,
     ];
@@ -92,6 +94,7 @@ impl KernelId {
             Self::TablePairsRound => "jk_table_pairs_round",
             Self::HammingRound => "jk_hamming_round",
             Self::G1SegSum => "jk_g1_seg_sum",
+            Self::G1CombineRows => "jk_g1_combine_rows",
             Self::OpeningFoldDense => "jk_opening_fold_dense",
             Self::OpeningFoldOneHot => "jk_opening_fold_onehot",
         }

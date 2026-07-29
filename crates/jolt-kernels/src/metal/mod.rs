@@ -33,6 +33,7 @@ mod commitment;
 mod error;
 mod field;
 mod g1;
+mod hint_combine;
 mod runtime;
 mod slots;
 pub mod testing;
