@@ -75,7 +75,7 @@ pub fn assert_ra_bounds(one_hot_params: &OneHotParams) {
 
 /// Stores all RA chunk indices for a single cycle.
 /// Uses fixed-size arrays to avoid heap allocation in hot loops.
-#[derive(Clone, Copy, Default, Allocative)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Allocative)]
 pub struct RaIndices {
     /// Instruction RA chunk indices (always present)
     pub instruction: [u8; MAX_INSTRUCTION_D],
@@ -209,14 +209,9 @@ pub fn compute_all_G<F: JoltField>(
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
 ) -> Vec<Vec<F>> {
-    compute_all_G_impl::<F>(
-        trace,
-        bytecode,
-        memory_layout,
-        one_hot_params,
-        r_cycle,
-        None,
-    )
+    compute_all_G_impl::<F, _>(trace.len(), one_hot_params, r_cycle, None, |j| {
+        RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params)
+    })
 }
 
 /// Compute all G evaluations AND RA indices in a single pass over the trace.
@@ -238,16 +233,27 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
     // Pre-allocate ra_indices
     let mut ra_indices: Vec<RaIndices> = unsafe_allocate_zero_vec(T);
 
-    let G = compute_all_G_impl::<F>(
-        trace,
-        bytecode,
-        memory_layout,
+    let G = compute_all_G_impl::<F, _>(
+        trace.len(),
         one_hot_params,
         r_cycle,
         Some(&mut ra_indices),
+        |j| RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params),
     );
 
     (G, ra_indices)
+}
+
+/// Compute all G evaluations from previously derived RA indices.
+#[tracing::instrument(skip_all, name = "shared_ra_polys::compute_all_G_from_ra_indices")]
+pub fn compute_all_G_from_ra_indices<F: JoltField>(
+    ra_indices: &[RaIndices],
+    one_hot_params: &OneHotParams,
+    r_cycle: &[F::Challenge],
+) -> Vec<Vec<F>> {
+    compute_all_G_impl::<F, _>(ra_indices.len(), one_hot_params, r_cycle, None, |j| {
+        ra_indices[j]
+    })
 }
 
 /// Core implementation for computing G evaluations.
@@ -255,13 +261,12 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
 /// When `ra_indices` is `Some`, also writes RaIndices to the provided slice.
 /// This is safe because each cycle index is visited exactly once (disjoint writes).
 #[inline(always)]
-fn compute_all_G_impl<F: JoltField>(
-    trace: &[Cycle],
-    bytecode: &BytecodePreprocessing,
-    memory_layout: &MemoryLayout,
+fn compute_all_G_impl<F: JoltField, I: Fn(usize) -> RaIndices + Sync>(
+    T: usize,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
     ra_indices: Option<&mut [RaIndices]>,
+    index_at: I,
 ) -> Vec<Vec<F>> {
     // Convert to usize for thread safety (usize is Send + Sync, raw pointers are not Sync)
     let ra_ptr_usize: usize = ra_indices.map(|s| s.as_mut_ptr() as usize).unwrap_or(0);
@@ -273,8 +278,6 @@ fn compute_all_G_impl<F: JoltField>(
     let bytecode_d = one_hot_params.bytecode_d;
     let ram_d = one_hot_params.ram_d;
     let N = instruction_d + bytecode_d + ram_d;
-    let T = trace.len();
-
     // Two-table split-eq:
     // EqPolynomial::evals uses big-endian bit order: r_cycle[0] is MSB, r_cycle[last] is LSB.
     // To get contiguous blocks in the cycle index, we split off the LSB half (suffix) as E_lo.
@@ -360,8 +363,7 @@ fn compute_all_G_impl<F: JoltField>(
                     // Get 4-limb unreduced representation
                     let add = E_lo[c_lo].to_unreduced();
 
-                    let ra_idx =
-                        RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params);
+                    let ra_idx = index_at(j);
 
                     // Write ra_indices if collecting (disjoint write, each j visited once)
                     if ra_ptr_usize != 0 {
