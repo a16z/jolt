@@ -39,7 +39,9 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 pub mod ram_hamming_booleanity;
+pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
+pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
 mod ram_trace;
@@ -50,6 +52,7 @@ pub mod registers_val_evaluation;
 mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
+pub mod spartan_shift;
 mod support;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
@@ -68,12 +71,11 @@ where
 {
     /// The optimized backend: [`JoltBackend::reference`] with every slot this
     /// module tree ports overwritten by its optimized kernel, so the two
-    /// backends cannot drift on the slots left untouched (`spartan_shift`,
-    /// `ram_output_check`, `ram_ra_virtualization`, the precommitted /
-    /// advice reduction slots, and the commit / opening slots). Same
+    /// backends cannot drift on the slots left untouched (the precommitted /
+    /// advice reduction slots and the commit / opening slots). Same
     /// construction bounds as the reference backend (the commit slot is the
     /// reference streaming implementation), plus the accumulator bound the
-    /// registers kernels' compact-scalar walks need.
+    /// registers and shift kernels' compact-scalar walks need.
     pub fn optimized() -> Self
     where
         PCS: StreamingCommitment,
@@ -85,11 +87,14 @@ where
         backend.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);
         backend.spartan_product_uniskip = Box::new(spartan_product::OptimizedProductUniskip);
         backend.spartan_product_remainder = Box::new(spartan_product::OptimizedProductRemainder);
+        backend.spartan_shift = Box::new(spartan_shift::OptimizedSpartanShift);
 
         backend.ram_read_write = Box::new(OptimizedBackend);
         backend.ram_val_check = Box::new(OptimizedBackend);
         backend.ram_ra_claim_reduction = Box::new(OptimizedBackend);
         backend.ram_raf_evaluation = Box::new(OptimizedBackend);
+        backend.ram_output_check = Box::new(OptimizedBackend);
+        backend.ram_ra_virtualization = Box::new(OptimizedBackend);
 
         backend.instruction_read_raf = Box::new(instruction_read_raf::OptimizedInstructionReadRaf);
         backend.instruction_ra_virtualization =
