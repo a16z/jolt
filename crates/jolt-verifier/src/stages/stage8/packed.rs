@@ -392,7 +392,7 @@ where
 /// Every packed column's single leaf claim, resolved from the stage-7 and
 /// reconstruction outputs and keyed by committed polynomial. The canonical
 /// object plans check coverage, point arity, and suffix compatibility.
-fn leaf_claims<F: Field>(
+pub fn leaf_claims<F: Field>(
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
 ) -> BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>> {
