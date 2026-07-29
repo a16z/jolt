@@ -143,6 +143,84 @@ fn pushforwards<F: Field>(
 /// optimized kernel.
 pub struct OptimizedHammingWeightClaimReduction;
 
+/// The `N` pushforward/weight table pairs of the fused summand
+/// `Σ_i G_i·W_i`, as built by [`build_hamming_weight_tables`] — shared
+/// between the optimized kernel and its Metal twin (which concatenates the
+/// pairs into two flat device tables).
+pub(crate) struct HammingWeightTables<F> {
+    pub(crate) rounds: usize,
+    /// Pushforwards `G_i`, canonical layout order.
+    pub(crate) g_tables: Vec<Vec<F>>,
+    /// Combined claim weights `W_i`, index-aligned with `g_tables`.
+    pub(crate) weight_tables: Vec<Vec<F>>,
+    pub(crate) output_openings: Vec<JoltOpeningId>,
+}
+
+pub(crate) fn build_hamming_weight_tables<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: &ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
+) -> Result<HammingWeightTables<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let layout = dimensions.layout;
+    let r_cycle = relation.r_cycle();
+    let r_address = relation.r_address();
+    let virtualization_points = relation.virtualization_points();
+    if r_address.len() != dimensions.log_k_chunk || virtualization_points.len() != layout.total() {
+        return Err(KernelError::InvariantViolation {
+            reason: "hamming reduction reference point shapes disagree with the layout",
+        });
+    }
+    let k_chunk = 1usize << dimensions.log_k_chunk;
+    let cycles = 1usize << r_cycle.len();
+
+    let rows: Vec<RaIndexBundle> = collect_rows(witness, cycles)?;
+    let eq_cycle = eq_table(r_cycle);
+    let selectors = FamilySelectors::new(
+        (layout.instruction(), layout.bytecode(), layout.ram()),
+        dimensions.log_k_chunk,
+    )?;
+    let g_tables = pushforwards(&rows, &eq_cycle, &selectors, k_chunk);
+
+    // W_i(k) = γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k).
+    let gamma = inputs.challenges.gamma;
+    let mut gamma_powers = vec![F::one(); 3 * layout.total()];
+    for i in 1..gamma_powers.len() {
+        gamma_powers[i] = gamma_powers[i - 1] * gamma;
+    }
+    let eq_bool = eq_table(r_address);
+    let weight_tables: Vec<Vec<F>> = virtualization_points
+        .iter()
+        .enumerate()
+        .map(|(i, point)| {
+            if point.len() != dimensions.log_k_chunk {
+                return Err(KernelError::InvariantViolation {
+                    reason: "hamming virtualization point has the wrong variable count",
+                });
+            }
+            let eq_virt = eq_table(point);
+            Ok((0..k_chunk)
+                .map(|k| {
+                    gamma_powers[3 * i]
+                        + gamma_powers[3 * i + 1] * eq_bool[k]
+                        + gamma_powers[3 * i + 2] * eq_virt[k]
+                })
+                .collect())
+        })
+        .collect::<Result<_, _>>()?;
+
+    let output_openings: Vec<JoltOpeningId> = layout
+        .openings(JoltRelationId::HammingWeightClaimReduction)
+        .collect();
+
+    Ok(HammingWeightTables {
+        rounds: relation.rounds(),
+        g_tables,
+        weight_tables,
+        output_openings,
+    })
+}
+
 impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
     for OptimizedHammingWeightClaimReduction
 {
@@ -153,71 +231,16 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
         inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
     {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let layout = dimensions.layout;
-        let r_cycle = relation.r_cycle();
-        let r_address = relation.r_address();
-        let virtualization_points = relation.virtualization_points();
-        if r_address.len() != dimensions.log_k_chunk
-            || virtualization_points.len() != layout.total()
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "hamming reduction reference point shapes disagree with the layout",
-            });
-        }
-        let k_chunk = 1usize << dimensions.log_k_chunk;
-        let cycles = 1usize << r_cycle.len();
-
-        let rows: Vec<RaIndexBundle> = collect_rows(witness, cycles)?;
-        let eq_cycle = eq_table(r_cycle);
-        let selectors = FamilySelectors::new(
-            (layout.instruction(), layout.bytecode(), layout.ram()),
-            dimensions.log_k_chunk,
-        )?;
-        let g_tables: Vec<Polynomial<F>> = pushforwards(&rows, &eq_cycle, &selectors, k_chunk)
-            .into_iter()
-            .map(Polynomial::new)
-            .collect();
-
-        // W_i(k) = γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k).
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = vec![F::one(); 3 * layout.total()];
-        for i in 1..gamma_powers.len() {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
-        let eq_bool = eq_table(r_address);
-        let weight_tables: Vec<Polynomial<F>> = virtualization_points
-            .iter()
-            .enumerate()
-            .map(|(i, point)| {
-                if point.len() != dimensions.log_k_chunk {
-                    return Err(KernelError::InvariantViolation {
-                        reason: "hamming virtualization point has the wrong variable count",
-                    });
-                }
-                let eq_virt = eq_table(point);
-                Ok(Polynomial::new(
-                    (0..k_chunk)
-                        .map(|k| {
-                            gamma_powers[3 * i]
-                                + gamma_powers[3 * i + 1] * eq_bool[k]
-                                + gamma_powers[3 * i + 2] * eq_virt[k]
-                        })
-                        .collect(),
-                ))
-            })
-            .collect::<Result<_, _>>()?;
-
-        let output_openings: Vec<JoltOpeningId> = layout
-            .openings(JoltRelationId::HammingWeightClaimReduction)
-            .collect();
-
+        let tables = build_hamming_weight_tables(witness, &inputs)?;
         Ok(Box::new(HammingWeightKernel {
-            rounds: relation.rounds(),
-            g_tables,
-            weight_tables,
-            output_openings,
+            rounds: tables.rounds,
+            g_tables: tables.g_tables.into_iter().map(Polynomial::new).collect(),
+            weight_tables: tables
+                .weight_tables
+                .into_iter()
+                .map(Polynomial::new)
+                .collect(),
+            output_openings: tables.output_openings,
             rounds_bound: 0,
         }))
     }

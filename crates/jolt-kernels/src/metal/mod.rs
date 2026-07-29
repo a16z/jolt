@@ -39,11 +39,12 @@ pub use buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec, PAGE_SIZE};
 pub use error::MetalError;
 pub use field::{fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS};
 pub use runtime::{ComputePass, KernelId, MetalContext, MAX_EVAL_POINTS, THREADGROUP_SIZE};
-pub use slots::MetalIncClaimReduction;
+pub use slots::{MetalHammingWeightClaimReduction, MetalIncClaimReduction};
 
 use jolt_field::Fr;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
+use crate::optimized::hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 use crate::optimized::inc_claim_reduction::OptimizedIncClaimReduction;
 use crate::JoltBackend;
 
@@ -109,6 +110,9 @@ where
         let mut backend = Self::optimized();
         backend.inc_claim_reduction = Box::new(MetalIncClaimReduction {
             fallback: OptimizedIncClaimReduction,
+        });
+        backend.hamming_weight_claim_reduction = Box::new(MetalHammingWeightClaimReduction {
+            fallback: OptimizedHammingWeightClaimReduction,
         });
         Ok(backend)
     }

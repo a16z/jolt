@@ -40,4 +40,9 @@ pub enum MetalError {
 
     #[error("Metal command buffer failed: {0}")]
     Execution(String),
+
+    /// The instance's geometry is one a device kernel does not model (e.g. a
+    /// degenerate table count) — the slot falls back to its optimized twin.
+    #[error("shape unsupported by the device kernel: {0}")]
+    UnsupportedShape(&'static str),
 }

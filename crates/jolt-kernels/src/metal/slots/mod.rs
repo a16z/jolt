@@ -31,8 +31,10 @@
 //! ([`DeviceRound::failed`]). `finish_rounds` (a single fold to one element)
 //! is always host-side.
 
+mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
 
+pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
 
 use jolt_field::{Fr, FromPrimitiveInt};
