@@ -402,13 +402,9 @@ fn transparent_object_setup(
     ),
     jolt_openings::OpeningsError,
 > {
-    // Every auxiliary packed object (advice byte columns, the precommitted
-    // program) commits through the sparse-unit/dense flavor, so the one-hot
-    // backend setup — which dominates the setup cost at these shapes — is
-    // never built.
-    <AkitaScheme as VerifierCommitmentScheme>::setup(jolt_akita::AkitaSetupParams::dense_only(
-        num_vars, 1, [0u8; 32],
-    ))
+    // The convention is single-sourced on the scheme's `TransparentObjectSetup`
+    // impl (jolt-akita), shared with the modular prover's packed path.
+    <AkitaScheme as jolt_openings::TransparentObjectSetup>::transparent_object_setup(num_vars)
 }
 
 /// Builds the advice commitment object's prover setup from the public advice

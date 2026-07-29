@@ -80,6 +80,21 @@ pub trait CommitmentScheme: Commitment {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
 
+    /// Commits a group of polynomials as one commitment object whose members
+    /// are opened together at a shared point ([`open_batch`](Self::open_batch)).
+    /// Only schemes with a native commitment group (e.g. Akita's one-hot
+    /// flavor) support this; `layout_digest` is the protocol-owned digest
+    /// binding the ordered member identities.
+    fn commit_batch(
+        _polynomials: &[&dyn MultilinearPoly<Self::Field>],
+        _layout_digest: [u8; 32],
+        _setup: &Self::ProverSetup,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Err(OpeningsError::InvalidBatch(
+            "this commitment scheme has no native commitment group".to_owned(),
+        ))
+    }
+
     /// Opens every member of one commitment group at a shared point in a
     /// single proof. Only schemes with a native same-point batch (e.g. Akita)
     /// support this; the hint must be the group commit's hint covering all
@@ -111,6 +126,17 @@ pub trait CommitmentScheme: Commitment {
             "this commitment scheme has no native same-point batch opening".to_owned(),
         ))
     }
+}
+
+/// Transparent derivation of a singleton commitment-object setup from the
+/// object's public shape alone (one polynomial at `num_vars`, fixed seed):
+/// prover and verifier re-derive byte-identical setups independently, so
+/// auxiliary packed objects (advice byte columns, the precommitted program)
+/// need no setup ceremony or transport.
+pub trait TransparentObjectSetup: CommitmentScheme {
+    fn transparent_object_setup(
+        num_vars: usize,
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 }
 
 /// C = Σ s_i · C_i.
