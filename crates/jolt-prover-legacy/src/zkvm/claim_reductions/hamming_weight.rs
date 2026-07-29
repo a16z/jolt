@@ -94,6 +94,8 @@ use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, P
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "prover")]
 use crate::poly::opening_proof::ProverOpeningAccumulator;
+#[cfg(all(feature = "prover", feature = "akita"))]
+use crate::poly::shared_ra_polys::{compute_all_G_from_ra_indices, RaIndices};
 use crate::poly::{
     eq_poly::EqPolynomial,
     opening_proof::{
@@ -556,17 +558,12 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     }
 
     #[cfg(feature = "akita")]
-    pub fn initialize_lattice<C, PCS>(
+    pub fn initialize_lattice(
         params: HammingWeightClaimReductionParams<F>,
-        trace: &[Cycle],
-        preprocessing: &JoltProverPreprocessing<F, C, PCS>,
+        ra_indices: &[RaIndices],
         one_hot_params: &OneHotParams,
         one_hot_columns: &[std::sync::Arc<Vec<Option<u8>>>],
-    ) -> Self
-    where
-        C: JoltCurve<F = F>,
-        PCS: CommitmentScheme<Field = F>,
-    {
+    ) -> Self {
         // `params.r_cycle` is BIG_ENDIAN, so the head half of the point
         // indexes the high cycle bits: eq(r, j) = e_hi[j >> lo] · e_lo[j & mask].
         let lo_bits = params.r_cycle.len() / 2;
@@ -582,13 +579,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
             &e_lo,
             1usize << params.log_k_chunk,
         );
-        let mut G = compute_all_G::<F>(
-            trace,
-            &preprocessing.materialized_program().bytecode,
-            &preprocessing.shared.memory_layout,
-            one_hot_params,
-            &params.r_cycle,
-        );
+        let mut G = compute_all_G_from_ra_indices::<F>(ra_indices, one_hot_params, &params.r_cycle);
         G.extend(increment_g);
         for polynomial in &mut G {
             polynomial[0] = F::zero();

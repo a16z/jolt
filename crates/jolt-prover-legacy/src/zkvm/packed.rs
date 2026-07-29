@@ -1113,6 +1113,7 @@ impl AkitaPackedProver<'_> {
     fn prove_stage7_lattice(
         &mut self,
         columns: FusedIncColumns,
+        ra_indices: &[RaIndices],
     ) -> crate::subprotocols::sumcheck::SumcheckInstanceProof<
         AkitaFp128,
         AkitaNoCurve,
@@ -1125,8 +1126,7 @@ impl AkitaPackedProver<'_> {
         );
         let hw_prover = HammingWeightClaimReductionProver::initialize_lattice(
             hw_params,
-            &self.trace,
-            self.preprocessing,
+            ra_indices,
             &self.one_hot_params,
             &columns.one_hot,
         );
@@ -1549,14 +1549,15 @@ impl AkitaPackedProver<'_> {
         let (stage3_sumcheck_proof, _r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, _r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
+        let ra_indices = one_hot_trace_rows.ra_indices();
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
-            self.prove_stage6a_lattice(&fused_inc_columns, one_hot_trace_rows.ra_indices());
+            self.prove_stage6a_lattice(&fused_inc_columns, Arc::clone(&ra_indices));
         let stage6b_sumcheck_proof = self.prove_stage6b_lattice(
             bytecode_read_raf_params,
             booleanity_cycle_input,
             std::mem::take(&mut fused_inc_columns.fused),
         );
-        let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns);
+        let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns, &ra_indices);
         let reconstruction_proof =
             self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice);
 
