@@ -36,6 +36,12 @@ pub const THREADGROUP_SIZE: usize = 256;
 /// shader-side). The actual point count is a runtime parameter.
 pub const MAX_EVAL_POINTS: usize = 8;
 
+/// Per-dispatch selector capacity of `jk_opening_fold_onehot`
+/// (`JK_OPENING_MAX_SEL` shader-side): each selector costs one full-width
+/// `Fr` accumulator of thread registers, so wider one-hot families split
+/// into several dispatches over the same column buffer.
+pub const OPENING_MAX_SEL: usize = 8;
+
 /// The compute kernels compiled into the global library. `name()` must match
 /// the `[[kernel]]` function names in `shaders/kernels.metal`; prewarm
 /// catches a mismatch at construction.
@@ -52,10 +58,12 @@ pub enum KernelId {
     TablePairsRound,
     HammingRound,
     G1SegSum,
+    OpeningFoldDense,
+    OpeningFoldOneHot,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 13] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -67,6 +75,8 @@ impl KernelId {
         Self::TablePairsRound,
         Self::HammingRound,
         Self::G1SegSum,
+        Self::OpeningFoldDense,
+        Self::OpeningFoldOneHot,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -82,6 +92,8 @@ impl KernelId {
             Self::TablePairsRound => "jk_table_pairs_round",
             Self::HammingRound => "jk_hamming_round",
             Self::G1SegSum => "jk_g1_seg_sum",
+            Self::OpeningFoldDense => "jk_opening_fold_dense",
+            Self::OpeningFoldOneHot => "jk_opening_fold_onehot",
         }
     }
 

@@ -14,7 +14,7 @@
 
 use jolt_field::{Fq, Fr, Limbs, MontgomeryConstants};
 
-use super::runtime::{MAX_EVAL_POINTS, THREADGROUP_SIZE};
+use super::runtime::{MAX_EVAL_POINTS, OPENING_MAX_SEL, THREADGROUP_SIZE};
 
 /// u32 limbs per field element (8 for BN254).
 pub const FR_U32_LIMBS: usize = <Fr as MontgomeryConstants>::NUM_U32_LIMBS;
@@ -55,12 +55,20 @@ pub(super) fn constants_preamble() -> String {
     let _ = writeln!(out, "#define JK_TG_SIZE {THREADGROUP_SIZE}u");
     let _ = writeln!(out, "#define JK_MAX_EVAL_POINTS {MAX_EVAL_POINTS}u");
     let _ = writeln!(out, "#define JK_G1_AFFINE_STRIDE {G1_AFFINE_U32_STRIDE}u");
+    let _ = writeln!(out, "#define JK_OPENING_MAX_SEL {OPENING_MAX_SEL}u");
     let _ = writeln!(
         out,
         "constant uint FR_MOD[FR_LIMBS] = {};",
         limb_array(Fr::modulus_u32())
     );
     let _ = writeln!(out, "constant uint FR_INV32 = {:#010x}u;", Fr::inv32());
+    // R² mod p: the to-Montgomery factor for device-side integer→Fr
+    // conversion (mont_mul(x, R²) = x·R).
+    let _ = writeln!(
+        out,
+        "constant uint FR_R2[FR_LIMBS] = {};",
+        limb_array(Fr::r2_u32())
+    );
     let _ = writeln!(
         out,
         "constant uint FQ_MOD[FR_LIMBS] = {};",

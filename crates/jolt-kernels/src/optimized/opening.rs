@@ -60,7 +60,7 @@ use crate::{KernelError, OptimizedBackend, ProofSession};
 
 /// Column sentinel for cycles with no hot address (no bytecode row, no
 /// remappable RAM access).
-const COLD: u64 = u64::MAX;
+pub(crate) const COLD: u64 = u64::MAX;
 
 /// The row-window size of the column-collection pass.
 const COLLECT_CHUNK: usize = 1 << 12;
@@ -84,72 +84,103 @@ impl<F: Field> JointOpeningPolynomials<F> for OptimizedBackend {
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
-        if grid.total_vars < grid.log_t + grid.log_k_chunk {
-            return Err(KernelError::InvalidGeometry {
-                reason: format!(
-                    "grid of {} variables cannot hold a (2^{} × 2^{}) one-hot matrix",
-                    grid.total_vars, grid.log_k_chunk, grid.log_t
-                ),
-            });
-        }
-
-        // Chunk selectors for the trace-derived subset — the same family-size
-        // counting and selector math as the commit kernel, so the opened
-        // values are the committed values by construction.
-        let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
-            .iter()
-            .copied()
-            .filter(|id| !is_block_embedded(*id))
-            .collect();
-        let kinds = column_kinds(&trace_ids, grid)?;
-        let kind_by_id: BTreeMap<JoltCommittedPolynomial, ColumnKind> =
-            trace_ids.into_iter().zip(kinds).collect();
-
-        // One typed trace pass shared by every trace polynomial.
-        let columns = if kind_by_id.is_empty() {
-            None
-        } else {
-            Some(Arc::new(OpeningColumns::collect(witness, grid.log_t)?))
-        };
-        let placement = TracePlacement::new(grid);
-
-        polynomials
-            .iter()
-            .map(|&polynomial| {
-                if is_block_embedded(polynomial) {
-                    let table = match precommitted_tables.get(&polynomial) {
-                        Some(table) => table.clone(),
-                        None => dense_view(witness, final_opening_id(polynomial))?,
-                    };
-                    let poly = BlockOpeningPoly::new(table, grid, polynomial)?;
-                    Ok(Box::new(poly) as Box<dyn MultilinearPoly<F>>)
-                } else {
-                    let kind =
-                        *kind_by_id
-                            .get(&polynomial)
-                            .ok_or(KernelError::InvariantViolation {
-                                reason: "trace polynomial missing from the resolved column kinds",
-                            })?;
-                    let columns =
-                        Arc::clone(columns.as_ref().ok_or(KernelError::InvariantViolation {
-                            reason: "trace columns not collected despite trace polynomials",
-                        })?);
-                    Ok(Box::new(TraceOpeningPoly::<F> {
-                        columns,
-                        kind,
-                        placement,
-                        _field: PhantomData,
-                    }) as Box<dyn MultilinearPoly<F>>)
-                }
-            })
-            .collect()
+        let views = build_opening_views(witness, polynomials, precommitted_tables, grid)?;
+        Ok(views.into_iter().map(OpeningView::into_boxed).collect())
     }
+}
+
+/// One opened polynomial's lazy view — the optimized slot boxes these
+/// directly; the metal slot wraps the trace views (which share one
+/// [`OpeningColumns`] pass through their `Arc`) around its fused device
+/// fold and keeps the blocks as-is.
+pub(crate) enum OpeningView<F: Field> {
+    Trace(TraceOpeningPoly<F>),
+    Block(BlockOpeningPoly<F>),
+}
+
+impl<F: Field> OpeningView<F> {
+    pub(crate) fn into_boxed(self) -> Box<dyn MultilinearPoly<F>> {
+        match self {
+            Self::Trace(poly) => Box::new(poly),
+            Self::Block(poly) => Box::new(poly),
+        }
+    }
+}
+
+/// Build every opened polynomial's lazy view over `grid` — the whole
+/// optimized `prepare` minus the boxing, shared with the metal twin so both
+/// tiers serve the same placement math and column pass.
+pub(crate) fn build_opening_views<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    polynomials: &[JoltCommittedPolynomial],
+    precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+    grid: CommitmentGrid,
+) -> Result<Vec<OpeningView<F>>, KernelError<F>> {
+    if grid.total_vars < grid.log_t + grid.log_k_chunk {
+        return Err(KernelError::InvalidGeometry {
+            reason: format!(
+                "grid of {} variables cannot hold a (2^{} × 2^{}) one-hot matrix",
+                grid.total_vars, grid.log_k_chunk, grid.log_t
+            ),
+        });
+    }
+
+    // Chunk selectors for the trace-derived subset — the same family-size
+    // counting and selector math as the commit kernel, so the opened
+    // values are the committed values by construction.
+    let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
+        .iter()
+        .copied()
+        .filter(|id| !is_block_embedded(*id))
+        .collect();
+    let kinds = column_kinds(&trace_ids, grid)?;
+    let kind_by_id: BTreeMap<JoltCommittedPolynomial, ColumnKind> =
+        trace_ids.into_iter().zip(kinds).collect();
+
+    // One typed trace pass shared by every trace polynomial.
+    let columns = if kind_by_id.is_empty() {
+        None
+    } else {
+        Some(Arc::new(OpeningColumns::collect(witness, grid.log_t)?))
+    };
+    let placement = TracePlacement::new(grid);
+
+    polynomials
+        .iter()
+        .map(|&polynomial| {
+            if is_block_embedded(polynomial) {
+                let table = match precommitted_tables.get(&polynomial) {
+                    Some(table) => table.clone(),
+                    None => dense_view(witness, final_opening_id(polynomial))?,
+                };
+                Ok(OpeningView::Block(BlockOpeningPoly::new(
+                    table, grid, polynomial,
+                )?))
+            } else {
+                let kind = *kind_by_id
+                    .get(&polynomial)
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "trace polynomial missing from the resolved column kinds",
+                    })?;
+                let columns =
+                    Arc::clone(columns.as_ref().ok_or(KernelError::InvariantViolation {
+                        reason: "trace columns not collected despite trace polynomials",
+                    })?);
+                Ok(OpeningView::Trace(TraceOpeningPoly::<F> {
+                    columns,
+                    kind,
+                    placement,
+                    _field: PhantomData,
+                }))
+            }
+        })
+        .collect()
 }
 
 /// Whether `polynomial` embeds as its own balanced matrix in the grid's
 /// top-left block (advice and committed-program polynomials) rather than by
 /// the trace placement.
-const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
+pub(crate) const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
     matches!(
         polynomial,
         JoltCommittedPolynomial::TrustedAdvice
@@ -168,14 +199,14 @@ const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
 /// packed as [`COLD`] sentinels: 64 bytes per cycle, shared by every trace
 /// polynomial view.
 pub(crate) struct OpeningColumns {
-    rd_inc: Vec<i128>,
-    ram_inc: Vec<i128>,
-    lookup_index: Vec<u128>,
+    pub(crate) rd_inc: Vec<i128>,
+    pub(crate) ram_inc: Vec<i128>,
+    pub(crate) lookup_index: Vec<u128>,
     /// Mapped bytecode pc per cycle; [`COLD`] when the cycle reads no
     /// bytecode row.
-    bytecode_pc: Vec<u64>,
+    pub(crate) bytecode_pc: Vec<u64>,
     /// Remapped RAM word address per cycle; [`COLD`] on no-access cycles.
-    ram_address: Vec<u64>,
+    pub(crate) ram_address: Vec<u64>,
 }
 
 impl OpeningColumns {
@@ -203,7 +234,7 @@ impl OpeningColumns {
         Ok(columns)
     }
 
-    fn cycles(&self) -> usize {
+    pub(crate) fn cycles(&self) -> usize {
         self.rd_inc.len()
     }
 
@@ -264,14 +295,14 @@ impl StreamConsumer for CollectOpeningColumns {
 /// cycle-block-strided (`t_stride = cycle_stride`, `k_stride =
 /// one_hot_stride`) — the reference embeddings' index maps verbatim.
 #[derive(Clone, Copy, Debug)]
-struct TracePlacement {
+pub(crate) struct TracePlacement {
     total_vars: usize,
     t_stride: usize,
     k_stride: usize,
 }
 
 impl TracePlacement {
-    fn new(grid: CommitmentGrid) -> Self {
+    pub(crate) fn new(grid: CommitmentGrid) -> Self {
         match grid.order {
             TracePolynomialOrder::CycleMajor => Self {
                 total_vars: grid.total_vars,
@@ -356,11 +387,11 @@ fn split_ranges(total: usize) -> Vec<Range<usize>> {
 /// One committed trace polynomial as a lazy view over the shared columns:
 /// per cycle one hot grid index (one-hot kinds) or one increment value at
 /// address slot zero (dense kinds).
-struct TraceOpeningPoly<F: Field> {
-    columns: Arc<OpeningColumns>,
-    kind: ColumnKind,
-    placement: TracePlacement,
-    _field: PhantomData<F>,
+pub(crate) struct TraceOpeningPoly<F: Field> {
+    pub(crate) columns: Arc<OpeningColumns>,
+    pub(crate) kind: ColumnKind,
+    pub(crate) placement: TracePlacement,
+    pub(crate) _field: PhantomData<F>,
 }
 
 impl<F: Field> TraceOpeningPoly<F> {
@@ -438,7 +469,7 @@ impl<F: Field> MultilinearPoly<F> for TraceOpeningPoly<F> {
 /// its own balanced `(2^{ν_p} × 2^{σ_p})` matrix lands row-aligned in the
 /// grid matrix — coefficient `r · 2^{σ_p} + c` at grid index
 /// `r · 2^{σ_grid} + c`.
-struct BlockOpeningPoly<F: Field> {
+pub(crate) struct BlockOpeningPoly<F: Field> {
     table: Vec<F>,
     sigma_table: usize,
     sigma_grid: usize,
@@ -446,7 +477,7 @@ struct BlockOpeningPoly<F: Field> {
 }
 
 impl<F: Field> BlockOpeningPoly<F> {
-    fn new(
+    pub(crate) fn new(
         table: Vec<F>,
         grid: CommitmentGrid,
         polynomial: JoltCommittedPolynomial,

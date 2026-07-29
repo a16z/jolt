@@ -48,8 +48,8 @@ pub use runtime::{
     ComputePass, KernelId, MetalContext, PendingPass, MAX_EVAL_POINTS, THREADGROUP_SIZE,
 };
 pub use slots::{
-    MetalHammingWeightClaimReduction, MetalIncClaimReduction, MetalRamHammingBooleanity,
-    MetalRamRafEvaluation,
+    MetalHammingWeightClaimReduction, MetalIncClaimReduction, MetalJointOpening,
+    MetalRamHammingBooleanity, MetalRamRafEvaluation,
 };
 
 use jolt_field::Fr;
@@ -136,6 +136,9 @@ where
             fallback: OptimizedRamHammingBooleanity,
         });
         backend.ram_raf_evaluation = Box::new(MetalRamRafEvaluation {
+            fallback: OptimizedBackend,
+        });
+        backend.joint_opening = Box::new(MetalJointOpening {
             fallback: OptimizedBackend,
         });
         if let Some(slot) = commitment::dory_commit_slot::<Fr, PCS>() {

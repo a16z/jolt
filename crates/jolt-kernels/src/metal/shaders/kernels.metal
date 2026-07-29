@@ -308,6 +308,148 @@ kernel void jk_hamming_round(
     jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, q_lead), partials, 1, p.num_tgs);
 }
 
+// --- Stage-8 joint-opening fold (W3b) ---------------------------------------
+//
+// The batch opening's one vector-matrix product, distributed per committed
+// trace polynomial: result_p[c] = Σ_r left[r]·M_p[r][c] where M_p places one
+// coefficient per cycle at grid index cycle + address·2^log_T (cycle-major).
+// With σ ≤ log_T the column of every cycle is its own low σ bits, so thread
+// c owns output column c outright — no scatter, no atomics: it walks cycles
+// c, c+2^σ, c+2·2^σ, … (adjacent threads read adjacent cycles — coalesced)
+// and gathers left[j + address·2^(log_T−σ)] per polynomial. Accumulation
+// order per column is ascending-cycle; Fr addition is exact, so any
+// regrouping against the CPU's range-partial order is byte-identical.
+
+// value·R mod p for a two's-complement i128 given as 4 LE u32 words:
+// magnitude < 2^128 < p is already canonical, one mont_mul by R² lifts it to
+// Montgomery form, and p − x (branchless in fr_sub) applies the sign.
+inline Fr256 fr_from_i128(uint w0, uint w1, uint w2, uint w3) {
+    uint neg = w3 >> 31;
+    if (neg != 0u) {
+        ulong carry = 1;
+        ulong s0 = (ulong)(~w0) + carry; w0 = (uint)s0; carry = s0 >> 32;
+        ulong s1 = (ulong)(~w1) + carry; w1 = (uint)s1; carry = s1 >> 32;
+        ulong s2 = (ulong)(~w2) + carry; w2 = (uint)s2; carry = s2 >> 32;
+        ulong s3 = (ulong)(~w3) + carry; w3 = (uint)s3;
+    }
+    Fr256 x = fr_zero();
+    x.v[0] = w0;
+    x.v[1] = w1;
+    x.v[2] = w2;
+    x.v[3] = w3;
+    Fr256 r = fr_mont_mul(x, fr_load_const(FR_R2, 0));
+    if (neg != 0u) {
+        r = fr_sub(fr_zero(), r);
+    }
+    return r;
+}
+
+struct OpeningFoldDenseParams {
+    uint sigma;  // log2(output columns) — one thread per column
+    uint steps;  // cycles per thread = T >> sigma
+};
+
+// One dense increment column (i128 per cycle, address slot 0):
+// out[c] = Σ_j left[j] · value(cycle c + j·2^σ). Zero increments are skipped
+// exactly like the CPU's entry() — adding zero is the same sum either way.
+kernel void jk_opening_fold_dense(
+    device const uint* col [[buffer(0)]],   // 4 u32 words per cycle (LE i128)
+    device const uint* left [[buffer(1)]],  // Fr per row
+    device uint* out [[buffer(2)]],         // Fr per column
+    constant OpeningFoldDenseParams& p [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= (1u << p.sigma)) {
+        return;
+    }
+    Fr256 acc = fr_zero();
+    for (uint j = 0; j < p.steps; j++) {
+        uint cycle = gid + (j << p.sigma);
+        uint w0 = col[4 * cycle];
+        uint w1 = col[4 * cycle + 1];
+        uint w2 = col[4 * cycle + 2];
+        uint w3 = col[4 * cycle + 3];
+        if ((w0 | w1 | w2 | w3) == 0u) {
+            continue;
+        }
+        Fr256 v = fr_from_i128(w0, w1, w2, w3);
+        acc = fr_add(acc, fr_mont_mul(fr_load(left, j), v));
+    }
+    fr_store(out, gid, acc);
+}
+
+struct OpeningFoldOneHotParams {
+    uint sigma;       // log2(output columns) — one thread per column
+    uint steps;       // cycles per thread = T >> sigma
+    uint row_shift;   // log_T − σ: row = j + (address << row_shift)
+    uint elem_words;  // u32 words per column element: 2 (u64) or 4 (u128)
+    uint has_cold;    // 1: an all-ones element is a cold cycle (no entry)
+    uint sel_count;   // live selectors ≤ JK_OPENING_MAX_SEL
+    uint sel_mask;    // (1 << chunk_bits) − 1, chunk_bits < 32
+    uint sel_shift[JK_OPENING_MAX_SEL];  // per-selector bit offset
+};
+
+// Extract the chunk at bit offset `shift` (width < 32) from up to 4 LE words.
+inline uint jk_chunk_bits(uint w0, uint w1, uint w2, uint w3,
+                          uint shift, uint mask)
+{
+    uint ws[4] = { w0, w1, w2, w3 };
+    uint word = shift >> 5;
+    uint bit = shift & 31u;
+    uint lo = ws[word] >> bit;
+    // Chunks may straddle a word boundary; shifts of 32 are avoided (MSL
+    // shift counts are modular).
+    if (bit != 0u && word + 1u < 4u) {
+        lo |= ws[word + 1u] << (32u - bit);
+    }
+    return lo & mask;
+}
+
+// A one-hot family's columns from one shared per-cycle stream (lookup index,
+// mapped pc, or remapped RAM address): out[s·2^σ + c] accumulates selector
+// s's fold, each selector reading its own chunk of the element as the hot
+// address. Cold cycles (all-ones sentinel) contribute nothing.
+kernel void jk_opening_fold_onehot(
+    device const uint* col [[buffer(0)]],   // elem_words u32 per cycle
+    device const uint* left [[buffer(1)]],  // Fr per row
+    device uint* out [[buffer(2)]],         // Fr per (selector, column)
+    constant OpeningFoldOneHotParams& p [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= (1u << p.sigma)) {
+        return;
+    }
+    Fr256 acc[JK_OPENING_MAX_SEL];
+    for (uint s = 0; s < JK_OPENING_MAX_SEL; s++) {
+        acc[s] = fr_zero();
+    }
+    for (uint j = 0; j < p.steps; j++) {
+        uint cycle = gid + (j << p.sigma);
+        uint base = p.elem_words * cycle;
+        uint w0 = col[base];
+        uint w1 = col[base + 1];
+        uint w2 = p.elem_words > 2u ? col[base + 2] : 0u;
+        uint w3 = p.elem_words > 2u ? col[base + 3] : 0u;
+        if (p.has_cold != 0u && (w0 & w1) == 0xffffffffu) {
+            continue;
+        }
+        for (uint s = 0; s < JK_OPENING_MAX_SEL; s++) {
+            if (s >= p.sel_count) {
+                break;
+            }
+            uint address = jk_chunk_bits(w0, w1, w2, w3, p.sel_shift[s], p.sel_mask);
+            uint row = j + (address << p.row_shift);
+            acc[s] = fr_add(acc[s], fr_load(left, row));
+        }
+    }
+    for (uint s = 0; s < JK_OPENING_MAX_SEL; s++) {
+        if (s >= p.sel_count) {
+            break;
+        }
+        fr_store(out, (s << p.sigma) + gid, acc[s]);
+    }
+}
+
 // Fused fold + round-poly evaluation: the bind above, plus per-threadgroup
 // partial sums of v_j(i) = a[2i] + t_j·(a[2i+1] − a[2i]) for each runtime
 // eval point t_j. One kernel serves every point set — t is data, so the
