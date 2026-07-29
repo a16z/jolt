@@ -189,23 +189,10 @@ fn hi32_ops_match() {
             a160.cmp(&b160),
             to_base_hi32(&a160).cmp(&to_base_hi32(&b160))
         );
-        // Baseline's unrolled S160 mul kernel overflows u128 in its cross-term
-        // sum when the second limbs are large (panics in debug, wraps in
-        // release), so the vs-baseline mul comparison is restricted to the
-        // domain where the baseline is correct. Full-range correctness of our
-        // kernel is covered by `hi32_mul_full_range_oracle`.
-        let mask = (1u64 << 62) - 1;
-        let a160m = two::signed::S160::new(
-            [a160.magnitude_lo()[0], a160.magnitude_lo()[1] & mask],
-            a160.magnitude_hi(),
-            a160.is_positive(),
-        );
-        let b160m = two::signed::S160::new(
-            [b160.magnitude_lo()[0], b160.magnitude_lo()[1] & mask],
-            b160.magnitude_hi(),
-            b160.is_positive(),
-        );
-        assert_hi32_matches(a160m * b160m, to_base_hi32(&a160m) * to_base_hi32(&b160m));
+        // Baseline's unrolled S160 mul kernel originally overflowed u128 in
+        // its cross-term sum for large second limbs; fixed on the PR #1684
+        // branch, so the vs-baseline comparison runs on the full range.
+        assert_hi32_matches(a160 * b160, to_base_hi32(&a160) * to_base_hi32(&b160));
 
         let a224 = two::signed::S224::new(rng.gen(), rng.gen(), rng.gen());
         let b224 = two::signed::S224::new(rng.gen(), rng.gen(), rng.gen());

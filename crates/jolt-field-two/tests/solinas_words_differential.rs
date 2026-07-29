@@ -24,21 +24,17 @@ macro_rules! check_prime {
     ($two:ty, $base:ty, $p:expr, $rng:expr) => {{
         let p: u128 = $p;
         let bits = <$two as CanonicalEncoding>::MODULUS_BITS;
-        // Baseline Fp64::reduce_u128 truncates the fold's high part to u64
-        // (`(v >> BITS) as u64`), so for sub-word u64 primes it reduces
-        // inputs >= 2^(64+BITS) incorrectly. Ours reduces correctly on the
-        // full domain (asserted against the oracle); baseline reduction
-        // parity is only asserted on its correct domain.
-        let base_reduces_correctly = |raw: u128| bits + 64 >= 128 || raw < (1u128 << (bits + 64));
+        // Baseline Fp64::reduce_u128 originally truncated the fold's high
+        // part for sub-word primes; fixed on the PR #1684 branch, so parity
+        // is asserted on the full u128 domain.
+        let _ = bits;
         let sample = |rng: &mut ChaCha20Rng| -> ($two, $base, u128) {
             let raw: u128 = rng.gen();
             let v = raw % p;
             let t = <$two as CanonicalEncoding>::from_u128_reduced(raw);
             assert_eq!(t.to_u128_checked(), Some(v), "reduction vs oracle");
-            if base_reduces_correctly(raw) {
-                let b = <$base as CanonicalField>::from_canonical_u128_reduced(raw);
-                assert_eq!(b.to_canonical_u128(), v, "baseline reduction vs oracle");
-            }
+            let b = <$base as CanonicalField>::from_canonical_u128_reduced(raw);
+            assert_eq!(b.to_canonical_u128(), v, "baseline reduction vs oracle");
             let b = <$base as CanonicalField>::from_canonical_u128_checked(v).unwrap();
             (t, b, v)
         };
@@ -119,8 +115,6 @@ macro_rules! check_prime {
             );
             assert_eq!(ta.to_u64_checked(), ba.to_canonical_u64_checked());
             let challenge: [u8; 32] = $rng.gen();
-            // 16-byte decodes hit the baseline truncation bug on sub-word
-            // u64 primes; ours is asserted against the oracle there instead.
             for len in [8usize, 16, 32] {
                 let ours = <$two as CanonicalEncoding>::from_bytes_le_reduced(&challenge[..len]);
                 assert_eq!(
@@ -133,9 +127,6 @@ macro_rules! check_prime {
                     padded[..len].copy_from_slice(&challenge[..len]);
                     let raw = u128::from_le_bytes(padded);
                     assert_eq!(ours.to_u128_checked(), Some(raw % p), "decode vs oracle");
-                    if !base_reduces_correctly(raw) {
-                        continue;
-                    }
                 }
                 assert_eq!(
                     ours.to_u128_checked().unwrap(),
