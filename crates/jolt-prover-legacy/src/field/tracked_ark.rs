@@ -327,6 +327,7 @@ impl JoltField for TrackedFr {
     type UnreducedMulU128Accum = <ark_bn254::Fr as JoltField>::UnreducedMulU128Accum;
     type UnreducedProduct = <ark_bn254::Fr as JoltField>::UnreducedProduct;
     type UnreducedProductAccum = <ark_bn254::Fr as JoltField>::UnreducedProductAccum;
+    type MultiProductAccum = <ark_bn254::Fr as JoltField>::MultiProductAccum;
 
     type SmallValueLookupTables = <ark_bn254::Fr as JoltField>::SmallValueLookupTables;
 
@@ -454,6 +455,11 @@ impl JoltField for TrackedFr {
         <Fr as JoltField>::mul_to_product_accum(self.0, other.0)
     }
 
+    fn mul_to_multi_product_accum(self, other: Self) -> Self::MultiProductAccum {
+        MUL_UNRED_COUNT.fetch_add(1, Ordering::Relaxed);
+        <Fr as JoltField>::mul_to_multi_product_accum(self.0, other.0)
+    }
+
     fn unreduced_mul_u64(a: &Self::UnreducedElem, b: u64) -> Self::UnreducedMulU64 {
         <Fr as JoltField>::unreduced_mul_u64(a, b)
     }
@@ -504,6 +510,11 @@ impl JoltField for TrackedFr {
     fn reduce_product_accum(x: Self::UnreducedProductAccum) -> Self {
         MONT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
         TrackedFr(<Fr as JoltField>::reduce_product_accum(x))
+    }
+
+    fn reduce_multi_product_accum(x: Self::MultiProductAccum) -> Self {
+        MONT_REDUCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        TrackedFr(<Fr as JoltField>::reduce_multi_product_accum(x))
     }
 }
 

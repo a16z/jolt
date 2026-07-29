@@ -103,6 +103,26 @@ pub trait UnreducedInteger:
 {
 }
 
+/// Minimal surface for field-selected product accumulators.
+pub trait ProductAccumulator:
+    'static + Clone + Copy + Debug + Send + Sync + Default + Zero + Add<Output = Self> + AddAssign
+{
+}
+
+impl<T> ProductAccumulator for T where
+    T: 'static
+        + Clone
+        + Copy
+        + Debug
+        + Send
+        + Sync
+        + Default
+        + Zero
+        + Add<Output = Self>
+        + AddAssign
+{
+}
+
 pub trait JoltField:
     'static
     + Sized
@@ -188,6 +208,9 @@ pub trait JoltField:
     type UnreducedProductAccum: UnreducedInteger
         + AddAssign<Self::UnreducedElem>
         + AddAssign<Self::UnreducedProduct>;
+
+    /// Product accumulator selected for kernels with several concurrently live lanes.
+    type MultiProductAccum: ProductAccumulator;
 
     type SmallValueLookupTables: Clone + Default + CanonicalSerialize + CanonicalDeserialize;
     type Challenge: 'static
@@ -277,6 +300,9 @@ pub trait JoltField:
     /// Widening multiply: field × field → UnreducedProductAccum (with carry headroom).
     fn mul_to_product_accum(self, other: Self) -> Self::UnreducedProductAccum;
 
+    /// Field product represented in the accumulator selected for multi-lane kernels.
+    fn mul_to_multi_product_accum(self, other: Self) -> Self::MultiProductAccum;
+
     /// Widening multiply on unreduced elem: UnreducedElem × u64 → UnreducedMulU64.
     fn unreduced_mul_u64(a: &Self::UnreducedElem, b: u64) -> Self::UnreducedMulU64;
 
@@ -302,6 +328,7 @@ pub trait JoltField:
     fn reduce_mul_u128_accum(x: Self::UnreducedMulU128Accum) -> Self;
     fn reduce_product(x: Self::UnreducedProduct) -> Self;
     fn reduce_product_accum(x: Self::UnreducedProductAccum) -> Self;
+    fn reduce_multi_product_accum(x: Self::MultiProductAccum) -> Self;
 }
 
 /// Unified fused-multiply-add trait for accumulators.

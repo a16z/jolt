@@ -289,6 +289,60 @@ impl_add_bigint_trunc!(Folded128MulU64, 2);
 
 impl_addassign_folded_trunc!(Folded128Product, Folded128MulU64, 4);
 
+/// Product accumulator after one reduction modulo `2^128 - C`.
+///
+/// For a raw product with limbs `[r0, r1, r2, r3]`, the two slots store
+/// `r0 + C*r2` and `r1 + C*r3`. Each contribution is less than `2^96`, so
+/// the slots can hold at most `2^32` products without overflow.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Solinas128ProductAccum(pub [u128; 2]);
+
+impl Solinas128ProductAccum {
+    #[inline(always)]
+    pub fn from_raw_product(product: [u64; 4], c: u64) -> Self {
+        Self([
+            product[0] as u128 + product[2] as u128 * c as u128,
+            product[1] as u128 + product[3] as u128 * c as u128,
+        ])
+    }
+
+    #[inline(always)]
+    pub fn normalize(self) -> BigInt<3> {
+        let carry = self.0[0] >> 64;
+        let high = self.0[1] + carry;
+        BigInt::new([self.0[0] as u64, high as u64, (high >> 64) as u64])
+    }
+}
+
+impl Zero for Solinas128ProductAccum {
+    #[inline(always)]
+    fn zero() -> Self {
+        Self([0; 2])
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.0 == [0; 2]
+    }
+}
+
+impl Add for Solinas128ProductAccum {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self([self.0[0] + rhs.0[0], self.0[1] + rhs.0[1]])
+    }
+}
+
+impl AddAssign for Solinas128ProductAccum {
+    #[inline(always)]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+    }
+}
+
 /// Folded 4x4 limb multiplication into 8 positional slots.
 ///
 /// This keeps all per-product operations independent (no inter-slot carry chain)

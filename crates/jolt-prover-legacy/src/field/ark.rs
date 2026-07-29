@@ -38,6 +38,7 @@ impl JoltField for ark_bn254::Fr {
     type UnreducedMulU128Accum = Folded256MulU128Accum;
     type UnreducedProduct = Folded256Product;
     type UnreducedProductAccum = Folded256ProductAccum;
+    type MultiProductAccum = Folded256ProductAccum;
 
     type SmallValueLookupTables = [Vec<Self>; 2];
 
@@ -265,6 +266,11 @@ impl JoltField for ark_bn254::Fr {
     }
 
     #[inline]
+    fn mul_to_multi_product_accum(self, other: Self) -> Folded256ProductAccum {
+        Folded256ProductAccum::from_mul(self.0, other.0)
+    }
+
+    #[inline]
     fn unreduced_mul_u64(a: &BigInt<4>, b: u64) -> Folded256MulU64 {
         Folded256MulU64::from_bigint(a.mul_u64_w_carry::<5>(b))
     }
@@ -306,6 +312,11 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn reduce_product_accum(x: Folded256ProductAccum) -> Self {
+        ark_bn254::Fr::from_montgomery_reduce::<9, 5>(x.normalize())
+    }
+
+    #[inline]
+    fn reduce_multi_product_accum(x: Folded256ProductAccum) -> Self {
         ark_bn254::Fr::from_montgomery_reduce::<9, 5>(x.normalize())
     }
 }

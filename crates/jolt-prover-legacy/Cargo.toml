@@ -183,6 +183,11 @@ harness = false
 name = "challenge_mult_performance"
 harness = false
 
+[[bench]]
+name = "fp128_piop_arith"
+harness = false
+required-features = ["akita"]
+
 [lib]
 name = "jolt_prover_legacy"
 path = "src/lib.rs"

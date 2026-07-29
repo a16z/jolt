@@ -11,7 +11,7 @@
 //! Solinas fold as the Barrett-reduced ones.
 
 use super::{FieldOps, JoltField};
-use crate::field::folded_accum::{Folded128MulU64, Folded128Product};
+use crate::field::folded_accum::{Folded128MulU64, Folded128Product, Solinas128ProductAccum};
 use akita_field::{
     CanonicalBitLength, CanonicalField, CanonicalU64, FromPrimitiveInt, Invertible, RandomSampling,
     ReducingBytes,
@@ -350,6 +350,7 @@ impl JoltField for AkitaFp128 {
     type UnreducedMulU128Accum = Folded128Product;
     type UnreducedProduct = Folded128Product;
     type UnreducedProductAccum = Folded128Product;
+    type MultiProductAccum = Solinas128ProductAccum;
 
     type SmallValueLookupTables = [Vec<Self>; 2];
 
@@ -454,6 +455,11 @@ impl JoltField for AkitaFp128 {
         Folded128Product::from_bigint(BigInt::new(self.0.mul_wide(other.0)))
     }
 
+    #[inline(always)]
+    fn mul_to_multi_product_accum(self, other: Self) -> Solinas128ProductAccum {
+        Solinas128ProductAccum::from_raw_product(self.0.mul_wide(other.0), AkitaField::C as u64)
+    }
+
     #[inline]
     fn unreduced_mul_u64(a: &BigInt<2>, b: u64) -> Folded128MulU64 {
         Folded128MulU64::from_bigint(BigInt::new(elem_to_field(a).mul_wide_u64(b)))
@@ -498,6 +504,11 @@ impl JoltField for AkitaFp128 {
     fn reduce_product_accum(x: Folded128Product) -> Self {
         Self(AkitaField::solinas_reduce(&x.normalize().0))
     }
+
+    #[inline(always)]
+    fn reduce_multi_product_accum(x: Solinas128ProductAccum) -> Self {
+        Self(AkitaField::solinas_reduce(&x.normalize().0))
+    }
 }
 
 #[cfg(test)]
@@ -506,6 +517,7 @@ mod tests {
     // exercised deliberately: they are `JoltField`/`Challenge` trait surface.
     #![expect(clippy::op_ref, clippy::assign_op_pattern, clippy::useless_conversion)]
     use super::*;
+    use crate::field::folded_accum::Solinas128ProductAccum;
     use crate::field::{BarrettReduce, FMAdd, MontgomeryReduce};
     use crate::transcripts::{Blake2bTranscript, Transcript};
     use crate::utils::accumulation::{FullAccumS, MedAccumS, SmallAccumS, WideAccumS};
@@ -752,6 +764,48 @@ mod tests {
             assert_eq!(F::reduce_mul_u128(acc), expected);
             assert_eq!(F::reduce_mul_u128_accum(acc), expected);
         }
+    }
+
+    #[test]
+    fn solinas_product_accumulator_matches_field_arithmetic() {
+        let mut rng = test_rng();
+        for _ in 0..32 {
+            let mut acc = Solinas128ProductAccum::zero();
+            let mut expected = F::zero();
+            for _ in 0..257 {
+                let a = F::rand(&mut rng);
+                let b = F::rand(&mut rng);
+                acc += a.mul_to_multi_product_accum(b);
+                expected += a * b;
+            }
+            assert_eq!(F::reduce_multi_product_accum(acc), expected);
+        }
+    }
+
+    #[test]
+    fn solinas_product_accumulator_supports_2exp26_terms_and_merges() {
+        let a = F::from_u128(modulus() - 1);
+        let term = a.mul_to_multi_product_accum(a);
+        let mut acc = term;
+        let mut expected = a * a;
+        for _ in 0..26 {
+            acc += acc;
+            expected += expected;
+        }
+        assert_eq!(F::reduce_multi_product_accum(acc), expected);
+
+        let parts = [3usize, 17, 65, 1025];
+        let mut merged = Solinas128ProductAccum::zero();
+        let mut merged_expected = F::zero();
+        for count in parts {
+            let mut partial = Solinas128ProductAccum::zero();
+            for _ in 0..count {
+                partial += term;
+                merged_expected += a * a;
+            }
+            merged += partial;
+        }
+        assert_eq!(F::reduce_multi_product_accum(merged), merged_expected);
     }
 
     #[test]

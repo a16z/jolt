@@ -624,6 +624,38 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         )
         .map(F::reduce_product_accum)
     }
+
+    /// Delayed-reduction fold using the field's multi-lane product accumulator.
+    #[inline]
+    pub fn par_fold_out_in_multi<const NUM_OUT: usize>(
+        &self,
+        per_g_values: &(impl Fn(usize) -> [F; NUM_OUT] + Sync + Send),
+    ) -> [F; NUM_OUT] {
+        self.par_fold_out_in(
+            || [F::MultiProductAccum::zero(); NUM_OUT],
+            |inner, g, _x_in, e_in| {
+                let vals = per_g_values(g);
+                for k in 0..NUM_OUT {
+                    inner[k] += e_in.mul_to_multi_product_accum(vals[k]);
+                }
+            },
+            |_x_out, e_out, inner| {
+                let mut outer = [F::MultiProductAccum::zero(); NUM_OUT];
+                for k in 0..NUM_OUT {
+                    let inner_red = F::reduce_multi_product_accum(inner[k]);
+                    outer[k] = e_out.mul_to_multi_product_accum(inner_red);
+                }
+                outer
+            },
+            |mut a, b| {
+                for k in 0..NUM_OUT {
+                    a[k] += b[k];
+                }
+                a
+            },
+        )
+        .map(F::reduce_multi_product_accum)
+    }
 }
 
 #[cfg(test)]
@@ -854,5 +886,25 @@ mod tests {
             assert_eq!(split_eq.E_out_vec[0], vec![Fr::one()]);
             assert_eq!(split_eq.E_in_vec[0], vec![Fr::one()]);
         }
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn multi_product_fold_matches_unreduced_fold_akita() {
+        use crate::field::akita::AkitaFp128;
+
+        type F = AkitaFp128;
+
+        let mut rng = test_rng();
+        let w: Vec<F> = std::iter::repeat_with(|| F::random(&mut rng))
+            .take(10)
+            .collect();
+        let split_eq = GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
+        let per_g = |g| std::array::from_fn(|lane| F::from_u64((4 * g + lane + 1) as u64));
+
+        let expected = split_eq.par_fold_out_in_unreduced::<4>(&per_g);
+        let actual = split_eq.par_fold_out_in_multi::<4>(&per_g);
+
+        assert_eq!(actual, expected);
     }
 }
