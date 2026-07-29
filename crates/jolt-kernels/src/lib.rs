@@ -40,6 +40,7 @@ pub mod committed_program;
 mod error;
 mod kernel;
 pub mod opening;
+pub mod optimized;
 pub mod precommitted_reduction;
 pub mod reference;
 pub mod uniskip;
