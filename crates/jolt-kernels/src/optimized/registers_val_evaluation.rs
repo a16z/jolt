@@ -13,11 +13,8 @@
 //!   indices and the K-sized eq table — the `K × T` grid is never
 //!   materialized, and the reference's prepare-time `address_fold` over it is
 //!   gone. The dense bound vector (T/2) appears only at the first bind.
-//! - **Split LT** (legacy `LtPolynomial`): `LT(j, r_cycle)` is served from
-//!   three ~√T tables via `LT(j_hi‖j_lo) = lt_hi[j_hi] + eq_hi[j_hi]·lt_lo[j_lo]`,
-//!   bound low-to-high in the lo tables until they collapse into `lt_hi`
-//!   (jolt-poly's `LtPolynomial` binds high-to-low only, so the low-to-high
-//!   variant lives here).
+//! - **Split LT** ([`SplitLt`], legacy `LtPolynomial`): `LT(j, r_cycle)` is
+//!   served from three ~√T tables instead of a dense `T`-sized one.
 //! - **Eval-at-{0,2,3} sampling** with the engine hint supplying s(1)
 //!   (legacy samples {1,2,∞}; both interpolate the same cubic exactly).
 //! - **Deferred-reduction accumulation** of the triple products.
@@ -29,7 +26,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
-use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -38,116 +35,15 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage5::registers_val_evaluation::{
     RegistersValEvaluation, RegistersValEvaluationOutputClaims,
 };
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
+use super::support::{collect_rows, SplitLt};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-
-/// `LT(·, r_cycle)` served from split tables and bound low-to-high.
-///
-/// Big-endian index `j = j_hi ‖ j_lo` with `r_cycle = r_hi ‖ r_lo`:
-/// `LT(j, r) = LT(j_hi, r_hi) + eq(j_hi, r_hi) · LT(j_lo, r_lo)`. Low-to-high
-/// binding touches only `lt_lo`; once the lo variables are exhausted the lo
-/// scalar folds into `lt_hi` and binding continues densely. Values equal the
-/// dense `LtPolynomial::evaluations(r_cycle)` table bound identically —
-/// binding acts linearly on the `j_lo` tensor factor.
-enum SplitLt<F> {
-    Split {
-        lt_lo: Vec<F>,
-        lt_hi: Vec<F>,
-        eq_hi: Vec<F>,
-    },
-    Dense(Vec<F>),
-}
-
-impl<F: Field> SplitLt<F> {
-    fn new(r_cycle: &[F]) -> Self {
-        let mid = r_cycle.len() / 2;
-        let (r_hi, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
-        if r_lo.is_empty() {
-            return Self::Dense(LtPolynomial::evaluations(r_hi));
-        }
-        Self::Split {
-            lt_lo: LtPolynomial::evaluations(r_lo),
-            lt_hi: LtPolynomial::evaluations(r_hi),
-            eq_hi: EqPolynomial::<F>::evals(r_hi, None),
-        }
-    }
-
-    /// `(LT[2y], LT[2y + 1])` under low-to-high pairing.
-    #[inline]
-    fn pair(&self, y: usize) -> (F, F) {
-        match self {
-            Self::Split {
-                lt_lo,
-                lt_hi,
-                eq_hi,
-            } => {
-                let lo_len = lt_lo.len();
-                let j = 2 * y;
-                let hi = j / lo_len;
-                let base = lt_hi[hi];
-                let scale = eq_hi[hi];
-                debug_assert!(lo_len >= 2, "adjacent lo indices share the hi part");
-                (
-                    base + scale * lt_lo[j % lo_len],
-                    base + scale * lt_lo[(j + 1) % lo_len],
-                )
-            }
-            Self::Dense(table) => (table[2 * y], table[2 * y + 1]),
-        }
-    }
-
-    fn bind(&mut self, r: F) {
-        match self {
-            Self::Split {
-                lt_lo,
-                lt_hi,
-                eq_hi,
-            } => {
-                let half = lt_lo.len() / 2;
-                for y in 0..half {
-                    let lo = lt_lo[2 * y];
-                    lt_lo[y] = lo + r * (lt_lo[2 * y + 1] - lo);
-                }
-                lt_lo.truncate(half);
-                if half == 1 {
-                    // Lo variables exhausted: fold the lo scalar into the hi
-                    // table and continue densely.
-                    let lo_scalar = lt_lo[0];
-                    let dense: Vec<F> = lt_hi
-                        .iter()
-                        .zip(eq_hi.iter())
-                        .map(|(&lt, &eq)| lt + eq * lo_scalar)
-                        .collect();
-                    *self = Self::Dense(dense);
-                }
-            }
-            Self::Dense(table) => {
-                let half = table.len() / 2;
-                for y in 0..half {
-                    let lo = table[2 * y];
-                    table[y] = lo + r * (table[2 * y + 1] - lo);
-                }
-                table.truncate(half);
-            }
-        }
-    }
-
-    fn final_value(&self) -> F {
-        match self {
-            Self::Dense(table) => {
-                debug_assert_eq!(table.len(), 1);
-                table[0]
-            }
-            Self::Split { .. } => unreachable!("split state always has lo variables to bind"),
-        }
-    }
-}
 
 /// The write-address column: hot indices plus the address eq table until the
 /// first bind, a dense bound vector afterwards. The `K × T` grid never exists.
@@ -250,7 +146,7 @@ where
         // from the row source otherwise (reference-only stage 4, tests).
         let rd = match session.take::<SharedRdIndices>() {
             Some(SharedRdIndices(rd)) if rd.len() == cycles => rd,
-            _ => collect_bundles::<RegisterCycleRow>(witness, cycles)?
+            _ => collect_rows::<RegisterCycleRow>(witness, cycles)?
                 .iter()
                 .map(|row| row.rd.map(|(k, ..)| k))
                 .collect(),

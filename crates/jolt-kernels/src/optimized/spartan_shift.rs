@@ -41,10 +41,11 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage3::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 use jolt_witness::witnesses::{InstructionFlag, OpFlag, Pc, UnexpandedPc};
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::collect_rows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -111,7 +112,7 @@ where
             });
         }
         let cycles = 1usize << log_t;
-        let rows: Vec<SpartanShiftRow> = collect_bundles(witness, cycles)?;
+        let rows: Vec<SpartanShiftRow> = collect_rows(witness, cycles)?;
 
         let gamma = inputs.challenges.gamma;
         let mut gamma_powers = [F::one(); 5];

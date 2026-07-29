@@ -72,10 +72,11 @@ use jolt_witness::witnesses::{
     RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
     ShouldBranch, ShouldJump, UnexpandedPc,
 };
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::collect_rows;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -465,7 +466,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
         tau: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows: Vec<SpartanOuterRow> = collect_bundles(witness, 1usize << log_t)?;
+        let rows: Vec<SpartanOuterRow> = collect_rows(witness, 1usize << log_t)?;
         Self::prepare_from_rows(session, log_t, tau, rows)
     }
 

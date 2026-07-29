@@ -30,13 +30,13 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress};
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
-use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals};
+use super::support::{bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -169,7 +169,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
         let k_chunk = 1usize << dimensions.log_k_chunk;
         let cycles = 1usize << r_cycle.len();
 
-        let rows: Vec<RaIndexBundle> = collect_bundles(witness, cycles)?;
+        let rows: Vec<RaIndexBundle> = collect_rows(witness, cycles)?;
         let eq_cycle = eq_table(r_cycle);
         let selectors = FamilySelectors::new(
             (layout.instruction(), layout.bytecode(), layout.ram()),

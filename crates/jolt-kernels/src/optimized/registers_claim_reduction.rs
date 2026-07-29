@@ -38,10 +38,11 @@ use jolt_verifier::stages::stage3::registers_claim_reduction::{
     RegistersClaimReduction, RegistersClaimReductionOutputClaims,
 };
 use jolt_witness::witnesses::WitnessEnv;
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::collect_rows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -114,7 +115,7 @@ where
             });
         }
         let cycles = 1usize << log_t;
-        let values: Vec<RegisterValuesRow> = collect_bundles(witness, cycles)?;
+        let values: Vec<RegisterValuesRow> = collect_rows(witness, cycles)?;
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;

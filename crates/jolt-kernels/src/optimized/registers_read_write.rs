@@ -108,8 +108,10 @@ impl WitnessBundle for RegisterCycleRow {
 /// the trace to collect them).
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
 
-/// The row-window size of the streaming entry-collection pass.
-const COLLECT_CHUNK: usize = 1 << 14;
+/// The row-window size of the streaming entry-collection pass (matches
+/// `support::collect_rows`: wide enough to amortize the per-chunk rayon
+/// extraction dispatch).
+const COLLECT_CHUNK: usize = 1 << 16;
 
 /// Streaming consumer building the sparse entries and the operand index
 /// columns in one trace pass, no whole-trace row materialization.
