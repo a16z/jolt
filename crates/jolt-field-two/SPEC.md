@@ -54,7 +54,7 @@ capability subset with defaulted members".
 
 | Trait | Replaces | Contents |
 |---|---|---|
-| `PseudoMersenne` | `PseudoMersenneField` + `ExtMulBackend` | `const OFFSET: u128` (bits live on `CanonicalEncoding`) + the degree-4/8 ext-mul kernel hooks with generic coefficient-formula defaults (only `Fp32` overrides, fusing i64 accumulation) |
+| `PseudoMersenne` (defined unconditionally in `algebra.rs`, per the file table) | `PseudoMersenneField` + `ExtMulBackend` | `const OFFSET: u128` (bits live on `CanonicalEncoding`) + the degree-4/8 ext-mul kernel hooks with generic coefficient-formula defaults (only `Fp32` overrides, fusing i64 accumulation) |
 | `ExtField<F>` | same | degree, `lift_base`, `mul_base`, coeff access, Frobenius |
 | `Ext2Config<F>` | `FpExt2Config` | quadratic non-residue config (ZST pattern), `IS_NEG_ONE` fast path |
 | `MulBaseUnreduced<F>` | same | tiny overridable ext×base deferred multiply |
@@ -69,6 +69,7 @@ capability subset with defaulted members".
 
 **Exported stamping macros** (`ops.rs`): `impl_ring_ops!` (full operator
 matrix + `Zero`/`One`/`Sum`/`Product` from raw add/sub/mul/neg),
+`impl_group_ops!` (the additive-only subset, for accumulator types),
 `impl_serde_bytes!` (canonical-checked serde over `CanonicalEncoding`, byte-format
 identical to baseline). Exported so third-party field implementors pay the
 same near-zero boilerplate we do — the `mersenne61`-style compat test consumes
@@ -77,8 +78,8 @@ them as a third party would.
 ## Scope
 
 **Parity (functionality, not names):** everything jolt-field @ baseline does —
-BN254 `Fr`/`Fq`/`WideAccumulator`; Solinas `Fp32`/`Fp64`/`Fp128` + 12
-registered prime offsets; `FpExt2/4/8` + Frobenius/Moore machinery; packed
+BN254 `Fr`/`Fq`/`WideAccumulator`; Solinas `Fp32`/`Fp64`/`Fp128` + the 9
+registered prime offsets (count tracks the baseline registry); `FpExt2/4/8` + Frobenius/Moore machinery; packed
 NEON/AVX2/AVX-512 × {32,64,128} + packed ext + `NoPacking`; lane accumulators
 and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
 `allocative` derives. Features: `default = ["bn254"]`, `solinas`, `parallel`,

@@ -232,6 +232,10 @@ fn fq_matches() {
             <two::Fq as CanonicalEncoding>::from_challenge_bytes(&challenge),
             <base::Fq as CanonicalRepr>::from_challenge_bytes(&challenge),
         );
+        assert_matches_fq(
+            <two::Fq as CanonicalEncoding>::from_scalar_challenge_bytes(&challenge),
+            <base::Fq as CanonicalRepr>::from_scalar_challenge_bytes(&challenge),
+        );
 
         let cfg = bincode::config::standard();
         assert_eq!(

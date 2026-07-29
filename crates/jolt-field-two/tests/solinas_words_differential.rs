@@ -23,11 +23,9 @@ fn rng() -> ChaCha20Rng {
 macro_rules! check_prime {
     ($two:ty, $base:ty, $p:expr, $rng:expr) => {{
         let p: u128 = $p;
-        let bits = <$two as CanonicalEncoding>::MODULUS_BITS;
         // Baseline Fp64::reduce_u128 originally truncated the fold's high
         // part for sub-word primes; fixed on the PR #1684 branch, so parity
         // is asserted on the full u128 domain.
-        let _ = bits;
         let sample = |rng: &mut ChaCha20Rng| -> ($two, $base, u128) {
             let raw: u128 = rng.gen();
             let v = raw % p;
@@ -121,6 +119,15 @@ macro_rules! check_prime {
                     <$two as CanonicalEncoding>::from_challenge_bytes(&challenge[..len]),
                     ours,
                     "challenge derivation defaults to the reducing decode"
+                );
+                assert_eq!(
+                    <$two as CanonicalEncoding>::from_scalar_challenge_bytes(&challenge[..len])
+                        .to_u128_checked(),
+                    Some(
+                        <$base as CanonicalRepr>::from_scalar_challenge_bytes(&challenge[..len])
+                            .to_canonical_u128()
+                    ),
+                    "scalar challenge derivation diverges from baseline"
                 );
                 if len <= 16 {
                     let mut padded = [0u8; 16];
