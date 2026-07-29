@@ -33,9 +33,11 @@
 
 mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
+mod ram_hamming_booleanity;
 
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
+pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 
 use jolt_field::{Fr, FromPrimitiveInt};
 

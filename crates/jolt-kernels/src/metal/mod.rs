@@ -39,13 +39,16 @@ pub use buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec, PAGE_SIZE};
 pub use error::MetalError;
 pub use field::{fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS};
 pub use runtime::{ComputePass, KernelId, MetalContext, MAX_EVAL_POINTS, THREADGROUP_SIZE};
-pub use slots::{MetalHammingWeightClaimReduction, MetalIncClaimReduction};
+pub use slots::{
+    MetalHammingWeightClaimReduction, MetalIncClaimReduction, MetalRamHammingBooleanity,
+};
 
 use jolt_field::Fr;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::optimized::hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 use crate::optimized::inc_claim_reduction::OptimizedIncClaimReduction;
+use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
 use crate::JoltBackend;
 
 /// Default [`metal_gate`] threshold, from `metal_microbench` on the target
@@ -113,6 +116,9 @@ where
         });
         backend.hamming_weight_claim_reduction = Box::new(MetalHammingWeightClaimReduction {
             fallback: OptimizedHammingWeightClaimReduction,
+        });
+        backend.ram_hamming_booleanity = Box::new(MetalRamHammingBooleanity {
+            fallback: OptimizedRamHammingBooleanity,
         });
         Ok(backend)
     }
