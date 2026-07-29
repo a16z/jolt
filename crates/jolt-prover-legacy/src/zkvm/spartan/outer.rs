@@ -1344,7 +1344,16 @@ impl<F: JoltField> OuterLinearStage<F> {
         let mut az: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
         #[cfg(feature = "akita")]
-        let mut r1cs_rows = vec![R1CSCycleInputs::default(); shared.trace.len()];
+        let mut r1cs_rows = {
+            let mut rows =
+                Vec::<core::mem::MaybeUninit<R1CSCycleInputs>>::with_capacity(shared.trace.len());
+            // SAFETY: `MaybeUninit<T>` may be uninitialized. Every element is
+            // written exactly once by `cache_row` before conversion below.
+            unsafe {
+                rows.set_len(shared.trace.len());
+            }
+            rows
+        };
         #[cfg(feature = "akita")]
         let r1cs_rows_ptr = r1cs_rows.as_mut_ptr() as usize;
         #[cfg(feature = "akita")]
@@ -1352,7 +1361,8 @@ impl<F: JoltField> OuterLinearStage<F> {
             // SAFETY: round zero visits each time-step index once, and the
             // parallel chunks cover disjoint index ranges.
             unsafe {
-                *(r1cs_rows_ptr as *mut R1CSCycleInputs).add(index) = row;
+                (*(r1cs_rows_ptr as *mut core::mem::MaybeUninit<R1CSCycleInputs>).add(index))
+                    .write(row);
             }
         };
 
@@ -1591,7 +1601,14 @@ impl<F: JoltField> OuterLinearStage<F> {
         shared.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
         #[cfg(feature = "akita")]
         {
-            shared.r1cs_rows = Some(r1cs_rows);
+            let mut rows = core::mem::ManuallyDrop::new(r1cs_rows);
+            let len = rows.len();
+            let capacity = rows.capacity();
+            let ptr = rows.as_mut_ptr().cast::<R1CSCycleInputs>();
+            // SAFETY: `cache_row` initialized every element, and
+            // `ManuallyDrop` transfers the original allocation exactly once.
+            let initialized = unsafe { Vec::from_raw_parts(ptr, len, capacity) };
+            shared.r1cs_rows = Some(initialized);
         }
         (DensePolynomial::new(az), DensePolynomial::new(bz))
     }
