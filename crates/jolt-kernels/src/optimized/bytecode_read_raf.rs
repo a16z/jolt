@@ -59,6 +59,7 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
 use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals, scaled_eq_table};
@@ -471,9 +472,14 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
             });
         }
         let rows = pc_rows(session, witness, cycles)?;
+        // This is the PC scan's last consumer: remove the session's copy so
+        // the rows free at the lazy fold's materialization instead of living
+        // to the end of the proof.
+        let _ = session.take::<PcRowsKey>();
 
         // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
-        // one-hot grid, off the sparse per-cycle indices.
+        // one-hot grid, served lazily off the sparse per-cycle indices for
+        // the first three binds instead of `d × T` dense.
         let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
         let selectors = (0..num_ra)
             .map(|index| {
@@ -481,28 +487,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
                     .map_err(KernelError::from)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let fold_ra = |index: usize| -> Vec<F> {
-            let eq = &chunk_eqs[index];
-            let selector = selectors[index];
-            let map_row = |row: &PcRow| {
-                if row.mapped_pc == COLD {
-                    F::zero()
-                } else {
-                    eq[selector.chunk_usize(row.mapped_pc as usize)]
-                }
-            };
-            #[cfg(feature = "parallel")]
-            {
-                rows.par_iter().map(map_row).collect()
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                rows.iter().map(map_row).collect()
-            }
-        };
-        let ra: Vec<Polynomial<F>> = (0..num_ra)
-            .map(|index| Polynomial::new(fold_ra(index)))
-            .collect();
+        let ra = LazyFoldedRa::new(chunk_eqs, BytecodePcChunks { rows, selectors });
 
         // The combined coefficient table: every non-RA factor of the summand
         // is linear in one cycle table, so
@@ -560,10 +545,36 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
     }
 }
 
+/// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
+/// cold on unmapped cycles, off the session-shared PC scan.
+struct BytecodePcChunks {
+    rows: Arc<Vec<PcRow>>,
+    selectors: Vec<RaChunkSelector>,
+}
+
+impl ChunkIndexSource for BytecodePcChunks {
+    fn num_polys(&self) -> usize {
+        self.selectors.len()
+    }
+
+    fn cycles(&self) -> usize {
+        self.rows.len()
+    }
+
+    #[inline]
+    fn index(&self, i: usize, j: usize) -> Option<usize> {
+        let row = &self.rows[j];
+        if row.mapped_pc == COLD {
+            return None;
+        }
+        Some(self.selectors[i].chunk_usize(row.mapped_pc as usize))
+    }
+}
+
 struct CycleKernel<F: Field> {
     rounds: usize,
     degree: usize,
-    ra: Vec<Polynomial<F>>,
+    ra: LazyFoldedRa<F, BytecodePcChunks>,
     combined: Polynomial<F>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
@@ -573,25 +584,30 @@ struct CycleKernel<F: Field> {
 
 impl<F: Field> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {
-        bind_all(self.ra.iter_mut().chain([&mut self.combined]), challenge);
+        bind_all([&mut self.combined], challenge);
+        self.ra.bind(challenge);
         self.rounds_bound += 1;
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
-    /// group `y`, written into `acc` (length `degree`).
+    /// group `y`, written into `acc` (length `degree`); `ra_pairs` is the
+    /// caller's per-group `(lo, hi)` scratch (each RA pair is gathered once
+    /// per group, not once per sample point).
     #[inline]
-    fn accumulate_group(&self, y: usize, acc: &mut [F]) {
+    fn accumulate_group(&self, y: usize, acc: &mut [F], ra_pairs: &mut [(F, F)]) {
         let (c_lo, c_hi) = pair(&self.combined, y);
         let c_delta = c_hi - c_lo;
-        let product_at = |t_value: F| -> F {
-            self.ra.iter().fold(c_lo + t_value * c_delta, |acc, ra| {
-                let (lo, hi) = pair(ra, y);
-                acc * (lo + t_value * (hi - lo))
-            })
-        };
-        acc[0] += self.ra.iter().fold(c_lo, |acc, ra| acc * pair(ra, y).0);
+        for (i, slot) in ra_pairs.iter_mut().enumerate() {
+            *slot = self.ra.lo_hi(i, y);
+        }
+        acc[0] += ra_pairs.iter().fold(c_lo, |acc, (lo, _)| acc * *lo);
         for (slot, t) in (2..=self.degree).enumerate() {
-            acc[slot + 1] += product_at(F::from_u64(t as u64));
+            let t_value = F::from_u64(t as u64);
+            acc[slot + 1] += ra_pairs
+                .iter()
+                .fold(c_lo + t_value * c_delta, |acc, (lo, hi)| {
+                    acc * (*lo + t_value * (*hi - *lo))
+                });
         }
     }
 }
@@ -612,23 +628,28 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
         }
         let half = self.combined.len() / 2;
         let slots = self.degree;
+        let num_ra = self.ra.num_polys();
 
         #[cfg(feature = "parallel")]
         let evals = (0..half)
             .into_par_iter()
             .fold(
-                || vec![F::zero(); slots],
-                |mut acc, y| {
-                    self.accumulate_group(y, &mut acc);
-                    acc
+                || (vec![F::zero(); slots], vec![(F::zero(), F::zero()); num_ra]),
+                |(mut acc, mut ra_pairs), y| {
+                    self.accumulate_group(y, &mut acc, &mut ra_pairs);
+                    (acc, ra_pairs)
                 },
             )
+            .map(|(acc, _)| acc)
             .reduce(|| vec![F::zero(); slots], merge_evals);
         #[cfg(not(feature = "parallel"))]
-        let evals = (0..half).fold(vec![F::zero(); slots], |mut acc, y| {
-            self.accumulate_group(y, &mut acc);
-            acc
-        });
+        let evals = {
+            let mut ra_pairs = vec![(F::zero(), F::zero()); num_ra];
+            (0..half).fold(vec![F::zero(); slots], |mut acc, y| {
+                self.accumulate_group(y, &mut acc, &mut ra_pairs);
+                acc
+            })
+        };
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
     }
@@ -657,7 +678,7 @@ impl<F: Field> SumcheckKernel<F> for CycleKernel<F> {
             output_openings
                 .iter()
                 .position(|opening| opening == id)
-                .map(|index| ra[index].evals()[0])
+                .map(|index| ra.value(index, 0))
         })
         .map_err(SumcheckKernelError::from)
     }

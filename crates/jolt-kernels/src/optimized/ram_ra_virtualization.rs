@@ -24,7 +24,9 @@ use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks
 use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
 use jolt_field::Field;
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use std::sync::Arc;
+
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -33,6 +35,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -74,40 +77,60 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
         }
 
         let columns = RamAccessColumns::shared(session, witness, log_t)?;
+        // This is the RAM family's last consumer: remove the session's copy
+        // so the columns free at the lazy fold's materialization instead of
+        // living to the end of the proof.
+        let _ = session.take::<Arc<RamAccessColumns>>();
         columns.validate_addresses(1usize << ram_reduced_address.len())?;
 
-        // One eq table per committed chunk point (each `2^w` entries), then
-        // the point-mass fold: one table lookup per accessed cycle per chunk.
-        let mask = (1u128 << committed_chunk_bits) - 1;
-        let folded_ra: Vec<Polynomial<F>> = chunks
-            .iter()
-            .enumerate()
-            .map(|(i, chunk)| {
-                let table = eq_table(chunk);
-                let shift = (num_committed - 1 - i) * committed_chunk_bits;
-                Polynomial::new(
-                    columns
-                        .addresses
-                        .iter()
-                        .map(|&address| {
-                            if address == NO_ACCESS {
-                                F::zero()
-                            } else {
-                                table[((u128::from(address) >> shift) & mask) as usize]
-                            }
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
+        // One eq table per committed chunk point (each `2^w` entries); the
+        // point-mass fold stays lazy — one table lookup per accessed cycle —
+        // instead of materializing `N × T` dense selectors up front.
+        let chunk_tables: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
+        let folded_ra = LazyFoldedRa::new(
+            chunk_tables,
+            RamAddressChunks {
+                columns,
+                num_committed,
+                committed_chunk_bits,
+            },
+        );
 
         Ok(Box::new(RamRaVirtualizationKernel {
             log_t,
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(ram_reduced_cycle, BindingOrder::LowToHigh),
-            bind_scratch: Vec::new(),
             rounds_bound: 0,
         }))
+    }
+}
+
+/// Lazy-RA index source: chunk `i` of the per-cycle remapped RAM address,
+/// cold on no-access cycles, off the session-shared access columns.
+struct RamAddressChunks {
+    columns: Arc<RamAccessColumns>,
+    num_committed: usize,
+    committed_chunk_bits: usize,
+}
+
+impl ChunkIndexSource for RamAddressChunks {
+    fn num_polys(&self) -> usize {
+        self.num_committed
+    }
+
+    fn cycles(&self) -> usize {
+        self.columns.addresses.len()
+    }
+
+    #[inline]
+    fn index(&self, i: usize, j: usize) -> Option<usize> {
+        let address = self.columns.addresses[j];
+        if address == NO_ACCESS {
+            return None;
+        }
+        let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
+        let mask = (1u128 << self.committed_chunk_bits) - 1;
+        Some(((u128::from(address) >> shift) & mask) as usize)
     }
 }
 
@@ -115,10 +138,10 @@ struct RamRaVirtualizationKernel<F: Field> {
     log_t: usize,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
-    /// cycles.
-    folded_ra: Vec<Polynomial<F>>,
+    /// cycles, served lazily off the shared columns for the first three
+    /// binds instead of `N × T` dense.
+    folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-    bind_scratch: Vec<F>,
     rounds_bound: usize,
 }
 
@@ -141,7 +164,7 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         // The relation degree: one eq factor plus the committed-RA product.
-        let num_committed = self.folded_ra.len();
+        let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
 
         let q_evals = self.gruen.par_fold_out_in(
@@ -153,10 +176,8 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
                 )
             },
             |(acc, evals, steps), row, _x_in, e_in| {
-                for (position, ra) in self.folded_ra.iter().enumerate() {
-                    let table = ra.evals();
-                    let lo = table[2 * row];
-                    let hi = table[2 * row + 1];
+                for position in 0..num_committed {
+                    let (lo, hi) = self.folded_ra.lo_hi(position, row);
                     evals[position] = lo;
                     steps[position] = hi - lo;
                 }
@@ -207,9 +228,7 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
-        for ra in &mut self.folded_ra {
-            ra.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
-        }
+        self.folded_ra.bind(challenge);
         self.rounds_bound += 1;
     }
 }
@@ -246,7 +265,7 @@ impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
     ) -> Result<RamRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(RamRaVirtualizationOutputClaims {
-            ram_ra: self.folded_ra.iter().map(|ra| ra.evals()[0]).collect(),
+            ram_ra: self.folded_ra.final_values(),
         })
     }
 

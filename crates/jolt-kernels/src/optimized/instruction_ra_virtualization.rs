@@ -36,7 +36,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
 use jolt_field::Field;
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::relations::{
@@ -48,6 +48,7 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane};
 use rayon::prelude::*;
 
 use super::instruction_read_raf::SharedInstructionRows;
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::reference::views::eq_table;
 use crate::{
@@ -84,9 +85,34 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
             relation.instruction_address(),
             relation.instruction_read_raf_cycle(),
             relation.committed_chunk_bits(),
-            &rows,
+            rows,
             inputs.challenges.gamma,
         )?))
+    }
+}
+
+/// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
+/// hot), off the stage-5 shared rows.
+struct LookupIndexChunks {
+    rows: Arc<Vec<InstructionReadRafWitness>>,
+    num_committed: usize,
+    committed_chunk_bits: usize,
+}
+
+impl ChunkIndexSource for LookupIndexChunks {
+    fn num_polys(&self) -> usize {
+        self.num_committed
+    }
+
+    fn cycles(&self) -> usize {
+        self.rows.len()
+    }
+
+    #[inline]
+    fn index(&self, i: usize, j: usize) -> Option<usize> {
+        let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
+        let mask = (1u128 << self.committed_chunk_bits) - 1;
+        Some(((self.rows[j].lookup_index.0 >> shift) & mask) as usize)
     }
 }
 
@@ -107,10 +133,10 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
     num_committed_per_virtual: usize,
     gamma_powers: Vec<F>,
     /// Address-folded committed RA selectors, one per committed chunk:
-    /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))`.
-    folded_ra: Vec<Polynomial<F>>,
+    /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))`, served lazily off the
+    /// shared rows for the first three binds instead of `N × T` dense.
+    folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-    bind_scratch: Vec<F>,
     rounds_bound: usize,
 }
 
@@ -123,7 +149,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: &[InstructionReadRafWitness],
+        rows: Arc<Vec<InstructionReadRafWitness>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let num_committed = num_virtual * num_committed_per_virtual;
@@ -155,20 +181,18 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             });
         }
 
-        // One eq table per committed chunk point (each `2^w` entries), then
-        // the point-mass fold: one table lookup per cycle per chunk.
+        // One eq table per committed chunk point (each `2^w` entries); the
+        // point-mass fold stays lazy — one table lookup per gathered cycle —
+        // instead of materializing `N × T` dense selectors up front.
         let chunk_tables: Vec<Vec<F>> = map_indices(chunks.len(), |i| eq_table(&chunks[i]));
-        let mask = (1u128 << committed_chunk_bits) - 1;
-        let folded_ra: Vec<Polynomial<F>> = chunk_tables
-            .iter()
-            .enumerate()
-            .map(|(i, table)| {
-                let shift = (num_committed - 1 - i) * committed_chunk_bits;
-                Polynomial::new(map_indices(rows.len(), |j| {
-                    table[((rows[j].lookup_index.0 >> shift) & mask) as usize]
-                }))
-            })
-            .collect();
+        let folded_ra = LazyFoldedRa::new(
+            chunk_tables,
+            LookupIndexChunks {
+                rows,
+                num_committed,
+                committed_chunk_bits,
+            },
+        );
 
         let mut gamma_powers = Vec::with_capacity(num_virtual);
         let mut power = F::one();
@@ -183,7 +207,6 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             gamma_powers,
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
-            bind_scratch: Vec::new(),
             rounds_bound: 0,
         })
     }
@@ -198,7 +221,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         // The relation degree: one eq factor plus the N-wide products.
         let degree = self.num_committed_per_virtual + 1;
         let points = degree + 1;
-        let num_committed = self.folded_ra.len();
+        let num_committed = self.folded_ra.num_polys();
 
         let q_evals = self.gruen.par_fold_out_in(
             || {
@@ -209,10 +232,8 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
                 )
             },
             |(acc, evals, steps), row, _x_in, e_in| {
-                for (position, ra) in self.folded_ra.iter().enumerate() {
-                    let table = ra.evals();
-                    let lo = table[2 * row];
-                    let hi = table[2 * row + 1];
+                for position in 0..num_committed {
+                    let (lo, hi) = self.folded_ra.lo_hi(position, row);
                     evals[position] = lo;
                     steps[position] = hi - lo;
                 }
@@ -268,9 +289,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
-        for ra in &mut self.folded_ra {
-            ra.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
-        }
+        self.folded_ra.bind(challenge);
         self.rounds_bound += 1;
     }
 }
@@ -311,7 +330,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
             });
         }
         Ok(InstructionRaVirtualizationOutputClaims {
-            committed_instruction_ra: self.folded_ra.iter().map(|ra| ra.evals()[0]).collect(),
+            committed_instruction_ra: self.folded_ra.final_values(),
         })
     }
 
@@ -343,6 +362,8 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use std::sync::Arc;
+
     use std::collections::BTreeMap;
     use std::num::NonZeroUsize;
 
@@ -508,7 +529,7 @@ mod tests {
             &instruction_address,
             &r_cycle,
             chunk_bits,
-            &rows,
+            Arc::new(rows.clone()),
             gamma,
         )
         .unwrap();
@@ -583,5 +604,12 @@ mod tests {
     #[test]
     fn parity_small_odd_geometry() {
         assert_parity(3, 3, 2, 2, 1337);
+    }
+
+    #[test]
+    fn parity_past_lazy_materialization() {
+        // log_t = 6: two lazy binds, the dense materialization at the third,
+        // and three plain multilinear binds after it.
+        assert_parity(6, 2, 2, 4, 7);
     }
 }
