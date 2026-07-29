@@ -10,7 +10,7 @@
 mod support;
 
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaBatchProof, AkitaField, AkitaNativeBatchStatement,
+    AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaNativeBatchStatement,
     AkitaNativeBatching, AkitaScheme,
 };
 use jolt_field::Field;
@@ -38,27 +38,18 @@ fn akita_public_commit_open_uses_sparse_one_hot_path() {
     assert!(!AkitaScheme::supports_unit_sparse_dimension(5));
     assert!(AkitaScheme::supports_unit_sparse_dimension(6));
 
-    let num_vars = 6;
+    let num_vars = 13;
     let (prover_setup, verifier_setup) = setup_for(num_vars, 1, layout(7));
     let k = 4;
-    let indices = vec![
-        Some(2),
-        None,
-        Some(0),
-        Some(3),
-        Some(1),
-        None,
-        Some(2),
-        Some(0),
-        None,
-        Some(3),
-        Some(1),
-        None,
-        Some(0),
-        Some(2),
-        None,
-        Some(1),
-    ];
+    let indices = (0..(1usize << num_vars) / k)
+        .map(|row| {
+            if row % 5 == 4 {
+                None
+            } else {
+                Some((row % k) as u8)
+            }
+        })
+        .collect::<Vec<_>>();
     let one_hot = OneHotPolynomial::new(k, indices.clone());
     let mut dense = vec![f(0); 1 << num_vars];
     for (row, col) in indices.iter().enumerate() {
@@ -71,7 +62,7 @@ fn akita_public_commit_open_uses_sparse_one_hot_path() {
     let (dense_commitment, _) = AkitaScheme::commit(&dense, &prover_setup).unwrap();
     assert_eq!(
         one_hot_commitment.backend_flavor(),
-        AkitaBackendFlavor::Full
+        AkitaBackendFlavor::Dense
     );
     assert_eq!(
         one_hot_commitment, dense_commitment,
@@ -110,10 +101,18 @@ fn akita_public_commit_open_uses_sparse_one_hot_path() {
 
 #[test]
 fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
-    let num_vars = 10;
+    let num_vars = 13;
     let (prover_setup, verifier_setup) = setup_for(num_vars, 1, layout(9));
     let k = 256;
-    let indices = vec![Some(2), None, Some(129), Some(255)];
+    let indices = (0..(1usize << num_vars) / k)
+        .map(|row| {
+            if row % 7 == 3 {
+                None
+            } else {
+                Some(((row * 11) % k) as u8)
+            }
+        })
+        .collect::<Vec<_>>();
     let one_hot = OneHotPolynomial::new(k, indices.clone());
     let mut dense = vec![f(0); 1 << num_vars];
     for (row, col) in indices.iter().enumerate() {
@@ -128,10 +127,10 @@ fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
         one_hot_commitment.backend_flavor(),
         AkitaBackendFlavor::OneHot
     );
-    assert_eq!(dense_commitment.backend_flavor(), AkitaBackendFlavor::Full);
+    assert_eq!(dense_commitment.backend_flavor(), AkitaBackendFlavor::Dense);
     assert_ne!(
         one_hot_commitment, dense_commitment,
-        "native Akita one-hot uses a separate backend setup from full dense commitments"
+        "native Akita one-hot uses a separate backend setup from dense commitments"
     );
 
     let point = (0..num_vars)
@@ -166,7 +165,7 @@ fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
 
 #[test]
 fn akita_proof_payloads_reject_unknown_serialized_fields() {
-    let (_, _, proof) = native_proof_fixture(b"akita-payload-unknown-fields");
+    let (_, statement, proof) = native_proof_fixture(b"akita-payload-unknown-fields");
 
     let mut top_level = serde_json::to_value(&proof).expect("proof should serialize");
     let _ = top_level
@@ -175,14 +174,71 @@ fn akita_proof_payloads_reject_unknown_serialized_fields() {
         .insert("unexpected".to_owned(), json!(true));
     assert!(serde_json::from_value::<AkitaBatchProof>(top_level).is_err());
 
-    let mut nested = serde_json::to_value(&proof).expect("proof should serialize");
-    let _ = nested
-        .get_mut("commitment")
-        .expect("proof should contain commitment")
+    let commitment = &statement[0].commitment;
+    let mut tampered = serde_json::to_value(commitment).expect("commitment should serialize");
+    let _ = tampered
         .as_object_mut()
         .expect("commitment should serialize as object")
         .insert("unexpected".to_owned(), json!(true));
-    assert!(serde_json::from_value::<AkitaBatchProof>(nested).is_err());
+    assert!(serde_json::from_value::<AkitaCommitment>(tampered).is_err());
+}
+
+#[test]
+fn akita_forged_shape_metadata_rejects_before_shape_backed_allocation() {
+    let (verifier_setup, statement, proof) = native_proof_fixture(b"akita-forged-metadata");
+
+    // Forge the commitment's declared coefficient count to the upstream
+    // deserializer's 2^25 cap: without the shape guard this would reserve
+    // ~512 MiB before hitting EOF. The statement must be internally
+    // consistent, so every claim carries the forged commitment.
+    let mut forged =
+        serde_json::to_value(&statement[0].commitment).expect("commitment should serialize");
+    *forged
+        .get_mut("backend_coeff_len")
+        .expect("commitment should expose backend_coeff_len") = json!(1u64 << 25);
+    let forged: AkitaCommitment =
+        serde_json::from_value(forged).expect("forged commitment should deserialize");
+    let forged_statement: AkitaNativeBatchStatement = statement
+        .iter()
+        .map(|claim| jolt_openings::VerifierOpeningClaim {
+            commitment: forged.clone(),
+            evaluation: claim.evaluation.clone(),
+        })
+        .collect();
+    let mut transcript = Blake2bTranscript::new(b"akita-forged-metadata");
+    let err = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        &forged_statement,
+        &proof,
+        &mut transcript,
+    )
+    .expect_err("forged backend_coeff_len should reject");
+    assert!(
+        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("coefficients")),
+        "expected a shape-guard rejection, got: {err}"
+    );
+
+    // An oversized proof-shape blob must be rejected by the protocol cap
+    // before shape deserialization ever runs.
+    let mut oversized = proof.clone();
+    let mut value = serde_json::to_value(&oversized).expect("proof should serialize");
+    *value
+        .get_mut("serialized_akita_proof_shape")
+        .expect("proof should expose the shape blob") =
+        serde_json::to_value(vec![0u8; 64 * 1024]).expect("blob should serialize");
+    oversized = serde_json::from_value(value).expect("oversized proof should deserialize");
+    let mut transcript = Blake2bTranscript::new(b"akita-forged-metadata");
+    let err = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        &statement,
+        &oversized,
+        &mut transcript,
+    )
+    .expect_err("oversized shape blob should reject");
+    assert!(
+        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("protocol cap")),
+        "expected the shape-blob cap rejection, got: {err}"
+    );
 }
 
 #[test]
@@ -199,7 +255,7 @@ fn akita_native_batching_rejects_corrupted_proof_payloads() {
         assert!(
             <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
                 &verifier_setup,
-                statement.clone(),
+                &statement.clone(),
                 &tampered,
                 &mut transcript,
             )
@@ -212,8 +268,8 @@ fn akita_native_batching_rejects_corrupted_proof_payloads() {
 #[test]
 fn akita_zk_interfaces_are_explicitly_unsupported() {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly = polynomial(4, 1);
-    let point = vec![f(2), f(3), f(5), f(7)];
+    let poly = polynomial(13, 1);
+    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).unwrap();
 
@@ -267,9 +323,9 @@ fn native_proof_fixture(
     label: &'static [u8],
 ) -> (VerifierSetup, AkitaNativeBatchStatement, AkitaBatchProof) {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly_a = polynomial(4, 1);
-    let poly_b = polynomial(4, 20);
-    let point = vec![f(2), f(3), f(5), f(7)];
+    let poly_a = polynomial(13, 1);
+    let poly_b = polynomial(13, 20);
+    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =

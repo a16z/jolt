@@ -13,7 +13,9 @@ workspace = true
 
 [features]
 default = []
+test-utils = []
 field-inline = [
+  "dep:rayon",
   "jolt-claims/field-inline",
   "jolt-lookup-tables/field-inline",
   "jolt-program/field-inline",
@@ -22,12 +24,12 @@ field-inline = [
 
 [dependencies]
 jolt-claims.workspace = true
+jolt-witness-derive.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
-jolt-poly.workspace = true
 jolt-program.workspace = true
 jolt-riscv.workspace = true
-rayon.workspace = true
+rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]

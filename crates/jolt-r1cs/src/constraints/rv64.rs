@@ -654,21 +654,23 @@ mod tests {
             .expected_output_claim(&openings)
             .expect("opening length matches");
 
-        let mut reconstructed = Fr::zero();
+        let mut tau_kernel = Fr::zero();
+        let mut az_form = Fr::zero();
+        let mut bz_form = Fr::zero();
         for (public, value) in formula
             .public_claims(&dimensions)
             .expect("public coefficients derive")
         {
-            reconstructed += match public {
-                SpartanOuterPublic::QuadraticCoefficient { left, right } => {
-                    value * openings[left] * openings[right]
-                }
-                SpartanOuterPublic::LinearCoefficient(index) => value * openings[index],
-                SpartanOuterPublic::ConstantCoefficient => value,
-            };
+            match public {
+                SpartanOuterPublic::TauKernel => tau_kernel = value,
+                SpartanOuterPublic::AzWeight(index) => az_form += value * openings[index],
+                SpartanOuterPublic::BzWeight(index) => bz_form += value * openings[index],
+                SpartanOuterPublic::AzConstant => az_form += value,
+                SpartanOuterPublic::BzConstant => bz_form += value,
+            }
         }
 
-        assert_eq!(expected, reconstructed);
+        assert_eq!(expected, tau_kernel * az_form * bz_form);
     }
 
     #[test]

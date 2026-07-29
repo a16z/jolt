@@ -15,9 +15,9 @@ This skill runs locally or in Claude Code cloud (claude.ai/code) — NOT in CI. 
 - Read CLAUDE.md for project conventions, testing requirements, and architecture.
 - Each phase must complete before the next begins.
 - Parallel execution within phases where possible.
-- QA cycles repeat up to 5 times; if the same error persists 3 times, stop and report.
 - If something in the spec is ambiguous, post a PR comment rather than guessing.
 - Do not add features, refactor code, or make improvements beyond the spec.
+- If the spec lacks the `claude-spec-approved` label, warn that it hasn't been analyzed yet (implementation from an unanalyzed spec risks rework), but proceed if the user insists.
 </Execution_Policy>
 
 <Steps>
@@ -69,8 +69,8 @@ Cycle until all checks pass (up to 5 cycles):
 
 1. **Format**: `cargo fmt -q`
 2. **Lint** (both modes):
-   - `cargo clippy -p jolt-prover-legacy --features host --message-format=short -q --all-targets -- -D warnings`
-   - `cargo clippy -p jolt-prover-legacy --features host,zk --message-format=short -q --all-targets -- -D warnings`
+   - `cargo clippy --all --features host --message-format=short -q --all-targets -- -D warnings`
+   - `cargo clippy --all --features host,zk --message-format=short -q --all-targets -- -D warnings`
 3. **Test**: Run evaluation criteria from the spec, plus:
    - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host`
    - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk`
@@ -113,19 +113,5 @@ Fix any issues found and re-validate.
 ```
 
 </Steps>
-
-<Examples>
-<Good>
-User: `/implement-spec`
-Action: Reads the spec from the PR, creates a plan, implements it, runs QA, validates, pushes commits.
-Why good: Full autonomous execution from spec to working code.
-</Good>
-
-<Bad>
-User: `/implement-spec` on a spec without `claude-spec-approved`
-Action: Should warn that the spec hasn't been analyzed yet, but proceed if the user insists.
-Why bad situation: Implementation from an unanalyzed spec risks rework.
-</Bad>
-</Examples>
 
 Task: Implement the spec in this PR. {{ARGUMENTS}}

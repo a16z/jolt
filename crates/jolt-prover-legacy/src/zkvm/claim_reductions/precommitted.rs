@@ -587,6 +587,18 @@ impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
         self.scale = scale;
     }
 
+    /// Multiplies the running claim scale by `2^exponent`.
+    ///
+    /// The two-phase schedule assumes each phase's batch binds exactly its
+    /// alignment window; a wider batch (the packed stage-7 batch is
+    /// chunk-reconstruction-sized) pre-scales this instance's claim by
+    /// `2^Δ` for the extra rounds, which this compensates so the active
+    /// rounds unscale correctly and the trailing batch-level dummy halvings
+    /// land the final claim back on the true output.
+    pub fn boost_scale_pow_2(&mut self, exponent: usize) {
+        self.scale = self.scale.mul_pow_2(exponent);
+    }
+
     pub fn aux_polys(&self) -> &[MultilinearPolynomial<F>] {
         &self.aux_polys
     }

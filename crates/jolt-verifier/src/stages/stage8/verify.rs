@@ -1,49 +1,68 @@
-use super::outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput};
+use super::outputs::Stage8Output;
+#[cfg(not(feature = "akita"))]
+use super::outputs::{Stage8ClearOutput, Stage8ZkOutput};
+#[cfg(not(feature = "akita"))]
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
+#[cfg(not(feature = "akita"))]
+use crate::proof::JoltCommitments;
+#[cfg(not(feature = "akita"))]
+use crate::stages::{stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims};
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
-    proof::{JoltCommitments, JoltProof},
-    stages::{
-        stage6b::{outputs::Stage6bOutputClaims, Stage6bOutput},
-        stage7::{outputs::Stage7OutputClaims, Stage7Output},
-    },
+    proof::JoltProof,
+    stages::{stage6b::Stage6bOutput, stage7::Stage7Output},
     verifier::CheckedInputs,
     VerifierError,
 };
+use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltOpeningId;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{
     geometry::{
         committed_openings::{
             commitment_embedding_scale, final_opening_id, final_opening_point,
             final_opening_polynomial_order, FinalOpeningPointInputs,
         },
-        dimensions::JoltFormulaDimensions,
         ra::JoltRaPolynomialLayout,
     },
-    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+    JoltCommittedPolynomial, JoltRelationId,
 };
-use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
+#[cfg(not(feature = "akita"))]
+use jolt_crypto::HomomorphicCommitment;
+use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
+use jolt_openings::CommitmentScheme;
+#[cfg(not(feature = "akita"))]
 use jolt_openings::{
-    AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim,
-    ZkEvaluationClaim, ZkOpeningScheme,
+    AdditivelyHomomorphic, EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim,
+    ZkOpeningScheme,
 };
+#[cfg(not(feature = "akita"))]
 use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+#[cfg(not(feature = "akita"))]
+use jolt_transcript::LabelWithCount;
+use jolt_transcript::{AppendToTranscript, Transcript};
 
-struct Stage8BatchEntry<'a, F: Field, C> {
-    id: JoltOpeningId,
-    commitment: &'a C,
+#[cfg(not(feature = "akita"))]
+/// One assembled final-opening batch entry. Public because the prover's
+/// stage-8 recipe assembles its PCS batch statement through the same
+/// [`batch_entries`] wiring.
+pub struct Stage8BatchEntry<'a, F: Field, C> {
+    pub id: JoltOpeningId,
+    pub commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
-    opening_claim: Option<F>,
+    pub opening_claim: Option<F>,
     /// Lagrange factor embedding this polynomial's own opening point into the
     /// unified opening point.
-    scale: F,
+    pub scale: F,
 }
 
 #[expect(
     clippy::too_many_arguments,
     reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
 )]
+#[cfg(not(feature = "akita"))]
 pub fn verify<F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -118,7 +137,8 @@ where
 
     let entries = batch_entries(
         preprocessing,
-        proof,
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
         layout,
         trusted_advice_commitment,
         &opening_point,
@@ -229,16 +249,20 @@ where
     }))
 }
 
-/// Builds the final PCS batch in the canonical order from
-/// [`final_opening_polynomial_order`], resolving each polynomial's commitment,
-/// opening claim (clear mode only), and unified-point embedding scale.
 #[expect(
     clippy::too_many_arguments,
     reason = "gathers per-polynomial sources from several stages"
 )]
-fn batch_entries<'a, F, PCS, VC, ZkProof>(
+#[cfg(not(feature = "akita"))]
+/// Assemble the final-opening batch entries in `final_opening_polynomial_order`,
+/// pairing each polynomial's commitment with its opening claim (clear mode) and
+/// its Lagrange embedding scale. Public because the prover's stage-8 recipe
+/// builds its PCS batch statement from the same assembly (passing its own
+/// stage-0 commitments where the verifier passes the proof's).
+pub fn batch_entries<'a, F, PCS, VC>(
     preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    proof: &'a JoltProof<PCS, VC, ZkProof>,
+    commitments: &'a JoltCommitments<PCS::Output>,
+    untrusted_advice_commitment: Option<&'a PCS::Output>,
     layout: JoltRaPolynomialLayout,
     trusted_advice_commitment: Option<&'a PCS::Output>,
     opening_point: &[F],
@@ -274,12 +298,12 @@ where
         let (commitment, own_point, opening_claim): (&PCS::Output, &[F], Option<F>) =
             match polynomial {
                 JoltCommittedPolynomial::RamInc => (
-                    &proof.commitments.ram_inc,
+                    &commitments.ram_inc,
                     inc_opening_point,
                     clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
                 ),
                 JoltCommittedPolynomial::RdInc => (
-                    &proof.commitments.rd_inc,
+                    &commitments.rd_inc,
                     inc_opening_point,
                     clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
                 ),
@@ -289,7 +313,7 @@ where
                     let (commitment_list, claim_list): (&[PCS::Output], Option<&[F]>) =
                         match polynomial {
                             JoltCommittedPolynomial::InstructionRa(_) => (
-                                &proof.commitments.ra.instruction,
+                                &commitments.instruction_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7
                                         .hamming_weight_claim_reduction
@@ -298,13 +322,13 @@ where
                                 }),
                             ),
                             JoltCommittedPolynomial::BytecodeRa(_) => (
-                                &proof.commitments.ra.bytecode,
+                                &commitments.bytecode_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7.hamming_weight_claim_reduction.bytecode_ra.as_slice()
                                 }),
                             ),
                             JoltCommittedPolynomial::RamRa(_) => (
-                                &proof.commitments.ra.ram,
+                                &commitments.ram_ra,
                                 clear_claims.map(|(_, stage7)| {
                                     stage7.hamming_weight_claim_reduction.ram_ra.as_slice()
                                 }),
@@ -332,9 +356,7 @@ where
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
                     let commitment = match polynomial {
                         JoltCommittedPolynomial::TrustedAdvice => trusted_advice_commitment,
-                        JoltCommittedPolynomial::UntrustedAdvice => {
-                            proof.untrusted_advice_commitment.as_ref()
-                        }
+                        JoltCommittedPolynomial::UntrustedAdvice => untrusted_advice_commitment,
                         JoltCommittedPolynomial::BytecodeChunk(index) => committed_program
                             .and_then(|committed| committed.bytecode_chunk_commitments.get(index)),
                         JoltCommittedPolynomial::ProgramImageInit => {
@@ -358,7 +380,7 @@ where
                 | JoltCommittedPolynomial::BytecodeImmBytes { .. }
                 | JoltCommittedPolynomial::ProgramImageBytes => {
                     // Lattice-mode polynomials open through the packed opening
-                    // (`lattice::packing::final_opening`), never the
+                    // (`stage8::packed` / `verify_packed_openings`), never the
                     // homomorphic stage 8 RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
                         reason: format!(
@@ -377,21 +399,22 @@ where
     Ok(entries)
 }
 
+#[cfg(not(feature = "akita"))]
 fn require_commitment_layout<C>(
     commitments: &JoltCommitments<C>,
     layout: JoltRaPolynomialLayout,
 ) -> Result<(), VerifierError> {
     let expected = 2 + layout.total();
     let got = 2
-        + commitments.ra.instruction.len()
-        + commitments.ra.bytecode.len()
-        + commitments.ra.ram.len();
+        + commitments.instruction_ra.len()
+        + commitments.bytecode_ra.len()
+        + commitments.ram_ra.len();
     if got != expected {
         return Err(VerifierError::InvalidCommitmentCount { expected, got });
     }
-    if commitments.ra.instruction.len() != layout.instruction()
-        || commitments.ra.bytecode.len() != layout.bytecode()
-        || commitments.ra.ram.len() != layout.ram()
+    if commitments.instruction_ra.len() != layout.instruction()
+        || commitments.bytecode_ra.len() != layout.bytecode()
+        || commitments.ram_ra.len() != layout.ram()
     {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason: format!(
@@ -399,11 +422,63 @@ fn require_commitment_layout<C>(
                 layout.instruction(),
                 layout.bytecode(),
                 layout.ram(),
-                commitments.ra.instruction.len(),
-                commitments.ra.bytecode.len(),
-                commitments.ra.ram.len()
+                commitments.instruction_ra.len(),
+                commitments.bytecode_ra.len(),
+                commitments.ram_ra.len()
             ),
         });
     }
     Ok(())
+}
+
+#[cfg(feature = "akita")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "same signature as the homomorphic build's verify"
+)]
+pub fn verify<F, PCS, VC, T, ZkProof>(
+    checked: &CheckedInputs,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    formula_dimensions: &JoltFormulaDimensions,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut T,
+    stage6: &Stage6bOutput<F, VC::Output>,
+    stage7: &Stage7Output<F, VC::Output>,
+) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: Clone + AppendToTranscript + super::OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: super::OneHotTraceSetupMetadata,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    // The reconstruction phase settles auxiliary word/chunk claims against
+    // their committed one-hot decompositions.
+    let reconstruction = super::reconstruction::verify(
+        checked,
+        proof.stages.reconstruction_sumcheck_proof.as_ref(),
+        &proof.clear_claims()?.reconstruction,
+        transcript,
+        stage6.clear()?,
+        stage7.clear()?,
+    )?;
+
+    // OneHotTrace then opens natively at its shared point; reconstruction leaves are
+    // discharged by separate auxiliary packed openings.
+    super::packed::verify(
+        formula_dimensions,
+        proof.one_hot_config,
+        preprocessing,
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
+        trusted_advice_commitment,
+        &proof.joint_opening_proof,
+        transcript,
+        stage7.clear()?,
+        &reconstruction,
+    )?;
+
+    Ok(Stage8Output::Clear)
 }

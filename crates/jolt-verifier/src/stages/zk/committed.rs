@@ -32,7 +32,7 @@ where
     let got = committed.output_claims.commitments.len();
     if got != expected {
         return Err(VerifierError::StageClaimSumcheckFailed {
-            stage,
+            stage: format!("{stage:?}"),
             reason: format!(
                 "{proof_label} output-claim commitment count mismatch: expected {expected} for {output_claim_count} hidden claims at VC capacity {capacity}, got {got}",
             ),

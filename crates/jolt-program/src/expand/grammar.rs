@@ -1,6 +1,8 @@
 use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, SourceInstructionRow};
 
-use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
+use crate::expand::{
+    allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, operands::format_i_imm, ExpansionError,
+};
 
 /// Symbolic register placeholder, resolved to a physical virtual register during materialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -362,6 +364,14 @@ impl ExpansionBuilder {
         ));
     }
 
+    /// Emit an address-form assert (`VirtualAssert{Word,Halfword}Alignment`).
+    ///
+    /// The offset is wrapped to `u64` exactly as `expand_i` callers do via
+    /// [`format_i_imm`]. These asserts carry `AddOperands`, so the bytecode's
+    /// `Imm` column is compared against a lookup index of `rs1 + imm` as a field
+    /// element; a raw *signed* offset would leave the two disagreeing, and would
+    /// make a negative effective address produce an index of `2^128 - |rs1+imm|`
+    /// whose only satisfying representative sits in the fp128 alias band.
     pub(super) fn expand_address(
         &mut self,
         instruction_kind: SourceInstructionKind,
@@ -371,7 +381,7 @@ impl ExpansionBuilder {
         self.expand(SourceInstructionRowTemplate::address(
             instruction_kind,
             rs1,
-            imm,
+            format_i_imm(imm),
         ));
     }
 
@@ -410,7 +420,9 @@ impl ExpansionBuilder {
 }
 
 /// Instructions that exist only in decoded source and must be expanded into target-legal sequences.
-pub(super) fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
+// Exposed (pub) so the Lean generator can gate on the same expand-vs-native
+// decision the expander itself uses in `dispatch_source`.
+pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
         SourceInstructionKind::Inline

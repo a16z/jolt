@@ -5,6 +5,6 @@
 pub mod advice_reconstruction;
 pub mod booleanity;
 pub mod bytecode_reconstruction;
-pub mod chunk_reconstruction;
-pub mod inc_virtualization;
+pub mod hamming_weight;
 pub mod program_image_reconstruction;
+pub mod read_raf;

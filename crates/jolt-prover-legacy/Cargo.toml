@@ -24,6 +24,18 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = ["host"]
+# The packed (lattice/Akita) commitment mode: the prover pipeline runs over
+# the fp128 lattice field and commits packed one-hot witness objects.
+# Mutually exclusive with `zk` — one PIOP per compiled prover (the
+# jolt-verifier build errors on the combination).
+akita = [
+  "dep:akita-config",
+  "dep:akita-field",
+  "dep:jolt-akita",
+  "jolt-claims?/akita",
+  "jolt-field/akita",
+  "jolt-verifier/akita",
+]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
 host = ["prover", "dep:jolt-inlines-sha2", "dep:jolt-inlines-keccak256"]
 prover = [
@@ -64,6 +76,8 @@ transcript-keccak = []
 transcript-blake2b = []
 
 [dependencies]
+akita-config = { workspace = true, optional = true }
+akita-field = { workspace = true, optional = true }
 ark-bn254.workspace = true
 jolt-optimizations.workspace = true
 ark-ec.workspace = true
@@ -102,6 +116,7 @@ allocative.workspace = true
 inferno = { workspace = true, optional = true }
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
+jolt-akita = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
 jolt-claims = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }

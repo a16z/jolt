@@ -21,6 +21,113 @@ use super::spartan::{
 pub(crate) const INPUT_VIRTUALIZATION_DEGREE: usize = 3;
 pub(crate) const READ_RAF_BASE_DEGREE: usize = 2;
 
+/// Whether instruction read-RAF must pin the lookup address to its canonical
+/// representative in `[0, p)`.
+///
+/// The identity-RAF leg ties the committed `2^(2·XLEN)`-cell address to the
+/// right lookup operand only *modulo* the field characteristic, so it is
+/// injective exactly when `p >= 2^(2·XLEN)`. BN254's scalar field clears
+/// `2^128` by 126 bits, and an aliased address `k + p ~ 2^254` is not even
+/// representable in 128 one-hot address variables. The Akita fp128 field is
+/// `p = 2^128 - 2^32 + 22537`, which falls short of `2^128` by 4_294_944_759,
+/// giving every honest index below that window a second committable preimage
+/// that the lookup table reads differently. See [`upper_half_all_ones`] for the
+/// predicate that closes it.
+///
+/// This is a property of the *field*, not of the commitment scheme; `akita`
+/// is the feature that selects fp128 and is the only configuration where the
+/// precondition fails today. Read it from here rather than re-deriving
+/// `cfg!(feature = "akita")` downstream — `jolt-kernels` has no `akita`
+/// feature of its own, so a local `cfg!` there would silently be `false` and
+/// desynchronize the prover from the verifier.
+pub const CANONICAL_INSTRUCTION_ADDRESS: bool = cfg!(feature = "akita");
+
+/// The multilinear extension of `1[high_XLEN(k) == 2^XLEN - 1]`, evaluated at
+/// an instruction read-RAF address point.
+///
+/// `r_address` is most-significant-coordinate first (`IdentityPolynomial` folds
+/// `r[i]` with weight `2^(len-1-i)`), so the upper half of the index is the
+/// *leading* half of the point and the AND of those bits extends to their
+/// product. Taking the trailing half instead would both miss the aliases and
+/// reject honest cycles — `SUB(2^64-1, 0)` has index `0x1_FFFF_FFFF_FFFF_FFFF`,
+/// whose low limb is all ones.
+pub fn upper_half_all_ones<F: Field>(r_address: &[F]) -> F {
+    r_address[..r_address.len() / 2]
+        .iter()
+        .copied()
+        .fold(F::one(), |acc, coordinate| acc * coordinate)
+}
+
+#[cfg(test)]
+mod canonical_address_tests {
+    /// `p = 2^128 - 2^32 + 22537`, the Akita fp128 modulus.
+    const P: u128 = u128::MAX - (1 << 32) + 22537 + 1;
+    /// `c = 2^128 - p`, the width of the alias window.
+    const C: u128 = (1 << 32) - 22537;
+    /// The smallest address the predicate rejects.
+    const FIRST_ALL_ONES: u128 = u128::MAX - (u64::MAX as u128);
+
+    /// The load-bearing inequality, as a compile-time fact: the rejected band
+    /// `[2^128 - 2^64, 2^128)` strictly contains the non-canonical band
+    /// `[p, 2^128)`. Hence `U(k) = 0 ⟹ k < p`.
+    const _: () = assert!(FIRST_ALL_ONES < P);
+
+    fn upper_all_ones(k: u128) -> bool {
+        (k >> 64) == u64::MAX as u128
+    }
+
+    /// The two arithmetic facts the whole construction rests on.
+    ///
+    /// 1. *Every alias is caught.* `k = r + p < 2^128` forces `r < c`, and since
+    ///    `p`'s low limb is `2^64 - c`, adding `r < c` cannot carry into the high
+    ///    limb — so every alias has an all-ones upper half.
+    /// 2. *Nothing else is needed.* `U(k) = 0` means `k < 2^128 - 2^64`, and that
+    ///    bound is strictly below `p`. So a surviving address is the canonical
+    ///    representative of its class outright — the identity leg then pins it
+    ///    exactly, with no range bound on `RightLookupOperand` required. That
+    ///    matters because advice rows have `RafFlag = 1` but no R1CS constraint
+    ///    on their right operand at all.
+    #[test]
+    fn canonical_predicate_separates_aliases_from_honest_indices() {
+        assert_eq!(P, 2u128.pow(127) + (2u128.pow(127) - (1 << 32) + 22537));
+        assert_eq!(C, u128::MAX - P + 1);
+        assert_eq!(C, 4_294_944_759);
+
+        // (1) every representable alias has an all-ones upper half
+        for r in [0u128, 1, 2, C / 2, C - 2, C - 1] {
+            let alias = P + r;
+            assert_eq!(alias % P, r, "alias for r={r} is not congruent to r");
+            assert!(
+                upper_all_ones(alias),
+                "alias for r={r} escapes the predicate"
+            );
+        }
+        // r = c is the first value whose alias overflows 2^128, i.e. is not
+        // representable as a committed address at all.
+        assert!(P.checked_add(C).is_none());
+
+        // (2) surviving addresses are canonical: !U(k) => k < p (see the
+        // compile-time assertion above for the inequality itself).
+        assert!(!upper_all_ones(FIRST_ALL_ONES - 1));
+        assert!(upper_all_ones(FIRST_ALL_ONES));
+
+        // Honest bounds for every non-interleaved family stay below that line.
+        let add_max = 2u128 * (u64::MAX as u128); // x + y
+        let sub_max = (u64::MAX as u128) + (1u128 << 64); // x + 2^64 - y
+        let mul_max = (u64::MAX as u128) * (u64::MAX as u128);
+        let advice_max = u64::MAX as u128;
+        for (name, k) in [
+            ("add", add_max),
+            ("sub", sub_max),
+            ("mul", mul_max),
+            ("advice", advice_max),
+        ] {
+            assert!(!upper_all_ones(k), "{name} boundary is falsely flagged");
+            assert!(k < FIRST_ALL_ONES, "{name} boundary escapes the bound");
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct InstructionReadRafDimensions {
     log_t: usize,

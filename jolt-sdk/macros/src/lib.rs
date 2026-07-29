@@ -297,7 +297,6 @@ impl MacroBuilder {
                         &io_device,
                         &proof,
                         #commitment_arg_in_verify,
-                        jolt::_ZK_FEATURE_ENABLED,
                     ).is_ok()
                 };
 
@@ -1418,7 +1417,6 @@ impl MacroBuilder {
                     &io_device,
                     &proof,
                     None,
-                    jolt::_ZK_FEATURE_ENABLED,
                 ).is_ok()
             }
         }

@@ -1,0 +1,80 @@
+//! The increment claim-reduction (stage 6b) kernel: a naive member over the
+//! cycle domain.
+//!
+//! The summand is
+//! `(eq(r_rw, j) + γ·eq(r_val, j)) · RamInc(j) + γ²·(eq(s_rw, j) + γ·eq(s_val, j)) · RdInc(j)`
+//! — reducing the four upstream committed increment openings (RAM read-write /
+//! val-check, register read-write / val-evaluation) to two fresh openings at
+//! one cycle point. Both increment tables are the committed dense trace views;
+//! each eq leaf is one multilinear over its upstream cycle point.
+
+use std::collections::BTreeMap;
+
+use crate::ProverInputs;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
+    ram_inc_reduced, rd_inc_reduced,
+};
+use jolt_claims::protocols::jolt::{IncClaimReductionPublic, JoltDerivedId};
+use jolt_field::Field;
+use jolt_poly::{BindingOrder, Polynomial};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
+use jolt_witness::JoltWitnessPlane;
+
+use super::views::{dense_view, eq_table};
+use crate::{
+    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
+};
+
+impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for ReferenceBackend {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
+        let relation = inputs.relation;
+        let cycle_points = relation.cycle_points();
+        for point in cycle_points {
+            if point.len() != relation.rounds() {
+                return Err(KernelError::InvariantViolation {
+                    reason: "increment reduction cycle point has the wrong variable count",
+                });
+            }
+        }
+
+        let opening_tables = BTreeMap::from([
+            (
+                ram_inc_reduced(),
+                Polynomial::new(dense_view(witness, ram_inc_reduced())?),
+            ),
+            (
+                rd_inc_reduced(),
+                Polynomial::new(dense_view(witness, rd_inc_reduced())?),
+            ),
+        ]);
+        let publics = [
+            IncClaimReductionPublic::EqRamReadWrite,
+            IncClaimReductionPublic::EqRamValCheck,
+            IncClaimReductionPublic::EqRegistersReadWrite,
+            IncClaimReductionPublic::EqRegistersValEvaluation,
+        ];
+        let derived_tables: BTreeMap<_, _> = publics
+            .into_iter()
+            .zip(cycle_points)
+            .map(|(public, point)| {
+                (
+                    JoltDerivedId::from(public),
+                    Polynomial::new(eq_table(point)),
+                )
+            })
+            .collect();
+
+        Ok(Box::new(NaiveSumcheckProver::new(
+            &inputs,
+            opening_tables,
+            derived_tables,
+            BindingOrder::LowToHigh,
+        )?))
+    }
+}

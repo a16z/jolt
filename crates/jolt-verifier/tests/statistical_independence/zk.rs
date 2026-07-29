@@ -145,9 +145,9 @@ impl StableZkProofShape {
             one_hot_config: case.proof.one_hot_config,
             trace_polynomial_order: case.proof.trace_polynomial_order,
             commitment_shape: CommitmentShape {
-                instruction_ra: case.proof.commitments.ra.instruction.len(),
-                ram_ra: case.proof.commitments.ra.ram.len(),
-                bytecode_ra: case.proof.commitments.ra.bytecode.len(),
+                instruction_ra: case.proof.commitments.instruction_ra.len(),
+                ram_ra: case.proof.commitments.ram_ra.len(),
+                bytecode_ra: case.proof.commitments.bytecode_ra.len(),
                 has_untrusted_advice: case.proof.untrusted_advice_commitment.is_some(),
             },
             stage_shapes: committed_stage_shapes(&case.proof.stages),
@@ -284,10 +284,10 @@ fn collect_jolt_proof_statistics(
     tracker.record_append("pcs.commitment.ram_inc", &proof.commitments.ram_inc);
     tracker.record_append_positions(
         "pcs.commitment.instruction_ra",
-        &proof.commitments.ra.instruction,
+        &proof.commitments.instruction_ra,
     );
-    tracker.record_append_positions("pcs.commitment.ram_ra", &proof.commitments.ra.ram);
-    tracker.record_append_positions("pcs.commitment.bytecode_ra", &proof.commitments.ra.bytecode);
+    tracker.record_append_positions("pcs.commitment.ram_ra", &proof.commitments.ram_ra);
+    tracker.record_append_positions("pcs.commitment.bytecode_ra", &proof.commitments.bytecode_ra);
     if let Some(commitment) = &proof.untrusted_advice_commitment {
         tracker.record_append("pcs.commitment.untrusted_advice", commitment);
     }

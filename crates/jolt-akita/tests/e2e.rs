@@ -14,16 +14,16 @@ use support::{f, layout, polynomial, setup_for};
 
 #[test]
 fn akita_single_opening_roundtrips_across_dimensions() {
-    single_opening_roundtrip(1, 10, vec![f(3)], b"akita-e2e-arity-1");
-    single_opening_roundtrip(2, 20, vec![f(3), f(5)], b"akita-e2e-arity-2");
-    single_opening_roundtrip(4, 30, vec![f(2), f(3), f(5), f(7)], b"akita-e2e-arity-4");
+    single_opening_roundtrip(13, 10, (2..15).map(f).collect(), b"akita-e2e-arity-13");
+    single_opening_roundtrip(14, 20, (3..17).map(f).collect(), b"akita-e2e-arity-14");
+    single_opening_roundtrip(15, 30, (5..20).map(f).collect(), b"akita-e2e-arity-15");
 }
 
 #[test]
 fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
-    let (prover_setup, verifier_setup) = setup_for(4, 1, layout(7));
-    let poly = polynomial(4, 100);
-    let point = vec![f(2), f(3), f(5), f(7)];
+    let (prover_setup, verifier_setup) = setup_for(13, 1, layout(7));
+    let poly = polynomial(13, 100);
+    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup).unwrap();
 
@@ -82,7 +82,7 @@ fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
         "different transcript domain should reject"
     );
 
-    let (_, wrong_layout_setup) = setup_for(4, 1, layout(8));
+    let (_, wrong_layout_setup) = setup_for(13, 1, layout(8));
     let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
     assert!(
         AkitaScheme::verify(
@@ -100,9 +100,9 @@ fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
 
 #[test]
 fn akita_commit_group_rejects_shape_pathologies() {
-    let (prover_setup, _) = setup_for(4, 2, layout(7));
-    let poly_a = polynomial(4, 1);
-    let mixed_vars = polynomial(3, 40);
+    let (prover_setup, _) = setup_for(14, 2, layout(7));
+    let poly_a = polynomial(14, 1);
+    let mixed_vars = polynomial(13, 40);
 
     let empty: Vec<Polynomial<_>> = Vec::new();
     assert!(matches!(
@@ -119,13 +119,13 @@ fn akita_commit_group_rejects_shape_pathologies() {
         AkitaScheme::commit_group(
             &prover_setup,
             layout(7),
-            &[poly_a.clone(), polynomial(4, 20), polynomial(4, 40)],
+            &[poly_a.clone(), polynomial(14, 20), polynomial(14, 40)],
         ),
         Err(OpeningsError::InvalidBatch(_))
     ));
 
     let (wrong_dimension_setup, _) =
-        AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7))).unwrap();
+        AkitaScheme::setup(AkitaSetupParams::new(13, 2, layout(7))).unwrap();
     assert!(matches!(
         AkitaScheme::commit_group(&wrong_dimension_setup, layout(7), &[poly_a]),
         Err(OpeningsError::InvalidBatch(_))
@@ -134,12 +134,13 @@ fn akita_commit_group_rejects_shape_pathologies() {
 
 #[test]
 fn akita_commit_group_preserves_statement_layout_digest() {
-    let (prover_setup, _) = setup_for(4, 2, layout(7));
-    let (commitment, _) = AkitaScheme::commit_group(&prover_setup, layout(11), &[polynomial(4, 1)])
-        .expect("direct commitments carry their statement layout digest");
+    let (prover_setup, _) = setup_for(14, 2, layout(7));
+    let (commitment, _) =
+        AkitaScheme::commit_group(&prover_setup, layout(11), &[polynomial(14, 1)])
+            .expect("direct commitments carry their statement layout digest");
 
     assert_eq!(commitment.layout_digest(), layout(11));
-    assert_eq!(commitment.num_vars(), 4);
+    assert_eq!(commitment.num_vars(), 14);
     assert_eq!(commitment.poly_count(), 1);
 }
 

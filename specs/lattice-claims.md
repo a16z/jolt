@@ -4,37 +4,33 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Claude |
 | Created | 2026-07-02 |
-| Status | draft |
-| PR | TBD |
+| Status | in review |
+| PR | [#1675](https://github.com/a16z/jolt/pull/1675) |
 
 ## Purpose
 
 Akita is a lattice PCS: it commits to small-norm coefficient vectors and has no
 commitment homomorphism. Two consequences for Jolt:
 
-1. **No RLC of commitments.** The stage-8 final-opening step (an RLC batch over the
-   separate `RamInc`/`RdInc`/`Ra`/advice commitments, each lifted to a unified
-   point by an embedding scale) cannot exist. Instead, all committed columns
-   live in **one packed witness polynomial `W`** per commitment lifecycle, and
-   one opening of `W` settles every logical claim via the prefix-packing
-   reduction (`jolt-openings::PrefixPacking`).
+1. **No RLC of commitments.** The stage-8 final-opening step over homomorphic
+   commitments cannot be reused. The per-proof `OneHotTrace` commitment is therefore
+   one native Akita commitment group: every member is a strict `K x T` one-hot
+   polynomial, all members open at one canonical point, and one native Akita
+   batch proof settles the group. Advice and committed-program objects have
+   different domains and remain auxiliary `PrefixPacking` reductions.
 2. **0/1 cells, for efficiency.** Committing 0/1 vectors is where Akita is
-   fast, so the packed witness is kept one-hot/boolean throughout — this is a
+   fast, so OneHotTrace and the auxiliary objects stay one-hot/boolean throughout — this is a
    performance choice, not a norm-bound requirement. Every committed column
    that is not already one-hot gets a one-hot encoding: the dense signed
    `RdInc`/`RamInc` columns become a **fused, shifted, one-hot chunk
    decomposition**, and all unstructured committed data (trusted/untrusted
-   advice, program image, bytecode lanes) is byte/symbol one-hotted. The
+   advice, program image, bytecode lanes) is byte one-hotted. The
    one-hot *validity* relations double as the range checks the reconstructions
    rely on (byte one-hot ⇒ each reconstructed byte < 256).
 
-This spec defines the `jolt-claims` surface for both: the canonical packed
-witness description, and the additional symbolic relations that make the
-one-hot inc representation sound. It describes **additional semantics on top of
-the base `jolt/` PIOP** — not a new PIOP. `jolt-verifier` has no lattice
-implementation yet; this crate-level design is written so that the later
-verifier integration is mechanical (`ConcreteSumcheck` impls + a stage-schedule
-swap + a packed-opening stage).
+This spec defines the protocol cutover on top of the base `jolt/` PIOP: the
+canonical commitment layout, the additional relations making the fused
+increment representation sound, and the verifier/prover stage schedule.
 
 The previous integration attempt was snapshotted as the `jolt-claims-ref`
 crate (commit `16727bef9`; deleted from the workspace once this module reached
@@ -49,13 +45,14 @@ rejected here.
 V1 scope (full prototype parity):
 
 ```text
-canonical packed-witness description (per-proof + precommitted), consumed by
-    jolt-openings::PrefixPacking — jolt-claims defines ids + arities only
+canonical native one-hot OneHotTrace layout plus auxiliary prefix-packed objects
 inc fusion (RamInc/RdInc -> one Inc stream selected by the bytecode Store flag)
-base-2^b one-hot chunk decomposition + msb column (the +2^64 unsigned shift is
-    a constant, folded into the chunk reconstruction)
+base-2^b one-hot chunk decomposition + full one-hot msb column
+four fused-inc consumer val stages inside the bytecode read-RAF, discharging
+    the reduced inc claims and producing the FusedInc opening at the shared
+    stage-6b cycle point
 booleanity + hamming-weight coverage of the new one-hot columns
-chunk reconstruction relation tying the chunk columns back to the fused Inc claim
+fused-increment decode folded into stage 7 HammingWeightClaimReduction
 store-selector binding to the bytecode Store circuit flag
 advice byte one-hot decomposition + its reconstruction relations (untrusted:
     validity + word-decode legs; trusted: word-decode leg)
@@ -64,7 +61,7 @@ bytecode sub-column decomposition (register selectors, circuit/instruction
     BytecodeChunkReconstruction relation rebuilding chunk lane values
 program-image byte decomposition + its reconstruction relation
 decode-weight point algebra (the relations' derived semantics)
-final-opening map (packed claim | virtualized)
+final-opening map (native OneHotTrace claim | auxiliary packed claim | virtualized)
 ```
 
 Out of scope (deferred):
@@ -72,7 +69,6 @@ Out of scope (deferred):
 ```text
 field_inline lattice support (FieldRdInc byte decomposition)
 ZK/BlindFold composition with lattice mode
-jolt-verifier / jolt-witness / prover implementation
 ```
 
 All committed unstructured data is one-hot encoded (efficiency: Akita commits
@@ -82,7 +78,7 @@ structural validity (one-hot shape, store/rd disjointness, canonical imm
 bytes) checked **offline at preprocessing** — the verifier holds the public
 bytecode and program image, so no in-protocol relation is spent on them.
 In-protocol validity relations cover prover-supplied columns: the inc
-chunks/msb (via the lattice booleanity + reconstruction relations) and
+chunks/msb (via lattice Booleanity and HammingWeightClaimReduction) and
 untrusted advice bytes (via dedicated byte-validity relations, which are also
 the range checks for the reconstructed words). Trusted advice is one-hot encoded
 like everything else but precommitted by a party the verifier trusts, so its
@@ -92,21 +88,16 @@ encoding is not re-proven in-protocol.
 
 | Crate | Owns | Must NOT contain |
 |-------|------|------------------|
-| `jolt-claims` | ids, arities, symbolic relations, final-opening map, reconstruction terms | slot assignment, offsets, digests, transcripts, witnesses, PCS |
+| `jolt-claims` | ids, arities, symbolic relations, final-opening map, canonical OneHotTrace column order and layout digest | transcripts, witnesses, PCS |
 | `jolt-openings` | `PrefixPacking` slot assignment, suffix-compat check, eq-prefix reduction, transcript binding | Jolt-specific ids or protocol semantics |
-| `jolt-verifier` (future) | `ConcreteSumcheck` impls, stage schedule, packed-opening stage | relation algebra (sourced from `jolt-claims`) |
-| `jolt-witness`/prover (future) | packed witness materialization | — |
+| `jolt-verifier` | `ConcreteSumcheck` impls, stage schedule, native OneHotTrace opening and auxiliary packed openings | relation algebra (sourced from `jolt-claims`) |
+| `jolt-witness`/prover | one-hot witness materialization and matching stage schedule | — |
 | `jolt-akita` | PCS transport | — |
 
-`jolt-claims` depends on `jolt-openings` directly and uses its API as the
-**single source of truth** for the packing:
-`lattice::proof_packing`/`precommitted_packing` register the canonical column
-orderings with `PrefixPacking::new` and return the `PrefixPacking` object
-itself — there is no parallel jolt-claims vocabulary for slots, offsets, or
-placement (`PrefixSlot::packed_index` is where witness assembly gets cell
-positions). The boundary is unchanged in substance: jolt-claims names ids and
-arities; jolt-openings owns slot assignment and the eq-prefix reduction;
-jolt-claims' API surface remains transcript-free.
+`jolt-claims` owns the ordered OneHotTrace column list and hashes the order, member
+identities, and dimensions into a nonzero setup digest. The proof never chooses
+this digest. `jolt-openings::PrefixPacking` remains the source of truth only for
+the auxiliary advice and committed-program objects.
 
 ## Module Layout
 
@@ -121,15 +112,15 @@ crates/jolt-claims/src/protocols/jolt/lattice/
 │                   definitions of the reconstruction relations' deriveds,
 │                   composed from jolt-poly's IdentityPolynomial /
 │                   eq_index_msb primitives); pure functions
-├── packing.rs      packed-witness registration + endgame:
-│                   proof_packing(..)/precommitted_packing(..) ->
-│                   PrefixPacking<JoltCommittedPolynomial> (the canonical
-│                   registration; every packed polynomial is a lattice-mode
-│                   committed polynomial), and the LatticeFinalOpening
-│                   final-opening map (packed claim | virtualized)
+├── packing.rs      one_hot_trace_columns(..) -> canonical native member order;
+│                   auxiliary precommitted/advice PrefixPacking registration
+├── strategy.rs     the one native OneHotTrace layout, common-point permutation,
+│                   setup shape, and canonical nonzero layout digest
 └── relations/
-    ├── inc_virtualization.rs
-    ├── chunk_reconstruction.rs
+    ├── read_raf.rs                      lattice bytecode read-RAF (address
+    │                                    fold over the four inc claims; cycle
+    │                                    phases carrying the FusedInc factor)
+    ├── hamming_weight.rs                stage-7 fused increment reduction
     ├── booleanity.rs                    lattice-mode Booleanity (same id)
     ├── advice_reconstruction.rs         untrusted (validity + decode legs)
     │                                    and trusted (decode leg) advice
@@ -137,10 +128,10 @@ crates/jolt-claims/src/protocols/jolt/lattice/
     └── program_image_reconstruction.rs  word -> byte one-hot decode
 ```
 
-There is no store-binding relation file: the fused-inc destination selector is
-the existing `OpFlags(Store)` virtual polynomial, so its opening is settled
-through the bytecode read-raf val stages like every other flag consumer (see
-relation 1 below).
+There is no store-binding relation file and no store-selector opening at all:
+the fused-inc consumer stages substitute the store column into the read-raf
+fold directly (see relation 1 below), so the selector never leaves the
+bytecode val-stage machinery.
 
 Placement rationale: the lattice relations are pinned to the Jolt id families
 (`ConcreteSumcheck` fixes `RelationId = JoltRelationId`, `OpeningId =
@@ -156,17 +147,16 @@ index-based serde codecs stable for existing proofs):
 
 ```rust
 // JoltRelationId — appended variants
-IncVirtualization,
-UnsignedIncChunkReconstruction,
 UntrustedAdviceReconstruction,   // byte validity + word-decode legs
 TrustedAdviceReconstruction,     // word-decode leg only
 ProgramImageReconstruction,      // word-decode leg only
 BytecodeChunkReconstruction,     // chunk -> lane sub-column decode
 
 // JoltCommittedPolynomial — appended variants (committed only in lattice mode,
-// as slots of the packed witness; base mode never constructs them)
+// as native OneHotTrace columns or auxiliary packed columns; base mode never
+// constructs them)
 UnsignedIncChunk(usize),   // one-hot column j of the fused unsigned inc
-UnsignedIncMsb,            // boolean msb column
+UnsignedIncMsb,            // full K x T one-hot column, hot address 0 or 1
 TrustedAdviceBytes,        // byte one-hot advice encodings
 UntrustedAdviceBytes,
 // Precommitted bytecode sub-columns + program image bytes. These are real
@@ -183,25 +173,25 @@ BytecodeImmBytes { chunk },
 ProgramImageBytes,
 
 // JoltVirtualPolynomial — appended variant
-FusedInc,                  // gamma-batched RamInc/RdInc stream; its selector
-                           // is the existing OpFlags(Store), its +2^64 shift
-                           // is folded into the chunk reconstruction
+FusedInc,                  // gamma-batched RamInc/RdInc stream; opened once,
+                           // by the read-raf cycle phase at the shared 6b
+                           // cycle point; its +2^64 shift is folded into the
+                           // stage-7 hamming reduction
 ```
 
-WARNING: enum `Ord` is protocol data too — `PrefixPacking` assigns slots by
-`(num_vars, Id)` order, so *reordering* variants (not just inserting) changes
-the packed witness layout silently.
+WARNING: enum `Ord` is protocol data for auxiliary objects — `PrefixPacking`
+assigns slots by `(num_vars, Id)` order. OneHotTrace does not use this ordering: its
+member order is constructed explicitly by `one_hot_trace_columns` and hashed into its
+canonical layout digest.
 
 Per-relation challenge/public sub-enums live in `protocols/jolt/ids.rs` next to every other
 relation's (house convention) and are aggregated as appended
 `JoltChallengeId`/`JoltDerivedId` variants:
 
 ```rust
-IncVirtualizationChallenge { Gamma }
-IncVirtualizationPublic    { EqRamReadWrite, EqRamValCheck,
-                             EqRegistersReadWrite, EqRegistersValEvaluation }
-UnsignedIncChunkReconstructionChallenge { Gamma }
-UnsignedIncChunkReconstructionPublic    { EqBooleanityAddress, IdentityAtAddress }
+BytecodeReadRafPublic::{StageValue, StageCycleEq} index the relation's val
+    stages 0..READ_RAF_CYCLE_STAGES (9 in lattice mode; see relation 1)
+HammingWeightClaimReductionPublic additionally includes IdentityAtAddress
 ```
 
 There is **no** `JoltOpeningId::Lattice { relation, index }` variant. Every
@@ -209,28 +199,26 @@ lattice opening is an ordinary `(polynomial, producing-relation)` pair; the
 prototype's flat-index ids obscured which polynomial an opening referred to and
 allowed the same id to denote claims at two different points.
 
-## Packed Witness Description
+## Commitment Layout
 
-The packing id is `JoltCommittedPolynomial` itself: every logical polynomial
-of a packed witness — including the precommitted bytecode lane polynomials
-and program-image
-bytes — is a (lattice-mode) committed polynomial with in-protocol openings
-(its packed claim is produced by a relation). The earlier draft's separate
-`LatticeColumn` id family, which distinguished "columns with identity" from
-"reconstruction-only columns", is gone: once the reconstructions are
-relations, every packed column has exactly one relation-produced claim and
-the two-tier distinction has nothing left to describe.
+Every native OneHotTrace column and every auxiliary packed column is identified by
+`JoltCommittedPolynomial`. The earlier draft's separate `LatticeColumn` id
+family is gone. OneHotTrace has one relation-produced claim per column at a shared
+point; auxiliary columns have one claim per prefix-packed slot.
 
-Two commitment lifecycles, two packings:
+OneHotTrace is one native Akita group; the helper below supplies its canonical
+ordered member list. Auxiliary objects use separate prefix packings:
 
 ```rust
-/// Per-proof packed commitment: trace/advice-domain columns.
-pub fn proof_packing(shape) -> PrefixPacking<JoltCommittedPolynomial>;
+/// Canonical per-proof OneHotTrace column order.
+pub fn one_hot_trace_columns(shape) -> Vec<JoltCommittedPolynomial>;
 // InstructionRa(0..I), BytecodeRa(0..B), RamRa(0..R)   log_k_chunk + log_T each
 // UnsignedIncChunk(0..N)                               log_k_chunk + log_T each
 //                       (chunk width b = log_k_chunk, N = 64 / b)
-// UnsignedIncMsb                                       log_T
-// UntrustedAdviceBytes                                 8 + 3 + advice_vars
+// UnsignedIncMsb                                       log_k_chunk + log_T
+
+// Advice columns are separate auxiliary objects, each over
+// 8 + 3 + advice_vars variables.
 
 /// Preprocessing-time packed commitment (committed-program mode).
 pub fn precommitted_packing(shape) -> PrefixPacking<JoltCommittedPolynomial>;
@@ -251,20 +239,22 @@ logical polynomial / slot / prefix, plus each family's own dimension names —
 `(address ‖ cycle)`, `(byte ‖ place ‖ word)`, `(lane ‖ row)`):
 
 - **Boolean index order**: `(hot-value bits ‖ instance bits)`, msb-first —
-  e.g. `(byte ‖ place ‖ word)` for byte one-hots — so the instance bits are
-  always the packed point's suffix (this is what lines packed claims up on
-  shared suffix points).
-- **Boolean flag columns** are plain 0/1 columns of `log_rows` variables —
-  *not* the prototype's 2-symbol one-hot encoding. `1 − flag` is expression
+  e.g. `(byte ‖ place ‖ word)` for byte one-hots.
+- **Auxiliary public bytecode flag columns** are plain 0/1 columns of
+  `log_rows` variables —
+  *not* the prototype's two-entry one-hot encoding. `1 − flag` is expression
   algebra; spending a second cell row on it doubles cells for nothing.
 - **Non-power-of-two byte counts** (imm bytes) round the place dimension up;
   dummy place cells are zero by convention (checked offline with the rest of
   the precommitted validity).
 
-`PrefixPacking::new` sorts by descending `num_vars` then id and assigns
-power-of-two-aligned prefix slots, so `jolt-claims` performs **no offset
-arithmetic, no digesting, no dummy-cell accounting** — all of that (including
-transcript binding of the packing) is `jolt-openings`' job. The prototype's
+Every OneHotTrace column has the same arity. Relation leaves use
+`(address || cycle)` order; the native Akita members use row-major
+`(cycle || address)` order. Stage 8 applies this one permutation to every
+member and rejects unless all mapped points are identical. A protocol-owned,
+nonzero digest binds the ordered member identities and dimensions into the
+Akita setup; the proof never supplies it. `PrefixPacking` continues to assign
+slots and reduction statements for auxiliary objects. The prototype's
 `PackingWitnessLayout`/`PackingFamilySpec`/`PackingFactDomain`/
 `PackingAlphabet`/`PackingFamilyId` model (~600 lines + digests) is deleted
 with no replacement.
@@ -287,8 +277,8 @@ semantically defined by pure point-algebra helpers in `lattice/geometry.rs`:
   `(byte, place) ↦ value(byte) · 256^place` (the `ByteDecode` deriveds);
   the value half is `jolt-poly`'s `IdentityPolynomial`, the radix half the
   local `place_value_weight`.
-- `selector_block_weight(lane_point, block_start, symbol_point, symbols)` —
-  a selector block's lane-eq weights as a symbol-variable multilinear (the
+- `selector_block_weight(lane_point, block_start, address_point, addresses)` —
+  a selector block's lane-eq weights as an address-variable multilinear (the
   `RegisterSelectorWeight`/`LookupSelectorWeight` deriveds).
 - The `LaneWeight(lane)` deriveds of the direct 0/1 flag lanes are plain
   `jolt-poly` `eq_index_msb(lane_point, lane)` — no lattice helper.
@@ -307,31 +297,55 @@ prototype; every relation below is a `SymbolicSumcheck` impl with typed
 `#[derive(InputClaims/OutputClaims/SumcheckChallenges)]` structs, exactly like
 the existing `relations/**` modules.
 
-### 1. `IncVirtualization` (replaces `IncClaimReduction` in lattice mode)
+### 1. Fused-inc consumer stages inside the bytecode read-RAF
 
 A cycle writes RAM (store) or a register, never both, so one inc stream
-suffices — this halves the one-hot column count ("fused polys").
+suffices — this halves the one-hot column count ("fused polys"). The four
+reduced inc claims are discharged *inside* the lattice bytecode read-RAF
+(`lattice/relations/read_raf.rs`), with no standalone sumcheck and no
+store-selector opening. The load-bearing substitution: bytecode `ra` is
+one-hot per cycle, so
 
-- **Inputs** (same four consumed claims as base `IncClaimReduction`):
-  `RamInc@RamReadWriteChecking`, `RamInc@RamValCheck`,
-  `RdInc@RegistersReadWriteChecking`, `RdInc@RegistersValEvaluation`.
-- **Outputs**: `FusedInc` (virtual) and `OpFlags(Store)`, both at the bound
-  cycle point. Using the existing store circuit-flag polynomial as the
-  selector means its opening is bound to the actual bytecode by the same
-  read-raf val-stage machinery that binds every other flag consumer
-  (`LATTICE_BYTECODE_VAL_STAGES = NUM_BYTECODE_VAL_STAGES + 1` names the extra
-  stage) — no dedicated store-binding relation exists.
-- **Input expr**: `ram_rw + γ·ram_val + γ²·rd_rw + γ³·rd_val`.
-- **Output expr**:
-  `FusedInc · (ram_coeff·store + γ²·rd_coeff·(1 − store))` where
-  `ram_coeff = EqRamReadWrite + γ·EqRamValCheck`,
-  `rd_coeff = EqRegistersReadWrite + γ·EqRegistersValEvaluation` (deriveds).
-- degree 3, `log_T` rounds.
+```text
+Store(j)  = Σ_k val_store(k) · RA(k, j)
+RamInc(j) = FusedInc(j) · Store(j)
+RdInc(j)  = FusedInc(j) · (1 − Store(j))
+```
+
+turns each inc claim into a read-raf-shaped val stage — a bytecode val column
+(`store` / `¬store`), the producing relation's cycle point, and the shared RA
+product — with one shared `FusedInc` cycle factor. The four consumer stages
+join the address-phase input fold at `γ^5..8` (the pc/shift/entry terms shift
+to `γ^9..11`):
+
+```text
+stage 5: (store,     RamInc@RamReadWriteChecking's cycle point)
+stage 6: (store,     RamInc@RamValCheck's cycle point)
+stage 7: (1 − store, RdInc@RegistersReadWriteChecking's cycle point)
+stage 8: (1 − store, RdInc@RegistersValEvaluation's cycle point)
+```
+
+All four input claims exist before stage 6a (stages 2/4/5 produce them), so
+the fold has no timing constraint. Two counts, easy to conflate, are kept
+distinct in code:
+
+- `READ_RAF_CYCLE_STAGES = 9` in lattice mode (5 base flag stages + the 4
+  fused consumers): one cycle point / cycle-eq public per relation stage;
+- `NUM_BYTECODE_VAL_STAGES = 6` (5 base staged values + the raw `Store`
+  column): the committed-mode staged-value *wire* count. The fused stages
+  resolve through the store wire and its complement (`1 − store`), so
+  committed mode adds no staged-value wires.
+
+The `FusedInc` factor raises the cycle-phase degree by one (`d + 2` over the
+base `d + 1`). The cycle phase binds the shared stage-6b batch challenges, so
+its `FusedInc` opening lands directly at the 6b cycle point — the point
+stage 7 consumes — as the relation's own output claim alongside the
+`BytecodeRa` openings.
 
 There is no separate unsigned-shift relation: `+2^64` is a constant, hence
-free at any opening point, and is folded into the reconstruction's value leg
-below. (The prototype spent a `log_T`-round sumcheck on it, with no eq
-factor in its output — structurally unsound as written; dropped.)
+free at any opening point, and is folded into the Stage 7 decode leg below.
+There is also no second point-alignment sumcheck: the opening is born at the
+shared point.
 
 ### 2. Lattice `Booleanity` (same `JoltRelationId::Booleanity`)
 
@@ -340,42 +354,46 @@ extended with the `UnsignedIncChunk(0..N)` columns and the `UnsignedIncMsb`
 booleanity term. Precedent: the full/committed bytecode modes already share
 relation ids across variant sumcheck structs. The base
 `relations/booleanity/*` files stay untouched; the lattice variant reuses the
-base geometry helpers. Produces chunk openings at the booleanity
-`(r_address, r_cycle)` point.
+base geometry helpers. Every increment column, including the MSB, is a full
+`K x T` one-hot column and produces an opening at the common
+`(r_address, r_cycle)` point. For each cycle the MSB row is `[1,0,...]` or
+`[0,1,0,...]`.
 
-### 3. `UnsignedIncChunkReconstruction`
+### 3. Lattice `HammingWeightClaimReduction` (Stage 7)
 
-One sumcheck over the `b` address bits of a chunk, γ-batching three duties:
+The existing RA hamming-weight claim reduction is extended, on the Akita path
+only, with the increment columns. One sumcheck over the `b = log_K` address
+bits batches:
 
-- **hamming weight**: each chunk column sums to exactly 1 per cycle row
-  (the `γ^{2i}` constant legs),
+- **hamming weight**: every increment chunk and the MSB has exactly one hot
+  address per cycle row,
 - **claim reduction**: reduces the chunk openings produced by lattice
-  Booleanity to the reconstruction's bound address point (the `γ^{2i+1}` legs
-  against the `EqBooleanityAddress` derived),
-- **value reconstruction**: `Σ_j place_j · symbol(chunk_j) = FusedInc +
-  2^64·(1 − msb)` — the folded unsigned shift (the `δ = γ^{2N}` leg against
-  the `IdentityAtAddress` derived).
+  Booleanity to Stage 7's bound address point, and
+- **value reconstruction**:
+  `Σ_j 2^(b*j) * address(chunk_j) + 2^64 * address(msb)
+   = FusedInc + 2^64`.
 
-- **Inputs**: `FusedInc@IncVirtualization`, `UnsignedIncMsb@Booleanity`,
+- **Inputs**: `FusedInc@BytecodeReadRaf` (the read-raf cycle phase's own
+  output, already at the shared 6b cycle point), `UnsignedIncMsb@Booleanity`,
   `UnsignedIncChunk(j)@Booleanity`.
-- **Outputs**: `UnsignedIncChunk(j)` at the final shared address point.
-- degree 2, `b` rounds. Draws `Gamma`. (Per bound variable every leg is at
-  most a product of two multilinears — `eq·chunk`, `id·chunk` — so the round
-  polynomials are quadratic; the prototype's degree 3 was slack.)
+- **Outputs**: every RA, increment chunk, and MSB opening at the same full
+  `(r_address, r_cycle)` point.
+- degree 2, `b` rounds, using the existing hamming batching challenge.
 
-The prototype reused one flat opening id for a chunk's claims at *two
-different points* (booleanity-bound and reconstruction-bound). The typed
-`from =` attributes make that distinction structural here.
+There is no standalone increment reconstruction and no additional alignment
+sumcheck after Stage 7.
 
 ### 4. Store binding (via the existing flag plumbing)
 
 The selector must equal the bytecode `Store` circuit-flag column, else a
-malicious prover could route increments to the wrong destination. Because the
-selector *is* `OpFlags(Store)`, the binding is the ordinary flag-opening
-plumbing: the lattice-mode bytecode read-raf batch grows one val stage
-(`LATTICE_BYTECODE_VAL_STAGES`) carrying the `OpFlags(Store)@IncVirtualization`
-claim at its cycle point, exactly as the spartan-outer/shift flag claims enter
-(this is what the prototype's `bind_store` sixth stage was). The offline
+malicious prover could route increments to the wrong destination. The binding
+is structural: the fused consumer stages never open a selector at all — they
+substitute `Σ_k val_store(k)·RA(k, j)` (and its complement) directly, where
+`val_store` is the bytecode store column itself. The raw `Store` column stays
+the sixth staged-value wire in committed-program mode
+(`NUM_BYTECODE_VAL_STAGES = 6`), proven against the committed image by the
+bytecode claim reduction like the other staged values; in full-program mode
+the verifier folds it from the public bytecode. The offline
 store/rd-disjointness check on the public bytecode (`Store` and rd-writing
 selectors never co-occur) completes the argument that per cycle exactly one of
 RAM/registers receives the fused increment.
@@ -408,8 +426,8 @@ Trusted advice shares the byte encoding but is precommitted by a party the
 verifier trusts, so no validity legs are spent — only the decode leg, which
 is still required in-protocol (a weighted sum over cells is not an
 evaluation, and there is no homomorphism to fold it away). Binds the
-`(byte ‖ place)` prefix only; the word point is fixed by the incoming claim,
-mirroring how the chunk reconstruction fixes `r_cycle`. Inputs
+`(byte ‖ place)` prefix only; the word point is fixed by the incoming claim.
+Inputs
 `trusted_advice@AdviceClaimReduction`; outputs `TrustedAdviceBytes` at
 `(bound prefix ‖ r_word)` (`ByteDecode` derived). degree 2, `8 + 3` rounds,
 no challenges.
@@ -445,40 +463,30 @@ would emit.
 
 ## Packed-Claim Invariants and Final Openings
 
-What `jolt-openings::prepare_statement` machine-checks is exactly: every
-claim's point length equals its slot's `num_vars`, **one claim per slot**,
-and every slot claimed. The packed-opening reduction itself supports
-*distinct* points per slot (the single opening point is fresh sumcheck
-randomness), so — correcting this spec's earlier draft — equal-variable-count
-columns are **not** required to share a point for correctness.
+OneHotTrace's native batch requires one evaluation per committed column at exactly
+one point. Stage 7 therefore lands all RA, increment chunk, and MSB claims at
+the same `(address || cycle)` point, after which Stage 8 applies the common
+row-major permutation. Any missing member, arity mismatch, or point mismatch
+is rejected before the native Akita verifier runs.
 
-Two consequences:
-
-- **One claim per slot is the load-bearing invariant.** It is why the
-  untrusted-advice validity legs and the word-decode leg are one relation
-  (relation 5), and why every packed column has exactly one producing
-  relation in the final-opening map below.
-- **Point sharing is a prover/verifier optimization**, not a requirement:
-  landing the chunk columns on the `Ra` families' shared
-  `(r_address ‖ r_cycle)` point (chunk width fixed at `b = log_k_chunk`, the
-  `EqBooleanityAddress` leg) keeps the packed-opening eq work down and stays
-  the intended schedule. `jolt-verifier` owns batching, staging, and any
-  co-binding; `jolt-claims` carries no stage assignments.
+Auxiliary packed objects retain the `PrefixPacking` invariant: one claim per
+slot, every slot claimed, with the generic reduction handling distinct points.
 
 **Padding invariant**: the hamming legs claim "exactly one hot cell per row"
 summed over the *full* Boolean hypercube, so padding rows must be encoded as
-the one-hot of value 0 — never as all-zero cells. This applies to inc-chunk
-rows beyond the trace length and advice byte positions beyond the actual
+the canonical shifted-zero encoding — never as all-zero cells. For fused
+increment zero, every chunk is hot at address zero and the MSB is hot at
+address one because the encoded value is `2^64`. This also applies to advice
+byte positions beyond the actual
 advice size (and, by the offline checks, to padded bytecode/program-image
 rows). All-zero padding would falsify the claimed input sums (`1` per chunk
 row, `γ` for the advice column).
 
 `lattice/packing.rs` is the single source of truth for the endgame:
 
-A polynomial's **final claim** is the one claim left on it when the relation
-DAG bottoms out — consumed by the packed opening (as its slot's single
-`EvaluationClaim`) rather than by another relation. `Virtualized` polynomials
-have none: every claim on them is consumed by a lattice relation.
+A polynomial's **final claim** is the one claim left when the relation DAG
+bottoms out. OneHotTrace final claims feed the native batch; auxiliary claims feed
+their packed reductions. `Virtualized` polynomials have none.
 
 ```rust
 pub enum LatticeFinalOpening {
@@ -491,14 +499,15 @@ pub enum LatticeFinalOpening {
 }
 
 pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening;
-// RdInc, RamInc                  -> Virtualized (via IncVirtualization chain)
-// TrustedAdvice/UntrustedAdvice  -> Virtualized (via relations 5/6)
-// BytecodeChunk(i)               -> Virtualized (via relation 8)
-// ProgramImageInit               -> Virtualized (via relation 7)
+// RdInc, RamInc                  -> Virtualized (discharged by the read-raf
+//                                   fused consumer stages)
+// TrustedAdvice/UntrustedAdvice  -> Virtualized (via relations 6/7)
+// BytecodeChunk(i)               -> Virtualized (via relation 9)
+// ProgramImageInit               -> Virtualized (via relation 8)
 // InstructionRa/BytecodeRa/RamRa -> Packed, from HammingWeightClaimReduction
-// UnsignedIncChunk(j)            -> Packed, from UnsignedIncChunkReconstruction
-// UnsignedIncMsb                 -> Packed, from Booleanity
-// {Un}trustedAdviceBytes         -> Packed, from relation 5/6
+// UnsignedIncChunk(j)            -> Packed, from HammingWeightClaimReduction
+// UnsignedIncMsb                 -> Packed, from HammingWeightClaimReduction
+// {Un}trustedAdviceBytes         -> Packed, from relation 6/7
 // bytecode lane polynomials      -> Packed, from BytecodeChunkReconstruction
 // ProgramImageBytes              -> Packed, from ProgramImageReconstruction
 ```
@@ -511,19 +520,19 @@ polynomial→relation mapping: the final claims are derived from it
 This replaces both the prototype's `final_opening_lattice_requirement` and the
 base stage-8 RLC order for lattice mode.
 
-## Verifier Integration Sketch (future work, not this change)
+## Verifier and Prover Schedule
 
-- `JoltProtocolConfig` gains a commitment-mode axis (`Homomorphic` vs
-  `Packed`/lattice), mirroring how `ZkConfig` gates BlindFold.
-- Stage schedule swaps, all at existing seams: `IncClaimReduction` →
-  `IncVirtualization` (+ chain), base `Booleanity` → lattice `Booleanity`,
-  bytecode read-raf → store-binding variants, stage-8 RLC batch →
-  `PrefixPackedStatement` opening through `jolt-openings` + `jolt-akita`.
-- Each lattice relation gets a `ConcreteSumcheck` impl (deriveds: the eq/lt
-  and identity evaluations), identical in shape to existing stage relations.
-
-Nothing in `jolt-claims` presumes any of this beyond the `SymbolicSumcheck`
-contract.
+- Stage 6a's bytecode read-RAF address fold consumes the four reduced inc
+  claims (stages `γ^5..8`); no phase runs between Stages 5 and 6a.
+- Stage 6a/6b runs lattice Booleanity; Stage 6b's read-raf cycle phase carries
+  the `FusedInc` factor and produces its opening at the shared cycle point —
+  there is no separate fused-inc member.
+- Stage 7 extends `HammingWeightClaimReduction` with hamming, Booleanity, and
+  shifted-decode terms for all increment one-hot columns.
+- Stage 8 opens OneHotTrace directly with one native same-point Akita batch and runs
+  the generic packed-opening reduction only for auxiliary objects.
+- The Dory build instantiates the original Booleanity, increment claim
+  reduction, HammingWeightClaimReduction, and homomorphic final opening.
 
 ## Testing Strategy
 
@@ -531,14 +540,15 @@ contract.
   `input_expression`/`output_expression` against distinct prime values and
   assert the closed-form formula; assert `required_openings/deriveds/
   challenges` sets and opening order.
-- Reconstruction identity test: for random u64 values, `Σ place_j ·
-  symbol(chunk_j) + 2^64·msb − 2^64` round-trips the signed value.
+- Reconstruction identity test: for random signed values,
+  `Σ 2^(b*j)·address(chunk_j) + 2^64·address(msb) − 2^64`
+  round-trips the value.
 - Semantic integration tests (`tests/lattice_semantics.rs`) over concrete
-  witness data: every packed column reads back through its slot
-  (`P_i(x) = W(prefix_i ‖ x)`); the chunk decomposition reconstructs signed
-  increments (padding rows included); the lane/advice reconstruction terms reproduce
-  the committed evaluations.
-- Determinism: `proof_packing`/`precommitted_packing` are pure functions of
+  witness data: every OneHotTrace column is a uniform `K x T` one-hot polynomial;
+  the chunk/MSB decomposition reconstructs signed increments including
+  padding; auxiliary lane/advice reconstruction terms reproduce the committed
+  evaluations.
+- Determinism: `one_hot_trace_columns`/`precommitted_packing` are pure functions of
   shape (golden test), and every packed proof column has a claim source.
 
 ## Dropped From the Prototype (jolt-claims-ref) and Why
@@ -550,7 +560,7 @@ contract.
 | `JoltOpeningId::Lattice { relation, index }` | deleted | untyped; hid polynomial identity and point identity |
 | `PackingValidityRequirement`/`PackingValidityKind` + digest | deleted | validity is not metadata; it is the validity **relations** (prover-supplied columns) or an **offline preprocessing check** (public precommitted columns) |
 | `PackingViewFormula`/`PackingViewTerm` | deleted | briefly survived as `ReconstructionTerm` lists, then replaced outright by the reconstruction *relations* (5–8) + the decode-weight point algebra; provenness follows from the column's validity story |
-| 2-symbol boolean-flag encoding | replaced | plain 0/1 columns of `log_rows` variables; `1 − flag` is expression algebra, and the packed witness stays 0/1 |
+| two-entry one-hot boolean-flag encoding | replaced for auxiliary public bytecode flags | plain 0/1 columns of `log_rows` variables; `1 − flag` is expression algebra, and the auxiliary commitment stays 0/1. The increment MSB is not such a flag: it is a full `K x T` OneHotTrace one-hot column. |
 | bytecode store-rd-disjoint, canonical imm bytes, sub-column one-hot validity | moved offline | public precommitted data; the verifier checks structure at preprocessing instead of spending relations |
 | Public→Challenge enum migration (EqCycle etc.) | not ported | orthogonal to lattice; main's Derived model already covers it |
 | eq-polynomial / coefficient materialization helpers | not ported | belongs to verifier/witness crates per the boundary contract |

@@ -36,6 +36,7 @@ pub struct ProgramImageReductionCyclePhaseInputClaims<C> {
 /// `ProgramImageInitContributionRw` scalar to either the cycle-phase
 /// intermediate opening (when an address phase follows) or directly to the
 /// final committed `ProgramImageInit` opening scaled by `FinalScale`.
+#[derive(Clone)]
 pub struct CyclePhase {
     shape: PrecommittedReductionDimensions,
 }

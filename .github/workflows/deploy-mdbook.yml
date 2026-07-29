@@ -9,7 +9,7 @@ jobs:
   deploy_gcloud:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
     - uses: dtolnay/rust-toolchain@stable
 
     - id: 'auth'
@@ -26,7 +26,8 @@ jobs:
         mdbook-version: '0.4.10'
 
     - name: Install mdbook-katex
-      run: cargo install mdbook-katex
+      # 0.9.4 is the last release compatible with mdbook 0.4.x; 0.10+ targets mdbook 0.5
+      run: cargo install mdbook-katex --version 0.9.4 --locked
 
     - run: mdbook build ./book
 
@@ -36,14 +37,15 @@ jobs:
   deploy_firebase:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: '0.4.10'
       - name: Install mdbook-katex
-        run: cargo install mdbook-katex
+        # 0.9.4 is the last release compatible with mdbook 0.4.x; 0.10+ targets mdbook 0.5
+        run: cargo install mdbook-katex --version 0.9.4 --locked
 
       - run: mdbook build ./book
 

@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
 use crate::{InputClaims, OutputClaims};
 
 /// The cycle-phase produced openings: the per-chunk committed `BytecodeRa` claims,
@@ -23,6 +24,11 @@ pub struct BytecodeReadRafInputClaims<C> {
     #[opening(BytecodeReadRafAddrClaim, from = BytecodeReadRaf)]
     pub address_phase: C,
 }
+
+/// The cycle-phase shape: the read-raf dimensions plus the staged-val count
+/// the output fold spans — five in base mode, six in lattice mode (the
+/// store stage, with the RAF and entry publics shifted past it).
+pub type BytecodeReadRafCycleShape = (BytecodeReadRafDimensions, usize);
 
 mod read_raf;
 mod read_raf_address_phase;

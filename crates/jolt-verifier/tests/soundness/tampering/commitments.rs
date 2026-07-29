@@ -38,7 +38,7 @@ fn tampered_commitment_count_reject() {
         tamper_manifest::required_target("proof.commitments.missing"),
         &base,
         |case| {
-            let _ = case.proof.commitments.ra.bytecode.pop();
+            let _ = case.proof.commitments.bytecode_ra.pop();
         },
     );
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
@@ -47,8 +47,7 @@ fn tampered_commitment_count_reject() {
         |case| {
             case.proof
                 .commitments
-                .ra
-                .bytecode
+                .bytecode_ra
                 .push(case.proof.commitments.ram_inc.clone());
         },
     );

@@ -46,6 +46,7 @@ pub fn registers_read_write_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RegistersReadWriteChecking<F: Field> {
     symbolic: relations::registers::ReadWriteChecking,
     register_dimensions: ReadWriteDimensions,
@@ -59,6 +60,10 @@ impl<F: Field> RegistersReadWriteChecking<F> {
             register_dimensions,
             _field: core::marker::PhantomData,
         }
+    }
+
+    pub fn register_dimensions(&self) -> ReadWriteDimensions {
+        self.register_dimensions
     }
 }
 

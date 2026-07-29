@@ -89,24 +89,30 @@ where
 fn stage1_spartan_outer_output_expr<F: Field>(
     openings: &[JoltVirtualPolynomial],
 ) -> VerifierExpr<F> {
-    let mut output = VerifierExpr::zero();
-    for left in 0..openings.len() {
-        for right in 0..openings.len() {
-            output = output
-                + derived(VerifierPublicId::SpartanOuter(
-                    JoltSpartanOuterPublic::QuadraticCoefficient { left, right },
-                )) * opening(outer_opening(openings[left]))
-                    * opening(outer_opening(openings[right]));
-        }
-    }
+    // The factored quadratic form, mirroring the jolt-claims relation: each
+    // derived leaf one constituent multilinear.
+    let mut az = VerifierExpr::zero();
+    let mut bz = VerifierExpr::zero();
     for (index, variable) in openings.iter().copied().enumerate() {
-        output = output
+        az = az
             + derived(VerifierPublicId::SpartanOuter(
-                JoltSpartanOuterPublic::LinearCoefficient(index),
+                JoltSpartanOuterPublic::AzWeight(index),
+            )) * opening(outer_opening(variable));
+        bz = bz
+            + derived(VerifierPublicId::SpartanOuter(
+                JoltSpartanOuterPublic::BzWeight(index),
             )) * opening(outer_opening(variable));
     }
-    output
+    az = az
         + derived(VerifierPublicId::SpartanOuter(
-            JoltSpartanOuterPublic::ConstantCoefficient,
-        ))
+            JoltSpartanOuterPublic::AzConstant,
+        ));
+    bz = bz
+        + derived(VerifierPublicId::SpartanOuter(
+            JoltSpartanOuterPublic::BzConstant,
+        ));
+    derived(VerifierPublicId::SpartanOuter(
+        JoltSpartanOuterPublic::TauKernel,
+    )) * az
+        * bz
 }

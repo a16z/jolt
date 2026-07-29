@@ -29,7 +29,7 @@ mod tests;
 
 pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
-pub use grammar::ExpandedInstructionSequence;
+pub use grammar::{is_source_only, ExpandedInstructionSequence};
 pub use inline::{
     InlineExpansionBuilder, InlineInstruction, InlineOperands, InlineRegister, Value,
 };

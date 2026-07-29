@@ -447,6 +447,11 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // Expected hashes generated from baseline main commit 51d81a36e. This catches
     // recursive expansion order and virtual-register reuse regressions without
     // checking a giant expanded-row fixture into the repository.
+    //
+    // 16 of the 360 hashes were re-baselined when `expand_address` began wrapping
+    // its offset through `format_i_imm`: exactly the `imm = -8` cases for LH/LHU/
+    // LW/LWU/SH/SW, the accesses that emit an alignment assert. Byte accesses
+    // (no assert) and non-negative offsets (wrap is the identity) are unchanged.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
 

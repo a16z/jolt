@@ -1,6 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 6a (address-phase)
 //! verification.
 
+use jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -27,20 +28,29 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// canonical Fiat-Shamir order.
 ///
 /// The bytecode read-RAF member's wire set extends its output `Expr` with the
-/// committed-program-only staged `BytecodeValStage` openings (see its
+/// committed-program-only staged `BytecodeValClaim` openings (see its
 /// `wire_output_openings` override), so the generated output-shape
 /// count/validator cover the val-stage presence and count.
+///
+/// The generated `draw_challenges` draws each member in declaration order —
+/// the bytecode member's six gammas (its default per-field draw), then the
+/// booleanity member's `draw_challenges` override (the reference-address pad
+/// draw and the gamma; the reference vectors derive from the stage-5
+/// instruction point the relation carries as construction geometry) —
+/// reproducing the pre-batch draw schedule squeeze-for-squeeze, so both fronts
+/// call it directly.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage6aSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,
 }
 
-/// The stage-6a Fiat-Shamir draws sampled before/around the address-phase batch
-/// but consumed only by stage 6b. The prover's booleanity subprotocol samples its
+/// The stage-6a Fiat-Shamir draws sampled by the batch's `draw_challenges` but
+/// consumed downstream too. The prover's booleanity subprotocol samples its
 /// gamma (and the reference-address padding) before the 6a batch runs, and the
-/// per-stage folding gammas are drawn with the 6a batch's bytecode fold; only
-/// stage 6b's members consume them, so 6a carries them downstream as typed
+/// per-stage folding gammas are drawn with the 6a batch's bytecode fold; stage
+/// 6b's members consume them as well, so 6a carries them downstream as typed
 /// upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6aCarriedChallenges<F: Field> {
@@ -48,13 +58,28 @@ pub struct Stage6aCarriedChallenges<F: Field> {
     /// per-stage gammas), verbatim. Consumers folding with power vectors expand
     /// them via `stage_gamma_powers`.
     pub bytecode_read_raf: BytecodeReadRafAddressPhaseChallenges<F>,
-    pub booleanity_reference_address: Vec<F>,
-    pub booleanity_reference_cycle: Vec<F>,
-    pub booleanity_gamma: F,
+    /// The booleanity address-phase draws (the reference address vector and
+    /// the gamma), verbatim. The reference cycle is not carried: it is
+    /// construction geometry (the reversed stage-5 instruction cycle, no draw
+    /// of its own), rederived by its consumers from the stage-5 point.
+    pub booleanity: BooleanityAddressPhaseChallenges<F>,
+}
+
+impl<F: Field> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
+    fn from(challenges: &Stage6aChallenges<F>) -> Self {
+        Self {
+            bytecode_read_raf: challenges.bytecode_read_raf,
+            booleanity: challenges.booleanity.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6aClearOutput<F: Field> {
+    /// The produced address-phase opening *values* (the staged intermediates
+    /// and, in committed-program mode, the `BytecodeValClaim` claims), read by
+    /// stage 6b as its bytecode/booleanity input claims.
+    pub output_values: Stage6aOutputClaims<F>,
     /// The produced address-phase opening *points*, read by stage 6b to construct
     /// the cycle-phase batch.
     pub output_points: Stage6aOutputPoints<F>,
@@ -93,6 +118,13 @@ impl<F: Field, C> Stage6aOutput<F, C> {
         match self {
             Self::Clear(output) => &output.challenges,
             Self::Zk(output) => &output.challenges,
+        }
+    }
+
+    pub fn clear(&self) -> Result<&Stage6aClearOutput<F>, crate::VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage6a" }),
         }
     }
 

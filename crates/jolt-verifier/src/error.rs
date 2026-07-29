@@ -74,18 +74,15 @@ pub enum VerifierError {
     #[error("missing stage claim public input {id:?}")]
     MissingStageClaimDerived { id: JoltDerivedId },
 
-    #[error("stage {stage:?} opening inputs {left:?} and {right:?} must have the same evaluation")]
+    #[error("stage {stage} opening inputs {left:?} and {right:?} must have the same evaluation")]
     StageClaimOpeningMismatch {
-        stage: JoltRelationId,
+        stage: String,
         left: JoltOpeningId,
         right: JoltOpeningId,
     },
 
-    #[error("stage {stage:?} sumcheck verification failed: {reason}")]
-    StageClaimSumcheckFailed {
-        stage: JoltRelationId,
-        reason: String,
-    },
+    #[error("stage {stage} sumcheck verification failed: {reason}")]
+    StageClaimSumcheckFailed { stage: String, reason: String },
 
     #[error("stage {stage:?} public claim construction failed: {reason}")]
     StageClaimPublicInputFailed {

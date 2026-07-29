@@ -7,4 +7,4 @@ pub mod spartan_shift;
 mod verify;
 
 pub use outputs::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints, Stage3ZkOutput};
-pub use verify::verify;
+pub use verify::{stage3_input_values_from_upstream, verify};

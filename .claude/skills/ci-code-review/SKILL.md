@@ -99,7 +99,6 @@ Follow these steps:
    ```
 
    Key points:
-   - Always POST the review, even with an empty `comments` array, so authors see the review ran.
    - Use a heredoc with `'EOF'` (quoted) to prevent shell interpolation of `$`, backticks, etc.
    - The `line` field refers to the NEW file line number (right side of diff) for added/modified lines.
    - Get the head SHA via `gh api repos/{owner}/{repo}/pulls/{number} --jq '.head.sha'`.
@@ -139,5 +138,3 @@ Follow these steps:
 
 - Do NOT run builds/tests - CI handles that
 - Use `gh` for all GitHub interaction
-- When posting comments, post them to the specific lines of code
-- Make a todo list to track progress

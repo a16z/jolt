@@ -424,13 +424,7 @@ fn collect_guest_proofs(
             jolt_sdk::VerifierPCS,
             jolt_sdk::VerifierVC,
             jolt_sdk::VerifierTranscript,
-        >(
-            &guest_verifier_preprocessing,
-            &io_device,
-            &proof,
-            None,
-            proof.claims.is_zk(),
-        )
+        >(&guest_verifier_preprocessing, &io_device, &proof, None)
         .is_ok();
         info!("  Verification result: {is_valid}");
     }
@@ -598,19 +592,14 @@ fn run_recursion_proof(
                     &recursion_prover_preprocessing,
                 )
                 .expect("prover should produce verifier-native proof");
-            let is_valid = jolt_sdk::jolt_verifier::verify::<
-                jolt_sdk::VerifierField,
-                jolt_sdk::VerifierPCS,
-                jolt_sdk::VerifierVC,
-                jolt_sdk::VerifierTranscript,
-            >(
-                &recursion_verifier_preprocessing,
-                &io_device,
-                &proof,
-                None,
-                proof.claims.is_zk(),
-            )
-            .is_ok();
+            let is_valid =
+                jolt_sdk::jolt_verifier::verify::<
+                    jolt_sdk::VerifierField,
+                    jolt_sdk::VerifierPCS,
+                    jolt_sdk::VerifierVC,
+                    jolt_sdk::VerifierTranscript,
+                >(&recursion_verifier_preprocessing, &io_device, &proof, None)
+                .is_ok();
             let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
             info!("  Recursion verification result: {rv}");
             info!("  Recursion verification result: {is_valid}");

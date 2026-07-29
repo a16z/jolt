@@ -8,4 +8,4 @@ pub use instruction_read_raf::{InstructionReadRaf, InstructionReadRafOutputClaim
 pub use outputs::{Stage5Output, Stage5OutputClaims, Stage5OutputPoints, Stage5ZkOutput};
 pub use ram_ra_claim_reduction::RamRaClaimReductionOutputClaims;
 pub use registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationOutputClaims};
-pub use verify::verify;
+pub use verify::{stage5_input_points_from_upstream, stage5_input_values_from_upstream, verify};

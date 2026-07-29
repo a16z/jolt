@@ -58,6 +58,15 @@ impl CanonicalRepr for AkitaField {
     }
 
     #[inline]
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        // Scalar challenges match the legacy transcript convention: digest bytes
+        // are interpreted as a big-endian integer before reduction.
+        let mut buf = bytes.to_vec();
+        buf.reverse();
+        <Self as akita_field::ReducingBytes>::from_le_bytes_mod_order(&buf)
+    }
+
+    #[inline]
     fn to_canonical_u64_checked(&self) -> Option<u64> {
         <Self as akita_field::CanonicalU64>::to_canonical_u64_checked(self)
     }

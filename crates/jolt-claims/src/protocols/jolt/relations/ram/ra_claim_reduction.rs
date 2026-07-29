@@ -50,6 +50,7 @@ pub struct RamRaClaimReductionChallenges<F> {
 /// The RAM `ra` claim-reduction sumcheck: folds the three `ra` openings (RAF,
 /// read/write, val-check) by `gamma` on the input side, and matches the reduced
 /// `ra` opening weighted by the matching cycle-`eq` publics on the output side.
+#[derive(Clone)]
 pub struct RaClaimReduction {
     shape: TraceDimensions,
 }

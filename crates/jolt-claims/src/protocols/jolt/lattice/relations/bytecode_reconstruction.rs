@@ -49,13 +49,13 @@ pub struct BytecodeReconstructionDimensions {
 
 /// The consumed chunk claims: the base bytecode reduction's terminus, all
 /// chunks at one shared point.
-#[derive(Clone, Debug, InputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeChunkReconstructionInputClaims<C> {
     #[opening(committed = BytecodeChunk, from = BytecodeClaimReduction)]
     pub chunks: Vec<C>,
 }
 
-#[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 pub struct BytecodeChunkReconstructionChallenges<F> {
     #[challenge(BytecodeChunkReconstructionChallenge::Gamma)]
     pub gamma: F,
@@ -119,7 +119,7 @@ impl<C> BytecodeChunkReconstructionOutputClaims<C> {
     /// pairs one-for-one with this by construction (one lookup selector per
     /// chunk fixes the chunk count; the assert keeps a malformed family from
     /// silently shifting every later id).
-    fn leaves(&self) -> impl Iterator<Item = (JoltOpeningId, &C)> {
+    pub fn leaves(&self) -> impl Iterator<Item = (JoltOpeningId, &C)> {
         let chunks = self.lookup_selectors.len();
         debug_assert_eq!(
             self.register_selectors.len(),
@@ -149,6 +149,58 @@ impl<F: jolt_field::Field> OutputClaims<F> for BytecodeChunkReconstructionOutput
         self.leaves().map(|(id, _)| id).collect()
     }
 
+    fn from_opening_values(
+        mut resolve: impl FnMut(&JoltOpeningId) -> Option<F>,
+    ) -> Result<Self, crate::MissingOpeningValue<JoltOpeningId>> {
+        // The chunk count is instance data; probe it through the
+        // one-per-chunk lookup-selector family, then size every other family
+        // from it (the same invariant `leaves()` debug-asserts).
+        let mut chunks = 0usize;
+        while resolve(&bytecode_lookup_selector_opening(chunks)).is_some() {
+            chunks += 1;
+        }
+        let mut get = |id: JoltOpeningId| resolve(&id).ok_or(crate::MissingOpeningValue { id });
+        Ok(Self {
+            register_selectors: (0..chunks)
+                .flat_map(|chunk| {
+                    BytecodeRegisterLane::ALL
+                        .map(|lane| bytecode_register_selector_opening(chunk, lane))
+                })
+                .map(&mut get)
+                .collect::<Result<_, _>>()?,
+            circuit_flags: (0..chunks)
+                .flat_map(|chunk| {
+                    (0..NUM_CIRCUIT_FLAGS)
+                        .map(move |flag| bytecode_circuit_flag_opening(chunk, flag))
+                })
+                .map(&mut get)
+                .collect::<Result<_, _>>()?,
+            instruction_flags: (0..chunks)
+                .flat_map(|chunk| {
+                    (0..NUM_INSTRUCTION_FLAGS)
+                        .map(move |flag| bytecode_instruction_flag_opening(chunk, flag))
+                })
+                .map(&mut get)
+                .collect::<Result<_, _>>()?,
+            lookup_selectors: (0..chunks)
+                .map(bytecode_lookup_selector_opening)
+                .map(&mut get)
+                .collect::<Result<_, _>>()?,
+            raf_flags: (0..chunks)
+                .map(bytecode_raf_flag_opening)
+                .map(&mut get)
+                .collect::<Result<_, _>>()?,
+            pc_bytes: (0..chunks)
+                .map(bytecode_unexpanded_pc_bytes_opening)
+                .map(&mut get)
+                .collect::<Result<_, _>>()?,
+            imm_bytes: (0..chunks)
+                .map(bytecode_imm_bytes_opening)
+                .map(&mut get)
+                .collect::<Result<_, _>>()?,
+        })
+    }
+
     /// One pass instead of the default's per-id linear re-resolution — this
     /// is the largest claim struct in the system.
     fn opening_values(&self) -> Vec<F> {
@@ -162,6 +214,7 @@ impl<F: jolt_field::Field> OutputClaims<F> for BytecodeChunkReconstructionOutput
     }
 }
 
+#[derive(Clone)]
 pub struct BytecodeChunkReconstruction {
     shape: BytecodeReconstructionDimensions,
 }

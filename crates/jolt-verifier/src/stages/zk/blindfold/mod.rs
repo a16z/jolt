@@ -402,11 +402,15 @@ where
     )
 }
 
+#[expect(
+    clippy::type_complexity,
+    reason = "the three RAM output-check publics (eq, mask, val_io)"
+)]
 fn ram_output_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     output_address_challenges: &[PCS::Field],
     ram_output_address: &[PCS::Field],
-) -> Result<(PCS::Field, PCS::Field), VerifierError>
+) -> Result<(PCS::Field, PCS::Field, PCS::Field), VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -591,7 +595,7 @@ where
         ),
         (
             BooleanityChallenge::Gamma.into(),
-            input.stage6a.challenges.booleanity_gamma,
+            input.stage6a.challenges.booleanity.gamma,
         ),
         (
             InstructionRaVirtualizationChallenge::Gamma.into(),
@@ -665,9 +669,9 @@ where
                 r_address: &bytecode_r_address,
                 r_cycle: &bytecode_r_cycle,
                 stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
+                    stage1_cycle.as_slice(),
+                    stage2_cycle.as_slice(),
+                    stage3_cycle.as_slice(),
                     stage4_cycle,
                     stage5_cycle,
                 ],
@@ -740,20 +744,16 @@ where
         .batch_consistency
         .try_instance_point(booleanity_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
+    // The (little-endian) reference cycle is the reversed stage-5 instruction
+    // cycle, so its big-endian form here is the stage-5 point itself.
     let reference_eq_point = input
         .stage6a
         .challenges
-        .booleanity_reference_address
+        .booleanity
+        .reference_address
         .iter()
         .rev()
-        .chain(
-            input
-                .stage6a
-                .challenges
-                .booleanity_reference_cycle
-                .iter()
-                .rev(),
-        )
+        .chain(input.stage5.output_points.instruction_r_cycle().iter())
         .copied()
         .collect::<Vec<_>>();
     let booleanity_full_point = [
@@ -1143,7 +1143,7 @@ fn stage_sumcheck_error<F: Field>(
     error: jolt_sumcheck::SumcheckError<F>,
 ) -> VerifierError {
     VerifierError::StageClaimSumcheckFailed {
-        stage,
+        stage: format!("{stage:?}"),
         reason: error.to_string(),
     }
 }

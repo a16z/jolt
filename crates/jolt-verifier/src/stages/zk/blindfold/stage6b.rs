@@ -49,13 +49,16 @@ where
     // The committed and uncommitted cycle-phase relations are distinct types, so
     // collapse the active one into its domain and batch tuple here.
     let (bytecode_domain, bytecode_claim) = if bytecode_reduction_layout.is_some() {
-        let claims = relations::bytecode::ReadRafCyclePhaseCommitted::new(
+        let claims = relations::bytecode::ReadRafCyclePhaseCommitted::new((
             formula_dimensions.bytecode_read_raf,
-        );
+            bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
+        ));
         (claims.domain(), relation_claim(&claims))
     } else {
-        let claims =
-            relations::bytecode::ReadRafCyclePhase::new(formula_dimensions.bytecode_read_raf);
+        let claims = relations::bytecode::ReadRafCyclePhase::new((
+            formula_dimensions.bytecode_read_raf,
+            bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
+        ));
         (claims.domain(), relation_claim(&claims))
     };
 

@@ -20,6 +20,7 @@ use jolt_poly::try_eq_mle;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
+#[derive(Clone)]
 pub struct RamHammingBooleanity<F: Field> {
     symbolic: relations::ram::HammingBooleanity,
     trace_dimensions: TraceDimensions,
@@ -35,6 +36,14 @@ impl<F: Field> RamHammingBooleanity<F> {
             trace_dimensions,
             stage1_cycle_binding,
         }
+    }
+
+    pub fn trace_dimensions(&self) -> TraceDimensions {
+        self.trace_dimensions
+    }
+
+    pub fn stage1_cycle_binding(&self) -> &[F] {
+        &self.stage1_cycle_binding
     }
 }
 

@@ -1,11 +1,18 @@
+#[cfg(not(feature = "akita"))]
 use jolt_prover_legacy::host;
+#[cfg(not(feature = "akita"))]
 use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+#[cfg(not(feature = "akita"))]
 use jolt_prover_legacy::zkvm::program::ProgramPreprocessing;
+#[cfg(not(feature = "akita"))]
 use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+#[cfg(not(feature = "akita"))]
 use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing;
+#[cfg(not(feature = "akita"))]
 use jolt_prover_legacy::zkvm::RV64IMACProver;
 use std::fs;
 use std::io::Write;
+#[cfg(not(feature = "akita"))]
 use std::time::Instant;
 
 // Empirically measured cycles per operation for RV64IMAC
@@ -196,6 +203,15 @@ pub fn master_benchmark(
     )]
 }
 
+#[cfg(feature = "akita")]
+fn prove_example(
+    _example_name: &str,
+    _serialized_input: Vec<u8>,
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    unimplemented!("akita profiling arrives with the packed prove path")
+}
+
+#[cfg(not(feature = "akita"))]
 fn prove_example(
     example_name: &str,
     serialized_input: Vec<u8>,
@@ -240,13 +256,7 @@ fn prove_example(
             jolt_dory::DoryScheme,
             jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
             jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
-        >(
-            &verifier_preprocessing,
-            &program_io,
-            &jolt_proof,
-            None,
-            cfg!(feature = "zk"),
-        )
+        >(&verifier_preprocessing, &program_io, &jolt_proof, None)
         .unwrap();
     };
 
@@ -258,6 +268,18 @@ fn prove_example(
     tasks
 }
 
+#[cfg(feature = "akita")]
+fn prove_example_with_trace(
+    _example_name: &str,
+    _serialized_input: Vec<u8>,
+    _max_trace_length: usize,
+    _bench_name: &str,
+    _scale: usize,
+) -> (std::time::Duration, usize, usize, usize) {
+    unimplemented!("akita profiling arrives with the packed prove path")
+}
+
+#[cfg(not(feature = "akita"))]
 fn prove_example_with_trace(
     example_name: &str,
     serialized_input: Vec<u8>,
@@ -313,13 +335,7 @@ fn prove_example_with_trace(
         jolt_dory::DoryScheme,
         jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
         jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
-    >(
-        &verifier_preprocessing,
-        &program_io,
-        &proof,
-        None,
-        cfg!(feature = "zk"),
-    )
+    >(&verifier_preprocessing, &program_io, &proof, None)
     .unwrap();
 
     (prove_duration, proof_size, proof_size, trace.len())

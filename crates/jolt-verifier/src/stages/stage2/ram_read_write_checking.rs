@@ -31,6 +31,7 @@ pub fn ram_read_write_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamReadWriteChecking<F: Field> {
     symbolic: relations::ram::ReadWriteChecking,
     dimensions: ReadWriteDimensions,
@@ -53,6 +54,20 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::RamReadWriteChecking,
         reason: reason.to_string(),
+    }
+}
+
+impl<F: Field> RamReadWriteChecking<F> {
+    pub fn dimensions(&self) -> ReadWriteDimensions {
+        self.dimensions
+    }
+
+    pub fn ram_log_k(&self) -> usize {
+        self.ram_log_k
+    }
+
+    pub fn product_tau_low(&self) -> &[F] {
+        &self.product_tau_low
     }
 }
 

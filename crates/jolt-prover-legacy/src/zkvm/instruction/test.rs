@@ -111,6 +111,29 @@ mod flags {
         }
     }
 
+    /// The packed (Akita) fused-inc encoding keys the per-cycle delta off
+    /// the `Store` circuit flag and assumes the flag coincides with the
+    /// cycle's declared RAM-write access — stores are the only provable
+    /// instruction shape that writes RAM; every read-modify-write
+    /// instruction lowers into a sequence whose RAM-writing step is a plain
+    /// store. `FusedIncValue::from_cycle_with_store` debug-asserts the same
+    /// per cycle at witness-generation time.
+    #[test]
+    fn store_flag_matches_ram_write_access() {
+        for cycle in Cycle::iter() {
+            let Ok(jolt_cycle) = JoltTraceCycle::try_new(&cycle) else {
+                continue;
+            };
+            let flags = jolt_cycle.circuit_flags();
+            assert_eq!(
+                flags[CircuitFlags::Store],
+                matches!(cycle.ram_access(), tracer::instruction::RAMAccess::Write(_)),
+                "Store flag disagrees with the declared RAM access for {:?}",
+                jolt_cycle.instruction(),
+            );
+        }
+    }
+
     #[test]
     fn jolt_trace_cycle_flags_match_final_row_flags() {
         for cycle in Cycle::iter() {

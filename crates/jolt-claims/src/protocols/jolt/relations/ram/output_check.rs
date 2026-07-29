@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::ram_val_final;
 use crate::protocols::jolt::{
-    JoltExpr, JoltOpeningId, JoltRelationId, RamOutputCheckPublic, ReadWriteDimensions,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltRelationId, RamOutputCheckPublic,
+    ReadWriteDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{derived, opening, InputClaims, OutputClaims};
+use crate::{derived, opening, ChallengeDrawError, InputClaims, OutputClaims, SumcheckChallenges};
 
 /// The produced RAM `val_final` opening, sharing the single output-check opening
 /// point. Generic over the opening cell (`F` for the serialized wire value,
@@ -50,9 +51,36 @@ impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<F> {
     }
 }
 
-/// The RAM output-check sumcheck: a degree-one output that pins `Val_final` on
-/// the I/O region (via `EqIoMask`) and offsets by the masked I/O value; no
-/// input claim.
+/// The RAM output-check Fiat-Shamir draw: the address reference point the
+/// `EqAddress` public is evaluated against, drawn as one raw `challenge()` per
+/// RAM address variable right after the stage-2 batch gammas (the relation's
+/// `draw_challenges` override in `jolt-verifier` performs the draw).
+///
+/// The vector field rules out the `SumcheckChallenges` derive, so the impl is
+/// hand-written: the vector is not challenge-id-resolvable (it never appears
+/// as an `Expr` leaf), and the struct cannot be built from a per-field scalar
+/// stream — `from_transcript_values` fails rather than fabricate a point.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamOutputCheckChallenges<F> {
+    pub output_address: Vec<F>,
+}
+
+impl<F: Field> SumcheckChallenges<F> for RamOutputCheckChallenges<F> {
+    fn from_transcript_values<I: Iterator<Item = F>>(
+        _values: I,
+    ) -> Result<Self, ChallengeDrawError> {
+        Err(ChallengeDrawError::NotStreamConstructible)
+    }
+
+    fn resolve_challenge(&self, _id: &JoltChallengeId) -> Option<F> {
+        None
+    }
+}
+
+/// The RAM output-check sumcheck: pins `Val_final` against the committed
+/// public I/O value on the I/O region — `eq · mask · (val_final − val_io)` —
+/// with each derived leaf one multilinear; no input claim.
+#[derive(Clone)]
 pub struct OutputCheck {
     shape: ReadWriteDimensions,
 }
@@ -63,7 +91,7 @@ impl SymbolicSumcheck for OutputCheck {
     type DerivedId = crate::protocols::jolt::JoltDerivedId;
     type ChallengeId = crate::protocols::jolt::JoltChallengeId;
     type Shape = ReadWriteDimensions;
-    type Challenges<F> = crate::NoChallenges<F>;
+    type Challenges<F> = RamOutputCheckChallenges<F>;
     type Inputs<C> = RamOutputCheckInputClaims<C>;
     type Outputs<C> = RamOutputCheckOutputClaims<C>;
 
@@ -88,8 +116,12 @@ impl SymbolicSumcheck for OutputCheck {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        derived(RamOutputCheckPublic::EqIoMask) * opening(ram_val_final())
-            + derived(RamOutputCheckPublic::NegEqIoMaskValIo)
+        derived(RamOutputCheckPublic::EqAddress)
+            * derived(RamOutputCheckPublic::IoMask)
+            * opening(ram_val_final())
+            - derived(RamOutputCheckPublic::EqAddress)
+                * derived(RamOutputCheckPublic::IoMask)
+                * derived(RamOutputCheckPublic::ValIo)
     }
 }
 
@@ -108,8 +140,9 @@ mod tests {
         let relation = OutputCheck::new(read_write_dimensions());
 
         let val_final = Fr::from_u64(7);
-        let eq_io_mask = Fr::from_u64(11);
-        let neg_eq_io_mask_val_io = -Fr::from_u64(13);
+        let eq_address = Fr::from_u64(11);
+        let io_mask = Fr::from_u64(13);
+        let val_io = Fr::from_u64(17);
         let zero = Fr::from_u64(0);
 
         let input = relation
@@ -122,16 +155,15 @@ mod tests {
             },
             |_| zero,
             |id| match *id {
-                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::EqIoMask) => eq_io_mask,
-                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::NegEqIoMaskValIo) => {
-                    neg_eq_io_mask_val_io
-                }
+                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::EqAddress) => eq_address,
+                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::IoMask) => io_mask,
+                JoltDerivedId::RamOutputCheck(RamOutputCheckPublic::ValIo) => val_io,
                 _ => zero,
             },
         );
 
         assert_eq!(input, zero);
-        assert_eq!(output, eq_io_mask * val_final + neg_eq_io_mask_val_io);
+        assert_eq!(output, eq_address * io_mask * (val_final - val_io));
     }
 
     #[test]

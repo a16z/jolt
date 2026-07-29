@@ -83,6 +83,7 @@ pub fn ram_val_check_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamValCheck<F: Field> {
     symbolic: RamValCheckSymbolic,
     trace_dimensions: TraceDimensions,
@@ -142,6 +143,14 @@ impl<F: Field> RamValCheck<F> {
             init_selectors,
             contribution_openings,
         }
+    }
+
+    pub fn trace_dimensions(&self) -> TraceDimensions {
+        self.trace_dimensions
+    }
+
+    pub fn ram_log_k(&self) -> usize {
+        self.ram_log_k
     }
 }
 
@@ -325,7 +334,7 @@ impl<F: Field> RamValCheckInitStructure<F> {
 /// geometry. Runs before the zk/clear branch in both modes; the advice selectors
 /// and opening points come from [`ram_val_check_advice_block`], the same
 /// computation the prover uses.
-pub(crate) fn ram_val_check_init_structure<F: Field>(
+pub fn ram_val_check_init_structure<F: Field>(
     checked: &CheckedInputs,
     untrusted_advice_present: bool,
     r_address: &[F],

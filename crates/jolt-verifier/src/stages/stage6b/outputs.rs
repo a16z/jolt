@@ -28,6 +28,7 @@ use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
 };
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
 use super::ram_hamming_booleanity::RamHammingBooleanity;
@@ -46,29 +47,44 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// invariant on that impl); the aggregates project through the anchor, which both
 /// variants share cell-for-cell.
 ///
-/// The generated `draw_challenges` is suppressed (`no_draw_challenges`): the
-/// members' challenges have stage-level provenance (the bytecode gamma shares
-/// stage 6a's squeeze and the booleanity gamma is drawn pre-6a where the
-/// prover's booleanity subprotocol samples it), so `verify` hand-assembles
-/// `Stage6bChallenges` from the stage-level draws — a generated per-member draw
-/// would squeeze at the wrong transcript position if it existed to be called.
+/// The generated `draw_challenges` is suppressed (`no_draw_challenges` — this
+/// batch is its only production user): the members' challenges have
+/// stage-level provenance (the bytecode gamma shares stage 6a's squeeze and
+/// the booleanity gamma is drawn by stage 6a's aggregate, via its booleanity
+/// member's `draw_challenges` override), so `verify` hand-assembles
+/// `Stage6bChallenges` from the stage-6a carried draws — a generated
+/// per-member draw would squeeze at the wrong transcript position if it
+/// existed to be called.
 ///
 /// The opt-out `#[sumcheck_batch(no_opening_values)]` suppresses the generated
 /// absorb methods: booleanity's `bytecode_ra` openings
 /// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
-/// order is curated by [`append_opening_claims`](super::verify::append_opening_claims)
-/// which threads the dedup points. `no_output_shape`: shape methods are inapplicable — the committed
-/// bytecode output `Expr` consumes the 6a-produced `BytecodeValStage` openings
+/// order is curated by [`stage6b_opening_values`](super::verify::stage6b_opening_values)
+/// which threads the dedup points (the verifier absorbs its output; the
+/// prover's recorder absorbs the same sequence). `no_output_shape`: shape methods are inapplicable — the committed
+/// bytecode output `Expr` consumes the 6a-produced `BytecodeValClaim` openings
 /// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(no_opening_values, no_draw_challenges, no_output_shape)]
+#[sumcheck_batch(
+    no_opening_values,
+    no_draw_challenges,
+    no_output_shape,
+    crate = "crate"
+)]
 pub struct Stage6bSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
+    /// Absent on the packed path: the inc claims are discharged inside the
+    /// bytecode read-raf's fused-inc stages instead.
+    #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
+    /// On the prove side the four precommitted reduction kernels span the
+    /// 6b→7 batch boundary as `ProofSession` carries: each cycle kernel parks
+    /// the shared two-phase state at prepare, and stage 7's address-phase
+    /// members reclaim it.
     pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
     pub untrusted_advice: Option<UntrustedAdviceCyclePhase<F>>,
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
@@ -85,18 +101,31 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
     pub fn booleanity_opening_point(&self) -> Option<&[F]> {
+        #[cfg(not(feature = "akita"))]
+        let chunk_fallback = None;
+        #[cfg(feature = "akita")]
+        let chunk_fallback = self.booleanity.unsigned_inc_chunks.first();
         self.booleanity
             .instruction_ra
             .first()
             .or_else(|| self.booleanity.bytecode_ra.first())
             .or_else(|| self.booleanity.ram_ra.first())
+            .or(chunk_fallback)
             .map(Vec::as_slice)
     }
 
     /// The increment claim-reduction opening point (the reversed cycle point shared
     /// by the `RamInc`/`RdInc` reduced openings).
+    #[cfg(not(feature = "akita"))]
     pub fn inc_opening_point(&self) -> &[F] {
         &self.inc_claim_reduction.ram_inc
+    }
+
+    /// The packed fused-inc opening point: the read-raf cycle suffix (the
+    /// stage-6b cycle point).
+    #[cfg(feature = "akita")]
+    pub fn fused_inc_opening_point(&self) -> &[F] {
+        &self.bytecode_read_raf.fused_inc
     }
 
     /// The advice cycle-phase opening point for `kind`, present only when that
@@ -158,7 +187,9 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// The total number of produced opening-point cells across every member. This
     /// is the derived, layout-independent claim count; the ZK path subtracts its
     /// runtime bytecode/booleanity point-alias dedup from it to size the committed
-    /// output claims.
+    /// output claims. ZK-only, hence base-only (no zk protocol exists over the
+    /// packed axis).
+    #[cfg(not(feature = "akita"))]
     pub fn point_count(&self) -> usize {
         self.bytecode_read_raf.bytecode_ra.len()
             + self.booleanity.instruction_ra.len()
@@ -209,6 +240,7 @@ fn reversed<F: Field>(point: &[F]) -> Vec<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6bCarriedChallenges<F: Field> {
     pub instruction_ra_gamma: F,
+    #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
     /// Committed program mode only: bytecode claim-reduction batching
     /// challenge (the prover's `eta`).

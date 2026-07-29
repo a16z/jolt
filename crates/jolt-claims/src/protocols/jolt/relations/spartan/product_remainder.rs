@@ -55,6 +55,7 @@ pub struct ProductRemainderInputClaims<C> {
 
 /// The Spartan product remainder sumcheck: the `tau_kernel * left * right`
 /// virtualization form over the product-remainder openings.
+#[derive(Clone)]
 pub struct ProductRemainder {
     shape: SpartanProductDimensions,
 }

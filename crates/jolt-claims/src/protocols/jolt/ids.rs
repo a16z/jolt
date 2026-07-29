@@ -38,10 +38,6 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
-    // Lattice-mode relations (see protocols/jolt/lattice). Appended so
-    // index-based codecs of base-mode proofs stay stable.
-    IncVirtualization,
-    UnsignedIncChunkReconstruction,
     UntrustedAdviceReconstruction,
     TrustedAdviceReconstruction,
     ProgramImageReconstruction,
@@ -99,8 +95,9 @@ pub enum RamRafEvaluationPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamOutputCheckPublic {
-    EqIoMask,
-    NegEqIoMaskValIo,
+    EqAddress,
+    IoMask,
+    ValIo,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -142,6 +139,7 @@ pub enum HammingWeightClaimReductionChallenge {
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
     EqVirtualization(usize),
+    IdentityAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -158,7 +156,7 @@ pub enum BytecodeReadRafChallenge {
 pub enum BytecodeReadRafPublic {
     StageValue(usize),
     /// Committed program mode: `eq(stage_cycle_point_s, r_cycle)` factor
-    /// multiplying the staged `BytecodeValStage(s)` opening. In full mode this
+    /// multiplying the staged `BytecodeValClaim(s)` opening. In full mode this
     /// factor is folded into `StageValue(s)` instead.
     StageCycleEq(usize),
     SpartanOuterRaf,
@@ -214,9 +212,17 @@ pub enum SpartanProductVirtualizationPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SpartanOuterPublic {
-    QuadraticCoefficient { left: usize, right: usize },
-    LinearCoefficient(usize),
-    ConstantCoefficient,
+    /// `LK(τ_high, r₀) · eq(τ_low, ·)` — the uni-skip kernel times the cycle eq.
+    TauKernel,
+    /// The `Az` linear-form weight of R1CS input column `i` (linear in the
+    /// stream variable).
+    AzWeight(usize),
+    /// The `Bz` linear-form weight of R1CS input column `i`.
+    BzWeight(usize),
+    /// The `Az` linear form's public-column contribution.
+    AzConstant,
+    /// The `Bz` linear form's public-column contribution.
+    BzConstant,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -284,35 +290,6 @@ pub enum InstructionRaVirtualizationChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstructionRaVirtualizationPublic {
     EqCycle,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum IncVirtualizationChallenge {
-    Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum IncVirtualizationPublic {
-    EqRamReadWrite,
-    EqRamValCheck,
-    EqRegistersReadWrite,
-    EqRegistersValEvaluation,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UnsignedIncChunkReconstructionChallenge {
-    Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UnsignedIncChunkReconstructionPublic {
-    /// `eq(r_booleanity_address, r_address)` — reduces the chunk openings
-    /// produced at the booleanity address point to this relation's bound
-    /// address point.
-    EqBooleanityAddress,
-    /// The identity MLE `Σ_bit 2^bit · r_address[bit]` at the bound address
-    /// point — decodes a one-hot chunk opening into its address value.
-    IdentityAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -398,8 +375,6 @@ pub enum JoltChallengeId {
     InstructionInput(InstructionInputChallenge),
     InstructionReadRaf(InstructionReadRafChallenge),
     InstructionRaVirtualization(InstructionRaVirtualizationChallenge),
-    IncVirtualization(IncVirtualizationChallenge),
-    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionChallenge),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionChallenge),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionChallenge),
 }
@@ -517,7 +492,7 @@ pub enum JoltVirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
-    BytecodeValStage(usize),
+    BytecodeValClaim(usize),
     BytecodeReadRafAddrClaim,
     BooleanityAddrClaim,
     BytecodeClaimReductionIntermediate,
@@ -552,6 +527,20 @@ pub enum JoltOpeningId {
 }
 
 impl JoltOpeningId {
+    /// The polynomial this opening refers to; advice openings resolve to
+    /// their committed advice polynomials.
+    pub const fn polynomial_id(self) -> JoltPolynomialId {
+        match self {
+            Self::Polynomial { polynomial, .. } => polynomial,
+            Self::TrustedAdvice { .. } => {
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::TrustedAdvice)
+            }
+            Self::UntrustedAdvice { .. } => {
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::UntrustedAdvice)
+            }
+        }
+    }
+
     pub fn polynomial(polynomial: impl Into<JoltPolynomialId>, relation: JoltRelationId) -> Self {
         Self::Polynomial {
             polynomial: polynomial.into(),
@@ -580,10 +569,6 @@ impl JoltOpeningId {
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
 pub enum JoltDerivedId {
-    TraceLength,
-    PaddedTraceLength,
-    BytecodeLength,
-    MemorySize,
     RamReadWrite(RamReadWritePublic),
     RamValCheck(RamValCheckPublic),
     RamRafEvaluation(RamRafEvaluationPublic),
@@ -608,16 +593,19 @@ pub enum JoltDerivedId {
     InstructionInput(InstructionInputPublic),
     InstructionReadRaf(InstructionReadRafPublic),
     InstructionRaVirtualization(InstructionRaVirtualizationPublic),
-    #[from(ignore)]
-    PublicInput(usize),
-    #[from(ignore)]
-    PublicOutput(usize),
-    IncVirtualization(IncVirtualizationPublic),
-    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
     UntrustedAdviceReconstruction(UntrustedAdviceReconstructionPublic),
     TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
     ProgramImageReconstruction(ProgramImageReconstructionPublic),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
+    /// Test-only derived id for toy relations that define their own
+    /// `derive_output_term`. Gated on `any(test, feature = "test-utils")`
+    /// rather than `test` alone because `cfg(test)` is per-crate: a downstream
+    /// crate's tests (the naive prover's toy relation foremost) see this crate
+    /// compiled without `cfg(test)` and reach the variant via the feature.
+    /// Kept LAST so toggling the feature cannot shift the discriminants of
+    /// real variants across feature-unified builds.
+    #[cfg(any(test, feature = "test-utils"))]
+    Test,
 }
 
 #[cfg(test)]

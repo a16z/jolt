@@ -59,7 +59,7 @@ enum ProductUniskipVerified<F: Field, C> {
 /// `*_from_upstream` helper wires which upstream opening feeds which downstream
 /// input. The product-remainder input is the product uni-skip's output claim (a
 /// separate stage-2 sub-sumcheck), not an upstream stage's opening.
-fn stage2_batch_input_values_from_upstream<F: Field>(
+pub fn stage2_batch_input_values_from_upstream<F: Field>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
 ) -> Stage2BatchInputClaims<F> {
@@ -121,7 +121,7 @@ where
             reason: error.to_string(),
         }
     })?;
-    let mut sumchecks = Stage2BatchSumchecks {
+    let sumchecks = Stage2BatchSumchecks {
         ram_read_write: RamReadWriteChecking::new(
             read_write_dimensions,
             log_k,
@@ -144,30 +144,17 @@ where
             lowest_address,
             uniskip.tau_low.clone(),
         ),
-        // Two-phase construction: the output-check address reference point is
-        // drawn AFTER the batch gammas, so the instance starts with a placeholder
-        // and is completed right after the draws below (see
-        // `set_output_address_challenges`).
-        ram_output_check: RamOutputCheck::new(read_write_dimensions, Vec::new(), public_memory),
+        ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
     };
 
-    // Draw each relation's batching gamma in declaration order: the RAM read-write
+    // Draw each relation's challenges in declaration order: the RAM read-write
     // gamma, then the instruction claim-reduction gamma (each a single
-    // `challenge_scalar`; the other three batch relations draw nothing —
-    // `NoChallenges`). The drawn challenges feed the input/output claims and
-    // populate the stage aggregate carried downstream.
+    // `challenge_scalar`), then the RAM output-check address reference point
+    // (the last member's `draw_challenges` override — one raw `challenge()` per
+    // RAM address variable, landing after both gammas as the inline draw did).
+    // The drawn challenges feed the input/output claims and populate the stage
+    // aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
-
-    // The RAM output-check address reference point, drawn after both gammas. MUST
-    // stay `challenge()` (not `challenge_scalar()`): both decode the same 16-byte
-    // squeeze, but differently, so switching would silently change the address
-    // point values without changing the transcript bytes.
-    let output_address_challenges = (0..log_k)
-        .map(|_| transcript.challenge())
-        .collect::<Vec<_>>();
-    sumchecks
-        .ram_output_check
-        .set_output_address_challenges(output_address_challenges.clone());
 
     // Every member's input points are empty (each derives its output points from its
     // own sumcheck point).
@@ -195,7 +182,6 @@ where
             product_uniskip_challenge: uniskip.challenge,
             product_tau_low: uniskip.tau_low,
             product_tau_high: uniskip.tau_high,
-            output_address_challenges,
             product_uniskip_consistency: product_uniskip.consistency,
             product_uniskip_output_claims: product_uniskip.output_claims,
             batch_consistency: consistency,
@@ -216,28 +202,15 @@ where
     let input_values =
         stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim);
 
-    let batch = sumchecks.verify_clear(
+    let output_points = sumchecks.verify_clear(
         &input_values,
+        &input_points,
         &challenges,
+        &claims.batch_outputs,
         &proof.stages.stage2_sumcheck_proof,
         transcript,
+        2,
     )?;
-
-    let output_points =
-        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
-
-    // Runs the generated `validate_aliases` first: the reduction's aliased wire
-    // cells (read by its output `Expr`) must equal their product-remainder sources.
-    let expected_final_claim = sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &input_points,
-        &claims.batch_outputs,
-        &output_points,
-        &challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 2 });
-    }
 
     sumchecks.append_output_claims(transcript, &claims.batch_outputs);
 
@@ -246,6 +219,33 @@ where
         output_points,
         product_tau_low: uniskip.tau_low,
     }))
+}
+
+/// The product uni-skip's low binding tau_low: the tail (`[1..]`) of stage
+/// 1's raw remainder point, reversed. Shared by `verify_product_uniskip` and
+/// the prove-side stage-2 recipe, so the derivation cannot drift.
+pub fn product_tau_low<F: Field>(
+    stage1_remainder: &[F],
+    log_t: usize,
+) -> Result<Vec<F>, VerifierError> {
+    let mut tau_low = stage1_remainder
+        .get(1..)
+        .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{:?}", JoltRelationId::SpartanProductVirtualization),
+            reason: "Stage 1 remainder challenge vector is empty".to_string(),
+        })?
+        .to_vec();
+    if tau_low.len() != log_t {
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{:?}", JoltRelationId::SpartanProductVirtualization),
+            reason: format!(
+                "Stage 1 remainder challenge tail length mismatch: expected {log_t}, got {}",
+                tau_low.len()
+            ),
+        });
+    }
+    tau_low.reverse();
+    Ok(tau_low)
 }
 
 fn verify_product_uniskip<PCS, VC, T, ZkProof>(
@@ -259,29 +259,11 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
     let product_dimensions = SpartanProductDimensions::new(log_t);
-    let stage1_remainder = stage1.remainder_point();
-    let mut tau_low = stage1_remainder
-        .get(1..)
-        .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-            stage,
-            reason: "Stage 1 remainder challenge vector is empty".to_string(),
-        })?
-        .to_vec();
-    if tau_low.len() != log_t {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage,
-            reason: format!(
-                "Stage 1 remainder challenge tail length mismatch: expected {log_t}, got {}",
-                tau_low.len()
-            ),
-        });
-    }
-    tau_low.reverse();
+    let tau_low = product_tau_low(&stage1.remainder_point(), log_t)?;
 
-    let tau_high = transcript.challenge();
+    let tau_high = uniskip::draw_spartan_product_tau_high(transcript);
     let uniskip_params = uniskip::UniskipParams::spartan_product();
     match stage1 {
         Stage1Output::Clear(stage1) => {

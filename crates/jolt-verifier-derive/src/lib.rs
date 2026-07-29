@@ -42,12 +42,30 @@
 //! per-member logic lives as generic functions in `stages::relations`, so the
 //! macro emits only the typed per-member dispatch):
 //!
-//! - `verify_clear` — the clear-path batched-verify driver: fold the members into
-//!   one combined claim (max `(num_vars, degree)`, absorb each `input_claim`, draw
-//!   the batching coefficients, random-linear-combine the padded sums) and reduce it
-//!   through the single-instance `SumcheckProof::verify_compressed_boolean`. The
-//!   batching lives in this generated driver; `jolt-sumcheck` provides only the
-//!   single-instance verifier. Returns `StageNClearBatch { reduction, coefficients }`.
+//! - `begin_batch` — the batched-sumcheck *head*, shared by `verify_clear` and
+//!   the prove-side stage recipes: per-member `input_claim` (declaration order)
+//!   → `recorder.absorb_input_claims` → one batching-coefficient draw per
+//!   present member → the `2^(max − rounds)`-padded random linear combination.
+//!   Generic over `jolt_sumcheck::SumcheckRecorder`, the clear/ZK seam: whether
+//!   the claim absorb writes transcript bytes is decided by the recorder TYPE
+//!   (clear appends, committed no-ops), never by a runtime flag. Returns the
+//!   engine-form `jolt_sumcheck::BatchPrelude` paired with the stage's named
+//!   `BatchingCoefficients`.
+//! - `<snake_case_struct>_members` — an inert, `#[macro_export]`ed callback
+//!   macro carrying the batch declaration as a structured token list (member
+//!   names, generics-stripped relation paths, presence, the stage's
+//!   error-attribution label, aggregate type names, output-shape flag),
+//!   forwarded to a caller-chosen macro. The derive's
+//!   ONLY prover-facing emission — the single-sourcing handoff from which
+//!   `jolt-prover`'s `impl_stage_prover` expands the prove-side stage-driver
+//!   impls (`StageProver`/`KernelSource`), so no stage's member list, order,
+//!   or presence is ever restated. See `specs/prover-stage-drivers.md`.
+//! - `verify_clear` — the composed clear-path driver: `begin_batch` with a clear
+//!   recorder, reduce the combined claim through the single-instance
+//!   `SumcheckProof::verify_compressed_boolean`, `derive_opening_points` at the
+//!   reduced point, then the `expected_final_claim` equality check. The batching
+//!   lives in the generated head; `jolt-sumcheck` provides only the single-instance
+//!   verifier. Returns the stage's produced `OutputPoints`.
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
 //!   batching coefficients, and check committed consistency through
 //!   `SumcheckProof::verify_committed_consistency_dims`. Committed proofs reveal no
@@ -80,6 +98,14 @@
 //! rather than overridden so they cannot be miscalled. A flagless stage gets
 //! the full method suite.
 //!
+//! The one non-flag entry is the serde-style crate-path override
+//! `#[sumcheck_batch(crate = "...")]`: the path the generated code names
+//! `jolt-verifier` by. Defaults to the absolute `::jolt_verifier`, so external
+//! users need nothing; `jolt-verifier` itself passes `crate = "crate"`. The
+//! emitted member-list callback macro is NOT affected — its tokens resolve at
+//! the consumer's invocation site (cross-crate, in `jolt-prover`), never
+//! against this override.
+//!
 //! The `verify_*` drivers never name `SumcheckClaim` / `SumcheckStatement`; those
 //! stay internal to `jolt-sumcheck`.
 //!
@@ -102,6 +128,9 @@ use syn::{
 /// suppressing generated methods that would be wrong to call on the flagged
 /// stage, which supplies its own replacement where one is needed. The
 /// aggregate structs and their derives are emitted unchanged.
+/// `#[sumcheck_batch(crate = "...")]` overrides the `::jolt_verifier` path
+/// the generated code names this crate by (the defining crate passes
+/// `"crate"`).
 #[proc_macro_derive(SumcheckBatch, attributes(sumcheck_batch))]
 pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -165,15 +194,23 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 "a #[derive(SumcheckBatch)] struct must be named `<Stage>Sumchecks`",
             )
         })?;
+    // The batch's string label for stage-level sumcheck errors.
+    let base_lit = syn::LitStr::new(&base, name.span());
     let input_claims_name = format_ident!("{base}InputClaims");
     let input_points_name = format_ident!("{base}InputPoints");
     let output_claims_name = format_ident!("{base}OutputClaims");
     let output_points_name = format_ident!("{base}OutputPoints");
     let challenges_name = format_ident!("{base}Challenges");
     let batching_coefficients_name = format_ident!("{base}BatchingCoefficients");
-    let clear_batch_name = format_ident!("{base}ClearBatch");
 
     let options = StageOptions::parse(&input.attrs)?;
+    // The path the generated code names `jolt-verifier` by: the absolute
+    // default serves external deriving crates; `jolt-verifier` itself passes
+    // `crate = "crate"` (no `extern crate self` alias).
+    let krate = options
+        .krate
+        .clone()
+        .unwrap_or_else(|| syn::parse_quote!(::jolt_verifier));
 
     let f = validated_field_param(&input.generics)?;
     let fields = named_fields(&input.data, name.span())?;
@@ -188,7 +225,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
 
-    let relations = quote!(crate::stages::relations);
+    let relations = quote!(#krate::stages::relations);
 
     let project = |alias: &TokenStream2, plan: &InstanceField| {
         let instance = &plan.instance;
@@ -277,14 +314,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: self.#id.draw_challenges(transcript)?)
         }
     });
-    // The representative relation id used in a batch-level sumcheck error: the first
-    // non-`Option` member (the batch's leading instance), matching the hand-written
-    // stages' choice. Falls back to the first member if every member is optional.
-    let stage_id_ident = plans
-        .iter()
-        .find(|plan| !plan.is_option)
-        .map_or(&plans[0].ident, |plan| &plan.ident);
-
     // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
     // max_degree)` — the front-loaded batching layout's combined dimensions. Reused
     // by both the clear and ZK drivers, so it is a closure re-invoked per block (a
@@ -303,11 +332,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         })
     };
 
-    // The clear-path batched-verify driver: compute the combined `(max_num_vars,
-    // max_degree, claimed_sum)` from the members (absorb sums, draw coefficients,
-    // random-linear-combine), then reduce through the single-instance
-    // `SumcheckProof::verify_compressed_boolean`.
-    let verify_clear_method = {
+    // The batched-sumcheck head, shared by the clear verify driver and the
+    // prove-side stage recipes: compute each member's input claim, absorb the
+    // claims through the recorder (the clear/ZK seam — a clear recorder appends
+    // them, a committed recorder no-ops), draw the batching coefficients, and
+    // random-linear-combine the padded sums. Every Fiat-Shamir-ordered step of
+    // the head lives here, so the two sides cannot drift on it.
+    let begin_batch_method = {
         let max_fold = max_fold();
         let sum_idents = plans
             .iter()
@@ -338,8 +369,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (::core::option::Option::None, _, _) => ::core::option::Option::None,
                         (::core::option::Option::Some(__member), __inputs, _) => {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
-                                    stage: __member.id(),
+                                #krate::VerifierError::StageClaimSumcheckFailed {
+                                    stage: #base_lit.to_string(),
                                     reason: if __inputs.is_none() {
                                         "present instance is missing its input values"
                                     } else {
@@ -356,15 +387,16 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
 
-        // Absorb each present member's claimed sum into the transcript, in
-        // declaration order — the Fiat-Shamir binding that must precede the
-        // batching-coefficient draw.
+        // Collect each present member's claimed sum, in declaration order, for
+        // the recorder absorb — the Fiat-Shamir binding that must precede the
+        // batching-coefficient draw (a clear recorder appends each under
+        // `b"sumcheck_claim"`).
         let sum_ident = format_ident!("__sum");
-        let sum_absorbs = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
+        let sum_collects = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
             per_member(
                 plan.is_option,
                 &[(&sum_ident, quote!(#sum))],
-                quote!(::jolt_sumcheck::append_sumcheck_claim(transcript, __sum);),
+                quote!(__input_claims.push(*__sum);),
             )
         });
 
@@ -393,45 +425,69 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: #coeff)
         });
 
-        // Each member's contribution to the combined claim: `coeff * sum * 2^(max -
-        // rounds)` (front-loaded padding scale), pushed into `__terms` and summed.
-        let term_pushes = plans
-            .iter()
-            .zip(sum_idents.iter().zip(&coeff_idents))
-            .map(|(plan, (sum, coeff))| {
-                let id = &plan.ident;
-                if plan.is_option {
-                    quote! {
-                        if let (
-                            ::core::option::Option::Some(__coeff),
-                            ::core::option::Option::Some(__sum),
-                            ::core::option::Option::Some(__member),
-                        ) = (#coeff, #sum, self.#id.as_ref())
-                        {
-                            __terms.push(__coeff * __sum.mul_pow_2(__max_num_vars - __member.rounds()));
+        // Each present member's engine-form entry `{ input_claim, coefficient,
+        // rounds }`, in declaration order. `BatchPrelude::new` folds these into
+        // the combined claim `Σ coeff · sum · 2^(max − rounds)` (the front-loaded
+        // padding scale).
+        let member_pushes =
+            plans
+                .iter()
+                .zip(sum_idents.iter().zip(&coeff_idents))
+                .map(|(plan, (sum, coeff))| {
+                    let id = &plan.ident;
+                    if plan.is_option {
+                        quote! {
+                            if let (
+                                ::core::option::Option::Some(__coeff),
+                                ::core::option::Option::Some(__sum),
+                                ::core::option::Option::Some(__member),
+                            ) = (#coeff, #sum, self.#id.as_ref())
+                            {
+                                __members.push(::jolt_sumcheck::BatchMember {
+                                    input_claim: __sum,
+                                    coefficient: __coeff,
+                                    rounds: __member.rounds(),
+                                    offset: __member.instance_point_offset(__max_num_vars)?,
+                                });
+                            }
+                        }
+                    } else {
+                        quote! {
+                            __members.push(::jolt_sumcheck::BatchMember {
+                                input_claim: #sum,
+                                coefficient: #coeff,
+                                rounds: self.#id.rounds(),
+                                offset: self.#id.instance_point_offset(__max_num_vars)?,
+                            });
                         }
                     }
-                } else {
-                    quote! {
-                        __terms.push(#coeff * #sum.mul_pow_2(__max_num_vars - self.#id.rounds()));
-                    }
-                }
-            });
+                });
 
         quote! {
-            pub fn verify_clear<__C, __T>(
+            /// The batched-sumcheck head, shared by `verify_clear` and the
+            /// prove-side stage recipes: per-member `input_claim` (declaration
+            /// order) → `recorder.absorb_input_claims` → one batching-coefficient
+            /// draw per present member → the `2^(max − rounds)`-padded random
+            /// linear combination. Whether the claim absorb writes transcript
+            /// bytes is decided by the recorder type (clear appends, committed
+            /// no-ops), never by a runtime flag. Returns the engine-form
+            /// `jolt_sumcheck::BatchPrelude` paired with the stage's named
+            /// batching coefficients.
+            pub fn begin_batch<__R, __T>(
                 &self,
                 inputs: &#input_claims_name<#f>,
                 challenges: &#challenges_name<#f>,
-                proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
+                recorder: &mut __R,
                 transcript: &mut __T,
-            ) -> ::core::result::Result<#clear_batch_name<#f>, crate::VerifierError>
+            ) -> ::core::result::Result<
+                (::jolt_sumcheck::BatchPrelude<#f>, #batching_coefficients_name<#f>),
+                #krate::VerifierError,
+            >
             where
-                __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
+                __R: ::jolt_sumcheck::SumcheckRecorder<#f>,
                 __T: ::jolt_transcript::Transcript<Challenge = #f>,
             {
                 use #relations::ConcreteSumcheck as _;
-                use ::jolt_field::FromPrimitiveInt as _;
 
                 #(#sum_bindings)*
 
@@ -439,29 +495,91 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let mut __max_degree = 0usize;
                 #(#max_fold)*
 
-                #(#sum_absorbs)*
+                let mut __input_claims = ::std::vec::Vec::new();
+                #(#sum_collects)*
+                recorder.absorb_input_claims(&__input_claims, transcript);
 
                 #(#coeff_draws)*
                 let __coefficients = #batching_coefficients_name {
                     #(#coeff_fields,)*
                 };
 
-                let mut __terms = ::std::vec::Vec::new();
-                #(#term_pushes)*
-                let __claimed_sum: #f = __terms.into_iter().sum();
+                let mut __members = ::std::vec::Vec::new();
+                #(#member_pushes)*
 
-                let __reduction = proof
-                    .verify_compressed_boolean(__max_num_vars, __max_degree, __claimed_sum, transcript)
-                    .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
-                        stage: self.#stage_id_ident.id(),
-                        reason: error.to_string(),
-                    })?;
-
-                ::core::result::Result::Ok(#clear_batch_name {
-                    reduction: __reduction,
-                    coefficients: __coefficients,
-                })
+                ::core::result::Result::Ok((
+                    ::jolt_sumcheck::BatchPrelude::new(__members, __max_num_vars, __max_degree),
+                    __coefficients,
+                ))
             }
+        }
+    };
+
+    // The composed clear-path driver: begin the batch (clear recorder, so the
+    // claim absorbs are appended), verify the single-instance compressed-boolean
+    // sumcheck, derive the produced opening points at the reduced point, and check
+    // the reduced claim against the expected final-claim fold — the tail every
+    // stage repeats verbatim. Validation (`validate_output_claims`,
+    // member-presence guards) and the canonical opening absorb stay with the
+    // caller: their position and form are stage-specific.
+    let verify_clear_method = quote! {
+        /// Run the clear-path batched verification in one call: `begin_batch`
+        /// (with a clear recorder, so the claim absorbs are appended), the
+        /// single-instance `SumcheckProof::verify_compressed_boolean`,
+        /// [`Self::derive_opening_points`] at the reduced point, then the
+        /// [`Self::expected_final_claim`] equality check (attributed to `stage`
+        /// on mismatch). Returns the produced opening points.
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "the composed tail threads every per-stage aggregate once"
+        )]
+        pub fn verify_clear<__C, __T>(
+            &self,
+            inputs: &#input_claims_name<#f>,
+            input_points: &#input_points_name<#f>,
+            challenges: &#challenges_name<#f>,
+            claims: &#output_claims_name<#f>,
+            proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
+            transcript: &mut __T,
+            stage: usize,
+        ) -> ::core::result::Result<#output_points_name<#f>, #krate::VerifierError>
+        where
+            __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
+            __T: ::jolt_transcript::Transcript<Challenge = #f>,
+        {
+            use #relations::ConcreteSumcheck as _;
+
+            let mut __recorder = ::jolt_sumcheck::ClearSumcheckRecorder::<#f, __C>::new();
+            let (__batch, __coefficients) =
+                self.begin_batch(inputs, challenges, &mut __recorder, transcript)?;
+
+            let __reduction = proof
+                .verify_compressed_boolean(
+                    __batch.max_num_vars,
+                    __batch.max_degree,
+                    __batch.claimed_sum,
+                    transcript,
+                )
+                .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
+                    stage: #base_lit.to_string(),
+                    reason: error.to_string(),
+                })?;
+
+            let __output_points =
+                self.derive_opening_points(__reduction.point.as_slice(), input_points)?;
+            let __expected_final_claim = self.expected_final_claim(
+                &__coefficients,
+                input_points,
+                claims,
+                &__output_points,
+                challenges,
+            )?;
+            if __reduction.value != __expected_final_claim {
+                return ::core::result::Result::Err(
+                    #krate::VerifierError::StageClaimOutputMismatch { stage },
+                );
+            }
+            ::core::result::Result::Ok(__output_points)
         }
     };
 
@@ -501,7 +619,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 transcript: &mut __T,
             ) -> ::core::result::Result<
                 ::jolt_sumcheck::BatchedCommittedSumcheckConsistency<#f, __C>,
-                crate::VerifierError,
+                #krate::VerifierError,
             >
             where
                 __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
@@ -518,8 +636,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
                 let __consistency = proof
                     .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
-                    .map_err(|error| crate::VerifierError::StageClaimSumcheckFailed {
-                        stage: self.#stage_id_ident.id(),
+                    .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
+                        stage: #base_lit.to_string(),
                         reason: error.to_string(),
                     })?;
 
@@ -535,10 +653,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     // Map each member's opening point through its
     // `ConcreteSumcheck::derive_opening_points` into the stage's `OutputPoints`
-    // aggregate. Takes the batch challenge vector directly: under the front-loaded
-    // batching layout an instance's point is the length-`rounds` suffix of that
-    // vector, so no batch-result abstraction is needed and one method serves both the
-    // clear and ZK paths (each supplies its own challenge vector).
+    // aggregate. Takes the batch challenge vector directly: an instance's point
+    // is the length-`rounds` slice of that vector starting at its
+    // `instance_point_offset`, so no batch-result abstraction is needed and one
+    // method serves both the clear and ZK paths (each supplies its own
+    // challenge vector).
     let derive_points_method = {
         let field_bindings = plans.iter().map(|plan| {
             let id = &plan.ident;
@@ -556,8 +675,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (::core::option::Option::None, _) => ::core::option::Option::None,
                         (::core::option::Option::Some(__member), ::core::option::Option::None) => {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
-                                    stage: __member.id(),
+                                #krate::VerifierError::StageClaimSumcheckFailed {
+                                    stage: #base_lit.to_string(),
                                     reason: "present instance is missing its input opening points"
                                         .to_string(),
                                 },
@@ -585,7 +704,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 &self,
                 batch_point: &[#f],
                 input_points: &#input_points_name<#f>,
-            ) -> ::core::result::Result<#output_points_name<#f>, crate::VerifierError> {
+            ) -> ::core::result::Result<#output_points_name<#f>, #krate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
 
                 #(#point_bindings)*
@@ -648,7 +767,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn validate_aliases(
                 &self,
                 output_values: &#output_claims_name<#f>,
-            ) -> ::core::result::Result<(), crate::VerifierError> {
+            ) -> ::core::result::Result<(), #krate::VerifierError> {
                 use ::jolt_claims::OutputClaims as _;
                 let __resolve = |__id: &::jolt_claims::protocols::jolt::JoltOpeningId| {
                     ::core::option::Option::<#f>::None
@@ -684,8 +803,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                             challenges.#id.as_ref(),
                         ) else {
                             return ::core::result::Result::Err(
-                                crate::VerifierError::StageClaimSumcheckFailed {
-                                    stage: __member.id(),
+                                #krate::VerifierError::StageClaimSumcheckFailed {
+                                    stage: #base_lit.to_string(),
                                     reason: "present instance is missing a coefficient, claim, \
                                              point, or challenge cell for the final-claim fold"
                                         .to_string(),
@@ -719,7 +838,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 output_values: &#output_claims_name<#f>,
                 output_points: &#output_points_name<#f>,
                 challenges: &#challenges_name<#f>,
-            ) -> ::core::result::Result<#f, crate::VerifierError> {
+            ) -> ::core::result::Result<#f, #krate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
                 // The fold consumes the aliased wire copies, so their equality
                 // with the canonical sources is enforced here, unskippably.
@@ -821,7 +940,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn validate_output_claims(
                 &self,
                 claims: &#output_claims_name<#f>,
-            ) -> ::core::result::Result<(), crate::VerifierError> {
+            ) -> ::core::result::Result<(), #krate::VerifierError> {
                 #(#validate_checks)*
                 ::core::result::Result::Ok(())
             }
@@ -845,7 +964,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             pub fn draw_challenges<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
                 &self,
                 transcript: &mut __T,
-            ) -> ::core::result::Result<#challenges_name<#f>, crate::VerifierError> {
+            ) -> ::core::result::Result<#challenges_name<#f>, #krate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
                 ::core::result::Result::Ok(#challenges_name {
                     #(#draw_fields,)*
@@ -890,10 +1009,78 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
+    // The prover-facing single-sourcing handoff: an inert, exported callback
+    // macro carrying this batch's declaration — member names, relation paths
+    // (generics stripped; the consumer re-applies its own field parameter),
+    // presence, the stage's error-attribution label (the same `#base_lit` the
+    // generated verify drivers use, so both fronts attribute batch-level
+    // sumcheck errors identically), the aggregate type names, and the
+    // output-shape flag — as a structured token list forwarded to a
+    // caller-chosen macro. `jolt-prover`'s `impl_stage_prover` expands its
+    // `StageProver`/`KernelSource` impls from it, so no stage's member list,
+    // order, or presence is ever restated.
+    // Tokens resolve at the consumer's invocation site (which imports the
+    // batch's relation and aggregate names); extra invocation tokens (e.g. a
+    // curation override) are forwarded ahead of the list.
+    let members_macro = {
+        let macro_name = format_ident!("{}_members", snake_case(&name.to_string()));
+        let macro_doc = format!(
+            "The member-list callback macro for [`{name}`], emitted by \
+             `#[derive(SumcheckBatch)]`: forwards the batch's declaration (member names, \
+             relation paths, presence, stage label, aggregate names, output-shape flag) to a \
+             caller-chosen macro. See `specs/prover-stage-drivers.md`."
+        );
+        let shape = if options.no_output_shape {
+            format_ident!("unchecked")
+        } else {
+            format_ident!("checked")
+        };
+        let member_entries = plans
+            .iter()
+            .map(|plan| {
+                let id = &plan.ident;
+                let relation = relation_path(&plan.instance)?;
+                let presence = if plan.is_option {
+                    format_ident!("optional")
+                } else {
+                    format_ident!("required")
+                };
+                Ok(quote! {
+                    { name: #id, relation: #relation, presence: #presence },
+                })
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        quote! {
+            #[doc = #macro_doc]
+            #[macro_export]
+            macro_rules! #macro_name {
+                ($cb:ident $($extra:tt)*) => {
+                    $cb! {
+                        $($extra)*
+                        batch = #name,
+                        label = #base_lit,
+                        aggregates = {
+                            input_claims = #input_claims_name,
+                            input_points = #input_points_name,
+                            output_claims = #output_claims_name,
+                            output_points = #output_points_name,
+                            challenges = #challenges_name,
+                        },
+                        shape = #shape,
+                        members = [
+                            #(#member_entries)*
+                        ]
+                    }
+                };
+            }
+        }
+    };
+
     let driver_impl = quote! {
         impl<#f: ::jolt_field::Field> #name<#f> {
             #draw_challenges_method
 
+            #begin_batch_method
             #verify_clear_method
             #verify_zk_method
             #derive_points_method
@@ -912,16 +1099,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // derives serde. `F: Field` does not imply the serde traits, so the bounds are
     // spelled explicitly (the workspace convention for claim structs), fully
     // qualified so call sites need no serde imports.
-    // `verify_clear`'s result: the single-instance reduction plus the named batching
-    // coefficients.
-    let clear_batch_struct = quote! {
-        #[derive(Clone, Debug, PartialEq, Eq)]
-        #vis struct #clear_batch_name<#f: ::jolt_field::Field> {
-            pub reduction: ::jolt_sumcheck::EvaluationClaim<#f>,
-            pub coefficients: #batching_coefficients_name<#f>,
-        }
-    };
-
     let serialize_bound = format!("{f}: ::serde::Serialize");
     let deserialize_bound = format!("{f}: for<'a> ::serde::Deserialize<'a>");
 
@@ -957,7 +1134,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #(#batching_coefficient_fields,)*
         }
 
-        #clear_batch_struct
+        #members_macro
 
         #driver_impl
     })
@@ -984,6 +1161,12 @@ struct StageOptions {
     /// per-member draw there would squeeze at the wrong transcript position, so
     /// the method must not exist to be miscalled.
     no_draw_challenges: bool,
+    /// `#[sumcheck_batch(crate = "...")]`: the path the generated code names
+    /// `jolt-verifier` by (serde's `crate` attribute shape). `None` means the
+    /// absolute `::jolt_verifier` default; the defining crate passes
+    /// `"crate"`. Never applied to the emitted member-list callback macro,
+    /// whose tokens resolve at the (cross-crate) invocation site.
+    krate: Option<syn::Path>,
 }
 
 impl StageOptions {
@@ -993,17 +1176,25 @@ impl StageOptions {
             if !attr.path().is_ident("sumcheck_batch") {
                 continue;
             }
-            // `#[sumcheck_batch(flag, flag, ...)]` — a comma-separated list of
-            // bare-word flags (`Meta::Path`). Reject any non-flag form or unknown
+            // `#[sumcheck_batch(flag, ..., crate = "path")]` — a
+            // comma-separated list of bare-word flags (`Meta::Path`) plus the
+            // optional crate-path override. Reject any other form or unknown
             // flag with a span-pointed error.
             let flags = attr.parse_args_with(
                 syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated,
             )?;
             for flag in flags {
+                if let Meta::NameValue(name_value) = &flag {
+                    if name_value.path.is_ident("crate") {
+                        options.krate = Some(parse_crate_path(name_value)?);
+                        continue;
+                    }
+                }
                 let Meta::Path(path) = &flag else {
                     return Err(syn::Error::new_spanned(
                         &flag,
-                        "expected a bare `sumcheck_batch` flag (e.g. `no_opening_values`)",
+                        "expected a bare `sumcheck_batch` flag (e.g. `no_opening_values`) or \
+                         `crate = \"...\"`",
                     ));
                 };
                 if path.is_ident("no_opening_values") {
@@ -1016,13 +1207,30 @@ impl StageOptions {
                     return Err(syn::Error::new_spanned(
                         path,
                         "unknown `sumcheck_batch` flag (supported: `no_opening_values`, \
-                         `no_output_shape`, `no_draw_challenges`)",
+                         `no_output_shape`, `no_draw_challenges`, `crate = \"...\"`)",
                     ));
                 }
             }
         }
         Ok(options)
     }
+}
+
+/// Parse the serde-style `crate = "..."` value: a string literal holding the
+/// path the generated code names the defining crate by (`"crate"` in
+/// `jolt-verifier` itself, a re-export path in a wrapping crate).
+fn parse_crate_path(name_value: &syn::MetaNameValue) -> syn::Result<syn::Path> {
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(lit),
+        ..
+    }) = &name_value.value
+    else {
+        return Err(syn::Error::new_spanned(
+            &name_value.value,
+            "expected a string literal path, e.g. `crate = \"crate\"`",
+        ));
+    };
+    lit.parse()
 }
 
 /// The macro supports exactly one generic type parameter (the field `F`,
@@ -1076,6 +1284,41 @@ fn plan_field(field: &syn::Field) -> syn::Result<InstanceField> {
         instance,
         is_option,
     })
+}
+
+/// `CamelCase` → `snake_case` for the emitted member-list macro's name
+/// (`Stage1BatchSumchecks` → `stage1_batch_sumchecks`).
+fn snake_case(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index != 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// The relation path of a member field with its generic arguments stripped
+/// (`SpartanShift<F>` → `SpartanShift`): the consumer macro re-applies its own
+/// field-type parameter, so the emitted token needs no hygiene agreement on
+/// the parameter name.
+fn relation_path(instance: &Type) -> syn::Result<syn::Path> {
+    let Type::Path(path) = instance else {
+        return Err(syn::Error::new_spanned(
+            instance,
+            "SumcheckBatch member types must be paths",
+        ));
+    };
+    let mut path = path.path.clone();
+    if let Some(segment) = path.segments.last_mut() {
+        segment.arguments = PathArguments::None;
+    }
+    Ok(path)
 }
 
 /// If `ty` is syntactically `Option<Inner>`, return `Inner`.

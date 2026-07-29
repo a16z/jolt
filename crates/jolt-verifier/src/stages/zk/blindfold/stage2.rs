@@ -157,16 +157,20 @@ where
         .map_err(|error| public_error(JoltRelationId::RamOutputCheck, error))?;
     let output_publics = ram_output_publics(
         input,
-        &input.stage2.output_address_challenges,
+        &input.stage2.challenges.ram_output_check.output_address,
         &ram_output_address,
     )?;
     values.public(
-        JoltDerivedId::from(RamOutputCheckPublic::EqIoMask),
+        JoltDerivedId::from(RamOutputCheckPublic::EqAddress),
         output_publics.0,
     )?;
     values.public(
-        JoltDerivedId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
+        JoltDerivedId::from(RamOutputCheckPublic::IoMask),
         output_publics.1,
+    )?;
+    values.public(
+        JoltDerivedId::from(RamOutputCheckPublic::ValIo),
+        output_publics.2,
     )?;
 
     let product_order = relations::spartan::ProductRemainderOutputClaims::<PCS::Field> {

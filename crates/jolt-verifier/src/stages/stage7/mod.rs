@@ -10,4 +10,4 @@ pub use outputs::{
     Stage7Challenges, Stage7ClearOutput, Stage7InputClaims, Stage7InputPoints, Stage7Output,
     Stage7OutputClaims, Stage7OutputPoints, Stage7ZkOutput,
 };
-pub use verify::verify;
+pub use verify::{build_stage7_sumchecks, stage7_input_values_from_upstream, verify};

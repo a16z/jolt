@@ -24,7 +24,7 @@ use super::committed_reduction_address_phase::{
 };
 use super::hamming_weight_claim_reduction::{
     hamming_weight_input_values_from_upstream, stage7_hamming_virtualization_address_points,
-    HammingWeightClaimReduction,
+    HammingDimensions, HammingWeightClaimReduction,
 };
 use super::outputs::{
     Stage7ClearOutput, Stage7InputClaims, Stage7Output, Stage7Sumchecks, Stage7ZkOutput,
@@ -33,7 +33,10 @@ use crate::{
     proof::JoltProof,
     stages::{
         stage4::{Stage4ClearOutput, Stage4Output},
-        stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
+        stage6b::{
+            committed_reduction_cycle_phase::advice_reference_point_from_upstream,
+            outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput,
+        },
         zk::committed,
         PrecommittedSchedule,
     },
@@ -54,10 +57,22 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
+    let base_hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
         proof.one_hot_config.committed_chunk_bits(),
     );
+    #[cfg(not(feature = "akita"))]
+    let hamming_dimensions = base_hamming_dimensions;
+    #[cfg(feature = "akita")]
+    let hamming_dimensions =
+        jolt_claims::protocols::jolt::lattice::relations::hamming_weight::LatticeHammingWeightClaimReductionDimensions::new(
+            base_hamming_dimensions.layout,
+            base_hamming_dimensions.log_k_chunk,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: error.to_string(),
+        })?;
 
     // The clear-only reference geometry each address phase's expected-output term
     // reads (advice / program-image RAM address points, bytecode cycle-phase
@@ -126,26 +141,15 @@ where
     let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;
     let input_points = sumchecks.empty_input_points();
 
-    let batch = sumchecks.verify_clear(
+    let output_points = sumchecks.verify_clear(
         &input_values,
+        &input_points,
         &challenges,
+        claims,
         &proof.stages.stage7_sumcheck_proof,
         transcript,
+        7,
     )?;
-
-    let output_points =
-        sumchecks.derive_opening_points(batch.reduction.point.as_slice(), &input_points)?;
-
-    let expected_final_claim = sumchecks.expected_final_claim(
-        &batch.coefficients,
-        &input_points,
-        claims,
-        &output_points,
-        &challenges,
-    )?;
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch { stage: 7 });
-    }
 
     sumchecks.append_output_claims(transcript, claims);
 
@@ -162,8 +166,8 @@ where
 /// `derive_output_term` never runs). An address phase is present exactly when its
 /// precommitted layout is committed and its dimensions carry active address rounds
 /// — the presence flag the input / challenge aggregates track in lockstep.
-fn build_stage7_sumchecks<F: Field>(
-    hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+pub fn build_stage7_sumchecks<F: Field>(
+    hamming_dimensions: HammingDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
     clear: Option<(&Stage4ClearOutput<F>, &Stage6bClearOutput<F>)>,
@@ -176,6 +180,15 @@ fn build_stage7_sumchecks<F: Field>(
     )?;
     let (booleanity_r_address, booleanity_r_cycle) =
         booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
+    #[cfg(feature = "akita")]
+    if stage6_points.fused_inc_opening_point() != booleanity_r_cycle {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason:
+                "the read-raf FusedInc opening and Booleanity do not share the Stage 6b cycle point"
+                    .to_string(),
+        });
+    }
     let hamming = HammingWeightClaimReduction::new(
         hamming_dimensions,
         booleanity_r_cycle.to_vec(),
@@ -187,10 +200,7 @@ fn build_stage7_sumchecks<F: Field>(
     // in ZK), the clear-only reference the advice `FinalScale` term reads.
     let advice_reference = |kind| {
         clear.and_then(|(stage4, _)| {
-            stage4
-                .ram_val_check_init
-                .advice_contribution(kind)
-                .map(|contribution| contribution.opening_point.clone())
+            advice_reference_point_from_upstream(&stage4.ram_val_check_init, kind)
         })
     };
 
@@ -277,8 +287,9 @@ fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
 /// output into the generated `Stage7InputClaims` aggregate. The two advice members
 /// and the two committed-program members are `Some` exactly when their address
 /// phase runs (tracking each `Stage7Sumchecks` member's presence), so a present
-/// member always has its input cell populated.
-fn stage7_input_values_from_upstream<F: Field>(
+/// member always has its input cell populated. Public because the prover's
+/// stage-7 recipe builds its batch inputs through the same wiring.
+pub fn stage7_input_values_from_upstream<F: Field>(
     sumchecks: &Stage7Sumchecks<F>,
     stage6: &Stage6bClearOutput<F>,
 ) -> Result<Stage7InputClaims<F>, VerifierError> {

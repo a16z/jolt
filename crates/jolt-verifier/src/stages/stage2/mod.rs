@@ -10,7 +10,7 @@ pub mod ram_read_write_checking;
 mod verify;
 
 pub use outputs::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output, Stage2ZkOutput};
-pub use verify::verify;
+pub use verify::{product_tau_low, stage2_batch_input_values_from_upstream, verify};
 
 use jolt_claims::protocols::jolt::{geometry::dimensions::ReadWriteDimensions, JoltRelationId};
 
@@ -30,7 +30,7 @@ fn phase1_instance_point_offset(
     let window_offset = batch_num_vars
         .checked_sub(dimensions.read_write_rounds())
         .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-            stage,
+            stage: format!("{stage:?}"),
             reason: format!(
                 "batch challenge vector has {batch_num_vars} entries, fewer than the \
                      active stage-2 window's {} rounds",
