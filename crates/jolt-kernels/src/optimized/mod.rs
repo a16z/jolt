@@ -39,6 +39,7 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 pub mod opening;
+pub mod precommitted_reduction;
 pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
@@ -59,6 +60,7 @@ mod support;
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 pub use inc_claim_reduction::OptimizedIncClaimReduction;
+pub use precommitted_reduction::{OptimizedPrecommittedAddress, OptimizedPrecommittedCycle};
 
 /// The optimized implementations' marker type: implements the RAM-family
 /// [`PrepareKernel`](crate::PrepareKernel) slots (each module here hosts its
@@ -72,12 +74,10 @@ where
 {
     /// The optimized backend: [`JoltBackend::reference`] with every slot this
     /// module tree ports overwritten by its optimized kernel, so the two
-    /// backends cannot drift on the slots left untouched (the precommitted /
-    /// advice reduction slots, the commit slot, and the advice-opening
-    /// evaluation). Same construction bounds as the reference backend (the
-    /// commit slot is the reference streaming implementation), plus the
-    /// accumulator bound the registers and shift kernels' compact-scalar
-    /// walks need.
+    /// backends cannot drift on the one slot left untouched (the commit
+    /// slot). Same construction bounds as the reference backend (the commit
+    /// slot is the reference streaming implementation), plus the accumulator
+    /// bound the registers and shift kernels' compact-scalar walks need.
     pub fn optimized() -> Self
     where
         PCS: StreamingCommitment,
@@ -122,6 +122,24 @@ where
         backend.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
 
         backend.joint_opening = Box::new(OptimizedBackend);
+
+        backend.trusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
+        backend.untrusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
+        backend.bytecode_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
+        backend.program_image_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
+        backend.advice_opening = Box::new(OptimizedPrecommittedCycle);
+        backend.trusted_advice_address = Box::new(OptimizedPrecommittedAddress::new(
+            "stage 6b parked no trusted-advice reduction state for the scheduled address phase",
+        ));
+        backend.untrusted_advice_address = Box::new(OptimizedPrecommittedAddress::new(
+            "stage 6b parked no untrusted-advice reduction state for the scheduled address phase",
+        ));
+        backend.bytecode_reduction_address = Box::new(OptimizedPrecommittedAddress::new(
+            "stage 6b parked no bytecode reduction state for the scheduled address phase",
+        ));
+        backend.program_image_reduction_address = Box::new(OptimizedPrecommittedAddress::new(
+            "stage 6b parked no program-image reduction state for the scheduled address phase",
+        ));
 
         backend
     }
