@@ -4,10 +4,12 @@ use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::{advice, bytecode, program_image},
     geometry::dimensions::JoltFormulaDimensions,
     geometry::error::JoltFormulaPointError,
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
-    PrecommittedClaimReduction, ProgramImageClaimReductionLayout, TracePolynomialOrder,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltOneHotConfig,
+    JoltRelationId, PrecommittedClaimReduction, ProgramImageClaimReductionLayout,
+    TracePolynomialOrder,
 };
 use jolt_crypto::VectorCommitment;
+use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 
@@ -26,7 +28,7 @@ pub mod stage6a;
 pub mod stage6b;
 pub mod stage7;
 pub mod stage8;
-pub(crate) mod uniskip;
+pub mod uniskip;
 #[doc(hidden)]
 pub mod zk;
 
@@ -46,16 +48,53 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+    formula_dimensions_from_parts(
+        proof.one_hot_config,
         log_t,
-        2 * RISCV_XLEN,
         preprocessing.program.bytecode_len(),
         checked.ram_K,
+        stage,
+    )
+}
+
+/// Core [`JoltFormulaDimensions`] constructor over primitive geometry inputs,
+/// shared by the verifier's [`build_formula_dimensions`] and the prover's
+/// `formula_dimensions` so the two sides cannot drift apart.
+pub fn formula_dimensions_from_parts(
+    one_hot_config: JoltOneHotConfig,
+    log_t: usize,
+    bytecode_len: usize,
+    ram_k: usize,
+    stage: JoltRelationId,
+) -> Result<JoltFormulaDimensions, VerifierError> {
+    JoltFormulaDimensions::try_from(one_hot_config.dimensions(
+        log_t,
+        2 * RISCV_XLEN,
+        bytecode_len,
+        ram_k,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage,
         reason: error.to_string(),
     })
+}
+
+pub(crate) fn stage6_checked_split<'a, F: Field>(
+    label: &'static str,
+    point: &'a [F],
+    split_at: usize,
+    stage: JoltRelationId,
+) -> Result<(&'a [F], &'a [F]), VerifierError> {
+    if point.len() < split_at {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: format!(
+                "{label} has {} variables, expected at least {split_at}",
+                point.len()
+            ),
+        });
+    }
+    Ok(point.split_at(split_at))
 }
 
 /// Committed-program geometry feeding the bytecode and program-image

@@ -89,6 +89,7 @@ pub struct LatticeHammingWeightClaimReductionOutputClaims<C> {
     pub unsigned_inc_msb: C,
 }
 
+#[derive(Clone)]
 pub struct LatticeHammingWeightClaimReduction {
     shape: LatticeHammingWeightClaimReductionDimensions,
 }

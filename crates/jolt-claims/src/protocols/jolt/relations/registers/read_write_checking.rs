@@ -59,6 +59,7 @@ pub struct RegistersReadWriteChallenges<F> {
 /// The registers read/write checking sumcheck: relates the read-value claims
 /// (`RdWriteValue`, `Rs1Value`, `Rs2Value`) folded by `gamma` to the register
 /// `val`/`ra`/`inc` openings weighted by the `EqCycle` public.
+#[derive(Clone)]
 pub struct ReadWriteChecking {
     shape: ReadWriteDimensions,
 }

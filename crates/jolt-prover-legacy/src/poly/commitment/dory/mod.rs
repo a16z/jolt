@@ -6,6 +6,8 @@
 mod commitment_scheme;
 mod dory_globals;
 mod jolt_dory_routines;
+#[cfg(not(target_arch = "wasm32"))]
+mod urs_lock;
 mod wrappers;
 
 #[cfg(test)]

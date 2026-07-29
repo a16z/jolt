@@ -43,6 +43,7 @@ pub fn ram_ra_virtualization_input_points_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamRaVirtualization<F: Field> {
     symbolic: relations::ram::RaVirtualization,
     dimensions: RamRaVirtualizationDimensions,
@@ -69,6 +70,22 @@ impl<F: Field> RamRaVirtualization<F> {
             ram_reduced_cycle,
             committed_chunk_bits,
         }
+    }
+
+    pub fn dimensions(&self) -> RamRaVirtualizationDimensions {
+        self.dimensions
+    }
+
+    pub fn ram_reduced_address(&self) -> &[F] {
+        &self.ram_reduced_address
+    }
+
+    pub fn ram_reduced_cycle(&self) -> &[F] {
+        &self.ram_reduced_cycle
+    }
+
+    pub fn committed_chunk_bits(&self) -> usize {
+        self.committed_chunk_bits
     }
 }
 

@@ -42,8 +42,12 @@ pub struct Stage2OutputClaims<F: Field> {
 /// copies equal their sources) all derive from those per-member declarations.
 /// The two RAM relations slice their point at the phase-1 `instance_point_offset`.
 #[derive(SumcheckBatch)]
+#[sumcheck_batch(crate = "crate")]
 pub struct Stage2BatchSumchecks<F: Field> {
     pub ram_read_write: RamReadWriteChecking<F>,
+    /// On the prove side the remainder kernel is minted from the state the
+    /// product uni-skip slot parked in the proof session, through its
+    /// regular universal backend slot.
     pub product_remainder: ProductRemainder<F>,
     pub instruction_claim_reduction: InstructionClaimReduction<F>,
     pub ram_raf_evaluation: RamRafEvaluation<F>,
@@ -94,16 +98,16 @@ pub struct Stage2ClearOutput<F: Field> {
 }
 
 /// Stage 2's ZK output, carrying the Fiat-Shamir values BlindFold sources via
-/// `input.stage2.<field>`. The two batch gammas are the generated
+/// `input.stage2.<field>`. The batch draws are the generated
 /// [`Stage2BatchChallenges`] member structs (`challenges.ram_read_write.gamma`,
-/// `challenges.instruction_claim_reduction.gamma`; the other three batch relations
-/// draw nothing — `NoChallenges`). The remaining three are non-batch draws — the
-/// product uni-skip reduction challenge and its freshly-drawn `product_tau_high`
-/// scalar (a separate sub-sumcheck), and the RAM output-check address reference
-/// point (folded in like stage 6's booleanity reference points) — so they are not
-/// part of the per-instance aggregate. `product_tau_low` is opening-derived (stage
-/// 1's remainder sumcheck point low half), stored so downstream stage-3 relation
-/// construction can read it mode-agnostically via
+/// `challenges.instruction_claim_reduction.gamma`, and the RAM output-check
+/// address reference point `challenges.ram_output_check.output_address`; the
+/// other two batch relations draw nothing — `NoChallenges`). The remaining two
+/// are non-batch draws — the product uni-skip reduction challenge and its
+/// freshly-drawn `product_tau_high` scalar (a separate sub-sumcheck) — so they
+/// are not part of the per-instance aggregate. `product_tau_low` is
+/// opening-derived (stage 1's remainder sumcheck point low half), stored so
+/// downstream stage-3 relation construction can read it mode-agnostically via
 /// [`Stage2Output::product_tau_low`]; BlindFold independently recomputes it from
 /// `stage1.remainder_consistency`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,7 +116,6 @@ pub struct Stage2ZkOutput<F: Field, C> {
     pub product_uniskip_challenge: F,
     pub product_tau_low: Vec<F>,
     pub product_tau_high: F,
-    pub output_address_challenges: Vec<F>,
     pub product_uniskip_consistency: CommittedSumcheckConsistency<F, C>,
     pub product_uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
@@ -211,29 +214,44 @@ mod tests {
                 0,
                 Vec::new(),
             ),
-            ram_output_check: RamOutputCheck::new(dimensions, Vec::new(), public_memory),
+            ram_output_check: RamOutputCheck::new(dimensions, public_memory),
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the pre-port inline draw: exactly two
-    /// squeezes, the RAM read-write gamma then the instruction claim-reduction
-    /// gamma (the other three members are `NoChallenges` and draw nothing).
+    /// Pins the batch's `draw_challenges` to the pre-port inline draw: the RAM
+    /// read-write gamma, the instruction claim-reduction gamma (each a single
+    /// `challenge_scalar`), then the RAM output-check address reference point —
+    /// one raw `challenge()` per RAM address variable, via the last member's
+    /// `draw_challenges` override (the other two members draw nothing).
     #[test]
-    fn draw_challenges_matches_inline_two_gamma_sequence() {
+    fn draw_challenges_matches_inline_draw_sequence() {
         let sumchecks = sumchecks();
-        let (inline_events, (inline_ram_gamma, inline_instruction_gamma)) =
-            record(|t| (t.challenge_scalar(), t.challenge_scalar()));
+        let log_k = sumchecks.ram_output_check.read_write_dimensions().log_k();
+        let (inline_events, (inline_ram_gamma, inline_instruction_gamma, inline_output_address)) =
+            record(|t| {
+                (
+                    t.challenge_scalar(),
+                    t.challenge_scalar(),
+                    (0..log_k).map(|_| t.challenge()).collect::<Vec<Fr>>(),
+                )
+            });
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
         assert_eq!(
             draw_events,
-            vec![DrawEvent::Squeeze(1), DrawEvent::Squeeze(2)]
+            (1..=(2 + log_k) as u64)
+                .map(DrawEvent::Squeeze)
+                .collect::<Vec<_>>()
         );
         assert_eq!(challenges.ram_read_write.gamma, inline_ram_gamma);
         assert_eq!(
             challenges.instruction_claim_reduction.gamma,
             inline_instruction_gamma
+        );
+        assert_eq!(
+            challenges.ram_output_check.output_address,
+            inline_output_address
         );
     }
 

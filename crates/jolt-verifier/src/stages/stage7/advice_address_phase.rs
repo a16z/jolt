@@ -62,6 +62,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+#[derive(Clone)]
 pub struct TrustedAdviceAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::advice::TrustedAddressPhase,
     layout: AdviceClaimReductionLayout,
@@ -145,6 +146,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceAddressPhase<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct UntrustedAdviceAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::advice::UntrustedAddressPhase,
     layout: AdviceClaimReductionLayout,

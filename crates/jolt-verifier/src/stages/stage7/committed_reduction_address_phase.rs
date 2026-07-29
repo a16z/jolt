@@ -32,6 +32,7 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::outputs::BytecodeReductionWeights;
 use crate::VerifierError;
 
+#[derive(Clone)]
 pub struct BytecodeReductionAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::AddressPhase,
     layout: BytecodeClaimReductionLayout,
@@ -144,6 +145,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct ProgramImageReductionAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::program_image::AddressPhase,
     layout: ProgramImageClaimReductionLayout,
