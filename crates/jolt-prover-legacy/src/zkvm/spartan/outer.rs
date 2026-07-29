@@ -767,6 +767,9 @@ pub struct OuterSharedState<F: JoltField> {
     r_grid: ExpandingTable<F>,
     #[allocative(skip)]
     lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+    #[cfg(feature = "akita")]
+    #[allocative(skip)]
+    r1cs_rows: Option<Vec<R1CSCycleInputs>>,
     pub params: OuterRemainingSumcheckParams<F>,
 }
 
@@ -813,6 +816,8 @@ impl<F: JoltField> OuterSharedState<F> {
             r_grid,
             params: outer_params,
             lagrange_evals_r0: lagrange_evals_r,
+            #[cfg(feature = "akita")]
+            r1cs_rows: None,
         }
     }
 
@@ -1338,6 +1343,18 @@ impl<F: JoltField> OuterLinearStage<F> {
         let num_evals_az = E_out.len() * E_in.len() * grid_size;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+        #[cfg(feature = "akita")]
+        let mut r1cs_rows = vec![R1CSCycleInputs::default(); shared.trace.len()];
+        #[cfg(feature = "akita")]
+        let r1cs_rows_ptr = r1cs_rows.as_mut_ptr() as usize;
+        #[cfg(feature = "akita")]
+        let cache_row = |index: usize, row: R1CSCycleInputs| {
+            // SAFETY: round zero visits each time-step index once, and the
+            // parallel chunks cover disjoint index ranges.
+            unsafe {
+                *(r1cs_rows_ptr as *mut R1CSCycleInputs).add(index) = row;
+            }
+        };
 
         let ans: Vec<F> = if E_in.len() == 1 {
             az.par_chunks_exact_mut(grid_size)
@@ -1380,6 +1397,8 @@ impl<F: JoltField> OuterLinearStage<F> {
                             az_grid[j + 1] = az1;
                             bz_grid[j + 1] = bz1;
 
+                            #[cfg(feature = "akita")]
+                            cache_row(time_step_idx, row_inputs);
                             j += 2;
                         }
                     } else {
@@ -1411,6 +1430,10 @@ impl<F: JoltField> OuterLinearStage<F> {
                             bz_chunk[j] = bz_at_full_idx;
                             az_grid[j] = az_at_full_idx;
                             bz_grid[j] = bz_at_full_idx;
+                            #[cfg(feature = "akita")]
+                            if !selector {
+                                cache_row(time_step_idx, row_inputs);
+                            }
                         }
                     }
 
@@ -1493,6 +1516,8 @@ impl<F: JoltField> OuterLinearStage<F> {
                                 az_grid[j + 1] = az1;
                                 bz_grid[j + 1] = bz1;
 
+                                #[cfg(feature = "akita")]
+                                cache_row(time_step_idx, row_inputs);
                                 j += 2;
                             }
                         } else {
@@ -1525,6 +1550,10 @@ impl<F: JoltField> OuterLinearStage<F> {
                                 bz_outer_chunk[offset_in_chunk] = bz_at_full_idx;
                                 az_grid[j] = az_at_full_idx;
                                 bz_grid[j] = bz_at_full_idx;
+                                #[cfg(feature = "akita")]
+                                if !selector {
+                                    cache_row(time_step_idx, row_inputs);
+                                }
                             }
                         }
 
@@ -1560,6 +1589,10 @@ impl<F: JoltField> OuterLinearStage<F> {
                 )
         };
         shared.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
+        #[cfg(feature = "akita")]
+        {
+            shared.r1cs_rows = Some(r1cs_rows);
+        }
         (DensePolynomial::new(az), DensePolynomial::new(bz))
     }
 
@@ -1746,6 +1779,14 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
     ) {
         let r_cycle = shared.params.normalize_opening_point(sumcheck_challenges);
 
+        #[cfg(feature = "akita")]
+        let claimed_witness_evals = {
+            let Some(r1cs_rows) = shared.r1cs_rows.as_ref() else {
+                panic!("round-zero materialization must retain the R1CS rows");
+            };
+            R1CSEval::compute_claimed_inputs_from_rows(r1cs_rows, &r_cycle)
+        };
+        #[cfg(not(feature = "akita"))]
         let claimed_witness_evals = R1CSEval::compute_claimed_inputs(
             &shared.bytecode_preprocessing,
             &shared.trace,
