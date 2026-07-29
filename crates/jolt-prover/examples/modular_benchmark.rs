@@ -283,6 +283,8 @@ fn run_benchmark(
     let backend = match backend_choice {
         Backend::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
         Backend::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        Backend::Metal => JoltBackend::<Fr, DoryScheme>::metal().expect("metal backend"),
     };
 
     // --- The timed window: the full modular prove (witness materialization,
@@ -317,6 +319,8 @@ fn run_benchmark(
     let backend_label = match backend_choice {
         Backend::Reference => "reference",
         Backend::Optimized => "optimized",
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        Backend::Metal => "metal",
     };
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
     let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
