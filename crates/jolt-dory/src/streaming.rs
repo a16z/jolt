@@ -448,7 +448,7 @@ fn one_hot_chunk_commitments(
     row_commitments
 }
 
-fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
+pub(crate) fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
     assert!(
         num_rows.is_power_of_two(),
         "streaming: row count ({num_rows}) must be a power of two",

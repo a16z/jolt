@@ -18,15 +18,16 @@
 //! way. Commitments and hints are therefore byte-identical to the unprepared
 //! path (pinned by parity tests in `streaming`).
 
-use ark_bn254::Bn254;
+use ark_bn254::{Bn254, G1Affine};
 use ark_ec::pairing::{MillerLoopOutput, Pairing};
 use ark_ec::CurveGroup;
 use ark_ff::One;
 use dory::Mode;
+use jolt_crypto::Bn254G1;
 use rayon::prelude::*;
 
-use crate::scheme::{ArkFr, ArkG1, ArkGT};
-use crate::types::DoryProverSetup;
+use crate::scheme::{ark_to_jolt_fr, ark_to_jolt_gt, ArkFr, ArkG1, ArkGT};
+use crate::types::{DoryCommitment, DoryHint, DoryProverSetup};
 
 /// Miller-loop-prepared `g2_vec[..max_rows]` setup generators, shared
 /// read-only across every column finish of one commit pass.
@@ -97,4 +98,148 @@ pub(crate) fn commit_rows_tier_2_prepared<M: Mode>(
     let commit_blind = M::sample::<ArkFr>();
     let tier_2 = M::mask(tier_2, &setup.0.ht, &commit_blind);
     (tier_2, commit_blind)
+}
+
+/// Incremental transparent-mode tier-2: the Fp12 Miller product accumulated
+/// as row commitments become final (any order, any partition — the product
+/// commutes), final-exponentiated once. Produces the exact
+/// `multi_pair_g2_setup` GT for the same row set: a multi-Miller loop equals
+/// the per-pair Miller product, and identity rows are skipped by both paths
+/// (`e(∞, ·) = 1`). This is the overlap seam for the Metal commit slot —
+/// the CPU pairs each superchunk's finished rows while the device crunches
+/// the next one.
+pub struct Tier2Accumulator {
+    miller: <Bn254 as Pairing>::TargetField,
+}
+
+impl Default for Tier2Accumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Tier2Accumulator {
+    pub fn new() -> Self {
+        Self {
+            miller: <Bn254 as Pairing>::TargetField::one(),
+        }
+    }
+
+    /// Multiply in the Miller loops of `points[i]` paired with prepared
+    /// setup generator `row_indices[i]`.
+    pub fn absorb(&mut self, prep: &DoryTier2Prep, points: &[G1Affine], row_indices: &[u32]) {
+        assert_eq!(
+            points.len(),
+            row_indices.len(),
+            "tier-2 absorb: one row index per point",
+        );
+        if points.is_empty() {
+            return;
+        }
+        let qs: Vec<<Bn254 as Pairing>::G2Prepared> = row_indices
+            .iter()
+            .map(|&row| prep.prepared[row as usize].clone())
+            .collect();
+        let out = Bn254::multi_miller_loop(points.iter().copied(), qs);
+        self.miller *= out.0;
+    }
+
+    /// Fold another accumulator in (parallel absorb lanes).
+    pub fn merge(&mut self, other: Self) {
+        self.miller *= other.miller;
+    }
+
+    /// Final exponentiation — the transparent-mode tier-2 commitment.
+    pub fn finish(self) -> DoryCommitment {
+        #[expect(
+            clippy::expect_used,
+            reason = "final exponentiation only fails on a zero Miller product, which no pair set produces"
+        )]
+        let result = Bn254::final_exponentiation(MillerLoopOutput(self.miller))
+            .expect("final exponentiation should not fail");
+        DoryCommitment(ark_to_jolt_gt(&dory::backends::arkworks::ArkGT(result)))
+    }
+}
+
+/// Assemble a one-hot column's output from externally computed row
+/// commitments (tier-2 row order: `k · chunk_count + window`) and its
+/// accumulated tier-2 — the transparent-mode counterpart of
+/// `finish_one_hot_column_major_chunks` for rows that never passed through
+/// chunk commitments.
+pub fn one_hot_output_from_rows(
+    setup: &DoryProverSetup,
+    rows: Vec<Bn254G1>,
+    tier2: Tier2Accumulator,
+) -> (DoryCommitment, DoryHint) {
+    crate::streaming::validate_row_count(rows.len(), setup);
+    let commit_blind = dory::Transparent::sample::<ArkFr>();
+    (
+        tier2.finish(),
+        DoryHint::new(rows, ark_to_jolt_fr(&commit_blind)),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_ff::{UniformRand, Zero};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use super::*;
+    use crate::scheme::commit_rows_tier_2;
+    use crate::DoryScheme;
+
+    /// Absorbing rows in shards, out of order, across merged accumulators
+    /// must reproduce `commit_rows_tier_2`'s GT exactly — including skipped
+    /// identity rows.
+    #[test]
+    fn accumulator_matches_whole_row_tier_2() {
+        let num_rows = 16usize;
+        let setup = DoryScheme::setup_prover(8);
+        let mut rng = ChaCha20Rng::seed_from_u64(77);
+        let mut rows: Vec<ArkG1> = (0..num_rows)
+            .map(|_| dory::backends::arkworks::ArkG1(ark_bn254::G1Projective::rand(&mut rng)))
+            .collect();
+        rows[3] = dory::backends::arkworks::ArkG1(ark_bn254::G1Projective::zero());
+        rows[10] = dory::backends::arkworks::ArkG1(ark_bn254::G1Projective::zero());
+
+        let (expected_gt, _) = commit_rows_tier_2::<dory::Transparent>(&rows, &setup);
+
+        let prep = DoryTier2Prep::new(&setup, num_rows);
+        let affine: Vec<G1Affine> = rows.iter().map(|p| p.0.into_affine()).collect();
+        // Shard the rows into interleaved index sets absorbed out of order,
+        // one accumulator per parity, merged at the end.
+        let mut even = Tier2Accumulator::new();
+        let mut odd = Tier2Accumulator::new();
+        let evens: Vec<u32> = (0..num_rows as u32).filter(|i| i % 2 == 0).rev().collect();
+        let odds: Vec<u32> = (0..num_rows as u32).filter(|i| i % 2 == 1).collect();
+        odd.absorb(
+            &prep,
+            &odds.iter().map(|&i| affine[i as usize]).collect::<Vec<_>>(),
+            &odds,
+        );
+        for &i in &evens {
+            even.absorb(&prep, &[affine[i as usize]], &[i]);
+        }
+        even.merge(odd);
+        let device_gt = even.finish();
+
+        assert_eq!(device_gt.0, crate::scheme::ark_to_jolt_gt(&expected_gt));
+
+        // The assembled output: same GT, the given rows, zero blind.
+        let jolt_rows: Vec<Bn254G1> = affine
+            .iter()
+            .map(|a| {
+                let point: ark_bn254::G1Projective = (*a).into();
+                Bn254G1::from(point)
+            })
+            .collect();
+        let mut acc = Tier2Accumulator::new();
+        let all: Vec<u32> = (0..num_rows as u32).collect();
+        acc.absorb(&prep, &affine, &all);
+        let (commitment, hint) = one_hot_output_from_rows(&setup, jolt_rows.clone(), acc);
+        assert_eq!(commitment.0, crate::scheme::ark_to_jolt_gt(&expected_gt));
+        let zero_blind = ark_to_jolt_fr(&dory::Transparent::sample::<ArkFr>());
+        assert_eq!(hint, DoryHint::new(jolt_rows, zero_blind));
+    }
 }
