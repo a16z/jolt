@@ -131,6 +131,10 @@ pub struct TraceInputs {
     pub untrusted_advice: Vec<u8>,
     pub trusted_advice: Vec<u8>,
     pub memory_config: MemoryConfig,
+    /// Runtime advice tape to seed execution with (the SDK's two-pass advice
+    /// flow: pass 1 populates the tape, pass 2 consumes it). Read cursor
+    /// always starts at 0.
+    pub advice_tape: Option<Vec<u8>>,
 }
 
 impl TraceInputs {
@@ -145,7 +149,13 @@ impl TraceInputs {
             untrusted_advice,
             trusted_advice,
             memory_config,
+            advice_tape: None,
         }
+    }
+
+    pub fn with_advice_tape(mut self, advice_tape: Option<Vec<u8>>) -> Self {
+        self.advice_tape = advice_tape;
+        self
     }
 }
 
@@ -294,6 +304,9 @@ pub struct TraceOutput<T> {
     pub trace: T,
     pub device: JoltDevice,
     pub final_memory: Option<MemoryImage>,
+    /// The populated runtime advice tape captured at guest termination
+    /// (`None` when the backend produced no tape).
+    pub advice_tape: Option<Vec<u8>>,
 }
 
 impl<T> TraceOutput<T> {
@@ -302,7 +315,13 @@ impl<T> TraceOutput<T> {
             trace,
             device,
             final_memory,
+            advice_tape: None,
         }
+    }
+
+    pub fn with_advice_tape(mut self, advice_tape: Option<Vec<u8>>) -> Self {
+        self.advice_tape = advice_tape;
+        self
     }
 }
 

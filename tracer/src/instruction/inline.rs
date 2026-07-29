@@ -32,7 +32,35 @@ pub type InlineSequenceFn = fn(
     InlineOperands,
 ) -> Result<ExpandedInstructionSequence, ExpansionError>;
 
-pub type AdviceFn = fn(FormatInline, &mut Cpu) -> Option<VecDeque<u64>>;
+pub type AdviceFn = fn(FormatInline, &mut dyn InlineAdviceContext) -> Option<VecDeque<u64>>;
+
+/// Minimal execution-state view for inline advice builders
+/// (`specs/inline-expansion-grammar.md`): inline operands plus CPU/memory
+/// read helpers, and nothing else — no expansion builder, no allocation.
+///
+/// Every execution backend implements this over its own state so that inline
+/// advice (sha2, bigint, secp256k1, …) is computed by the same Rust code
+/// under all backends.
+pub trait InlineAdviceContext {
+    /// Read guest register `x[index]` as an unsigned value.
+    fn register(&self, index: usize) -> u64;
+
+    /// Read a doubleword from guest memory; `None` on an invalid access.
+    fn load_doubleword(&mut self, address: u64) -> Option<u64>;
+}
+
+impl InlineAdviceContext for Cpu {
+    fn register(&self, index: usize) -> u64 {
+        self.x[index] as u64
+    }
+
+    fn load_doubleword(&mut self, address: u64) -> Option<u64> {
+        self.mmu
+            .load_doubleword(address)
+            .ok()
+            .map(|(value, _)| value)
+    }
+}
 
 /// Runtime registration for one inline opcode.
 ///
@@ -330,7 +358,10 @@ mod tests {
         asm.finalize()
     }
 
-    fn test_advice(_operands: FormatInline, _cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+    fn test_advice(
+        _operands: FormatInline,
+        _ctx: &mut dyn InlineAdviceContext,
+    ) -> Option<VecDeque<u64>> {
         None
     }
 

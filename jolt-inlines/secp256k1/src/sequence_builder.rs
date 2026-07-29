@@ -6,10 +6,10 @@ use jolt_inlines_sdk::host::{
         virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, Cpu,
-    ExpandedInstructionSequence, ExpansionError, FormatInline, GlvDecompositionAdvice,
-    InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
-    ModularDivisionAdvice, MulqType, QuotientAdvice,
+    limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, ExpandedInstructionSequence,
+    ExpansionError, FormatInline, GlvDecompositionAdvice, InlineAdviceContext, InlineBuilderExt,
+    InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister, ModularDivisionAdvice,
+    MulqType, QuotientAdvice,
 };
 
 /// inline constructor for GLV decomposition in secp256k1 scalar field
@@ -27,13 +27,13 @@ impl GlvrAdvBuilder {
         let vr = asm.allocate_for_inline()?;
         Ok(GlvrAdvBuilder { asm, vr, operands })
     }
-    fn advice(operands: FormatInline, cpu: &mut Cpu) -> GlvDecompositionAdvice {
-        let k_addr = cpu.x[operands.rs1 as usize] as u64;
+    fn advice(operands: FormatInline, ctx: &mut dyn InlineAdviceContext) -> GlvDecompositionAdvice {
+        let k_addr = ctx.register(operands.rs1 as usize);
         let kr = [
-            cpu.mmu.load_doubleword(k_addr).unwrap().0,
-            cpu.mmu.load_doubleword(k_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(k_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
+            ctx.load_doubleword(k_addr).unwrap(),
+            ctx.load_doubleword(k_addr + 8).unwrap(),
+            ctx.load_doubleword(k_addr + 16).unwrap(),
+            ctx.load_doubleword(k_addr + 24).unwrap(),
         ];
         let k = Fr::new(BigInt(kr)).into_bigint().into();
         GlvDecompositionAdvice::from_sign_abs(crate::glv::decompose_scalar(k))
@@ -126,21 +126,21 @@ impl MulqBuilder {
     }
     fn quotient_advice(
         operands: FormatInline,
-        cpu: &mut Cpu,
+        ctx: &mut dyn InlineAdviceContext,
         is_scalar_field: bool,
         op_type: &MulqType,
     ) -> QuotientAdvice {
-        mulq_quotient_advice(&operands, cpu, is_scalar_field, op_type, secp256k1_modulus)
+        mulq_quotient_advice(&operands, ctx, is_scalar_field, op_type, secp256k1_modulus)
     }
 
     fn division_advice(
         operands: FormatInline,
-        cpu: &mut Cpu,
+        ctx: &mut dyn InlineAdviceContext,
         is_scalar_field: bool,
     ) -> ModularDivisionAdvice {
         mulq_division_advice(
             &operands,
-            cpu,
+            ctx,
             is_scalar_field,
             secp256k1_modulus,
             |b, a| {
@@ -477,8 +477,11 @@ macro_rules! secp256k1_mulq_op {
             ) -> Result<ExpandedInstructionSequence, ExpansionError> {
                 MulqBuilder::new(asm, operands, MulqType::Div, $is_scalar)?.inline_sequence()
             }
-            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-                MulqBuilder::division_advice(operands, cpu, $is_scalar)
+            fn build_advice(
+                operands: FormatInline,
+                ctx: &mut dyn InlineAdviceContext,
+            ) -> Self::Advice {
+                MulqBuilder::division_advice(operands, ctx, $is_scalar)
             }
         }
     };
@@ -497,8 +500,11 @@ macro_rules! secp256k1_mulq_op {
             ) -> Result<ExpandedInstructionSequence, ExpansionError> {
                 MulqBuilder::new(asm, operands, $mul_type, $is_scalar)?.inline_sequence()
             }
-            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-                MulqBuilder::quotient_advice(operands, cpu, $is_scalar, &$mul_type)
+            fn build_advice(
+                operands: FormatInline,
+                ctx: &mut dyn InlineAdviceContext,
+            ) -> Self::Advice {
+                MulqBuilder::quotient_advice(operands, ctx, $is_scalar, &$mul_type)
             }
         }
     };
@@ -525,7 +531,7 @@ impl InlineOp for Secp256k1GlvrAdv {
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         GlvrAdvBuilder::new(asm, operands)?.inline_sequence()
     }
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-        GlvrAdvBuilder::advice(operands, cpu)
+    fn build_advice(operands: FormatInline, ctx: &mut dyn InlineAdviceContext) -> Self::Advice {
+        GlvrAdvBuilder::advice(operands, ctx)
     }
 }
