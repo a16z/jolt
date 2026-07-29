@@ -17,6 +17,8 @@
 //! (`advice_consumer`, `committed_muldiv`, `address_major`,
 //! `advice_committed`) are whole-proof ratchets over the mode ×
 //! trace-order matrix, sharing the `support` scaffolding.
+//! `chunk_boundary` is the scale arm: a real 2^17-cycle trace, one power
+//! past the optimized backend's 2^16-row streaming chunk.
 
 /// Shared scaffolding for the byte-diff modules: every test runs the same
 /// legacy-side guest pipeline (decode + trace + preprocess + prove + replay)
@@ -193,13 +195,14 @@ mod support {
         verifier_preprocessing: &VerifierPreprocessing,
         order: TracePolynomialOrder,
         legacy_proof: &Proof,
+        max_padded_trace_length: usize,
     ) -> ProverConfig {
         let mut config = ProverConfig::derive::<Fr>(
             trace_output.trace.rows(),
             memory_layout,
             verifier_preprocessing.program.min_bytecode_address(),
             verifier_preprocessing.program.program_image_len_words(),
-            MAX_PADDED_TRACE_LENGTH,
+            max_padded_trace_length,
         )
         .expect("derive config");
         config.trace_polynomial_order = order;
@@ -248,9 +251,13 @@ mod support {
     /// supported trace, both advice candidates (always included in setup
     /// sizing, present or not), plus any committed-program candidates. The
     /// SRS is prefix-stable, so an over-sized setup commits identical bytes.
-    pub fn setup_total_vars(memory_layout: &MemoryLayout, extra_candidates: &[usize]) -> usize {
-        let max_log_t = MAX_PADDED_TRACE_LENGTH.ilog2() as usize;
-        let max_log_k_chunk = 4usize; // max_log_t = 16 < the 25-bit threshold
+    pub fn setup_total_vars(
+        memory_layout: &MemoryLayout,
+        extra_candidates: &[usize],
+        max_padded_trace_length: usize,
+    ) -> usize {
+        let max_log_t = max_padded_trace_length.ilog2() as usize;
+        let max_log_k_chunk = 4usize; // max_log_t < the 25-bit threshold
         extra_candidates.iter().copied().fold(
             (max_log_k_chunk + max_log_t)
                 .max(advice_vars(memory_layout.max_trusted_advice_size))
@@ -504,6 +511,7 @@ mod muldiv {
             &verifier_preprocessing,
             TracePolynomialOrder::CycleMajor,
             &legacy_proof,
+            support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = TraceBackend::new(
@@ -513,7 +521,11 @@ mod muldiv {
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
-            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(memory_layout, &[])),
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                support::MAX_PADDED_TRACE_LENGTH,
+            )),
             committed_program: None,
         };
 
@@ -1025,6 +1037,7 @@ mod advice_consumer {
             &verifier_preprocessing,
             order,
             &legacy_proof,
+            support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = TraceBackend::new(
@@ -1036,7 +1049,11 @@ mod advice_consumer {
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
-            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(memory_layout, &[])),
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                support::MAX_PADDED_TRACE_LENGTH,
+            )),
             committed_program: None,
         };
 
@@ -1218,6 +1235,7 @@ mod committed_muldiv {
             &verifier_preprocessing,
             order,
             &legacy_proof,
+            support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         // The witness borrows its own copy: `full_program` itself moves into
@@ -1234,6 +1252,7 @@ mod committed_muldiv {
         let pcs_setup = DoryScheme::setup_prover(support::setup_total_vars(
             memory_layout,
             &[bytecode_candidate, image_candidate],
+            support::MAX_PADDED_TRACE_LENGTH,
         ));
         let (bytecode_chunk_hints, program_image_hint) = support::commit_committed_program(
             &verifier_preprocessing,
@@ -1362,6 +1381,7 @@ mod address_major {
             &verifier_preprocessing,
             TracePolynomialOrder::AddressMajor,
             &legacy_proof,
+            support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = TraceBackend::new(
@@ -1371,7 +1391,11 @@ mod address_major {
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
-            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(memory_layout, &[])),
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                support::MAX_PADDED_TRACE_LENGTH,
+            )),
             committed_program: None,
         };
 
@@ -1507,6 +1531,7 @@ mod advice_committed {
             &verifier_preprocessing,
             order,
             &legacy_proof,
+            support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         // The witness borrows its own copy: `full_program` itself moves into
@@ -1524,6 +1549,7 @@ mod advice_committed {
         let pcs_setup = DoryScheme::setup_prover(support::setup_total_vars(
             memory_layout,
             &[bytecode_candidate, image_candidate],
+            support::MAX_PADDED_TRACE_LENGTH,
         ));
         let (bytecode_chunk_hints, program_image_hint) = support::commit_committed_program(
             &verifier_preprocessing,
@@ -1593,6 +1619,172 @@ mod advice_committed {
             &proof,
             Some(&trusted.converted),
         );
+    }
+}
+
+/// The chunk-boundary gate: the optimized backend's shared trace walks
+/// stream in 2^16-row chunks (`jolt-kernels` `COLLECT_ROWS_CHUNK`), and every
+/// other byte-parity arm caps at a 2^16 padded trace — no arm crosses a
+/// chunk boundary. This one pads to 2^17 (asserted), so the collect passes
+/// run two chunks and the boundary carry is pinned byte-for-byte against
+/// legacy.
+#[cfg(feature = "prover-fixtures")]
+#[expect(clippy::expect_used)]
+mod chunk_boundary {
+    // Anchor the sha2 inline's inventory registration into this test binary;
+    // without it the guest's inline instructions fail bytecode expansion.
+    extern crate jolt_inlines_sha2;
+
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_program::execution::JoltProgram;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing};
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+    use jolt_prover_legacy::zkvm::RV64IMACProver;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
+
+    use super::support;
+
+    /// One power past the streaming chunk (and past the other arms' cap).
+    const MAX_PADDED_TRACE_LENGTH: usize = 1 << 17;
+
+    /// sha2 iterations landing the raw trace in `(2^16, 2^17]` at ~3396
+    /// cycles per inlined hash (the legacy perf harness's calibration), so
+    /// the padded trace is exactly 2^17 — asserted below.
+    const SHA2_ITERATIONS: u32 = 30;
+
+    #[test]
+    fn prover_matches_legacy_on_sha2_chain_across_collect_rows_chunks() {
+        let mut program = host::Program::new("sha2-chain-guest");
+        let inputs = [
+            postcard::to_stdvec(&[5u8; 32]).expect("serialize seed"),
+            postcard::to_stdvec(&SHA2_ITERATIONS).expect("serialize iterations"),
+        ]
+        .concat();
+
+        // --- Legacy side: preprocess and prove at the widened trace cap.
+        let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
+        let shared = JoltSharedPreprocessing::new(
+            guest.program,
+            guest.io_device.memory_layout.clone(),
+            MAX_PADDED_TRACE_LENGTH,
+        );
+        let legacy_preprocessing = LegacyProverPreprocessing::new(shared);
+        let legacy_prover = RV64IMACProver::gen_from_elf(
+            &legacy_preprocessing,
+            &guest.elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let public_io = legacy_prover.program_io.clone();
+        let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+
+        // --- New-prover side: trace independently through the modular stack.
+        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let memory_layout = &public_io.memory_layout;
+        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full()
+            .expect("full program preprocessing")
+            .clone();
+        let config = support::derive_config_pinned(
+            &trace_output,
+            memory_layout,
+            &verifier_preprocessing,
+            TracePolynomialOrder::CycleMajor,
+            &legacy_proof,
+            MAX_PADDED_TRACE_LENGTH,
+        );
+        // The gate's precondition — a shorter trace never crosses the
+        // 2^16-row streaming chunk this module exists to exercise.
+        assert_eq!(
+            config.trace_length,
+            1usize << 17,
+            "the chunk-boundary gate needs a 2^17 padded trace; retune SHA2_ITERATIONS",
+        );
+        let padded_output = support::pad_trace(trace_output, config.trace_length);
+        let witness = TraceBackend::new(
+            support::witness_config(&config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        );
+
+        let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                MAX_PADDED_TRACE_LENGTH,
+            )),
+            committed_program: None,
+        };
+
+        // Optimized backend only: the reference tier materializes dense
+        // `(K × T)` grids per RAM/instruction polynomial — at a real 2^17
+        // trace that is tens of gigabytes and hours of naive-prover walking,
+        // and the reference tier has no streaming chunk to gate. The chunked
+        // walks under test are the optimized tier's.
+        let backend = JoltBackend::<Fr, DoryScheme>::optimized();
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            &backend,
+            &prover_preprocessing,
+            &config,
+            None,
+            &witness,
+            &public_io,
+        )
+        .expect("top-level prove");
+
+        // Component-wise asserts give per-stage granularity when bytes
+        // diverge; the final whole-struct assert is the ratchet.
+        assert_eq!(proof.commitments, legacy_proof.commitments);
+        assert_eq!(
+            proof.stages.stage1_sumcheck_proof,
+            legacy_proof.stages.stage1_sumcheck_proof
+        );
+        assert_eq!(
+            proof.stages.stage2_sumcheck_proof, legacy_proof.stages.stage2_sumcheck_proof,
+            "stage-2 bytes diverged (RAM access columns collect here)",
+        );
+        assert_eq!(
+            proof.stages.stage3_sumcheck_proof,
+            legacy_proof.stages.stage3_sumcheck_proof
+        );
+        assert_eq!(
+            proof.stages.stage4_sumcheck_proof,
+            legacy_proof.stages.stage4_sumcheck_proof
+        );
+        assert_eq!(
+            proof.stages.stage5_sumcheck_proof,
+            legacy_proof.stages.stage5_sumcheck_proof
+        );
+        assert_eq!(
+            proof.stages.stage6a_sumcheck_proof,
+            legacy_proof.stages.stage6a_sumcheck_proof
+        );
+        assert_eq!(
+            proof.stages.stage6b_sumcheck_proof,
+            legacy_proof.stages.stage6b_sumcheck_proof
+        );
+        assert_eq!(
+            proof.stages.stage7_sumcheck_proof,
+            legacy_proof.stages.stage7_sumcheck_proof
+        );
+        assert_eq!(proof.claims, legacy_proof.claims);
+        assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
+
+        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
     }
 }
 
