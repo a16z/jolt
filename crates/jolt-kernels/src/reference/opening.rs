@@ -10,7 +10,7 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder
 use jolt_field::Field;
 use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::MultilinearPoly;
-use jolt_witness::JoltWitnessOracle;
+use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -28,7 +28,7 @@ impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        witness: &dyn JoltWitnessOracle<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,

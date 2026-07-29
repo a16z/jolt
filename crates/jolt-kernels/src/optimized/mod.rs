@@ -38,6 +38,7 @@ pub mod instruction_claim_reduction;
 pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
+pub mod opening;
 pub mod ram_hamming_booleanity;
 pub mod ram_ra_claim_reduction;
 pub mod ram_raf_evaluation;
@@ -70,10 +71,10 @@ where
     /// module tree ports overwritten by its optimized kernel, so the two
     /// backends cannot drift on the slots left untouched (`spartan_shift`,
     /// `ram_output_check`, `ram_ra_virtualization`, the precommitted /
-    /// advice reduction slots, and the commit / opening slots). Same
-    /// construction bounds as the reference backend (the commit slot is the
-    /// reference streaming implementation), plus the accumulator bound the
-    /// registers kernels' compact-scalar walks need.
+    /// advice reduction slots, the commit slot, and the advice-opening
+    /// evaluation). Same construction bounds as the reference backend (the
+    /// commit slot is the reference streaming implementation), plus the
+    /// accumulator bound the registers kernels' compact-scalar walks need.
     pub fn optimized() -> Self
     where
         PCS: StreamingCommitment,
@@ -113,6 +114,8 @@ where
         backend.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
         backend.hamming_weight_claim_reduction = Box::new(OptimizedHammingWeightClaimReduction);
         backend.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
+
+        backend.joint_opening = Box::new(OptimizedBackend);
 
         backend
     }
