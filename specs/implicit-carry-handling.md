@@ -21,6 +21,8 @@ The design uses a small, grounded proof story:
 
 This work is landed behind a Cargo feature named `implicit-carry`. The implementation should treat `implicit-carry` as an additive protocol axis, parallel to `field-inline`, rather than as four bespoke protocol variants.
 
+One important corollary is that there is only one proof-visible source of incoming carry: the committed `Carry` column. The design must not introduce a second independently-opened "virtual carry" source, because that would re-open the underconstraint that this feature is trying to eliminate.
+
 ## Intent
 
 ### Goal
@@ -38,6 +40,11 @@ Concretely, for the arithmetic instructions in scope:
 - `MUL`: `rd = low_64(rs1 * rs2)`, `NextCarry = high_64(rs1 * rs2)`
 - `ADDC`: `rd = low_64(rs1 + rs2 + Carry)`, `NextCarry = high_64(rs1 + rs2 + Carry)`
 - `MULC`: `rd = low_64(rs1 * rs2 + Carry)`, `NextCarry = high_64(rs1 * rs2 + Carry)`
+
+For `MUL` and `MULC`, this split is over the unsigned 128-bit widening of the raw 64-bit words. That is:
+
+- `MUL`: let `p = (rs1 as u128) * (rs2 as u128)`; then `rd = low_64(p)` and `NextCarry = high_64(p)`
+- `MULC`: let `p = (rs1 as u128) * (rs2 as u128) + (Carry as u128)`; then `rd = low_64(p)` and `NextCarry = high_64(p)`
 
 The carry is a full 64-bit value, not merely a boolean overflow flag.
 
@@ -68,7 +75,7 @@ The implementation must preserve the following properties:
 `jolt-eval` impact:
 
 - Preserve the existing `soundness` invariant.
-- Add a new invariant covering implicit carry correctness and uniqueness.
+- Add a new invariant named `implicit_carry_pair_soundness`.
 - Do not add a new tracked performance objective.
 
 ### Non-Goals
@@ -100,9 +107,11 @@ New tests required:
 
 - Randomized correctness tests covering every `{ADD, MUL} -> {ADDC, MULC}` pairing.
 - End-to-end proof acceptance tests for those pairings in both standard and ZK modes.
-- Negative tests that mutate the committed `Carry` witness and assert verification failure.
+- Negative tests that mutate the committed `Carry` path and assert verification failure.
 - Negative tests that mutate the claimed `NextCarry` path and assert verification failure.
-- Unit tests for the new lookup semantics, product virtualization of `CarryUsed`, row-0 carry initialization, shift relation changes, and outer-claim field ordering changes.
+- Negative tests that mutate the product-remainder `uses_carry` or `carry` openings and assert verification failure.
+- Negative tests that mutate the row-0 `Carry(0) = 0` final-opening claim and assert verification failure.
+- Unit tests for the new lookup semantics, the fourth product term, row-0 carry initialization, shift relation changes, and outer-claim field ordering changes.
 
 Because `implicit-carry` is cfg-gated, the supported matrix is `{field-inline on/off} x {implicit-carry on/off}`. The implementation should not fork into four separate codepaths, but CI and local validation should still cover the matrix with representative compile/test jobs:
 
@@ -112,6 +121,12 @@ Because `implicit-carry` is cfg-gated, the supported matrix is `{field-inline on
 - `field-inline = on`, `implicit-carry = on`: composition coverage proving that both additive feature lanes coexist correctly.
 
 The carry-specific randomized and negative tests only need to run when `implicit-carry` is enabled, but the feature-on build must compile and verify correctly with `field-inline` both enabled and disabled.
+
+`akita` handling is explicit:
+
+- The initial `implicit-carry` landing is in scope for the standard and ZK proof modes.
+- `implicit-carry + akita` is out of scope for this change and must fail closed with a compile-time error until the packed/final-opening plumbing is implemented deliberately.
+- The spec must therefore name every `akita`-sensitive file that needs either a real implementation or an explicit reject path; silent partial support is not acceptable.
 
 No dedicated acceptance tests are required for `ADDC` or `MULC` after non-carry-producing instructions beyond documenting that the consumed carry is `0`.
 
@@ -179,6 +194,14 @@ Concretely:
 - Shift batching should be “existing batch terms plus an optional carry term.”
 - Protocol metadata should record whether `implicit-carry` is enabled so mismatched prover/verifier builds fail closed.
 
+For the places that currently hard-code counts, the additive structure should be explicit:
+
+- `num_product_terms = 3 + implicit_carry_enabled as usize`
+- `num_outer_extra_inputs = 2 * implicit_carry_enabled as usize`
+- `num_shift_terms = 5 + implicit_carry_enabled as usize`
+
+Geometry helpers should derive from those additive quantities instead of growing feature-specific one-off tables.
+
 ### Representation
 
 The proof-visible carry state is:
@@ -196,6 +219,8 @@ Semantics:
 - `NextCarry(t) = Carry(t + 1)` for all non-padding rows.
 
 `Carry` is committed so the carry chain has a real grounding point in the claim DAG.
+
+There is intentionally no separate proof-visible `VirtualPolynomial::Carry`. Any path that needs the incoming carry must read the committed `Carry` column directly or read a value derived from it (`CarryUsed` or shifted `Carry`). This avoids a second witness source for the same semantic value.
 
 ### Trace and Execution Model
 
@@ -287,6 +312,8 @@ Tests that need to emit these instructions directly should do so via raw `.insn 
   - Define the top-level legacy prover feature and forward it to the crates above.
 - `jolt-sdk/Cargo.toml`
   - Forward `implicit-carry` if SDK-level build/test flows should expose it the same way `field-inline` is exposed today.
+- `Cargo.toml` feature validation points that already reject unsupported feature combinations
+  - Add an explicit fail-closed rejection for `implicit-carry + akita` in this initial landing.
 - `crates/jolt-verifier/src/config.rs`
   - Extend `JoltProtocolConfig` with an explicit `implicit_carry` protocol bit or enum.
   - Extend `JOLT_VERIFIER_CONFIG` and `validate_proof_config(...)` so verifier/prover mismatches fail closed.
@@ -352,16 +379,17 @@ Recommended semantics:
 
 - `crates/jolt-prover-legacy/src/zkvm/witness.rs`
   - Add `CommittedPolynomial::Carry`.
-  - Add `VirtualPolynomial::Carry`, `VirtualPolynomial::CarryUsed`, and `VirtualPolynomial::NextCarry`.
+  - Add `VirtualPolynomial::CarryUsed` and `VirtualPolynomial::NextCarry`.
   - Generate `CommittedPolynomial::Carry` directly from `TraceRow.carry`.
 - `crates/jolt-prover-legacy/src/zkvm/proof.rs`
   - Extend committed/virtual polynomial conversion for the new carry symbols.
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs`
   - Add `ProductConstraintLabel::CarryUsed`.
   - Extend `ProductConstraint` and `PRODUCT_CONSTRAINTS` with `CarryUsed = UsesCarry * Carry`.
+  - Extend the product-factor plumbing so `CarryUsed` can read committed `Carry` directly, rather than introducing a second independently-opened virtual carry source.
   - Recompute `NUM_PRODUCT_CONSTRAINTS` and any product uni-skip sizing that depends on it.
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs`
-  - Extend `PRODUCT_UNIQUE_FACTOR_VIRTUALS` with the factors needed for `CarryUsed`.
+  - Extend `PRODUCT_UNIQUE_FACTOR_*` bookkeeping with the factors needed for `CarryUsed`, including committed `Carry`.
   - Extend `ProductCycleInputs` and witness extraction accordingly.
 - `crates/jolt-prover-legacy/src/zkvm/spartan/product.rs`
   - Extend product virtualization claim computation, caching, and verifier expectations for `CarryUsed`.
@@ -411,8 +439,14 @@ Recommended semantics:
 - `crates/jolt-claims/src/protocols/jolt/ids.rs`
   - Add ids for committed `Carry`, virtual `CarryUsed`, and outer `NextCarry`.
 - `crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs`
+  - Generalize the Spartan product geometry from a fixed three-term layout to `3 + implicit_carry_enabled` terms.
   - Add `CarryUsed` and `NextCarry` to the outer geometry behind `implicit-carry`.
   - Re-sync outer row-group constants.
+- `crates/jolt-claims/src/protocols/jolt/relations/spartan/product_remainder.rs`
+  - Append `uses_carry` and committed `carry` openings to `ProductRemainderOutputClaims`.
+  - Change the left/right weighted product expression so term 3 is `uses_carry * carry`.
+- `crates/jolt-verifier/src/stages/stage2/outputs.rs`
+  - Update the source-of-truth comments, output counts, and point accessors for the larger product-remainder opening set.
 - `crates/jolt-claims/src/protocols/jolt/relations/spartan/outer_remainder.rs`
   - Extend canonical output-claim structs and field ordering.
 - `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs`
@@ -423,8 +457,14 @@ Recommended semantics:
   - Update field ordering assumptions.
 - `crates/jolt-verifier/src/stages/stage3/spartan_shift.rs`
   - Verify the added carry shift relation.
+- `crates/jolt-prover-legacy/src/zkvm/clear_claims.rs`
+  - Extend the stage-2 and stage-3 synthetic clear-claim builders with the new `uses_carry`, `carry`, and shifted carry fields so tamper tests and clear-claim reconstruction stay in sync.
 - Opening verification plumbing
-  - Verify the direct committed `Carry(0) = 0` opening claim.
+  - Add a named final-opening leaf for `Carry(0)` and verify it equals `0`.
+  - Bind that leaf in standard mode's transcript exactly where other final-opening claims are absorbed.
+  - Add the matching ZK/BlindFold claim constraint so the same invariant holds in ZK mode.
+- `crates/jolt-verifier/tests/support/tamper_manifest.rs`
+  - Add explicit tamper targets for `claims.stage1.outer.outer_remainder.next_carry`, `claims.stage2.batch_outputs.product_remainder.uses_carry`, `claims.stage2.batch_outputs.product_remainder.carry`, `claims.stage3.shift.carry`, and the new final-opening `Carry(0)` leaf.
 
 #### Modern constraint table
 
@@ -445,6 +485,7 @@ Add:
 - outer `NextCarry`
 
 Do **not** add raw `Carry` as a new uniform outer input. The uniform R1CS only needs `CarryUsed` and `NextCarry`.
+Do **not** add a second independently-opened virtual `Carry` polynomial. Product and shift relations must read the committed `Carry` column directly where they need the incoming carry witness.
 
 #### New product constraint
 
@@ -458,6 +499,32 @@ Consequences:
 
 - on `ADDC` and `MULC`, `CarryUsed = Carry`
 - on all other rows, `CarryUsed = 0`
+
+#### Exact fourth product term
+
+This proposal makes `CarryUsed` the fourth Spartan product term, not a side relation.
+
+The product-remainder relation should therefore move from 3 weighted terms to 4 weighted terms:
+
+- left term 0: `LeftInstructionInput`
+- right term 0: `RightInstructionInput`
+- left term 1: `LookupOutput`
+- right term 1: `BranchFlag`
+- left term 2: `JumpFlag`
+- right term 2: `1 - NextIsNoop`
+- left term 3: `UsesCarry`
+- right term 3: committed `Carry`
+
+Equivalently, the symbolic relation becomes:
+
+`tau_kernel * (w0*LeftInstructionInput + w1*LookupOutput + w2*JumpFlag + w3*UsesCarry) * (w0*RightInstructionInput + w1*BranchFlag + w2*(1-NextIsNoop) + w3*Carry)`
+
+This preserves the existing left/right product-remainder structure while adding exactly one new multiplicative term. In the modular stack this means `ProductRemainderOutputClaims` grows from 8 fields to 10 fields by appending:
+
+- `uses_carry`
+- committed `carry`
+
+and the stage-2 batch absorb count correspondingly grows from 15 to 17 leaves.
 
 #### Uniform R1CS constraints
 
@@ -549,16 +616,19 @@ This preserves the intended forward direction:
 
 `NextCarry(t)` is checked against `Carry(t + 1)`
 
+In the typed verifier structs, this means `SpartanShiftOutputClaims` gains one new `carry` field and stage 3's absorbed opening count increases by one.
+
 #### Row-0 carry initialization
 
 The invariant `Carry(0) = 0` is **not** enforced by `EqPlusOne`, because `EqPlusOne` constrains `f(j + 1)` against `Next*` values and says nothing about row 0 of the shifted column.
 
 The corrected mechanism is:
 
-- add one direct committed opening claim for `Carry` at the all-zero point
+- add one direct committed final-opening claim for `Carry` at the all-zero point
+- give that leaf a stable name such as `carry_init`
 - constrain that opening to equal `0`
 
-This is intentionally separate from the generic shift relation. It is smaller and clearer than trying to encode row-0 initialization as extra shift-side public machinery.
+This leaf belongs to the final-opening/reconstruction path, not to a new sumcheck stage. It is intentionally separate from the generic shift relation. It is smaller and clearer than trying to encode row-0 initialization as extra shift-side public machinery.
 
 #### Typed row implications
 
@@ -576,7 +646,7 @@ Instead:
 
 - store incoming carry on `TraceRow`
 - define committed `Carry` witness extraction from `row.carry`
-- define virtual `CarryUsed` witness extraction from `row.carry` together with `UsesCarry`
+- define virtual `CarryUsed` witness extraction from the same `row.carry` source used to populate committed `Carry`, together with `UsesCarry`
 - define outer `NextCarry` witness extraction from `next.map(|r| r.carry).unwrap_or(0)`
 
 This is the smallest change that fits the current modular witness stack while still grounding every carry-related claim.
@@ -613,6 +683,44 @@ Rejected because the total policy `NextCarry = 0` off the arithmetic family is s
 
 Rejected because the spec wants defined semantics and a single direct opening check is cheap.
 
+## Test and Invariant Details
+
+### Tamper coverage
+
+The negative test suite should not stop at "change some carry-looking value." It should exercise the distinct grounding paths:
+
+- mutate `claims.stage1.outer.outer_remainder.next_carry`
+- mutate `claims.stage2.batch_outputs.product_remainder.uses_carry`
+- mutate `claims.stage2.batch_outputs.product_remainder.carry`
+- mutate `claims.stage3.shift.carry`
+- mutate the named final-opening `carry_init` leaf
+
+Each mutation must make verification fail in both the clear and ZK feature combinations that support `implicit-carry`.
+
+### `jolt-eval` invariant
+
+Add `jolt-eval/src/invariant/implicit_carry.rs` and register it in `jolt-eval/src/invariant/mod.rs` as `ImplicitCarryPairSoundness`.
+
+The invariant should use:
+
+- `Setup`: build the tiny guest templates needed to run each `{ADD, MUL} -> {ADDC, MULC}` pair in the currently-supported proving modes.
+- `Input`: `producer_kind`, `consumer_kind`, `a: u64`, `b: u64`, `c: u64`.
+- `Check`: run the two-instruction carry chain `tmp = producer(a, b); out = consumer(tmp, c)`, then assert:
+  - the first row's `rd` matches the low 64 bits of the honest 128-bit producer result
+  - the first row's carry-out matches the high 64 bits of that result
+  - the second row's `rd` matches the low 64 bits of the honest consumer result after injecting that carry
+  - the second row's carry-out matches the high 64 bits of the honest consumer result
+  - when the producer or consumer is `MUL`/`MULC`, the reference result uses unsigned 64x64 widening semantics, matching the instruction-definition section above
+  - proof generation and verification both succeed
+
+Its deterministic seed corpus should include edge cases such as:
+
+- `0`, `1`, `u64::MAX`
+- add-with-overflow into `ADDC`
+- multiply-with-large-high-half into `ADDC`
+- add-with-overflow into `MULC`
+- multiply-with-large-high-half into `MULC`
+
 ## Documentation
 
 Update the Jolt book in two places:
@@ -633,13 +741,13 @@ Recommended implementation order:
 1. Add workspace feature plumbing and protocol-config fail-closed metadata for `implicit-carry`.
 2. Add instruction kinds, custom decode support, and tracer semantics for `ADDC` and `MULC`.
 3. Add `carry` to `TraceRow` and preserve it through trace production.
-4. Add `CommittedPolynomial::Carry`, `VirtualPolynomial::Carry`, `VirtualPolynomial::CarryUsed`, and `VirtualPolynomial::NextCarry`.
-5. Add the `CarryUsed = UsesCarry * Carry` product-virtualization row.
+4. Add `CommittedPolynomial::Carry`, `VirtualPolynomial::CarryUsed`, and `VirtualPolynomial::NextCarry`, but do not add a second proof-visible `VirtualPolynomial::Carry`.
+5. Make `CarryUsed` the fourth product term by teaching product virtualization to read committed `Carry` directly.
 6. Extend outer inputs and update the uniform R1CS rows to use `CarryUsed` and `NextCarry`.
 7. Extend the shift relation so `NextCarry` is checked against shifted committed `Carry`.
-8. Add the direct `Carry(0) = 0` committed opening check.
-9. Extend modern witness, claims, verifier, and `jolt-r1cs` geometry plumbing.
-10. Add randomized positive and negative tests in standard and ZK modes, including `field-inline` composition coverage.
+8. Add the named final-opening `Carry(0) = 0` leaf and its clear/ZK verification plumbing.
+9. Extend modern witness, claims, verifier, stage-2/stage-3 clear claims, and `jolt-r1cs` geometry plumbing.
+10. Add randomized positive tests, path-specific tamper tests, and the `implicit_carry_pair_soundness` invariant.
 11. Update documentation.
 
 This ordering front-loads the shared feature scaffolding, grounds the carry chain early, and keeps the `implicit-carry` lane additive throughout the stack.
