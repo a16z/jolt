@@ -168,6 +168,7 @@ pub struct BytecodeReadRafAddressSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafAddressSumcheckProver::initialize")]
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<Cycle>>,
@@ -203,6 +204,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
         let out_len: usize = 1 << hi_bits; // E_hi size (outer loop)
 
         // Pre-compute E_hi[stage][c_hi] and E_lo[stage][c_lo] for all stages in parallel
+        let span = tracing::info_span!("bytecode_read_raf_address_eq_tables").entered();
         let (E_hi, E_lo): (Vec<Vec<F>>, Vec<Vec<F>>) = rayon::join(
             || {
                 params
@@ -219,12 +221,14 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
                     .collect()
             },
         );
+        drop(span);
 
         // Process by c_hi blocks, distributing work evenly among threads
         let num_threads = rayon::current_num_threads();
         let chunk_size = out_len.div_ceil(num_threads);
 
         // Double summation: outer sum over c_hi, inner sum over c_lo
+        let span = tracing::info_span!("bytecode_read_raf_address_pushforwards").entered();
         let F: Vec<Vec<F>> = E_hi[0]
             .par_chunks(chunk_size)
             .enumerate()
@@ -309,6 +313,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
                     a
                 },
             );
+        drop(span);
 
         #[cfg(test)]
         {
@@ -333,8 +338,10 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
             }
         }
 
+        let span = tracing::info_span!("bytecode_read_raf_address_materialize").entered();
         let F: Vec<MultilinearPolynomial<F>> =
             F.into_iter().map(MultilinearPolynomial::from).collect();
+        drop(span);
 
         let pc_0 = super::get_pc_for_cycle(&bytecode_preprocessing, &trace[0]);
         assert!(
@@ -397,6 +404,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         self.params.input_claim(accumulator)
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "BytecodeReadRafAddressSumcheckProver::compute_message"
+    )]
     fn compute_message(&mut self, round: usize, _previous_claim: F) -> UniPoly<F> {
         debug_assert!(round < self.params.log_K);
         const DEGREE: usize = 2;
@@ -492,6 +503,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         agg_round_poly
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "BytecodeReadRafAddressSumcheckProver::ingest_challenge"
+    )]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         debug_assert!(round < self.params.log_K);
         if let Some(prev_round_polys) = self.prev_round_polys.take() {
@@ -715,6 +730,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             .1
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeReadRafCycleSumcheckProver::compute_message")]
     fn compute_message(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
         let out_len = self.gruen_eq_polys[0].E_out_current().len();
         let in_len = self.gruen_eq_polys[0].E_in_current().len();
@@ -851,6 +867,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         agg_round_poly
     }
 
+    #[tracing::instrument(
+        skip_all,
+        name = "BytecodeReadRafCycleSumcheckProver::ingest_challenge"
+    )]
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
         debug_assert!(round < self.params.log_T);
         if let Some(prev_round_polys) = self.prev_round_polys.take() {
