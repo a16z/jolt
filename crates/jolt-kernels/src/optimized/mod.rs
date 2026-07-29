@@ -2,3 +2,4 @@
 //! exact wire behavior, one module per slot family.
 
 pub mod spartan_outer;
+pub mod spartan_product;
