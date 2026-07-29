@@ -1,13 +1,43 @@
-//! Test/bench support for the Metal tier: the cross-process GPU lock and
+//! Test/bench support for the Metal tier: the cross-process GPU lock,
 //! deterministic field-element fixtures (shared by the parity tests below
-//! and the `metal_microbench` example).
+//! and the `metal_microbench` example), and the device-path probe counters
+//! the parity gates assert against.
 
 use std::fs::{File, OpenOptions};
 use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use jolt_field::{Fr, FromPrimitiveInt, MontgomeryConstants};
 
 use super::field::fr_from_u32_limbs;
+
+/// Successful device round dispatches (process lifetime). Threshold gates
+/// fall back SILENTLY by design, so a test that means to exercise the device
+/// must assert this advanced — otherwise it green-lights the CPU fallback.
+static DEVICE_ROUNDS: AtomicU64 = AtomicU64::new(0);
+
+/// Buffers whose construction fell back to allocate+copy (no-copy declined).
+static COPIED_BUFFERS: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn note_device_round() {
+    let _ = DEVICE_ROUNDS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn note_copied_buffers(count: u64) {
+    if count > 0 {
+        let _ = COPIED_BUFFERS.fetch_add(count, Ordering::Relaxed);
+    }
+}
+
+/// How many sumcheck rounds have run on the device in this process.
+pub fn device_probe_count() -> u64 {
+    DEVICE_ROUNDS.load(Ordering::Relaxed)
+}
+
+/// How many slot buffers fell back to allocate+copy in this process.
+pub fn copied_buffer_count() -> u64 {
+    COPIED_BUFFERS.load(Ordering::Relaxed)
+}
 
 /// Exclusive advisory lock on `/tmp/jolt-gpu.lock`, the campaign convention
 /// for serializing GPU-touching tests (nextest runs one process per test;

@@ -32,16 +32,19 @@ mod buffers;
 mod error;
 mod field;
 mod runtime;
+mod slots;
 pub mod testing;
 
-pub use buffers::{DeviceBuffer, PageAlignedVec, PAGE_SIZE};
+pub use buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec, PAGE_SIZE};
 pub use error::MetalError;
 pub use field::{fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS};
 pub use runtime::{ComputePass, KernelId, MetalContext, MAX_EVAL_POINTS, THREADGROUP_SIZE};
+pub use slots::MetalIncClaimReduction;
 
-use jolt_field::Field;
+use jolt_field::Fr;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
+use crate::optimized::inc_claim_reduction::OptimizedIncClaimReduction;
 use crate::JoltBackend;
 
 /// Default [`metal_gate`] threshold, from `metal_microbench` on the target
@@ -84,26 +87,29 @@ fn parse_env(name: &str) -> Option<usize> {
     std::env::var(name).ok()?.trim().parse().ok()
 }
 
-impl<F, PCS> JoltBackend<F, PCS>
+impl<PCS> JoltBackend<Fr, PCS>
 where
-    F: Field,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = Fr>,
 {
-    /// The Metal backend: [`JoltBackend::optimized`] with a live, prewarmed
-    /// device context. Fail-closed: no Metal device, a shader that fails to
+    /// The Metal backend: [`JoltBackend::optimized`] with device kernels
+    /// installed over the converted slots, each gated by [`metal_gate`] and
+    /// falling back to its optimized twin below threshold or on any device
+    /// failure. Fail-closed: no Metal device, a shader that fails to
     /// compile, or a pipeline that cannot be built errors HERE, never
     /// mid-proof.
     ///
-    /// W1 overwrites zero slots — proving behavior is byte-identical to the
-    /// optimized backend. Later waves overwrite slots with device kernels
-    /// gated by [`metal_gate`], each falling back to its optimized twin
-    /// below threshold.
+    /// `Fr`-concrete (unlike the other constructors): the device tier is
+    /// BN254 Montgomery arithmetic — the shaders' limb layout IS `Fr`'s.
     pub fn metal() -> Result<Self, MetalError>
     where
         PCS: StreamingCommitment,
     {
         let context = MetalContext::global()?;
         tracing::info!(device = %context.device_name(), "Metal backend ready");
-        Ok(Self::optimized())
+        let mut backend = Self::optimized();
+        backend.inc_claim_reduction = Box::new(MetalIncClaimReduction {
+            fallback: OptimizedIncClaimReduction,
+        });
+        Ok(backend)
     }
 }

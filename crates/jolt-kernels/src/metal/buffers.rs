@@ -226,6 +226,147 @@ impl MetalContext {
     }
 }
 
+/// An `MTLBuffer` that OWNS its backing memory, for tables that live across
+/// many compute passes (a sumcheck kernel's round tables). The borrow-scoped
+/// [`DeviceBuffer<'a>`] cannot outlive a `prepare`-time slice, so slots that
+/// keep device-visible state between rounds hold `OwnedDeviceBuffer`s and
+/// mint per-pass [`DeviceBuffer`] views ([`device_buffer`]
+/// (Self::device_buffer), a retain — no re-wrap, no copy).
+///
+/// Backing is the `Vec` handed to [`MetalContext::own_vec`] when it is
+/// no-copy eligible (module docs), else a [`PageAlignedVec`] copy —
+/// [`was_copied`](Self::was_copied) reports which. Both allocations are
+/// address-stable across moves of this struct, so the wrap stays valid.
+///
+/// Host access ([`as_slice`](Self::as_slice) /
+/// [`as_mut_slice`](Self::as_mut_slice)) is safe under this tier's
+/// synchronous execution model: every pass blocks until GPU completion, and
+/// the borrow rules make `as_mut_slice` unavailable while a minted
+/// [`DeviceBuffer`] (and thus a pass that could touch the memory) is live.
+pub struct OwnedDeviceBuffer<T: Copy> {
+    backing: OwnedBacking<T>,
+    raw: Retained<ProtocolObject<dyn MTLBuffer>>,
+    copied: bool,
+}
+
+enum OwnedBacking<T: Copy> {
+    Vec(Vec<T>),
+    Page(PageAlignedVec<T>),
+}
+
+impl<T: Copy> OwnedDeviceBuffer<T> {
+    pub fn as_slice(&self) -> &[T] {
+        match &self.backing {
+            OwnedBacking::Vec(v) => v,
+            OwnedBacking::Page(v) => v,
+        }
+    }
+
+    /// Host-side mutable view. Unavailable (borrow rules) while any minted
+    /// [`DeviceBuffer`] view is live, so host writes cannot race GPU work.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        match &mut self.backing {
+            OwnedBacking::Vec(v) => v,
+            OwnedBacking::Page(v) => v,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+
+    /// True when construction fell back to a [`PageAlignedVec`] copy.
+    pub fn was_copied(&self) -> bool {
+        self.copied
+    }
+
+    /// A pass-scoped view of this buffer (an objc retain of the same
+    /// `MTLBuffer`). The `'_` borrow keeps the backing immovable and blocks
+    /// `as_mut_slice` while the view — and any pass dispatched over it —
+    /// is alive.
+    pub fn device_buffer(&self) -> DeviceBuffer<'_> {
+        DeviceBuffer {
+            raw: self.raw.clone(),
+            len_bytes: std::mem::size_of_val(self.as_slice()),
+            copied: self.copied,
+            _backing: PhantomData,
+        }
+    }
+}
+
+impl MetalContext {
+    /// Take ownership of `vec` as a device-visible buffer: wrapped in place
+    /// when no-copy eligible (module docs), else copied into a
+    /// [`PageAlignedVec`] (`was_copied() == true`; callers count copies).
+    pub fn own_vec<T: Copy>(&self, vec: Vec<T>) -> Result<OwnedDeviceBuffer<T>, MetalError> {
+        let len_bytes = std::mem::size_of_val(vec.as_slice());
+        let aligned = (vec.as_ptr() as usize).is_multiple_of(PAGE_SIZE);
+        let page_granular =
+            len_bytes.is_multiple_of(PAGE_SIZE) || len_bytes >= MALLOC_LARGE_THRESHOLD;
+        if len_bytes > 0 && aligned && page_granular {
+            // SAFETY: same eligibility argument as `wrap_slice_nocopy`; the
+            // Vec moves into the returned struct un-resized, so its heap
+            // allocation (what the pointer references) outlives the wrap.
+            let raw =
+                unsafe { self.wrap_raw_nocopy_untracked(NonNull::from(&vec[0]).cast(), len_bytes) }
+                    .ok_or(MetalError::Alloc { bytes: len_bytes })?;
+            return Ok(OwnedDeviceBuffer {
+                backing: OwnedBacking::Vec(vec),
+                raw,
+                copied: false,
+            });
+        }
+        let mut owned = self.own_page_aligned(PageAlignedVec::from_slice(&vec))?;
+        owned.copied = true;
+        Ok(owned)
+    }
+
+    /// Take ownership of a [`PageAlignedVec`] as a device-visible buffer —
+    /// no-copy at any length via its capacity guarantee.
+    pub fn own_page_aligned<T: Copy>(
+        &self,
+        vec: PageAlignedVec<T>,
+    ) -> Result<OwnedDeviceBuffer<T>, MetalError> {
+        let len_bytes = vec.len() * size_of::<T>();
+        // SAFETY: base is PAGE_SIZE-aligned with page-granular capacity (the
+        // PageAlignedVec construction invariant); the vec moves into the
+        // returned struct, so the allocation outlives the wrap.
+        let raw = unsafe { self.wrap_raw_nocopy_untracked(vec.ptr.cast(), len_bytes) }
+            .ok_or(MetalError::Alloc { bytes: len_bytes })?;
+        Ok(OwnedDeviceBuffer {
+            backing: OwnedBacking::Page(vec),
+            raw,
+            copied: false,
+        })
+    }
+
+    /// # Safety
+    ///
+    /// As for `wrap_raw_nocopy`, except the caller (not a `PhantomData`
+    /// borrow) guarantees the allocation outlives the returned `MTLBuffer` —
+    /// used by the owning wrappers, which move the allocation in next to it.
+    unsafe fn wrap_raw_nocopy_untracked(
+        &self,
+        ptr: NonNull<c_void>,
+        len_bytes: usize,
+    ) -> Option<Retained<ProtocolObject<dyn MTLBuffer>>> {
+        // SAFETY: forwarded caller contract.
+        unsafe {
+            self.device()
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    ptr,
+                    round_up_to_page(len_bytes.max(1)),
+                    MTLResourceOptions::StorageModeShared,
+                    None,
+                )
+        }
+    }
+}
+
 /// Page-aligned, page-granular owned storage for kernel-tier tables:
 /// `posix_memalign(PAGE_SIZE)` with capacity rounded up to a page multiple,
 /// so [`device_buffer`](Self::device_buffer) is no-copy at any length.
