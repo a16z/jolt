@@ -225,6 +225,9 @@ fn double_branches<F: Field>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
 /// `cycles / 8` length through the eight pre-scaled branch tables —
 /// lookups and adds only.
 fn materialize<F: Field, S: ChunkIndexSource>(tables: &[Vec<F>], source: &S) -> Vec<Polynomial<F>> {
+    // Materialization runs at the third bind, so the unbound cycle domain
+    // holds at least 2^3 slots.
+    debug_assert!(source.cycles() >= 8);
     let new_len = source.cycles() / 8;
     let materialize_poly = |i: usize| -> Polynomial<F> {
         let table = tables[i].as_slice();

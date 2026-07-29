@@ -75,11 +75,17 @@ impl RamAccessColumns {
             let columns = Arc::new(Self::collect(witness, log_t)?);
             session.park(columns);
         }
-        Ok(Arc::clone(
+        let columns = Arc::clone(
             session
                 .state::<Arc<Self>>()
                 .expect("RAM access columns parked above"),
-        ))
+        );
+        debug_assert_eq!(
+            columns.addresses.len(),
+            1usize << log_t,
+            "parked RAM access columns cover a different cycle domain than requested"
+        );
+        Ok(columns)
     }
 
     /// Bounds-check every accessed address against the proof's `K`, matching

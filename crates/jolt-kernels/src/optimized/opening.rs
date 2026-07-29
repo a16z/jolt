@@ -194,7 +194,13 @@ impl OpeningColumns {
             },
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-        Ok(consumers.0.columns)
+        let columns = consumers.0.columns;
+        debug_assert_eq!(
+            columns.cycles(),
+            cycles,
+            "opening columns must cover the full padded cycle domain"
+        );
+        Ok(columns)
     }
 
     fn cycles(&self) -> usize {
@@ -226,6 +232,16 @@ impl StreamConsumer for CollectOpeningColumns {
     fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
         let columns = &mut self.columns;
         for row in chunk {
+            debug_assert_ne!(
+                row.bytecode_pc.0.map(|pc| pc as u64),
+                Some(COLD),
+                "a live mapped pc collides with the COLD sentinel"
+            );
+            debug_assert_ne!(
+                row.ram_address.0,
+                Some(COLD),
+                "a live remapped RAM address collides with the COLD sentinel"
+            );
             columns.rd_inc.push(row.rd_inc.0);
             columns.ram_inc.push(row.ram_inc.0);
             columns.lookup_index.push(row.lookup_index.0);
