@@ -523,12 +523,16 @@ impl Cpu {
                 )
             });
 
-        if trace.is_none() {
-            instr.execute(self);
-            self.trace_len += 1;
-        } else {
-            instr.trace(self, trace);
-            self.trace_len += instr.inline_sequence(&self.vr_allocator).len();
+        match trace {
+            None => {
+                instr.execute(self);
+                self.trace_len += 1;
+            }
+            Some(trace_vec) => {
+                let rows_before = trace_vec.len();
+                instr.trace(self, Some(&mut *trace_vec));
+                self.trace_len += trace_vec.len() - rows_before;
+            }
         }
 
         // check if current instruction is real or not for cycle profiling
