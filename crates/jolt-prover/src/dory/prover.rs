@@ -12,16 +12,16 @@ use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_witness::JoltWitnessPlane;
 
-use crate::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
-use crate::stages::stage1::prove_stage1;
-use crate::stages::stage2::prove_stage2;
-use crate::stages::stage3::prove_stage3;
-use crate::stages::stage4::prove_stage4;
-use crate::stages::stage5::prove_stage5;
-use crate::stages::stage6a::prove_stage6a;
-use crate::stages::stage6b::prove_stage6b;
-use crate::stages::stage7::prove_stage7;
-use crate::stages::stage8::prove_stage8;
+use crate::dory::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
+use crate::dory::stages::stage1::prove_stage1;
+use crate::dory::stages::stage2::prove_stage2;
+use crate::dory::stages::stage3::prove_stage3;
+use crate::dory::stages::stage4::prove_stage4;
+use crate::dory::stages::stage5::prove_stage5;
+use crate::dory::stages::stage6a::prove_stage6a;
+use crate::dory::stages::stage6b::prove_stage6b;
+use crate::dory::stages::stage7::prove_stage7;
+use crate::dory::stages::stage8::prove_stage8;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and

@@ -28,7 +28,9 @@ use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     bytecode_ra, read_raf_stage_values, BytecodeReadRafDimensions, BytecodeReadRafStageValueInputs,
 };
-use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::bytecode_val_stage_opening;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
+    bytecode_val_stage_opening, NUM_BYTECODE_VAL_STAGES,
+};
 use jolt_claims::protocols::jolt::geometry::dimensions::{
     committed_address_chunks, REGISTER_ADDRESS_BITS,
 };
@@ -127,12 +129,20 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
     pub fn new(
         relation: &BytecodeReadRafAddressPhase<F>,
         dimensions: BytecodeReadRafDimensions,
-        stage_values: Vec<[F; 5]>,
+        stage_values: Vec<[F; NUM_BYTECODE_VAL_STAGES]>,
         stage_cycle_points: &[Vec<F>; 5],
         bytecode_indices: Vec<usize>,
         entry_bytecode_index: usize,
         challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
     ) -> Result<Self, KernelError<F>> {
+        // The packed (akita) geometry appends a fused-inc val stage; this
+        // kernel implements only the base five-stage fold.
+        if NUM_BYTECODE_VAL_STAGES != 5 {
+            return Err(KernelError::InvariantViolation {
+                reason: "the reference bytecode read-raf kernel folds the base five val stages; \
+                         the packed (akita) fused-inc stage is not ported",
+            });
+        }
         let addresses = 1usize << dimensions.log_k();
         let cycles = 1usize << dimensions.log_t();
         if stage_values.len() != addresses {
