@@ -73,6 +73,19 @@ where
         formula_dimensions.ra_layout,
         config.one_hot_config.committed_chunk_bits(),
     );
+    // The packed build extends the hamming reduction with the fused-inc
+    // one-hot columns — the same dimension lift the verifier's
+    // `stage7::verify` applies.
+    #[cfg(feature = "akita")]
+    let hamming_dimensions =
+        jolt_claims::protocols::jolt::lattice::relations::hamming_weight::LatticeHammingWeightClaimReductionDimensions::new(
+            hamming_dimensions.layout,
+            hamming_dimensions.log_k_chunk,
+        )
+        .map_err(|error| jolt_verifier::VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: error.to_string(),
+        })?;
 
     let sumchecks = build_stage7_sumchecks(
         hamming_dimensions,

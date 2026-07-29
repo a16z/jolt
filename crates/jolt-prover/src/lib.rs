@@ -36,6 +36,7 @@ pub mod dory;
 pub mod driver;
 mod error;
 mod preprocessing;
+pub mod stages;
 
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
 pub use driver::{KernelSource, Proved, StageProver};

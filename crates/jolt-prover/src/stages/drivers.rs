@@ -94,6 +94,9 @@ mod stage6b {
         BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
         UntrustedAdviceCyclePhase,
     };
+    // The packed batch has no inc member — the fused-inc read-raf stages
+    // discharge the reduced inc claims instead.
+    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
     use jolt_verifier::stages::stage6b::outputs::{

@@ -457,10 +457,6 @@ macro_rules! __stage_shape_check {
 /// // (the first closure parameter binds the batch, i.e. `&self`):
 /// jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover curate = |batch, claims, points| { .. },);
 /// ```
-// The macro is member-list-generic (it expands whatever the derive-emitted
-// callback provides), so the packed (akita) port reuses it as-is; it is
-// merely dormant until the port reinstates stage-driver invocation sites.
-#[cfg_attr(feature = "akita", expect(unused_macros))]
 macro_rules! impl_stage_prover {
     // Uncurated stage: default to the derive-generated canonical absorb order.
     // The batch receiver is an explicit closure parameter (not `self`) because
@@ -640,5 +636,4 @@ macro_rules! impl_stage_prover {
     };
 }
 
-#[cfg_attr(feature = "akita", expect(unused_imports))]
 pub(crate) use {__stage_member, __stage_shape_check, impl_stage_prover};
