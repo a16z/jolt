@@ -11,8 +11,9 @@ use std::sync::Arc;
 
 use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 
+use super::support::collect_rows;
 use crate::{KernelError, ProofSession};
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
@@ -43,7 +44,7 @@ impl RamAccessColumns {
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
-        let bundles: Vec<RamAccessBundle> = collect_bundles(witness, cycles)?;
+        let bundles: Vec<RamAccessBundle> = collect_rows(witness, cycles)?;
         let mut addresses = Vec::with_capacity(cycles);
         let mut pre_values = Vec::with_capacity(cycles);
         let mut post_values = Vec::with_capacity(cycles);

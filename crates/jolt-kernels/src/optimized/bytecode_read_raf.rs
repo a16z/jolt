@@ -55,14 +55,16 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
 };
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::witnesses::{BytecodePc, MappedPc, RaChunkSelector};
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
-use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals, scaled_eq_table};
+use super::support::{
+    bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals, scaled_eq_table,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -95,30 +97,34 @@ fn pc_rows<F: Field>(
     cycles: usize,
 ) -> Result<Arc<Vec<PcRow>>, KernelError<F>> {
     if session.state::<PcRowsKey>().is_none() {
-        let bundles: Vec<PcBundle> = collect_bundles(witness, cycles)?;
-        let rows = bundles
-            .into_iter()
-            .map(|bundle| {
-                let mapped = match bundle.mapped_pc.0 {
-                    Some(pc) if pc as u32 as usize == pc && pc as u32 != COLD => pc as u32,
-                    Some(_) => {
-                        return Err(KernelError::InvariantViolation {
-                            reason: "bytecode PC exceeds the packed u32 range",
-                        })
-                    }
-                    None => COLD,
-                };
-                if bundle.bytecode_pc.0 as u32 as usize != bundle.bytecode_pc.0 {
+        let bundles: Vec<PcBundle> = collect_rows(witness, cycles)?;
+        let pack = |bundle: &PcBundle| {
+            let mapped = match bundle.mapped_pc.0 {
+                Some(pc) if pc as u32 as usize == pc && pc as u32 != COLD => pc as u32,
+                Some(_) => {
                     return Err(KernelError::InvariantViolation {
                         reason: "bytecode PC exceeds the packed u32 range",
-                    });
+                    })
                 }
-                Ok(PcRow {
-                    push_pc: bundle.bytecode_pc.0 as u32,
-                    mapped_pc: mapped,
-                })
+                None => COLD,
+            };
+            if bundle.bytecode_pc.0 as u32 as usize != bundle.bytecode_pc.0 {
+                return Err(KernelError::InvariantViolation {
+                    reason: "bytecode PC exceeds the packed u32 range",
+                });
+            }
+            Ok(PcRow {
+                push_pc: bundle.bytecode_pc.0 as u32,
+                mapped_pc: mapped,
             })
+        };
+        #[cfg(feature = "parallel")]
+        let rows = bundles
+            .par_iter()
+            .map(pack)
             .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(not(feature = "parallel"))]
+        let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
         session.park(PcRowsKey(Arc::new(rows)));
     }
     let rows = session

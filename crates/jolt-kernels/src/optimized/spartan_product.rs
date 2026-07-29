@@ -44,10 +44,11 @@ use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::{
     InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, RightInstructionInput,
 };
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::collect_rows;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -107,8 +108,12 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
 /// `left(node) · right(node)` for one cycle at every extended node, as exact
 /// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
 /// (the i128 lane), product `< 2^196` — inside `S256`.
-fn extended_products(row: &SpartanProductRow) -> [S256; EXTENDED_SIZE] {
-    let coefficients = extension_coefficients();
+/// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
+/// loop (its integer Lagrange build is not free at `2^23` calls).
+fn extended_products(
+    row: &SpartanProductRow,
+    coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
+) -> [S256; EXTENDED_SIZE] {
     let mut out = [S256::zero(); EXTENDED_SIZE];
     let left_lanes = [
         i128::from(row.left_instruction_input.0),
@@ -120,7 +125,7 @@ fn extended_products(row: &SpartanProductRow) -> [S256; EXTENDED_SIZE] {
         i64::from(row.branch_flag.0),
         1 - i64::from(row.next_is_noop.0),
     ];
-    for (slot, coefficients) in out.iter_mut().zip(&coefficients) {
+    for (slot, coefficients) in out.iter_mut().zip(coefficients) {
         let mut left: i128 = 0;
         for (lane, &c) in left_lanes.iter().zip(coefficients) {
             left += i128::from(c) * lane;
@@ -150,12 +155,13 @@ fn extended_t1_values<F: Field>(rows: &[SpartanProductRow], tau_low: &[F]) -> Ve
     let e_out = EqPolynomial::<F>::evals(out_point, None);
     let e_in = EqPolynomial::<F>::evals(in_point, None);
     let in_len = e_in.len();
+    let coefficients = extension_coefficients();
 
     let block = |x_out: usize| -> Vec<F> {
         let mut accumulators: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator> =
             vec![Default::default(); EXTENDED_SIZE];
         for (x_in, &e) in e_in.iter().enumerate() {
-            let products = extended_products(&rows[x_out * in_len + x_in]);
+            let products = extended_products(&rows[x_out * in_len + x_in], &coefficients);
             for (accumulator, product) in accumulators.iter_mut().zip(&products) {
                 accumulator.fmadd_s256(e, product);
             }
@@ -230,7 +236,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
         tau_low: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows: Vec<SpartanProductRow> = collect_bundles(witness, 1usize << log_t)?;
+        let rows: Vec<SpartanProductRow> = collect_rows(witness, 1usize << log_t)?;
         Self::prepare_from_rows(session, log_t, tau_low, rows)
     }
 

@@ -27,7 +27,7 @@
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
-use jolt_field::Field;
+use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -39,10 +39,11 @@ use jolt_witness::witnesses::{
     LeftInstructionInput, LeftLookupOperand, LookupOutput, RightInstructionInput,
     RightLookupOperand,
 };
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::collect_rows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -81,8 +82,9 @@ impl InstructionOperandRow {
 /// `instruction_claim_reduction` slot.
 pub struct OptimizedInstructionClaimReduction;
 
-impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>>
-    for OptimizedInstructionClaimReduction
+impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for OptimizedInstructionClaimReduction
+where
+    F::Accumulator: RingAccumulator,
 {
     fn prepare(
         &self,
@@ -92,7 +94,7 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>>
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
     {
         let rows: Vec<InstructionOperandRow> =
-            collect_bundles(witness, 1usize << inputs.relation.tau_low().len())?;
+            collect_rows(witness, 1usize << inputs.relation.tau_low().len())?;
         Ok(Box::new(OptimizedInstructionClaimReductionKernel::new(
             inputs.relation.tau_low(),
             rows,
@@ -119,7 +121,10 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
         tau_low: &[F],
         rows: Vec<InstructionOperandRow>,
         gamma: F,
-    ) -> Result<Self, KernelError<F>> {
+    ) -> Result<Self, KernelError<F>>
+    where
+        F::Accumulator: RingAccumulator,
+    {
         let log_t = tau_low.len();
         if rows.len() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {
@@ -136,13 +141,36 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
             gamma_sqr * gamma,
             gamma_sqr * gamma_sqr,
         ];
+        // The combine runs on the native scalars through the wide accumulator
+        // — one 4×1 fused multiply per u64 limb and a single reduction, no
+        // per-operand Montgomery conversion. The wide lanes split limb-wise
+        // against `2^64`-shifted coefficient copies, the signed lane folds its
+        // sign into the coefficient: exactly `Σ_i γ^i·F(o_i)` by
+        // distributivity.
+        let shift_64 = F::from_u128(1u128 << 64);
+        let right_lookup_hi = gamma_powers[2] * shift_64;
+        let right_input_coeffs = {
+            let positive = (gamma_powers[4], gamma_powers[4] * shift_64);
+            ((-positive.0, -positive.1), positive)
+        };
         let combine = |row: &InstructionOperandRow| -> F {
-            let values = row.field_values::<F>();
-            let mut combined = F::zero();
-            for (value, gamma_power) in values.into_iter().zip(&gamma_powers) {
-                combined += *gamma_power * value;
-            }
-            combined
+            let mut acc = F::Accumulator::default();
+            acc.fmadd_u64(gamma_powers[0], row.lookup_output.0);
+            acc.fmadd_u64(gamma_powers[1], row.left_lookup_operand.0);
+            let right_lookup = row.right_lookup_operand.0;
+            acc.fmadd_u64(gamma_powers[2], right_lookup as u64);
+            acc.fmadd_u64(right_lookup_hi, (right_lookup >> 64) as u64);
+            acc.fmadd_u64(gamma_powers[3], row.left_instruction_input.0);
+            let right_input = row.right_instruction_input.0;
+            let magnitude = right_input.unsigned_abs();
+            let (lo, hi) = if right_input < 0 {
+                right_input_coeffs.0
+            } else {
+                right_input_coeffs.1
+            };
+            acc.fmadd_u64(lo, magnitude as u64);
+            acc.fmadd_u64(hi, (magnitude >> 64) as u64);
+            acc.reduce()
         };
         #[cfg(feature = "parallel")]
         let combined: Vec<F> = rows.par_iter().map(combine).collect();
