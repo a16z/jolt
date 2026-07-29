@@ -94,6 +94,53 @@ fn canonical_setup_log_n(max_num_vars: usize) -> usize {
     }
 }
 
+/// Generation guard for dory's global prepared-point cache.
+///
+/// The cache skips the G2 Miller preprocessing otherwise re-done on every
+/// `multi_pair_g2_setup` call (measured ~20-25% of that call's wall at 1024
+/// pairs in a pure-modular process), but dory's `init_cache`
+/// "smart reuse" is a footgun: it keeps any size-`>=` cache, while the URS
+/// seeds generator VALUES on the exact size — so a cache primed for one
+/// setup size silently pairs against wrong generators for another. All of
+/// dory's cache consumers slice `setup.{g1,g2}_vec` prefixes from index 0,
+/// so the cache is safe iff it holds exactly the current setup's vectors.
+/// This guard maintains that invariant: prime for the first canonical size
+/// seen, and on the first sight of a different size invalidate the cache
+/// and disable priming for the process lifetime (per-call preparation is
+/// the correct fallback — it is today's uncached behavior).
+///
+/// A mixed legacy+modular process where the legacy prover primes a
+/// different size via `DoryGlobals::init_prepared_cache` remains the
+/// pre-existing consumption hazard; this guard neither fixes nor worsens it.
+#[cfg(not(target_arch = "wasm32"))]
+enum PreparedCacheState {
+    Unprimed,
+    Primed(usize),
+    Disabled,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static PREPARED_CACHE_STATE: std::sync::Mutex<PreparedCacheState> =
+    std::sync::Mutex::new(PreparedCacheState::Unprimed);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn prime_prepared_cache(setup: &ArkworksProverSetup, canonical_max_num_vars: usize) {
+    let mut state = PREPARED_CACHE_STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match *state {
+        PreparedCacheState::Primed(size) if size == canonical_max_num_vars => {}
+        PreparedCacheState::Unprimed => {
+            dory::backends::arkworks::init_cache(&setup.g1_vec, &setup.g2_vec);
+            *state = PreparedCacheState::Primed(canonical_max_num_vars);
+        }
+        _ => {
+            dory::backends::arkworks::invalidate_cache();
+            *state = PreparedCacheState::Disabled;
+        }
+    }
+}
+
 impl DoryScheme {
     #[tracing::instrument(skip_all, name = "DoryScheme::setup_prover", fields(max_num_vars))]
     pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
@@ -108,15 +155,11 @@ impl DoryScheme {
             let _urs_lock = crate::urs_lock::lock_urs_cache();
             ArkworksProverSetup::new_from_urs(canonical_max_num_vars)
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        prime_prepared_cache(&setup, canonical_max_num_vars);
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
-        // Deliberately NOT priming dory's global prepared-point cache (the
-        // legacy prover does): the cache only grows and its consumers
-        // prefix-match blindly, so any process touching two setup sizes —
-        // the URS seeds generators on the exact size — silently pairs
-        // against the wrong generators. The saving is ~0.2 s wall of G2
-        // Miller preprocessing per 2^20 proof; not worth the footgun.
         DoryProverSetup(setup)
     }
 
@@ -306,6 +349,10 @@ impl AdditivelyHomomorphic for DoryScheme {
             .map(|(hint, &scalar)| scalar * hint.commit_blind)
             .sum();
 
+        // Row-major with per-element scalar_mul is the measured optimum here:
+        // the arkworks fork's G1 `Mul` is already GLV, and a hint-major
+        // vector-op restructure benches ~15% slower (sequential per-hint
+        // rayon barriers, worse locality).
         let combined: Vec<Bn254G1> = (0..num_rows)
             .into_par_iter()
             .map(|row| {
