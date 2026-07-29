@@ -139,6 +139,9 @@ struct BatchedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + Streaming
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     row_width: usize,
+    /// Row windows delivered so far — the increment columns' tier-2 row
+    /// count (one-hot columns aggregate `one_hot_k` rows per window).
+    windows_fed: usize,
     setup: &'a PCS::ProverSetup,
 }
 
@@ -172,17 +175,38 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
             columns,
             one_hot_k: 1usize << grid.log_k_chunk,
             row_width,
+            windows_fed: 0,
             setup,
         }
     }
 
     fn finish(self, setup: &PCS::ProverSetup) -> Vec<(PCS::Output, PCS::OpeningHint)> {
         let one_hot_k = self.one_hot_k;
+        // Every column's tier-2 pairs against the same setup generator
+        // prefix; prepare it once for the whole pass. One-hot columns
+        // aggregate `windows · one_hot_k` rows, increment columns `windows`.
+        let max_rows = self
+            .columns
+            .iter()
+            .map(|column| match column {
+                ColumnCommitState::Increment { .. } => self.windows_fed,
+                ColumnCommitState::OneHot { .. } => self.windows_fed * one_hot_k,
+            })
+            .max()
+            .unwrap_or(0);
+        let prep = PCS::prepare_tier2(setup, max_rows);
         let finish_column = |column: ColumnCommitState<PCS>| match column {
-            ColumnCommitState::Increment { partial, .. } => PCS::finish_with_hint(partial, setup),
+            ColumnCommitState::Increment { partial, .. } => {
+                PCS::finish_with_hint_prepared(partial, setup, &prep)
+            }
             ColumnCommitState::OneHot {
                 chunk_commitments, ..
-            } => PCS::finish_one_hot_column_major_chunks(setup, one_hot_k, &chunk_commitments),
+            } => PCS::finish_one_hot_column_major_chunks_prepared(
+                setup,
+                one_hot_k,
+                &chunk_commitments,
+                &prep,
+            ),
         };
         #[cfg(feature = "parallel")]
         {
@@ -205,6 +229,7 @@ impl<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamCon
             chunk.len().is_multiple_of(self.row_width),
             "superchunk must be whole rows"
         );
+        self.windows_fed += chunk.len() / self.row_width;
         let row_width = self.row_width;
         let one_hot_k = self.one_hot_k;
         let setup = self.setup;

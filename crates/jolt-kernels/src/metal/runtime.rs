@@ -51,10 +51,11 @@ pub enum KernelId {
     IncRound,
     TablePairsRound,
     HammingRound,
+    G1SegSum,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -65,6 +66,7 @@ impl KernelId {
         Self::IncRound,
         Self::TablePairsRound,
         Self::HammingRound,
+        Self::G1SegSum,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -79,6 +81,7 @@ impl KernelId {
             Self::IncRound => "jk_inc_round",
             Self::TablePairsRound => "jk_table_pairs_round",
             Self::HammingRound => "jk_hamming_round",
+            Self::G1SegSum => "jk_g1_seg_sum",
         }
     }
 
@@ -113,10 +116,11 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             field::constants_preamble(),
             include_str!("shaders/fr.metal"),
             include_str!("shaders/kernels.metal"),
+            include_str!("shaders/g1.metal"),
         );
         let library = device
             .newLibraryWithSource_options_error(&NSString::from_str(&source), None)
@@ -253,8 +257,34 @@ impl<'b> ComputePass<'_, 'b> {
 
     /// Commit and block until the GPU finishes; surfaces device-side errors.
     pub fn run(self) -> Result<(), MetalError> {
+        self.commit().wait()
+    }
+
+    /// Commit without blocking: the GPU starts executing while the caller
+    /// keeps the CPU busy; [`PendingPass::wait`] collects completion. The
+    /// pending pass extends the dispatched buffers' borrows, so backing
+    /// memory stays alive until the wait.
+    pub fn commit(self) -> PendingPass<'b> {
         self.encoder.endEncoding();
         self.cb.commit();
+        PendingPass {
+            cb: self.cb,
+            _buffers: PhantomData,
+        }
+    }
+}
+
+/// A committed, in-flight command buffer. Dropping without
+/// [`wait`](Self::wait) does not cancel the GPU work — callers must wait
+/// before reading results.
+pub struct PendingPass<'b> {
+    cb: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    _buffers: PhantomData<&'b ()>,
+}
+
+impl PendingPass<'_> {
+    /// Block until the GPU finishes; surfaces device-side errors.
+    pub fn wait(self) -> Result<(), MetalError> {
         self.cb.waitUntilCompleted();
         if self.cb.status() != MTLCommandBufferStatus::Completed {
             let reason = self.cb.error().map_or_else(

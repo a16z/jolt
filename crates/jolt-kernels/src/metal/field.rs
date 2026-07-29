@@ -12,7 +12,7 @@
 //! preamble by [`constants_preamble`] — no limb value is hardcoded in any
 //! `.metal` source.
 
-use jolt_field::{Fr, Limbs, MontgomeryConstants};
+use jolt_field::{Fq, Fr, Limbs, MontgomeryConstants};
 
 use super::runtime::{MAX_EVAL_POINTS, THREADGROUP_SIZE};
 
@@ -24,6 +24,23 @@ pub const FR_U32_LIMBS: usize = <Fr as MontgomeryConstants>::NUM_U32_LIMBS;
 const _: () = assert!(size_of::<Fr>() == FR_U32_LIMBS * 4);
 const _: () = assert!(align_of::<Fr>() >= align_of::<u32>());
 const _: () = assert!(size_of::<Fr>() == <Fr as MontgomeryConstants>::FIELD_BYTE_SIZE);
+// The shaders reuse FR_LIMBS for base-field values (g1.metal's Fq256).
+const _: () = assert!(<Fq as MontgomeryConstants>::NUM_U32_LIMBS == FR_U32_LIMBS);
+
+/// u32 stride between consecutive `ark_bn254::G1Affine` elements when their
+/// backing memory is viewed as a `uint` array on the device (x limbs at +0,
+/// y at +[`FR_U32_LIMBS`]; the trailing `infinity` flag is padding to the
+/// shader). Pinned by the layout assertions below and the
+/// `g1_affine_layout_matches_u32_view` test in [`super::testing`].
+pub const G1_AFFINE_U32_STRIDE: usize = size_of::<ark_bn254::G1Affine>() / 4;
+
+// The zero-copy G1Affine view contract: x at offset 0, y right behind it,
+// whole struct a u32 multiple. `offset_of` makes field reordering (legal
+// for repr(Rust)) a compile error instead of silent garbage.
+const _: () = assert!(std::mem::offset_of!(ark_bn254::G1Affine, x) == 0);
+const _: () = assert!(std::mem::offset_of!(ark_bn254::G1Affine, y) == FR_U32_LIMBS * 4);
+const _: () = assert!(size_of::<ark_bn254::G1Affine>().is_multiple_of(4));
+const _: () = assert!(align_of::<ark_bn254::G1Affine>() >= align_of::<u32>());
 
 /// The generated MSL preamble: field constants off the
 /// [`MontgomeryConstants`] seam plus the dispatch-geometry defines shared
@@ -32,17 +49,29 @@ const _: () = assert!(size_of::<Fr>() == <Fr as MontgomeryConstants>::FIELD_BYTE
 pub(super) fn constants_preamble() -> String {
     use std::fmt::Write as _;
 
-    let mut out = String::with_capacity(512);
+    let mut out = String::with_capacity(1024);
     out.push_str("// Generated from jolt_field::MontgomeryConstants — never hand-edit limbs.\n");
     let _ = writeln!(out, "#define FR_LIMBS {FR_U32_LIMBS}u");
     let _ = writeln!(out, "#define JK_TG_SIZE {THREADGROUP_SIZE}u");
     let _ = writeln!(out, "#define JK_MAX_EVAL_POINTS {MAX_EVAL_POINTS}u");
+    let _ = writeln!(out, "#define JK_G1_AFFINE_STRIDE {G1_AFFINE_U32_STRIDE}u");
     let _ = writeln!(
         out,
         "constant uint FR_MOD[FR_LIMBS] = {};",
         limb_array(Fr::modulus_u32())
     );
     let _ = writeln!(out, "constant uint FR_INV32 = {:#010x}u;", Fr::inv32());
+    let _ = writeln!(
+        out,
+        "constant uint FQ_MOD[FR_LIMBS] = {};",
+        limb_array(Fq::modulus_u32())
+    );
+    let _ = writeln!(out, "constant uint FQ_INV32 = {:#010x}u;", Fq::inv32());
+    let _ = writeln!(
+        out,
+        "constant uint FQ_ONE[FR_LIMBS] = {};",
+        limb_array(Fq::one_u32())
+    );
     out
 }
 

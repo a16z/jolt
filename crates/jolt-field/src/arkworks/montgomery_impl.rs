@@ -1,7 +1,7 @@
-use ark_bn254::FrConfig;
+use ark_bn254::{FqConfig, FrConfig};
 use ark_ff::MontConfig;
 
-use crate::{Fr, MontgomeryConstants};
+use crate::{Fq, Fr, MontgomeryConstants};
 
 // The u32 limbs are derived from arkworks' FrConfig u64 limbs by splitting
 // each u64 into (lo, hi) u32 pairs. This matches the little-endian byte layout
@@ -53,6 +53,42 @@ impl MontgomeryConstants for Fr {
 
     fn one_u32() -> &'static [u32] {
         &ONE_U32
+    }
+}
+
+// The BN254 base field (G1 coordinate field), same limb derivation as Fr.
+// The CIOS chaining property (`4·q²/R < 2q`) holds: q < 2^254 = R/4.
+
+const FQ_MODULUS: [u64; 4] = <FqConfig as MontConfig<4>>::MODULUS.0;
+const FQ_R: [u64; 4] = <FqConfig as MontConfig<4>>::R.0;
+const FQ_R2: [u64; 4] = <FqConfig as MontConfig<4>>::R2.0;
+const FQ_INV64: u64 = <FqConfig as MontConfig<4>>::INV;
+
+static FQ_MODULUS_U32: [u32; 8] = u64s_to_u32s(&FQ_MODULUS);
+static FQ_R2_U32: [u32; 8] = u64s_to_u32s(&FQ_R2);
+static FQ_ONE_U32: [u32; 8] = u64s_to_u32s(&FQ_R);
+
+const FQ_INV32: u32 = FQ_INV64 as u32;
+
+impl MontgomeryConstants for Fq {
+    const NUM_U32_LIMBS: usize = 8;
+    const ACC_U32_LIMBS: usize = 18; // 2*8 + 2
+    const FIELD_BYTE_SIZE: usize = 32; // 8 * 4
+
+    fn modulus_u32() -> &'static [u32] {
+        &FQ_MODULUS_U32
+    }
+
+    fn inv32() -> u32 {
+        FQ_INV32
+    }
+
+    fn r2_u32() -> &'static [u32] {
+        &FQ_R2_U32
+    }
+
+    fn one_u32() -> &'static [u32] {
+        &FQ_ONE_U32
     }
 }
 
@@ -117,6 +153,29 @@ mod tests {
             <Fr as MontgomeryConstants>::ACC_U32_LIMBS,
             2 * <Fr as MontgomeryConstants>::NUM_U32_LIMBS + 2
         );
+    }
+
+    #[test]
+    fn bn254_fq_modulus_known_value() {
+        // q = 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47
+        let expected: [u32; 8] = [
+            0xd87c_fd47,
+            0x3c20_8c16,
+            0x6871_ca8d,
+            0x9781_6a91,
+            0x8181_585d,
+            0xb850_45b6,
+            0xe131_a029,
+            0x3064_4e72,
+        ];
+        assert_eq!(FQ_MODULUS_U32, expected);
+    }
+
+    #[test]
+    fn bn254_fq_inv32_is_negative_inverse() {
+        // q · (-q^{-1}) ≡ -1 (mod 2^32)
+        assert_eq!(FQ_MODULUS_U32[0].wrapping_mul(FQ_INV32), u32::MAX);
+        assert_eq!(FQ_INV32, 0xe486_6389);
     }
 
     #[test]

@@ -1,0 +1,767 @@
+//! The Metal witness-commitment slot: tier-1 one-hot G1 accumulation on the
+//! device, pipelined with the CPU work only the CPU can do.
+//!
+//! The optimized CPU kernel spends its streaming phase on one-hot G1 batch
+//! additions (~55% of the @2^23 stage-0 wall) and then a strictly-after
+//! finish phase on tier-2 pairings (~40%). This slot restructures the pass
+//! into three concurrent lanes so the pairings overlap the group work
+//! instead of following it:
+//!
+//! ```text
+//! driver   [extract sc0|bucket|—i128 MSMs—][extract sc1|bucket|…]
+//! gpu      ......[G1 seg sums sc0]......[G1 seg sums sc1]......
+//! tier-2   ............[Miller absorb sc0]...[Miller absorb sc1]…[final exps]
+//! ```
+//!
+//! - The **driver** (calling thread) streams superchunks, derives each
+//!   one-hot column's hot addresses, bucket-sorts them into per
+//!   `(column, window, k)` gather segments, ships the segment job to the GPU
+//!   lane, and runs the increment columns' i128 row MSMs — the identical
+//!   [`StreamingCommitment::feed_i128_rows`] calls the optimized kernel
+//!   makes.
+//! - The **GPU lane** (dedicated thread; command buffers are not `Send`)
+//!   runs `jk_g1_seg_sum` over each superchunk: every segment thread sums
+//!   its selected SRS bases in Jacobian form — the work the CPU tier does
+//!   with batch-affine additions.
+//! - The **tier-2 lane** decodes finished segments, reduces multi-segment
+//!   buckets, batch-normalizes, records the row commitments, and multiplies
+//!   the rows' Miller loops into per-column [`Tier2Accumulator`]s. One final
+//!   exponentiation per column at the end.
+//!
+//! Row commitments equal the CPU path's at group level by construction
+//! (both are sums of the same base subsets), and after batch normalization
+//! they are coordinate-identical (Z = 1). The accumulated tier-2 GT is
+//! value-identical to `multi_pair_g2_setup` (see [`jolt_dory`]'s `tier2`
+//! module), so commitments, hints, and downstream proof bytes all match the
+//! optimized kernel — pinned by `metal_commit_matches_optimized`.
+//!
+//! Increment columns and every non-streaming geometry (address-major
+//! orders, widened grids, advice) take the optimized/reference path
+//! unchanged. Device errors fall back to the optimized kernel on a fresh
+//! stream pass (fail-closed, never mid-proof wrong).
+
+use std::any::TypeId;
+use std::sync::mpsc::{sync_channel, SyncSender};
+
+use ark_bn254::G1Projective;
+use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::Zero;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+use jolt_crypto::Bn254G1;
+use jolt_dory::{
+    one_hot_output_from_rows, DoryCommitment, DoryHint, DoryPartialCommitment, DoryProverSetup,
+    DoryScheme, DoryTier2Prep, Tier2Accumulator,
+};
+use jolt_field::{Field, Fr};
+use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer, WitnessError};
+use rayon::prelude::*;
+
+use super::g1::{bases_as_u32s, JAC_U32S};
+use super::runtime::{KernelId, MetalContext};
+use super::{metal_gate, MetalError, PageAlignedVec};
+use crate::commitment::{
+    CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
+};
+use crate::reference::commitment::{column_kinds, ColumnKind};
+use crate::{KernelError, OptimizedBackend, ProofSession};
+
+/// Cycles per superchunk — the optimized kernel's width, so both backends
+/// stream the same window sequences.
+const SUPERCHUNK_CYCLES: usize = 1 << 17;
+
+/// Job/result queue depth. Two keeps each lane one superchunk ahead of the
+/// next without unbounded buffering (a queued job is ~tens of MB of gather
+/// indices at production widths).
+const PIPELINE_DEPTH: usize = 2;
+
+/// Per-thread segment cap: buckets larger than this split into several
+/// device threads whose partial sums the tier-2 lane re-adds. Sized so an
+/// average production bucket (`row_width / one_hot_k` = 512–1024 entries)
+/// spans 2–4 threads — enough threads per superchunk (~20k) to fill the
+/// device, enough serial adds per thread to amortize scheduling.
+const MAX_SEGMENT_LEN: usize = 256;
+
+/// Install the Dory-specialized Metal commit slot when the backend is
+/// instantiated at `(Fr, DoryScheme)` — the only pairing the device tier
+/// implements. Other instantiations keep the optimized slot.
+pub(super) fn dory_commit_slot<F, PCS>() -> Option<Box<dyn CommitWitness<F, PCS>>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + StreamingCommitment + 'static,
+{
+    if TypeId::of::<PCS>() != TypeId::of::<DoryScheme>() {
+        return None;
+    }
+    let boxed: Box<dyn CommitWitness<Fr, DoryScheme>> = Box::new(MetalCommitWitness);
+    // SAFETY: the TypeId check proves PCS == DoryScheme, and the
+    // `CommitmentScheme<Field = F>` bound then forces F == DoryScheme::Field
+    // == Fr, so the source and target trait-object types are the same type;
+    // the fat pointer (data + vtable) is reinterpreted, not changed.
+    Some(unsafe {
+        std::mem::transmute::<Box<dyn CommitWitness<Fr, DoryScheme>>, Box<dyn CommitWitness<F, PCS>>>(
+            boxed,
+        )
+    })
+}
+
+/// The Metal commit slot: device tier-1 with pipelined CPU tier-2, falling
+/// back to [`OptimizedBackend`] below the gate, off the streaming geometry,
+/// or on any device error.
+struct MetalCommitWitness;
+
+impl CommitWitness<Fr, DoryScheme> for MetalCommitWitness {
+    #[tracing::instrument(
+        skip_all,
+        name = "commit_witness",
+        fields(columns = ids.len(), total_vars = grid.total_vars)
+    )]
+    fn commit_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn RowSource,
+        ids: &[JoltCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &DoryProverSetup,
+    ) -> Result<Vec<WitnessCommitment<DoryScheme>>, KernelError<Fr>> {
+        let cycles = 1usize << grid.log_t;
+        let row_width = grid.num_columns();
+        let kinds = column_kinds::<Fr>(ids, grid)?;
+
+        let streaming_geometry =
+            grid.order == TracePolynomialOrder::CycleMajor && row_width <= cycles;
+        let device = streaming_geometry
+            && kinds.iter().any(|kind| kind.is_one_hot())
+            && metal_gate("commit", cycles)
+            && MetalContext::global().is_ok();
+        if !device {
+            return OptimizedBackend.commit_witness(session, source, ids, grid, setup);
+        }
+
+        #[expect(clippy::expect_used, reason = "checked by the device gate above")]
+        let ctx = MetalContext::global().expect("gated on a live context");
+        match commit_streaming_metal(
+            ctx,
+            source,
+            &kinds,
+            grid,
+            setup,
+            SUPERCHUNK_CYCLES,
+            MAX_SEGMENT_LEN,
+        ) {
+            Ok(outputs) => Ok(outputs
+                .into_iter()
+                .zip(ids)
+                .map(|((commitment, hint), &id)| WitnessCommitment {
+                    id,
+                    commitment,
+                    hint,
+                })
+                .collect()),
+            Err(MetalCommitError::Witness(error)) => Err(error.into()),
+            Err(MetalCommitError::Device(error)) => {
+                tracing::warn!(%error, "Metal commit failed; re-running on the optimized kernel");
+                OptimizedBackend.commit_witness(session, source, ids, grid, setup)
+            }
+        }
+    }
+
+    fn commit_advice(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessOracle<Fr>,
+        id: JoltCommittedPolynomial,
+        grid: CommitmentGrid,
+        setup: &DoryProverSetup,
+    ) -> Result<WitnessCommitment<DoryScheme>, KernelError<Fr>> {
+        // Advice grids are small single-column dense commits — no one-hot
+        // tier-1 to offload.
+        OptimizedBackend.commit_advice(session, witness, id, grid, setup)
+    }
+}
+
+/// Device errors are recoverable (the wrapper re-runs the pass on the CPU);
+/// witness errors are the caller's.
+#[derive(Debug)]
+enum MetalCommitError {
+    Device(MetalError),
+    Witness(WitnessError),
+}
+
+impl From<MetalError> for MetalCommitError {
+    fn from(error: MetalError) -> Self {
+        Self::Device(error)
+    }
+}
+
+/// One segment's destination: which one-hot column (ordinal among one-hot
+/// columns) and which tier-2 row (`k · windows_total + window`).
+#[derive(Clone, Copy)]
+struct SegOut {
+    column: u32,
+    row: u32,
+}
+
+/// A superchunk's device job: gather indices grouped by segment, the
+/// segment prefix, and each segment's destination.
+struct GpuJob {
+    indices: PageAlignedVec<u32>,
+    seg_starts: PageAlignedVec<u32>,
+    segs: Vec<SegOut>,
+}
+
+/// A finished job: decoded destinations plus the raw Jacobian limb results.
+struct GpuDone {
+    segs: Vec<SegOut>,
+    jac: Vec<u32>,
+}
+
+/// The streaming metal commit at explicit superchunk width and segment cap
+/// (tests shrink both to force multi-delivery and multi-segment reduction).
+/// Returns per-column outputs in `kinds` order.
+#[expect(
+    clippy::expect_used,
+    reason = "worker joins fail only on a panicked worker (which must propagate); the \
+              output expect is the one-hot/increment kind exhaustiveness"
+)]
+fn commit_streaming_metal(
+    ctx: &'static MetalContext,
+    source: &dyn RowSource,
+    kinds: &[ColumnKind],
+    grid: CommitmentGrid,
+    setup: &DoryProverSetup,
+    superchunk_cycles: usize,
+    max_segment_len: usize,
+) -> Result<Vec<(DoryCommitment, DoryHint)>, MetalCommitError> {
+    let cycles = 1usize << grid.log_t;
+    let row_width = grid.num_columns();
+    let one_hot_k = 1usize << grid.log_k_chunk;
+    let windows_total = cycles / row_width;
+    let windows_per_sc = (superchunk_cycles / row_width).clamp(1, windows_total);
+    let one_hot_rows = windows_total * one_hot_k;
+
+    let one_hot: Vec<(usize, ColumnKind)> = kinds
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, kind)| kind.is_one_hot())
+        .collect();
+    let n_one_hot = one_hot.len();
+
+    // Shared pass state, built while nothing else is running: the prepared
+    // G2 generators every tier-2 absorb pairs against, and the affine SRS
+    // bases the device gathers from (one copy for all columns — the CPU
+    // path materializes one per column).
+    let (prep, bases) = rayon::join(
+        || DoryScheme::prepare_tier2(setup, one_hot_rows.max(windows_total)),
+        || DoryScheme::begin_one_hot_column_major_stream(setup, row_width),
+    );
+    assert!(
+        !bases.par_iter().any(AffineRepr::is_zero),
+        "SRS G1 bases must not contain the identity (the device view never \
+         reads the infinity flag)"
+    );
+
+    std::thread::scope(|scope| {
+        let (tx_jobs, rx_jobs) = sync_channel::<GpuJob>(PIPELINE_DEPTH);
+        let (tx_done, rx_done) = sync_channel::<GpuDone>(PIPELINE_DEPTH);
+
+        let bases_ref = &bases;
+        let gpu = scope.spawn(move || -> Result<(), MetalError> {
+            // Command buffers and MTLBuffers are not Send: every device
+            // object lives and dies on this thread.
+            let bases_buf = ctx.wrap_slice(bases_as_u32s(bases_ref))?;
+            while let Ok(job) = rx_jobs.recv() {
+                let n_segs = job.segs.len();
+                let indices_buf = job.indices.device_buffer(ctx)?;
+                let starts_buf = job.seg_starts.device_buffer(ctx)?;
+                let out_buf = ctx.alloc_u32s(n_segs * JAC_U32S)?;
+                let mut pass = ctx.begin_pass()?;
+                pass.dispatch(
+                    KernelId::G1SegSum,
+                    &[u32::try_from(n_segs).map_err(|_| {
+                        MetalError::Execution("segment count overflows u32".to_owned())
+                    })?],
+                    &[&bases_buf, &indices_buf, &starts_buf, &out_buf],
+                    n_segs,
+                );
+                pass.run()?;
+                let mut jac = vec![0u32; n_segs * JAC_U32S];
+                out_buf.copy_to_u32s(&mut jac);
+                if tx_done
+                    .send(GpuDone {
+                        segs: job.segs,
+                        jac,
+                    })
+                    .is_err()
+                {
+                    // The tier-2 lane never closes first unless the scope is
+                    // unwinding; stop quietly either way.
+                    return Ok(());
+                }
+            }
+            Ok(())
+        });
+
+        let prep_ref = &prep;
+        let tier2 = scope.spawn(move || -> (Vec<Tier2Accumulator>, Vec<Vec<Bn254G1>>) {
+            let mut accumulators: Vec<Tier2Accumulator> =
+                (0..n_one_hot).map(|_| Tier2Accumulator::new()).collect();
+            let mut rows: Vec<Vec<Bn254G1>> = (0..n_one_hot)
+                .map(|_| vec![Default::default(); one_hot_rows])
+                .collect();
+            while let Ok(done) = rx_done.recv() {
+                absorb_superchunk(prep_ref, &done, &mut accumulators, &mut rows);
+            }
+            (accumulators, rows)
+        });
+
+        let mut consumers = (MetalColumns {
+            tx: Some(tx_jobs),
+            send_failed: false,
+            one_hot: &one_hot,
+            increments: kinds
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(_, kind)| !kind.is_one_hot())
+                .map(|(index, kind)| (index, kind, DoryScheme::begin(setup)))
+                .collect(),
+            row_width,
+            one_hot_k,
+            windows_fed: 0,
+            windows_total,
+            max_segment_len,
+            setup,
+        },);
+        let stream_result = stream_witnesses(
+            source,
+            0..cycles,
+            row_width * windows_per_sc,
+            &mut consumers,
+        );
+        let mut consumer = consumers.0;
+        // Close the job queue so the GPU lane drains and exits; the tier-2
+        // lane then drains the done queue and exits.
+        consumer.tx = None;
+        let gpu_result = gpu.join().expect("GPU lane panicked");
+        let (accumulators, rows) = tier2.join().expect("tier-2 lane panicked");
+
+        stream_result.map_err(MetalCommitError::Witness)?;
+        gpu_result?;
+        if consumer.send_failed {
+            // Unreachable when gpu_result was Ok, but keep the pass honest.
+            return Err(MetalCommitError::Device(MetalError::Execution(
+                "GPU lane closed mid-pass".to_owned(),
+            )));
+        }
+
+        // Assemble outputs in `kinds` order: one-hot columns from the
+        // accumulated rows, increment columns through the shared-prep finish
+        // (the optimized kernel's own call).
+        let mut outputs: Vec<Option<(DoryCommitment, DoryHint)>> = vec![None; kinds.len()];
+        for ((ids_index, _), (acc, column_rows)) in
+            one_hot.iter().zip(accumulators.into_iter().zip(rows))
+        {
+            outputs[*ids_index] = Some(one_hot_output_from_rows(setup, column_rows, acc));
+        }
+        for (ids_index, _, partial) in consumer.increments {
+            outputs[ids_index] = Some(DoryScheme::finish_with_hint_prepared(
+                partial, setup, prep_ref,
+            ));
+        }
+        Ok(outputs
+            .into_iter()
+            .map(|output| output.expect("every column is one-hot or increment"))
+            .collect())
+    })
+}
+
+/// Decode one finished superchunk: reduce multi-segment buckets, batch
+/// normalize, record rows, absorb Miller loops — parallel across columns
+/// (each column's accumulator and row vector are disjoint).
+fn absorb_superchunk(
+    prep: &DoryTier2Prep,
+    done: &GpuDone,
+    accumulators: &mut [Tier2Accumulator],
+    rows: &mut [Vec<Bn254G1>],
+) {
+    // Segments arrive column-major (the driver emits buckets column by
+    // column), so each column owns one contiguous segment range.
+    let mut column_ranges: Vec<std::ops::Range<usize>> = vec![0..0; accumulators.len()];
+    let mut cursor = 0usize;
+    while cursor < done.segs.len() {
+        let column = done.segs[cursor].column as usize;
+        let start = cursor;
+        while cursor < done.segs.len() && done.segs[cursor].column as usize == column {
+            cursor += 1;
+        }
+        column_ranges[column] = start..cursor;
+    }
+
+    accumulators
+        .par_iter_mut()
+        .zip(rows.par_iter_mut())
+        .zip(column_ranges)
+        .for_each(|((accumulator, column_rows), range)| {
+            if range.is_empty() {
+                return;
+            }
+            // Reduce consecutive same-row segments (split buckets) into one
+            // point per row; drop identities (empty buckets never emit
+            // segments, but a partial sum can still cancel to zero).
+            let mut reduced: Vec<(u32, G1Projective)> = Vec::with_capacity(range.len());
+            for (seg, jac) in done.segs[range.clone()]
+                .iter()
+                .zip(done.jac[range.start * JAC_U32S..range.end * JAC_U32S].chunks_exact(JAC_U32S))
+            {
+                let point = super::g1::jac_from_device_limbs(jac);
+                match reduced.last_mut() {
+                    Some((row, sum)) if *row == seg.row => *sum += point,
+                    _ => reduced.push((seg.row, point)),
+                }
+            }
+            reduced.retain(|(_, point)| !point.is_zero());
+            if reduced.is_empty() {
+                return;
+            }
+            let points: Vec<G1Projective> = reduced.iter().map(|(_, point)| *point).collect();
+            let affine = G1Projective::normalize_batch(&points);
+            let row_indices: Vec<u32> = reduced.iter().map(|(row, _)| *row).collect();
+            for (&row, point) in row_indices.iter().zip(&affine) {
+                column_rows[row as usize] = Bn254G1::from(G1Projective::from(*point));
+            }
+            accumulator.absorb(prep, &affine, &row_indices);
+        });
+}
+
+/// The driver-side stream consumer: buckets one-hot hot addresses into
+/// device jobs and advances the increment columns on the CPU.
+struct MetalColumns<'a> {
+    tx: Option<SyncSender<GpuJob>>,
+    send_failed: bool,
+    one_hot: &'a [(usize, ColumnKind)],
+    increments: Vec<(usize, ColumnKind, DoryPartialCommitment)>,
+    row_width: usize,
+    one_hot_k: usize,
+    windows_fed: usize,
+    windows_total: usize,
+    max_segment_len: usize,
+    setup: &'a DoryProverSetup,
+}
+
+impl StreamConsumer for MetalColumns<'_> {
+    type Witness = CommittedColumnsWitness;
+
+    fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
+        debug_assert!(
+            chunk.len().is_multiple_of(self.row_width),
+            "superchunk must be whole windows"
+        );
+        let n_windows = chunk.len() / self.row_width;
+        let window_base = self.windows_fed;
+        self.windows_fed += n_windows;
+
+        // Ship the one-hot job first so the device starts while the CPU
+        // handles the increment MSMs.
+        if let Some(tx) = &self.tx {
+            if !self.send_failed {
+                let job = build_gpu_job(
+                    chunk,
+                    self.one_hot,
+                    self.row_width,
+                    self.one_hot_k,
+                    window_base,
+                    self.windows_total,
+                    self.max_segment_len,
+                );
+                if tx.send(job).is_err() {
+                    // Device lane died; its join surfaces the error after
+                    // the stream completes.
+                    self.send_failed = true;
+                }
+            }
+        }
+
+        for (_, kind, partial) in &mut self.increments {
+            let increments: Vec<i128> = chunk.iter().map(|row| kind.increment(row)).collect();
+            DoryScheme::feed_i128_rows(partial, &increments, self.row_width, self.setup);
+        }
+    }
+}
+
+/// Bucket a superchunk's one-hot hot addresses into gather segments:
+/// count-sort per `(column, window)` into a flat index array (bucket-major,
+/// columns outermost), then split buckets at the segment cap.
+fn build_gpu_job(
+    chunk: &[CommittedColumnsWitness],
+    one_hot: &[(usize, ColumnKind)],
+    row_width: usize,
+    one_hot_k: usize,
+    window_base: usize,
+    windows_total: usize,
+    max_segment_len: usize,
+) -> GpuJob {
+    let n_windows = chunk.len() / row_width;
+    let n_cw = one_hot.len() * n_windows;
+    let buckets_per_cw = one_hot_k;
+
+    // Hot addresses per column — the same per-column derivation the CPU
+    // kernel feeds `process_one_hot_chunks`.
+    let hot: Vec<Vec<Option<usize>>> = one_hot
+        .par_iter()
+        .map(|(_, kind)| chunk.iter().map(|row| kind.hot_address(row)).collect())
+        .collect();
+
+    // Bucket counts, (column, window) blocks of `one_hot_k` each.
+    let mut counts = vec![0u32; n_cw * buckets_per_cw];
+    counts
+        .par_chunks_mut(buckets_per_cw)
+        .enumerate()
+        .for_each(|(cw, counts)| {
+            let (column, window) = (cw / n_windows, cw % n_windows);
+            for hot_row in hot[column][window * row_width..(window + 1) * row_width]
+                .iter()
+                .flatten()
+            {
+                counts[*hot_row] += 1;
+            }
+        });
+
+    // Exclusive prefix over all buckets → gather layout offsets.
+    let mut bucket_starts = vec![0u32; counts.len() + 1];
+    for (i, &count) in counts.iter().enumerate() {
+        bucket_starts[i + 1] = bucket_starts[i] + count;
+    }
+    let total_hot = bucket_starts[counts.len()] as usize;
+
+    // Scatter window-local base positions into their buckets. Each
+    // (column, window) block owns a disjoint `one_hot_k` bucket range, so
+    // per-block cursors need no synchronization.
+    let mut indices = PageAlignedVec::from_elem(0u32, total_hot.max(1));
+    {
+        let indices = &mut indices[..];
+        // Split the flat array at block boundaries so blocks fill in
+        // parallel without synchronization.
+        let mut blocks: Vec<&mut [u32]> = Vec::with_capacity(n_cw);
+        let mut rest = indices;
+        for cw in 0..n_cw {
+            let start = bucket_starts[cw * buckets_per_cw] as usize;
+            let end = bucket_starts[(cw + 1) * buckets_per_cw] as usize;
+            let (block, tail) = rest.split_at_mut(end - start);
+            blocks.push(block);
+            rest = tail;
+        }
+        blocks.par_iter_mut().enumerate().for_each(|(cw, block)| {
+            let (column, window) = (cw / n_windows, cw % n_windows);
+            let base = bucket_starts[cw * buckets_per_cw];
+            let mut cursors: Vec<u32> = (0..buckets_per_cw)
+                .map(|k| bucket_starts[cw * buckets_per_cw + k] - base)
+                .collect();
+            for (position, hot_row) in hot[column][window * row_width..(window + 1) * row_width]
+                .iter()
+                .enumerate()
+            {
+                if let Some(hot_row) = hot_row {
+                    block[cursors[*hot_row] as usize] = position as u32;
+                    cursors[*hot_row] += 1;
+                }
+            }
+        });
+    }
+
+    // Segment table: split buckets at the cap; empty buckets emit nothing
+    // (their rows stay identity, exactly the CPU path's empty-index rows).
+    let mut seg_starts_host = vec![0u32];
+    let mut segs = Vec::new();
+    for cw in 0..n_cw {
+        let (column, window) = (cw / n_windows, cw % n_windows);
+        for k in 0..buckets_per_cw {
+            let start = bucket_starts[cw * buckets_per_cw + k] as usize;
+            let end = bucket_starts[cw * buckets_per_cw + k + 1] as usize;
+            let mut cursor = start;
+            while cursor < end {
+                let seg_end = (cursor + max_segment_len).min(end);
+                seg_starts_host.push(seg_end as u32);
+                segs.push(SegOut {
+                    column: column as u32,
+                    row: (k * windows_total + window_base + window) as u32,
+                });
+                cursor = seg_end;
+            }
+        }
+    }
+
+    GpuJob {
+        indices,
+        seg_starts: PageAlignedVec::from_slice(&seg_starts_host),
+        segs,
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "tests: fail loudly"
+)]
+mod tests {
+    use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+    use jolt_witness::RowSource;
+
+    use super::super::testing::gpu_lock;
+    use super::*;
+    use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
+
+    fn assert_same(
+        cpu: &[WitnessCommitment<DoryScheme>],
+        device: &[(DoryCommitment, DoryHint)],
+        label: &str,
+    ) {
+        assert_eq!(cpu.len(), device.len());
+        for (cpu, (commitment, hint)) in cpu.iter().zip(device) {
+            assert_eq!(
+                &cpu.commitment, commitment,
+                "{label}: {:?} commitment diverged",
+                cpu.id
+            );
+            assert_eq!(&cpu.hint, hint, "{label}: {:?} hint diverged", cpu.id);
+        }
+    }
+
+    /// The device pipeline must reproduce the optimized kernel's commitments
+    /// and hints exactly: whole-trace superchunks with production segment
+    /// caps, and single-window superchunks with a 1-entry segment cap (every
+    /// addition its own device thread — the deepest multi-segment reduction
+    /// and multi-delivery sequencing).
+    #[test]
+    fn metal_commit_matches_optimized() {
+        let _lock = gpu_lock();
+        let shape = FixtureShape {
+            log_t: 6,
+            ram_k: 16,
+        };
+        let ops = vec![
+            RamOp::Write { word: 2, post: 17 },
+            RamOp::Read { word: 2 },
+            RamOp::None,
+            RamOp::Write { word: 5, post: 3 },
+            RamOp::Read { word: 5 },
+            RamOp::Write { word: 2, post: 9 },
+            RamOp::Read { word: 3 },
+        ];
+        with_ram_fixture(shape, ops, |witness| {
+            let ids: Vec<JoltCommittedPolynomial> = witness
+                .committed_order()
+                .unwrap()
+                .into_iter()
+                .filter(|id| {
+                    !matches!(
+                        id,
+                        JoltCommittedPolynomial::TrustedAdvice
+                            | JoltCommittedPolynomial::UntrustedAdvice
+                    )
+                })
+                .collect();
+            let grid = CommitmentGrid {
+                total_vars: 4 + shape.log_t,
+                log_t: shape.log_t,
+                log_k_chunk: 4,
+                order: TracePolynomialOrder::CycleMajor,
+            };
+            let setup = DoryScheme::setup_prover(grid.total_vars);
+            let source: &dyn RowSource = witness;
+            let kinds = column_kinds::<Fr>(&ids, grid).unwrap();
+            let ctx = MetalContext::global().expect("metal context");
+
+            let optimized = <OptimizedBackend as CommitWitness<Fr, DoryScheme>>::commit_witness(
+                &OptimizedBackend,
+                &mut ProofSession::default(),
+                source,
+                &ids,
+                grid,
+                &setup,
+            )
+            .unwrap();
+
+            let whole_trace = commit_streaming_metal(
+                ctx,
+                source,
+                &kinds,
+                grid,
+                &setup,
+                1 << shape.log_t,
+                MAX_SEGMENT_LEN,
+            )
+            .expect("whole-trace metal commit");
+            assert_same(&optimized, &whole_trace, "whole-trace superchunk");
+
+            let single_window =
+                commit_streaming_metal(ctx, source, &kinds, grid, &setup, grid.num_columns(), 1)
+                    .expect("single-window metal commit");
+            assert_same(&optimized, &single_window, "single-window superchunk");
+        });
+    }
+
+    /// The full slot path: with the gate forced open, `MetalCommitWitness`
+    /// routes through the device and matches the optimized kernel; advice
+    /// stays delegated.
+    #[test]
+    fn metal_slot_matches_optimized_through_gate() {
+        let _lock = gpu_lock();
+        // nextest runs one process per test, so the env write cannot race
+        // another test.
+        std::env::set_var("JOLT_METAL_MIN_TERMS_COMMIT", "1");
+        let shape = FixtureShape {
+            log_t: 6,
+            ram_k: 16,
+        };
+        let ops = vec![
+            RamOp::Write { word: 1, post: 5 },
+            RamOp::Read { word: 1 },
+            RamOp::Write { word: 7, post: 2 },
+        ];
+        with_ram_fixture(shape, ops, |witness| {
+            let ids: Vec<JoltCommittedPolynomial> = witness
+                .committed_order()
+                .unwrap()
+                .into_iter()
+                .filter(|id| {
+                    !matches!(
+                        id,
+                        JoltCommittedPolynomial::TrustedAdvice
+                            | JoltCommittedPolynomial::UntrustedAdvice
+                    )
+                })
+                .collect();
+            let grid = CommitmentGrid {
+                total_vars: 4 + shape.log_t,
+                log_t: shape.log_t,
+                log_k_chunk: 4,
+                order: TracePolynomialOrder::CycleMajor,
+            };
+            let setup = DoryScheme::setup_prover(grid.total_vars);
+            let source: &dyn RowSource = witness;
+
+            let optimized = <OptimizedBackend as CommitWitness<Fr, DoryScheme>>::commit_witness(
+                &OptimizedBackend,
+                &mut ProofSession::default(),
+                source,
+                &ids,
+                grid,
+                &setup,
+            )
+            .unwrap();
+            let metal = MetalCommitWitness
+                .commit_witness(&mut ProofSession::default(), source, &ids, grid, &setup)
+                .unwrap();
+
+            assert_eq!(optimized.len(), metal.len());
+            for (cpu, device) in optimized.iter().zip(&metal) {
+                assert_eq!(cpu.id, device.id);
+                assert_eq!(cpu.commitment, device.commitment, "{:?}", cpu.id);
+                assert_eq!(cpu.hint, device.hint, "{:?}", cpu.id);
+            }
+        });
+    }
+}

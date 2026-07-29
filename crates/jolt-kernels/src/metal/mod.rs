@@ -29,16 +29,24 @@
 //! nothing hot).
 
 mod buffers;
+mod commitment;
 mod error;
 mod field;
+mod g1;
 mod runtime;
 mod slots;
 pub mod testing;
 
 pub use buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec, PAGE_SIZE};
 pub use error::MetalError;
-pub use field::{fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS};
-pub use runtime::{ComputePass, KernelId, MetalContext, MAX_EVAL_POINTS, THREADGROUP_SIZE};
+pub use field::{
+    fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS,
+    G1_AFFINE_U32_STRIDE,
+};
+pub use g1::{bases_as_u32s, g1_seg_sum_dispatch, g1_seg_sums, jac_from_device_limbs, JAC_U32S};
+pub use runtime::{
+    ComputePass, KernelId, MetalContext, PendingPass, MAX_EVAL_POINTS, THREADGROUP_SIZE,
+};
 pub use slots::{
     MetalHammingWeightClaimReduction, MetalIncClaimReduction, MetalRamHammingBooleanity,
     MetalRamRafEvaluation,
@@ -106,12 +114,17 @@ where
     ///
     /// `Fr`-concrete (unlike the other constructors): the device tier is
     /// BN254 Montgomery arithmetic — the shaders' limb layout IS `Fr`'s.
+    ///
+    /// Installed device slots: the W2 sumcheck four (inc / hamming-weight
+    /// claim reductions, ram hamming booleanity, ram RAF evaluation) plus
+    /// `commit` — Dory one-hot tier-1 G1 accumulation on the device,
+    /// pipelined with CPU tier-2 pairings (W3a; `(Fr, DoryScheme)`
+    /// instantiations only — everything else keeps the optimized slot).
     pub fn metal() -> Result<Self, MetalError>
     where
-        PCS: StreamingCommitment,
+        PCS: StreamingCommitment + 'static,
     {
         let context = MetalContext::global()?;
-        tracing::info!(device = %context.device_name(), "Metal backend ready");
         let mut backend = Self::optimized();
         backend.inc_claim_reduction = Box::new(MetalIncClaimReduction {
             fallback: OptimizedIncClaimReduction,
@@ -125,6 +138,12 @@ where
         backend.ram_raf_evaluation = Box::new(MetalRamRafEvaluation {
             fallback: OptimizedBackend,
         });
+        if let Some(slot) = commitment::dory_commit_slot::<Fr, PCS>() {
+            backend.commit = slot;
+            tracing::info!(device = %context.device_name(), "Metal backend ready (commit on device)");
+        } else {
+            tracing::info!(device = %context.device_name(), "Metal backend ready");
+        }
         Ok(backend)
     }
 }
