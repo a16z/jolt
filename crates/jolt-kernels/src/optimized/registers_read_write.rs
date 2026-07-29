@@ -364,9 +364,12 @@ where
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
         let dimensions = inputs.relation.register_dimensions();
-        if dimensions.phase1_num_rounds() != dimensions.log_t()
-            || dimensions.phase2_num_rounds() != 0
-        {
+        // Same guard as the reference kernel: phase 1 must cover all cycle
+        // rounds. The phase-2/phase-3 split of the address rounds is a legacy
+        // data-structure choice with no effect on the round polynomials (the
+        // default config sets phase 2 = all `log_K` address rounds), so it is
+        // deliberately not constrained here.
+        if dimensions.phase1_num_rounds() != dimensions.log_t() {
             return Err(KernelError::Unsupported {
                 reason: "optimized registers read-write checking supports only the default \
                          read-write config (phase 1 = all cycle rounds)",
