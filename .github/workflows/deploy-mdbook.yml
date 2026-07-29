@@ -26,7 +26,8 @@ jobs:
         mdbook-version: '0.4.10'
 
     - name: Install mdbook-katex
-      run: cargo install mdbook-katex
+      # 0.9.4 is the last release compatible with mdbook 0.4.x; 0.10+ targets mdbook 0.5
+      run: cargo install mdbook-katex --version 0.9.4 --locked
 
     - run: mdbook build ./book
 
@@ -43,7 +44,8 @@ jobs:
         with:
           mdbook-version: '0.4.10'
       - name: Install mdbook-katex
-        run: cargo install mdbook-katex
+        # 0.9.4 is the last release compatible with mdbook 0.4.x; 0.10+ targets mdbook 0.5
+        run: cargo install mdbook-katex --version 0.9.4 --locked
 
       - run: mdbook build ./book
 
