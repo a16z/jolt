@@ -41,6 +41,7 @@ pub use field::{fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, 
 pub use runtime::{ComputePass, KernelId, MetalContext, MAX_EVAL_POINTS, THREADGROUP_SIZE};
 pub use slots::{
     MetalHammingWeightClaimReduction, MetalIncClaimReduction, MetalRamHammingBooleanity,
+    MetalRamRafEvaluation,
 };
 
 use jolt_field::Fr;
@@ -49,6 +50,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use crate::optimized::hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 use crate::optimized::inc_claim_reduction::OptimizedIncClaimReduction;
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
+use crate::optimized::OptimizedBackend;
 use crate::JoltBackend;
 
 /// Default [`metal_gate`] threshold, from `metal_microbench` on the target
@@ -119,6 +121,9 @@ where
         });
         backend.ram_hamming_booleanity = Box::new(MetalRamHammingBooleanity {
             fallback: OptimizedRamHammingBooleanity,
+        });
+        backend.ram_raf_evaluation = Box::new(MetalRamRafEvaluation {
+            fallback: OptimizedBackend,
         });
         Ok(backend)
     }
