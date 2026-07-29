@@ -516,30 +516,28 @@ impl Mmu {
     /// state is used in Jolt to construct the witnesses in `read_write_memory.rs`.
     fn trace_load(&mut self, effective_address: u64) -> RAMRead {
         let word_address = (effective_address >> 2) << 2;
-        let bytes = 8;
         if word_address < DRAM_BASE {
-            let mut value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                value_bytes[i as usize] = self
-                    .jolt_device
-                    .as_ref()
-                    .expect("JoltDevice not set")
-                    .load(word_address + i);
-            }
             RAMRead {
                 address: word_address,
-                value: u64::from_le_bytes(value_bytes),
+                value: self.device_doubleword(word_address),
             }
         } else {
-            let mut value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                value_bytes[i as usize] = self.memory.read_byte(word_address + i);
-            }
             RAMRead {
                 address: word_address,
-                value: u64::from_le_bytes(value_bytes),
+                value: self.memory.read_doubleword(word_address),
             }
         }
+    }
+
+    /// Read a (4-byte-aligned) doubleword from the memory-mapped device region.
+    #[expect(clippy::expect_used)]
+    fn device_doubleword(&self, address: u64) -> u64 {
+        let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");
+        let mut value_bytes = [0u8; 8];
+        for (i, byte) in value_bytes.iter_mut().enumerate() {
+            *byte = jolt_device.load(address + i as u64);
+        }
+        u64::from_le_bytes(value_bytes)
     }
 
     /// Records the state of the memory word containing the accessed byte
@@ -547,25 +545,12 @@ impl Mmu {
     /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = 8;
         let word_address = (effective_address >> 2) << 2;
 
         let pre_value = if effective_address < DRAM_BASE {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self
-                    .jolt_device
-                    .as_ref()
-                    .expect("JoltDevice not set")
-                    .load(word_address + i);
-            }
-            u64::from_le_bytes(pre_value_bytes)
+            self.device_doubleword(word_address)
         } else {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.memory.read_byte(word_address + i);
-            }
-            u64::from_le_bytes(pre_value_bytes)
+            self.memory.read_doubleword(word_address)
         };
 
         // Mask the value into the word
@@ -589,25 +574,12 @@ impl Mmu {
     /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = 8;
         let word_address = (effective_address >> 2) << 2;
 
         let pre_value = if effective_address < DRAM_BASE {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self
-                    .jolt_device
-                    .as_ref()
-                    .expect("JoltDevice not set")
-                    .load(word_address + i);
-            }
-            u64::from_le_bytes(pre_value_bytes)
+            self.device_doubleword(word_address)
         } else {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.memory.read_byte(word_address + i);
-            }
-            u64::from_le_bytes(pre_value_bytes)
+            self.memory.read_doubleword(word_address)
         };
 
         // Mask the value into the word
@@ -631,34 +603,16 @@ impl Mmu {
     /// in `read_write_memory.rs`.
     fn trace_store(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = 8;
 
-        if effective_address < DRAM_BASE {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self
-                    .jolt_device
-                    .as_ref()
-                    .expect("JoltDevice not set")
-                    .load(effective_address + i);
-            }
-            let pre_value = u64::from_le_bytes(pre_value_bytes);
-            RAMWrite {
-                address: effective_address,
-                pre_value,
-                post_value: value,
-            }
+        let pre_value = if effective_address < DRAM_BASE {
+            self.device_doubleword(effective_address)
         } else {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
-            }
-            let pre_value = u64::from_le_bytes(pre_value_bytes);
-            RAMWrite {
-                address: effective_address,
-                pre_value,
-                post_value: value,
-            }
+            self.memory.read_doubleword(effective_address)
+        };
+        RAMWrite {
+            address: effective_address,
+            pre_value,
+            post_value: value,
         }
     }
 
