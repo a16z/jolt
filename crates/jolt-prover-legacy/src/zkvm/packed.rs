@@ -2489,7 +2489,7 @@ mod committed_tests {
         let prover_preprocessing = JoltProverPreprocessing::new(shared);
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-        let prover = AkitaPackedProver::gen_from_elf(
+        let mut prover = AkitaPackedProver::gen_from_elf(
             &prover_preprocessing,
             elf_contents,
             &inputs,
@@ -2499,6 +2499,27 @@ mod committed_tests {
             None,
             None,
         );
+        if let (Ok(log_k_chunk), Ok(lookups_ra_virtual_log_k_chunk)) = (
+            std::env::var("PERF_LOG_K_CHUNK"),
+            std::env::var("PERF_LOOKUPS_RA_VIRTUAL_LOG_K_CHUNK"),
+        ) {
+            let config = crate::zkvm::config::OneHotConfig {
+                log_k_chunk: log_k_chunk
+                    .parse()
+                    .expect("PERF_LOG_K_CHUNK must be an integer"),
+                lookups_ra_virtual_log_k_chunk: lookups_ra_virtual_log_k_chunk
+                    .parse()
+                    .expect("PERF_LOOKUPS_RA_VIRTUAL_LOG_K_CHUNK must be an integer"),
+            };
+            config
+                .validate()
+                .expect("forced performance one-hot config must be valid");
+            prover.one_hot_params = crate::zkvm::config::OneHotParams::from_config(
+                &config,
+                prover.preprocessing.shared.bytecode_size(),
+                prover.one_hot_params.ram_k,
+            );
+        }
         let io_device = prover.program_io.clone();
         eprintln!("trace length: {}", prover.trace.len());
         let setup_params = prover.one_hot_trace_setup_params();
