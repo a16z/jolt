@@ -925,6 +925,41 @@ mod muldiv {
         // stage (its RAM kernels replace the naive grid materialization).
         assert_backend_matches_legacy(&JoltBackend::optimized());
 
+        // The metal backend must reproduce the same bytes with its device
+        // slots FORCED onto the GPU (threshold zeroed), stage by stage — the
+        // probe counter proves the device path really ran instead of
+        // silently gating back to the CPU.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            let _gpu = jolt_kernels::metal::testing::gpu_lock();
+            // nextest runs one process per test, so env mutation is safe;
+            // the gates read the environment on every consult.
+            std::env::remove_var("JOLT_METAL_DISABLE");
+            std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
+            let device_rounds = jolt_kernels::metal::testing::device_probe_count();
+            let backend = JoltBackend::<Fr, DoryScheme>::metal().expect("metal backend");
+            assert_backend_matches_legacy(&backend);
+            let proof =
+                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                    &backend,
+                    &prover_preprocessing,
+                    &config,
+                    None,
+                    &witness,
+                    &public_io,
+                )
+                .expect("metal-backend prove");
+            assert_eq!(
+                proof, legacy_proof,
+                "metal-backend proof diverged from legacy"
+            );
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+            assert!(
+                jolt_kernels::metal::testing::device_probe_count() > device_rounds,
+                "the metal arm never dispatched a device round"
+            );
+        }
+
         // The full-proof ratchet: the top-level prove() runs the same stage
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.
@@ -1134,6 +1169,38 @@ mod advice_consumer {
             proof, legacy_proof,
             "optimized-backend proof diverged from legacy"
         );
+
+        // The metal backend, device slots forced onto the GPU and
+        // probe-verified, must assemble the identical proof too — advice
+        // mode reruns the stage-6b/7 claim-reduction slots this wave
+        // converted under a different claim wiring.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            let _gpu = jolt_kernels::metal::testing::gpu_lock();
+            // nextest runs one process per test, so env mutation is safe.
+            std::env::remove_var("JOLT_METAL_DISABLE");
+            std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
+            let device_rounds = jolt_kernels::metal::testing::device_probe_count();
+            let backend = JoltBackend::<Fr, DoryScheme>::metal().expect("metal backend");
+            let proof =
+                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                    &backend,
+                    &prover_preprocessing,
+                    &config,
+                    Some(&trusted_advice_commitment),
+                    &witness,
+                    &public_io,
+                )
+                .expect("metal-backend prove");
+            assert_eq!(
+                proof, legacy_proof,
+                "metal-backend proof diverged from legacy"
+            );
+            assert!(
+                jolt_kernels::metal::testing::device_probe_count() > device_rounds,
+                "the metal arm never dispatched a device round"
+            );
+        }
     }
 }
 
