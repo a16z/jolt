@@ -4,8 +4,8 @@ Bars at 2^26 (adjacent same-night pair vs prove 101-103s): ACCEPT prove
 ≤80s with commit ≤34s AND batched_prove ≤18s traced; PARTIAL 80<prove≤95;
 FAIL <−8s → revert.
 
-STATUS: phase 1 implementation and soundness validation complete; production
-benchmark pending (2026-07-28).
+STATUS: runtime ACCEPT at T=2^26; implementation, soundness, and local
+revalidation complete (2026-07-28).
 
 ## Adopt-and-extend checkpoint
 
@@ -13,7 +13,9 @@ PATH A is selected. Quang's seven Jolt commits through `a740e209c` were
 cherry-picked with their original authorship and boundaries. The two Akita
 kernel prerequisites (`a96b26fa`, `0d38c126`) were cherry-picked onto the
 memory-optimized Akita branch; `050d93bb` was not duplicated because this
-branch already contains the equivalent rank-slack policy.
+branch already contains the equivalent rank-slack policy. The Jolt-owned
+catalogs were subsequently regenerated because their checked-in entries
+predated that policy.
 
 The one integration conflict was intentional: Quang's branch assumes a
 permanently materialized setup matrix, while this branch releases that matrix
@@ -194,67 +196,80 @@ Validation completed before the production run:
 - the standard and ZK Dory mul/div gates pass unchanged;
 - affected Akita, standard, and ZK Clippy targets pass with warnings denied.
 
-## Phase 0a — planner probe: the n_a mechanism is FALSIFIED
+## Planner correction
 
-Probe: `crates/jolt-akita/tests/schedule_probe.rs` (ignored test; resolves
-schedules through the production configs, DP fallback on catalog miss).
-Results under `JoltD64OneHotK256`/`K16` at 10‰ rank slack:
+The first production sparse-root run logged `n_a=7` even though the current
+10‰ rank-slack planner selected `n_a=6` for the same `(39 vars, 1 poly)`
+K256 layout. The checked-in Jolt catalog was old. A direct planner probe
+showed:
 
-| shape | ppb | live blocks | root n_a | root fold bucket |
-|---|---|---|---|---|
-| (34 vars, 29 polys) current | 2^21 | 128/claim (3712 block-claims) | **6** | 2^20−1 |
-| (39 vars, 1 poly) packed K256 | 2^21 | 4096 | **6** | 2^20−1 |
-| (36 vars, 1 poly) packed K16 | 2^18 | 4096 | **6** | 2^20−1 |
+| policy | root n_a | positions/block | blocks | proof payload |
+|---|---:|---:|---:|---:|
+| zero slack | 7 | 2^20 | 8192 | 99,292 bytes |
+| 10‰ rank slack | 6 | 2^21 | 4096 | 99,404 bytes |
 
-Why packing cannot move n_a: claims 29→1, but the packed domain grows to
-capacity·K·T so live blocks rise 3712→4096 — the t*-driving product
-claims×blocks is UNCHANGED (+10% from the 3/32 capacity padding), so
-δ_fold/bucket stay put, and at bucket 2^20−1 the q128 D=64 SIS row gives
-rank 6 for any width in [65609, 4178804] — both ppb 2^20 (quang's schedule)
-and 2^21 sit in the same band. Rank 5 needs width ≤65608 (ppb ≤2^16), which
-multiplies blocks 32× and pushes the bucket UP. The geometry is
-self-balancing; n_a=6 is a hard floor here (consistent with the 2026-07-24
-campaign's Q1/Q3 verdicts).
+The narrower root costs only 112 payload bytes (+0.113%). Regenerating both
+Jolt catalogs changed the K256 production entry to the second row. The slow
+catalog-drift oracle, catalog coverage tests, K16/K256 e2e cases, verifier
+fixtures, and tamper tests all passed afterward.
 
-Bucket-down routes checked and closed analytically:
-- blocks↓ via ppb↑: rank-6 width cap is 4178804 < 2^22 — ppb is maxed.
-- δ_fold 4→3 via a tighter fold-l∞ grind cap: the grind currently spends
-  ~1.5s beyond the mandatory root fold (see below), i.e. the cap already
-  sits at the challenge-fold distribution's natural tail; an 8× tighter cap
-  has vanishing acceptance probability.
-- K-regime change: cols(K)≈263/log2(K)+1 shrinks entries, but domain
-  cols·K·T grows ~K/log2K → blocks → bucket → rank. At K=2^12:
-  ~21 cols but rank ≥7 ⇒ 21·T·7 ≥ 29·T·6·0.84 — no win; at K=16: rank
-  would need ≤5 to beat 29·6, but bucket stays 2^20 (probe) ⇒ 57·T·6 is
-  2× worse. K=256 is near-optimal for accumulate count.
+The regenerated K256 setup envelope is 12,582,912 ring elements
+(12,884,901,888 bytes in field form). That size exposed a second interaction:
+releasing the field-form setup immediately after commit made Stage 8 derive
+setup data again and made in-process verification regenerate the full matrix.
 
-## Baseline window decomposition (tonight's traced 2^26 A side, prove 103.3s)
+## Production measurements
 
-- commit 42.9s: `onehot_merge_sweep` 622.9 thread-s (÷16 ≈ 39s wall — the
-  accumulate wall), everything else ≪1s.
-- batched_prove 25.6s: `ring_relation_fold_grind` 11.65s ⊇ root
-  `decompose_fold_batched` 10.09s (the grind's overhead beyond the mandatory
-  root fold ≈ 1.5s); ring-switch/quotient/finalize ≈ 12 thread-s across 8
-  levels; per-claim work that packing removes: `OneHotPoly::build_blocks`
-  3.67 thread-s (x29) + root-level per-claim eval/tensor/transcript ≈ 2-5s
-  wall total.
+Workload: `sha2-chain`, 17,785 iterations, padded trace T=2^26, K=256,
+release build, `PERF_TRACE=1`. The original bars were:
 
-## Feasibility projection for the packed protocol at 2^26
+- ACCEPT: prove <=80s, commit <=34s, and `batched_prove` <=18s;
+- PARTIAL: 80s < prove <=95s;
+- FAIL: less than 8s improvement.
 
-n_a unchanged ⇒ commit floor ≈ 29·T·6 accums at the measured sustained wall
-(65-74 ns/accum ×16t) ≈ 37-40s. Packing buys: emission/materialization ≈ −3s
-(measured on the fused-sweep dead end, same mechanism), batched_prove
-per-claim collapse ≈ −2..−5s, witness-gen columns never built ≈ −1..−2s.
-Projected total: prove ≈ 93-97s — BELOW the PARTIAL floor at worst, far from
-ACCEPT ≤80s. The two invariants (accumulate wall × n_a=6; per-level fold
-machinery) are untouched by packing.
+| variant | commit | batched prove | total prove | verify | peak RSS |
+|---|---:|---:|---:|---:|---:|
+| pre-protocol baseline | 42.90s | 25.60s | 103.30s | — | — |
+| implicit-zero, catalog n_a=7, release matrix | 38.62s | 14.89s | 87.08s | 0.130s | 43.07GB |
+| implicit-zero, regenerated n_a=6, release matrix | 32.08s | 21.72s | 85.97s | 2.54s | 32.87GB |
+| n_a=6, retain field matrix, valid run 1 | 31.16s | 14.06s | 76.29s | 0.185s | <=43.61GB (bound) |
+| n_a=6, retain field matrix, valid run 2 | 30.19s | 13.66s | 74.13s | 0.182s | <=43.61GB (bound) |
 
-Empirical arbitration pending: PR #1706's stack AS-PINNED (his jolt head +
-quangvdao/akita@050d93bb git dep, no reconciliation — valid at 2^24 where
-the missing M2-M8 RSS work doesn't bind) vs our stack, quiet adjacent 2^24
-pair. If his measured delta ≈ the projection, infeasibility of the ACCEPT
-bar is confirmed empirically + analytically; if much larger, the window
-model is missing something and phase 0 continues.
+The two valid retained-matrix runs average 75.21s prove, 30.68s commit, and
+13.86s `batched_prove`. Both clear every ACCEPT bar. Against the 103.30s
+trace, the mean reduction is 28.09s (27.2%).
+
+One additional retained-matrix run produced 106.56s prove
+(`commit=30.91s`, `batched_prove=22.91s`). It did not follow the declared
+120-second cooldown. Its trace shows the commit at normal speed followed by
+broad 1.4–2x inflation across unrelated CPU-bound stages. It is preserved as
+an excluded run rather than folded into the accepted pair.
+
+The sandboxed full run could not emit `/usr/bin/time -l`'s peak-RSS field.
+The exact setup size gives a hard bound: adding the entire 10.74GB released
+suffix to the measured 32.87GB release-matrix peak yields at most 43.61GB.
+This ignores the temporary derivation buffers that retention removes, so it
+is conservative. A matched T=2^25 A/B measured the trade directly:
+
+| T=2^25 K256 | batched prove | total prove | verify | peak RSS |
+|---|---:|---:|---:|---:|
+| release field matrix | 13.98s | 44.45s | 1.26s | 25.05GB |
+| retain field matrix | 8.26s | 40.10s | 0.104s | 28.18GB |
+
+## Why the optimizations stack
+
+The implicit-zero protocol removes public zero-lane contributions from the
+single committed polynomial. The regenerated rank-aware schedule then lowers
+the root rank from seven to six and halves the live block count, which cuts
+commit from 38.62s to roughly 31s.
+
+That schedule also enlarges the setup extent. Releasing its field form after
+commit traded the commit gain for setup derivation in `batched_prove`; it was
+a memory/runtime policy conflict, not a protocol failure. The final lifecycle
+drops the transformed NTT slots after commit but retains the field matrix
+through Stage 8. The trace records 10.74GB and 11.41GB NTT releases while
+avoiding setup re-derivation. This restores `batched_prove` to roughly 14s
+without adding a commitment, opening, proof field, or sumcheck round.
 
 ## Fork and merge findings (Path A cost)
 
@@ -265,38 +280,38 @@ model is missing something and phase 0 continues.
 - #332/#333 cherry-pick cleanly onto 3710a42c (done on akita
   `perf/packed-onehot`). 050d93bb conflicts in 3 files because OUR tree
   already ships the same rank-slack planner feature (identity-bound slack
-  tags, slack-candidate sweep) — his commit is an earlier-base parallel
-  version; probe shows our planner already rank-selects. Not picked.
+  tags, slack-candidate sweep). His commit is an earlier-base parallel
+  version, so it was not duplicated. Regenerating the Jolt-owned catalogs was
+  the missing operational step.
 
 ## Stage-8 soundness read (design level: PASS)
 
-Verifier stage8/packed.rs binds `one_hot_trace_point` then
-`one_hot_trace_evals` into the transcript BEFORE sampling the selector
-challenge, and recomputes the packed evaluation Σ eq(selector,i)·eval_i
-itself from the bound leaves — the prover cannot adapt semantic evaluations
-to the selector. Remaining diligence (phase 2 if we proceed): explicit
-tamper/negative test for the binding order; padding-slot zero semantics are
-a completeness concern only.
+Verifier `stage8/packed.rs` binds `one_hot_trace_point` and
+`one_hot_trace_evals` before sampling the selector challenge. It recomputes
+the packed evaluation `sum_i eq(selector,i) * eval_i` from those bound
+leaves, so the prover cannot adapt semantic evaluations to the selector.
+All fixture-enabled verifier tests pass, including clear-claim and
+commitment-wire tampering.
 
-## Phase 0b — 2^24 as-pinned pair (K16 regime at this size)
+## Validation verdict
 
-Note: at 2^24 both stacks select the K=16 chunk regime (57 semantic columns
-native / 64-slot packed), so this pair probes packed-vs-native in the K16
-regime; the K256 question needs 2^26 (or a forced-K256 run).
+Highest evidence stage: **revalidated** for this local engineering target.
+Two production-size runs that followed the cooldown contract clear the
+predeclared ACCEPT bars, and the mechanism transfers to a matched T=2^25
+release/retain A/B. It has not been replicated on another machine.
 
-- First attempt (2026-07-27 22:29): wrapper timeout killed the pipeline
-  mid-quiet-gate (ambient load ~5 for ~2.5h: code42 agent, Spotlight over
-  fresh build artifacts, video decode). The orphaned script still ran side
-  A hot (a ~33-min rebuild absorbed into the timed window immediately
-  before the test): OURS at 2^24 K16 = prove 64.88s, peak 25.7GB —
-  DIRECTIONAL ONLY.
-- Clean rerun (detached, file-logged, gate load<6 with ambient documented,
-  order B-then-A, both sides prebuilt): PENDING.
+Correctness and compatibility gates:
+
+- natural K16, forced K256, committed-program, and both advice e2e paths;
+- all Akita claims tests and all fixture-enabled verifier tests;
+- standard and ZK Dory mul/div non-regression tests;
+- catalog regeneration drift and coverage checks;
+- affected Akita, standard, and ZK Clippy targets with warnings denied.
 
 ## Decision
 
-PATH A — adopt and extend Quang's packed single-polynomial implementation.
-The root-only sparse experiment is the decisive evidence that the original
-all-rows-active projection missed a roughly 2× root lever. The protocol
-change above is now the shortest credible route to the acceptance band while
-preserving this branch's memory work.
+ACCEPT PATH A. Keep Quang's packed single-polynomial kernels, the implicit
+public-zero protocol, the regenerated rank-aware catalogs, and the
+post-commit NTT-only release. The result reduces the T=2^26 prover from
+103.30s to a revalidated 74.13–76.29s while retaining a conservative
+43.61GB peak-RSS bound.

@@ -1497,10 +1497,9 @@ impl AkitaPackedProver<'_> {
             reason: error.to_string(),
         })?;
 
-        // The commit sweep is the last full-width consumer of the built NTT
-        // slots and the setup matrix's field form. Release both before the
-        // remaining proving stages; stage 8 rebuilds or streams them lazily.
-        object_setup.release_post_commit_residency();
+        // The commit sweep is the last full-width NTT consumer. Stage 8 reuses
+        // the field-form setup matrix for its ring-switch relation.
+        object_setup.release_post_commit_ntt_residency();
 
         // Absorb the packed commitment objects exactly where and how the
         // verifier's `absorb_commitments` akita arm does.

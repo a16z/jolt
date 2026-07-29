@@ -185,12 +185,13 @@ impl AkitaProverSetup {
         .flatten()
     }
 
-    /// Release the built NTT slots and the setup matrix's field form beyond
-    /// the streaming-threshold prefix after the commit's last full-width read.
-    pub fn release_post_commit_residency(&self) {
+    /// Release the built NTT slots after the commit's last full-width read.
+    ///
+    /// The setup matrix remains resident because the opening and verifier paths
+    /// reuse it.
+    pub fn release_post_commit_ntt_residency(&self) {
         for prepared in self.prepared_backends() {
             let _freed = prepared.drop_built_ntt_slots();
-            let _freed = prepared.release_setup_matrix_to_streaming_prefix();
         }
     }
 
