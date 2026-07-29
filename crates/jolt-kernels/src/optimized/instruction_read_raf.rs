@@ -364,10 +364,45 @@ fn extension_pair<F: Field>(evals: &[F], b: usize, half: usize) -> (F, F) {
 /// Cycle-round state: the Gruen-split eq factor plus the dense cycle tables.
 struct CycleState<F: Field> {
     gruen: GruenSplitEqPolynomial<F>,
+    tables: CycleTablesDriver<F>,
+}
+
+/// Where the dense cycle tables live. `Host` is the ordinary CPU state;
+/// `Device` means a [`PhaseScanner`] adopted them at the address→cycle
+/// boundary and folds/evaluates them itself ([`PhaseScanner::cycle_round`]).
+enum CycleTablesDriver<F: Field> {
+    Host(HostCycleTables<F>),
+    /// `pending_bind` is a challenge already bound into `gruen` but not yet
+    /// folded into the tables — the device folds it fused with the next
+    /// round's evaluation, or the handoff path applies it on the CPU.
+    Device {
+        pending_bind: Option<F>,
+    },
+}
+
+struct HostCycleTables<F: Field> {
     combined_val: Polynomial<F>,
     ra: Vec<Polynomial<F>>,
     /// Reused low-to-high binding buffer (swapped through every bind).
     bind_scratch: Vec<F>,
+}
+
+impl<F: Field> HostCycleTables<F> {
+    fn new(tables: CycleTables<F>) -> Self {
+        Self {
+            combined_val: Polynomial::new(tables.combined_val),
+            ra: tables.ra.into_iter().map(Polynomial::new).collect(),
+            bind_scratch: Vec::new(),
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        self.combined_val
+            .bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
+        for ra in &mut self.ra {
+            ra.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
+        }
+    }
 }
 
 /// Per-thread RAF scan accumulators over one phase's chunk domain, in
@@ -547,8 +582,8 @@ pub(crate) struct CycleTables<F> {
     pub(crate) ra: Vec<Vec<F>>,
 }
 
-/// Device seam for the per-phase trace scans and the cycle-table
-/// materialization.
+/// Device seam for the per-phase trace scans, the cycle-table
+/// materialization, and the cycle product rounds.
 pub(crate) trait PhaseScanner<F: Field> {
     fn scan_phase(&mut self, request: PhaseScanRequest<'_, F>) -> ScanOutcome<F>;
 
@@ -557,6 +592,35 @@ pub(crate) trait PhaseScanner<F: Field> {
     /// buffers, so unlike condensation there is no corrupt state).
     fn materialize_cycle(&mut self, request: CycleInitRequest<'_, F>) -> Option<CycleTables<F>> {
         let _ = request;
+        None
+    }
+
+    /// Materialize AND keep the cycle tables for device rounds. `true` moves
+    /// the kernel's table driver to [`CycleTablesDriver::Device`]: rounds go
+    /// through [`cycle_round`](Self::cycle_round) until the scanner steps
+    /// aside, and the kernel keeps the scanner alive past the address
+    /// phases. `false` (with no side effects) keeps the ordinary
+    /// [`materialize_cycle`](Self::materialize_cycle)/CPU path.
+    fn adopt_cycle(&mut self, request: &CycleInitRequest<'_, F>) -> bool {
+        let _ = request;
+        false
+    }
+
+    /// One fused cycle round over the adopted tables: fold `bind` (when
+    /// present) low-to-high, then return the product-grid evaluations
+    /// `[q(1), …, q(F−1), q(∞)]` against the CURRENT (post-`bind`) gruen
+    /// levels. `None` steps aside with NO effect — the live tables are
+    /// still the pre-`bind` state and the caller reclaims them through
+    /// [`take_cycle_tables`](Self::take_cycle_tables).
+    fn cycle_round(&mut self, bind: Option<F>, e_in: &[F], e_out: &[F]) -> Option<Vec<F>> {
+        let _ = (bind, e_in, e_out);
+        None
+    }
+
+    /// Hand the adopted tables back at their current (post-last-successful-
+    /// round) length. `None` only if nothing was adopted — an invariant
+    /// violation when the driver is [`CycleTablesDriver::Device`].
+    fn take_cycle_tables(&mut self) -> Option<CycleTables<F>> {
         None
     }
 }
@@ -1107,15 +1171,40 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     /// unique degree-`(F+1)` coefficient vector recomposed — byte-identical
     /// to explicit-point interpolation.
     fn cycle_message(
-        &self,
+        &mut self,
         _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        {
+            let cycle = self
+                .cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+            if let CycleTablesDriver::Device { pending_bind } = &cycle.tables {
+                let bind = *pending_bind;
+                let gruen = &cycle.gruen;
+                let lanes = self.scanner.as_mut().and_then(|scanner| {
+                    scanner.cycle_round(bind, gruen.e_in_current(), gruen.e_out_current())
+                });
+                match lanes {
+                    Some(lanes) => {
+                        cycle.tables = CycleTablesDriver::Device { pending_bind: None };
+                        return Ok(cycle.gruen.gruen_poly_from_evals(&lanes, previous_claim));
+                    }
+                    // The device stepped aside pre-round: reclaim the tables
+                    // (and any pending fold) and finish on the CPU.
+                    None => self.ensure_host_cycle_tables()?,
+                }
+            }
+        }
         let cycle = self
             .cycle
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
-        let factors = 1 + cycle.ra.len();
+        let CycleTablesDriver::Host(tables) = &cycle.tables else {
+            return Err(SumcheckError::MissingEvaluationSource { kind: "opening" });
+        };
+        let factors = 1 + tables.ra.len();
 
         struct Scratch<F: Field> {
             /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
@@ -1133,13 +1222,13 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             },
             |scratch, row, _x_in, e_in| {
                 {
-                    let val = cycle.combined_val.evals();
+                    let val = tables.combined_val.evals();
                     let lo = e_in * val[2 * row];
                     let hi = e_in * val[2 * row + 1];
                     scratch.evals[0] = hi;
                     scratch.steps[0] = hi - lo;
                 }
-                for ((ra, eval), step) in cycle
+                for ((ra, eval), step) in tables
                     .ra
                     .iter()
                     .zip(scratch.evals[1..].iter_mut())
@@ -1209,58 +1298,67 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         let phases_per_ra = self.phases() / ra_count;
         let address_bits = self.address_bits();
 
-        let device_tables = self.scanner.as_mut().and_then(|scanner| {
-            scanner.materialize_cycle(CycleInitRequest {
-                table_values: &table_values,
-                raf_interleaved,
-                raf_identity,
-                v_tables: &self.v_tables,
-                ra_count,
-                phases_per_ra,
-                address_bits,
-            })
-        });
-        let tables = device_tables.unwrap_or_else(|| {
-            let rows = self.rows.as_slice();
-            let v_tables = self.v_tables.as_slice();
-            let combined_val: Vec<F> = map_indices(rows.len(), |j| {
-                let row = &rows[j];
-                let table_value = row
-                    .table_index()
-                    .map_or_else(F::zero, |index| table_values[index]);
-                let raf_value = if !row.raf_flag {
-                    raf_interleaved
-                } else {
-                    raf_identity
-                };
-                table_value + raf_value
-            });
-            let ra = (0..ra_count)
-                .map(|i| {
-                    map_indices(rows.len(), |j| {
-                        let index = rows[j].lookup_index;
-                        let mut phase = i * phases_per_ra;
-                        let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
-                        let mut product =
-                            v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-                        for _ in 1..phases_per_ra {
-                            phase += 1;
-                            shift -= CHUNK_LEN;
-                            product *=
+        let request = CycleInitRequest {
+            table_values: &table_values,
+            raf_interleaved,
+            raf_identity,
+            v_tables: &self.v_tables,
+            ra_count,
+            phases_per_ra,
+            address_bits,
+        };
+        let adopted = self
+            .scanner
+            .as_mut()
+            .is_some_and(|scanner| scanner.adopt_cycle(&request));
+        let tables = if adopted {
+            CycleTablesDriver::Device { pending_bind: None }
+        } else {
+            let device_tables = self
+                .scanner
+                .as_mut()
+                .and_then(|scanner| scanner.materialize_cycle(request));
+            let tables = device_tables.unwrap_or_else(|| {
+                let rows = self.rows.as_slice();
+                let v_tables = self.v_tables.as_slice();
+                let combined_val: Vec<F> = map_indices(rows.len(), |j| {
+                    let row = &rows[j];
+                    let table_value = row
+                        .table_index()
+                        .map_or_else(F::zero, |index| table_values[index]);
+                    let raf_value = if !row.raf_flag {
+                        raf_interleaved
+                    } else {
+                        raf_identity
+                    };
+                    table_value + raf_value
+                });
+                let ra = (0..ra_count)
+                    .map(|i| {
+                        map_indices(rows.len(), |j| {
+                            let index = rows[j].lookup_index;
+                            let mut phase = i * phases_per_ra;
+                            let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
+                            let mut product =
                                 v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-                        }
-                        product
+                            for _ in 1..phases_per_ra {
+                                phase += 1;
+                                shift -= CHUNK_LEN;
+                                product *=
+                                    v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+                            }
+                            product
+                        })
                     })
-                })
-                .collect();
-            CycleTables { combined_val, ra }
-        });
+                    .collect();
+                CycleTables { combined_val, ra }
+            });
+            CycleTablesDriver::Host(HostCycleTables::new(tables))
+        };
 
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
-            combined_val: Polynomial::new(tables.combined_val),
-            ra: tables.ra.into_iter().map(Polynomial::new).collect(),
-            bind_scratch: Vec::new(),
+            tables,
         });
 
         // The address-phase state is dead past this point.
@@ -1270,9 +1368,39 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         self.v_tables = Vec::new();
         self.bucket_flat = Arc::new(Vec::new());
         self.present = Vec::new();
-        // The scanner holds `Arc` clones of the rows and buckets — dropping
-        // it here releases the device buffers with the address-phase state.
+        // Without adopted tables the scanner is dead too — dropping it
+        // releases the device buffers (it holds `Arc` clones of the rows and
+        // buckets) with the address-phase state. An adopting scanner stays
+        // for the cycle rounds and is dropped at the CPU handoff.
+        if !adopted {
+            self.scanner = None;
+        }
+    }
+
+    /// Reclaim device-adopted cycle tables into ordinary host state,
+    /// applying any pending fold. No-op when the tables are already
+    /// host-side.
+    fn ensure_host_cycle_tables(&mut self) -> Result<(), SumcheckError<F>> {
+        let cycle = self
+            .cycle
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let CycleTablesDriver::Device { pending_bind } = &cycle.tables else {
+            return Ok(());
+        };
+        let pending = *pending_bind;
+        let tables = self
+            .scanner
+            .as_mut()
+            .and_then(|scanner| scanner.take_cycle_tables())
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let mut host = HostCycleTables::new(tables);
+        if let Some(challenge) = pending {
+            host.bind(challenge);
+        }
+        cycle.tables = CycleTablesDriver::Host(host);
         self.scanner = None;
+        Ok(())
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
@@ -1331,11 +1459,15 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 .as_mut()
                 .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
             cycle.gruen.bind(challenge);
-            cycle
-                .combined_val
-                .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
-            for ra in &mut cycle.ra {
-                ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+            match &mut cycle.tables {
+                CycleTablesDriver::Host(tables) => tables.bind(challenge),
+                // The device folds fused with the next round's evaluation
+                // (or the handoff applies it) — never two challenges deep,
+                // since every bind is followed by a message or the handoff.
+                CycleTablesDriver::Device { pending_bind } => {
+                    debug_assert!(pending_bind.is_none());
+                    *pending_bind = Some(challenge);
+                }
             }
             self.cycle_challenges.push(challenge);
         }
@@ -1382,12 +1514,22 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
                 remaining: self.num_rounds() - self.rounds_bound,
             });
         }
+        // finish_rounds' final challenge may still be pending device-side.
+        self.ensure_host_cycle_tables()
+            .map_err(|_| SumcheckKernelError::InvariantViolation {
+                reason: "device-adopted cycle tables unavailable after full binding",
+            })?;
         let cycle = self
             .cycle
             .as_ref()
             .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "cycle tables absent after full binding",
             })?;
+        let CycleTablesDriver::Host(tables) = &cycle.tables else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "cycle tables absent after full binding",
+            });
+        };
 
         // Flag claims at the normalized (big-endian) cycle point via the
         // split-eq factorization `eq(r_cycle, j) = E_hi[j_hi] · E_lo[j_lo]`:
@@ -1426,7 +1568,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
 
         Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
-            instruction_ra: cycle.ra.iter().map(|ra| ra.evals()[0]).collect(),
+            instruction_ra: tables.ra.iter().map(|ra| ra.evals()[0]).collect(),
             instruction_raf_flag,
         })
     }
