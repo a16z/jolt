@@ -272,6 +272,7 @@ fn bench_d4(c: &mut Criterion) {
         let expected = d4_eager(&akita);
         assert_eq!(d4_raw(&akita), expected);
         assert_eq!(d4_multi(&akita), expected);
+        assert_eq!(d4_multi(&bn), d4_raw(&bn));
 
         let mut group = c.benchmark_group(format!("d4/{label}"));
         group.throughput(Throughput::Elements((rows * D4_PRODUCTS) as u64));
@@ -286,6 +287,9 @@ fn bench_d4(c: &mut Criterion) {
         });
         group.bench_function(BenchmarkId::new("bn254_raw", rows), |b| {
             b.iter(|| black_box(d4_raw(&bn)))
+        });
+        group.bench_function(BenchmarkId::new("bn254_multi", rows), |b| {
+            b.iter(|| black_box(d4_multi(&bn)))
         });
         group.finish();
     }

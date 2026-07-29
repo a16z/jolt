@@ -155,7 +155,7 @@ impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d32, 32, eval_prod
 /// ```
 ///
 /// on the split-eq grid `U_D = [1, 2, ..., D - 1, ∞]` (i.e. returns
-/// `[q(1), q(2), ..., q(D-1), q(∞)]`), using a single `par_fold_out_in_unreduced`
+/// `[q(1), q(2), ..., q(D-1), q(∞)]`), using a single `par_fold_out_in_multi`
 /// pass.
 ///
 /// This is useful when multiple product terms share the same split-eq weights
@@ -167,8 +167,8 @@ impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d32, 32, eval_prod
 /// Intended for cases where per-product scalars are already absorbed into one
 /// factor of each product term (e.g. by pre-scaling the first MLE in each product).
 ///
-/// Uses `eval_prod_4_accumulate` to defer Montgomery reductions across product
-/// terms: the final pointwise multiplies stay as `UnreducedProductAccum` and are
+/// Uses `eval_prod_4_accumulate_multi` to defer reductions across product
+/// terms: the final pointwise multiplies stay in the multi-lane accumulator and are
 /// reduced once after all `n_products` terms are summed.
 #[inline]
 pub fn compute_mles_product_sum_evals_sum_of_products_d4<F: JoltField>(
@@ -181,8 +181,8 @@ pub fn compute_mles_product_sum_evals_sum_of_products_d4<F: JoltField>(
 
     let current_scalar = eq_poly.get_current_scalar();
 
-    let sum_evals_arr: [F; 4] = eq_poly.par_fold_out_in_unreduced::<4>(&|g| {
-        let mut sums = [F::UnreducedProductAccum::zero(); 4];
+    let sum_evals_arr: [F; 4] = eq_poly.par_fold_out_in_multi::<4>(&|g| {
+        let mut sums = [F::MultiProductAccum::zero(); 4];
 
         for t in 0..n_products {
             let base = t * 4;
@@ -191,10 +191,10 @@ pub fn compute_mles_product_sum_evals_sum_of_products_d4<F: JoltField>(
                 let p1 = mles[base + i].get_bound_coeff(2 * g + 1);
                 (p0, p1)
             });
-            eval_prod_4_accumulate::<F>(&pairs, &mut sums);
+            eval_prod_4_accumulate_multi::<F>(&pairs, &mut sums);
         }
 
-        core::array::from_fn(|k| F::reduce_product_accum(sums[k]))
+        core::array::from_fn(|k| F::reduce_multi_product_accum(sums[k]))
     });
 
     sum_evals_arr
@@ -508,6 +508,21 @@ fn eval_prod_4_accumulate<F: JoltField>(p: &[(F, F); 4], outputs: &mut [F::Unred
     outputs[1] += a2.mul_to_product_accum(b2); // 2
     outputs[2] += a3.mul_to_product_accum(b3); // 3
     outputs[3] += a_inf.mul_to_product_accum(b_inf); // ∞
+}
+
+#[inline(always)]
+fn eval_prod_4_accumulate_multi<F: JoltField>(
+    p: &[(F, F); 4],
+    outputs: &mut [F::MultiProductAccum],
+) {
+    let (a1, a2, a_inf) = eval_linear_prod_2_internal(p[0], p[1]);
+    let a3 = ex2(&[a1, a2], &a_inf);
+    let (b1, b2, b_inf) = eval_linear_prod_2_internal(p[2], p[3]);
+    let b3 = ex2(&[b1, b2], &b_inf);
+    outputs[0] += a1.mul_to_multi_product_accum(b1);
+    outputs[1] += a2.mul_to_multi_product_accum(b2);
+    outputs[2] += a3.mul_to_multi_product_accum(b3);
+    outputs[3] += a_inf.mul_to_multi_product_accum(b_inf);
 }
 
 /// Evaluate the product of 5 linear polynomials on `U_5 = [1, 2, 3, 4, ∞]`.
@@ -1281,7 +1296,7 @@ fn product_eval_univariate_naive_accumulate<F: JoltField>(
 #[cfg(test)]
 mod tests {
     use ark_bn254::Fr;
-    use ark_std::{test_rng, UniformRand, Zero};
+    use ark_std::{test_rng, UniformRand};
     use std::array::from_fn;
 
     use crate::{
@@ -1304,8 +1319,11 @@ mod tests {
         },
     };
 
-    fn random_mle(n_vars: usize, rng: &mut impl rand::Rng) -> MultilinearPolynomial<Fr> {
-        let values: Vec<Fr> = (0..(1 << n_vars)).map(|_| Fr::random(rng)).collect();
+    fn random_mle<F: JoltField>(
+        n_vars: usize,
+        rng: &mut impl rand::Rng,
+    ) -> MultilinearPolynomial<F> {
+        let values: Vec<F> = (0..(1 << n_vars)).map(|_| F::random(rng)).collect();
         MultilinearPolynomial::LargeScalars(DensePolynomial::new(values))
     }
 
@@ -1374,31 +1392,32 @@ mod tests {
         check_optimized_product_sum_matches_naive::<32>();
     }
 
-    fn check_sum_of_products_evals_match_sum_of_individual_products<const D: usize>() {
+    fn check_sum_of_products_evals_match_sum_of_individual_products<
+        F: JoltField,
+        const D: usize,
+    >() {
         let mut rng = &mut test_rng();
 
         // Use enough variables to exercise the split-eq inner loop (E_in_len > 1).
         let n_vars = 6;
-        let w: Vec<<Fr as JoltField>::Challenge> = (0..n_vars)
-            .map(|_| <Fr as JoltField>::Challenge::rand(&mut rng))
-            .collect();
+        let w: Vec<F::Challenge> = (0..n_vars).map(|_| F::Challenge::rand(&mut rng)).collect();
         let mut eq_poly = GruenSplitEqPolynomial::new(&w, BindingOrder::LowToHigh);
 
         // Number of product terms to sum; keep small for test runtime.
         let n_products = 3;
         let total_mles = n_products * D;
 
-        let mut mles: Vec<RaPolynomial<u8, Fr>> = (0..total_mles)
+        let mut mles: Vec<RaPolynomial<u8, F>> = (0..total_mles)
             .map(|_| random_mle(n_vars, rng))
             .map(RaPolynomial::RoundN)
             .collect();
 
         // Compare at a few successive binding states (rounds).
         for _round in 0..3 {
-            let mut expected = vec![Fr::zero(); D];
+            let mut expected = vec![F::zero(); D];
             for t in 0..n_products {
                 let base = t * D;
-                let evals_t: Vec<Fr> = match D {
+                let evals_t: Vec<F> = match D {
                     4 => compute_mles_product_sum_evals_d4(&mles[base..base + 4], &eq_poly),
                     8 => compute_mles_product_sum_evals_d8(&mles[base..base + 8], &eq_poly),
                     16 => compute_mles_product_sum_evals_d16(&mles[base..base + 16], &eq_poly),
@@ -1409,7 +1428,7 @@ mod tests {
                 }
             }
 
-            let actual: Vec<Fr> = match D {
+            let actual: Vec<F> = match D {
                 4 => compute_mles_product_sum_evals_sum_of_products_d4(&mles, n_products, &eq_poly),
                 8 => compute_mles_product_sum_evals_sum_of_products_d8(&mles, n_products, &eq_poly),
                 16 => {
@@ -1421,7 +1440,7 @@ mod tests {
             assert_eq!(actual, expected);
 
             // Advance one round of binding (simulate sumcheck).
-            let r_j = <Fr as JoltField>::Challenge::rand(&mut rng);
+            let r_j = F::Challenge::rand(&mut rng);
             for mle in mles.iter_mut() {
                 mle.bind_parallel(r_j, BindingOrder::LowToHigh);
             }
@@ -1431,16 +1450,24 @@ mod tests {
 
     #[test]
     fn sum_of_products_evals_d4_matches_sum_of_individual_products() {
-        check_sum_of_products_evals_match_sum_of_individual_products::<4>();
+        check_sum_of_products_evals_match_sum_of_individual_products::<Fr, 4>();
     }
 
     #[test]
     fn sum_of_products_evals_d8_matches_sum_of_individual_products() {
-        check_sum_of_products_evals_match_sum_of_individual_products::<8>();
+        check_sum_of_products_evals_match_sum_of_individual_products::<Fr, 8>();
     }
 
     #[test]
     fn sum_of_products_evals_d16_matches_sum_of_individual_products() {
-        check_sum_of_products_evals_match_sum_of_individual_products::<16>();
+        check_sum_of_products_evals_match_sum_of_individual_products::<Fr, 16>();
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn sum_of_products_evals_d4_matches_sum_of_individual_products_akita() {
+        use crate::field::akita::AkitaFp128;
+
+        check_sum_of_products_evals_match_sum_of_individual_products::<AkitaFp128, 4>();
     }
 }
