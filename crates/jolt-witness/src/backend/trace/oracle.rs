@@ -90,11 +90,38 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::UnsignedIncChunk(_)
-                | C::UnsignedIncMsb
-                | C::TrustedAdviceBytes
-                | C::UntrustedAdviceBytes
-                | C::BytecodeRegisterSelector { .. }
+                C::UnsignedIncChunk(index) => {
+                    require_index(index, self.unsigned_inc_chunk_count()?)?;
+                    Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
+                }
+                C::UnsignedIncMsb => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
+                C::TrustedAdviceBytes => {
+                    if !self.config.include_trusted_advice {
+                        return Err(WitnessError::UnknownOracle {
+                            label: JOLT_VM_LABEL,
+                        });
+                    }
+                    Ok(Shape::new(
+                        advice_bytes_cell_vars(
+                            self.preprocessing.memory_layout.max_trusted_advice_size as usize,
+                        ),
+                        Dense,
+                    ))
+                }
+                C::UntrustedAdviceBytes => {
+                    if !self.config.include_untrusted_advice {
+                        return Err(WitnessError::UnknownOracle {
+                            label: JOLT_VM_LABEL,
+                        });
+                    }
+                    Ok(Shape::new(
+                        advice_bytes_cell_vars(
+                            self.preprocessing.memory_layout.max_untrusted_advice_size as usize,
+                        ),
+                        Dense,
+                    ))
+                }
+                C::BytecodeRegisterSelector { .. }
                 | C::BytecodeCircuitFlag { .. }
                 | C::BytecodeInstructionFlag { .. }
                 | C::BytecodeLookupSelector { .. }
@@ -152,10 +179,30 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 | V::ProgramImageInitContributionRw => {
                     Err(not_served(id, PROTOCOL_INTERMEDIATE_REASON))
                 }
-                V::FusedInc => Err(not_served(id, LATTICE_REASON)),
+                V::FusedInc => Ok(Shape::new(self.trace_log_rows(), Compact)),
             },
         }
     }
+
+    fn unsigned_inc_chunk_count(&self) -> Result<usize, WitnessError> {
+        jolt_claims::protocols::jolt::lattice::UnsignedIncChunking::new(
+            self.config.one_hot.committed_chunk_bits(),
+        )
+        .map(|chunking| chunking.chunk_count())
+        .map_err(|error| WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: error.to_string(),
+        })
+    }
+}
+
+/// An advice byte one-hot column's cell variable count, from the configured
+/// maximum advice size — the `(byte ‖ place ‖ word)` domain over the
+/// power-of-two padded word count.
+fn advice_bytes_cell_vars(max_bytes: usize) -> usize {
+    jolt_claims::protocols::jolt::lattice::geometry::word_byte_num_vars(
+        advice::advice_words(max_bytes).ilog2() as usize,
+    )
 }
 
 impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> {
@@ -194,11 +241,18 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::UnsignedIncChunk(_)
-                | C::UnsignedIncMsb
-                | C::TrustedAdviceBytes
-                | C::UntrustedAdviceBytes
-                | C::BytecodeRegisterSelector { .. }
+                C::UnsignedIncChunk(index) => self.materialize_unsigned_inc_one_hot(
+                    crate::witnesses::UnsignedIncLane::Chunk {
+                        width: self.config.one_hot.committed_chunk_bits(),
+                        index,
+                    },
+                ),
+                C::UnsignedIncMsb => {
+                    self.materialize_unsigned_inc_one_hot(crate::witnesses::UnsignedIncLane::Msb)
+                }
+                C::TrustedAdviceBytes => self.materialize_trusted_advice_bytes(),
+                C::UntrustedAdviceBytes => self.materialize_untrusted_advice_bytes(),
+                C::BytecodeRegisterSelector { .. }
                 | C::BytecodeCircuitFlag { .. }
                 | C::BytecodeInstructionFlag { .. }
                 | C::BytecodeLookupSelector { .. }
@@ -258,7 +312,7 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 | V::ProgramImageInitContributionRw => {
                     Err(not_served(id, PROTOCOL_INTERMEDIATE_REASON))
                 }
-                V::FusedInc => Err(not_served(id, LATTICE_REASON)),
+                V::FusedInc => self.materialize_cycle::<F, crate::witnesses::FusedInc>(),
             },
         }
     }
