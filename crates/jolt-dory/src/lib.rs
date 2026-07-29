@@ -28,12 +28,14 @@
 mod routines;
 mod scheme;
 mod streaming;
+mod tier2;
 mod transcript;
 mod types;
 #[cfg(not(target_arch = "wasm32"))]
 mod urs_lock;
 
 pub use scheme::DoryScheme;
+pub use tier2::DoryTier2Prep;
 pub use types::{
     DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
 };
