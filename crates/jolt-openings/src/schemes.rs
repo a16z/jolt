@@ -178,6 +178,22 @@ pub trait StreamingCommitment: CommitmentScheme {
         Self::feed(partial, &values, setup);
     }
 
+    /// Feed a batch of consecutive `row_width`-wide rows at once — equivalent
+    /// to calling [`feed_i128`](Self::feed_i128) on each window of `rows` in
+    /// order. Each row's commitment is independent and only the append order
+    /// is sequenced, so schemes may override this to compute the windows in
+    /// parallel.
+    fn feed_i128_rows(
+        partial: &mut Self::PartialCommitment,
+        rows: &[i128],
+        row_width: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        for row in rows.chunks(row_width) {
+            Self::feed_i128(partial, row, setup);
+        }
+    }
+
     fn begin_one_hot_column_major_stream(
         setup: &Self::ProverSetup,
         row_width: usize,
@@ -189,6 +205,25 @@ pub trait StreamingCommitment: CommitmentScheme {
         one_hot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::OneHotChunkCommitment;
+
+    /// Process a batch of consecutive `chunk_width`-column one-hot chunks at
+    /// once — equivalent to calling
+    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk) on each window
+    /// of `chunks` in order and collecting the results. Chunk commitments are
+    /// independent, so schemes may override this to compute the windows in
+    /// parallel.
+    fn process_one_hot_chunks(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Option<usize>],
+        chunk_width: usize,
+    ) -> Vec<Self::OneHotChunkCommitment> {
+        chunks
+            .chunks(chunk_width)
+            .map(|chunk| Self::process_one_hot_chunk(context, setup, one_hot_k, chunk))
+            .collect()
+    }
 
     fn finish_with_hint(
         partial: Self::PartialCommitment,

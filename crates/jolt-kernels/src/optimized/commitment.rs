@@ -1,0 +1,345 @@
+//! The optimized witness-commitment kernel: the reference consumer's exact
+//! per-column call sequences, parallelized.
+//!
+//! The reference kernel streams `row_width`-cycle chunks and advances every
+//! column's commitment state serially per chunk — each tier-1 group operation
+//! (one MSM or batch addition per column per chunk) runs alone on the calling
+//! thread, so the whole commit is wall-clock serial. This kernel restores the
+//! legacy prover's parallel shape on the same call sequences:
+//!
+//! - The stream delivers *superchunks* (many `row_width` windows at once), so
+//!   one extraction pass fans out to a `(column × window)` rayon grid via the
+//!   [`StreamingCommitment`] batch entry points (`feed_i128_rows`,
+//!   `process_one_hot_chunks`).
+//! - Tier-2 finishes (one multi-pairing per column) run in parallel across
+//!   columns.
+//!
+//! Per column the fed windows, their order, and the finish calls are exactly
+//! the reference kernel's, so commitments and hints are byte-identical.
+//! The materializing modes (address-major order, widened grids) and advice
+//! commits delegate to the reference kernel unchanged.
+
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+use jolt_field::Field;
+use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+use crate::commitment::{
+    CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
+};
+use crate::reference::commitment::{column_kinds, ColumnKind};
+use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
+
+/// Cycles per superchunk: large enough that every column contributes several
+/// windows to the rayon grid per delivery, small enough that the extracted
+/// bundle buffer and per-column scratch stay tens of megabytes.
+const SUPERCHUNK_CYCLES: usize = 1 << 17;
+
+impl<F, PCS> CommitWitness<F, PCS> for OptimizedBackend
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+{
+    #[tracing::instrument(
+        skip_all,
+        name = "commit_witness",
+        fields(columns = ids.len(), total_vars = grid.total_vars)
+    )]
+    fn commit_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn RowSource,
+        ids: &[JoltCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
+        let cycles = 1usize << grid.log_t;
+        let row_width = grid.num_columns();
+
+        if grid.order != TracePolynomialOrder::CycleMajor || row_width > cycles {
+            // Materializing modes are off the streaming hot path; the
+            // reference kernel's one-table-per-column passes serve them.
+            return ReferenceBackend.commit_witness(session, source, ids, grid, setup);
+        }
+
+        commit_streaming(source, ids, grid, setup, SUPERCHUNK_CYCLES)
+    }
+
+    fn commit_advice(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessOracle<F>,
+        id: JoltCommittedPolynomial,
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        // Advice grids are small single-column commits; the reference pass
+        // is already the right shape.
+        ReferenceBackend.commit_advice(session, witness, id, grid, setup)
+    }
+}
+
+/// The streaming commit pass at an explicit superchunk width (tests shrink
+/// it to force multi-delivery sequencing; production uses
+/// [`SUPERCHUNK_CYCLES`]).
+fn commit_streaming<F, PCS>(
+    source: &dyn RowSource,
+    ids: &[JoltCommittedPolynomial],
+    grid: CommitmentGrid,
+    setup: &PCS::ProverSetup,
+    superchunk_cycles: usize,
+) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+{
+    let cycles = 1usize << grid.log_t;
+    let row_width = grid.num_columns();
+    let kinds = column_kinds(ids, grid)?;
+    // Superchunk width: a power-of-two window count (both factors are powers
+    // of two), so every delivery is whole windows.
+    let windows = (superchunk_cycles / row_width).clamp(1, cycles / row_width);
+    let mut consumers = (BatchedColumns::<F, PCS>::begin(
+        &kinds, row_width, grid, setup,
+    ),);
+    stream_witnesses(source, 0..cycles, row_width * windows, &mut consumers)?;
+    Ok(consumers
+        .0
+        .finish(setup)
+        .into_iter()
+        .zip(ids)
+        .map(|((commitment, hint), &id)| WitnessCommitment {
+            id,
+            commitment,
+            hint,
+        })
+        .collect())
+}
+
+/// One column's in-progress commitment — the reference kernel's states,
+/// advanced a superchunk at a time through the batch entry points.
+enum ColumnCommitState<PCS: StreamingCommitment> {
+    Increment {
+        kind: ColumnKind,
+        partial: PCS::PartialCommitment,
+    },
+    OneHot {
+        kind: ColumnKind,
+        context: PCS::OneHotStreamContext,
+        chunk_commitments: Vec<PCS::OneHotChunkCommitment>,
+    },
+}
+
+/// The superchunked commit consumer: every column advances over the same
+/// window sequence as the reference kernel, columns in parallel and windows
+/// in parallel inside each batch call.
+struct BatchedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> {
+    columns: Vec<ColumnCommitState<PCS>>,
+    one_hot_k: usize,
+    row_width: usize,
+    setup: &'a PCS::ProverSetup,
+}
+
+impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
+    BatchedColumns<'a, F, PCS>
+{
+    fn begin(
+        kinds: &[ColumnKind],
+        row_width: usize,
+        grid: CommitmentGrid,
+        setup: &'a PCS::ProverSetup,
+    ) -> Self {
+        let columns = kinds
+            .iter()
+            .map(|&kind| {
+                if kind.is_one_hot() {
+                    ColumnCommitState::OneHot {
+                        kind,
+                        context: PCS::begin_one_hot_column_major_stream(setup, row_width),
+                        chunk_commitments: Vec::new(),
+                    }
+                } else {
+                    ColumnCommitState::Increment {
+                        kind,
+                        partial: PCS::begin(setup),
+                    }
+                }
+            })
+            .collect();
+        Self {
+            columns,
+            one_hot_k: 1usize << grid.log_k_chunk,
+            row_width,
+            setup,
+        }
+    }
+
+    fn finish(self, setup: &PCS::ProverSetup) -> Vec<(PCS::Output, PCS::OpeningHint)> {
+        let one_hot_k = self.one_hot_k;
+        let finish_column = |column: ColumnCommitState<PCS>| match column {
+            ColumnCommitState::Increment { partial, .. } => PCS::finish_with_hint(partial, setup),
+            ColumnCommitState::OneHot {
+                chunk_commitments, ..
+            } => PCS::finish_one_hot_column_major_chunks(setup, one_hot_k, &chunk_commitments),
+        };
+        #[cfg(feature = "parallel")]
+        {
+            self.columns.into_par_iter().map(finish_column).collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            self.columns.into_iter().map(finish_column).collect()
+        }
+    }
+}
+
+impl<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamConsumer
+    for BatchedColumns<'_, F, PCS>
+{
+    type Witness = CommittedColumnsWitness;
+
+    fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
+        debug_assert!(
+            chunk.len().is_multiple_of(self.row_width),
+            "superchunk must be whole rows"
+        );
+        let row_width = self.row_width;
+        let one_hot_k = self.one_hot_k;
+        let setup = self.setup;
+        let advance = |column: &mut ColumnCommitState<PCS>| match column {
+            ColumnCommitState::Increment { kind, partial } => {
+                let increments: Vec<i128> = chunk.iter().map(|row| kind.increment(row)).collect();
+                PCS::feed_i128_rows(partial, &increments, row_width, setup);
+            }
+            ColumnCommitState::OneHot {
+                kind,
+                context,
+                chunk_commitments,
+            } => {
+                let hot_addresses: Vec<Option<usize>> =
+                    chunk.iter().map(|row| kind.hot_address(row)).collect();
+                chunk_commitments.extend(PCS::process_one_hot_chunks(
+                    context,
+                    setup,
+                    one_hot_k,
+                    &hot_addresses,
+                    row_width,
+                ));
+            }
+        };
+        #[cfg(feature = "parallel")]
+        self.columns.par_iter_mut().for_each(advance);
+        #[cfg(not(feature = "parallel"))]
+        self.columns.iter_mut().for_each(advance);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used, reason = "test module")]
+
+    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_witness::RowSource;
+
+    use super::commit_streaming;
+    use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
+    use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
+    use crate::{OptimizedBackend, ProofSession, ReferenceBackend};
+
+    fn assert_same_commitments(
+        reference: &[WitnessCommitment<DoryScheme>],
+        optimized: &[WitnessCommitment<DoryScheme>],
+    ) {
+        assert_eq!(reference.len(), optimized.len());
+        for (reference, optimized) in reference.iter().zip(optimized) {
+            assert_eq!(reference.id, optimized.id);
+            assert_eq!(
+                reference.commitment, optimized.commitment,
+                "{:?} commitment diverged",
+                reference.id
+            );
+            assert_eq!(
+                reference.hint, optimized.hint,
+                "{:?} hint diverged",
+                reference.id
+            );
+        }
+    }
+
+    /// The optimized streaming pass must reproduce the reference kernel's
+    /// commitments and hints exactly, both when a superchunk covers the whole
+    /// trace (one multi-window delivery) and when it is forced down to one
+    /// window (multi-delivery sequencing).
+    #[test]
+    fn optimized_commit_matches_reference() {
+        let shape = FixtureShape {
+            log_t: 6,
+            ram_k: 16,
+        };
+        let ops = vec![
+            RamOp::Write { word: 2, post: 17 },
+            RamOp::Read { word: 2 },
+            RamOp::None,
+            RamOp::Write { word: 5, post: 3 },
+            RamOp::Read { word: 5 },
+            RamOp::Write { word: 2, post: 9 },
+            RamOp::Read { word: 3 },
+        ];
+        with_ram_fixture(shape, ops, |witness| {
+            let ids: Vec<JoltCommittedPolynomial> = witness
+                .committed_order()
+                .unwrap()
+                .into_iter()
+                .filter(|id| {
+                    !matches!(
+                        id,
+                        JoltCommittedPolynomial::TrustedAdvice
+                            | JoltCommittedPolynomial::UntrustedAdvice
+                    )
+                })
+                .collect();
+            let grid = CommitmentGrid {
+                total_vars: 4 + shape.log_t,
+                log_t: shape.log_t,
+                log_k_chunk: 4,
+                order: TracePolynomialOrder::CycleMajor,
+            };
+            assert!(
+                grid.num_columns() < 1usize << shape.log_t,
+                "fixture must exercise the streaming path with multiple windows"
+            );
+            let setup = DoryScheme::setup_prover(grid.total_vars);
+            let source: &dyn RowSource = witness;
+
+            let reference = <ReferenceBackend as CommitWitness<Fr, DoryScheme>>::commit_witness(
+                &ReferenceBackend,
+                &mut ProofSession::default(),
+                source,
+                &ids,
+                grid,
+                &setup,
+            )
+            .unwrap();
+
+            let optimized = <OptimizedBackend as CommitWitness<Fr, DoryScheme>>::commit_witness(
+                &OptimizedBackend,
+                &mut ProofSession::default(),
+                source,
+                &ids,
+                grid,
+                &setup,
+            )
+            .unwrap();
+            assert_same_commitments(&reference, &optimized);
+
+            let single_window_superchunks =
+                commit_streaming::<Fr, DoryScheme>(source, &ids, grid, &setup, grid.num_columns())
+                    .unwrap();
+            assert_same_commitments(&reference, &single_window_superchunks);
+        });
+    }
+}

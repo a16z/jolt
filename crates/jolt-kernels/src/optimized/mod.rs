@@ -32,6 +32,7 @@ use crate::JoltBackend;
 
 pub mod booleanity;
 pub mod bytecode_read_raf;
+pub mod commitment;
 pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
@@ -73,10 +74,8 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     /// The optimized backend: [`JoltBackend::reference`] with every slot this
-    /// module tree ports overwritten by its optimized kernel, so the two
-    /// backends cannot drift on the one slot left untouched (the commit
-    /// slot). Same construction bounds as the reference backend (the commit
-    /// slot is the reference streaming implementation), plus the accumulator
+    /// module tree ports overwritten by its optimized kernel. Same
+    /// construction bounds as the reference backend, plus the accumulator
     /// bound the registers and shift kernels' compact-scalar walks need.
     pub fn optimized() -> Self
     where
@@ -84,6 +83,8 @@ where
         F::Accumulator: RingAccumulator,
     {
         let mut backend = Self::reference();
+
+        backend.commit = Box::new(OptimizedBackend);
 
         backend.spartan_outer_uniskip = Box::new(spartan_outer::OptimizedOuterUniskip);
         backend.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);

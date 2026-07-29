@@ -34,6 +34,7 @@ tracing.workspace = true
 [dev-dependencies]
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
+jolt-dory.workspace = true
 jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
