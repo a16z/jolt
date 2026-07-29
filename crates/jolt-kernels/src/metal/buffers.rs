@@ -253,10 +253,9 @@ impl<T: Copy> PageAlignedVec<T> {
         }
         // Defensive: the hard-coded page size must match the platform's.
         // SAFETY: sysconf is a trivially safe FFI query.
-        debug_assert_eq!(
-            unsafe { libc::sysconf(libc::_SC_PAGESIZE) },
-            PAGE_SIZE as i64
-        );
+        let platform_page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        debug_assert_eq!(platform_page, PAGE_SIZE as i64);
+        let _ = platform_page;
 
         let cap_bytes = round_up_to_page((len * size_of::<T>()).max(1));
         let mut base: *mut c_void = std::ptr::null_mut();

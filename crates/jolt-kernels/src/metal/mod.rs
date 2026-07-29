@@ -13,9 +13,9 @@
 //!
 //! Device paths are threshold-gated: a slot asks
 //! `metal_gate(kind, work_items)` and runs on the GPU only when the answer
-//! is true. Dispatch has a fixed latency floor (~0.3 ms per synchronous
-//! round trip on an M4 — see the `metal_microbench` example), so small
-//! instances always stay on the CPU.
+//! is true. Dispatch has a fixed latency floor (~97 µs per synchronous
+//! command-buffer round trip on an M4 — see the `metal_microbench`
+//! example), so small instances always stay on the CPU.
 //!
 //! - `JOLT_METAL_DISABLE=1` — kill every device path (any value other than
 //!   `0`/empty counts).
@@ -44,14 +44,16 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::JoltBackend;
 
-/// Default [`metal_gate`] threshold. Rationale: a synchronous dispatch round
-/// trip costs ~0.3 ms on this tier's target hardware (M4, measured by
-/// `metal_microbench` D1), and the CPU crunches roughly 40 field muls/µs
-/// across cores — device dispatch only pays for itself when it displaces at
-/// least ~10k-element-scale work, with real wins from ~10⁵. 2^17 puts the
-/// cutover where measured device throughput first clearly beats the
-/// all-core CPU on streaming kernels.
-pub const DEFAULT_MIN_TERMS: usize = 1 << 17;
+/// Default [`metal_gate`] threshold, from `metal_microbench` on the target
+/// M4 (2026-07-29): a synchronous dispatch round trip floors at ~97 µs
+/// (D1), and the pure-streaming bind — the LEAST compute-dense kernel —
+/// crosses over against the all-core CPU between 2^18 (device 12% behind)
+/// and 2^19 (device 15% ahead) input elements (D2b). Real sumcheck kernels
+/// do strictly more arithmetic per byte than a bare fold, which moves their
+/// cutover below bind's, so 2^18 is the break-even-or-better default;
+/// bind-shaped outliers can be raised per slot via
+/// `JOLT_METAL_MIN_TERMS_<SLOT>`.
+pub const DEFAULT_MIN_TERMS: usize = 1 << 18;
 
 /// Should `kind` run on the device for `work_items` elements? See the
 /// module docs for the environment convention.
