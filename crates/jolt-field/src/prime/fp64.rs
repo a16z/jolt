@@ -188,7 +188,11 @@ impl<const P: u64> Fp64<P> {
     fn reduce_u128(x: u128) -> u64 {
         let mut v = x;
         while v >> Self::BITS != 0 {
-            v = (v & Self::MASK) + Self::mul_c((v >> Self::BITS) as u64);
+            // The fold's high part `v >> BITS` can exceed 64 bits for
+            // sub-word primes (BITS < 64), so the multiply by `C` must stay
+            // in u128. It cannot overflow: `v >> BITS < 2^(128 - BITS)` and
+            // `C < 2^(BITS - 1)`, so the product is below `2^127`.
+            v = (v & Self::MASK) + (v >> Self::BITS) * (Self::C as u128);
         }
         let reduced = v.wrapping_sub(P as u128);
         let borrow = reduced >> 127;
@@ -568,6 +572,65 @@ mod tests {
 
         type H = Fp64<{ u64::MAX - 58 }>; // C = 59, not 2^a±1
         assert_eq!(H::C_SHIFT_KIND, 0);
+    }
+
+    #[test]
+    fn reduce_u128_subword_primes() {
+        // Regression: the fold's high part `v >> BITS` exceeds 64 bits for
+        // sub-word primes once the input reaches 2^(64 + BITS); the pre-fix
+        // kernel truncated it with `as u64`. 16-byte challenge inputs are
+        // essentially always in that domain.
+        fn check<const P: u64>() {
+            let bits = 64 - P.leading_zeros();
+            // For the full-word prime (BITS = 64) the truncation threshold
+            // 2^(64 + BITS) is out of u128 range; clamp the shift and rely on
+            // the u128::MAX cases.
+            let shift = (64 + bits).min(127);
+            let cases: [u128; 6] = [
+                u128::MAX,
+                1u128 << shift,
+                (1u128 << shift) + 12_345,
+                (1u128 << shift) - 1,
+                u128::MAX - P as u128,
+                (P as u128) << 63,
+            ];
+            for x in cases {
+                let expected = (x % P as u128) as u64;
+                assert_eq!(
+                    Fp64::<P>::from_canonical_u128_reduced(x).to_canonical_u64(),
+                    expected,
+                    "P = {P}, x = {x}"
+                );
+            }
+        }
+        check::<{ (1u64 << 40) - 195 }>();
+        check::<{ (1u64 << 48) - 59 }>();
+        check::<{ (1u64 << 56) - 27 }>();
+        check::<{ u64::MAX - 58 }>();
+    }
+
+    #[test]
+    fn challenge_bytes_subword_primes() {
+        // 16-byte Fiat-Shamir challenge derivation must agree with plain
+        // u128 modular reduction for every registered Fp64 prime.
+        let bytes: [u8; 16] = [
+            0xEF, 0xBE, 0xAD, 0xDE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
+            0xBA, 0x98,
+        ];
+        let x = u128::from_le_bytes(bytes);
+        fn check<const P: u64>(x: u128, bytes: &[u8]) {
+            use crate::CanonicalRepr;
+            let expected = (x % P as u128) as u64;
+            assert_eq!(
+                Fp64::<P>::from_challenge_bytes(bytes).to_canonical_u64(),
+                expected,
+                "P = {P}"
+            );
+        }
+        check::<{ (1u64 << 40) - 195 }>(x, &bytes);
+        check::<{ (1u64 << 48) - 59 }>(x, &bytes);
+        check::<{ (1u64 << 56) - 27 }>(x, &bytes);
+        check::<{ u64::MAX - 58 }>(x, &bytes);
     }
 
     #[test]

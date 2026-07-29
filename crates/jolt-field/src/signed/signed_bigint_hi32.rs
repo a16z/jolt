@@ -189,14 +189,24 @@ impl<const N: usize> SignedBigIntHi32<N> {
             let r0 = t0 as u64;
             let carry0 = t0 >> 64;
 
-            let sum1 = carry0 + (a0 as u128) * (b1 as u128) + (a1 as u128) * (b0 as u128);
+            // Word 1 sums two full 64x64 products plus the carry, which can
+            // exceed u128 (2 * (2^64 - 1)^2 > 2^128); one product plus the
+            // carry always fits, so add the second with overflow tracking.
+            let p01 = (a0 as u128) * (b1 as u128);
+            let p10 = (a1 as u128) * (b0 as u128);
+            let (sum1, overflow1) = (p01 + carry0).overflowing_add(p10);
             let r1 = sum1 as u64;
-            let carry1 = sum1 >> 64;
+            // True carry into word 2 (up to 2^65): high half plus the
+            // overflowed 2^128 bit, which contributes 2^64 to the carry.
+            let carry1 = (sum1 >> 64) + ((overflow1 as u128) << 64);
 
+            // Only the low 32 bits of word 2 survive in the 160-bit result,
+            // and wrapping addition preserves low bits exactly, so word 2
+            // needs no overflow tracking.
             let sum2 = carry1
-                + (a0 as u128) * (b2 as u128)
-                + (a1 as u128) * (b1 as u128)
-                + (a2 as u128) * (b0 as u128);
+                .wrapping_add((a0 as u128) * (b2 as u128))
+                .wrapping_add((a1 as u128) * (b1 as u128))
+                .wrapping_add((a2 as u128) * (b0 as u128));
             let r2 = sum2 as u64;
 
             let hi = (r2 & 0xFFFF_FFFF) as u32;
@@ -538,6 +548,73 @@ impl Default for S160 {
 
 #[cfg(test)]
 mod tests {
+
+    fn oracle_mul_160(a: &S160, b: &S160) -> ([u64; 2], u32) {
+        // 32-bit digit schoolbook, truncated to 160 bits: the independent
+        // reference for the unrolled N == 2 kernel.
+        let digits = |v: &S160| -> [u32; 5] {
+            [
+                v.magnitude_lo[0] as u32,
+                (v.magnitude_lo[0] >> 32) as u32,
+                v.magnitude_lo[1] as u32,
+                (v.magnitude_lo[1] >> 32) as u32,
+                v.magnitude_hi,
+            ]
+        };
+        let (a, b) = (digits(a), digits(b));
+        let mut cols = [0u128; 10];
+        for i in 0..5 {
+            for j in 0..5 {
+                cols[i + j] += (a[i] as u128) * (b[j] as u128);
+            }
+        }
+        let mut out = [0u32; 10];
+        let mut carry = 0u128;
+        for k in 0..10 {
+            let v = cols[k] + carry;
+            out[k] = (v & 0xFFFF_FFFF) as u32;
+            carry = v >> 32;
+        }
+        (
+            [
+                out[0] as u64 | (out[1] as u64) << 32,
+                out[2] as u64 | (out[3] as u64) << 32,
+            ],
+            out[4],
+        )
+    }
+
+    #[test]
+    fn s160_mul_magnitudes_large_second_limbs() {
+        // Regression: the pre-fix kernel fused two (three) full 64x64
+        // products into one u128 sum, which overflows once both operands
+        // have large second limbs (debug panic, release wraparound).
+        let make = |lo: [u64; 2], hi: u32| S160 {
+            magnitude_lo: lo,
+            magnitude_hi: hi,
+            is_positive: true,
+        };
+        let cases = [
+            (make([u64::MAX, u64::MAX], 0), make([u64::MAX, u64::MAX], 0)),
+            (
+                make([u64::MAX, u64::MAX], u32::MAX),
+                make([u64::MAX, u64::MAX], u32::MAX),
+            ),
+            (make([0, u64::MAX], 0), make([0, u64::MAX], 0)),
+            (make([1, u64::MAX], 0), make([u64::MAX, 1], 0)),
+            (
+                make([0xDEAD_BEEF_0123_4567, 0x89AB_CDEF_FEDC_BA98], 0x0F0F_0F0F),
+                make([0x1111_2222_3333_4444, 0x5555_6666_7777_8888], 0xFFFF_0000),
+            ),
+            (make([42, 0], 0), make([37, 0], 0)),
+        ];
+        for (a, b) in cases {
+            let got = a.mul_magnitudes(&b);
+            let want = oracle_mul_160(&a, &b);
+            assert_eq!(got, want, "a = {a:?}, b = {b:?}");
+        }
+    }
+
     use super::*;
 
     #[test]
