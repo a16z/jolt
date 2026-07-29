@@ -179,7 +179,7 @@ const CSR_MIP_ADDRESS: u16 = 0x344;
 const _CSR_PMPCFG0_ADDRESS: u16 = 0x3a0;
 const _CSR_PMPADDR0_ADDRESS: u16 = 0x3b0;
 const _CSR_MCYCLE_ADDRESS: u16 = 0xb00;
-const CSR_CYCLE_ADDRESS: u16 = 0xc00;
+const _CSR_CYCLE_ADDRESS: u16 = 0xc00;
 const CSR_TIME_ADDRESS: u16 = 0xc01;
 const _CSR_INSERT_ADDRESS: u16 = 0xc02;
 const _CSR_MHARTID_ADDRESS: u16 = 0xf14;
@@ -483,14 +483,18 @@ impl Cpu {
             Ok(()) => {}
             Err(e) => self.handle_exception(e, instruction_address),
         }
-        self.mmu.tick();
-        self.handle_interrupt(self.pc);
+        // Jolt guests have no interrupt sources (no CLINT/PLIC) and cannot
+        // write MIP (unsupported CSR rejected at decode), so pending-interrupt
+        // handling is gated on a single always-zero load. handle_interrupt is
+        // a no-op when MIP is 0.
+        if self.read_csr_raw(CSR_MIP_ADDRESS) != 0 {
+            self.handle_interrupt(self.pc);
+        }
         self.clock = self.clock.wrapping_add(1);
-
-        // cpu core clock : mtime clock in clint = 8 : 1 is
-        // just an arbitrary ratio.
-        // @TODO: Implement more properly
-        self.write_csr_raw(CSR_CYCLE_ADDRESS, self.clock * 8);
+        // Historical per-tick bookkeeping removed as provably dead state:
+        // mmu.tick() only advanced a clock nobody reads, and CSR_CYCLE (0xc00)
+        // is not in the supported-CSR whitelist, so no guest instruction can
+        // ever observe the `clock * 8` value that used to be stored there.
     }
 
     // @TODO: Rename?
