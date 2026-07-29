@@ -2,6 +2,7 @@
 /// is the address in main memory.
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
+use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
 use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
@@ -22,6 +23,10 @@ pub struct Mmu {
     addressing_mode: AddressingMode,
     privilege_mode: PrivilegeMode,
     pub memory: MemoryWrapper,
+
+    /// Pre-decoded instruction cache. Lives on the Mmu so the store paths can
+    /// invalidate it directly when the executable range is written.
+    pub decode_cache: DecodeCache,
 
     pub jolt_device: Option<JoltDevice>,
 
@@ -65,9 +70,16 @@ impl Mmu {
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
+            decode_cache: DecodeCache::empty(),
             jolt_device: None,
             mstatus: 0,
         }
+    }
+
+    /// Set the executable address range covered by the pre-decoded
+    /// instruction cache.
+    pub fn init_decode_cache(&mut self, text_base: u64, text_end: u64) {
+        self.decode_cache.init(text_base, text_end);
     }
 
     /// Initializes Main memory. This method is expected to be called only once.
@@ -699,6 +711,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_raw(&mut self, p_address: u64, value: u8) {
         let effective_address = self.get_effective_address(p_address);
+        self.decode_cache.invalidate_store(effective_address, 1);
         // @TODO: Mapping should be configurable with dtb
         match effective_address >= DRAM_BASE {
             true => {
@@ -748,6 +761,7 @@ impl Mmu {
     /// * `value` data written
     fn store_halfword_raw(&mut self, p_address: u64, value: u16) {
         let effective_address = self.get_effective_address(p_address);
+        self.decode_cache.invalidate_store(effective_address, 2);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(1) > effective_address
         {
@@ -775,6 +789,7 @@ impl Mmu {
     /// * `value` data written
     fn store_word_raw(&mut self, p_address: u64, value: u32) {
         let effective_address = self.get_effective_address(p_address);
+        self.decode_cache.invalidate_store(effective_address, 4);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(3) > effective_address
         {
@@ -802,6 +817,7 @@ impl Mmu {
     /// * `value` data written
     fn store_doubleword_raw(&mut self, p_address: u64, value: u64) {
         let effective_address = self.get_effective_address(p_address);
+        self.decode_cache.invalidate_store(effective_address, 8);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(7) > effective_address
         {
@@ -981,6 +997,7 @@ impl Mmu {
             memory: MemoryWrapper {
                 memory: Memory::empty(),
             },
+            decode_cache: self.decode_cache.snapshot_with_empty_entries(),
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
         }

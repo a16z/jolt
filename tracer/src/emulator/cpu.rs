@@ -502,26 +502,14 @@ impl Cpu {
             return Ok(());
         }
 
-        let original_word = self.fetch()?;
-        let instruction_address = normalize_u64(self.pc);
-        let is_compressed = (original_word & 0x3) != 0x3;
-        let word = match is_compressed {
-            false => {
-                self.pc = self.pc.wrapping_add(4); // 32-bit length non-compressed instruction
-                original_word
+        let instr = match self.mmu.decode_cache.lookup(self.pc) {
+            Some(cached) => {
+                let instr = cached.instr;
+                self.pc = self.pc.wrapping_add(cached.len as u64);
+                instr
             }
-            true => {
-                self.pc = self.pc.wrapping_add(2); // 16-bit length compressed instruction
-                uncompress_instruction(original_word & 0xffff)
-            }
+            None => self.decode_and_cache()?,
         };
-
-        let instr = Instruction::decode(word, instruction_address, is_compressed)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Failed to decode instruction: word=0x{word:08x}, address=0x{instruction_address:x}, compressed={is_compressed}: {e}"
-                )
-            });
 
         match trace {
             None => {
@@ -542,6 +530,33 @@ impl Cpu {
         self.x[0] = 0; // hardwired zero
 
         Ok(())
+    }
+
+    /// Decode-cache miss path: fetch, decode, and cache the instruction at the
+    /// current PC. Advances the PC past the instruction.
+    fn decode_and_cache(&mut self) -> Result<Instruction, Trap> {
+        let original_word = self.fetch()?;
+        let instruction_address = normalize_u64(self.pc);
+        let is_compressed = (original_word & 0x3) != 0x3;
+        let word = match is_compressed {
+            false => {
+                self.pc = self.pc.wrapping_add(4); // 32-bit length non-compressed instruction
+                original_word
+            }
+            true => {
+                self.pc = self.pc.wrapping_add(2); // 16-bit length compressed instruction
+                uncompress_instruction(original_word & 0xffff)
+            }
+        };
+
+        let instr = Instruction::decode(word, instruction_address, is_compressed)
+            .unwrap_or_else(|e| decode_failure(word, instruction_address, is_compressed, e));
+        self.mmu.decode_cache.insert(
+            instruction_address,
+            instr,
+            if is_compressed { 2 } else { 4 },
+        );
+        Ok(instr)
     }
 
     fn handle_interrupt(&mut self, instruction_address: u64) {
@@ -1220,6 +1235,14 @@ pub fn get_register_name(num: usize) -> &'static str {
 
 fn normalize_u64(value: u64) -> u64 {
     value
+}
+
+#[cold]
+#[inline(never)]
+fn decode_failure(word: u32, address: u64, compressed: bool, e: impl core::fmt::Display) -> ! {
+    panic!(
+        "Failed to decode instruction: word=0x{word:08x}, address=0x{address:x}, compressed={compressed}: {e}"
+    )
 }
 
 #[cfg(test)]

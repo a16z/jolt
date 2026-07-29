@@ -49,7 +49,7 @@ pub struct SectionHeader {
     #[allow(dead_code)]
     sh_name: u32,
     pub sh_type: u32,
-    _sh_flags: u64,
+    pub sh_flags: u64,
     pub sh_addr: u64,
     pub sh_offset: u64,
     pub sh_size: u64,
@@ -487,7 +487,7 @@ impl ElfAnalyzer {
             headers.push(SectionHeader {
                 sh_name,
                 sh_type,
-                _sh_flags: sh_flags,
+                sh_flags,
                 sh_addr,
                 sh_offset,
                 sh_size,
