@@ -522,9 +522,43 @@ pub(crate) enum ScanOutcome<F> {
     Corrupt,
 }
 
-/// Device seam for the per-phase trace scans.
+/// Inputs for the cycle-table materialization at the address→cycle
+/// boundary: the collapsed per-table values and RAF constants (host-derived
+/// from the bound checkpoints) plus the per-phase bound-challenge tables the
+/// `ra` products gather from.
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal scanner")
+)]
+pub(crate) struct CycleInitRequest<'a, F> {
+    pub(crate) table_values: &'a [F],
+    pub(crate) raf_interleaved: F,
+    pub(crate) raf_identity: F,
+    pub(crate) v_tables: &'a [Vec<F>],
+    pub(crate) ra_count: usize,
+    pub(crate) phases_per_ra: usize,
+    pub(crate) address_bits: usize,
+}
+
+/// Materialized cycle tables: `combined_val` then the `ra_count` virtual RA
+/// products, each one entry per cycle.
+pub(crate) struct CycleTables<F> {
+    pub(crate) combined_val: Vec<F>,
+    pub(crate) ra: Vec<Vec<F>>,
+}
+
+/// Device seam for the per-phase trace scans and the cycle-table
+/// materialization.
 pub(crate) trait PhaseScanner<F: Field> {
     fn scan_phase(&mut self, request: PhaseScanRequest<'_, F>) -> ScanOutcome<F>;
+
+    /// Materialize the cycle tables on the device, or `None` for the CPU
+    /// path (materialization is pure — a failed attempt discards its
+    /// buffers, so unlike condensation there is no corrupt state).
+    fn materialize_cycle(&mut self, request: CycleInitRequest<'_, F>) -> Option<CycleTables<F>> {
+        let _ = request;
+        None
+    }
 }
 
 pub struct OptimizedInstructionReadRafKernel<F: Field> {
@@ -1171,46 +1205,61 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
         }
 
-        let rows = self.rows.as_slice();
-        let combined_val: Vec<F> = map_indices(rows.len(), |j| {
-            let row = &rows[j];
-            let table_value = row
-                .table_index()
-                .map_or_else(F::zero, |index| table_values[index]);
-            let raf_value = if !row.raf_flag {
-                raf_interleaved
-            } else {
-                raf_identity
-            };
-            table_value + raf_value
-        });
-
         let ra_count = self.dimensions.num_virtual_ra_polys();
         let phases_per_ra = self.phases() / ra_count;
         let address_bits = self.address_bits();
-        let v_tables = self.v_tables.as_slice();
-        let ra = (0..ra_count)
-            .map(|i| {
-                Polynomial::new(map_indices(rows.len(), |j| {
-                    let index = rows[j].lookup_index;
-                    let mut phase = i * phases_per_ra;
-                    let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
-                    let mut product =
-                        v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-                    for _ in 1..phases_per_ra {
-                        phase += 1;
-                        shift -= CHUNK_LEN;
-                        product *= v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-                    }
-                    product
-                }))
+
+        let device_tables = self.scanner.as_mut().and_then(|scanner| {
+            scanner.materialize_cycle(CycleInitRequest {
+                table_values: &table_values,
+                raf_interleaved,
+                raf_identity,
+                v_tables: &self.v_tables,
+                ra_count,
+                phases_per_ra,
+                address_bits,
             })
-            .collect();
+        });
+        let tables = device_tables.unwrap_or_else(|| {
+            let rows = self.rows.as_slice();
+            let v_tables = self.v_tables.as_slice();
+            let combined_val: Vec<F> = map_indices(rows.len(), |j| {
+                let row = &rows[j];
+                let table_value = row
+                    .table_index()
+                    .map_or_else(F::zero, |index| table_values[index]);
+                let raf_value = if !row.raf_flag {
+                    raf_interleaved
+                } else {
+                    raf_identity
+                };
+                table_value + raf_value
+            });
+            let ra = (0..ra_count)
+                .map(|i| {
+                    map_indices(rows.len(), |j| {
+                        let index = rows[j].lookup_index;
+                        let mut phase = i * phases_per_ra;
+                        let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
+                        let mut product =
+                            v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+                        for _ in 1..phases_per_ra {
+                            phase += 1;
+                            shift -= CHUNK_LEN;
+                            product *=
+                                v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+                        }
+                        product
+                    })
+                })
+                .collect();
+            CycleTables { combined_val, ra }
+        });
 
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
-            combined_val: Polynomial::new(combined_val),
-            ra,
+            combined_val: Polynomial::new(tables.combined_val),
+            ra: tables.ra.into_iter().map(Polynomial::new).collect(),
             bind_scratch: Vec::new(),
         });
 

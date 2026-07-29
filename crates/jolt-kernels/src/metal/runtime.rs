@@ -55,11 +55,12 @@ pub enum KernelId {
     IrrPhaseScan,
     IrrSuffixScan,
     IrrReduce,
+    IrrCycleInit,
     SuffixProbe,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -74,6 +75,7 @@ impl KernelId {
         Self::IrrPhaseScan,
         Self::IrrSuffixScan,
         Self::IrrReduce,
+        Self::IrrCycleInit,
         Self::SuffixProbe,
     ];
 
@@ -93,6 +95,7 @@ impl KernelId {
             Self::IrrPhaseScan => "jk_irr_phase_scan",
             Self::IrrSuffixScan => "jk_irr_suffix_scan",
             Self::IrrReduce => "jk_irr_reduce",
+            Self::IrrCycleInit => "jk_irr_cycle_init",
             Self::SuffixProbe => "jk_suffix_probe",
         }
     }

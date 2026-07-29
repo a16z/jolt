@@ -575,6 +575,54 @@ kernel void jk_irr_reduce(
     fr_store(out, gid, acc);
 }
 
+struct IrrCycleInitParams {
+    uint n;
+    uint phase_begin;  // first bound-challenge table of this ra product
+    uint phase_count;  // 0 selects combined_val mode
+    uint address_bits;
+    uint raf_interleaved[FR_LIMBS];
+    uint raf_identity[FR_LIMBS];
+};
+
+// Address→cycle handoff materialization, one output table per dispatch:
+// combined_val (phase_count = 0) is the collapsed lookup-table value plus
+// the RAF constant selected by the row's flag; ra_i (phase_count > 0) is
+// the product of its phases' bound-challenge chunk weights. Pure map — a
+// failed command buffer leaves nothing to recover.
+kernel void jk_irr_cycle_init(
+    device const uint* rows [[buffer(0)]],
+    device const uint* v_tables [[buffer(1)]],
+    device const uint* table_values [[buffer(2)]],
+    device uint* out [[buffer(3)]],
+    constant IrrCycleInitParams& p [[buffer(4)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= p.n) {
+        return;
+    }
+    device const uint* row = rows + gid * 12u;
+    ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
+    ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
+    if (p.phase_count == 0u) {
+        uint table_plus_one = row[8] & 0xFFu;
+        bool flag = ((row[8] >> 8) & 0xFFu) != 0u;
+        Fr256 value =
+            (table_plus_one != 0u) ? fr_load(table_values, table_plus_one - 1u) : fr_zero();
+        Fr256 raf = flag ? fr_load_const(p.raf_identity, 0) : fr_load_const(p.raf_interleaved, 0);
+        fr_store(out, gid, fr_add(value, raf));
+        return;
+    }
+    uint phase = p.phase_begin;
+    uint shift = p.address_bits - (phase + 1u) * 8u;
+    Fr256 product = fr_load(v_tables, phase * 256u + jk_chunk8(lo, hi, shift));
+    for (uint k = 1u; k < p.phase_count; k++) {
+        phase += 1u;
+        shift -= 8u;
+        product = fr_mont_mul(product, fr_load(v_tables, phase * 256u + jk_chunk8(lo, hi, shift)));
+    }
+    fr_store(out, gid, product);
+}
+
 struct SuffixProbeParams {
     uint n;
 };

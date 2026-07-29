@@ -35,9 +35,9 @@ use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::instruction_read_raf::{
-    collect_instruction_cycle_rows, InstructionCycleRow, OptimizedInstructionReadRafKernel,
-    PhaseScanRequest, PhaseScanSums, PhaseScanner, RafSums, ScanOutcome, ScannerInputs,
-    SharedInstructionRows,
+    collect_instruction_cycle_rows, CycleInitRequest, CycleTables, InstructionCycleRow,
+    OptimizedInstructionReadRafKernel, PhaseScanRequest, PhaseScanSums, PhaseScanner, RafSums,
+    ScanOutcome, ScannerInputs, SharedInstructionRows,
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
@@ -400,6 +400,107 @@ impl PhaseScanner<Fr> for DeviceIrrScanner {
             }
         }
     }
+
+    fn materialize_cycle(&mut self, request: CycleInitRequest<'_, Fr>) -> Option<CycleTables<Fr>> {
+        let context = self.device.gated(self.rows.len())?;
+        match self.dispatch_cycle_init(context, &request) {
+            Ok(tables) => tables,
+            Err(error) => {
+                // Materialization is pure: the partially written tables are
+                // dropped and the CPU rebuilds from intact inputs.
+                self.device.failed(&error);
+                None
+            }
+        }
+    }
+}
+
+impl DeviceIrrScanner {
+    /// Fill `combined_val` and each `ra` product into host-owned buffers
+    /// through mutable zero-copy wraps: one command buffer, one dispatch per
+    /// output table (the fixed shader signature takes one output). The
+    /// buffers are never CPU-touched before the device writes them, so the
+    /// virtual allocations fault in under GPU writes — no host page-zeroing.
+    fn dispatch_cycle_init(
+        &self,
+        context: &'static MetalContext,
+        request: &CycleInitRequest<'_, Fr>,
+    ) -> Result<Option<CycleTables<Fr>>, MetalError> {
+        let n = self.rows.len();
+        let Some(rows_buffer) = context.wrap_slice_nocopy(self.rows.as_slice()) else {
+            return Ok(None);
+        };
+        let mut v_flat: Vec<Fr> = Vec::with_capacity(request.v_tables.len() * CHUNK_SIZE);
+        for table in request.v_tables {
+            debug_assert_eq!(table.len(), CHUNK_SIZE);
+            v_flat.extend_from_slice(table);
+        }
+        let v_tables_buffer = context.wrap_slice(&v_flat)?;
+        let table_values_buffer = context.wrap_slice(request.table_values)?;
+        testing::note_copied_buffers(
+            u64::from(v_tables_buffer.was_copied()) + u64::from(table_values_buffer.was_copied()),
+        );
+
+        let mut combined_val = uninit_frs(n);
+        let mut ra: Vec<Vec<Fr>> = (0..request.ra_count).map(|_| uninit_frs(n)).collect();
+        let mut outputs = Vec::with_capacity(1 + request.ra_count);
+        let Some(combined_buffer) = context.wrap_slice_mut_nocopy(combined_val.as_mut_slice())
+        else {
+            return Ok(None);
+        };
+        outputs.push(combined_buffer);
+        for table in &mut ra {
+            let Some(buffer) = context.wrap_slice_mut_nocopy(table.as_mut_slice()) else {
+                return Ok(None);
+            };
+            outputs.push(buffer);
+        }
+
+        let base_params = |phase_begin: usize, phase_count: usize| -> Vec<u32> {
+            let mut params = vec![
+                n as u32,
+                phase_begin as u32,
+                phase_count as u32,
+                request.address_bits as u32,
+            ];
+            params.extend_from_slice(&crate::metal::fr_to_u32_limbs(request.raf_interleaved));
+            params.extend_from_slice(&crate::metal::fr_to_u32_limbs(request.raf_identity));
+            params
+        };
+        let mut pass = context.begin_pass()?;
+        for (position, output) in outputs.iter().enumerate() {
+            let (phase_begin, phase_count) = match position.checked_sub(1) {
+                None => (0, 0),
+                Some(i) => (i * request.phases_per_ra, request.phases_per_ra),
+            };
+            pass.dispatch(
+                KernelId::IrrCycleInit,
+                &base_params(phase_begin, phase_count),
+                &[&rows_buffer, &v_tables_buffer, &table_values_buffer, output],
+                n,
+            );
+        }
+        pass.run()?;
+        testing::note_device_round();
+        Ok(Some(CycleTables { combined_val, ra }))
+    }
+}
+
+/// An uninitialized field-element buffer for device fills.
+///
+/// SAFETY-adjacent contract: callers must guarantee every element is
+/// device-written before any host read (the cycle-init kernel is a dense
+/// map over `0..len`). `Fr` is plain limb data — no drop glue, no invalid
+/// representations.
+#[expect(clippy::uninit_vec, reason = "device-filled before any read")]
+fn uninit_frs(len: usize) -> Vec<Fr> {
+    let mut buffer = Vec::with_capacity(len);
+    // SAFETY: capacity == len, and per the contract above the contents are
+    // fully overwritten by the device before being read.
+    unsafe {
+        buffer.set_len(len);
+    }
+    buffer
 }
 
 /// Device-vs-CPU parity: the suffix MLE library case by case, then the full
@@ -648,6 +749,12 @@ mod tests {
         }
         cpu.finish_rounds(challenge(rounds - 1)).unwrap();
         device.finish_rounds(challenge(rounds - 1)).unwrap();
+        // 16 phase command buffers + the cycle-init one — a silent fallback
+        // anywhere shows up as a missing probe.
+        assert!(
+            device_probe_count() - probes_before >= 17,
+            "expected every phase and the cycle materialization on device"
+        );
 
         let inputs =
             jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims {
