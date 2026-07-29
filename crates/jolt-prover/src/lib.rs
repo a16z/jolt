@@ -7,17 +7,38 @@
 //! naive reference tier). This crate is orchestration only: config and
 //! preprocessing, transcript sequencing, kernel invocation, typed claim
 //! assembly, and proof assembly. See `specs/clean-slate-prover.md`.
+//!
+//! Two parallel prover paths share that orchestration ([`config`],
+//! [`preprocessing`], [`driver`], [`error`]):
+//!
+//! - `dory` — the homomorphic pipeline over an elliptic-curve PCS:
+//!   streaming per-polynomial witness commitments, the stage 0–8 recipes,
+//!   and the RLC-batched joint opening (`dory::prove`);
+//! - `akita` — the packed pipeline over the lattice PCS: one native
+//!   `OneHotTrace` commitment group, the fused-inc/reconstruction stage
+//!   swaps, and the native same-point joint opening (`akita::prove`, port in
+//!   progress).
+//!
+//! Like `jolt-verifier`, one compiled prover proves exactly one protocol:
+//! the `akita` feature swaps the shared wire types to the packed envelope,
+//! so exactly one of the two path modules compiles into any given build.
+//!
+//! [`config`]: ProverConfig
+//! [`preprocessing`]: JoltProverPreprocessing
+//! [`driver`]: StageProver
+//! [`error`]: ProverError
 
+#[cfg(feature = "akita")]
+pub mod akita;
 mod config;
+#[cfg(not(feature = "akita"))]
+pub mod dory;
 pub mod driver;
 mod error;
 mod preprocessing;
-mod prover;
-pub mod stages;
 
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
 pub use driver::{KernelSource, Proved, StageProver};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession};
 pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
-pub use prover::prove;

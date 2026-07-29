@@ -15,6 +15,21 @@ workspace = true
 default = ["parallel"]
 parallel = ["jolt-kernels/parallel"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+# The packed (lattice/Akita) protocol. Like jolt-verifier, one compiled
+# prover proves exactly one protocol: this feature swaps the proof shape to
+# the packed envelope, so the Dory (elliptic-curve) path `src/dory` is
+# compiled out and the Akita (lattice) path `src/akita` (port in progress)
+# replaces it. Mutually exclusive with a future zk feature by construction.
+# jolt-prover-legacy must flip together with jolt-verifier: the verifier's
+# own akita edge to it is a dev-dependency edge that does not propagate here,
+# and a host-only legacy build against an akita-shaped jolt-verifier fails to
+# compile.
+akita = [
+  "jolt-verifier/akita",
+  "jolt-claims/akita",
+  "jolt-field/akita",
+  "jolt-prover-legacy/akita",
+]
 
 [dependencies]
 common.workspace = true

@@ -79,6 +79,13 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
       - name: cargo clippy -p jolt-prover-legacy --features akita
         run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
+      # The modular prover's packed (Akita) scaffolding: the stub prove path
+      # plus the ignored byte-diff/e2e suites (they run once the port lands).
+      # Lint both alone and with prover-fixtures so the suites keep compiling.
+      - name: cargo clippy -p jolt-prover --features akita
+        run: cargo clippy -p jolt-prover --all-targets --features akita
+      - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
+        run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
