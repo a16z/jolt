@@ -181,9 +181,13 @@ mod tests {
 
     #[test]
     fn g1_routines_match_stock() {
-        let bases: Vec<ArkG1> = (0..33).map(|_| random_g1()).collect();
-        let scalars: Vec<ArkFr> = (0..33).map(|_| random_fr()).collect();
+        let mut bases: Vec<ArkG1> = (0..33).map(|_| random_g1()).collect();
+        let mut scalars: Vec<ArkFr> = (0..33).map(|_| random_fr()).collect();
         let scalar = random_fr();
+        // Identity points and zero scalars exercise the GLV decomposition
+        // and batch-normalization edge cases the random fixtures miss.
+        bases[5] = ArkG1::identity();
+        scalars[9] = <ArkFr as DoryField>::zero();
 
         assert_eq!(
             JoltG1Routines::msm(&bases, &scalars),
@@ -193,8 +197,13 @@ mod tests {
             JoltG1Routines::fixed_base_vector_scalar_mul(&bases[0], &scalars),
             G1Routines::fixed_base_vector_scalar_mul(&bases[0], &scalars)
         );
+        assert_eq!(
+            JoltG1Routines::fixed_base_vector_scalar_mul(&ArkG1::identity(), &scalars),
+            G1Routines::fixed_base_vector_scalar_mul(&ArkG1::identity(), &scalars)
+        );
 
         let mut vs_jolt: Vec<ArkG1> = (0..33).map(|_| random_g1()).collect();
+        vs_jolt[3] = ArkG1::identity();
         let mut vs_stock = vs_jolt.clone();
         JoltG1Routines::fixed_scalar_mul_bases_then_add(&bases, &mut vs_jolt, &scalar);
         G1Routines::fixed_scalar_mul_bases_then_add(&bases, &mut vs_stock, &scalar);
@@ -218,9 +227,13 @@ mod tests {
 
     #[test]
     fn g2_routines_match_stock() {
-        let bases: Vec<ArkG2> = (0..17).map(|_| random_g2()).collect();
-        let scalars: Vec<ArkFr> = (0..17).map(|_| random_fr()).collect();
+        let mut bases: Vec<ArkG2> = (0..17).map(|_| random_g2()).collect();
+        let mut scalars: Vec<ArkFr> = (0..17).map(|_| random_fr()).collect();
         let scalar = random_fr();
+        // Identity points and zero scalars exercise the GLV decomposition
+        // and batch-normalization edge cases the random fixtures miss.
+        bases[5] = ArkG2::identity();
+        scalars[9] = <ArkFr as DoryField>::zero();
 
         assert_eq!(
             JoltG2Routines::msm(&bases, &scalars),
@@ -230,8 +243,13 @@ mod tests {
             JoltG2Routines::fixed_base_vector_scalar_mul(&bases[0], &scalars),
             G2Routines::fixed_base_vector_scalar_mul(&bases[0], &scalars)
         );
+        assert_eq!(
+            JoltG2Routines::fixed_base_vector_scalar_mul(&ArkG2::identity(), &scalars),
+            G2Routines::fixed_base_vector_scalar_mul(&ArkG2::identity(), &scalars)
+        );
 
         let mut vs_jolt: Vec<ArkG2> = (0..17).map(|_| random_g2()).collect();
+        vs_jolt[3] = ArkG2::identity();
         let mut vs_stock = vs_jolt.clone();
         JoltG2Routines::fixed_scalar_mul_bases_then_add(&bases, &mut vs_jolt, &scalar);
         G2Routines::fixed_scalar_mul_bases_then_add(&bases, &mut vs_stock, &scalar);

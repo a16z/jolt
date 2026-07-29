@@ -169,4 +169,46 @@ mod tests {
             );
         });
     }
+
+    /// A non-default phase split (RAF rounds exceeding `log_K`) is rejected
+    /// as `Unsupported` instead of misproving.
+    #[test]
+    fn rejects_non_default_phase_split() {
+        let shape = FixtureShape { log_t: 4, ram_k: 8 };
+        with_ram_fixture(shape, vec![RamOp::None; 3], |witness| {
+            let read_write_dimensions = ReadWriteDimensions::new(
+                shape.log_t,
+                shape.log_k(),
+                shape.log_t - 1,
+                shape.log_k() + 1,
+            );
+            let relation = RamRafEvaluation::<Fr>::new(
+                read_write_dimensions,
+                RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap(),
+                shape.log_k(),
+                super::super::testing::fixture_lowest_address(),
+                random_scalars(shape.log_t, 83),
+            );
+            let claims = RamRafEvaluationInputClaims {
+                ram_address: Fr::from_u64(0),
+            };
+            let points = RamRafEvaluationInputClaims::<Vec<Fr>>::default();
+            let challenges = NoChallenges::default();
+            let result = PrepareKernel::<Fr, _>::prepare(
+                &OptimizedBackend,
+                &mut ProofSession::default(),
+                witness,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            );
+            assert!(matches!(
+                result.map(|_| ()),
+                Err(KernelError::Unsupported { .. })
+            ));
+        });
+    }
 }

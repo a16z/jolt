@@ -336,7 +336,7 @@ mod tests {
     };
 
     use super::super::testing::{
-        assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,
+        assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
     };
     use super::*;
     use crate::ReferenceBackend;
@@ -366,7 +366,11 @@ mod tests {
     }
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>) {
-        with_ram_fixture(shape, ops, |witness| {
+        run_parity_init(shape, Vec::new(), ops);
+    }
+
+    fn run_parity_init(shape: FixtureShape, init_words: Vec<u64>, ops: Vec<RamOp>) {
+        with_ram_fixture_init(shape, init_words, ops, |witness| {
             let tau_low = random_scalars(shape.log_t, 17);
             let gamma = random_scalars(1, 23)[0];
             let relation = RamReadWriteChecking::<Fr>::new(
@@ -472,5 +476,74 @@ mod tests {
     #[test]
     fn matches_reference_without_ram_traffic() {
         run_parity(FixtureShape { log_t: 3, ram_k: 4 }, vec![RamOp::None; 3]);
+    }
+
+    /// Nonzero `val_init` with reads BEFORE the first write: the optimized
+    /// `val_init` reconstruction must recover a read-first word's initial
+    /// value from its first access's pre-value, a never-accessed nonzero
+    /// word's from the final state, and stay in parity with the reference
+    /// val grid through both phases.
+    #[test]
+    fn matches_reference_on_read_before_write_with_nonzero_val_init() {
+        run_parity_init(
+            FixtureShape {
+                log_t: 4,
+                ram_k: 16,
+            },
+            // Words 2..5 start at 7, 5, 11; word 3 is never accessed.
+            vec![7, 5, 11],
+            vec![
+                RamOp::Read { word: 2 },
+                RamOp::Write { word: 2, post: 9 },
+                RamOp::Read { word: 2 },
+                RamOp::Read { word: 4 },
+                RamOp::None,
+                RamOp::Write { word: 6, post: 3 },
+                RamOp::Read { word: 6 },
+            ],
+        );
+    }
+
+    /// A non-default phase split (phase 1 shorter than the cycle rounds) is
+    /// rejected as `Unsupported` instead of misproving.
+    #[test]
+    fn rejects_non_default_phase_split() {
+        let shape = FixtureShape { log_t: 3, ram_k: 4 };
+        with_ram_fixture(shape, vec![RamOp::None; 3], |witness| {
+            let tau_low = random_scalars(shape.log_t, 17);
+            let relation = RamReadWriteChecking::<Fr>::new(
+                ReadWriteDimensions::new(
+                    shape.log_t,
+                    shape.log_k(),
+                    shape.log_t - 1,
+                    shape.log_k() + 1,
+                ),
+                shape.log_k(),
+                tau_low,
+            );
+            let claims = RamReadWriteInputClaims {
+                ram_read_value: Fr::from_u64(0),
+                ram_write_value: Fr::from_u64(0),
+            };
+            let points = RamReadWriteInputClaims::<Vec<Fr>>::default();
+            let challenges = RamReadWriteChallenges {
+                gamma: random_scalars(1, 23)[0],
+            };
+            let result = PrepareKernel::<Fr, _>::prepare(
+                &OptimizedBackend,
+                &mut ProofSession::default(),
+                witness,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            );
+            assert!(matches!(
+                result.map(|_| ()),
+                Err(KernelError::Unsupported { .. })
+            ));
+        });
     }
 }

@@ -72,7 +72,30 @@ pub(crate) fn with_ram_fixture<R>(
     ops: Vec<RamOp>,
     f: impl FnOnce(&dyn jolt_witness::JoltWitnessPlane<Fr>) -> R,
 ) -> R {
+    with_ram_fixture_init(shape, Vec::new(), ops, f)
+}
+
+/// [`with_ram_fixture`] with nonzero initial RAM values: `init_words[i]`
+/// seeds word `2 + i` (the reserved panic/termination words stay zero). The
+/// values ride in as trusted-advice bytes, which the witness backend
+/// populates into BOTH the initial and the final RAM state — so untouched
+/// nonzero words keep `RamValFinal` consistent with `val_init` without a
+/// final-memory image. WARNING: the final-state advice populate also masks
+/// script WRITES to seeded words in `RamValFinal`; only the never-accessed
+/// fallback of the optimized `val_init` reconstruction reads those slots, so
+/// read-write parity is unaffected, but scripts feeding a val-final-anchored
+/// kernel must not write seeded words.
+pub(crate) fn with_ram_fixture_init<R>(
+    shape: FixtureShape,
+    init_words: Vec<u64>,
+    ops: Vec<RamOp>,
+    f: impl FnOnce(&dyn jolt_witness::JoltWitnessPlane<Fr>) -> R,
+) -> R {
     assert!(ops.len() < 1usize << shape.log_t, "script too long");
+    assert!(
+        2 + init_words.len() <= shape.ram_k,
+        "init words exceed the RAM domain"
+    );
 
     let memory_layout = MemoryLayout {
         trusted_advice_start: BASE_ADDRESS,
@@ -109,6 +132,18 @@ pub(crate) fn with_ram_fixture<R>(
     let program = JoltProgram::default();
 
     let mut state = vec![0u64; shape.ram_k];
+    let trusted_advice: Vec<u8> = if init_words.is_empty() {
+        Vec::new()
+    } else {
+        // Two zero words keep the reserved panic/termination words zero in
+        // the advice populate.
+        let mut bytes = vec![0u8; 16];
+        for (i, &value) in init_words.iter().enumerate() {
+            state[2 + i] = value;
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    };
     let mut script = ops;
     script.push(RamOp::Write {
         word: TERMINATION_WORD,
@@ -142,6 +177,7 @@ pub(crate) fn with_ram_fixture<R>(
 
     let device = JoltDevice {
         memory_layout,
+        trusted_advice,
         ..Default::default()
     };
     let config = JoltVmWitnessConfig::new(

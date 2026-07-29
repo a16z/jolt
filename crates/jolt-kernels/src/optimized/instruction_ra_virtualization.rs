@@ -483,10 +483,11 @@ mod tests {
 
     use crate::reference::instruction_read_raf::InstructionReadRafWitness;
     use crate::reference::views::{address_fold, eq_table};
-    use crate::{NaiveSumcheckProver, ProverInputs, SumcheckKernel};
+    use crate::{NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-    use super::super::instruction_read_raf::InstructionCycleRow;
-    use super::OptimizedInstructionRaVirtualizationKernel;
+    use super::super::instruction_read_raf::{InstructionCycleRow, SharedInstructionRows};
+    use super::super::testing::{with_ram_fixture, FixtureShape};
+    use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
     /// Packs reference-typed fixture rows into the optimized kernels' shared
     /// row form (this kernel reads only the lookup index).
@@ -563,12 +564,17 @@ mod tests {
     /// the reference `prepare` assembles it) vs the optimized kernel, same
     /// challenges: byte-equal round polynomials and output claims, and the
     /// optimized eq-scalar passes the derived-table cross-check.
+    ///
+    /// `with_session` builds the optimized kernel through the `prepare` slot
+    /// with pre-parked stage-5 rows instead of direct construction,
+    /// exercising the session take/park-back carry.
     fn assert_parity(
         log_t: usize,
         num_virtual: usize,
         per_virtual: usize,
         chunk_bits: usize,
         seed: u64,
+        with_session: bool,
     ) {
         let num_committed = num_virtual * per_virtual;
         let dimensions = InstructionRaVirtualizationDimensions::new(
@@ -637,17 +643,48 @@ mod tests {
         )
         .unwrap();
 
-        let mut optimized = OptimizedInstructionRaVirtualizationKernel::new(
-            log_t,
-            num_virtual,
-            per_virtual,
-            &instruction_address,
-            &r_cycle,
-            chunk_bits,
-            Arc::new(pack(&rows)),
-            gamma,
-        )
-        .unwrap();
+        let mut optimized: Box<dyn SumcheckKernel<Fr, Relation = InstructionRaVirtualization<Fr>>> =
+            if with_session {
+                // The witness plane comes from an unrelated trace fixture: a
+                // missed take of the parked rows would stream that trace's
+                // lookup indices instead and fail the parity loop loudly.
+                let shape = FixtureShape { log_t, ram_k: 16 };
+                with_ram_fixture(shape, Vec::new(), |witness| {
+                    let mut session = ProofSession::default();
+                    session.park(SharedInstructionRows(Arc::new(pack(&rows))));
+                    let kernel = OptimizedInstructionRaVirtualization
+                        .prepare(
+                            &mut session,
+                            witness,
+                            ProverInputs {
+                                relation: &relation,
+                                claims: &input_claims,
+                                points: &input_points,
+                                challenges: &challenges,
+                            },
+                        )
+                        .unwrap();
+                    assert!(
+                        session.state::<SharedInstructionRows>().is_some(),
+                        "prepare must park the shared rows back for later consumers"
+                    );
+                    kernel
+                })
+            } else {
+                Box::new(
+                    OptimizedInstructionRaVirtualizationKernel::new(
+                        log_t,
+                        num_virtual,
+                        per_virtual,
+                        &instruction_address,
+                        &r_cycle,
+                        chunk_bits,
+                        Arc::new(pack(&rows)),
+                        gamma,
+                    )
+                    .unwrap(),
+                )
+            };
 
         // True input claim: the full hypercube sum of the output summand.
         let eq_cycle = eq_table(&r_cycle);
@@ -712,19 +749,27 @@ mod tests {
     /// 128-bit instruction address).
     #[test]
     fn parity_production_geometry() {
-        assert_parity(4, 8, 4, 4, 42);
+        assert_parity(4, 8, 4, 4, 42, false);
     }
 
     /// Odd geometry: 3 virtuals × 2 committed, 2-bit chunks, odd log_t.
     #[test]
     fn parity_small_odd_geometry() {
-        assert_parity(3, 3, 2, 2, 1337);
+        assert_parity(3, 3, 2, 2, 1337, false);
     }
 
     #[test]
     fn parity_past_lazy_materialization() {
         // log_t = 6: two lazy binds, the dense materialization at the third,
         // and three plain multilinear binds after it.
-        assert_parity(6, 2, 2, 4, 7);
+        assert_parity(6, 2, 2, 4, 7, false);
+    }
+
+    /// Through the `prepare` slot with pre-parked stage-5 rows: the session
+    /// take/park-back carry serves this kernel the same rows and parks them
+    /// back for the stage-6a/6b booleanity consumers.
+    #[test]
+    fn parity_with_carried_session_rows() {
+        assert_parity(4, 8, 4, 4, 42, true);
     }
 }
