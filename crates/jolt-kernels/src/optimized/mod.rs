@@ -26,10 +26,12 @@ use crate::reference::spartan_outer::ReferenceOuterRemainder;
 use crate::reference::spartan_product::ReferenceProductRemainder;
 use crate::{JoltBackend, ReferenceBackend};
 
+pub mod booleanity;
 pub mod instruction_claim_reduction;
 pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
+pub mod ram_hamming_booleanity;
 pub mod ram_ra_claim_reduction;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
