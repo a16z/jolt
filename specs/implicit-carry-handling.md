@@ -18,6 +18,8 @@ The key design choice is that carry is **not** represented as direct previous-ro
 
 and will constrain `Carry(t + 1) = NextCarry(t)` using the same forward shift-style proof machinery already used for other `Next*` values. This avoids memory checking, keeps the carry proof-level only, and matches the structure of the existing modular witness and verifier stack.
 
+This work is landed behind a Cargo feature named `implicit-carry`. The implementation should treat `implicit-carry` as an additive protocol axis, parallel to `field-inline`. The design goal is a single base implementation plus optional feature contributions.
+
 ## Intent
 
 ### Goal
@@ -97,6 +99,15 @@ New tests required:
 - Negative tests that mutate the incoming or outgoing carry and assert verification failure.
 - Unit tests for the new lookup semantics, witness extraction, row-0 carry initialization, shift relation changes, and outer-claim field ordering changes.
 
+Because `implicit-carry` is cfg-gated, the supported matrix is `{field-inline on/off} x {implicit-carry on/off}`. The implementation should not fork into four separate codepaths, but CI and local validation should still cover the matrix with representative compile/test jobs:
+
+- `field-inline = off`, `implicit-carry = off`: current baseline behavior and current regression suite.
+- `field-inline = on`, `implicit-carry = off`: current field-inline behavior and current field-inline regression suite.
+- `field-inline = off`, `implicit-carry = on`: new carry tests and baseline regressions.
+- `field-inline = on`, `implicit-carry = on`: composition coverage proving that both additive feature lanes coexist correctly.
+
+The carry-specific randomized and negative tests only need to run when `implicit-carry` is enabled, but the feature-on build must compile and verify correctly with `field-inline` both enabled and disabled.
+
 No dedicated acceptance tests are required for `ADDC` or `MULC` after non-carry-producing instructions beyond documenting that the consumed carry is `0`.
 
 Trace-tail assumption:
@@ -133,6 +144,29 @@ This is necessary because the modern stack is organized around current-row value
 - `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs` is a forward shift relation over `Next*` openings.
 
 Therefore the implementation should materialize the incoming carry as current-row data and constrain it against the prior row's `NextCarry` through the existing shift-style mechanism.
+
+### Cfg-Gated Composition Strategy
+
+This feature is introduced behind `--features implicit-carry`, and the implementation should be structured as:
+
+1. A base protocol path that matches today's behavior when `implicit-carry` is disabled.
+2. A `field-inline` feature lane that contributes only its existing instruction/lookup extensions.
+3. An `implicit-carry` feature lane that contributes only carry-related instructions, witnesses, openings, and constraints.
+4. A small set of geometry and proof-config aggregation points that combine the enabled feature contributions.
+
+The important design rule is:
+
+**prefer additive feature contributions over per-combination implementations.**
+
+Concretely:
+
+- Instruction inventories should be “base list plus cfg-appended feature entries,” not four distinct lists.
+- Outer-input enums and opening ids should be append-only, with `Carry` and `NextCarry` present only under `implicit-carry`.
+- R1CS row sets should be “existing rows plus carry rows,” not duplicated whole tables for each feature combination.
+- Shift batching should be “existing batch terms plus an optional carry term.”
+- Protocol metadata should record whether `implicit-carry` is enabled so mismatched prover/verifier builds fail closed.
+
+This means the repository will still have a 2x2 feature matrix for validation, but it should not require four separately maintained implementations. Most code should know only about its own feature lane; only geometry constants, proof config, and a few compile-time arrays need to observe the combined feature set.
 
 ### Representation
 
@@ -219,15 +253,47 @@ Tests that need to emit these instructions directly should do so via raw `.insn 
 
 ### Exact File-Level Code Change Suggestions
 
+#### Feature propagation and protocol config
+
+- `crates/jolt-riscv/Cargo.toml`
+  - Add `implicit-carry` as a feature, following the same general propagation pattern used by `field-inline`.
+- `tracer/Cargo.toml`
+  - Forward `implicit-carry` into the tracer's instruction/program dependencies.
+- `crates/jolt-program/Cargo.toml`
+  - Forward `implicit-carry` into decode/trace-facing dependencies.
+- `crates/jolt-lookup-tables/Cargo.toml`
+  - Forward `implicit-carry` into the lookup instruction universe.
+- `crates/jolt-witness/Cargo.toml`
+  - Forward `implicit-carry` into witness-side feature plumbing.
+- `crates/jolt-claims/Cargo.toml`
+  - Forward `implicit-carry` into claims/geometry relations.
+- `crates/jolt-r1cs/Cargo.toml`
+  - Forward `implicit-carry` into the modern constraint table.
+- `crates/jolt-verifier/Cargo.toml`
+  - Forward `implicit-carry` into verifier-stage logic.
+- `crates/jolt-prover-legacy/Cargo.toml`
+  - Define the top-level legacy prover feature and forward it to the crates above.
+- `jolt-sdk/Cargo.toml`
+  - Forward `implicit-carry` if SDK-level build/test flows should expose it the same way `field-inline` is exposed today.
+- `crates/jolt-verifier/src/config.rs`
+  - Extend `JoltProtocolConfig` with an explicit `implicit_carry` protocol bit or enum.
+  - Extend `JOLT_VERIFIER_CONFIG` and `validate_proof_config(...)` so verifier/prover mismatches fail closed.
+- `crates/jolt-verifier/src/proof.rs`
+  - Carry the new protocol config field in serialized proofs.
+- `crates/jolt-prover-legacy/src/zkvm/proof.rs`
+  - Populate the new protocol config field from the active Cargo feature set.
+
+The intended structure is additive propagation, not separate `all(field-inline, implicit-carry)` implementations in every crate. Only a few protocol/geometry aggregation points should need to branch on both.
+
 #### Shared instruction universe
 
 - `crates/jolt-riscv/src/lib.rs`
-  - Add `ADDC` and `MULC` to `for_each_instruction_kind!`.
-  - Add `ADDC` and `MULC` to `for_each_jolt_instruction_kind!`.
+  - Add `ADDC` and `MULC` to `for_each_instruction_kind!` behind `#[cfg(feature = "implicit-carry")]`.
+  - Add `ADDC` and `MULC` to `for_each_jolt_instruction_kind!` behind `#[cfg(feature = "implicit-carry")]`.
   - Assign stable Jolt tags/opcodes.
 - `crates/jolt-riscv/src/flags.rs`
-  - Add `CircuitFlags::UsesCarry`.
-  - Add `CircuitFlags::ProducesCarry`.
+  - Add `CircuitFlags::UsesCarry` behind `#[cfg(feature = "implicit-carry")]`.
+  - Add `CircuitFlags::ProducesCarry` behind `#[cfg(feature = "implicit-carry")]`.
   - Extend `NUM_CIRCUIT_FLAGS`, `CIRCUIT_FLAGS`, and flag exclusivity tests.
 - `crates/jolt-riscv/src/kind.rs`
   - Add metadata arms for the new instruction kinds.
@@ -238,7 +304,7 @@ Tests that need to emit these instructions directly should do so via raw `.insn 
 #### Tracer and decoding
 
 - `tracer/src/emulator/cpu.rs`
-  - Add emulator-local `carry: u64`.
+  - Add emulator-local `carry: u64` behind `implicit-carry`, or a helper abstraction that compiles away to the current behavior when the feature is off.
   - Update `save_state_with_empty_memory`.
 - `tracer/src/instruction/mod.rs`
   - Register `addc` and `mulc` modules.
@@ -254,7 +320,7 @@ Tests that need to emit these instructions directly should do so via raw `.insn 
 - `crates/jolt-program/src/image/decode.rs`
   - Extend `decode_custom`.
 - `crates/jolt-program/src/execution/trace.rs`
-  - Add `carry: u64` to `TraceRow`.
+  - Add `carry: u64` to `TraceRow` behind `implicit-carry`, or expose accessor helpers so feature-off code does not have to reason about carry at all.
 
 #### Lookup semantics
 
@@ -293,22 +359,24 @@ Recommended semantics:
 #### Legacy outer inputs and typed row views
 
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs`
-  - Add `Carry` and `NextCarry` to `JoltR1CSInputs`.
-  - Append them to `ALL_R1CS_INPUTS`.
+  - Add `Carry` and `NextCarry` to `JoltR1CSInputs` behind `implicit-carry`.
+  - Append them to `ALL_R1CS_INPUTS` behind `implicit-carry`.
   - Extend `to_index`, `from_index`, `From<&JoltR1CSInputs> for VirtualPolynomial`, and `OpeningId`.
   - Add `carry: u64` and `next_carry: u64` to `R1CSCycleInputs`.
   - Populate them from the current and next trace rows.
   - Extend `get_input_value`.
 - `crates/jolt-prover-legacy/src/zkvm/spartan/outer.rs`
   - Update any fixed-size `[F; NUM_R1CS_INPUTS]` arrays and related helpers.
+  - Prefer `BASE_NUM_R1CS_INPUTS + IMPLICIT_CARRY_EXTRA_INPUTS`-style constants over separate full definitions for each feature combination.
 
 #### Legacy shift sumcheck
 
 - `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs`
   - Extend the shift payload to include carry.
-  - Increase `gamma_powers` from length 5 to length 6 for the extra carry-batching term.
+  - Increase `gamma_powers` from length 5 to length 6 only when `implicit-carry` is enabled.
   - Update the prover and verifier formulas.
   - Update the four `#[cfg(feature = "zk")]` BlindFold claim/constraint synchronization functions accordingly.
+  - Structure the batching constants as “base shift terms + optional carry term” instead of duplicating the whole relation for each feature combination.
 
 #### Legacy R1CS constraints and groupings
 
@@ -317,6 +385,7 @@ Recommended semantics:
   - Recompute `NUM_R1CS_CONSTRAINTS`.
   - Re-sync `R1CS_CONSTRAINTS_FIRST_GROUP_LABELS`.
   - Default policy: keep the existing first-group labels unchanged and place all new carry-related rows in the second group unless profiling justifies a different split.
+  - Prefer append-only carry rows and additive row-count constants over distinct hand-maintained tables for each feature combination.
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/evaluation.rs`
   - Update typed evaluators and remainder planning to match the new outer inputs and constraints.
 
@@ -331,8 +400,9 @@ Recommended semantics:
 - `crates/jolt-claims/src/protocols/jolt/ids.rs`
   - Add `Carry` and `NextCarry` ids.
 - `crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs`
-  - Add `Carry` and `NextCarry` to `SPARTAN_OUTER_R1CS_INPUTS`.
+  - Add `Carry` and `NextCarry` to `SPARTAN_OUTER_R1CS_INPUTS` behind `implicit-carry`.
   - Re-sync `SPARTAN_OUTER_FIRST_GROUP_ROWS` and `SPARTAN_OUTER_SECOND_GROUP_ROWS`.
+  - Prefer geometry constants derived from base rows plus feature deltas rather than four explicit geometry variants.
 - `crates/jolt-claims/src/protocols/jolt/relations/spartan/outer_remainder.rs`
   - Extend canonical output-claim structs and field ordering.
 - `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs`
@@ -349,6 +419,7 @@ Recommended semantics:
 
 - `crates/jolt-r1cs/src/constraints/jolt.rs`
   - Re-sync outer column count, opening columns, row groups, and any compile-time dimensions affected by the extra outer inputs and carry-related rows.
+  - Keep the modern constraint table additive: feature-off must preserve today's geometry exactly, while feature-on appends the carry-specific columns and rows.
 
 ### Detailed R1CS Changes
 
@@ -370,6 +441,8 @@ Add two new outer inputs:
 - `NextCarry`
 
 They should be appended to the canonical outer-input ordering rather than inserted in the middle, to minimize disruption to existing index assignments.
+
+Because `implicit-carry` is cfg-gated, these inputs should be absent entirely in feature-off builds rather than present as dead zero columns. The intended structure is “base outer-input ordering plus optional appended carry inputs,” so index stability is preserved within each feature lane and no feature combination needs its own bespoke ordering table.
 
 #### New constraint labels
 
@@ -482,6 +555,14 @@ Conceptually:
 
 This requires the legacy shift sumcheck in `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs` to extend its `gamma_powers` batching and its ZK constraint mirrors.
 
+Because this is cfg-gated, the recommended organization is:
+
+- base shift batching constants and expressions for today's five-term relation
+- one optional carry-batching term appended under `implicit-carry`
+- one shared prover/verifier implementation parameterized by the enabled term list
+
+Avoid writing separate full shift relations for `{field-inline, implicit-carry}` combinations unless profiling or const-eval limitations make that unavoidable.
+
 ### Row-0 Carry Initialization
 
 The invariant `Carry(0) = 0` is **not** enforced by the existing `EqPlusOne` machinery alone, because `EqPlusOne` constrains `f(j + 1)` against `Next*` values and does not constrain row 0 of the shifted column.
@@ -514,6 +595,8 @@ Instead:
 - define `NextCarry` witness extraction from `next.map(|r| r.carry).unwrap_or(0)`
 
 This is the smallest change that fits the current modular witness stack.
+
+Because `implicit-carry` is cfg-gated, prefer helper accessors or a small carry-aware row abstraction so feature-off code can remain close to today's `TraceRow` shape. That keeps the feature lane local and avoids spreading conditional struct construction across the tracer and witness pipeline.
 
 ### Alternatives Considered
 
@@ -553,16 +636,17 @@ Update the Jolt book in two places:
 
 Recommended implementation order:
 
-1. Add instruction kinds, custom decode support, and tracer semantics for `ADDC` and `MULC`.
-2. Add `carry` to `TraceRow` and preserve it through trace production.
-3. Add lookup semantics and witness support for `Carry` and `NextCarry`.
-4. Extend legacy outer inputs and implement the new R1CS constraints with `UsesCarry` and `ProducesCarry`.
-5. Extend the shift relation with carry transport and explicit row-0 initialization.
-6. Extend modern witness, claims, verifier, and `jolt-r1cs` geometry plumbing.
-7. Add randomized positive and negative tests in standard and ZK modes.
-8. Update documentation.
+1. Add workspace feature plumbing and protocol-config fail-closed metadata for `implicit-carry`.
+2. Add instruction kinds, custom decode support, and tracer semantics for `ADDC` and `MULC`.
+3. Add `carry` to `TraceRow` and preserve it through trace production.
+4. Add lookup semantics and witness support for `Carry` and `NextCarry`.
+5. Extend legacy outer inputs and implement the new R1CS constraints with `UsesCarry` and `ProducesCarry`.
+6. Extend the shift relation with carry transport and explicit row-0 initialization.
+7. Extend modern witness, claims, verifier, and `jolt-r1cs` geometry plumbing.
+8. Add randomized positive and negative tests in standard and ZK modes, including `field-inline` composition coverage if the feature is cfg-gated.
+9. Update documentation.
 
-This ordering front-loads semantic execution correctness and makes the proof-layer plumbing easier to validate incrementally.
+This ordering front-loads the shared feature scaffolding, keeps the `implicit-carry` lane additive, and makes the proof-layer plumbing easier to validate incrementally.
 
 ## References
 
