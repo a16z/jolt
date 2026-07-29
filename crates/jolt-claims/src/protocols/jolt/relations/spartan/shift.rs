@@ -66,6 +66,7 @@ pub struct SpartanShiftChallenges<F> {
 /// sumcheck (and `next_is_noop` from the product remainder) to the shifted
 /// column at the same cycle, folded by `gamma` and weighted by the `EqPlusOne`
 /// publics.
+#[derive(Clone)]
 pub struct Shift {
     shape: TraceDimensions,
 }

@@ -595,7 +595,7 @@ where
         ),
         (
             BooleanityChallenge::Gamma.into(),
-            input.stage6a.challenges.booleanity_gamma,
+            input.stage6a.challenges.booleanity.gamma,
         ),
         (
             InstructionRaVirtualizationChallenge::Gamma.into(),
@@ -744,20 +744,16 @@ where
         .batch_consistency
         .try_instance_point(booleanity_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
+    // The (little-endian) reference cycle is the reversed stage-5 instruction
+    // cycle, so its big-endian form here is the stage-5 point itself.
     let reference_eq_point = input
         .stage6a
         .challenges
-        .booleanity_reference_address
+        .booleanity
+        .reference_address
         .iter()
         .rev()
-        .chain(
-            input
-                .stage6a
-                .challenges
-                .booleanity_reference_cycle
-                .iter()
-                .rev(),
-        )
+        .chain(input.stage5.output_points.instruction_r_cycle().iter())
         .copied()
         .collect::<Vec<_>>();
     let booleanity_full_point = [

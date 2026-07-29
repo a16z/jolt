@@ -18,7 +18,7 @@ impl VirtualAssertHalfwordAlignment {
         cpu: &mut Cpu,
         _: &mut <VirtualAssertHalfwordAlignment as RISCVInstruction>::RAMAccess,
     ) {
-        let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm);
+        let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm as i64);
         assert!(
             address & 1 == 0,
             "RAM access (LH or LHU) is not halfword aligned: {address:x}"

@@ -12,6 +12,7 @@ use jolt_program::{
     preprocess::JoltProgramPreprocessing,
 };
 
+use crate::backend::ProgramSource;
 use crate::witnesses::ram_access_address;
 use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
@@ -106,6 +107,12 @@ pub struct TraceBackend<'a, T: TraceSource> {
     pub trace: TraceOutput<T>,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness<'a>>,
+}
+
+impl<T: TraceSource> ProgramSource for TraceBackend<'_, T> {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
+        self.preprocessing
+    }
 }
 
 impl<'a, T: TraceSource> TraceBackend<'a, T> {

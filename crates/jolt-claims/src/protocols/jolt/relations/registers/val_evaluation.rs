@@ -35,6 +35,7 @@ pub struct RegistersValEvaluationInputClaims<C> {
 
 /// The registers val-evaluation sumcheck: relates the register `val` opening to
 /// `rd_inc * rd_wa` weighted by the `LtCycle` public.
+#[derive(Clone)]
 pub struct ValEvaluation {
     shape: TraceDimensions,
 }

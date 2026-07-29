@@ -411,7 +411,6 @@ mod support {
             public_io,
             proof,
             trusted_advice_commitment,
-            false,
         )
         .expect("modular proof must verify end-to-end");
     }
@@ -478,15 +477,13 @@ mod muldiv {
         let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
 
-        let legacy_pre_stage1 =
-            verify_until_stage1::<DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                &verifier_preprocessing,
-                &public_io,
-                &legacy_proof,
-                None,
-                false,
-            )
-            .expect("legacy proof must verify through stage 0");
+        let legacy_pre_stage1 = verify_until_stage1::<
+            DoryScheme,
+            Pedersen<Bn254G1>,
+            Blake2bTranscript,
+            _,
+        >(&verifier_preprocessing, &public_io, &legacy_proof, None)
+        .expect("legacy proof must verify through stage 0");
 
         // --- New-prover side: trace independently through the modular stack.
         let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
@@ -700,7 +697,7 @@ mod muldiv {
             // The stage-5 ratchet: prove, then replay legacy's proof through
             // the verifier's stage 5 for the boundary state.
             let stage5 =
-                prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript, _>(
+                prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
                     backend,
                     &mut session,
                     &legacy_pre_stage1.checked,
@@ -745,7 +742,7 @@ mod muldiv {
             // The stage-6a ratchet: prove, then replay legacy's proof through
             // the verifier's stage 6a for the boundary state.
             let stage6a =
-                prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript, _>(
+                prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
                     backend,
                     &mut session,
                     &legacy_pre_stage1.checked,
@@ -769,6 +766,7 @@ mod muldiv {
 
             let legacy_stage6a = jolt_verifier::stages::stage6a::verify(
                 &legacy_pre_stage1.checked,
+                &prover_preprocessing.verifier,
                 &legacy_proof,
                 &formula_dimensions,
                 &mut legacy_transcript,
@@ -842,10 +840,6 @@ mod muldiv {
                     &prover_preprocessing,
                     &stage4.clear_output,
                     &stage6b.clear_output,
-                    stage6b.trusted_advice_member,
-                    stage6b.untrusted_advice_member,
-                    stage6b.bytecode_reduction_member,
-                    stage6b.program_image_member,
                     &witness,
                     &mut new_transcript,
                 )

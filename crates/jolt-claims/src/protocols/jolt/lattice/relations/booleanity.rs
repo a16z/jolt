@@ -113,6 +113,7 @@ impl SymbolicSumcheck for LatticeBooleanity {
 /// (the address phase is column-agnostic, so the base `BooleanityAddressPhase`
 /// serves both modes), with the output fold extended over the unsigned-inc
 /// chunk and msb polynomials.
+#[derive(Clone)]
 pub struct LatticeBooleanityCyclePhase {
     shape: LatticeBooleanityDimensions,
 }

@@ -33,7 +33,10 @@ use crate::{
     proof::JoltProof,
     stages::{
         stage4::{Stage4ClearOutput, Stage4Output},
-        stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
+        stage6b::{
+            committed_reduction_cycle_phase::advice_reference_point_from_upstream,
+            outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput,
+        },
         zk::committed,
         PrecommittedSchedule,
     },
@@ -197,10 +200,7 @@ pub fn build_stage7_sumchecks<F: Field>(
     // in ZK), the clear-only reference the advice `FinalScale` term reads.
     let advice_reference = |kind| {
         clear.and_then(|(stage4, _)| {
-            stage4
-                .ram_val_check_init
-                .advice_contribution(kind)
-                .map(|contribution| contribution.opening_point.clone())
+            advice_reference_point_from_upstream(&stage4.ram_val_check_init, kind)
         })
     };
 

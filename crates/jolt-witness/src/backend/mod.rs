@@ -2,8 +2,9 @@
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::Field;
+use jolt_program::preprocess::JoltProgramPreprocessing;
 
-use crate::{Shape, WitnessBundle, WitnessError};
+use crate::{RowSource, Shape, WitnessBundle, WitnessError};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod fixed;
@@ -55,3 +56,21 @@ pub trait JoltWitnessOracle<F: Field> {
     /// serves.
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError>;
 }
+
+/// The full program preprocessing behind the witness: the kernels whose
+/// tables materialize from the program itself (the bytecode stage-value
+/// fold, the reduction chunk grids, the program-image words) read it off the
+/// witness plane inside `prepare`.
+pub trait ProgramSource {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing;
+}
+
+/// The full witness plane a prover kernel prepares against: the id-indexed
+/// oracle surface, the sequential row source (kernels collect their own
+/// typed bundles through [`crate::collect_bundles`], so no stage recipe
+/// stages row vectors on the side), and the program view.
+/// Blanket-implemented; the supertrait set is exactly what kernels consume.
+pub trait JoltWitnessPlane<F: Field>: JoltWitnessOracle<F> + RowSource + ProgramSource {}
+
+impl<F: Field, T> JoltWitnessPlane<F> for T where T: JoltWitnessOracle<F> + RowSource + ProgramSource
+{}
