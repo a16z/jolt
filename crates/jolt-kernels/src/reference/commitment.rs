@@ -25,6 +25,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 
@@ -345,7 +346,7 @@ impl<F: Field> MaterializedColumn<F> {
         };
         Self {
             kind,
-            table: vec![F::zero(); table_len],
+            table: unsafe_allocate_zero_vec(table_len),
             cycle: 0,
             cycle_stride: if grid.order == TracePolynomialOrder::AddressMajor {
                 grid.cycle_stride()

@@ -1,5 +1,8 @@
 //! RAM virtual polynomials and memory-state reconstruction.
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use super::*;
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
@@ -20,7 +23,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
         let mut state = self.initial_ram_state()?;
-        let mut values = vec![F::zero(); addresses * cycles];
+        let mut values = crate::alloc::zero_table(addresses * cycles);
         let mut trace = self.trace.trace.clone();
 
         for cycle in 0..cycles {
@@ -53,7 +56,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn materialize_ram_ra<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
-        let mut values = vec![F::zero(); addresses * cycles];
+        let mut values = crate::alloc::zero_table(addresses * cycles);
         let mut trace = self.trace.trace.clone();
 
         for cycle in 0..cycles {
@@ -71,6 +74,11 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     }
 
     pub(crate) fn materialize_ram_val_final<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+        #[cfg(feature = "parallel")]
+        return self
+            .final_ram_state()
+            .map(|state| state.into_par_iter().map(F::from_u64).collect());
+        #[cfg(not(feature = "parallel"))]
         self.final_ram_state()
             .map(|state| state.into_iter().map(F::from_u64).collect())
     }
