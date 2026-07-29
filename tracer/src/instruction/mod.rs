@@ -617,10 +617,9 @@ macro_rules! define_rv64imac_enums {
 
         impl Instruction {
             pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-                let source = self.source_instruction();
                 // Rewrite instructions with rd=x0 via inline_sequence so the
                 // constraint system never sees rd=x0.
-                if source.row().operands.rd == Some(0)
+                if self.normalized_rd() == Some(0)
                     && !matches!(
                         self,
                         Instruction::SCW(_)
@@ -768,6 +767,22 @@ macro_rules! define_rv64imac_enums {
                         Instruction::$instr(instr) => instr.has_side_effects(),
                     )*
                     Instruction::INLINE(instr) => instr.has_side_effects(),
+                }
+            }
+
+            /// The normalized rd operand, without constructing a full
+            /// `SourceInstruction`. Matches `source_instruction().row().operands.rd`
+            /// (same `From<Format> for NormalizedOperands` conversions).
+            #[inline]
+            fn normalized_rd(&self) -> Option<u8> {
+                match self {
+                    Instruction::NoOp => None,
+                    Instruction::UNIMPL => None,
+                    $(
+                        $(#[$meta])*
+                        Instruction::$instr(instr) => NormalizedOperands::from(instr.operands).rd,
+                    )*
+                    Instruction::INLINE(inline) => NormalizedOperands::from(inline.operands).rd,
                 }
             }
 
