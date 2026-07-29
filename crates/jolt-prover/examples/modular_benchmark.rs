@@ -129,6 +129,8 @@ enum Backend {
     #[default]
     Reference,
     Optimized,
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Metal,
 }
 
 /// Benchmark the modular prover end to end, mirroring
@@ -180,6 +182,8 @@ fn main() {
     let backend_suffix = match cli.backend {
         Backend::Reference => "",
         Backend::Optimized => "_optimized",
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        Backend::Metal => "_metal",
     };
     let trace_name = format!(
         "modular_{}_{scale}{backend_suffix}",

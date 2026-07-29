@@ -341,6 +341,11 @@ sysinfo = "0.39"
 memory-stats = { version = "1.0.0", features = ["always_use_statm"] }
 libc = "0.2"
 
+# Apple Metal bindings (macOS-only, used behind jolt-kernels' `metal` feature)
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-metal = "0.3.2"
+
 # Parallel Processing
 rayon = { version = "^1.12.0" }
 

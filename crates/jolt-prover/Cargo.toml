@@ -15,6 +15,10 @@ workspace = true
 default = ["parallel"]
 parallel = ["jolt-kernels/parallel"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+# Forwarded to jolt-kernels: Apple Metal device kernels (macOS only, no-op
+# elsewhere). Lets `modular_benchmark --backend metal` exist without touching
+# non-metal builds.
+metal = ["jolt-kernels/metal"]
 
 [dependencies]
 common.workspace = true
