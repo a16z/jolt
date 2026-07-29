@@ -1,30 +1,34 @@
-//! The optimized backend: legacy-ported RAM-family kernels behind the same
-//! slots the reference backend serves, byte-identical round polynomials and
-//! output claims by construction (the parity tests in each module pin them
-//! against the naive tier on synthetic traces; `byte_diff` pins the full
-//! proofs against `jolt-prover-legacy`).
+//! The optimized backend: legacy-ported kernels behind the same slots the
+//! reference backend serves, byte-identical round polynomials and output
+//! claims by construction (the parity tests in each module pin them against
+//! the naive tier on synthetic traces; `byte_diff` pins the full proofs
+//! against `jolt-prover-legacy`).
 //!
-//! Wave 1 covers the four RAM relations whose reference kernels materialize
-//! the dense `(K × T)` `ra`/`val` grids:
+//! The shared playbook, per kernel:
+//! - **Sparse one-hot access**: per-cycle hot indices off typed witness
+//!   bundles ([`jolt_witness::collect_bundles`]) replace `oracle_table` walks
+//!   over materialized `K x T` one-hot grids — `O(T)` per polynomial instead
+//!   of `O(K·T)`.
+//! - **Split-eq pushforwards**: `Σ_{j: idx(j)=k} eq(r, j)` accumulated as
+//!   `E_hi[j_hi] · (Σ_{j_lo} E_lo[j_lo])` — inner sums are additions only,
+//!   one multiplication per touched slot per outer block.
+//! - **Linear-leaf fusion**: eq/selector leaves that enter the summand
+//!   linearly are folded into one combined coefficient table (or a constant),
+//!   shrinking per-round bind and extension work; exactness of multilinear
+//!   extension under scalar-weighted sums keeps the round messages
+//!   byte-identical.
+//! - **Eval-at-1 recovery**: round messages sample the summand at
+//!   `t ∈ {0, 2, .., degree}` and recover `s(1) = previous_claim − s(0)`,
+//!   the same trade the legacy prover makes (a dishonest input claim
+//!   surfaces at the driver's final-claim check instead of the round check).
+//! - **Rayon cycle walks** with per-thread partial accumulators.
 //!
-//! - [`ram_read_write`]: the full legacy port — phased sparse read-write
-//!   matrix (cycle-major then address-major) with Gruen split-eq cycle
-//!   rounds. `O(accesses)` state instead of `O(K·T)`.
-//! - [`ram_val_check`], [`ram_ra_claim_reduction`], [`ram_raf_evaluation`]:
-//!   their round loops were already over single-dimension tables; only the
-//!   reference `prepare` exploded (grid materialization + fold). These
-//!   kernels build the *same* tables in `O(T + K)` from one shared trace
-//!   walk and hand them to the naive round loop, so parity is structural.
-//!
-//! Every other slot stays on the reference tier.
+//! Each module documents its own port; [`JoltBackend::optimized`] wires them.
 
-use jolt_field::Field;
+use jolt_field::{Field, RingAccumulator};
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
-use crate::reference::precommitted_reduction::ReferencePrecommittedAddress;
-use crate::reference::spartan_outer::ReferenceOuterRemainder;
-use crate::reference::spartan_product::ReferenceProductRemainder;
-use crate::{JoltBackend, ReferenceBackend};
+use crate::JoltBackend;
 
 pub mod booleanity;
 pub mod bytecode_read_raf;
@@ -62,60 +66,55 @@ where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// The optimized backend: the four RAM-family slots served by the
-    /// legacy-ported kernels in this module, every other slot identical to
-    /// [`JoltBackend::reference`]. Same construction bounds as the reference
-    /// backend (the commit slot is the reference streaming implementation).
+    /// The optimized backend: [`JoltBackend::reference`] with every slot this
+    /// module tree ports overwritten by its optimized kernel, so the two
+    /// backends cannot drift on the slots left untouched (`spartan_shift`,
+    /// `ram_output_check`, `ram_ra_virtualization`, the precommitted /
+    /// advice reduction slots, and the commit / opening slots). Same
+    /// construction bounds as the reference backend (the commit slot is the
+    /// reference streaming implementation), plus the accumulator bound the
+    /// registers kernels' compact-scalar walks need.
     pub fn optimized() -> Self
     where
         PCS: StreamingCommitment,
+        F::Accumulator: RingAccumulator,
     {
-        Self {
-            commit: Box::new(ReferenceBackend),
-            spartan_outer_uniskip: Box::new(ReferenceBackend),
-            spartan_outer_remainder: Box::new(ReferenceOuterRemainder),
-            spartan_product_uniskip: Box::new(ReferenceBackend),
-            spartan_product_remainder: Box::new(ReferenceProductRemainder),
-            ram_read_write: Box::new(OptimizedBackend),
-            instruction_claim_reduction: Box::new(ReferenceBackend),
-            ram_raf_evaluation: Box::new(OptimizedBackend),
-            ram_output_check: Box::new(ReferenceBackend),
-            spartan_shift: Box::new(ReferenceBackend),
-            instruction_input: Box::new(ReferenceBackend),
-            registers_claim_reduction: Box::new(ReferenceBackend),
-            registers_read_write: Box::new(ReferenceBackend),
-            ram_val_check: Box::new(OptimizedBackend),
-            advice_opening: Box::new(ReferenceBackend),
-            instruction_read_raf: Box::new(ReferenceBackend),
-            ram_ra_claim_reduction: Box::new(OptimizedBackend),
-            registers_val_evaluation: Box::new(ReferenceBackend),
-            bytecode_read_raf_address: Box::new(ReferenceBackend),
-            booleanity_address: Box::new(ReferenceBackend),
-            bytecode_read_raf_cycle: Box::new(ReferenceBackend),
-            booleanity_cycle: Box::new(ReferenceBackend),
-            ram_hamming_booleanity: Box::new(ReferenceBackend),
-            ram_ra_virtualization: Box::new(ReferenceBackend),
-            instruction_ra_virtualization: Box::new(ReferenceBackend),
-            inc_claim_reduction: Box::new(ReferenceBackend),
-            trusted_advice_cycle: Box::new(ReferenceBackend),
-            untrusted_advice_cycle: Box::new(ReferenceBackend),
-            bytecode_reduction_cycle: Box::new(ReferenceBackend),
-            program_image_reduction_cycle: Box::new(ReferenceBackend),
-            hamming_weight_claim_reduction: Box::new(ReferenceBackend),
-            trusted_advice_address: Box::new(ReferencePrecommittedAddress::new(
-                "stage 6b parked no trusted-advice reduction state for the scheduled address phase",
-            )),
-            untrusted_advice_address: Box::new(ReferencePrecommittedAddress::new(
-                "stage 6b parked no untrusted-advice reduction state for the scheduled address phase",
-            )),
-            bytecode_reduction_address: Box::new(ReferencePrecommittedAddress::new(
-                "stage 6b parked no bytecode reduction state for the scheduled address phase",
-            )),
-            program_image_reduction_address: Box::new(ReferencePrecommittedAddress::new(
-                "stage 6b parked no program-image reduction state for the scheduled address phase",
-            )),
-            joint_opening: Box::new(ReferenceBackend),
-        }
+        let mut backend = Self::reference();
+
+        backend.spartan_outer_uniskip = Box::new(spartan_outer::OptimizedOuterUniskip);
+        backend.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);
+        backend.spartan_product_uniskip = Box::new(spartan_product::OptimizedProductUniskip);
+        backend.spartan_product_remainder = Box::new(spartan_product::OptimizedProductRemainder);
+
+        backend.ram_read_write = Box::new(OptimizedBackend);
+        backend.ram_val_check = Box::new(OptimizedBackend);
+        backend.ram_ra_claim_reduction = Box::new(OptimizedBackend);
+        backend.ram_raf_evaluation = Box::new(OptimizedBackend);
+
+        backend.instruction_read_raf = Box::new(instruction_read_raf::OptimizedInstructionReadRaf);
+        backend.instruction_ra_virtualization =
+            Box::new(instruction_ra_virtualization::OptimizedInstructionRaVirtualization);
+        backend.instruction_claim_reduction =
+            Box::new(instruction_claim_reduction::OptimizedInstructionClaimReduction);
+        backend.instruction_input = Box::new(instruction_input::OptimizedInstructionInput);
+
+        backend.registers_read_write = Box::new(registers_read_write::OptimizedRegistersReadWrite);
+        backend.registers_val_evaluation =
+            Box::new(registers_val_evaluation::OptimizedRegistersValEvaluation);
+        backend.registers_claim_reduction =
+            Box::new(registers_claim_reduction::OptimizedRegistersClaimReduction);
+
+        backend.booleanity_address = Box::new(booleanity::OptimizedBooleanityAddress);
+        backend.booleanity_cycle = Box::new(booleanity::OptimizedBooleanityCycle);
+        backend.ram_hamming_booleanity =
+            Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
+
+        backend.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
+        backend.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
+        backend.hamming_weight_claim_reduction = Box::new(OptimizedHammingWeightClaimReduction);
+        backend.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
+
+        backend
     }
 }
 

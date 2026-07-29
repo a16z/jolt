@@ -19,8 +19,9 @@
 //! `val_init` is reconstructed from the trace and the `RamValFinal` oracle
 //! (the witness plane does not expose the initial RAM state): an accessed
 //! address's initial value is its first access's pre-value, an untouched
-//! address's final value IS its initial value. Honest-prover data path; a
-//! divergent witness fails the engine's round check loudly.
+//! address's final value IS its initial value. Honest-prover data path; with
+//! hint-anchored round messages a divergent witness surfaces at the driver's
+//! final-claim check rather than a per-round check.
 //!
 //! Only the default read-write config (phase 1 = all cycle rounds) is
 //! supported, like the reference kernel. The legacy phase-2/phase-3 split of
