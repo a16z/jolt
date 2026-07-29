@@ -48,10 +48,11 @@ pub enum KernelId {
     FrPow2k,
     FrBind,
     FrBindEval,
+    G1SegSum,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -59,6 +60,7 @@ impl KernelId {
         Self::FrPow2k,
         Self::FrBind,
         Self::FrBindEval,
+        Self::G1SegSum,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -70,6 +72,7 @@ impl KernelId {
             Self::FrPow2k => "jk_fr_pow2k",
             Self::FrBind => "jk_fr_bind",
             Self::FrBindEval => "jk_fr_bind_eval",
+            Self::G1SegSum => "jk_g1_seg_sum",
         }
     }
 
@@ -104,10 +107,11 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             field::constants_preamble(),
             include_str!("shaders/fr.metal"),
             include_str!("shaders/kernels.metal"),
+            include_str!("shaders/g1.metal"),
         );
         let library = device
             .newLibraryWithSource_options_error(&NSString::from_str(&source), None)

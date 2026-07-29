@@ -31,12 +31,17 @@
 mod buffers;
 mod error;
 mod field;
+mod g1;
 mod runtime;
 pub mod testing;
 
 pub use buffers::{DeviceBuffer, PageAlignedVec, PAGE_SIZE};
 pub use error::MetalError;
-pub use field::{fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS};
+pub use field::{
+    fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS,
+    G1_AFFINE_U32_STRIDE,
+};
+pub use g1::{bases_as_u32s, g1_seg_sum_dispatch, g1_seg_sums, jac_from_device_limbs, JAC_U32S};
 pub use runtime::{ComputePass, KernelId, MetalContext, MAX_EVAL_POINTS, THREADGROUP_SIZE};
 
 use jolt_field::Field;
