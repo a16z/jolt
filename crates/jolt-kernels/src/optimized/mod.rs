@@ -32,6 +32,8 @@ pub mod ram_read_write;
 mod ram_trace;
 pub mod ram_val_check;
 mod rw_matrix;
+pub mod spartan_outer;
+pub mod spartan_product;
 
 /// The optimized implementations' marker type: implements the RAM-family
 /// [`PrepareKernel`](crate::PrepareKernel) slots (each module here hosts its
