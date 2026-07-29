@@ -192,11 +192,14 @@ impl<const N: usize> SignedBigIntHi32<N> {
             // Word 1 sums two full 64x64 products plus the carry, which can
             // exceed u128 (2 * (2^64 - 1)^2 > 2^128); one product plus the
             // carry always fits, so add the second with overflow tracking.
+            // (The old fused sum's failure mode was a debug-only panic: its
+            // wrapped carries cancel modulo 2^64, and only the low 32 bits
+            // of word 2 survive, so release output happened to be correct.)
             let p01 = (a0 as u128) * (b1 as u128);
             let p10 = (a1 as u128) * (b0 as u128);
             let (sum1, overflow1) = (p01 + carry0).overflowing_add(p10);
             let r1 = sum1 as u64;
-            // True carry into word 2 (up to 2^65): high half plus the
+            // True carry into word 2 (at most 2^65 - 3): high half plus the
             // overflowed 2^128 bit, which contributes 2^64 to the carry.
             let carry1 = (sum1 >> 64) + ((overflow1 as u128) << 64);
 
