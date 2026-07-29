@@ -115,6 +115,13 @@ impl DecodeCache {
     /// instruction at its address is the same variant. Mismatches (cache
     /// disabled, synthetic addresses, nested expansions) fall back to `None`,
     /// meaning "expand fresh, don't cache".
+    ///
+    /// INVARIANT: matching on the variant alone is sound because expansion
+    /// callers pass the instruction they were dispatched with, which came
+    /// from this same per-PC cache entry (or from a fresh decode of the same
+    /// text bytes) — same slot + same variant implies the identical decoded
+    /// instruction, operands included. Stores into the text range clear the
+    /// slot, so a rewritten instruction can never alias an old entry.
     #[inline]
     pub fn expansion_slot(&self, source: &Instruction) -> Option<u32> {
         let pc = source.address();
@@ -125,8 +132,16 @@ impl DecodeCache {
         match self.slots.get(slot) {
             Some(&index) if index != EMPTY => {
                 let entry = &self.entries[index as usize];
-                (core::mem::discriminant(&entry.instr) == core::mem::discriminant(source))
-                    .then_some(index)
+                let matches =
+                    core::mem::discriminant(&entry.instr) == core::mem::discriminant(source);
+                debug_assert!(
+                    !matches || entry.instr == *source,
+                    "expansion_slot: cached instruction at pc {pc:#x} differs from source \
+                     ({:?} vs {:?})",
+                    entry.instr,
+                    source
+                );
+                matches.then_some(index)
             }
             _ => None,
         }

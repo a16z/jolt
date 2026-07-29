@@ -406,14 +406,17 @@ impl Memory {
 
     /// Take the underlying collection of doublewords out of the memory structure, replacing it
     /// with an empty collection. We use this instead of `std::mem::take` in order to preserve the
-    /// `num_doublewords` value while still taking the underlying memory data structure.
+    /// `num_doublewords` value in the returned memory while still taking the underlying data
+    /// structure. The emptied `self` reports zero capacity, consistent with its empty backing.
     pub(crate) fn take_memory(&mut self) -> Self {
-        Self {
+        let taken = Self {
             data: MemoryData {
                 backing: std::mem::replace(&mut self.data.backing, MemoryBacking::Flat(Vec::new())),
                 num_doublewords: self.data.num_doublewords,
                 checkpoint: None,
             },
-        }
+        };
+        self.data.num_doublewords = 0;
+        taken
     }
 }

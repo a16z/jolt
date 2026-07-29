@@ -53,7 +53,6 @@ const TRACE_CAPACITY_RESERVE: usize = 1 << 24;
 /// * `Memory` — final guest memory state
 /// * `JoltDevice` — final I/O device state
 /// * `AdviceTape` — the populated advice tape
-
 #[tracing::instrument(skip_all)]
 #[expect(clippy::expect_used)]
 pub fn trace(
@@ -138,8 +137,12 @@ pub fn trace(
 /// This is the fast first-pass seam for two-pass parallel tracing: the CPU
 /// state it produces is bit-identical to trace mode at every tick boundary
 /// (instructions whose trace path expands a virtual sequence walk the same
-/// cached sequence, just without row emission), and it terminates on the
-/// same PC-stall heuristic as [`trace`].
+/// cached sequence, just without row emission).
+///
+/// Termination is *almost* the same as [`trace`]: both stop on a PC stall,
+/// but [`trace`] additionally stops on any step that emits zero rows (a
+/// trap or WFI-sleep tick), which this path cannot observe. No valid Jolt
+/// guest hits a zero-row step mid-program.
 #[tracing::instrument(skip_all)]
 #[expect(clippy::expect_used)]
 pub fn execute(
@@ -697,7 +700,15 @@ impl LazyTracer for CheckpointingTracer {
             self.finished = true;
             let emulator = &mut self.emulator_state;
             let cpu = emulator.get_mut_cpu();
-            self.final_memory_state = Some(cpu.mmu.memory.memory.take_memory());
+            // When checkpoint saving is active, the caller still saves one
+            // final checkpoint after termination, which snapshots the live
+            // memory's capacity — clone instead of emptying it.
+            let memory = &mut cpu.mmu.memory.memory;
+            self.final_memory_state = Some(if memory.data.is_saving_checkpoints() {
+                memory.clone()
+            } else {
+                memory.take_memory()
+            });
             None
         } else {
             self.trace_steps_since_last_checkpoint += 1;

@@ -446,7 +446,7 @@ macro_rules! define_rv64imac_enums {
     (
         instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
-        #[derive(Debug, IntoStaticStr, From, Clone, Copy, Serialize, Deserialize, EnumIter)]
+        #[derive(Debug, IntoStaticStr, From, Clone, Copy, Serialize, Deserialize, EnumIter, PartialEq)]
         pub enum Instruction {
             /// No-operation instruction (address)
             NoOp,
