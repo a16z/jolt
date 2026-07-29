@@ -3,9 +3,11 @@
 
 pub mod outputs;
 /// Packed-build statement assembly: per-object packings, leaf-claim
-/// resolution, and the joint opening call.
+/// resolution, and the joint opening call. Public because the prover's
+/// packed stage-8 recipe assembles its native opening and auxiliary
+/// statements through the same leaf resolution.
 #[cfg(feature = "akita")]
-mod packed;
+pub mod packed;
 #[cfg(not(feature = "akita"))]
 pub mod precommitted;
 /// The reconstruction phase that opens the stage-8 region on the packed path:
