@@ -14,6 +14,7 @@ workspace = true
 [features]
 default = []
 test-utils = []
+parallel = ["dep:rayon"]
 field-inline = [
   "dep:rayon",
   "jolt-claims/field-inline",

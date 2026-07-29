@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 default = ["parallel"]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
+parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
 
 [dependencies]
 jolt-claims.workspace = true

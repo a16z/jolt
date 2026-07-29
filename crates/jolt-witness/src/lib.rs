@@ -29,6 +29,7 @@ pub mod field_inline;
 pub mod testing;
 pub mod witnesses;
 
+mod alloc;
 mod bundle;
 mod consumer;
 mod error;
