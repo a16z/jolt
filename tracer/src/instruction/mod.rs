@@ -677,12 +677,11 @@ macro_rules! define_rv64imac_enums {
                         }
                     )*
                     Instruction::INLINE(instr) => {
-                        let mut cycle: RISCVCycle<INLINE> = RISCVCycle {
-                            instruction: *instr,
-                            register_state: Default::default(),
-                            ram_access: Default::default(),
-                        };
-                        instr.execute(cpu, &mut cycle.ram_access);
+                        // An INLINE has no single-step semantics (INLINE::exec
+                        // panics); executing it means executing its expansion
+                        // rows, with runtime advice patched the same way the
+                        // traced path does.
+                        instr.trace(cpu, None);
                     }
                 }
             }

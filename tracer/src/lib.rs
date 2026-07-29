@@ -130,6 +130,55 @@ pub fn trace(
     )
 }
 
+/// Executes a RISC-V program to completion without materializing trace rows
+/// (the emulator's execute-only path). Returns the executed instruction count
+/// (source instructions, not expanded trace rows), the final `JoltDevice`,
+/// and the populated advice tape.
+///
+/// This is the fast first-pass seam for two-pass parallel tracing: it runs
+/// the same program over the same termination heuristic (PC stall) as
+/// [`trace`], just without Cycle construction.
+#[tracing::instrument(skip_all)]
+#[expect(clippy::expect_used)]
+pub fn execute(
+    elf_contents: &[u8],
+    elf_path: Option<&std::path::PathBuf>,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+    memory_config: &MemoryConfig,
+    advice_tape: Option<cpu::AdviceTape>,
+) -> (usize, JoltDevice, cpu::AdviceTape) {
+    let mut emulator = setup_emulator_with_backtraces(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+        advice_tape,
+    );
+    let mut prev_pc: u64 = 0;
+    loop {
+        let pc = emulator.get_cpu().read_pc();
+        if pc == prev_pc {
+            break;
+        }
+        emulator.tick(None);
+        prev_pc = pc;
+    }
+
+    let executed = emulator.get_cpu().trace_len;
+    let advice_tape_result = emulator.take_advice_tape();
+    let jolt_device = emulator
+        .get_mut_cpu()
+        .get_mut_mmu()
+        .jolt_device
+        .take()
+        .expect("JoltDevice was not initialized");
+    (executed, jolt_device, advice_tape_result)
+}
+
 use crate::utils::trace_writer::{TraceBatchCollector, TraceWriter, TraceWriterConfig};
 
 pub fn trace_to_file(

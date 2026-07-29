@@ -54,6 +54,25 @@ fn bench(guest: &str, input: Vec<u8>, runs: usize) {
     let median = times[times.len() / 2];
     let mhz = len as f64 / median / 1e6;
     println!("{guest}: {len} cycles, times(s)={times:.3?}, median={median:.3}s => {mhz:.2} MHz");
+
+    // Execute-only pass: same program span, no Cycle construction. MHz is
+    // reported in trace-row-equivalents (rows the traced run produced over
+    // the wall time of the execute-only run) — the rate that matters for a
+    // two-pass parallel tracer's first pass.
+    let mut exec_times = Vec::new();
+    for _ in 0..runs {
+        let start = Instant::now();
+        let executed = program.execute(&input, &[], &[]);
+        let dt = start.elapsed().as_secs_f64();
+        assert!(executed > 0);
+        exec_times.push(dt);
+    }
+    exec_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let exec_median = exec_times[exec_times.len() / 2];
+    let exec_mhz = len as f64 / exec_median / 1e6;
+    println!(
+        "{guest} (execute-only): times(s)={exec_times:.3?}, median={exec_median:.3}s => {exec_mhz:.2} MHz row-equiv"
+    );
 }
 
 fn main() {
