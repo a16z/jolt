@@ -9,16 +9,17 @@
 
 ## Summary
 
-Large-integer arithmetic in Jolt currently pays a substantial overhead to materialize carries explicitly. For example, a `u64` add often needs both `ADD` and `SLTU` to obtain the low 64-bit result and the carry bit, and that extra materialization creates additional register writes that directly increase memory-checking cost. This feature introduces a proof-level implicit carry lane that is derived from already-constrained arithmetic, threads it row-to-row without making it an architectural register, and adds `ADDC` and `MULC` instructions that consume it.
+Large-integer arithmetic in Jolt currently pays a substantial overhead to materialize carries explicitly. For example, a `u64` add often needs both `ADD` and `SLTU` to obtain the low 64-bit result and the carry bit, and that extra materialization creates additional register writes that directly increase memory-checking cost. This feature introduces an implicit carry mechanism for arithmetic instructions without turning carry into an architectural register.
 
-The key design choice is that carry is **not** represented as direct previous-row access. Instead, the system will represent:
+The design uses a small, grounded proof story:
 
-- `Carry(t)`: the carry visible to row `t`
-- `NextCarry(t)`: the carry exported by row `t` to row `t + 1`
+- one new committed `Carry` column holding the incoming carry for each row
+- one new product-virtualized value `CarryUsed = UsesCarry * Carry`
+- one new outer value `NextCarry` holding the row's carry-out
 
-and will constrain `Carry(t + 1) = NextCarry(t)` using the same forward shift-style proof machinery already used for other `Next*` values. This avoids memory checking, keeps the carry proof-level only, and matches the structure of the existing modular witness and verifier stack.
+`Carry` is grounded by a committed polynomial, `CarryUsed` is grounded by product virtualization, and `NextCarry` is grounded by a forward shift relation to the next row's committed `Carry`.
 
-This work is landed behind a Cargo feature named `implicit-carry`. The implementation should treat `implicit-carry` as an additive protocol axis, parallel to `field-inline`. The design goal is a single base implementation plus optional feature contributions.
+This work is landed behind a Cargo feature named `implicit-carry`. The implementation should treat `implicit-carry` as an additive protocol axis, parallel to `field-inline`, rather than as four bespoke protocol variants.
 
 ## Intent
 
@@ -28,7 +29,7 @@ Introduce an implicit carry mechanism for arithmetic instructions so that:
 
 - `ADD` and `MUL` produce both a low 64-bit `rd` result and a high 64-bit carry-out.
 - `ADDC` and `MULC` consume the prior row's implicit carry-in.
-- The carry remains proof-level state only and does not become part of the architectural register file or RAM state.
+- Carry remains non-architectural: it is not part of the memory-checked register file or RAM state.
 - The carry is fully constrained, so a dishonest prover cannot equivocate about it and an honest prover is not rejected by an over-constrained relation.
 
 Concretely, for the arithmetic instructions in scope:
@@ -38,7 +39,7 @@ Concretely, for the arithmetic instructions in scope:
 - `ADDC`: `rd = low_64(rs1 + rs2 + Carry)`, `NextCarry = high_64(rs1 + rs2 + Carry)`
 - `MULC`: `rd = low_64(rs1 * rs2 + Carry)`, `NextCarry = high_64(rs1 * rs2 + Carry)`
 
-The carry is a full 64-bit value, not merely a boolean flag.
+The carry is a full 64-bit value, not merely a boolean overflow flag.
 
 ### Carry Policy
 
@@ -47,20 +48,22 @@ The carry policy is fixed as follows:
 - `Carry(0) = 0`
 - For carry-producing instructions (`ADD`, `MUL`, `ADDC`, `MULC`), `NextCarry` is the high 64 bits of the true 128-bit arithmetic result.
 - For all other instructions, `NextCarry = 0`.
-- Therefore, `ADDC` and `MULC` following a non-carry-producing instruction consume `0`.
+- Therefore `ADDC` and `MULC` following a non-carry-producing instruction consume `0`.
 
-This policy is preferred because it is simple, total, easy to document, and compatible with the existing forward-shift proof structure.
+This policy is total, simple, and easy to document. It also ensures that any instruction between a carry producer and a later `ADDC`/`MULC` consumer clobbers the carry to zero by design.
 
 ### Invariants
 
 The implementation must preserve the following properties:
 
-- The value consumed as `Carry(t)` is uniquely determined by the proof-visible arithmetic of row `t - 1`, except at `t = 0` where it is fixed to `0`.
+- The value consumed by `ADDC` and `MULC` is the committed incoming `Carry` for that row, fixed to `0` at row 0.
 - For `ADD`, `MUL`, `ADDC`, and `MULC`, the low 64 bits written to `rd` and the high 64 bits exported as `NextCarry` match the true arithmetic result.
 - `Carry` never participates in register or RAM memory checking.
-- `Carry` is visible only through proof-level virtual columns and shift constraints.
+- `Carry` is grounded by one committed column and then threaded through product and shift relations; it is not a free virtual value.
+- `CarryUsed = UsesCarry * Carry`.
+- `NextCarry(t) = Carry(t + 1)` for every non-padding row.
 - Standard and ZK proving modes agree on carry semantics.
-- Tampering with any claimed carry value must cause proof failure.
+- Tampering with the committed carry column, the derived `CarryUsed`, or any claimed `NextCarry` value must cause proof failure.
 
 `jolt-eval` impact:
 
@@ -82,8 +85,9 @@ The implementation must preserve the following properties:
 
 - [ ] Randomized tests over all `{ADD, MUL} -> {ADDC, MULC}` pairings produce correct low 64-bit outputs and carry propagation.
 - [ ] Proof generation and verification succeed for those pairings in standard mode (`--features host`) and ZK mode (`--features host,zk`).
-- [ ] Proof verification fails if one tampers with any claimed carry value.
+- [ ] Proof verification fails if one tampers with the committed `Carry` column, any derived `CarryUsed` value, or any claimed `NextCarry` value.
 - [ ] Documentation explains the carry model, the zero-default policy, the row-0 initialization rule, and the intended expert/manual use of `ADDC` and `MULC`.
+- [ ] Documentation warns that dependent carry chains must be contiguous in the final instruction stream because any intervening non-carry-producing instruction clears carry to `0`.
 
 ### Testing Strategy
 
@@ -96,8 +100,9 @@ New tests required:
 
 - Randomized correctness tests covering every `{ADD, MUL} -> {ADDC, MULC}` pairing.
 - End-to-end proof acceptance tests for those pairings in both standard and ZK modes.
-- Negative tests that mutate the incoming or outgoing carry and assert verification failure.
-- Unit tests for the new lookup semantics, witness extraction, row-0 carry initialization, shift relation changes, and outer-claim field ordering changes.
+- Negative tests that mutate the committed `Carry` witness and assert verification failure.
+- Negative tests that mutate the claimed `NextCarry` path and assert verification failure.
+- Unit tests for the new lookup semantics, product virtualization of `CarryUsed`, row-0 carry initialization, shift relation changes, and outer-claim field ordering changes.
 
 Because `implicit-carry` is cfg-gated, the supported matrix is `{field-inline on/off} x {implicit-carry on/off}`. The implementation should not fork into four separate codepaths, but CI and local validation should still cover the matrix with representative compile/test jobs:
 
@@ -135,15 +140,21 @@ Expected outcome:
 
 The central architectural decision is:
 
-**Carry is threaded as `Carry/NextCarry` using forward row-to-row proof plumbing, not as direct previous-row access and not as a memory-checked architectural register.**
+**carry is represented by one committed current-row column, one product-derived current-row value, and one outer carry-out value, not by a memory-checked architectural register and not by an ungrounded virtual column pair.**
 
-This is necessary because the modern stack is organized around current-row values plus `Next*` relations:
+This is necessary because:
 
-- `crates/jolt-witness/src/witnesses/mod.rs` exposes `Extract::extract(row, next, env)` but no previous-row accessor.
-- `crates/jolt-witness/src/backend/trace/cycle.rs` streams rows with a one-row lookahead window only.
-- `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs` is a forward shift relation over `Next*` openings.
+- the uniform R1CS layer only supports affine guards
+- the modern witness stack exposes `Extract::extract(row, next, env)` rather than previous-row access
+- every opened value must terminate in the claim DAG at a committed or otherwise grounded source
 
-Therefore the implementation should materialize the incoming carry as current-row data and constrain it against the prior row's `NextCarry` through the existing shift-style mechanism.
+The design therefore uses:
+
+- `Carry(t)`: committed incoming carry for row `t`
+- `CarryUsed(t) = UsesCarry(t) * Carry(t)`: product-virtualized current-row carry contribution
+- `NextCarry(t)`: outer carry-out for row `t`
+
+and constrains `NextCarry(t) = Carry(t + 1)` using the existing forward shift-style machinery.
 
 ### Cfg-Gated Composition Strategy
 
@@ -161,46 +172,48 @@ The important design rule is:
 Concretely:
 
 - Instruction inventories should be “base list plus cfg-appended feature entries,” not four distinct lists.
-- Outer-input enums and opening ids should be append-only, with `Carry` and `NextCarry` present only under `implicit-carry`.
-- R1CS row sets should be “existing rows plus carry rows,” not duplicated whole tables for each feature combination.
+- The committed witness set should be “existing columns plus optional `Carry`,” not duplicated whole witness inventories.
+- Product virtualization should be “existing rows plus optional `CarryUsed`.”
+- Outer-input enums should be append-only, with `CarryUsed` and `NextCarry` present only under `implicit-carry`.
+- Uniform R1CS row sets should be “existing rows plus carry rows,” not duplicated whole tables for each feature combination.
 - Shift batching should be “existing batch terms plus an optional carry term.”
 - Protocol metadata should record whether `implicit-carry` is enabled so mismatched prover/verifier builds fail closed.
 
-This means the repository will still have a 2x2 feature matrix for validation, but it should not require four separately maintained implementations. Most code should know only about its own feature lane; only geometry constants, proof config, and a few compile-time arrays need to observe the combined feature set.
-
 ### Representation
 
-The implementation should introduce two new proof-level virtual columns:
+The proof-visible carry state is:
 
-- `Carry`
-- `NextCarry`
+- one committed polynomial `Carry`
+- one virtual/product-derived value `CarryUsed`
+- one outer value `NextCarry`
 
 Semantics:
 
-- `Carry(t)` is the current row's implicit carry input.
-- `NextCarry(t)` is the carry exported by the current row.
-- `Carry(t + 1) = NextCarry(t)` for all non-padding rows.
+- `Carry(t)` is the current row's incoming carry.
+- `CarryUsed(t)` is `Carry(t)` on `ADDC`/`MULC` rows and `0` everywhere else.
+- `NextCarry(t)` is the carry exported by row `t`.
 - `Carry(0) = 0`.
+- `NextCarry(t) = Carry(t + 1)` for all non-padding rows.
 
-To make this compatible with the modular witness stack without changing the extractor API to `(prev, row, next, env)`, the execution trace should carry the current row's incoming carry explicitly.
+`Carry` is committed so the carry chain has a real grounding point in the claim DAG.
 
 ### Trace and Execution Model
 
 The runtime execution model should distinguish between:
 
 - **Emulator-local carry state**, used by the tracer to execute `ADDC` and `MULC`
-- **Proof-visible carry state**, stored on each `TraceRow` as the row's incoming carry
+- **Proof-visible carry state**, stored on each `TraceRow` as the row's incoming carry and then committed as the new `Carry` column
 
 Recommended behavior:
 
 - Add an emulator-local `carry: u64` field to `Cpu`.
 - For each executed instruction:
-  - record the current `cpu.carry` into the row's `carry` field,
-  - execute the instruction,
-  - update `cpu.carry` to the instruction's carry-out if it is `ADD`, `MUL`, `ADDC`, or `MULC`,
-  - otherwise set `cpu.carry = 0`.
+  - record the current `cpu.carry` into the row's `carry` field
+  - execute the instruction
+  - update `cpu.carry` to the instruction's carry-out if it is `ADD`, `MUL`, `ADDC`, or `MULC`
+  - otherwise set `cpu.carry = 0`
 
-This keeps the carry non-architectural while still making it available to the witness backend as ordinary current-row data.
+This keeps the carry non-architectural while making it available to the witness backend as ordinary current-row data.
 
 `Cpu::save_state_with_empty_memory` in `tracer/src/emulator/cpu.rs` must also preserve or intentionally reset the emulator-local carry field consistently with the chosen semantics.
 
@@ -229,15 +242,14 @@ All other instructions, including existing `AddOperands` and `MultiplyOperands` 
 
 This separation is required because:
 
-- `AddOperands` and `MultiplyOperands` are already used by many instructions whose lookup semantics do **not** split into low/high 64-bit halves.
-- In particular, gating the split constraint on `AddOperands || MultiplyOperands` would over-constrain `MULHU`, `ADDI`, `JAL`, and similar rows.
+- `AddOperands` and `MultiplyOperands` are already used by many instructions whose lookup semantics do not split into low/high 64-bit halves
+- `ProducesCarry` must isolate exactly the rows that participate in the low/high split
+- `UsesCarry` must isolate exactly the rows that actually consume the prior carry
 
 Packing note:
 
 - Today `CircuitFlagSet` in `crates/jolt-riscv/src/flags.rs` uses `u16`.
 - Adding both `UsesCarry` and `ProducesCarry` brings the flag count to exactly 16 variants, which still fits.
-
-`InstructionFlags` do not need a new operand-routing bit for carry if carry is handled as a dedicated virtual column rather than by expanding the existing left/right operand routing.
 
 ### Guest Encoding and Test Emission
 
@@ -283,8 +295,6 @@ Tests that need to emit these instructions directly should do so via raw `.insn 
 - `crates/jolt-prover-legacy/src/zkvm/proof.rs`
   - Populate the new protocol config field from the active Cargo feature set.
 
-The intended structure is additive propagation, not separate `all(field-inline, implicit-carry)` implementations in every crate. Only a few protocol/geometry aggregation points should need to branch on both.
-
 #### Shared instruction universe
 
 - `crates/jolt-riscv/src/lib.rs`
@@ -320,7 +330,7 @@ The intended structure is additive propagation, not separate `all(field-inline, 
 - `crates/jolt-program/src/image/decode.rs`
   - Extend `decode_custom`.
 - `crates/jolt-program/src/execution/trace.rs`
-  - Add `carry: u64` to `TraceRow` behind `implicit-carry`, or expose accessor helpers so feature-off code does not have to reason about carry at all.
+  - Add `carry: u64` to `TraceRow` behind `implicit-carry`, or expose helper accessors so feature-off code does not have to reason about carry.
 
 #### Lookup semantics
 
@@ -338,161 +348,171 @@ Recommended semantics:
 - `MULC` lookup operand should be `rs1 * rs2 + carry`.
 - Lookup output remains the low 64 bits.
 
-#### Legacy zkVM instruction layer
-
-- `crates/jolt-prover-legacy/src/zkvm/instruction/mod.rs`
-  - Add `CircuitFlags::UsesCarry`.
-  - Add `CircuitFlags::ProducesCarry`.
-  - Add `ADDC` and `MULC`.
-- New files:
-  - `crates/jolt-prover-legacy/src/zkvm/instruction/addc.rs`
-  - `crates/jolt-prover-legacy/src/zkvm/instruction/mulc.rs`
-
-#### Legacy witness and proof conversion
+#### Legacy committed carry and product virtualization
 
 - `crates/jolt-prover-legacy/src/zkvm/witness.rs`
-  - Add `VirtualPolynomial::Carry`.
-  - Add `VirtualPolynomial::NextCarry`.
+  - Add `CommittedPolynomial::Carry`.
+  - Add `VirtualPolynomial::Carry`, `VirtualPolynomial::CarryUsed`, and `VirtualPolynomial::NextCarry`.
+  - Generate `CommittedPolynomial::Carry` directly from `TraceRow.carry`.
 - `crates/jolt-prover-legacy/src/zkvm/proof.rs`
-  - Extend `convert_virtual_polynomial` for `Carry` and `NextCarry`.
+  - Extend committed/virtual polynomial conversion for the new carry symbols.
+- `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs`
+  - Add `ProductConstraintLabel::CarryUsed`.
+  - Extend `ProductConstraint` and `PRODUCT_CONSTRAINTS` with `CarryUsed = UsesCarry * Carry`.
+  - Recompute `NUM_PRODUCT_CONSTRAINTS` and any product uni-skip sizing that depends on it.
+- `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs`
+  - Extend `PRODUCT_UNIQUE_FACTOR_VIRTUALS` with the factors needed for `CarryUsed`.
+  - Extend `ProductCycleInputs` and witness extraction accordingly.
+- `crates/jolt-prover-legacy/src/zkvm/spartan/product.rs`
+  - Extend product virtualization claim computation, caching, and verifier expectations for `CarryUsed`.
 
 #### Legacy outer inputs and typed row views
 
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs`
-  - Add `Carry` and `NextCarry` to `JoltR1CSInputs` behind `implicit-carry`.
+  - Add `CarryUsed` and `NextCarry` to `JoltR1CSInputs` behind `implicit-carry`.
   - Append them to `ALL_R1CS_INPUTS` behind `implicit-carry`.
   - Extend `to_index`, `from_index`, `From<&JoltR1CSInputs> for VirtualPolynomial`, and `OpeningId`.
-  - Add `carry: u64` and `next_carry: u64` to `R1CSCycleInputs`.
-  - Populate them from the current and next trace rows.
+  - Add `next_carry: u64` to `R1CSCycleInputs`.
   - Extend `get_input_value`.
 - `crates/jolt-prover-legacy/src/zkvm/spartan/outer.rs`
   - Update any fixed-size `[F; NUM_R1CS_INPUTS]` arrays and related helpers.
   - Prefer `BASE_NUM_R1CS_INPUTS + IMPLICIT_CARRY_EXTRA_INPUTS`-style constants over separate full definitions for each feature combination.
 
-#### Legacy shift sumcheck
+#### Legacy shift and carry-init grounding
 
 - `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs`
-  - Extend the shift payload to include carry.
+  - Extend the shift payload with `NextCarry` on the input side and committed `Carry` on the shifted-output side.
   - Increase `gamma_powers` from length 5 to length 6 only when `implicit-carry` is enabled.
   - Update the prover and verifier formulas.
   - Update the four `#[cfg(feature = "zk")]` BlindFold claim/constraint synchronization functions accordingly.
-  - Structure the batching constants as “base shift terms + optional carry term” instead of duplicating the whole relation for each feature combination.
+- Opening-claim plumbing
+  - Add one direct committed opening check that `Carry(0) = 0` at the all-zero point.
+  - Thread that opening claim through the prover/verifier opening accumulators and proof outputs.
 
 #### Legacy R1CS constraints and groupings
 
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs`
-  - Add new labels and constraints described below.
+  - Keep `RightLookupAdd` and `RightLookupEqProductIfMul`, but change their bodies to include `CarryUsed`.
+  - Add only two new uniform rows: `LookupSplitsIntoOutputAndNextCarry` and `NextCarryZeroIfNotProducesCarry`.
   - Recompute `NUM_R1CS_CONSTRAINTS`.
   - Re-sync `R1CS_CONSTRAINTS_FIRST_GROUP_LABELS`.
-  - Default policy: keep the existing first-group labels unchanged and place all new carry-related rows in the second group unless profiling justifies a different split.
-  - Prefer append-only carry rows and additive row-count constants over distinct hand-maintained tables for each feature combination.
+  - Because adding two rows changes the uni-skip split, move one low-degree carry row into the first group as needed rather than trying to keep the first-group label set numerically unchanged.
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/evaluation.rs`
-  - Update typed evaluators and remainder planning to match the new outer inputs and constraints.
+  - Update typed evaluators and remainder planning to match the new outer inputs, product outputs, and carry rows.
 
 #### Modern witness / claims / verifier stack
 
 - `crates/jolt-witness/src/witnesses/mod.rs`
-  - Export new carry witnesses.
+  - Export carry witnesses.
 - New file:
   - `crates/jolt-witness/src/witnesses/carry.rs`
 - `crates/jolt-witness/src/backend/trace/oracle.rs`
-  - Add materialization for `Carry` and `NextCarry`.
+  - Add materialization for committed `Carry`, virtual `CarryUsed`, and outer `NextCarry`.
 - `crates/jolt-claims/src/protocols/jolt/ids.rs`
-  - Add `Carry` and `NextCarry` ids.
+  - Add ids for committed `Carry`, virtual `CarryUsed`, and outer `NextCarry`.
 - `crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs`
-  - Add `Carry` and `NextCarry` to `SPARTAN_OUTER_R1CS_INPUTS` behind `implicit-carry`.
-  - Re-sync `SPARTAN_OUTER_FIRST_GROUP_ROWS` and `SPARTAN_OUTER_SECOND_GROUP_ROWS`.
-  - Prefer geometry constants derived from base rows plus feature deltas rather than four explicit geometry variants.
+  - Add `CarryUsed` and `NextCarry` to the outer geometry behind `implicit-carry`.
+  - Re-sync outer row-group constants.
 - `crates/jolt-claims/src/protocols/jolt/relations/spartan/outer_remainder.rs`
   - Extend canonical output-claim structs and field ordering.
 - `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs`
-  - Extend shift inputs/outputs and symbolic relation with carry.
-  - Add a row-0 carry initialization public term as described below.
+  - Extend shift inputs/outputs and symbolic relation with the carry term.
 - `crates/jolt-verifier/src/stages/stage1/outputs.rs`
   - Extend stage-1 output claims.
 - `crates/jolt-verifier/src/stages/stage1/verify.rs`
   - Update field ordering assumptions.
 - `crates/jolt-verifier/src/stages/stage3/spartan_shift.rs`
   - Verify the added carry shift relation.
+- Opening verification plumbing
+  - Verify the direct committed `Carry(0) = 0` opening claim.
 
 #### Modern constraint table
 
 - `crates/jolt-r1cs/src/constraints/jolt.rs`
-  - Re-sync outer column count, opening columns, row groups, and any compile-time dimensions affected by the extra outer inputs and carry-related rows.
+  - Re-sync outer column count, opening columns, row groups, and any compile-time dimensions affected by `CarryUsed`, `NextCarry`, and the carry-specific rows.
   - Keep the modern constraint table additive: feature-off must preserve today's geometry exactly, while feature-on appends the carry-specific columns and rows.
 
-### Detailed R1CS Changes
+### Detailed Constraint Design
 
 The current relevant outer constraints live in `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs`.
 
-Today the arithmetic path is:
+#### Proof-visible carry state
 
-- `RightLookupAdd`: `RightLookupOperand = LeftInstructionInput + RightInstructionInput`
-- `RightLookupEqProductIfMul`: `RightLookupOperand = Product`
-- `RdWriteEqLookupIfWriteLookupToRd`: `RdWriteValue = LookupOutput`
+Add:
 
-This spec proposes extending that shape rather than introducing a new memory-checked carry register.
+- committed `Carry`
+- product-derived `CarryUsed`
+- outer `NextCarry`
 
-#### New outer inputs
+Do **not** add raw `Carry` as a new uniform outer input. The uniform R1CS only needs `CarryUsed` and `NextCarry`.
 
-Add two new outer inputs:
+#### New product constraint
 
-- `Carry`
-- `NextCarry`
+Add one product-virtualization row:
 
-They should be appended to the canonical outer-input ordering rather than inserted in the middle, to minimize disruption to existing index assignments.
+`CarryUsed = OpFlags(UsesCarry) * Carry`
 
-Because `implicit-carry` is cfg-gated, these inputs should be absent entirely in feature-off builds rather than present as dead zero columns. The intended structure is “base outer-input ordering plus optional appended carry inputs,” so index stability is preserved within each feature lane and no feature combination needs its own bespoke ordering table.
+This is the key affine-enabler. It moves the only true conjunction into the product-virtualization stage, where multiplication already belongs.
 
-#### New constraint labels
+Consequences:
 
-Add the following `R1CSConstraintLabel` entries:
+- on `ADDC` and `MULC`, `CarryUsed = Carry`
+- on all other rows, `CarryUsed = 0`
 
-- `RightLookupAddNoCarry`
-- `RightLookupAddWithCarry`
-- `RightLookupMulNoCarry`
-- `RightLookupMulWithCarry`
-- `LookupSplitsIntoOutputAndNextCarry`
-- `NextCarryZeroIfNotProducesCarry`
+#### Uniform R1CS constraints
 
-`RightLookupAdd` and `RightLookupEqProductIfMul` should be replaced by the split forms above rather than overloaded implicitly.
+Direct comparison of the old and new arithmetic-facing rows:
 
-#### Proposed constraints
+- `RightLookupAdd`
+  - Old: `if AddOperands => RightLookupOperand == LeftInstructionInput + RightInstructionInput`
+  - New: `if AddOperands => RightLookupOperand == LeftInstructionInput + RightInstructionInput + CarryUsed`
+- `RightLookupSub`
+  - Old: `if SubtractOperands => RightLookupOperand == LeftInstructionInput - RightInstructionInput + 2^64`
+  - New: unchanged
+- `RightLookupEqProductIfMul`
+  - Old: `if MultiplyOperands => RightLookupOperand == Product`
+  - New: `if MultiplyOperands => RightLookupOperand == Product + CarryUsed`
+- `RdWriteEqLookupIfWriteLookupToRd`
+  - Old: `if WriteLookupOutputToRD => RdWriteValue == LookupOutput`
+  - New: unchanged
+- New row: `LookupSplitsIntoOutputAndNextCarry`
+  - `if ProducesCarry => RightLookupOperand == LookupOutput + 2^64 * NextCarry`
+- New row: `NextCarryZeroIfNotProducesCarry`
+  - `if !ProducesCarry => NextCarry == 0`
 
-Use `UsesCarry` to distinguish carry-consuming arithmetic from non-carry-consuming arithmetic, and use `ProducesCarry` to distinguish rows whose wide arithmetic result is split into low/high halves.
+Unchanged supporting rows:
 
-1. Ordinary add:
+- `LeftLookupZeroUnlessAddSubMul`
+- `LeftLookupEqLeftInputOtherwise`
+- `RightLookupEqRightInputOtherwise`
+- `AssertLookupOne`
+- all PC / RAM rows
 
-`if AddOperands && ProducesCarry && !UsesCarry => RightLookupOperand == LeftInstructionInput + RightInstructionInput`
+Interpretation:
 
-2. Add-with-carry:
+- `ADD` and `MUL` pick up the old add/mul rows plus the new split row, with `CarryUsed = 0`.
+- `ADDC` and `MULC` use the same add/mul rows, but now `CarryUsed = Carry`.
+- Non-carry-producing `AddOperands` / `MultiplyOperands` users keep their existing right-lookup semantics and are forced to `NextCarry = 0`.
 
-`if AddOperands && UsesCarry => RightLookupOperand == LeftInstructionInput + RightInstructionInput + Carry`
+`RdWriteEqLookupIfWriteLookupToRd` remains important because it connects `LookupOutput` to `rd`, so once `RightLookupOperand == LookupOutput + 2^64 * NextCarry` is enforced on carry-producing rows, the arithmetic split is fully constrained.
 
-3. Ordinary mul:
+#### Why this fits the affine-guard model
 
-`if MultiplyOperands && ProducesCarry && !UsesCarry => RightLookupOperand == Product`
+Rows of the form:
 
-4. Mul-with-carry:
+- `AddOperands && UsesCarry`
+- `AddOperands && ProducesCarry && !UsesCarry`
+- `MultiplyOperands && UsesCarry`
 
-`if MultiplyOperands && UsesCarry => RightLookupOperand == Product + Carry`
+are not expressible in the current uniform R1CS DSL, whose guards are affine linear combinations only.
 
-5. Split wide result into low and high halves:
+This proposal avoids that entirely:
 
-`if ProducesCarry => RightLookupOperand == LookupOutput + 2^64 * NextCarry`
+- `UsesCarry * Carry` is computed once in product virtualization as `CarryUsed`
+- the outer R1CS keeps single-flag affine guards on `AddOperands`, `MultiplyOperands`, and `ProducesCarry`
+- rows like `ADDI`, `JAL`, `AUIPC`, `MULHU`, and `VirtualMULI` stay constrained by the existing add/mul rows because `CarryUsed = 0` there
 
-This is the key carry-out constraint. It forces:
-
-- `LookupOutput` to be the low 64 bits
-- `NextCarry` to be the high 64 bits
-
-because `LookupOutput` is already constrained by the instruction lookup table to be a `u64`, and `NextCarry` is witness-visible as a `u64` column.
-
-6. Zero carry for all other instructions:
-
-`if !ProducesCarry => NextCarry == 0`
-
-This enforces the zero-default policy for rows that are outside the carry-producing arithmetic family.
+This preserves total coverage of `RightLookupOperand` while keeping every relevant row constrained under the current flag layout.
 
 #### Why `ProducesCarry` is required
 
@@ -505,35 +525,7 @@ Two concrete examples from the current codebase:
 
 `ProducesCarry` is therefore mandatory for soundness and honest-prover completeness.
 
-#### Existing constraints that remain valid
-
-These constraints should continue to hold unchanged:
-
-- `LeftLookupZeroUnlessAddSubMul`
-- `LeftLookupEqLeftInputOtherwise`
-- `RightLookupSub`
-- `RightLookupEqRightInputOtherwise`
-- `RdWriteEqLookupIfWriteLookupToRd`
-
-`RdWriteEqLookupIfWriteLookupToRd` remains especially important because it already connects `LookupOutput` to `rd`, so once `LookupOutput + 2^64 * NextCarry = RightLookupOperand` is enforced, the arithmetic split is fully constrained.
-
-#### Typed row implications
-
-`R1CSCycleInputs` should be extended so the typed evaluator can compute:
-
-- `carry`
-- `next_carry`
-
-and so `get_input_value()` reflects those additions.
-
-The typed row builder in `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs` should populate:
-
-- `carry` from the current row's stored incoming carry
-- `next_carry` from the next row's stored incoming carry, or `0` on padded/final rows
-
-This matches the intended relation `NextCarry(t) = Carry(t + 1)`.
-
-### Shift Relation Changes
+#### Shift relation changes
 
 The existing shift relation in `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs` currently threads:
 
@@ -543,46 +535,38 @@ The existing shift relation in `crates/jolt-claims/src/protocols/jolt/relations/
 - `NextIsFirstInSequence`
 - `NextIsNoop`
 
-Extend it to also thread:
+Extend it to also thread carry:
 
 - input opening: `NextCarry` from stage-1 outer outputs
-- output opening: shifted `Carry`
+- output opening: committed `Carry` at the shifted point
 
 Conceptually:
 
 - add a new batched carry term to the shift input expression
-- add the matching shifted carry term to the shift output expression
+- add the matching shifted committed-carry term to the shift output expression
 
-This requires the legacy shift sumcheck in `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs` to extend its `gamma_powers` batching and its ZK constraint mirrors.
+This preserves the intended forward direction:
 
-Because this is cfg-gated, the recommended organization is:
+`NextCarry(t)` is checked against `Carry(t + 1)`
 
-- base shift batching constants and expressions for today's five-term relation
-- one optional carry-batching term appended under `implicit-carry`
-- one shared prover/verifier implementation parameterized by the enabled term list
+#### Row-0 carry initialization
 
-Avoid writing separate full shift relations for `{field-inline, implicit-carry}` combinations unless profiling or const-eval limitations make that unavoidable.
+The invariant `Carry(0) = 0` is **not** enforced by `EqPlusOne`, because `EqPlusOne` constrains `f(j + 1)` against `Next*` values and says nothing about row 0 of the shifted column.
 
-### Row-0 Carry Initialization
+The corrected mechanism is:
 
-The invariant `Carry(0) = 0` is **not** enforced by the existing `EqPlusOne` machinery alone, because `EqPlusOne` constrains `f(j + 1)` against `Next*` values and does not constrain row 0 of the shifted column.
+- add one direct committed opening claim for `Carry` at the all-zero point
+- constrain that opening to equal `0`
 
-Therefore the shift design must add an explicit row-0 initialization mechanism.
+This is intentionally separate from the generic shift relation. It is smaller and clearer than trying to encode row-0 initialization as extra shift-side public machinery.
 
-Chosen mechanism:
+#### Typed row implications
 
-- Extend the shift relation with an `eq(0...0, r_cycle)`-weighted public term, mirroring the `Entry` pattern already used by bytecode.
-- Add a new shift public value, e.g. `CarryInit`, whose evaluation is the row-0 selector at the shift opening point.
-- Include a term forcing `Carry(0) = 0` in both the symbolic relation and the legacy sumcheck verifier/prover logic.
+`R1CSCycleInputs` should only gain the data the uniform outer rows actually consume:
 
-This should be mirrored in:
+- `next_carry`, populated from the next row's stored incoming carry, or `0` on padded/final rows
 
-- `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs`
-- `crates/jolt-claims/src/protocols/jolt/ids.rs`
-- `crates/jolt-verifier/src/stages/stage3/spartan_shift.rs`
-- `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs`
-
-This option is preferred over weakening the invariant because it preserves the intended total semantics and avoids depending on program-entry discipline for soundness.
+The current row's raw `carry` belongs in the committed witness and product-virtualization path, not in the uniform outer row type.
 
 ### Witness Extraction Strategy
 
@@ -591,12 +575,13 @@ Do **not** redesign the witness extractor API to include previous-row access.
 Instead:
 
 - store incoming carry on `TraceRow`
-- define `Carry` witness extraction from `row.carry`
-- define `NextCarry` witness extraction from `next.map(|r| r.carry).unwrap_or(0)`
+- define committed `Carry` witness extraction from `row.carry`
+- define virtual `CarryUsed` witness extraction from `row.carry` together with `UsesCarry`
+- define outer `NextCarry` witness extraction from `next.map(|r| r.carry).unwrap_or(0)`
 
-This is the smallest change that fits the current modular witness stack.
+This is the smallest change that fits the current modular witness stack while still grounding every carry-related claim.
 
-Because `implicit-carry` is cfg-gated, prefer helper accessors or a small carry-aware row abstraction so feature-off code can remain close to today's `TraceRow` shape. That keeps the feature lane local and avoids spreading conditional struct construction across the tracer and witness pipeline.
+Because `implicit-carry` is cfg-gated, prefer helper accessors or a small carry-aware row abstraction so feature-off code can remain close to today's `TraceRow` shape.
 
 ### Alternatives Considered
 
@@ -608,29 +593,38 @@ Rejected because it imposes a 2-4x penalty on many bigint kernels and increases 
 
 Rejected because it would push carry into the register Twist instance for no proof benefit.
 
-3. Add previous-row access to the modern witness extractor API.
+3. Keep `Carry` and `NextCarry` fully virtual.
 
-Rejected as the first implementation path because it is substantially more invasive than storing incoming carry on `TraceRow`.
+Rejected because the resulting opening claims are not grounded in the claim DAG.
 
-4. Leave the carry undefined after non-carry instructions.
+4. Encode `AddOperands && UsesCarry`-style cases directly in the uniform R1CS.
+
+Rejected because the current uniform R1CS DSL supports only affine guards.
+
+5. Add new exclusive operand flags such as `AddCarryOperands` and `MulCarryOperands`.
+
+Rejected because it would push the flag set past the current `u16` packing and is unnecessary once `CarryUsed` is product-virtualized.
+
+6. Leave the carry undefined after non-carry instructions.
 
 Rejected because the total policy `NextCarry = 0` off the arithmetic family is simpler, safer, and easier to test and document.
 
-5. Weaken `Carry(0) = 0` to “unconstrained but harmless.”
+7. Weaken `Carry(0) = 0` to “unconstrained but harmless.”
 
-Rejected because the spec wants defined semantics, and an explicit initialization term is available.
+Rejected because the spec wants defined semantics and a single direct opening check is cheap.
 
 ## Documentation
 
 Update the Jolt book in two places:
 
 - `book/src/how/architecture/registers.md`
-  - Add a dedicated paragraph explaining that implicit carry is proof-level state, not part of the memory-checked register file.
+  - Add a dedicated paragraph explaining that implicit carry is non-architectural proof state, not part of the memory-checked register file.
 - `book/src/how/optimizations/inlines.md`
   - Document `ADDC` and `MULC`.
   - Explain the zero-default carry policy.
   - State that these instructions are intended for expert/manual use.
   - Mention the expected custom-instruction encoding pattern for direct guest use.
+  - Warn that dependent carry chains must remain contiguous in the final instruction stream because any intervening non-carry-producing instruction clears carry.
 
 ## Execution
 
@@ -639,20 +633,24 @@ Recommended implementation order:
 1. Add workspace feature plumbing and protocol-config fail-closed metadata for `implicit-carry`.
 2. Add instruction kinds, custom decode support, and tracer semantics for `ADDC` and `MULC`.
 3. Add `carry` to `TraceRow` and preserve it through trace production.
-4. Add lookup semantics and witness support for `Carry` and `NextCarry`.
-5. Extend legacy outer inputs and implement the new R1CS constraints with `UsesCarry` and `ProducesCarry`.
-6. Extend the shift relation with carry transport and explicit row-0 initialization.
-7. Extend modern witness, claims, verifier, and `jolt-r1cs` geometry plumbing.
-8. Add randomized positive and negative tests in standard and ZK modes, including `field-inline` composition coverage if the feature is cfg-gated.
-9. Update documentation.
+4. Add `CommittedPolynomial::Carry`, `VirtualPolynomial::Carry`, `VirtualPolynomial::CarryUsed`, and `VirtualPolynomial::NextCarry`.
+5. Add the `CarryUsed = UsesCarry * Carry` product-virtualization row.
+6. Extend outer inputs and update the uniform R1CS rows to use `CarryUsed` and `NextCarry`.
+7. Extend the shift relation so `NextCarry` is checked against shifted committed `Carry`.
+8. Add the direct `Carry(0) = 0` committed opening check.
+9. Extend modern witness, claims, verifier, and `jolt-r1cs` geometry plumbing.
+10. Add randomized positive and negative tests in standard and ZK modes, including `field-inline` composition coverage.
+11. Update documentation.
 
-This ordering front-loads the shared feature scaffolding, keeps the `implicit-carry` lane additive, and makes the proof-layer plumbing easier to validate incrementally.
+This ordering front-loads the shared feature scaffolding, grounds the carry chain early, and keeps the `implicit-carry` lane additive throughout the stack.
 
 ## References
 
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs`
 - `crates/jolt-prover-legacy/src/zkvm/r1cs/inputs.rs`
+- `crates/jolt-prover-legacy/src/zkvm/spartan/product.rs`
 - `crates/jolt-prover-legacy/src/zkvm/spartan/shift.rs`
+- `crates/jolt-prover-legacy/src/zkvm/witness.rs`
 - `crates/jolt-r1cs/src/constraints/jolt.rs`
 - `crates/jolt-claims/src/protocols/jolt/geometry/spartan.rs`
 - `crates/jolt-claims/src/protocols/jolt/relations/spartan/shift.rs`
