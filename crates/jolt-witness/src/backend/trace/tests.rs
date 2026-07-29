@@ -887,10 +887,6 @@ fn excluded_ids_report_their_classification() {
         assert_reason(JoltPolynomialId::Committed(id), COMMITTED_PROGRAM_REASON);
     }
     for id in [
-        JoltCommittedPolynomial::UnsignedIncChunk(0),
-        JoltCommittedPolynomial::UnsignedIncMsb,
-        JoltCommittedPolynomial::TrustedAdviceBytes,
-        JoltCommittedPolynomial::UntrustedAdviceBytes,
         JoltCommittedPolynomial::BytecodeLookupSelector { chunk: 0 },
         JoltCommittedPolynomial::ProgramImageBytes,
     ] {
@@ -913,8 +909,4 @@ fn excluded_ids_report_their_classification() {
     ] {
         assert_reason(JoltPolynomialId::Virtual(id), PROTOCOL_INTERMEDIATE_REASON);
     }
-    assert_reason(
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc),
-        LATTICE_REASON,
-    );
 }
