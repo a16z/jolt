@@ -84,7 +84,6 @@ pub fn advice_tape_remaining(cpu: &Cpu) -> usize {
     cpu.advice_tape.remaining()
 }
 
-use crate::instruction::format::NormalizedOperands;
 use crate::utils::panic::CallFrame;
 #[cfg(not(feature = "std"))]
 use alloc::collections::VecDeque;
@@ -223,6 +222,8 @@ pub struct Cpu {
     pub vr_allocator: VirtualRegisterAllocator,
     /// Call stack tracking (circular buffer)
     call_stack: VecDeque<CallFrame>,
+    /// Whether call frames snapshot the register file (JOLT_BACKTRACE=full).
+    capture_backtrace_registers: bool,
     /// Advice tape for runtime advice system
     pub advice_tape: AdviceTape,
     #[cfg(feature = "field-inline")]
@@ -391,6 +392,9 @@ impl Cpu {
             active_markers: FnvHashMap::default(),
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
+            capture_backtrace_registers: std::env::var("JOLT_BACKTRACE")
+                .map(|v| v.eq_ignore_ascii_case("full"))
+                .unwrap_or(false),
             advice_tape: AdviceTape::new(),
             #[cfg(feature = "field-inline")]
             field_registers: FieldRegisterFile::default(),
@@ -1167,7 +1171,7 @@ impl Cpu {
     /// Track a function call (JAL/JALR instruction that saves callsite information)
     /// Optimized for minimal overhead - just append to a circular buffer (VecDeque)
     #[inline]
-    pub fn track_call(&mut self, return_address: u64, operands: NormalizedOperands) {
+    pub fn track_call(&mut self, return_address: u64) {
         // Simple circular buffer - if full, overwrite oldest
         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
             self.call_stack.pop_front();
@@ -1175,8 +1179,9 @@ impl Cpu {
 
         self.call_stack.push_back(CallFrame {
             call_site: return_address,
-            x: self.x,
-            operands,
+            // Register snapshots are only displayed by JOLT_BACKTRACE=full;
+            // skip the bulk copy unless that mode was requested.
+            x: self.capture_backtrace_registers.then(|| Box::new(self.x)),
             cycle_count: self.trace_len,
         });
     }
@@ -1208,6 +1213,7 @@ impl Cpu {
             active_markers: self.active_markers.clone(),
             vr_allocator: self.vr_allocator.clone(),
             call_stack: self.call_stack.clone(),
+            capture_backtrace_registers: self.capture_backtrace_registers,
             advice_tape: self.advice_tape.clone(),
             #[cfg(feature = "field-inline")]
             field_registers: self.field_registers.clone(),
