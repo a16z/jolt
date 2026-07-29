@@ -103,7 +103,6 @@ struct JoltOneHotTraceRows {
     num_rows: usize,
     num_columns: usize,
     lanes: Vec<u8>,
-    ra_indices: Arc<Vec<RaIndices>>,
 }
 
 impl JoltOneHotTraceRows {
@@ -116,7 +115,7 @@ impl JoltOneHotTraceRows {
         params: &crate::zkvm::config::OneHotParams,
         bytecode: &crate::zkvm::bytecode::BytecodePreprocessing,
         memory_layout: &common::jolt_device::MemoryLayout,
-    ) -> Self {
+    ) -> (Self, Arc<Vec<RaIndices>>) {
         use rayon::prelude::*;
 
         let num_rows = trace.len();
@@ -131,12 +130,14 @@ impl JoltOneHotTraceRows {
                 Self::fill_row_from_indices(lanes, row, ra_index, fused_inc_one_hot, ranges);
             });
 
-        Self {
-            num_rows,
-            num_columns,
-            lanes,
-            ra_indices: Arc::new(ra_indices),
-        }
+        (
+            Self {
+                num_rows,
+                num_columns,
+                lanes,
+            },
+            Arc::new(ra_indices),
+        )
     }
 
     fn fill_row_from_indices(
@@ -163,10 +164,6 @@ impl JoltOneHotTraceRows {
             .last()
             .and_then(|column| column[row])
             .unwrap_or(0);
-    }
-
-    fn ra_indices(&self) -> Arc<Vec<RaIndices>> {
-        Arc::clone(&self.ra_indices)
     }
 }
 
@@ -757,8 +754,8 @@ impl AkitaPackedProver<'_> {
         &self,
         plan: &OneHotTraceLayoutPlan,
         fused_inc_one_hot: Vec<Arc<Vec<Option<u8>>>>,
-    ) -> Arc<JoltOneHotTraceRows> {
-        Arc::new(JoltOneHotTraceRows::new(
+    ) -> (Arc<JoltOneHotTraceRows>, Arc<Vec<RaIndices>>) {
+        let (rows, ra_indices) = JoltOneHotTraceRows::new(
             &self.trace,
             &fused_inc_one_hot,
             plan.columns.len(),
@@ -766,7 +763,8 @@ impl AkitaPackedProver<'_> {
             &self.one_hot_params,
             &self.preprocessing.materialized_program().bytecode,
             &self.preprocessing.shared.memory_layout,
-        ))
+        );
+        (Arc::new(rows), ra_indices)
     }
 
     /// The per-cycle fused increments, shared by the inc-column witness
@@ -1490,7 +1488,8 @@ impl AkitaPackedProver<'_> {
         let plan = ONE_HOT_TRACE_LAYOUT
             .plan(&self.one_hot_trace_shape())
             .expect("canonical OneHotTrace layout must exist");
-        let one_hot_trace_rows = self.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
+        let (one_hot_trace_rows, ra_indices) =
+            self.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
         drop(fused_cycles);
         let one_hot_trace_source: Arc<dyn jolt_akita::TraceOneHotRows> = one_hot_trace_rows.clone();
         let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
@@ -1531,7 +1530,6 @@ impl AkitaPackedProver<'_> {
         let (stage3_sumcheck_proof, _r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, _r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
-        let ra_indices = one_hot_trace_rows.ra_indices();
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
             self.prove_stage6a_lattice(&fused_inc_columns, Arc::clone(&ra_indices));
         let stage6b_sumcheck_proof = self.prove_stage6b_lattice(
@@ -1540,6 +1538,7 @@ impl AkitaPackedProver<'_> {
             std::mem::take(&mut fused_inc_columns.fused),
         );
         let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns, &ra_indices);
+        drop(ra_indices);
         let reconstruction_proof =
             self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice);
 
@@ -2038,8 +2037,8 @@ mod tests {
             let plan = ONE_HOT_TRACE_LAYOUT
                 .plan(&prover.one_hot_trace_shape())
                 .expect("canonical OneHotTrace layout must exist");
-            let cached = prover.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
-            let cached_indices = cached.ra_indices();
+            let (cached, cached_indices) =
+                prover.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
             assert_eq!(cached_indices.len(), prover.trace.len());
 
             let bytecode = &prover.preprocessing.materialized_program().bytecode;
