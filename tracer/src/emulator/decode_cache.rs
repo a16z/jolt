@@ -29,6 +29,10 @@ pub struct CachedDecode {
     pub instr: Instruction,
     /// Instruction length in bytes (2 or 4), for advancing the PC.
     pub len: u8,
+    /// Lazily-built inline sequence for multi-row instructions. Taken out and
+    /// put back around tracing so the rows can be iterated while the CPU is
+    /// borrowed mutably; `None` also means "not built yet".
+    pub expansion: Option<Box<[Instruction]>>,
 }
 
 impl DecodeCache {
@@ -99,8 +103,43 @@ impl DecodeCache {
         if index == EMPTY {
             return;
         }
-        self.entries.push(CachedDecode { instr, len });
+        self.entries.push(CachedDecode {
+            instr,
+            len,
+            expansion: None,
+        });
         self.slots[slot] = index;
+    }
+
+    /// Entry index usable for expansion caching for `source`, if the cached
+    /// instruction at its address is the same variant. Mismatches (cache
+    /// disabled, synthetic addresses, nested expansions) fall back to `None`,
+    /// meaning "expand fresh, don't cache".
+    #[inline]
+    pub fn expansion_slot(&self, source: &Instruction) -> Option<u32> {
+        let pc = source.address();
+        if pc < self.text_base || pc >= self.text_end {
+            return None;
+        }
+        let slot = ((pc - self.text_base) >> 1) as usize;
+        match self.slots.get(slot) {
+            Some(&index) if index != EMPTY => {
+                let entry = &self.entries[index as usize];
+                (core::mem::discriminant(&entry.instr) == core::mem::discriminant(source))
+                    .then_some(index)
+            }
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn take_expansion(&mut self, index: u32) -> Option<Box<[Instruction]>> {
+        self.entries[index as usize].expansion.take()
+    }
+
+    #[inline]
+    pub fn put_expansion(&mut self, index: u32, rows: Box<[Instruction]>) {
+        self.entries[index as usize].expansion = Some(rows);
     }
 
     /// Invalidate any decoded slots overlapping a store to

@@ -172,20 +172,47 @@ pub mod format;
 
 pub use crate::utils::instruction_macros;
 
-pub(crate) fn fill_virtual_advice(sequence: &mut [Instruction], values: &[u64]) {
-    let mut filled = 0;
-    for instruction in sequence {
-        if let Instruction::VirtualAdvice(advice) = instruction {
-            let Some(value) = values.get(filled) else {
-                panic!("inline sequence did not contain enough virtual advice instructions");
-            };
-            advice.advice = *value;
-            filled += 1;
+/// Trace a multi-row instruction through its per-PC cached inline sequence.
+pub(crate) fn trace_inline_sequence(
+    source: &Instruction,
+    cpu: &mut Cpu,
+    trace: Option<&mut Vec<Cycle>>,
+) {
+    let mut trace = trace;
+    cpu.with_cached_inline_sequence(source, |cpu, rows| {
+        for instr in rows {
+            instr.trace(cpu, trace.as_deref_mut());
         }
-    }
-    if filled != 0 && filled != values.len() {
-        panic!("inline sequence did not contain enough virtual advice instructions");
-    }
+    });
+}
+
+/// Like [`trace_inline_sequence`], but patches `values` into the sequence's
+/// `VirtualAdvice` rows (in order) before tracing them. The advice is written
+/// to per-execution copies of the rows; the cached template is not mutated.
+pub(crate) fn trace_inline_sequence_with_advice(
+    source: &Instruction,
+    cpu: &mut Cpu,
+    values: &[u64],
+    trace: Option<&mut Vec<Cycle>>,
+) {
+    let mut trace = trace;
+    cpu.with_cached_inline_sequence(source, |cpu, rows| {
+        let mut filled = 0;
+        for instr in rows {
+            let mut instr = *instr;
+            if let Instruction::VirtualAdvice(advice) = &mut instr {
+                let Some(value) = values.get(filled) else {
+                    panic!("inline sequence did not contain enough virtual advice instructions");
+                };
+                advice.advice = *value;
+                filled += 1;
+            }
+            instr.trace(cpu, trace.as_deref_mut());
+        }
+        if filled != 0 && filled != values.len() {
+            panic!("inline sequence did not contain enough virtual advice instructions");
+        }
+    });
 }
 
 pub mod add;
@@ -604,11 +631,12 @@ macro_rules! define_rv64imac_enums {
                     )
                     && !self.is_field_inline()
                 {
-                    let inline_sequence = self.inline_sequence(&cpu.vr_allocator);
                     let mut trace = trace;
-                    for instr in inline_sequence {
-                        instr.trace_raw(cpu, trace.as_deref_mut());
-                    }
+                    cpu.with_cached_inline_sequence(self, |cpu, rows| {
+                        for instr in rows {
+                            instr.trace_raw(cpu, trace.as_deref_mut());
+                        }
+                    });
                     return;
                 }
                 match self {
@@ -740,6 +768,19 @@ macro_rules! define_rv64imac_enums {
                         Instruction::$instr(instr) => instr.has_side_effects(),
                     )*
                     Instruction::INLINE(instr) => instr.has_side_effects(),
+                }
+            }
+
+            /// The memory address this instruction was decoded from.
+            pub fn address(&self) -> u64 {
+                match self {
+                    Instruction::NoOp => 0,
+                    Instruction::UNIMPL => 0,
+                    $(
+                        $(#[$meta])*
+                        Instruction::$instr(instr) => instr.address,
+                    )*
+                    Instruction::INLINE(instr) => instr.address,
                 }
             }
 
