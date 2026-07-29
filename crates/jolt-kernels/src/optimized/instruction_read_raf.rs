@@ -76,15 +76,28 @@ const _: () = assert!(
 /// RAF flag) plus the bytecode/RAM one-hot chunk sources the stage-6a/6b
 /// consumers gather from. Sentinel packing (`0` = cold) keeps the row at 48
 /// bytes — the same as a stage-5-only bundle row — so sharing the extra
-/// columns across stages costs no memory.
+/// columns across stages costs no memory. `repr(C)` so the Metal tier can
+/// view a row slice as flat `u32` words (12 per row, layout pinned below).
 #[derive(Clone, Copy, Debug)]
+#[repr(C)]
 pub(crate) struct InstructionCycleRow {
     pub(crate) lookup_index: u128,
     pc_plus_one: u64,
     ram_address_plus_one: u64,
-    table_index: Option<u8>,
+    /// `0` = no lookup table (the `COUNT < u8::MAX` assert keeps `+ 1` in
+    /// range).
+    table_index_plus_one: u8,
     pub(crate) raf_flag: bool,
 }
+
+// The device-view contract: 48 bytes per row, lookup index limbs first, the
+// table/flag bytes at fixed offsets behind the PC/RAM columns.
+const _: () = assert!(size_of::<InstructionCycleRow>() == 48);
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, lookup_index) == 0);
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, pc_plus_one) == 16);
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, ram_address_plus_one) == 24);
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, table_index_plus_one) == 32);
+const _: () = assert!(std::mem::offset_of!(InstructionCycleRow, raf_flag) == 33);
 
 impl InstructionCycleRow {
     pub(crate) fn new(
@@ -99,14 +112,14 @@ impl InstructionCycleRow {
             lookup_index,
             pc_plus_one: mapped_pc.map_or(0, |pc| pc as u64 + 1),
             ram_address_plus_one: remapped_ram_address.map_or(0, |address| address + 1),
-            table_index: table_index.map(|index| index as u8),
+            table_index_plus_one: table_index.map_or(0, |index| index as u8 + 1),
             raf_flag,
         }
     }
 
     #[inline]
     pub(crate) fn table_index(&self) -> Option<usize> {
-        self.table_index.map(usize::from)
+        (self.table_index_plus_one as usize).checked_sub(1)
     }
 
     #[inline]
@@ -368,14 +381,15 @@ struct RafScan<F: Field> {
     upper_all_ones: Vec<F::Accumulator>,
 }
 
-/// The reduced (field-element) form of one thread's [`RafScan`].
-struct RafSums<F> {
-    shift_half: Vec<F>,
-    left: Vec<F>,
-    right: Vec<F>,
-    shift_full: Vec<F>,
-    identity: Vec<F>,
-    upper_all_ones: Vec<F>,
+/// The reduced (field-element) form of one thread's [`RafScan`] — and the
+/// RAF half of a [`PhaseScanSums`], whichever tier produced it.
+pub(crate) struct RafSums<F> {
+    pub(crate) shift_half: Vec<F>,
+    pub(crate) left: Vec<F>,
+    pub(crate) right: Vec<F>,
+    pub(crate) shift_full: Vec<F>,
+    pub(crate) identity: Vec<F>,
+    pub(crate) upper_all_ones: Vec<F>,
 }
 
 impl<F: Field> RafScan<F> {
@@ -438,14 +452,91 @@ impl<F: Field> RafSums<F> {
     }
 }
 
+// --- phase-scan seam --------------------------------------------------------
+//
+// The three big per-phase trace passes (condensation, the fused RAF scan,
+// the per-table suffix scan) are the only `O(T)` work in the address
+// rounds; everything downstream operates on 256-sized chunk tables. The
+// seam below lets a device tier substitute those passes: field sums are
+// exact, so ANY scan regrouping produces the same field elements the CPU
+// scan does, and the shared assembly ([`assemble_phase`]
+// (OptimizedInstructionReadRafKernel::assemble_phase)) keeps the round
+// polynomials byte-identical by construction.
+
+/// One lookup table present in the trace: its kind and its contiguous slice
+/// of the flat bucket array (ascending cycle indices).
+pub(crate) struct PresentTable {
+    pub(crate) table: LookupTableKind<RISCV_XLEN>,
+    pub(crate) range: Range<usize>,
+}
+
+/// The static scan inputs a scanner captures at construction (all shared —
+/// the kernel keeps using them for its CPU paths).
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal scanner")
+)]
+pub(crate) struct ScannerInputs<'a> {
+    pub(crate) rows: &'a Arc<Vec<InstructionCycleRow>>,
+    pub(crate) bucket_flat: &'a Arc<Vec<u32>>,
+    pub(crate) present: &'a [PresentTable],
+}
+
+/// One phase's scan request. When `condense` is `Some((v_prev, shift))` the
+/// scanner must first fold `v_prev[(lookup_index >> shift) & 255]` into
+/// `u_evals` in place (phase-boundary condensation), exactly as the CPU
+/// path does, before accumulating the phase sums against the updated
+/// weights.
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal scanner")
+)]
+pub(crate) struct PhaseScanRequest<'a, F> {
+    pub(crate) suffix_len: usize,
+    pub(crate) condense: Option<(&'a [F], usize)>,
+    pub(crate) u_evals: &'a mut [F],
+}
+
+/// Raw per-phase scan sums, CPU- and device-produced alike: the fused RAF
+/// buckets plus, per [`PresentTable`] in order, the flat suffix-major
+/// read-checking buckets (`[s * CHUNK_SIZE + chunk]`, `s` indexing
+/// `table.suffixes()`).
+pub(crate) struct PhaseScanSums<F> {
+    pub(crate) raf: RafSums<F>,
+    pub(crate) suffix: Vec<Vec<F>>,
+}
+
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "constructed only by the Metal scanner")
+)]
+pub(crate) enum ScanOutcome<F> {
+    /// Scan complete; `u_evals` holds the post-condensation weights.
+    Scanned(PhaseScanSums<F>),
+    /// Gate declined or buffers ineligible; `u_evals` untouched — the CPU
+    /// path runs this phase (the scanner stays live for later ones).
+    Declined,
+    /// A dispatch failed after device work may have started: `u_evals` is
+    /// unreliable (condensation writes in place) and must be rebuilt; the
+    /// scanner is dead.
+    Corrupt,
+}
+
+/// Device seam for the per-phase trace scans.
+pub(crate) trait PhaseScanner<F: Field> {
+    fn scan_phase(&mut self, request: PhaseScanRequest<'_, F>) -> ScanOutcome<F>;
+}
+
 pub struct OptimizedInstructionReadRafKernel<F: Field> {
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
     rows: Arc<Vec<InstructionCycleRow>>,
-    /// Per-table cycle buckets (`u32` cycle indices), by
-    /// `LookupTableKind::index()`.
-    buckets: Vec<Vec<u32>>,
+    /// All present tables' cycle buckets, concatenated in
+    /// `LookupTableKind::iter()` order; per-table slices in `present`.
+    bucket_flat: Arc<Vec<u32>>,
+    present: Vec<PresentTable>,
+    scanner: Option<Box<dyn PhaseScanner<F>>>,
     /// Condensed per-cycle eq weights (see the reference kernel).
     u_evals: Vec<F>,
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -473,6 +564,19 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         r_reduction: &[F],
         rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
+    ) -> Result<Self, KernelError<F>> {
+        Self::new_with_scanner(dimensions, r_reduction, rows, gamma, |_| None)
+    }
+
+    /// As [`new`](Self::new), with a [`PhaseScanner`] factory invoked once
+    /// the static scan inputs (rows, buckets) exist; `None` keeps every
+    /// phase on the CPU.
+    pub(crate) fn new_with_scanner(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[F],
+        rows: Arc<Vec<InstructionCycleRow>>,
+        gamma: F,
+        scanner: impl FnOnce(ScannerInputs<'_>) -> Option<Box<dyn PhaseScanner<F>>>,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
         let log_t = dimensions.log_t();
@@ -521,13 +625,35 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                     .push(j as u32);
             }
         }
+        let mut bucket_flat = Vec::with_capacity(buckets.iter().map(Vec::len).sum());
+        let mut present = Vec::new();
+        for table in LookupTableKind::<RISCV_XLEN>::iter() {
+            let bucket = &buckets[table.index()];
+            if bucket.is_empty() {
+                continue;
+            }
+            let start = bucket_flat.len();
+            bucket_flat.extend_from_slice(bucket);
+            present.push(PresentTable {
+                table,
+                range: start..bucket_flat.len(),
+            });
+        }
+        let bucket_flat = Arc::new(bucket_flat);
+        let scanner = scanner(ScannerInputs {
+            rows: &rows,
+            bucket_flat: &bucket_flat,
+            present: &present,
+        });
 
         let mut kernel = Self {
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
             rows,
-            buckets,
+            bucket_flat,
+            present,
+            scanner,
             u_evals: eq_table(r_reduction),
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
@@ -563,31 +689,95 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     }
 
     fn init_phase(&mut self, phase: usize) {
-        // Condensation: fold the previous phase's bound-challenge eq weights
-        // into the per-cycle mass.
-        if phase != 0 {
-            let shift = self.suffix_len(phase - 1);
+        let suffix_len = self.suffix_len(phase);
+        let sums = self.phase_sums(phase, suffix_len);
+        self.assemble_phase(phase, suffix_len, sums);
+        self.phase_challenges.clear();
+    }
+
+    /// The phase's scan sums: device scanner when installed and willing,
+    /// CPU otherwise. Either way `u_evals` ends up condensed and the sums
+    /// are the same field elements (exact arithmetic — see the seam docs).
+    fn phase_sums(&mut self, phase: usize, suffix_len: usize) -> PhaseScanSums<F> {
+        let prev_shift = phase.checked_sub(1).map(|prev| self.suffix_len(prev));
+        if let Some(scanner) = self.scanner.as_mut() {
+            let request = PhaseScanRequest {
+                suffix_len,
+                condense: prev_shift.map(|shift| (self.v_tables[phase - 1].as_slice(), shift)),
+                u_evals: &mut self.u_evals,
+            };
+            match scanner.scan_phase(request) {
+                ScanOutcome::Scanned(sums) => return sums,
+                ScanOutcome::Declined => {}
+                ScanOutcome::Corrupt => {
+                    self.scanner = None;
+                    self.rebuild_u_evals(phase);
+                    return self.cpu_phase_sums(suffix_len);
+                }
+            }
+        }
+        self.condense_cpu(phase);
+        self.cpu_phase_sums(suffix_len)
+    }
+
+    /// Condensation: fold the previous phase's bound-challenge eq weights
+    /// into the per-cycle mass.
+    fn condense_cpu(&mut self, phase: usize) {
+        if phase == 0 {
+            return;
+        }
+        let shift = self.suffix_len(phase - 1);
+        let rows = Arc::clone(&self.rows);
+        let v_prev = std::mem::take(&mut self.v_tables[phase - 1]);
+        for_each_index_mut(&mut self.u_evals, |j, u| {
+            *u *= v_prev[((rows[j].lookup_index >> shift) as usize) & (CHUNK_SIZE - 1)];
+        });
+        self.v_tables[phase - 1] = v_prev;
+    }
+
+    /// Recompute the per-cycle weights from scratch: `eq(r_reduction, ·)`
+    /// with every completed phase's bound-challenge table folded back in.
+    /// Device condensation updates `u_evals` in place, so a failed dispatch
+    /// may leave it partially updated; the inputs (rows, `v_tables`) are
+    /// intact, so this rebuild is exact.
+    fn rebuild_u_evals(&mut self, phase: usize) {
+        self.u_evals = eq_table(&self.r_reduction);
+        for prev in 0..phase {
+            let shift = self.suffix_len(prev);
             let rows = Arc::clone(&self.rows);
-            let v_prev = std::mem::take(&mut self.v_tables[phase - 1]);
+            let v_prev = std::mem::take(&mut self.v_tables[prev]);
             for_each_index_mut(&mut self.u_evals, |j, u| {
                 *u *= v_prev[((rows[j].lookup_index >> shift) as usize) & (CHUNK_SIZE - 1)];
             });
-            self.v_tables[phase - 1] = v_prev;
+            self.v_tables[prev] = v_prev;
         }
+    }
 
-        let suffix_len = self.suffix_len(phase);
-        let suffix_mask = if suffix_len == 128 {
+    fn suffix_mask(suffix_len: usize) -> u128 {
+        if suffix_len == 128 {
             u128::MAX
         } else {
             (1u128 << suffix_len) - 1
-        };
-        let upper_suffix_bits = suffix_len.saturating_sub(self.address_bits() / 2);
+        }
+    }
 
-        // Fused RAF scan over the whole trace (deferred-reduction sums,
-        // primitive-scalar multiplies).
+    /// CPU scan of one phase (post-condensation): the fused RAF pass plus
+    /// the per-table suffix passes.
+    fn cpu_phase_sums(&self, suffix_len: usize) -> PhaseScanSums<F> {
+        PhaseScanSums {
+            raf: self.cpu_raf_sums(suffix_len),
+            suffix: self.cpu_suffix_sums(suffix_len),
+        }
+    }
+
+    /// Fused RAF scan over the whole trace (deferred-reduction sums,
+    /// primitive-scalar multiplies).
+    fn cpu_raf_sums(&self, suffix_len: usize) -> RafSums<F> {
+        let suffix_mask = Self::suffix_mask(suffix_len);
+        let upper_suffix_bits = suffix_len.saturating_sub(self.address_bits() / 2);
         let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
-        let raf = map_reduce_chunks(
+        map_reduce_chunks(
             rows.len(),
             scan_chunk_size(rows.len()),
             |range| {
@@ -625,8 +815,14 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             },
             RafSums::merge,
             RafSums::zero,
-        );
+        )
+    }
 
+    /// Build the phase's chunk tables from its scan sums — the shared
+    /// assembly both scan tiers feed, so round polynomials downstream are
+    /// byte-identical whichever tier scanned.
+    fn assemble_phase(&mut self, phase: usize, suffix_len: usize, sums: PhaseScanSums<F>) {
+        let PhaseScanSums { raf, suffix } = sums;
         let q_shift_half: Vec<F> = raf
             .shift_half
             .iter()
@@ -685,7 +881,18 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             self.raf_upper_all_ones.q_value = Polynomial::new(vec![F::zero(); CHUNK_SIZE]);
         }
 
-        self.init_suffix_tables(suffix_len, suffix_mask);
+        self.suffix_tables = self
+            .present
+            .iter()
+            .zip(suffix)
+            .map(|(present, flat)| {
+                let polynomials = flat
+                    .chunks_exact(CHUNK_SIZE)
+                    .map(|coefficients| Polynomial::new(coefficients.to_vec()))
+                    .collect();
+                (present.table, polynomials)
+            })
+            .collect();
 
         // Table-prefix chunk polynomials from the checkpoints, one prefix per
         // parallel task.
@@ -706,32 +913,29 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                     .collect(),
             )
         });
-
-        self.phase_challenges.clear();
     }
 
     /// Read-checking suffix accumulators for the phase, per present table:
     /// tables in parallel, each over parallel bucket chunks, suffixes
     /// classified once (`One` adds, {0,1}-valued adds conditionally, general
     /// ones use the primitive-scalar multiply).
-    fn init_suffix_tables(&mut self, suffix_len: usize, suffix_mask: u128) {
+    fn cpu_suffix_sums(&self, suffix_len: usize) -> Vec<Vec<F>> {
+        let suffix_mask = Self::suffix_mask(suffix_len);
         let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
-        let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
-            .filter(|table| !self.buckets[table.index()].is_empty())
-            .collect();
-        let buckets = self.buckets.as_slice();
+        let bucket_flat = self.bucket_flat.as_slice();
+        let present = self.present.as_slice();
         let suffix_shift = suffix_len;
-        let new_tables = map_indices(present.len(), |table_position| {
-            let table = present[table_position];
+        map_indices(present.len(), |table_position| {
+            let table = present[table_position].table;
             let suffixes = table.suffixes();
             let num_suffixes = suffixes.len();
             let one_position = suffixes
                 .iter()
                 .position(|suffix| matches!(suffix, Suffixes::One));
-            let bucket = &buckets[table.index()];
+            let bucket = &bucket_flat[present[table_position].range.clone()];
 
-            let flat = map_reduce_chunks(
+            map_reduce_chunks(
                 bucket.len(),
                 scan_chunk_size(bucket.len()),
                 |range| {
@@ -772,15 +976,8 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                     a
                 },
                 || vec![F::zero(); num_suffixes * CHUNK_SIZE],
-            );
-
-            let polynomials = flat
-                .chunks_exact(CHUNK_SIZE)
-                .map(|coefficients| Polynomial::new(coefficients.to_vec()))
-                .collect();
-            (table, polynomials)
-        });
-        self.suffix_tables = new_tables;
+            )
+        })
     }
 
     /// The address-round quadratic, evaluated at `c ∈ {0, 2}` with
@@ -788,6 +985,14 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     /// through the same `from_evals` constructor as the reference.
     fn address_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let half = self.prefix_tables[0].evals().len() / 2;
+        // Field-only borrows: the parallel closure must not capture `&self`
+        // (the scanner slot is not `Sync`).
+        let prefix_tables = self.prefix_tables.as_slice();
+        let suffix_tables = self.suffix_tables.as_slice();
+        let raf_left = &self.raf_left;
+        let raf_right = &self.raf_right;
+        let raf_identity = &self.raf_identity;
+        let raf_upper_all_ones = &self.raf_upper_all_ones;
         // Partial sums: [read, left, right, identity, upper] × {c=0, c=2}.
         let sums = map_reduce_chunks(
             half,
@@ -797,19 +1002,19 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 // Per-thread scratch: full prefix eval rows (indexed by the
                 // `Prefixes` discriminant, as `combine` expects) plus suffix
                 // eval rows reused across tables.
-                let mut p0: Vec<PrefixEval<F>> = Vec::with_capacity(self.prefix_tables.len());
-                let mut p2: Vec<PrefixEval<F>> = Vec::with_capacity(self.prefix_tables.len());
+                let mut p0: Vec<PrefixEval<F>> = Vec::with_capacity(prefix_tables.len());
+                let mut p2: Vec<PrefixEval<F>> = Vec::with_capacity(prefix_tables.len());
                 let mut s0: Vec<SuffixEval<F>> = Vec::new();
                 let mut s2: Vec<SuffixEval<F>> = Vec::new();
                 for b in range {
                     p0.clear();
                     p2.clear();
-                    for table in &self.prefix_tables {
+                    for table in prefix_tables {
                         let (lo, ext) = extension_pair(table.evals(), b, half);
                         p0.push(PrefixEval::from(lo));
                         p2.push(PrefixEval::from(ext));
                     }
-                    for (table, suffixes) in &self.suffix_tables {
+                    for (table, suffixes) in suffix_tables {
                         s0.clear();
                         s2.clear();
                         for q in suffixes {
@@ -820,9 +1025,9 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                         sums[0] += table.combine(&p0, &s0);
                         sums[1] += table.combine(&p2, &s2);
                     }
-                    let (left0, left2) = self.raf_left.message_evals(b, half);
-                    let (right0, right2) = self.raf_right.message_evals(b, half);
-                    let (id0, id2) = self.raf_identity.message_evals(b, half);
+                    let (left0, left2) = raf_left.message_evals(b, half);
+                    let (right0, right2) = raf_right.message_evals(b, half);
+                    let (id0, id2) = raf_identity.message_evals(b, half);
                     sums[2] += left0;
                     sums[3] += left2;
                     sums[4] += right0;
@@ -830,7 +1035,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                     sums[6] += id0;
                     sums[7] += id2;
                     if CANONICAL_INSTRUCTION_ADDRESS {
-                        let (upper0, upper2) = self.raf_upper_all_ones.message_evals(b, half);
+                        let (upper0, upper2) = raf_upper_all_ones.message_evals(b, half);
                         sums[8] += upper0;
                         sums[9] += upper2;
                     }
@@ -1014,7 +1219,11 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
         self.v_tables = Vec::new();
-        self.buckets = Vec::new();
+        self.bucket_flat = Arc::new(Vec::new());
+        self.present = Vec::new();
+        // The scanner holds `Arc` clones of the rows and buckets — dropping
+        // it here releases the device buffers with the address-phase state.
+        self.scanner = None;
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
