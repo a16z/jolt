@@ -34,6 +34,7 @@ pub fn ram_raf_evaluation_input_values_from_upstream<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct RamRafEvaluation<F: Field> {
     symbolic: relations::ram::RafEvaluation,
     read_write_dimensions: ReadWriteDimensions,
@@ -64,6 +65,24 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::RamRafEvaluation,
         reason: reason.to_string(),
+    }
+}
+
+impl<F: Field> RamRafEvaluation<F> {
+    pub fn read_write_dimensions(&self) -> ReadWriteDimensions {
+        self.read_write_dimensions
+    }
+
+    pub fn ram_log_k(&self) -> usize {
+        self.ram_log_k
+    }
+
+    pub fn lowest_address(&self) -> u64 {
+        self.lowest_address
+    }
+
+    pub fn tau_low(&self) -> &[F] {
+        &self.tau_low
     }
 }
 

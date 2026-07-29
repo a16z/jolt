@@ -33,22 +33,37 @@
 //! optimizations of the same true polynomials; byte parity needs only
 //! exactness, so this kernel always uses 8-variable phases.)
 
-use crate::instruction_read_raf::InstructionReadRafWitness;
-use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-use jolt_claims::protocols::jolt::relations::instruction::{
-    InstructionReadRafChallenges, InstructionReadRafOutputClaims,
+use crate::ProverInputs;
+use jolt_claims::protocols::jolt::geometry::instruction::{
+    InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
+use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
 use jolt_field::Field;
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::SuffixEval;
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
+use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
+use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
 use super::views::eq_table;
-use crate::instruction_read_raf::InstructionReadRafProver;
-use crate::{KernelError, ProofSession, ProveSumcheck, ReferenceBackend};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel, SumcheckKernelError,
+};
+
+/// The per-cycle witness of the instruction read+RAF relation: the lookup
+/// index bits, the table selection, and the RAF flag (the negation of the
+/// operand-interleaving marker).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
+pub struct InstructionReadRafWitness {
+    pub lookup_index: LookupIndex,
+    pub table_index: TableIndex,
+    #[opening(InstructionRafFlag)]
+    pub raf_flag: InstructionRafFlag,
+}
 
 /// Address variables bound per phase. Fixed at 8 (the legacy prover picks 8
 /// or 16 by trace size, but the emitted polynomials are identical — see the
@@ -56,20 +71,23 @@ use crate::{KernelError, ProofSession, ProveSumcheck, ReferenceBackend};
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
-impl<F: Field> InstructionReadRafProver<F> for ReferenceBackend {
+impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        dimensions: InstructionReadRafDimensions,
-        r_reduction: &[F],
-        rows: Vec<InstructionReadRafWitness>,
-        challenges: &InstructionReadRafChallenges<F>,
-    ) -> Result<Box<dyn ProveSumcheck<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
+        let dimensions = inputs.relation.dimensions();
+        // The per-cycle lookup rows (index bits, table selection, RAF flag) —
+        // data no field-element oracle table carries losslessly, collected as
+        // typed bundles off the witness plane's row source.
+        let rows = collect_bundles(witness, 1 << dimensions.log_t())?;
         Ok(Box::new(InstructionReadRafKernel::new(
             dimensions,
-            r_reduction,
+            &inputs.points.lookup_output,
             rows,
-            challenges.gamma,
+            inputs.challenges.gamma,
         )?))
     }
 }
@@ -92,6 +110,19 @@ impl<F: Field> RafDecomposition<F> {
             q_shift: Polynomial::new(vec![F::zero()]),
             q_value: Polynomial::new(vec![F::zero()]),
             checkpoint: F::zero(),
+        }
+    }
+
+    /// Like [`Self::empty`] but with a checkpoint of one.
+    ///
+    /// WARNING: the canonical-address decomposition is an AND over address
+    /// bits, so its bound-prefix accumulator is a *product* and its empty value
+    /// is one. Starting it at zero would make the whole term vanish and turn
+    /// the alias check into a silent no-op that still passes every test.
+    fn empty_product() -> Self {
+        Self {
+            checkpoint: F::one(),
+            ..Self::empty()
         }
     }
 
@@ -133,7 +164,6 @@ struct CycleTables<F: Field> {
 }
 
 pub struct InstructionReadRafKernel<F: Field> {
-    relation: InstructionReadRaf<F>,
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
@@ -155,6 +185,10 @@ pub struct InstructionReadRafKernel<F: Field> {
     raf_left: RafDecomposition<F>,
     raf_right: RafDecomposition<F>,
     raf_identity: RafDecomposition<F>,
+    /// `U(k) = ∏_{i < address_bits/2} k_i`, accumulated over identity-RAF rows
+    /// only so that it carries the `raf_flag` mask. Inert unless
+    /// [`CANONICAL_INSTRUCTION_ADDRESS`].
+    raf_upper_all_ones: RafDecomposition<F>,
     /// Completed phases' bound-challenge eq tables (`v[p][x] =
     /// eq(phase-p challenges, x)`, MSB-first).
     v_tables: Vec<Vec<F>>,
@@ -215,7 +249,6 @@ impl<F: Field> InstructionReadRafKernel<F> {
         }
 
         let mut kernel = Self {
-            relation: InstructionReadRaf::new(dimensions),
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
@@ -231,6 +264,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
             raf_left: RafDecomposition::empty(),
             raf_right: RafDecomposition::empty(),
             raf_identity: RafDecomposition::empty(),
+            raf_upper_all_ones: RafDecomposition::empty_product(),
             v_tables: Vec::new(),
             phase_challenges: Vec::new(),
             cycle_challenges: Vec::new(),
@@ -292,9 +326,22 @@ impl<F: Field> InstructionReadRafKernel<F> {
         let mut q_right = [F::zero(); CHUNK_SIZE];
         let mut q_shift_full_raw = [F::zero(); CHUNK_SIZE];
         let mut q_identity = [F::zero(); CHUNK_SIZE];
+        // Identity-path mass whose still-unbound upper-half address bits are all
+        // ones. Once the suffix stops reaching into the upper half this is every
+        // identity row, and the bucket coincides with `q_shift_full_raw`.
+        let mut q_upper_all_ones = [F::zero(); CHUNK_SIZE];
+        let upper_suffix_bits = suffix_len.saturating_sub(self.address_bits() / 2);
         for (row, &u) in self.rows.iter().zip(&self.u_evals) {
             let chunk = self.chunk(row.lookup_index.0, phase);
             let suffix_bits = row.lookup_index.0 & suffix_mask;
+            if CANONICAL_INSTRUCTION_ADDRESS
+                && row.raf_flag.0
+                && (upper_suffix_bits == 0
+                    || (suffix_bits >> (suffix_len - upper_suffix_bits))
+                        == (1u128 << upper_suffix_bits) - 1)
+            {
+                q_upper_all_ones[chunk] += u;
+            }
             if !row.raf_flag.0 {
                 q_shift_half_raw[chunk] += u;
                 let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
@@ -342,6 +389,31 @@ impl<F: Field> InstructionReadRafKernel<F> {
         self.raf_identity.prefix = Polynomial::new(identity_prefix);
         self.raf_identity.q_shift = Polynomial::new(q_shift_full.to_vec());
         self.raf_identity.q_value = Polynomial::new(q_identity.to_vec());
+
+        if CANONICAL_INSTRUCTION_ADDRESS {
+            // `U` is a pure product, so the decomposition degenerates to
+            // `prefix · q_shift` with no additive part. The prefix keeps the
+            // running AND: it gates on this chunk's upper-half bits while any
+            // remain, and is the bound constant afterwards.
+            let chunk_upper_bits = (self.address_bits() / 2)
+                .saturating_sub(phase * CHUNK_LEN)
+                .min(CHUNK_LEN);
+            let checkpoint = self.raf_upper_all_ones.checkpoint;
+            let upper_prefix: Vec<F> = (0..CHUNK_SIZE)
+                .map(|x| {
+                    if chunk_upper_bits == 0
+                        || (x >> (CHUNK_LEN - chunk_upper_bits)) == (1 << chunk_upper_bits) - 1
+                    {
+                        checkpoint
+                    } else {
+                        F::zero()
+                    }
+                })
+                .collect();
+            self.raf_upper_all_ones.prefix = Polynomial::new(upper_prefix);
+            self.raf_upper_all_ones.q_shift = Polynomial::new(q_upper_all_ones.to_vec());
+            self.raf_upper_all_ones.q_value = Polynomial::new(vec![F::zero(); CHUNK_SIZE]);
+        }
 
         // Read-checking suffix accumulators, per present table.
         self.suffix_tables = LookupTableKind::<RISCV_XLEN>::iter()
@@ -401,6 +473,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
             let mut left = F::zero();
             let mut right = F::zero();
             let mut identity = F::zero();
+            let mut upper_all_ones = F::zero();
             for b in 0..half {
                 let prefix_evals: Vec<PrefixEval<F>> = self
                     .prefix_tables
@@ -417,8 +490,14 @@ impl<F: Field> InstructionReadRafKernel<F> {
                 left += self.raf_left.message_eval(b, half, c);
                 right += self.raf_right.message_eval(b, half, c);
                 identity += self.raf_identity.message_eval(b, half, c);
+                if CANONICAL_INSTRUCTION_ADDRESS {
+                    upper_all_ones += self.raf_upper_all_ones.message_eval(b, half, c);
+                }
             }
             *eval = read + self.gamma * left + gamma_sqr * (right + identity);
+            if CANONICAL_INSTRUCTION_ADDRESS {
+                *eval += gamma_sqr * self.gamma * upper_all_ones;
+            }
         }
         evals
     }
@@ -479,7 +558,12 @@ impl<F: Field> InstructionReadRafKernel<F> {
             .collect();
         let raf_interleaved =
             self.gamma * self.raf_left.checkpoint + gamma_sqr * self.raf_right.checkpoint;
-        let raf_identity = gamma_sqr * self.raf_identity.checkpoint;
+        // The identity branch is selected by `raf_flag`, so folding γ³·U(r_address)
+        // in here applies the mask without a separate cycle-indexed polynomial.
+        let mut raf_identity = gamma_sqr * self.raf_identity.checkpoint;
+        if CANONICAL_INSTRUCTION_ADDRESS {
+            raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
+        }
 
         let combined_val: Vec<F> = self
             .rows
@@ -537,11 +621,15 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
         self.dimensions.sumcheck_rounds()
     }
 
-    fn compute_message(
+    fn prove_round(
         &mut self,
+        bind: Option<F>,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
         let evals = if self.rounds_bound < self.address_bits() {
             self.address_message().to_vec()
         } else {
@@ -558,7 +646,13 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn ingest_challenge(&mut self, challenge: F, _round: usize) -> Result<(), SumcheckError<F>> {
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> InstructionReadRafKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         if self.rounds_bound < self.address_bits() {
             for table in &mut self.prefix_tables {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -571,6 +665,9 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
             self.raf_left.bind(challenge);
             self.raf_right.bind(challenge);
             self.raf_identity.bind(challenge);
+            if CANONICAL_INSTRUCTION_ADDRESS {
+                self.raf_upper_all_ones.bind(challenge);
+            }
             self.phase_challenges.push(challenge);
 
             if self.phase_challenges.len() == CHUNK_LEN {
@@ -584,6 +681,9 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
                 self.raf_left.checkpoint = self.raf_left.prefix.evals()[0];
                 self.raf_right.checkpoint = self.raf_right.prefix.evals()[0];
                 self.raf_identity.checkpoint = self.raf_identity.prefix.evals()[0];
+                if CANONICAL_INSTRUCTION_ADDRESS {
+                    self.raf_upper_all_ones.checkpoint = self.raf_upper_all_ones.prefix.evals()[0];
+                }
 
                 if phase + 1 < self.phases() {
                     self.init_phase(phase + 1);
@@ -612,23 +712,22 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
     }
 }
 
-impl<F: Field> ProveSumcheck<F> for InstructionReadRafKernel<F> {
+impl<F: Field> SumcheckKernel<F> for InstructionReadRafKernel<F> {
     type Relation = InstructionReadRaf<F>;
 
-    fn relation(&self) -> &InstructionReadRaf<F> {
-        &self.relation
-    }
-
-    fn output_claims(&mut self) -> Result<InstructionReadRafOutputClaims<F>, KernelError<F>> {
+    fn output_claims(
+        &mut self,
+        _inputs: &SumcheckInputClaims<F, Self::Relation>,
+    ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
         if self.rounds_bound != self.num_rounds() {
-            return Err(KernelError::NotFullyBound {
+            return Err(SumcheckKernelError::NotFullyBound {
                 remaining: self.num_rounds() - self.rounds_bound,
             });
         }
         let tables = self
             .cycle_tables
             .as_ref()
-            .ok_or(KernelError::InvariantViolation {
+            .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "cycle tables absent after full binding",
             })?;
 

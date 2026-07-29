@@ -31,6 +31,7 @@ pub struct RamRaVirtualizationInputClaims<C> {
 /// The RAM `ra` virtualization sumcheck: equates the reduced `ra` opening on the
 /// input side with the product of the committed per-`d` `ra` openings, weighted
 /// by the cycle-`eq` public, on the output side.
+#[derive(Clone)]
 pub struct RaVirtualization {
     shape: RamRaVirtualizationDimensions,
 }

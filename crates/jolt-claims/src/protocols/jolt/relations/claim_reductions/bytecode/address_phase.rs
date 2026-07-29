@@ -36,6 +36,7 @@ pub struct BytecodeReductionAddressPhaseInputClaims<C> {
 /// Address phase of the committed-bytecode reduction: reduces the cycle-phase
 /// intermediate opening to the committed `BytecodeChunk(i)` openings weighted by
 /// `ChunkOutputWeight`.
+#[derive(Clone)]
 pub struct AddressPhase {
     shape: BytecodeReductionShape,
 }

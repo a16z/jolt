@@ -697,7 +697,7 @@ fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
         // progress without a runtime counter.
         build_stmts.push(quote! {
             let #ident = __values.next().ok_or(
-                ::jolt_claims::ChallengeDrawError {
+                ::jolt_claims::ChallengeDrawError::StreamExhausted {
                     required: #required,
                     populated: #index,
                 },

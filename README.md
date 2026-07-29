@@ -103,7 +103,7 @@ To generate a trace, run e.g.
 
 ```cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome```
 
-Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`e2e_profiling.rs`](./crates/jolt-prover-legacy/benches/e2e_profiling.rs).
+Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `sha3-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`e2e_profiling.rs`](./crates/jolt-prover-legacy/benches/e2e_profiling.rs).
 
 The above command will output a JSON file in the workspace rootwith a name `trace-<timestamp>.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
 

@@ -61,6 +61,7 @@ pub struct UntrustedAdviceAddressPhaseInputClaims<C> {
 
 /// Address phase of the trusted-advice reduction: reduces the cycle-phase advice
 /// opening to the final advice opening scaled by `FinalScale`.
+#[derive(Clone)]
 pub struct TrustedAddressPhase {
     dimensions: PrecommittedReductionDimensions,
 }
@@ -104,6 +105,7 @@ impl SymbolicSumcheck for TrustedAddressPhase {
 
 /// Address phase of the untrusted-advice reduction: reduces the cycle-phase advice
 /// opening to the final advice opening scaled by `FinalScale`.
+#[derive(Clone)]
 pub struct UntrustedAddressPhase {
     dimensions: PrecommittedReductionDimensions,
 }

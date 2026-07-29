@@ -108,6 +108,7 @@ pub struct OuterRemainderOutputClaims<C> {
 
 /// The Spartan outer remainder sumcheck: the quadratic R1CS form over the outer
 /// R1CS-input openings, weighted by the `SpartanOuterPublic` coefficients.
+#[derive(Clone)]
 pub struct OuterRemainder {
     shape: SpartanOuterDimensions,
 }

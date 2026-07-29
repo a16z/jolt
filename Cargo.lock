@@ -3464,10 +3464,10 @@ version = "0.1.0"
 dependencies = [
  "jolt-claims",
  "jolt-field",
+ "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
- "jolt-program",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
@@ -3476,6 +3476,15 @@ dependencies = [
  "jolt-witness",
  "rayon",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-kernels-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3613,6 +3622,8 @@ dependencies = [
  "jolt-verifier",
  "jolt-witness",
  "postcard",
+ "rand_core 0.6.4",
+ "serde",
  "thiserror 2.0.18",
  "tracer",
 ]
@@ -3803,7 +3814,6 @@ dependencies = [
  "jolt-verifier-derive",
  "num-traits",
  "postcard",
- "rand_core 0.6.4",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

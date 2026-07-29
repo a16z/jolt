@@ -44,6 +44,7 @@ pub fn product_uniskip_input_values_from_stage1<F: Field>(
     }
 }
 
+#[derive(Clone)]
 pub struct ProductUniskip<F: Field> {
     symbolic: relations::spartan::ProductUniskip,
     tau_high: F,

@@ -214,6 +214,7 @@ impl<F: jolt_field::Field> OutputClaims<F> for BytecodeChunkReconstructionOutput
     }
 }
 
+#[derive(Clone)]
 pub struct BytecodeChunkReconstruction {
     shape: BytecodeReconstructionDimensions,
 }

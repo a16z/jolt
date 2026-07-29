@@ -45,7 +45,7 @@ cargo install --path . --locked
 ```bash
 # Execution trace (viewable in Perfetto)
 cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome
-# --name options: sha2, sha3, sha2-chain, fibonacci, btreemap
+# --name options: sha2, sha3, sha2-chain, sha3-chain, fibonacci, btreemap
 
 # With CPU/memory monitoring (adds counter tracks to Perfetto trace)
 cargo run --release --features monitor -p jolt-prover-legacy profile --name sha3 --format chrome
@@ -80,7 +80,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 
 **common** — Shared constants (`XLEN`, `REGISTER_COUNT`, thresholds) and `JoltDevice`/`MemoryLayout` types
 
-Feature flag hierarchy: `host` ⊃ `prover` ⊃ `minimal`. Most code is unconditional; `host/` is the main gated module.
+Feature flag hierarchy: `host` ⊃ `prover` ⊃ `minimal`. Most code is unconditional; `host/` is the main gated module. The `akita` feature selects the packed (lattice/Akita) commitment mode — mutually exclusive with `zk` (compile error on the combination).
 
 ### Key Type Parameters
 
@@ -145,7 +145,7 @@ The `zk` Cargo feature (`cfg(feature = "zk")`) controls zero-knowledge mode:
 - `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`
 - `JoltProof::blindfold_proof: BlindFoldProof` — `#[cfg(feature = "zk")]`
 - Prover uses `#[cfg(feature = "zk")]` / `#[cfg(not(feature = "zk"))]` blocks — compile-time path selection, no runtime `zk_mode` field
-- Verifier detects mode from proof at runtime: `proof.stage1_sumcheck_proof.is_zk()` — stored as `VerifierOpeningAccumulator::zk_mode`
+- Verifier zk mode is fixed at compile time (`zk` feature → `JOLT_VERIFIER_CONFIG` in `crates/jolt-verifier/src/config.rs`); the proof self-describes its protocol (`JoltProof::protocol: JoltProtocolConfig`) and `validate_proof_config` rejects a mismatch fail-closed
 
 **CRITICAL — Verifier `new_from_verifier` must support both modes:**
 
