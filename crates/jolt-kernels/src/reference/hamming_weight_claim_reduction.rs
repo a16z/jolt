@@ -15,12 +15,16 @@ use std::collections::BTreeMap;
 
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::{
-    HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
+    HammingWeightClaimReductionPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId,
+    JoltRelationId,
 };
+use jolt_claims::{Source, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
+
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 
 use super::views::{cycle_fold, eq_table};
 use crate::{
@@ -72,6 +76,60 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBac
                 JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(index)),
                 Polynomial::new(eq_table(point)),
             );
+        }
+
+        // The packed (lattice) shape extends the reduction with the fused-inc
+        // one-hot columns and their little-endian decode: serve the extra
+        // tables per the relation's own expression leaves (the base shape
+        // references none of them, so this loop no-ops there — the kernel
+        // adapts to the jolt-claims shape instead of carrying a feature).
+        for term in &relation.symbolic().output_expression::<F>().terms {
+            for factor in &term.factors {
+                match factor {
+                    Source::Opening(id) => {
+                        if matches!(
+                            id.polynomial_id(),
+                            JoltPolynomialId::Committed(
+                                JoltCommittedPolynomial::UnsignedIncChunk(_)
+                                    | JoltCommittedPolynomial::UnsignedIncMsb,
+                            )
+                        ) && !opening_tables.contains_key(id)
+                        {
+                            let _ = opening_tables.insert(
+                                *id,
+                                Polynomial::new(cycle_fold(
+                                    witness,
+                                    *id,
+                                    dimensions.log_k_chunk,
+                                    r_cycle,
+                                )?),
+                            );
+                        }
+                    }
+                    Source::Derived(id) => {
+                        // `IdentityAtAddress` is the chunk-domain identity
+                        // `k ↦ k`; LowToHigh binding reproduces the verifier's
+                        // little-endian bound evaluation.
+                        if matches!(
+                            id,
+                            JoltDerivedId::HammingWeightClaimReduction(
+                                HammingWeightClaimReductionPublic::IdentityAtAddress,
+                            )
+                        ) && !derived_tables.contains_key(id)
+                        {
+                            let _ = derived_tables.insert(
+                                *id,
+                                Polynomial::new(
+                                    (0..1u64 << dimensions.log_k_chunk)
+                                        .map(F::from_u64)
+                                        .collect::<Vec<_>>(),
+                                ),
+                            );
+                        }
+                    }
+                    Source::Challenge(_) => {}
+                }
+            }
         }
 
         Ok(Box::new(NaiveSumcheckProver::new(

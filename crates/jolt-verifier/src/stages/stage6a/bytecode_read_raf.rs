@@ -46,6 +46,12 @@ pub struct BytecodeStagePoints<F: Field> {
     pub stage_cycle_points: [Vec<F>; 5],
     pub register_read_write_point: Vec<F>,
     pub register_val_evaluation_point: Vec<F>,
+    /// The packed fused-inc consumer cycle points in stage order (`γ^5..8`):
+    /// RAM read-write, RAM val-check, registers read-write, registers
+    /// val-evaluation — the four reduced `Inc` claims' own cycle points, which
+    /// the prover's address-phase kernel weights its fused pushforwards by.
+    /// Empty on the base build (populated only under `akita`).
+    pub fused_inc_cycle_points: Vec<Vec<F>>,
 }
 
 impl<F: Field> BytecodeStagePoints<F> {
@@ -94,10 +100,20 @@ pub fn bytecode_stage_points<F: Field>(
         register_read_write_cycle.to_vec(),
         register_val_evaluation_cycle.to_vec(),
     ];
+    #[cfg(not(feature = "akita"))]
+    let fused_inc_cycle_points = Vec::new();
+    #[cfg(feature = "akita")]
+    let fused_inc_cycle_points = vec![
+        stage2.ram_read_write.inc().to_vec(),
+        stage4.ram_val_check.ram_inc().to_vec(),
+        stage4.registers_read_write.rd_inc().to_vec(),
+        stage5.registers_val_evaluation.rd_inc().to_vec(),
+    ];
     Ok(BytecodeStagePoints {
         stage_cycle_points,
         register_read_write_point,
         register_val_evaluation_point,
+        fused_inc_cycle_points,
     })
 }
 
@@ -210,6 +226,12 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
         &self.stage_points.stage_cycle_points
     }
 
+    /// The packed fused-inc consumer cycle points (`γ^5..8` stage order);
+    /// empty on the base build. See [`BytecodeStagePoints`].
+    pub fn fused_inc_cycle_points(&self) -> &[Vec<F>] {
+        &self.stage_points.fused_inc_cycle_points
+    }
+
     /// The full stage-4 register read-write opening point (address prefix ‖
     /// cycle); the stage-value fold reads its `REGISTER_ADDRESS_BITS` prefix.
     pub fn register_read_write_point(&self) -> &[F] {
@@ -296,6 +318,7 @@ mod tests {
                 stage_cycle_points: Default::default(),
                 register_read_write_point: Vec::new(),
                 register_val_evaluation_point: Vec::new(),
+                fused_inc_cycle_points: Vec::new(),
             },
             0,
         );
