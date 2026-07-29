@@ -999,38 +999,6 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             )
             .map(|unr| F::reduce_product_accum(unr))
     }
-
-    #[tracing::instrument(skip_all, name = "R1CSEval::compute_claimed_inputs_from_rows")]
-    pub fn compute_claimed_inputs_from_rows(
-        rows: &[R1CSCycleInputs],
-        r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
-    ) -> [F; NUM_R1CS_INPUTS] {
-        debug_assert_eq!(rows.len(), 1 << r_cycle.len());
-        let m = r_cycle.len() / 2;
-        let (r2, r1) = r_cycle.split_at_r(m);
-        let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
-        let eq_two_len = eq_two.len();
-
-        (0..eq_one.len())
-            .into_par_iter()
-            .map(|x1| {
-                let mut acc = ClaimedInputAccumulators::new();
-                for (x2, e_in) in eq_two.iter().enumerate() {
-                    acc.accumulate(e_in, &rows[x1 * eq_two_len + x2]);
-                }
-                acc.into_unreduced(eq_one[x1])
-            })
-            .reduce(
-                || [F::UnreducedProductAccum::zero(); NUM_R1CS_INPUTS],
-                |mut acc, item| {
-                    for i in 0..NUM_R1CS_INPUTS {
-                        acc[i] += item[i];
-                    }
-                    acc
-                },
-            )
-            .map(|unr| F::reduce_product_accum(unr))
-    }
 }
 
 /// Struct for implementation of evaluation logic for product virtualization
