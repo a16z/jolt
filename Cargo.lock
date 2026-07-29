@@ -3229,6 +3229,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
+ "jolt-optimizations",
  "jolt-poly",
  "jolt-transcript",
  "rand_chacha 0.3.1",
@@ -3459,6 +3460,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "jolt-claims",
+ "jolt-dory",
  "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
