@@ -57,7 +57,7 @@ pub const PAGE_SIZE: usize = 16384;
 /// macOS malloc's large-allocation threshold: at and above this size,
 /// allocations are `vm_allocate`d with page granularity (the invariant the
 /// no-copy size heuristic relies on).
-const MALLOC_LARGE_THRESHOLD: usize = 32 * 1024;
+pub(super) const MALLOC_LARGE_THRESHOLD: usize = 32 * 1024;
 
 const fn round_up_to_page(bytes: usize) -> usize {
     bytes.div_ceil(PAGE_SIZE) * PAGE_SIZE

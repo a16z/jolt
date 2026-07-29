@@ -21,6 +21,17 @@
 //! multiplication here, landing byte-identically on the CPU accumulator's
 //! reduction (field sums are grouping-independent). The shared assembly
 //! downstream never knows which tier scanned.
+//!
+//! At the address→cycle boundary the scanner ADOPTS the cycle tables
+//! ([`PhaseScanner::adopt_cycle`]): materialization writes all `1 + ra_count`
+//! tables into one flat device-owned ping-pong pair, and each cycle round is
+//! one fused dispatch — fold the pending challenge out of place and
+//! accumulate the product-grid lanes `[q(1), …, q(F−1), q(∞)]` weighted by
+//! the host-bound Gruen eq levels — that the kernel assembles through its
+//! own `gruen_poly_from_evals` recipe. Below the gate (tail rounds) or on a
+//! failure the scanner steps aside and the kernel reclaims the live tables
+//! (`take_cycle_tables`, a small copy at the shrunken length) and finishes
+//! on the CPU, exactly as the W2 slots do.
 
 use std::sync::Arc;
 
@@ -30,8 +41,9 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
-use super::DeviceRound;
-use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
+use super::{num_threadgroups, DeviceRound, Partials};
+use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE};
+use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::instruction_read_raf::{
@@ -51,6 +63,9 @@ const RAF_CELLS: usize = 6 * CHUNK_SIZE;
 const SUF_CELLS: usize = MAX_SUFFIXES * CHUNK_SIZE;
 /// Simdgroup width the schedules assume (the kernels re-check at runtime).
 const SIMD_WIDTH: usize = 32;
+/// Flat cycle-table capacity baked into the round shader
+/// (`JK_IRR_MAX_FACTORS`): `1 + ra_count` must fit.
+const MAX_FACTORS: usize = 16;
 /// Scan parallelism: enough simdgroups to fill the target GPU, big enough
 /// row runs to amortize the per-simdgroup bucket rows.
 const TARGET_SIMDGROUPS: usize = 512;
@@ -126,6 +141,19 @@ struct SlotMeta {
 struct DeviceIrrScanner {
     device: DeviceRound,
     rows: Arc<Vec<InstructionCycleRow>>,
+    /// Address-phase scan state; dropped when the cycle tables are adopted
+    /// (the phases are over) so its buffers free early.
+    address: Option<AddressState>,
+    /// Adopted cycle tables (the address→cycle handoff onward).
+    cycle: Option<CycleRoundsState>,
+    /// Value-space `R = 2^256 mod p`: multiplying a raw-space cell by this
+    /// re-expresses it in Montgomery form (the exact element the CPU
+    /// accumulator reduces to).
+    r_mont: Fr,
+}
+
+/// Phase-scan schedule and working buffers (static across the 16 phases).
+struct AddressState {
     bucket_flat: Arc<Vec<u32>>,
     slots: Vec<SlotMeta>,
     // Static schedule (built once; buckets never change across phases).
@@ -142,10 +170,18 @@ struct DeviceIrrScanner {
     num_sgs_raf: usize,
     rows_per_sg_raf: usize,
     num_sgs_suffix: usize,
-    /// Value-space `R = 2^256 mod p`: multiplying a raw-space cell by this
-    /// re-expresses it in Montgomery form (the exact element the CPU
-    /// accumulator reduces to).
-    r_mont: Fr,
+}
+
+/// Adopted cycle tables: `combined_val` then the `ra` products concatenated
+/// in ONE flat ping-pong pair (fixed kernel arity at any `ra_count`), compact
+/// at stride `len` in `cur` and `len / 2` in `nxt`.
+struct CycleRoundsState {
+    cur: OwnedDeviceBuffer<Fr>,
+    nxt: OwnedDeviceBuffer<Fr>,
+    partials: Partials,
+    factors: usize,
+    /// Current per-table logical length (= `cur`'s stride).
+    len: usize,
 }
 
 fn div_ceil_pos(n: usize, d: usize) -> usize {
@@ -221,33 +257,40 @@ impl DeviceIrrScanner {
         Ok(Self {
             device: DeviceRound::new(context, KIND),
             rows,
-            bucket_flat,
-            slots,
-            sg_slot: own_u32s(sg_slot)?,
-            sg_range: own_u32s(sg_range)?,
-            suffix_meta: own_u32s(suffix_meta)?,
-            raf_group: own_u32s(vec![0, num_sgs_raf as u32])?,
-            suffix_group: own_u32s(suffix_group)?,
-            partials: context.own_page_aligned(PageAlignedVec::from_elem(zero, partial_cells))?,
-            v_prev: context.own_page_aligned(PageAlignedVec::from_elem(zero, CHUNK_SIZE))?,
-            raf_out: context.own_page_aligned(PageAlignedVec::from_elem(zero, RAF_CELLS))?,
-            suffix_out: context.own_page_aligned(PageAlignedVec::from_elem(
-                zero,
-                (inputs.present.len() * SUF_CELLS).max(1),
-            ))?,
-            num_sgs_raf,
-            rows_per_sg_raf,
-            num_sgs_suffix,
+            address: Some(AddressState {
+                bucket_flat,
+                slots,
+                sg_slot: own_u32s(sg_slot)?,
+                sg_range: own_u32s(sg_range)?,
+                suffix_meta: own_u32s(suffix_meta)?,
+                raf_group: own_u32s(vec![0, num_sgs_raf as u32])?,
+                suffix_group: own_u32s(suffix_group)?,
+                partials: context
+                    .own_page_aligned(PageAlignedVec::from_elem(zero, partial_cells))?,
+                v_prev: context.own_page_aligned(PageAlignedVec::from_elem(zero, CHUNK_SIZE))?,
+                raf_out: context.own_page_aligned(PageAlignedVec::from_elem(zero, RAF_CELLS))?,
+                suffix_out: context.own_page_aligned(PageAlignedVec::from_elem(
+                    zero,
+                    (inputs.present.len() * SUF_CELLS).max(1),
+                ))?,
+                num_sgs_raf,
+                rows_per_sg_raf,
+                num_sgs_suffix,
+            }),
+            cycle: None,
             r_mont: Fr::from_u64(1).mul_pow_2(128).mul_pow_2(128),
         })
     }
+}
 
+impl AddressState {
     /// Encode and run the phase's command buffer. `Ok(true)` means every
     /// dispatch ran; `Ok(false)` means a buffer wrap was ineligible and
     /// NOTHING ran (safe to decline).
     fn dispatch_phase(
         &mut self,
         context: &'static MetalContext,
+        rows: &[InstructionCycleRow],
         request: &mut PhaseScanRequest<'_, Fr>,
     ) -> Result<bool, MetalError> {
         let suffix_len = request.suffix_len as u32;
@@ -260,7 +303,7 @@ impl DeviceIrrScanner {
             None => (0u32, 0u32),
         };
 
-        let Some(rows_buffer) = context.wrap_slice_nocopy(self.rows.as_slice()) else {
+        let Some(rows_buffer) = context.wrap_slice_nocopy(rows) else {
             return Ok(false);
         };
         let Some(u_evals_buffer) = context.wrap_slice_mut_nocopy(request.u_evals) else {
@@ -270,7 +313,7 @@ impl DeviceIrrScanner {
         let bucket_buffer = context.wrap_slice(self.bucket_flat.as_slice())?;
         testing::note_copied_buffers(u64::from(bucket_buffer.was_copied()));
 
-        let n = self.rows.len();
+        let n = rows.len();
         let scan_params: Vec<u32> = vec![
             n as u32,
             self.rows_per_sg_raf as u32,
@@ -340,12 +383,12 @@ impl DeviceIrrScanner {
 
     /// Unpack the device sums, applying the raw-space `×R` fix-up to every
     /// scalar-product cell (RAF left/right/identity; non-0/1 suffixes).
-    fn collect_sums(&self) -> PhaseScanSums<Fr> {
+    fn collect_sums(&self, r_mont: Fr) -> PhaseScanSums<Fr> {
         let raf = self.raf_out.as_slice();
         let column = |q: usize, fix: bool| -> Vec<Fr> {
             raf[q * CHUNK_SIZE..(q + 1) * CHUNK_SIZE]
                 .iter()
-                .map(|&value| if fix { value * self.r_mont } else { value })
+                .map(|&value| if fix { value * r_mont } else { value })
                 .collect()
         };
         let suffix_cells = self.suffix_out.as_slice();
@@ -360,7 +403,7 @@ impl DeviceIrrScanner {
                     let fix = !meta.is_01[s];
                     flat.extend(suffix_cells[base..base + CHUNK_SIZE].iter().map(|&value| {
                         if fix {
-                            value * self.r_mont
+                            value * r_mont
                         } else {
                             value
                         }
@@ -388,8 +431,11 @@ impl PhaseScanner<Fr> for DeviceIrrScanner {
         let Some(context) = self.device.gated(self.rows.len()) else {
             return ScanOutcome::Declined;
         };
-        match self.dispatch_phase(context, &mut request) {
-            Ok(true) => ScanOutcome::Scanned(self.collect_sums()),
+        let Some(address) = self.address.as_mut() else {
+            return ScanOutcome::Declined;
+        };
+        match address.dispatch_phase(context, &self.rows, &mut request) {
+            Ok(true) => ScanOutcome::Scanned(address.collect_sums(self.r_mont)),
             Ok(false) => ScanOutcome::Declined,
             Err(error) => {
                 // The command buffer may have partially executed —
@@ -412,6 +458,68 @@ impl PhaseScanner<Fr> for DeviceIrrScanner {
                 None
             }
         }
+    }
+
+    fn adopt_cycle(&mut self, request: &CycleInitRequest<'_, Fr>) -> bool {
+        let Some(context) = self.device.gated(self.rows.len()) else {
+            return false;
+        };
+        let factors = 1 + request.ra_count;
+        if factors > MAX_FACTORS {
+            return false;
+        }
+        match self.build_cycle_state(context, request, factors) {
+            Ok(Some(cycle)) => {
+                self.cycle = Some(cycle);
+                // The phases are over — free their schedule and partials.
+                self.address = None;
+                true
+            }
+            // An ineligible wrap: nothing dispatched, CPU path unharmed.
+            Ok(None) => false,
+            Err(error) => {
+                // Materialization is pure (writes only the dropped buffers).
+                self.device.failed(&error);
+                false
+            }
+        }
+    }
+
+    fn cycle_round(&mut self, bind: Option<Fr>, e_in: &[Fr], e_out: &[Fr]) -> Option<Vec<Fr>> {
+        let len = self.cycle.as_ref()?.len;
+        let context = self.device.gated(len)?;
+        // Post-bind pair count; the eq levels must tile it exactly.
+        let groups = if bind.is_some() { len / 4 } else { len / 2 };
+        if groups == 0 || e_in.len() * e_out.len() != groups || !e_in.len().is_power_of_two() {
+            return None;
+        }
+        match self.dispatch_cycle_round(context, bind, e_in, e_out, groups) {
+            Ok(lanes) => {
+                if bind.is_some() {
+                    let cycle = self.cycle.as_mut()?;
+                    std::mem::swap(&mut cycle.cur, &mut cycle.nxt);
+                    cycle.len /= 2;
+                }
+                Some(lanes)
+            }
+            Err(error) => {
+                // The fused kernel writes only `nxt` and the partials —
+                // `cur` (the pre-bind tables) is intact for the handoff.
+                self.device.failed(&error);
+                None
+            }
+        }
+    }
+
+    fn take_cycle_tables(&mut self) -> Option<CycleTables<Fr>> {
+        let cycle = self.cycle.take()?;
+        let len = cycle.len;
+        let flat = cycle.cur.as_slice();
+        let table = |f: usize| flat[f * len..(f + 1) * len].to_vec();
+        Some(CycleTables {
+            combined_val: table(0),
+            ra: (1..cycle.factors).map(table).collect(),
+        })
     }
 }
 
@@ -456,26 +564,11 @@ impl DeviceIrrScanner {
             outputs.push(buffer);
         }
 
-        let base_params = |phase_begin: usize, phase_count: usize| -> Vec<u32> {
-            let mut params = vec![
-                n as u32,
-                phase_begin as u32,
-                phase_count as u32,
-                request.address_bits as u32,
-            ];
-            params.extend_from_slice(&crate::metal::fr_to_u32_limbs(request.raf_interleaved));
-            params.extend_from_slice(&crate::metal::fr_to_u32_limbs(request.raf_identity));
-            params
-        };
         let mut pass = context.begin_pass()?;
         for (position, output) in outputs.iter().enumerate() {
-            let (phase_begin, phase_count) = match position.checked_sub(1) {
-                None => (0, 0),
-                Some(i) => (i * request.phases_per_ra, request.phases_per_ra),
-            };
             pass.dispatch(
                 KernelId::IrrCycleInit,
-                &base_params(phase_begin, phase_count),
+                &cycle_init_params(n, position, 0, request),
                 &[&rows_buffer, &v_tables_buffer, &table_values_buffer, output],
                 n,
             );
@@ -484,6 +577,161 @@ impl DeviceIrrScanner {
         testing::note_device_round();
         Ok(Some(CycleTables { combined_val, ra }))
     }
+
+    /// The adopting twin of [`dispatch_cycle_init`](Self::dispatch_cycle_init):
+    /// materialize all `factors` tables into ONE flat scanner-owned buffer
+    /// (stride `n`) and set up the round ping-pong. `Ok(None)` = ineligible
+    /// buffers, nothing dispatched.
+    fn build_cycle_state(
+        &self,
+        context: &'static MetalContext,
+        request: &CycleInitRequest<'_, Fr>,
+        factors: usize,
+    ) -> Result<Option<CycleRoundsState>, MetalError> {
+        let n = self.rows.len();
+        let Some(rows_buffer) = context.wrap_slice_nocopy(self.rows.as_slice()) else {
+            return Ok(None);
+        };
+        let mut v_flat: Vec<Fr> = Vec::with_capacity(request.v_tables.len() * CHUNK_SIZE);
+        for table in request.v_tables {
+            debug_assert_eq!(table.len(), CHUNK_SIZE);
+            v_flat.extend_from_slice(table);
+        }
+        let v_tables_buffer = context.wrap_slice(&v_flat)?;
+        let table_values_buffer = context.wrap_slice(request.table_values)?;
+        testing::note_copied_buffers(
+            u64::from(v_tables_buffer.was_copied()) + u64::from(table_values_buffer.was_copied()),
+        );
+
+        // Uninitialized fills: the device writes every element of `cur`
+        // below, and `nxt` is read (as the swapped-in `cur`) only up to the
+        // compact region a fold fully wrote. A copying wrap would read the
+        // uninitialized memory, so eligibility is pre-checked and a miss
+        // declines adoption before anything runs.
+        let Some(cur) = own_uninit_frs(context, factors * n)? else {
+            return Ok(None);
+        };
+        let Some(nxt) = own_uninit_frs(context, factors * (n / 2))? else {
+            return Ok(None);
+        };
+
+        let cur_buffer = cur.device_buffer();
+        let mut pass = context.begin_pass()?;
+        for position in 0..factors {
+            pass.dispatch(
+                KernelId::IrrCycleInit,
+                &cycle_init_params(n, position, position * n, request),
+                &[
+                    &rows_buffer,
+                    &v_tables_buffer,
+                    &table_values_buffer,
+                    &cur_buffer,
+                ],
+                n,
+            );
+        }
+        pass.run()?;
+        testing::note_device_round();
+        drop(cur_buffer);
+
+        let partials = Partials::new(context, factors, n / 2)?;
+        Ok(Some(CycleRoundsState {
+            cur,
+            nxt,
+            partials,
+            factors,
+            len: n,
+        }))
+    }
+
+    /// One fused cycle round: fold (when binding) + product-grid lanes, one
+    /// dispatch, one command buffer, one wait. The eq levels are the CURRENT
+    /// (post-`gruen.bind`) ones — the kernel binds gruen host-side first.
+    fn dispatch_cycle_round(
+        &self,
+        context: &'static MetalContext,
+        bind: Option<Fr>,
+        e_in: &[Fr],
+        e_out: &[Fr],
+        groups: usize,
+    ) -> Result<Vec<Fr>, MetalError> {
+        let cycle = self.cycle.as_ref().ok_or(MetalError::UnsupportedShape(
+            "cycle round dispatched before adoption",
+        ))?;
+        let num_tgs = num_threadgroups(groups);
+        // IrrCycleRoundParams: [groups, do_bind, num_tgs, log_in,
+        // num_tables, len, r].
+        let mut params = vec![
+            groups as u32,
+            u32::from(bind.is_some()),
+            num_tgs as u32,
+            e_in.len().trailing_zeros(),
+            cycle.factors as u32,
+            cycle.len as u32,
+        ];
+        params.extend_from_slice(&fr_to_u32_limbs(bind.unwrap_or_else(|| Fr::from_u64(0))));
+        let e_in_buffer = context.wrap_slice(fr_as_u32s(e_in))?;
+        let e_out_buffer = context.wrap_slice(fr_as_u32s(e_out))?;
+        testing::note_copied_buffers(
+            u64::from(e_in_buffer.was_copied()) + u64::from(e_out_buffer.was_copied()),
+        );
+        let cur = cycle.cur.device_buffer();
+        let nxt = cycle.nxt.device_buffer();
+        let partials = cycle.partials.buffer().device_buffer();
+        let mut pass = context.begin_pass()?;
+        pass.dispatch(
+            KernelId::IrrCycleRound,
+            &params,
+            &[&cur, &nxt, &e_in_buffer, &e_out_buffer, &partials],
+            groups,
+        );
+        pass.run()?;
+        testing::note_device_round();
+        Ok(cycle.partials.sums(num_tgs))
+    }
+}
+
+/// `IrrCycleInitParams` for output table `position` (0 = combined_val,
+/// `1 + i` = `ra_i`) written at element offset `out_base`.
+fn cycle_init_params(
+    n: usize,
+    position: usize,
+    out_base: usize,
+    request: &CycleInitRequest<'_, Fr>,
+) -> Vec<u32> {
+    let (phase_begin, phase_count) = match position.checked_sub(1) {
+        None => (0, 0),
+        Some(i) => (i * request.phases_per_ra, request.phases_per_ra),
+    };
+    let mut params = vec![
+        n as u32,
+        phase_begin as u32,
+        phase_count as u32,
+        request.address_bits as u32,
+        out_base as u32,
+    ];
+    params.extend_from_slice(&fr_to_u32_limbs(request.raf_interleaved));
+    params.extend_from_slice(&fr_to_u32_limbs(request.raf_identity));
+    params
+}
+
+/// An uninitialized device-owned field-element buffer, or `None` when the
+/// allocation would not wrap no-copy (see the SAFETY-adjacent contract on
+/// [`uninit_frs`] — a copy would read the uninitialized memory).
+fn own_uninit_frs(
+    context: &'static MetalContext,
+    len: usize,
+) -> Result<Option<OwnedDeviceBuffer<Fr>>, MetalError> {
+    let vec = uninit_frs(len);
+    let len_bytes = std::mem::size_of_val(vec.as_slice());
+    let aligned = (vec.as_ptr() as usize).is_multiple_of(PAGE_SIZE);
+    let page_granular = len_bytes.is_multiple_of(PAGE_SIZE) || len_bytes >= MALLOC_LARGE_THRESHOLD;
+    if len_bytes == 0 || !aligned || !page_granular {
+        return Ok(None);
+    }
+    let buffer = context.own_vec(vec)?;
+    debug_assert!(!buffer.was_copied());
+    Ok(Some(buffer))
 }
 
 /// An uninitialized field-element buffer for device fills.
@@ -700,11 +948,19 @@ mod tests {
     }
 
     /// Full round-loop parity, device scanner vs pure CPU, byte-equal round
-    /// polynomials and output claims; the probe-count delta proves the
-    /// device actually scanned.
-    fn assert_scanner_parity(log_t: usize, seed: u64, skewed: bool) {
+    /// polynomials and output claims. `min_terms` sets the gate;
+    /// `device_cycle_rounds` is the number of cycle messages it admits
+    /// (below-gate rounds hand off mid-sumcheck and finish on the CPU) —
+    /// the exact probe count proves where the device actually ran.
+    fn assert_scanner_parity(
+        log_t: usize,
+        seed: u64,
+        skewed: bool,
+        min_terms: usize,
+        device_cycle_rounds: usize,
+    ) {
         std::env::remove_var("JOLT_METAL_DISABLE");
-        std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
+        std::env::set_var("JOLT_METAL_MIN_TERMS", min_terms.to_string());
         let dimensions =
             InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
         let rows = Arc::new(fixture_rows(log_t, seed, skewed));
@@ -749,11 +1005,13 @@ mod tests {
         }
         cpu.finish_rounds(challenge(rounds - 1)).unwrap();
         device.finish_rounds(challenge(rounds - 1)).unwrap();
-        // 16 phase command buffers + the cycle-init one — a silent fallback
-        // anywhere shows up as a missing probe.
-        assert!(
-            device_probe_count() - probes_before >= 17,
-            "expected every phase and the cycle materialization on device"
+        // 16 phase command buffers + the adopting materialization + one per
+        // admitted cycle round — a silent fallback anywhere shows up as a
+        // missing probe.
+        assert_eq!(
+            device_probe_count() - probes_before,
+            16 + 1 + device_cycle_rounds as u64,
+            "device dispatch count drifted (phases + adoption + cycle rounds)"
         );
 
         let inputs =
@@ -778,12 +1036,22 @@ mod tests {
     #[test]
     fn scanner_parity_random_indices() {
         let _lock = gpu_lock();
-        assert_scanner_parity(13, 12345, false);
+        assert_scanner_parity(13, 12345, false, 0, 13);
     }
 
     #[test]
     fn scanner_parity_skewed_indices() {
         let _lock = gpu_lock();
-        assert_scanner_parity(13, 67890, true);
+        assert_scanner_parity(13, 67890, true, 0, 13);
+    }
+
+    /// The gate declines mid-sumcheck: the device runs the phases, adopts,
+    /// and folds while the pre-bind length clears 2^11 (messages at 8192,
+    /// 8192→4096, 4096→2048, 2048→1024), then hands the live tables (with
+    /// the next challenge pending) back to the CPU tail.
+    #[test]
+    fn scanner_parity_cycle_handoff() {
+        let _lock = gpu_lock();
+        assert_scanner_parity(13, 424242, false, 2048, 4);
     }
 }

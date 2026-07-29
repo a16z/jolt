@@ -580,6 +580,7 @@ struct IrrCycleInitParams {
     uint phase_begin;  // first bound-challenge table of this ra product
     uint phase_count;  // 0 selects combined_val mode
     uint address_bits;
+    uint out_base;     // element offset of this table in `out`
     uint raf_interleaved[FR_LIMBS];
     uint raf_identity[FR_LIMBS];
 };
@@ -609,7 +610,7 @@ kernel void jk_irr_cycle_init(
         Fr256 value =
             (table_plus_one != 0u) ? fr_load(table_values, table_plus_one - 1u) : fr_zero();
         Fr256 raf = flag ? fr_load_const(p.raf_identity, 0) : fr_load_const(p.raf_interleaved, 0);
-        fr_store(out, gid, fr_add(value, raf));
+        fr_store(out, p.out_base + gid, fr_add(value, raf));
         return;
     }
     uint phase = p.phase_begin;
@@ -620,7 +621,82 @@ kernel void jk_irr_cycle_init(
         shift -= 8u;
         product = fr_mont_mul(product, fr_load(v_tables, phase * 256u + jk_chunk8(lo, hi, shift)));
     }
-    fr_store(out, gid, product);
+    fr_store(out, p.out_base + gid, product);
+}
+
+#define JK_IRR_MAX_FACTORS 16u
+
+struct IrrCycleRoundParams {
+    uint groups;      // post-bind per-table pair count = active threads
+    uint do_bind;
+    uint num_tgs;     // partials stride
+    uint log_in;      // log2(e_in length)
+    uint num_tables;  // F = 1 + ra_count (≤ JK_IRR_MAX_FACTORS)
+    uint len;         // per-table CURRENT (pre-bind) length = cur stride
+    uint r[FR_LIMBS];
+};
+
+// Stage-5 cycle product round over the flat cycle tables (combined_val then
+// the ra products; cur compact at stride len, nxt written compact at stride
+// len/2). Folds the pending challenge per table (jk_round_pair) and
+// accumulates the product-grid evaluations q(t) = Σ_y eq(y)·Π_f tbl_f(t, y)
+// for t ∈ {1, …, F−1, ∞} as lane-major per-threadgroup partials. eq =
+// e_out·e_in rides in factor 0, matching the CPU's e_in-in-Val fold by
+// distributivity (exact, so the host's gruen assembly lands byte-identical).
+kernel void jk_irr_cycle_round(
+    device const uint* cur [[buffer(0)]],
+    device uint* nxt [[buffer(1)]],
+    device const uint* e_in [[buffer(2)]],
+    device const uint* e_out [[buffer(3)]],
+    device uint* partials [[buffer(4)]],
+    constant IrrCycleRoundParams& p [[buffer(5)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < p.groups;
+    bool bind = p.do_bind != 0u;
+    Fr256 r = fr_load_const(p.r, 0);
+    uint f_count = min(p.num_tables, JK_IRR_MAX_FACTORS);
+
+    // Per-factor linear evaluations over the folded pair: value at t = 1 and
+    // the per-step increment (inactive lanes hold zeros and contribute zero
+    // to every lane sum, but still reach the barriers in jk_tg_sum).
+    Fr256 evals[JK_IRR_MAX_FACTORS];
+    Fr256 steps[JK_IRR_MAX_FACTORS];
+    for (uint f = 0u; f < f_count; f++) {
+        Fr256 lo, hi;
+        jk_round_pair(cur + f * p.len * FR_LIMBS, nxt + f * (p.len >> 1) * FR_LIMBS,
+                      bind, r, gid, active, lo, hi);
+        evals[f] = hi;
+        steps[f] = fr_sub(hi, lo);
+    }
+    Fr256 eq = fr_zero();
+    if (active) {
+        eq = fr_mont_mul(fr_load(e_out, gid >> p.log_in),
+                         fr_load(e_in, gid & ((1u << p.log_in) - 1u)));
+    }
+    evals[0] = fr_mont_mul(eq, evals[0]);
+    steps[0] = fr_mont_mul(eq, steps[0]);
+
+    for (uint t = 1u; t < f_count; t++) {
+        Fr256 prod = evals[0];
+        for (uint f = 1u; f < f_count; f++) {
+            prod = fr_mont_mul(prod, evals[f]);
+        }
+        jk_tg_sum(scratch, lid, tg, prod, partials, t - 1u, p.num_tgs);
+        if (t + 1u < f_count) {
+            for (uint f = 0u; f < f_count; f++) {
+                evals[f] = fr_add(evals[f], steps[f]);
+            }
+        }
+    }
+    Fr256 lead = steps[0];
+    for (uint f = 1u; f < f_count; f++) {
+        lead = fr_mont_mul(lead, steps[f]);
+    }
+    jk_tg_sum(scratch, lid, tg, lead, partials, f_count - 1u, p.num_tgs);
 }
 
 struct SuffixProbeParams {
