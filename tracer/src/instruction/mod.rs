@@ -616,10 +616,11 @@ macro_rules! define_rv64imac_enums {
         }
 
         impl Instruction {
-            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-                // Rewrite instructions with rd=x0 via inline_sequence so the
-                // constraint system never sees rd=x0.
-                if self.normalized_rd() == Some(0)
+            /// Whether tracing rewrites this instruction through its inline
+            /// sequence so the constraint system never sees rd=x0.
+            #[inline]
+            fn takes_rd0_expansion(&self) -> bool {
+                self.normalized_rd() == Some(0)
                     && !matches!(
                         self,
                         Instruction::SCW(_)
@@ -629,7 +630,10 @@ macro_rules! define_rv64imac_enums {
                             | Instruction::INLINE(_)
                     )
                     && !self.is_field_inline()
-                {
+            }
+
+            pub fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+                if self.takes_rd0_expansion() {
                     let mut trace = trace;
                     cpu.with_cached_inline_sequence(self, |cpu, rows| {
                         for instr in rows {
@@ -661,28 +665,34 @@ macro_rules! define_rv64imac_enums {
                 }
             }
 
+            /// Applies this instruction's state effects without emitting rows.
+            ///
+            /// Mirror of `trace(cpu, None)`: execute mode must leave the CPU
+            /// bit-identical to trace mode at every tick boundary, because
+            /// two-pass parallel tracing replays chunks from execute-mode
+            /// state. Instructions whose trace path walks a virtual-instruction
+            /// expansion (CSR mirrors in vr34–39, ecall/mret trap sequences,
+            /// advice-fed div/rem, vr40+ temp writes, rd=x0 rewrites) walk the
+            /// same cached expansion here with no sink; dispatching per arm as
+            /// `trace(…, None)` lets non-expanding instructions inline down to
+            /// their raw `execute`.
             pub fn execute(&self, cpu: &mut Cpu) {
+                if self.takes_rd0_expansion() {
+                    cpu.with_cached_inline_sequence(self, |cpu, rows| {
+                        for instr in rows {
+                            instr.trace_raw(cpu, None);
+                        }
+                    });
+                    return;
+                }
                 match self {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
                         $(#[$meta])*
-                        Instruction::$instr(instr) => {
-                            let mut cycle: RISCVCycle<$instr> = RISCVCycle {
-                                instruction: *instr,
-                                register_state: Default::default(),
-                                ram_access: Default::default(),
-                            };
-                            instr.execute(cpu, &mut cycle.ram_access);
-                        }
+                        Instruction::$instr(instr) => instr.trace(cpu, None),
                     )*
-                    Instruction::INLINE(instr) => {
-                        // An INLINE has no single-step semantics (INLINE::exec
-                        // panics); executing it means executing its expansion
-                        // rows, with runtime advice patched the same way the
-                        // traced path does.
-                        instr.trace(cpu, None);
-                    }
+                    Instruction::INLINE(instr) => instr.trace(cpu, None),
                 }
             }
 

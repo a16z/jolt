@@ -456,6 +456,21 @@ impl Program {
         }
     }
 
+    /// Build the guest and return its ELF bytes plus the memory config the
+    /// tracer runs it with. Public seam for harnesses that drive the emulator
+    /// directly (mode-equivalence gates, tracer benches).
+    pub fn elf_and_memory_config(&mut self) -> (Vec<u8>, MemoryConfig) {
+        self.build(DEFAULT_TARGET_DIR);
+        let elf_contents = self
+            .get_elf_contents()
+            .expect("ELF contents should be available after building the guest");
+        let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
+            .expect("program ELF decoding failed");
+        let memory_config =
+            self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
+        (elf_contents, memory_config)
+    }
+
     fn memory_config_with_program_size(&self, program_size: u64) -> MemoryConfig {
         MemoryConfig {
             heap_size: self.heap_size,

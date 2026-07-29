@@ -1219,6 +1219,104 @@ impl Cpu {
             field_registers: self.field_registers.clone(),
         }
     }
+
+    /// First architectural-state difference vs `other`, as a human-readable
+    /// report (`None` = equal).
+    ///
+    /// Compares everything a trace-mode chunk replay depends on: pc, the full
+    /// register file (including virtual registers), the CSR array, clock, wfi,
+    /// privilege mode, the LR/SC reservation triple, the advice tape (data and
+    /// read position), `executed_instrs`, and JoltDevice outputs/panic.
+    /// Excludes bookkeeping that legitimately differs between trace and
+    /// execute modes (`trace_len`, markers, call stack) and the dead `f`
+    /// registers. Memory is not compared — callers hash it separately.
+    pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
+        if self.pc != other.pc {
+            return Some(format!("pc: {:#x} vs {:#x}", self.pc, other.pc));
+        }
+        for i in 0..REGISTER_COUNT as usize {
+            if self.x[i] != other.x[i] {
+                return Some(format!("x[{i}]: {:#x} vs {:#x}", self.x[i], other.x[i]));
+            }
+        }
+        for i in 0..CSR_CAPACITY {
+            if self.csr[i] != other.csr[i] {
+                return Some(format!(
+                    "csr[{i:#x}]: {:#x} vs {:#x}",
+                    self.csr[i], other.csr[i]
+                ));
+            }
+        }
+        if self.clock != other.clock {
+            return Some(format!("clock: {} vs {}", self.clock, other.clock));
+        }
+        if self.wfi != other.wfi {
+            return Some(format!("wfi: {} vs {}", self.wfi, other.wfi));
+        }
+        if core::mem::discriminant(&self.privilege_mode)
+            != core::mem::discriminant(&other.privilege_mode)
+        {
+            return Some(format!(
+                "privilege_mode: {:?} vs {:?}",
+                self.privilege_mode, other.privilege_mode
+            ));
+        }
+        if (
+            self.reservation,
+            self.is_reservation_set,
+            self.reservation_width,
+        ) != (
+            other.reservation,
+            other.is_reservation_set,
+            other.reservation_width,
+        ) {
+            return Some(format!(
+                "reservation: ({:#x}, {}, {:?}) vs ({:#x}, {}, {:?})",
+                self.reservation,
+                self.is_reservation_set,
+                self.reservation_width,
+                other.reservation,
+                other.is_reservation_set,
+                other.reservation_width
+            ));
+        }
+        if self.advice_tape.read_position != other.advice_tape.read_position {
+            return Some(format!(
+                "advice_tape.read_position: {} vs {}",
+                self.advice_tape.read_position, other.advice_tape.read_position
+            ));
+        }
+        if self.advice_tape.data != other.advice_tape.data {
+            return Some(format!(
+                "advice_tape.data: {} bytes vs {} bytes (or contents differ)",
+                self.advice_tape.data.len(),
+                other.advice_tape.data.len()
+            ));
+        }
+        if self.executed_instrs != other.executed_instrs {
+            return Some(format!(
+                "executed_instrs: {} vs {}",
+                self.executed_instrs, other.executed_instrs
+            ));
+        }
+        match (&self.mmu.jolt_device, &other.mmu.jolt_device) {
+            (Some(a), Some(b)) => {
+                if a.outputs != b.outputs {
+                    return Some(format!(
+                        "jolt_device.outputs: {} bytes vs {} bytes (or contents differ)",
+                        a.outputs.len(),
+                        b.outputs.len()
+                    ));
+                }
+                if a.panic != b.panic {
+                    return Some(format!("jolt_device.panic: {} vs {}", a.panic, b.panic));
+                }
+            }
+            (None, None) => {}
+            _ => return Some("jolt_device: present vs absent".to_string()),
+        }
+        None
+    }
 }
 
 impl Drop for Cpu {
@@ -1539,6 +1637,9 @@ mod test_cpu {
 
     #[test]
     fn exception() {
+        // ECALL executes through its inline sequence in both modes (execute
+        // mode mirrors trace mode), so trap state lives in the CSR virtual
+        // registers: vr34 = mtvec, vr36 = mepc, vr37 = mcause.
         let handler_vector = 0x10000000;
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(4);
@@ -1547,21 +1648,17 @@ mod test_cpu {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
-        cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
+        cpu.x[34] = handler_vector as i64;
         cpu.update_pc(DRAM_BASE);
 
         cpu.tick(None);
 
-        // Interrupt happened and moved to handler
+        // Trap happened and moved to handler (via the mtvec virtual register)
         assert_eq!(handler_vector, cpu.read_pc());
 
-        // CSR Cause register holds the reason what caused the trap
-        assert_eq!(0xb, cpu.read_csr_raw(CSR_MCAUSE_ADDRESS));
-
-        // @TODO: Test post CSR status register
-        // @TODO: Test privilege levels
-        // @TODO: Test delegation
-        // @TODO: Test vector type handlers
+        // mepc/mcause virtual registers hold the faulting pc and cause
+        assert_eq!(DRAM_BASE as i64, cpu.x[36]);
+        assert_eq!(0xb, cpu.x[37]);
     }
 
     #[test]

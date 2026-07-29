@@ -71,7 +71,7 @@ pub fn trace(
     JoltDevice,
     cpu::AdviceTape,
 ) {
-    let mut emulator = setup_emulator_with_backtraces(
+    let mut emulator = create_emulator(
         elf_contents,
         elf_path,
         inputs,
@@ -135,9 +135,11 @@ pub fn trace(
 /// (source instructions, not expanded trace rows), the final `JoltDevice`,
 /// and the populated advice tape.
 ///
-/// This is the fast first-pass seam for two-pass parallel tracing: it runs
-/// the same program over the same termination heuristic (PC stall) as
-/// [`trace`], just without Cycle construction.
+/// This is the fast first-pass seam for two-pass parallel tracing: the CPU
+/// state it produces is bit-identical to trace mode at every tick boundary
+/// (instructions whose trace path expands a virtual sequence walk the same
+/// cached sequence, just without row emission), and it terminates on the
+/// same PC-stall heuristic as [`trace`].
 #[tracing::instrument(skip_all)]
 #[expect(clippy::expect_used)]
 pub fn execute(
@@ -149,7 +151,7 @@ pub fn execute(
     memory_config: &MemoryConfig,
     advice_tape: Option<cpu::AdviceTape>,
 ) -> (usize, JoltDevice, cpu::AdviceTape) {
-    let mut emulator = setup_emulator_with_backtraces(
+    let mut emulator = create_emulator(
         elf_contents,
         elf_path,
         inputs,
@@ -229,7 +231,7 @@ pub fn trace_lazy(
     memory_config: &MemoryConfig,
     advice_tape: Option<cpu::AdviceTape>,
 ) -> LazyTraceIterator {
-    LazyTraceIterator::new(CheckpointingTracer::new(setup_emulator_with_backtraces(
+    LazyTraceIterator::new(CheckpointingTracer::new(create_emulator(
         elf_contents,
         elf_path,
         inputs,
@@ -294,7 +296,7 @@ fn setup_emulator(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> Emulator {
-    setup_emulator_with_backtraces(
+    create_emulator(
         elf_contents,
         None,
         inputs,
@@ -306,8 +308,12 @@ fn setup_emulator(
 }
 
 #[tracing::instrument(skip_all)]
-/// Sets up an emulator instance with access to the elf-path for symbol loading and de-mangling.
-fn setup_emulator_with_backtraces(
+/// Sets up a ready-to-run emulator for a guest program, with access to the
+/// elf-path for symbol loading and de-mangling.
+///
+/// Public seam for drivers that need to tick the emulator themselves
+/// (mode-equivalence gates, two-pass parallel tracing).
+pub fn create_emulator(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
     inputs: &[u8],
@@ -906,6 +912,56 @@ mod tests {
             let ti: Vec<Cycle> = GeneralizedLazyTraceIter::new(checkpoint).collect();
             assert_eq!(trace_chunk[i], ti);
         }
+    }
+
+    #[test]
+    /// Execute-mode CPU state must be bit-identical to trace-mode state at
+    /// every tick boundary (foundation of two-pass parallel tracing: pass-1
+    /// runs execute-mode and its checkpoints seed trace-mode chunk replays).
+    fn test_execute_trace_state_lockstep() {
+        let elf = build_muldiv_guest();
+        let memory_config = MemoryConfig {
+            program_size: Some(elf.len() as u64),
+            ..Default::default()
+        };
+        let mut em_trace = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+        let mut em_exec = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+
+        let mut rows: Vec<Cycle> = Vec::new();
+        let mut prev_pc: u64 = 0;
+        let mut tick_idx: usize = 0;
+        loop {
+            let pc = em_trace.get_cpu().read_pc();
+            assert_eq!(pc, em_exec.get_cpu().read_pc(), "pc at tick {tick_idx}");
+            if pc == prev_pc {
+                break;
+            }
+            rows.clear();
+            em_trace.tick(Some(&mut rows));
+            em_exec.tick(None);
+            assert!(!rows.is_empty(), "zero-row tick at {tick_idx}");
+            if let Some(diff) = em_trace.get_cpu().arch_state_diff(em_exec.get_cpu()) {
+                panic!("state diverged at tick {tick_idx}: {diff}");
+            }
+            prev_pc = pc;
+            tick_idx += 1;
+        }
+        assert!(tick_idx > 0, "program did not execute");
+        assert_eq!(
+            em_trace
+                .get_cpu()
+                .mmu
+                .memory
+                .memory
+                .materialized_nonzero_bytes(),
+            em_exec
+                .get_cpu()
+                .mmu
+                .memory
+                .memory
+                .materialized_nonzero_bytes(),
+            "final memory diverged"
+        );
     }
 
     #[test]
