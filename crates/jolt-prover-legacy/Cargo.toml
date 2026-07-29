@@ -198,5 +198,9 @@ required-features = ["host"]
 name = "trace_bench"
 required-features = ["host"]
 
+[[example]]
+name = "trace_golden"
+required-features = ["host"]
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true
