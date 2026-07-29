@@ -32,6 +32,10 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
+jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true

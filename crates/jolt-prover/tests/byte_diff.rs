@@ -909,22 +909,27 @@ mod muldiv {
         };
 
         assert_backend_matches_legacy(&JoltBackend::reference());
+        // The optimized backend must reproduce the same bytes stage by
+        // stage (its RAM kernels replace the naive grid materialization).
+        assert_backend_matches_legacy(&JoltBackend::optimized());
 
         // The full-proof ratchet: the top-level prove() runs the same stage
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.
-        let backend = JoltBackend::reference();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("top-level prove");
-        assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
-        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+        for backend in [JoltBackend::reference(), JoltBackend::optimized()] {
+            let proof =
+                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                    &backend,
+                    &prover_preprocessing,
+                    &config,
+                    None,
+                    &witness,
+                    &public_io,
+                )
+                .expect("top-level prove");
+            assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+        }
     }
 }
 
@@ -1093,6 +1098,24 @@ mod advice_consumer {
             &public_io,
             &proof,
             Some(&trusted.converted),
+        );
+
+        // The optimized backend must assemble the identical proof — advice
+        // exercises the RAM val-check advice cells and the optimized
+        // val_init reconstruction against advice-populated initial memory.
+        let backend = JoltBackend::<Fr, DoryScheme>::optimized();
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            &backend,
+            &prover_preprocessing,
+            &config,
+            Some(&trusted_advice_commitment),
+            &witness,
+            &public_io,
+        )
+        .expect("optimized-backend prove");
+        assert_eq!(
+            proof, legacy_proof,
+            "optimized-backend proof diverged from legacy"
         );
     }
 }

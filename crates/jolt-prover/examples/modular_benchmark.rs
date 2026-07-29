@@ -124,6 +124,13 @@ enum Format {
     Chrome,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
+enum Backend {
+    #[default]
+    Reference,
+    Optimized,
+}
+
 /// Benchmark the modular prover end to end, mirroring
 /// `jolt_prover_legacy benchmark` semantics.
 #[derive(Parser, Debug)]
@@ -143,6 +150,10 @@ struct Cli {
     /// Output formats.
     #[clap(short, long, value_enum)]
     format: Option<Vec<Format>>,
+
+    /// Kernel backend to prove with.
+    #[clap(short, long, value_enum, default_value = "reference")]
+    backend: Backend,
 }
 
 fn main() {
@@ -166,13 +177,25 @@ fn main() {
             Format::Chrome => TracingFormat::Chrome,
         })
         .collect();
-    let trace_name = format!("modular_{}_{scale}", bench_name.replace('-', "_"));
+    let backend_suffix = match cli.backend {
+        Backend::Reference => "",
+        Backend::Optimized => "_optimized",
+    };
+    let trace_name = format!(
+        "modular_{}_{scale}{backend_suffix}",
+        bench_name.replace('-', "_")
+    );
     let _guards = setup_tracing(&formats, &trace_name);
 
-    run_benchmark(cli.name, scale, cli.target_trace_size);
+    run_benchmark(cli.name, scale, cli.target_trace_size, cli.backend);
 }
 
-fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize>) {
+fn run_benchmark(
+    bench: BenchName,
+    scale: usize,
+    target_trace_size: Option<usize>,
+    backend_choice: Backend,
+) {
     let bench_name = bench.as_str();
     let max_trace_length = 1usize << scale;
     let bench_target =
@@ -253,7 +276,10 @@ fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize
         pcs_setup: DoryScheme::setup_prover(total_vars),
         committed_program: None,
     };
-    let backend = JoltBackend::<Fr, DoryScheme>::reference();
+    let backend = match backend_choice {
+        Backend::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        Backend::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
+    };
 
     // --- The timed window: the full modular prove (witness materialization,
     // commitment, all sumcheck stages, joint opening) — the same window the
@@ -284,10 +310,14 @@ fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize
     )
     .expect("modular proof verifies");
 
+    let backend_label = match backend_choice {
+        Backend::Reference => "reference",
+        Backend::Optimized => "optimized",
+    };
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
     let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
     println!(
-        "modular {} (2^{}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
+        "modular {} (2^{}, {backend_label}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -296,7 +326,7 @@ fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize
     );
     if let Some(peak) = peak_rss_bytes() {
         println!(
-            "modular {} (2^{}): Peak RSS {}",
+            "modular {} (2^{}, {backend_label}): Peak RSS {}",
             bench_name,
             scale,
             format_memory_size(peak as f64 / BYTES_PER_GIB),

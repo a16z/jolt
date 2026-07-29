@@ -3457,18 +3457,22 @@ dependencies = [
 name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
+ "common",
  "jolt-claims",
  "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-program",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "rayon",
  "thiserror 2.0.18",
  "tracing",
