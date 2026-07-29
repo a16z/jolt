@@ -39,8 +39,12 @@ tempfile = "3"
 
 rust-code-analysis = "0.0.25"
 
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+
+[target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
+libc = "0.2"
 
 jolt-eval-macros = { path = "macros" }
 
@@ -95,6 +99,14 @@ name = "eq_evals"
 path = "benches/callgrind/eq_evals.rs"
 harness = false
 
+[[bench]]
+name = "trace_gen_fibonacci"
+harness = false
+
+[[bench]]
+name = "trace_gen_sha2_chain"
+harness = false
+
 [[bin]]
 name = "measure-objectives"
 path = "bin/measure_objectives.rs"
@@ -106,3 +118,7 @@ path = "bin/optimize.rs"
 [[bin]]
 name = "redteam"
 path = "bin/redteam.rs"
+
+[[bin]]
+name = "trace-gen-baseline"
+path = "bin/trace_gen_baseline.rs"
