@@ -35,7 +35,7 @@ pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
     NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
 };
-pub use increments::{RamInc, RdInc};
+pub use increments::{FusedInc, RamInc, RdInc, UnsignedIncHot, UnsignedIncLane};
 pub use lookups::{LookupIndex, LookupOutput, TableIndex};
 pub use one_hot::{BytecodeRaChunk, InstructionRaChunk, RaChunkSelector, RamRaChunk};
 pub use operands::{
