@@ -29,6 +29,7 @@
 //! nothing hot).
 
 mod buffers;
+mod commitment;
 mod error;
 mod field;
 mod g1;
@@ -42,7 +43,9 @@ pub use field::{
     G1_AFFINE_U32_STRIDE,
 };
 pub use g1::{bases_as_u32s, g1_seg_sum_dispatch, g1_seg_sums, jac_from_device_limbs, JAC_U32S};
-pub use runtime::{ComputePass, KernelId, MetalContext, MAX_EVAL_POINTS, THREADGROUP_SIZE};
+pub use runtime::{
+    ComputePass, KernelId, MetalContext, PendingPass, MAX_EVAL_POINTS, THREADGROUP_SIZE,
+};
 
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
@@ -95,20 +98,28 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     /// The Metal backend: [`JoltBackend::optimized`] with a live, prewarmed
-    /// device context. Fail-closed: no Metal device, a shader that fails to
-    /// compile, or a pipeline that cannot be built errors HERE, never
-    /// mid-proof.
+    /// device context and device kernels installed in the slots that have
+    /// them. Fail-closed: no Metal device, a shader that fails to compile,
+    /// or a pipeline that cannot be built errors HERE, never mid-proof.
     ///
-    /// W1 overwrites zero slots — proving behavior is byte-identical to the
-    /// optimized backend. Later waves overwrite slots with device kernels
-    /// gated by [`metal_gate`], each falling back to its optimized twin
-    /// below threshold.
+    /// Installed device slots (each gated by [`metal_gate`] and falling back
+    /// to its optimized twin below threshold or on device errors):
+    ///
+    /// - `commit` — Dory one-hot tier-1 G1 accumulation on the device,
+    ///   pipelined with CPU tier-2 pairings (W3a; `(Fr, DoryScheme)`
+    ///   instantiations only — everything else keeps the optimized slot).
     pub fn metal() -> Result<Self, MetalError>
     where
-        PCS: StreamingCommitment,
+        PCS: StreamingCommitment + 'static,
     {
         let context = MetalContext::global()?;
-        tracing::info!(device = %context.device_name(), "Metal backend ready");
-        Ok(Self::optimized())
+        let mut backend = Self::optimized();
+        if let Some(slot) = commitment::dory_commit_slot::<F, PCS>() {
+            backend.commit = slot;
+            tracing::info!(device = %context.device_name(), "Metal backend ready (commit on device)");
+        } else {
+            tracing::info!(device = %context.device_name(), "Metal backend ready");
+        }
+        Ok(backend)
     }
 }

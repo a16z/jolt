@@ -248,8 +248,34 @@ impl<'b> ComputePass<'_, 'b> {
 
     /// Commit and block until the GPU finishes; surfaces device-side errors.
     pub fn run(self) -> Result<(), MetalError> {
+        self.commit().wait()
+    }
+
+    /// Commit without blocking: the GPU starts executing while the caller
+    /// keeps the CPU busy; [`PendingPass::wait`] collects completion. The
+    /// pending pass extends the dispatched buffers' borrows, so backing
+    /// memory stays alive until the wait.
+    pub fn commit(self) -> PendingPass<'b> {
         self.encoder.endEncoding();
         self.cb.commit();
+        PendingPass {
+            cb: self.cb,
+            _buffers: PhantomData,
+        }
+    }
+}
+
+/// A committed, in-flight command buffer. Dropping without
+/// [`wait`](Self::wait) does not cancel the GPU work — callers must wait
+/// before reading results.
+pub struct PendingPass<'b> {
+    cb: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    _buffers: PhantomData<&'b ()>,
+}
+
+impl PendingPass<'_> {
+    /// Block until the GPU finishes; surfaces device-side errors.
+    pub fn wait(self) -> Result<(), MetalError> {
         self.cb.waitUntilCompleted();
         if self.cb.status() != MTLCommandBufferStatus::Completed {
             let reason = self.cb.error().map_or_else(
