@@ -9,23 +9,27 @@
 //! unbound selector column is a point mass — `ra_i(·, j)` is
 //! `eq(r_chunk_i, chunk_i(j))`, one scale-table lookup per cycle — and the
 //! first cycle binds preserve that structure: after `b < 3` binds the bound
-//! value at index `j` is the weighted gather
+//! value at index `j` is the gather
 //!
 //! ```text
-//! value(i, j) = Σ_{offset < 2^b} weights[offset] · tables[i][index(i, j·2^b + offset)]
+//! value(i, j) = Σ_{offset < 2^b} branch_tables[i][offset][index(i, j·2^b + offset)]
 //! ```
 //!
-//! with `weights` the eq weights of the bound low bits. Only the third bind
-//! materializes dense vectors, at `T/8` length, and drops the index source.
-//! Peak memory falls from `N·T` field elements to the index source plus
-//! `N·T/8`, with the `N × 2^w` scale tables unscaled and shared across all
-//! states.
+//! where branch table `offset` is the base scale table pre-scaled by that
+//! offset's bound-bit eq weight (legacy `SharedRaRound1→2→3` pre-scaling).
+//! Pre-scaling keeps the round-loop gathers multiplication-free — one table
+//! lookup and one addition per branch — because the eq weights are folded
+//! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
+//! instead of multiplied per cycle. Only the third bind materializes dense
+//! vectors, at `T/8` length, and drops the index source. Peak memory falls
+//! from `N·T` field elements to the index source plus `N·T/8`.
 //!
 //! Byte parity: every gathered value is the same polynomial of the same
 //! table entries and challenges as the iterated `lo + r·(hi − lo)` dense
-//! bind — identical monomials, exact field algebra — so round messages and
-//! output claims are bit-identical. The consumers' in-module parity tests
-//! pin this against the naive dense path.
+//! bind — identical monomials, exact field algebra (pre-scaling only
+//! reassociates the weight product) — so round messages and output claims
+//! are bit-identical. The consumers' in-module parity tests pin this
+//! against the naive dense path.
 
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, Polynomial};
@@ -49,13 +53,15 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
 /// `N` address-folded selector columns bound `LowToHigh`, lazily for the
 /// first three binds.
 pub(crate) enum LazyFoldedRa<F: Field, S> {
-    /// Fewer than three binds: unscaled per-polynomial scale tables, the
-    /// compact index source, and the bound low bits' eq weights
-    /// (`weights[b0 + 2·b1]`, length `2^binds`).
+    /// Fewer than three binds: per-polynomial branch scale tables (the base
+    /// table pre-scaled by each bound-bit pattern's eq weight), flattened
+    /// offset-major — `tables[i][offset · stride_i + k]` with
+    /// `stride_i = tables[i].len() / width` — plus the compact index source.
     Lazy {
         tables: Vec<Vec<F>>,
+        /// Bound-bit branch count (`2^binds`: 1, 2, or 4).
+        width: usize,
         source: S,
-        weights: Vec<F>,
     },
     /// Three or more binds: plain dense multilinears (`T/8` at entry).
     Dense(Vec<Polynomial<F>>),
@@ -67,8 +73,8 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         debug_assert_eq!(tables.len(), source.num_polys());
         Self::Lazy {
             tables,
+            width: 1,
             source,
-            weights: vec![F::one()],
         }
     }
 
@@ -87,22 +93,9 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         match self {
             Self::Lazy {
                 tables,
+                width,
                 source,
-                weights,
-            } => {
-                let table = &tables[i];
-                let width = weights.len();
-                if width == 1 {
-                    return source.index(i, j).map_or_else(F::zero, |k| table[k]);
-                }
-                let mut sum = F::zero();
-                for (offset, weight) in weights.iter().enumerate() {
-                    if let Some(k) = source.index(i, j * width + offset) {
-                        sum += *weight * table[k];
-                    }
-                }
-                sum
-            }
+            } => gather(&tables[i], *width, source, i, j),
             Self::Dense(polys) => polys[i].evals()[j],
         }
     }
@@ -114,38 +107,60 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         (self.value(i, 2 * row), self.value(i, 2 * row + 1))
     }
 
+    /// All polynomials' `(lo, hi)` pairs at `row`, into `out` (length
+    /// `num_polys`). One state dispatch per row instead of `2N`, with
+    /// per-polynomial table slices hoisted out of the gather loop — the
+    /// round-message hot path.
+    #[inline]
+    pub(crate) fn lo_hi_all(&self, row: usize, out: &mut [(F, F)]) {
+        match self {
+            Self::Lazy {
+                tables,
+                width,
+                source,
+            } => {
+                let width = *width;
+                for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
+                    *out = (
+                        gather(table, width, source, i, 2 * row),
+                        gather(table, width, source, i, 2 * row + 1),
+                    );
+                }
+            }
+            Self::Dense(polys) => {
+                for (out, poly) in out.iter_mut().zip(polys) {
+                    let evals = poly.evals();
+                    *out = (evals[2 * row], evals[2 * row + 1]);
+                }
+            }
+        }
+    }
+
     /// The fully bound claims, in polynomial order (any state, so short
     /// cycle geometries extract correctly).
     pub(crate) fn final_values(&self) -> Vec<F> {
         (0..self.num_polys()).map(|i| self.value(i, 0)).collect()
     }
 
-    /// Bind the next cycle variable `LowToHigh`: double the branch weights
+    /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
     /// for the first two binds, materialize dense (and drop the source) at
     /// the third, plain multilinear binds after.
     pub(crate) fn bind(&mut self, challenge: F) {
-        let one_minus = F::one() - challenge;
-        let doubled = |weights: &[F]| -> Vec<F> {
-            let mut next = Vec::with_capacity(weights.len() * 2);
-            next.extend(weights.iter().map(|weight| *weight * one_minus));
-            next.extend(weights.iter().map(|weight| *weight * challenge));
-            next
-        };
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
                 tables,
+                width,
                 source,
-                weights,
             } => {
-                let weights = doubled(&weights);
-                if weights.len() < 8 {
+                let tables = double_branches(tables, challenge);
+                if width < 4 {
                     Self::Lazy {
                         tables,
+                        width: width * 2,
                         source,
-                        weights,
                     }
                 } else {
-                    Self::Dense(materialize(&tables, &source, &weights))
+                    Self::Dense(materialize(&tables, &source))
                 }
             }
             Self::Dense(mut polys) => {
@@ -158,31 +173,77 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 }
 
-/// The third bind's materialization: gather every polynomial dense at
-/// `cycles / 8` length through the eight bound-bit weights.
-fn materialize<F: Field, S: ChunkIndexSource>(
-    tables: &[Vec<F>],
+/// The eq-weighted branch gather at unbound width `width`: one lookup and
+/// one add per hot branch, no multiplications (the weights are pre-scaled
+/// into the branch tables).
+#[inline]
+fn gather<F: Field, S: ChunkIndexSource>(
+    table: &[F],
+    width: usize,
     source: &S,
-    weights: &[F],
-) -> Vec<Polynomial<F>> {
-    debug_assert_eq!(weights.len(), 8);
+    i: usize,
+    j: usize,
+) -> F {
+    if width == 1 {
+        return source.index(i, j).map_or_else(F::zero, |k| table[k]);
+    }
+    let stride = table.len() / width;
+    let mut sum = F::zero();
+    let mut base = 0;
+    for offset in 0..width {
+        if let Some(k) = source.index(i, j * width + offset) {
+            sum += table[base + k];
+        }
+        base += stride;
+    }
+    sum
+}
+
+/// Doubles every polynomial's branch set for the next bound bit: the first
+/// half keeps the existing branches scaled by `1 − challenge` (bit 0), the
+/// second half by `challenge` (bit 1) — offset layout
+/// `b0 + 2·b1 + 4·b2`, matching the low bits of the original cycle index.
+fn double_branches<F: Field>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
+    let one_minus = F::one() - challenge;
+    let double = |table: Vec<F>| -> Vec<F> {
+        let mut next = Vec::with_capacity(table.len() * 2);
+        next.extend(table.iter().map(|value| one_minus * *value));
+        next.extend(table.iter().map(|value| challenge * *value));
+        next
+    };
+    #[cfg(feature = "parallel")]
+    {
+        tables.into_par_iter().map(double).collect()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        tables.into_iter().map(double).collect()
+    }
+}
+
+/// The third bind's materialization: gather every polynomial dense at
+/// `cycles / 8` length through the eight pre-scaled branch tables —
+/// lookups and adds only.
+fn materialize<F: Field, S: ChunkIndexSource>(tables: &[Vec<F>], source: &S) -> Vec<Polynomial<F>> {
     let new_len = source.cycles() / 8;
     let materialize_poly = |i: usize| -> Polynomial<F> {
-        let table = &tables[i];
-        let eval = |j: usize| -> F {
-            let mut sum = F::zero();
-            for (offset, weight) in weights.iter().enumerate() {
-                if let Some(k) = source.index(i, 8 * j + offset) {
-                    sum += *weight * table[k];
-                }
-            }
-            sum
-        };
+        let table = tables[i].as_slice();
+        let eval = |j: usize| gather(table, 8, source, i, j);
         #[cfg(feature = "parallel")]
         let evals: Vec<F> = (0..new_len).into_par_iter().map(eval).collect();
         #[cfg(not(feature = "parallel"))]
         let evals: Vec<F> = (0..new_len).map(eval).collect();
         Polynomial::new(evals)
     };
-    (0..tables.len()).map(materialize_poly).collect()
+    #[cfg(feature = "parallel")]
+    {
+        (0..tables.len())
+            .into_par_iter()
+            .map(materialize_poly)
+            .collect()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        (0..tables.len()).map(materialize_poly).collect()
+    }
 }

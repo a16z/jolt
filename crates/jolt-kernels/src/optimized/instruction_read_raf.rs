@@ -29,8 +29,10 @@
 //!   eq table.
 //! - **Shared witness rows**: the collected per-cycle rows are parked in the
 //!   [`ProofSession`] (keyed by [`SharedInstructionRows`]) so the stage-6b
-//!   instruction RA virtualization kernel reuses them instead of re-scanning
-//!   the trace.
+//!   instruction RA virtualization kernel and the stage-6a/6b booleanity
+//!   kernels reuse them instead of re-scanning the trace — the packed row
+//!   carries the mapped PC and remapped RAM address alongside the stage-5
+//!   facts at no size cost.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -39,7 +41,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
-use jolt_field::{AdditiveAccumulator, Field};
+use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::{SuffixEval, Suffixes};
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
@@ -47,11 +49,14 @@ use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable,
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::witnesses::{
+    InstructionRafFlag, LookupIndex, MappedPc, RemappedRamAddress, TableIndex,
+};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::reference::instruction_read_raf::InstructionReadRafWitness;
+use super::support::accumulate_product;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -62,10 +67,127 @@ use crate::{
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
+const _: () = assert!(
+    LookupTableKind::<RISCV_XLEN>::COUNT < u8::MAX as usize,
+    "InstructionCycleRow packs lookup table indices as u8"
+);
+
+/// One packed per-cycle row: the stage-5 facts (lookup index, lookup table,
+/// RAF flag) plus the bytecode/RAM one-hot chunk sources the stage-6a/6b
+/// consumers gather from. Sentinel packing (`0` = cold) keeps the row at 48
+/// bytes — the same as a stage-5-only bundle row — so sharing the extra
+/// columns across stages costs no memory.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InstructionCycleRow {
+    pub(crate) lookup_index: u128,
+    pc_plus_one: u64,
+    ram_address_plus_one: u64,
+    table_index: Option<u8>,
+    pub(crate) raf_flag: bool,
+}
+
+impl InstructionCycleRow {
+    pub(crate) fn new(
+        lookup_index: u128,
+        table_index: Option<usize>,
+        raf_flag: bool,
+        mapped_pc: Option<usize>,
+        remapped_ram_address: Option<u64>,
+    ) -> Self {
+        debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
+        Self {
+            lookup_index,
+            pc_plus_one: mapped_pc.map_or(0, |pc| pc as u64 + 1),
+            ram_address_plus_one: remapped_ram_address.map_or(0, |address| address + 1),
+            table_index: table_index.map(|index| index as u8),
+            raf_flag,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn table_index(&self) -> Option<usize> {
+        self.table_index.map(usize::from)
+    }
+
+    #[inline]
+    pub(crate) fn mapped_pc(&self) -> Option<usize> {
+        self.pc_plus_one.checked_sub(1).map(|pc| pc as usize)
+    }
+
+    #[inline]
+    pub(crate) fn remapped_ram_address(&self) -> Option<u64> {
+        self.ram_address_plus_one.checked_sub(1)
+    }
+}
+
+/// The bundle row the packing pass extracts; never materialized beyond one
+/// streaming chunk.
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct WideInstructionRow {
+    lookup_index: LookupIndex,
+    table_index: TableIndex,
+    raf_flag: InstructionRafFlag,
+    mapped_pc: MappedPc,
+    remapped_ram_address: RemappedRamAddress,
+}
+
+struct PackRows {
+    rows: Vec<InstructionCycleRow>,
+}
+
+impl StreamConsumer for PackRows {
+    type Witness = WideInstructionRow;
+
+    fn consume(&mut self, chunk: &[WideInstructionRow]) {
+        self.rows.extend(chunk.iter().map(|row| {
+            InstructionCycleRow::new(
+                row.lookup_index.0,
+                row.table_index.0,
+                row.raf_flag.0,
+                row.mapped_pc.0,
+                row.remapped_ram_address.0,
+            )
+        }));
+    }
+}
+
+/// One streaming bundle pass over the cycle domain, packed row by row (the
+/// wide bundle row exists only per chunk).
+pub(crate) fn collect_instruction_cycle_rows<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
+    let mut consumers = (PackRows {
+        rows: Vec::with_capacity(cycles),
+    },);
+    stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
+    Ok(consumers.0.rows)
+}
+
 /// The collected stage-5 rows, parked in the [`ProofSession`] for the
 /// stage-6b instruction RA virtualization kernel (its committed one-hot
-/// chunks are chunks of the same per-cycle lookup index).
-pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionReadRafWitness>>);
+/// chunks are chunks of the same per-cycle lookup index) and the
+/// stage-6a/6b booleanity kernels (all three one-hot chunk families).
+///
+/// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
+/// carry back for the later stages.
+pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
+
+/// Reclaim the parked stage-5 rows (the length guard makes a stale carry
+/// impossible to consume) or collect them fresh, and park the carry back
+/// for later consumers.
+pub(crate) fn shared_instruction_rows<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Arc<Vec<InstructionCycleRow>>, KernelError<F>> {
+    let rows = match session.take::<SharedInstructionRows>() {
+        Some(SharedInstructionRows(rows)) if rows.len() == cycles => rows,
+        _ => Arc::new(collect_instruction_cycle_rows(witness, cycles)?),
+    };
+    session.park(SharedInstructionRows(Arc::clone(&rows)));
+    Ok(rows)
+}
 
 /// Optimized [`PrepareKernel`] implementor for the `instruction_read_raf`
 /// slot.
@@ -79,8 +201,10 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionReadRafWitness>> =
-            Arc::new(collect_bundles(witness, 1 << dimensions.log_t())?);
+        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
+            witness,
+            1 << dimensions.log_t(),
+        )?);
         session.park(SharedInstructionRows(Arc::clone(&rows)));
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
@@ -318,7 +442,7 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
-    rows: Arc<Vec<InstructionReadRafWitness>>,
+    rows: Arc<Vec<InstructionCycleRow>>,
     /// Per-table cycle buckets (`u32` cycle indices), by
     /// `LookupTableKind::index()`.
     buckets: Vec<Vec<u32>>,
@@ -344,10 +468,10 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
 }
 
 impl<F: Field> OptimizedInstructionReadRafKernel<F> {
-    pub fn new(
+    pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        rows: Arc<Vec<InstructionReadRafWitness>>,
+        rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
@@ -388,7 +512,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
 
         let mut buckets = vec![Vec::new(); LookupTableKind::<RISCV_XLEN>::COUNT];
         for (j, row) in rows.iter().enumerate() {
-            if let Some(table_index) = row.table_index.0 {
+            if let Some(table_index) = row.table_index() {
                 buckets
                     .get_mut(table_index)
                     .ok_or(KernelError::InvariantViolation {
@@ -446,7 +570,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             let rows = Arc::clone(&self.rows);
             let v_prev = std::mem::take(&mut self.v_tables[phase - 1]);
             for_each_index_mut(&mut self.u_evals, |j, u| {
-                *u *= v_prev[((rows[j].lookup_index.0 >> shift) as usize) & (CHUNK_SIZE - 1)];
+                *u *= v_prev[((rows[j].lookup_index >> shift) as usize) & (CHUNK_SIZE - 1)];
             });
             self.v_tables[phase - 1] = v_prev;
         }
@@ -469,17 +593,17 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             |range| {
                 let mut scan = RafScan::<F>::new();
                 for (row, &u) in rows[range.clone()].iter().zip(&u_evals[range]) {
-                    let chunk = ((row.lookup_index.0 >> suffix_len) as usize) & (CHUNK_SIZE - 1);
-                    let suffix_bits = row.lookup_index.0 & suffix_mask;
+                    let chunk = ((row.lookup_index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
+                    let suffix_bits = row.lookup_index & suffix_mask;
                     if CANONICAL_INSTRUCTION_ADDRESS
-                        && row.raf_flag.0
+                        && row.raf_flag
                         && (upper_suffix_bits == 0
                             || (suffix_bits >> (suffix_len - upper_suffix_bits))
                                 == (1u128 << upper_suffix_bits) - 1)
                     {
                         scan.upper_all_ones[chunk].add(u);
                     }
-                    if !row.raf_flag.0 {
+                    if !row.raf_flag {
                         scan.shift_half[chunk].add(u);
                         let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
                         let left = u64::from(left);
@@ -617,9 +741,9 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                         let row = &rows[j as usize];
                         let u = u_evals[j as usize];
                         let chunk =
-                            ((row.lookup_index.0 >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
+                            ((row.lookup_index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
                         let suffix_bits =
-                            LookupBits::new(row.lookup_index.0 & suffix_mask, suffix_len);
+                            LookupBits::new(row.lookup_index & suffix_mask, suffix_len);
                         for (s_index, suffix) in suffixes.iter().enumerate() {
                             let slot = &mut accumulators[s_index * CHUNK_SIZE + chunk];
                             if one_position == Some(s_index) {
@@ -734,87 +858,86 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     }
 
     /// The cycle-round polynomial via the Gruen factorization: the true
-    /// degree-`(ra_count + 2)` polynomial is `s(t) = ℓ(t) · q(t)` with `ℓ` the
-    /// current linear eq factor and `q(t) = Σ_y E(y) · (Val · Π ra)(t, y)`,
-    /// sampled at the reference's `t = 0..=degree` points.
+    /// degree-`(ra_count + 2)` polynomial is `s(t) = ℓ(t) · q(t)` with `ℓ`
+    /// the current linear eq factor and `q(t) = Σ_y E(y) · (Val · Π ra)(t,
+    /// y)`. `q` is evaluated on the grid `[1, …, F−1, ∞]` (`F = 1 +
+    /// ra_count` linear factors): `e_in` folds into the `Val` pair so the
+    /// per-point products accumulate unreduced across the whole inner block
+    /// with no per-row reductions (legacy `eval_linear_prod_accumulate`).
+    /// `q(0)` is recovered from `s(0) + s(1) = previous_claim` and the
+    /// unique degree-`(F+1)` coefficient vector recomposed — byte-identical
+    /// to explicit-point interpolation.
     fn cycle_message(
         &self,
-        round: usize,
+        _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let cycle = self
             .cycle
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
-        let degree = self.dimensions.num_virtual_ra_polys() + 2;
-        let points = degree + 1;
         let factors = 1 + cycle.ra.len();
 
-        let q_evals = cycle.gruen.par_fold_out_in(
-            || {
-                (
-                    vec![F::zero(); points],
-                    vec![F::zero(); factors],
-                    vec![F::zero(); factors],
-                )
+        struct Scratch<F: Field> {
+            /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
+            /// the `Val` factor, so these stay unreduced across the block.
+            lanes: Vec<F::Accumulator>,
+            evals: Vec<F>,
+            steps: Vec<F>,
+        }
+
+        let block_lanes = cycle.gruen.par_fold_out_in(
+            || Scratch {
+                lanes: vec![F::Accumulator::default(); factors],
+                evals: vec![F::zero(); factors],
+                steps: vec![F::zero(); factors],
             },
-            |(acc, evals, steps), row, _x_in, e_in| {
+            |scratch, row, _x_in, e_in| {
                 {
-                    let mut load = |position: usize, table: &Polynomial<F>| {
-                        let table = table.evals();
-                        let lo = table[2 * row];
-                        let hi = table[2 * row + 1];
-                        evals[position] = lo;
-                        steps[position] = hi - lo;
-                    };
-                    load(0, &cycle.combined_val);
-                    for (position, ra) in cycle.ra.iter().enumerate() {
-                        load(1 + position, ra);
-                    }
+                    let val = cycle.combined_val.evals();
+                    let lo = e_in * val[2 * row];
+                    let hi = e_in * val[2 * row + 1];
+                    scratch.evals[0] = hi;
+                    scratch.steps[0] = hi - lo;
                 }
-                for value in acc.iter_mut() {
-                    let mut product = evals[0];
-                    for eval in &evals[1..] {
-                        product *= *eval;
-                    }
-                    *value += e_in * product;
-                    for (eval, step) in evals.iter_mut().zip(steps.iter()) {
+                for ((ra, eval), step) in cycle
+                    .ra
+                    .iter()
+                    .zip(scratch.evals[1..].iter_mut())
+                    .zip(scratch.steps[1..].iter_mut())
+                {
+                    let table = ra.evals();
+                    let lo = table[2 * row];
+                    let hi = table[2 * row + 1];
+                    *eval = hi;
+                    *step = hi - lo;
+                }
+                accumulate_product(&scratch.evals, &mut scratch.lanes[0]);
+                for lane in 1..factors - 1 {
+                    for (eval, step) in scratch.evals.iter_mut().zip(&scratch.steps) {
                         *eval += *step;
                     }
+                    accumulate_product(&scratch.evals, &mut scratch.lanes[lane]);
                 }
+                accumulate_product(&scratch.steps, &mut scratch.lanes[factors - 1]);
             },
-            |_x_out, e_out, (mut acc, _, _)| {
-                for value in &mut acc {
-                    *value *= e_out;
+            |_x_out, e_out, scratch| {
+                let mut out = vec![F::Accumulator::default(); factors];
+                for (out, lane) in out.iter_mut().zip(scratch.lanes) {
+                    out.fmadd(e_out, lane.reduce());
                 }
-                acc
+                out
             },
             |mut a, b| {
-                for (a, b) in a.iter_mut().zip(&b) {
-                    *a += *b;
+                for (a, b) in a.iter_mut().zip(b) {
+                    a.merge(b);
                 }
                 a
             },
         );
 
-        let (l_at_0, l_at_1) = cycle.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let mut l_eval = l_at_0;
-        let mut evals = Vec::with_capacity(points);
-        for q in &q_evals {
-            evals.push(l_eval * *q);
-            l_eval += l_step;
-        }
-
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        Ok(cycle.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
     }
 
     /// Handoff at the address/cycle boundary — same collapse as the
@@ -847,10 +970,9 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         let combined_val: Vec<F> = map_indices(rows.len(), |j| {
             let row = &rows[j];
             let table_value = row
-                .table_index
-                .0
+                .table_index()
                 .map_or_else(F::zero, |index| table_values[index]);
-            let raf_value = if !row.raf_flag.0 {
+            let raf_value = if !row.raf_flag {
                 raf_interleaved
             } else {
                 raf_identity
@@ -865,7 +987,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         let ra = (0..ra_count)
             .map(|i| {
                 Polynomial::new(map_indices(rows.len(), |j| {
-                    let index = rows[j].lookup_index.0;
+                    let index = rows[j].lookup_index;
                     let mut phase = i * phases_per_ra;
                     let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
                     let mut product =
@@ -1021,10 +1143,10 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
             || vec![F::Accumulator::default(); num_tables + 1],
             |accumulators, row_index, _x_in, e_in| {
                 let row = &rows[row_index];
-                if let Some(index) = row.table_index.0 {
+                if let Some(index) = row.table_index() {
                     accumulators[index].add(e_in);
                 }
-                if row.raf_flag.0 {
+                if row.raf_flag {
                     accumulators[num_tables].add(e_in);
                 }
             },
@@ -1073,7 +1195,23 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::OptimizedInstructionReadRafKernel;
+    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel};
+
+    /// Packs reference-typed fixture rows into the optimized kernel's shared
+    /// row form (the stage-5 kernel reads no PC/RAM columns).
+    fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
+        rows.iter()
+            .map(|row| {
+                InstructionCycleRow::new(
+                    row.lookup_index.0,
+                    row.table_index.0,
+                    row.raf_flag.0,
+                    None,
+                    None,
+                )
+            })
+            .collect()
+    }
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -1175,7 +1313,7 @@ mod tests {
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(rows.clone()),
+            Arc::new(pack(&rows)),
             gamma,
         )
         .unwrap();
@@ -1250,7 +1388,7 @@ mod tests {
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(rows.clone()),
+            Arc::new(pack(&rows)),
             gamma,
         )
         .unwrap();

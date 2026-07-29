@@ -1,7 +1,20 @@
 //! Small shared primitives of the optimized kernels.
 
-use jolt_field::Field;
+use jolt_field::{Field, RingAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
+
+/// Accumulates `Π factors` into `lane`, fusing the last multiply into the
+/// deferred-reduction accumulator. Requires at least two factors.
+#[inline]
+pub(crate) fn accumulate_product<F: Field>(factors: &[F], lane: &mut F::Accumulator) {
+    debug_assert!(factors.len() >= 2);
+    let last = factors.len() - 1;
+    let mut product = factors[0];
+    for factor in &factors[1..last] {
+        product *= *factor;
+    }
+    lane.fmadd(product, factors[last]);
+}
 
 /// `scale · eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index
 /// MSB) — the scaled variant of the reference tier's `eq_table`.

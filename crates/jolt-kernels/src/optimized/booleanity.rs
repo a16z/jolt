@@ -8,51 +8,52 @@
 //!
 //! Ported techniques, and why they are exact (byte parity with the
 //! reference tier holds because field arithmetic is exact — any correct
-//! regrouping of the same sums/products yields identical field elements):
+//! regrouping of the same sums/products yields identical field elements,
+//! and deferred reduction is exact mod `p`):
 //!
 //! - **Sparse one-hot access.** Each `ra_i(·, j)` is one-hot in the chunk
-//!   domain, so the per-cycle hot index (a `u8`) is the whole polynomial.
-//!   The kernels collect one typed bundle pass over the trace
-//!   ([`RaAddressRow`]) and never materialize the `K × T` grids the naive
-//!   tier's `oracle_table` walks (legacy `RaIndices`).
-//! - **Pushforward `G` tables (address phase).** `G_i[k] = Σ_j eq(r_ref_cycle, j) ·
-//!   ra_i(k, j)` collapses to a scatter of tensor-factored eq weights into a
-//!   `K`-sized accumulator per polynomial — `O(N·T)` adds instead of the
-//!   reference's `O(N·K·T)` multiplies over dense grids (legacy
+//!   domain, so the per-cycle hot index is a chunk of that cycle's lookup
+//!   index / mapped PC / remapped RAM address. Both phases gather through
+//!   [`RaChunkSelector`]s over the packed stage-5 rows
+//!   ([`SharedInstructionRows`], reclaimed from the [`ProofSession`] or
+//!   collected in one streaming pass) and never materialize the `K × T`
+//!   grids the naive tier's `oracle_table` walks, nor per-polynomial index
+//!   columns (legacy `RaIndices`).
+//! - **Pushforward `G` tables (address phase).** `G_i[k] = Σ_j
+//!   eq(r_ref_cycle, j) · ra_i(k, j)` collapses to a scatter of the
+//!   tensor-factored eq weights into a `K`-sized accumulator per
+//!   polynomial: per `E_out` block, the `E_in` weights accumulate
+//!   *unreduced* into the hot buckets (no per-cycle multiply at all), and
+//!   each block reduces and folds by its `e_out` once (legacy
 //!   `compute_all_G`).
 //! - **Shared expanded-eq gather (cycle phase).** The address-folded row
-//!   `x_i(j) = eq(r_address)[hot_i(j)]` is a lookup into one shared
-//!   `K`-sized table; per-polynomial tables are that table pre-scaled by
-//!   `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no batching multiply in
-//!   the round loop (legacy `SharedRaPolynomials` pre-scaling).
-//! - **Phase-staged materialization.** The cycle tables stay index-encoded
-//!   for the first three binds (K-sized scale tables per branch), then
-//!   materialize dense at `T/8` length — never `N·T` field elements up
-//!   front (legacy `SharedRaRound1→2→3→N` state machine).
+//!   `x_i(j) = eq(r_address)[hot_i(j)]` is a lookup into a `K`-sized table
+//!   pre-scaled by `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no
+//!   batching multiply in the round loop (legacy `SharedRaPolynomials`
+//!   pre-scaling), served by the shared [`LazyFoldedRa`] state machine —
+//!   index-encoded for the first three binds, dense at `T/8` after.
 //! - **Split-eq / Gruen round messages (cycle phase).** Only the constant
-//!   and leading coefficients of the inner quadratic are accumulated
-//!   (two point-evaluations per pair instead of four full-summand
-//!   evaluations); the cubic is reconstructed from `s(0)+s(1) =
-//!   previous_claim` via [`GruenSplitEqPolynomial::gruen_poly_deg_3`]. The
-//!   stage-6a `eq(r_address, reference_address)` scalar rides in the
-//!   split-eq scaling factor, mirroring the reference's `EqAddressCycle`
-//!   derived table exactly.
-//! - **Rayon-parallel walks** over cycle chunks (pushforward) and
-//!   polynomials (materialization), gated on the crate's `parallel`
-//!   feature.
+//!   and leading coefficients of the inner quadratic are accumulated, in
+//!   deferred-reduction lanes at every level (per-row products, per-block
+//!   `e_in` folds, cross-block `e_out` folds); the cubic is reconstructed
+//!   from `s(0)+s(1) = previous_claim` via
+//!   [`GruenSplitEqPolynomial::gruen_poly_deg_3`]. The stage-6a
+//!   `eq(r_address, reference_address)` scalar rides in the split-eq
+//!   scaling factor, mirroring the reference's `EqAddressCycle` derived
+//!   table exactly.
 //!
 //! The address phase's round loop runs over the `2^log_k_chunk`-point chunk
 //! domain (16–256 points) — negligible next to the `T`-scale table
 //! construction — so it reuses the reference kernel's explicit four-point
 //! sampling verbatim; only the table construction is replaced.
 //!
-//! Cross-stage carry: the 6a `prepare` parks the per-cycle index columns in
-//! the [`ProofSession`] under a module-private key; the 6b `prepare`
-//! reclaims them (falling back to a fresh bundle pass when absent or
-//! geometry-stale), so mixing this backend with the reference tier per slot
-//! stays correct.
+//! Cross-stage carry: both prepares reclaim the packed stage-5 rows with
+//! [`ProofSession::take`], clone the [`Arc`], and park the carry back for
+//! the later consumers (mixed-backend registries fall back to a fresh
+//! streaming pass when the carry is absent or geometry-stale).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
@@ -60,7 +61,7 @@ use jolt_claims::protocols::jolt::{
     BooleanityPublic, JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::{OutputClaims, Source, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{
     try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
 };
@@ -74,57 +75,53 @@ use jolt_verifier::stages::stage6a::booleanity::{
 };
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_verifier::VerifierError;
-use jolt_witness::witnesses::{LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress};
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::witnesses::RaChunkSelector;
+use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The per-cycle facts every booleanity chunk index derives from: the
-/// instruction lookup index, the mapped bytecode PC (`None` = cold cycle),
-/// and the remapped RAM word address (`None` = cold cycle). One bundle pass
-/// serves all `N` chunk columns.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-struct RaAddressRow {
-    lookup_index: LookupIndex,
-    mapped_pc: MappedPc,
-    remapped_ram_address: RemappedRamAddress,
+/// One checked polynomial's chunk selector over the packed per-cycle rows
+/// (canonical layout order: instruction, bytecode, ram).
+enum ColumnSelector {
+    Instruction(RaChunkSelector),
+    Bytecode(RaChunkSelector),
+    Ram(RaChunkSelector),
 }
 
-/// Per checked polynomial (canonical layout order: instruction, bytecode,
-/// ram), the hot chunk index per cycle; `None` is a cold cycle. The geometry
-/// stamp guards the 6a→6b session carry against a stale or mismatched
-/// reclaim.
-struct RaIndexColumns {
-    columns: Vec<Vec<Option<u8>>>,
-    layout: JoltRaPolynomialLayout,
-    log_t: usize,
-    log_k_chunk: usize,
+impl ColumnSelector {
+    /// The hot chunk index at `row`; `None` is a cold cycle. Mirrors the
+    /// trace oracle's grid materializers (`materialize_one_hot`), so
+    /// gathered indices and the reference tier's dense grids describe the
+    /// same one-hot polynomials.
+    #[inline]
+    fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
+        match self {
+            Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index)),
+            Self::Bytecode(selector) => row.mapped_pc().map(|pc| selector.chunk_usize(pc)),
+            Self::Ram(selector) => row
+                .remapped_ram_address()
+                .map(|address| selector.chunk_usize(address as usize)),
+        }
+    }
 }
 
-/// Module-private [`ProofSession`] key for the 6a→6b index-column carry.
-struct BooleanityIndexCarry(RaIndexColumns);
-
-/// One typed bundle pass over the cycle domain, then chunk-selector gathers
-/// per checked polynomial — the sparse replacement for the naive tier's
-/// `K × T` `oracle_table` grids. Shapes are validated against the relation's
-/// dimensions up front, mirroring the reference kernel's size checks.
-fn collect_index_columns<F: Field>(
+/// The layout's chunk selectors, in canonical polynomial order, with the
+/// witness shapes validated up front (mirroring the reference kernel's size
+/// checks).
+fn column_selectors<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     dimensions: BooleanityDimensions,
-) -> Result<RaIndexColumns, KernelError<F>> {
+) -> Result<Vec<ColumnSelector>, KernelError<F>> {
     let log_t = dimensions.log_t;
     let log_k_chunk = dimensions.log_k_chunk;
     let layout = dimensions.layout;
-    if log_k_chunk > 8 {
-        return Err(KernelError::Unsupported {
-            reason: "optimized booleanity stores chunk indices as u8 (log_k_chunk > 8)",
-        });
-    }
     for opening in layout.openings(JoltRelationId::Booleanity) {
         let shape = witness.shape(opening.polynomial_id())?;
         if shape.log_rows != log_k_chunk + log_t {
@@ -135,89 +132,86 @@ fn collect_index_columns<F: Field>(
             });
         }
     }
-
-    let rows: Vec<RaAddressRow> = collect_bundles(witness, 1usize << log_t)?;
-    let polynomials: Vec<JoltRaPolynomial> = layout.polynomials().collect();
-    let column_for = |polynomial: &JoltRaPolynomial| -> Result<Vec<Option<u8>>, KernelError<F>> {
-        // The selectors mirror the trace oracle's grid materializers
-        // (`materialize_one_hot`), so gathered indices and the reference
-        // tier's dense grids describe the same one-hot polynomials.
-        Ok(match *polynomial {
-            JoltRaPolynomial::Instruction(index) => {
-                let selector = RaChunkSelector::new(index, layout.instruction(), log_k_chunk)?;
-                rows.iter()
-                    .map(|row| Some(selector.chunk_u128(row.lookup_index.0) as u8))
-                    .collect()
-            }
-            JoltRaPolynomial::Bytecode(index) => {
-                let selector = RaChunkSelector::new(index, layout.bytecode(), log_k_chunk)?;
-                rows.iter()
-                    .map(|row| row.mapped_pc.0.map(|pc| selector.chunk_usize(pc) as u8))
-                    .collect()
-            }
-            JoltRaPolynomial::Ram(index) => {
-                let selector = RaChunkSelector::new(index, layout.ram(), log_k_chunk)?;
-                rows.iter()
-                    .map(|row| {
-                        row.remapped_ram_address
-                            .0
-                            .map(|address| selector.chunk_usize(address as usize) as u8)
-                    })
-                    .collect()
-            }
+    layout
+        .polynomials()
+        .map(|polynomial| {
+            Ok(match polynomial {
+                JoltRaPolynomial::Instruction(index) => ColumnSelector::Instruction(
+                    RaChunkSelector::new(index, layout.instruction(), log_k_chunk)?,
+                ),
+                JoltRaPolynomial::Bytecode(index) => ColumnSelector::Bytecode(
+                    RaChunkSelector::new(index, layout.bytecode(), log_k_chunk)?,
+                ),
+                JoltRaPolynomial::Ram(index) => {
+                    ColumnSelector::Ram(RaChunkSelector::new(index, layout.ram(), log_k_chunk)?)
+                }
+            })
         })
-    };
-
-    #[cfg(feature = "parallel")]
-    let columns = polynomials
-        .par_iter()
-        .map(column_for)
-        .collect::<Result<Vec<_>, _>>()?;
-    #[cfg(not(feature = "parallel"))]
-    let columns = polynomials
-        .iter()
-        .map(column_for)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(RaIndexColumns {
-        columns,
-        layout,
-        log_t,
-        log_k_chunk,
-    })
+        .collect()
 }
 
-/// Cycle-chunk granularity of the parallel pushforward scatter.
-const PUSHFORWARD_CHUNK: usize = 1 << 14;
-
-/// The one-hot pushforward `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`:
-/// per cycle, one tensor-factored eq product scattered into every column's
-/// `K`-sized accumulator (legacy `compute_all_G` / `one_hot_pushforwards`).
-/// Equals the reference's per-chunk cycle masses exactly — same terms,
-/// regrouped.
-fn cycle_pushforward<F: Field>(columns: &RaIndexColumns, point: &[F]) -> Vec<Vec<F>> {
-    let cycles = 1usize << columns.log_t;
-    let k_chunk = 1usize << columns.log_k_chunk;
+/// The one-hot pushforward `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`
+/// (legacy `compute_all_G` / `one_hot_pushforwards`): per `E_out` block,
+/// the `E_in` weights scatter into per-polynomial `K`-sized
+/// deferred-reduction buckets (an unreduced add per hot polynomial, no
+/// per-cycle multiply); each block then reduces its touched buckets and
+/// folds them by `e_out` into the running partials. Equals the reference's
+/// per-chunk cycle masses exactly — same terms, regrouped through the
+/// `eq = E_out ⊗ E_in` factorization.
+fn cycle_pushforward<F: Field>(
+    rows: &[InstructionCycleRow],
+    selectors: &[ColumnSelector],
+    k_chunk: usize,
+    point: &[F],
+) -> Vec<Vec<F>> {
     let eq = TensorEqTable::new(point);
-    debug_assert_eq!(eq.len(), cycles);
-    let zero = || vec![vec![F::zero(); k_chunk]; columns.columns.len()];
-    let scatter = |mut accumulator: Vec<Vec<F>>, chunk_index: usize| {
-        let start = chunk_index * PUSHFORWARD_CHUNK;
-        let end = (start + PUSHFORWARD_CHUNK).min(cycles);
-        for j in start..end {
-            let eq_eval = eq.evaluate_index(j);
-            for (column, table) in columns.columns.iter().zip(accumulator.iter_mut()) {
-                if let Some(k) = column[j] {
-                    table[k as usize] += eq_eval;
+    debug_assert_eq!(eq.len(), rows.len());
+    let e_out = eq.e_out();
+    let e_in = eq.e_in();
+    let in_len = e_in.len();
+
+    struct State<F: Field> {
+        /// Cross-block `Σ e_out · reduce(block)` lanes, still deferred.
+        partial: Vec<Vec<F::Accumulator>>,
+        /// Within-block unreduced `Σ e_in` buckets, cleared per block.
+        block: Vec<Vec<F::Accumulator>>,
+    }
+    let zero = || State::<F> {
+        partial: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
+        block: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
+    };
+    let scatter = |mut state: State<F>, x_out: usize| {
+        let base = x_out * in_len;
+        for (x_in, e) in e_in.iter().enumerate() {
+            let row = &rows[base + x_in];
+            for (selector, block) in selectors.iter().zip(state.block.iter_mut()) {
+                if let Some(k) = selector.index(row) {
+                    block[k].add(*e);
                 }
             }
         }
-        accumulator
+        let e_out = e_out[x_out];
+        for (partial, block) in state.partial.iter_mut().zip(state.block.iter_mut()) {
+            for (partial, block) in partial.iter_mut().zip(block.iter_mut()) {
+                let value = std::mem::take(block).reduce();
+                if value != F::zero() {
+                    partial.fmadd(e_out, value);
+                }
+            }
+        }
+        state
     };
-    let merge = |mut left: Vec<Vec<F>>, right: Vec<Vec<F>>| {
-        for (left, right) in left.iter_mut().zip(right) {
+    let finish = |state: State<F>| -> Vec<Vec<F>> {
+        state
+            .partial
+            .into_iter()
+            .map(|buckets| buckets.into_iter().map(|bucket| bucket.reduce()).collect())
+            .collect()
+    };
+    let merge = |mut left: State<F>, right: State<F>| {
+        for (left, right) in left.partial.iter_mut().zip(right.partial) {
             for (left, right) in left.iter_mut().zip(right) {
-                *left += right;
+                left.merge(right);
             }
         }
         left
@@ -225,15 +219,17 @@ fn cycle_pushforward<F: Field>(columns: &RaIndexColumns, point: &[F]) -> Vec<Vec
 
     #[cfg(feature = "parallel")]
     {
-        (0..cycles.div_ceil(PUSHFORWARD_CHUNK))
-            .into_par_iter()
-            .fold(zero, scatter)
-            .reduce(zero, merge)
+        finish(
+            (0..e_out.len())
+                .into_par_iter()
+                .fold(zero, scatter)
+                .reduce(zero, merge),
+        )
     }
     #[cfg(not(feature = "parallel"))]
     {
         let _ = merge;
-        (0..cycles.div_ceil(PUSHFORWARD_CHUNK)).fold(zero(), scatter)
+        finish((0..e_out.len()).fold(zero(), scatter))
     }
 }
 
@@ -267,12 +263,14 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleani
             });
         }
 
-        let columns = collect_index_columns(witness, dimensions)?;
-        let masses = cycle_pushforward(&columns, &reference_cycle);
-        // The index columns are pure witness data (challenge-free), so the
-        // carry cannot go stale; the 6b cycle phase reclaims them and skips
-        // its own trace pass.
-        session.park(BooleanityIndexCarry(columns));
+        let selectors = column_selectors(witness, dimensions)?;
+        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+        let masses = cycle_pushforward(
+            &rows,
+            &selectors,
+            1usize << dimensions.log_k_chunk,
+            &reference_cycle,
+        );
 
         Ok(Box::new(OptimizedBooleanityAddressKernel::new(
             relation.rounds(),
@@ -477,16 +475,8 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
             });
         }
 
-        let columns = match session.take::<BooleanityIndexCarry>() {
-            Some(BooleanityIndexCarry(columns))
-                if columns.layout == layout
-                    && columns.log_t == dimensions.log_t
-                    && columns.log_k_chunk == dimensions.log_k_chunk =>
-            {
-                columns
-            }
-            _ => collect_index_columns(witness, dimensions)?,
-        };
+        let selectors = column_selectors(witness, dimensions)?;
+        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
 
         // The fixed address eq factor of the `EqAddressCycle` public; rides
         // in the split-eq scaling so round messages and the bound scalar
@@ -511,7 +501,7 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
                 BindingOrder::LowToHigh,
                 Some(address_scalar),
             ),
-            tables: SharedRaTables::new(tables, columns),
+            tables: LazyFoldedRa::new(tables, BooleanityChunks { rows, selectors }),
             gamma_powers,
             gamma_powers_inv,
             layout,
@@ -540,164 +530,25 @@ fn gamma_power_pairs<F: Field>(gamma: F, count: usize) -> Result<(Vec<F>, Vec<F>
     Ok((powers, powers_inv))
 }
 
-/// The legacy `SharedRaPolynomials` state machine: the address-folded cycle
-/// rows of all `N` one-hot polynomials, served as gathers into shared
-/// `K`-sized scale tables for the first three binds, then materialized
-/// dense at `T/8` length. `LowToHigh` binding only (the booleanity
-/// convention).
-enum SharedRaTables<F: Field> {
-    /// No binds yet: `value(i, j) = tables[i][hot_i(j)]` (0 when cold).
-    Fresh {
-        tables: Vec<Vec<F>>,
-        columns: RaIndexColumns,
-    },
-    /// One bind: branch tables scaled by `(1−r)` / `r`.
-    Bound1 {
-        branch: [Vec<Vec<F>>; 2],
-        columns: RaIndexColumns,
-    },
-    /// Two binds: branch tables indexed by the two bound bits `(b0, b1)`
-    /// packed as `b0 + 2·b1` — the original index's low bits.
-    Bound2 {
-        branch: [Vec<Vec<F>>; 4],
-        columns: RaIndexColumns,
-    },
-    /// Three or more binds: plain dense multilinears.
-    Dense(Vec<Polynomial<F>>),
+/// Lazy-RA index source over the packed stage-5 rows: polynomial `i`'s hot
+/// chunk at cycle `j`, through the layout's selectors.
+struct BooleanityChunks {
+    rows: Arc<Vec<InstructionCycleRow>>,
+    selectors: Vec<ColumnSelector>,
 }
 
-impl<F: Field> SharedRaTables<F> {
-    fn new(tables: Vec<Vec<F>>, columns: RaIndexColumns) -> Self {
-        Self::Fresh { tables, columns }
+impl ChunkIndexSource for BooleanityChunks {
+    fn num_polys(&self) -> usize {
+        self.selectors.len()
     }
 
-    /// The current (bound) evaluation of polynomial `i` at index `j`: the
-    /// eq-weighted sum of the surviving original indices, exactly the value
-    /// the reference's dense table holds after the same binds.
+    fn cycles(&self) -> usize {
+        self.rows.len()
+    }
+
     #[inline]
-    fn value(&self, i: usize, j: usize) -> F {
-        let gather = |tables: &[Vec<Vec<F>>], columns: &RaIndexColumns, j: usize| -> F {
-            let width = tables.len();
-            let column = &columns.columns[i];
-            let mut sum = F::zero();
-            for (offset, table) in tables.iter().enumerate() {
-                if let Some(k) = column[j * width + offset] {
-                    sum += table[i][k as usize];
-                }
-            }
-            sum
-        };
-        match self {
-            Self::Fresh { tables, columns } => {
-                columns.columns[i][j].map_or_else(F::zero, |k| tables[i][k as usize])
-            }
-            Self::Bound1 { branch, columns } => gather(branch, columns, j),
-            Self::Bound2 { branch, columns } => gather(branch, columns, j),
-            Self::Dense(polys) => polys[i].evals()[j],
-        }
-    }
-
-    /// The fully bound claim of polynomial `i` (any state, so short
-    /// geometries with fewer than three rounds extract correctly).
-    fn final_value(&self, i: usize) -> F {
-        self.value(i, 0)
-    }
-
-    fn bind(&mut self, challenge: F) {
-        let scale = |tables: &[Vec<F>], factor: F| -> Vec<Vec<F>> {
-            tables
-                .iter()
-                .map(|table| table.iter().map(|value| factor * *value).collect())
-                .collect()
-        };
-        let one_minus = F::one() - challenge;
-        *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
-            Self::Fresh { tables, columns } => Self::Bound1 {
-                branch: [scale(&tables, one_minus), scale(&tables, challenge)],
-                columns,
-            },
-            Self::Bound1 {
-                branch: [zero, one],
-                columns,
-            } => Self::Bound2 {
-                // Packing: index = b0 + 2·b1 (b0 = first bound bit).
-                branch: [
-                    scale(&zero, one_minus),
-                    scale(&one, one_minus),
-                    scale(&zero, challenge),
-                    scale(&one, challenge),
-                ],
-                columns,
-            },
-            Self::Bound2 { branch, columns } => {
-                Self::Dense(materialize(&branch, &columns, challenge))
-            }
-            Self::Dense(mut polys) => {
-                for poly in &mut polys {
-                    poly.bind_with_order(challenge, BindingOrder::LowToHigh);
-                }
-                Self::Dense(polys)
-            }
-        };
-    }
-}
-
-/// The third bind's materialization: eight branch scale tables (the three
-/// bound low bits), gathered per polynomial into a dense `T/8`-length
-/// vector (legacy `SharedRaRound3::bind`).
-fn materialize<F: Field>(
-    branch: &[Vec<Vec<F>>; 4],
-    columns: &RaIndexColumns,
-    challenge: F,
-) -> Vec<Polynomial<F>> {
-    let one_minus = F::one() - challenge;
-    let scale = |tables: &[Vec<F>], factor: F| -> Vec<Vec<F>> {
-        tables
-            .iter()
-            .map(|table| table.iter().map(|value| factor * *value).collect())
-            .collect()
-    };
-    // Packing: index = b0 + 2·b1 + 4·b2.
-    let tables: Vec<Vec<Vec<F>>> = (0..8)
-        .map(|offset| {
-            let factor = if offset >= 4 { challenge } else { one_minus };
-            scale(&branch[offset % 4], factor)
-        })
-        .collect();
-
-    let materialize_poly = |column: &[Option<u8>], i: usize| -> Polynomial<F> {
-        let new_len = column.len() / 8;
-        let evals: Vec<F> = (0..new_len)
-            .map(|j| {
-                let mut sum = F::zero();
-                for (offset, table) in tables.iter().enumerate() {
-                    if let Some(k) = column[8 * j + offset] {
-                        sum += table[i][k as usize];
-                    }
-                }
-                sum
-            })
-            .collect();
-        Polynomial::new(evals)
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        columns
-            .columns
-            .par_iter()
-            .enumerate()
-            .map(|(i, column)| materialize_poly(column, i))
-            .collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        columns
-            .columns
-            .iter()
-            .enumerate()
-            .map(|(i, column)| materialize_poly(column, i))
-            .collect()
+    fn index(&self, i: usize, j: usize) -> Option<usize> {
+        self.selectors[i].index(&self.rows[j])
     }
 }
 
@@ -707,8 +558,9 @@ struct OptimizedBooleanityCycleKernel<F: Field> {
     /// `eq(r_address, reference_address)` — together the reference's
     /// `EqAddressCycle` derived table.
     eq: GruenSplitEqPolynomial<F>,
-    /// Pre-scaled (`γ^i`) shared address-folded tables.
-    tables: SharedRaTables<F>,
+    /// Pre-scaled (`γ^i`) shared address-folded tables, index-encoded for
+    /// the first three binds.
+    tables: LazyFoldedRa<F, BooleanityChunks>,
     gamma_powers: Vec<F>,
     gamma_powers_inv: Vec<F>,
     layout: JoltRaPolynomialLayout,
@@ -739,28 +591,54 @@ impl<F: Field> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         }
         let tables = &self.tables;
         let gamma_powers = &self.gamma_powers;
+        let num_polys = gamma_powers.len();
+
+        struct Scratch<F: Field> {
+            /// Within-block `Σ e_in · (constant, leading)` lanes, deferred.
+            lanes: [F::Accumulator; 2],
+            pairs: Vec<(F, F)>,
+        }
+
         // Inner quadratic `q(X) = Σ_j eq_rest(j) · Σ_i (H_i(X)² − γ^i·H_i(X))`:
         // constant coefficient from `H` at 0, leading coefficient from the
         // pair delta — the pre-scaling makes `γ^{2i}(x² − x) = H(H − γ^i)`.
-        let [constant, leading] = self.eq.par_fold_out_in(
-            || [F::zero(); 2],
-            |accumulator, row, _x_in, e_in| {
-                let mut pair_constant = F::zero();
-                let mut pair_leading = F::zero();
-                for (i, rho) in gamma_powers.iter().enumerate() {
-                    let h_0 = tables.value(i, 2 * row);
-                    let h_1 = tables.value(i, 2 * row + 1);
-                    let delta = h_1 - h_0;
-                    pair_constant += h_0 * (h_0 - *rho);
-                    pair_leading += delta * delta;
-                }
-                accumulator[0] += e_in * pair_constant;
-                accumulator[1] += e_in * pair_leading;
+        // Per-row products accumulate unreduced, reduce once, and fold into
+        // the block lanes by `e_in`; blocks fold by `e_out` (legacy
+        // `par_fold_out_in_unreduced`).
+        let block_lanes = self.eq.par_fold_out_in(
+            || Scratch {
+                lanes: [F::Accumulator::default(); 2],
+                pairs: vec![(F::zero(), F::zero()); num_polys],
             },
-            |_x_out, e_out, inner| [e_out * inner[0], e_out * inner[1]],
-            |left, right| [left[0] + right[0], left[1] + right[1]],
+            |scratch, row, _x_in, e_in| {
+                tables.lo_hi_all(row, &mut scratch.pairs);
+                let mut constant = F::Accumulator::default();
+                let mut leading = F::Accumulator::default();
+                for ((h_0, h_1), rho) in scratch.pairs.iter().zip(gamma_powers) {
+                    let delta = *h_1 - *h_0;
+                    constant.fmadd(*h_0, *h_0 - *rho);
+                    leading.fmadd(delta, delta);
+                }
+                scratch.lanes[0].fmadd(e_in, constant.reduce());
+                scratch.lanes[1].fmadd(e_in, leading.reduce());
+            },
+            |_x_out, e_out, scratch| {
+                let mut out = [F::Accumulator::default(); 2];
+                out[0].fmadd(e_out, scratch.lanes[0].reduce());
+                out[1].fmadd(e_out, scratch.lanes[1].reduce());
+                out
+            },
+            |mut a, b| {
+                a[0].merge(b[0]);
+                a[1].merge(b[1]);
+                a
+            },
         );
-        Ok(self.eq.gruen_poly_deg_3(constant, leading, previous_claim))
+        Ok(self.eq.gruen_poly_deg_3(
+            block_lanes[0].reduce(),
+            block_lanes[1].reduce(),
+            previous_claim,
+        ))
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -788,7 +666,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
             .layout
             .openings(JoltRelationId::Booleanity)
             .enumerate()
-            .map(|(i, id)| (id, self.tables.final_value(i) * self.gamma_powers_inv[i]))
+            .map(|(i, id)| (id, self.tables.value(i, 0) * self.gamma_powers_inv[i]))
             .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| values.get(id).copied())
             .map_err(SumcheckKernelError::from)
@@ -1033,6 +911,9 @@ mod tests {
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
     use jolt_witness::JoltWitnessOracle;
 
+    use super::super::instruction_read_raf::{
+        collect_instruction_cycle_rows, SharedInstructionRows,
+    };
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
     use crate::ReferenceBackend;
@@ -1162,8 +1043,8 @@ mod tests {
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap(),
             );
-            // The 6a prepare parks the index columns for the 6b cycle phase.
-            assert!(session.state::<BooleanityIndexCarry>().is_some());
+            // The 6a prepare parks the shared rows for the 6b consumers.
+            assert!(session.state::<SharedInstructionRows>().is_some());
         });
     }
 
@@ -1224,9 +1105,8 @@ mod tests {
                 .unwrap();
             let mut session = ProofSession::default();
             if carried_indices {
-                session.park(BooleanityIndexCarry(
-                    collect_index_columns::<Fr>(backend, dimensions).unwrap(),
-                ));
+                let rows = collect_instruction_cycle_rows::<Fr>(backend, 1usize << log_t).unwrap();
+                session.park(SharedInstructionRows(std::sync::Arc::new(rows)));
             }
             let optimized = OptimizedBooleanityCycle
                 .prepare(
@@ -1242,8 +1122,8 @@ mod tests {
                 .unwrap();
             if carried_indices {
                 assert!(
-                    session.state::<BooleanityIndexCarry>().is_none(),
-                    "cycle prepare must consume the parked index columns"
+                    session.state::<SharedInstructionRows>().is_some(),
+                    "cycle prepare must park the shared rows back for later consumers"
                 );
             }
 
@@ -1406,8 +1286,8 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                session.state::<BooleanityIndexCarry>().is_none(),
-                "cycle prepare must consume the 6a-parked index columns"
+                session.state::<SharedInstructionRows>().is_some(),
+                "cycle prepare must park the 6a-shared rows back"
             );
             let (mut reference, mut optimized, cycle_challenges_drawn) =
                 drive_lockstep(reference, optimized, input_claim);

@@ -19,11 +19,17 @@
 //! or collected fresh otherwise.
 //!
 //! Round messages use the Gruen split-eq factorization: `eq(r_cycle, ·)` is
-//! never materialized or bound as a `T`-sized table; each round emits
-//! `s(t) = ℓ(t) · Σ_y E_out·E_in · Σ_v γ^v Π_i ra(t, y)` at the naive
-//! prover's `t = 0..=degree` sample points through the same `from_evals`
-//! constructor, so round polynomials and output claims are byte-identical
-//! (field arithmetic is exact under any regrouping).
+//! never materialized or bound as a `T`-sized table; each round computes the
+//! inner factor `q(t) = Σ_y E_out·E_in · Σ_v γ^v Π_i ra(t, y)` on the grid
+//! `[1, …, N−1, ∞]` with deferred-reduction accumulation (per-batch `γ^v`
+//! pre-scaled into the batch's first table, so the row loop is pure
+//! products), recovers `q(0)` from `s(0) + s(1) = previous_claim`, and
+//! recomposes `s = ℓ · q` (legacy `compute_mles_product_sum` /
+//! `finish_mles_product_sum_from_evals`). The emitted coefficient vector is
+//! the unique degree-`(N+1)` polynomial through the same values the naive
+//! prover interpolates, so round polynomials and output claims are
+//! byte-identical (field arithmetic is exact under any regrouping, and
+//! deferred reduction is exact mod `p`).
 //!
 //! The bound eq factor is pinned to the verifier's scalar path by
 //! [`validate_derived_tables`](crate::SumcheckKernel::validate_derived_tables):
@@ -35,7 +41,7 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
-use jolt_field::Field;
+use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -43,13 +49,13 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::SharedInstructionRows;
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use crate::reference::instruction_read_raf::InstructionReadRafWitness;
+use super::support::accumulate_product;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -71,13 +77,7 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
     {
         let relation = inputs.relation;
         let cycles = 1usize << relation.dimensions().log_t();
-        // Reclaim the stage-5 rows when the optimized read-RAF kernel parked
-        // them (mixed-backend registries may not have); the length guard
-        // makes a stale carry impossible to consume.
-        let rows = match session.take::<SharedInstructionRows>() {
-            Some(SharedInstructionRows(rows)) if rows.len() == cycles => rows,
-            _ => Arc::new(collect_bundles(witness, cycles)?),
-        };
+        let rows = shared_instruction_rows(session, witness, cycles)?;
         Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
             relation.dimensions().log_t(),
             relation.dimensions().num_virtual_ra_polys(),
@@ -94,7 +94,7 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
 /// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
 /// hot), off the stage-5 shared rows.
 struct LookupIndexChunks {
-    rows: Arc<Vec<InstructionReadRafWitness>>,
+    rows: Arc<Vec<InstructionCycleRow>>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
@@ -112,7 +112,7 @@ impl ChunkIndexSource for LookupIndexChunks {
     fn index(&self, i: usize, j: usize) -> Option<usize> {
         let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
         let mask = (1u128 << self.committed_chunk_bits) - 1;
-        Some(((self.rows[j].lookup_index.0 >> shift) & mask) as usize)
+        Some(((self.rows[j].lookup_index >> shift) & mask) as usize)
     }
 }
 
@@ -131,10 +131,15 @@ fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec
 pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
     log_t: usize,
     num_committed_per_virtual: usize,
-    gamma_powers: Vec<F>,
+    /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
+    /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
+    /// exactly, so unscaling is byte-exact).
+    gamma_powers_inv: Vec<F>,
     /// Address-folded committed RA selectors, one per committed chunk:
-    /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))`, served lazily off the
-    /// shared rows for the first three binds instead of `N × T` dense.
+    /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
+    /// batch's first table pre-scaled by `γ^v` so the round loop needs no
+    /// batching multiplies — served lazily off the shared rows for the
+    /// first three binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
     rounds_bound: usize,
@@ -142,14 +147,14 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
 
 impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
-    pub fn new(
+    pub(crate) fn new(
         log_t: usize,
         num_virtual: usize,
         num_committed_per_virtual: usize,
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: Arc<Vec<InstructionReadRafWitness>>,
+        rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let num_committed = num_virtual * num_committed_per_virtual;
@@ -181,10 +186,36 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             });
         }
 
+        let gamma_inv = gamma.inverse().ok_or(KernelError::InvariantViolation {
+            reason: "instruction RA batching gamma must be invertible",
+        })?;
+        let mut gamma_powers = Vec::with_capacity(num_virtual);
+        let mut gamma_powers_inv = Vec::with_capacity(num_virtual);
+        let mut power = F::one();
+        let mut power_inv = F::one();
+        for _ in 0..num_virtual {
+            gamma_powers.push(power);
+            gamma_powers_inv.push(power_inv);
+            power *= gamma;
+            power_inv *= gamma_inv;
+        }
+
         // One eq table per committed chunk point (each `2^w` entries); the
         // point-mass fold stays lazy — one table lookup per gathered cycle —
-        // instead of materializing `N × T` dense selectors up front.
-        let chunk_tables: Vec<Vec<F>> = map_indices(chunks.len(), |i| eq_table(&chunks[i]));
+        // instead of materializing `N × T` dense selectors up front. Each
+        // virtual batch's `γ^v` weight rides in the batch's first table.
+        let chunk_tables: Vec<Vec<F>> = map_indices(chunks.len(), |i| {
+            let mut table = eq_table(&chunks[i]);
+            if i % num_committed_per_virtual == 0 {
+                let weight = gamma_powers[i / num_committed_per_virtual];
+                if weight != F::one() {
+                    for value in &mut table {
+                        *value *= weight;
+                    }
+                }
+            }
+            table
+        });
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
             LookupIndexChunks {
@@ -194,66 +225,127 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             },
         );
 
-        let mut gamma_powers = Vec::with_capacity(num_virtual);
-        let mut power = F::one();
-        for _ in 0..num_virtual {
-            gamma_powers.push(power);
-            power *= gamma;
-        }
-
         Ok(Self {
             log_t,
             num_committed_per_virtual,
-            gamma_powers,
+            gamma_powers_inv,
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
             rounds_bound: 0,
         })
     }
 
-    /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
-    /// `q(t) = Σ_y E(y) · Σ_v γ^v Π_{i<N} ra_{N·v+i}(t, y)`.
+    /// `s(t) = ℓ(t) · q(t)` with
+    /// `q(t) = Σ_y E(y) · Σ_v γ^v Π_{i<N} ra_{N·v+i}(t, y)` (the `γ^v` live
+    /// in the pre-scaled tables): `q` is evaluated on the grid
+    /// `[1, …, N−1, ∞]` with deferred-reduction accumulation at every level
+    /// (per-row product lanes, per-block `e_in` folds, cross-block `e_out`
+    /// folds), `q(0)` is recovered from `s(0) + s(1) = previous_claim`, and
+    /// [`GruenSplitEqPolynomial::gruen_poly_from_evals`] recomposes the
+    /// unique degree-`(N+1)` coefficient vector.
     fn message(
         &self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        // The relation degree: one eq factor plus the N-wide products.
-        let degree = self.num_committed_per_virtual + 1;
-        let points = degree + 1;
+        let n = self.num_committed_per_virtual;
+        if n < 2 {
+            return self.message_single_factor(round, previous_claim);
+        }
         let num_committed = self.folded_ra.num_polys();
+        let folded_ra = &self.folded_ra;
 
-        let q_evals = self.gruen.par_fold_out_in(
-            || {
-                (
-                    vec![F::zero(); points],
-                    vec![F::zero(); num_committed],
-                    vec![F::zero(); num_committed],
-                )
+        struct Scratch<F: Field> {
+            /// Cross-row lanes for `q(1), …, q(N−1), q(∞)`.
+            lanes: Vec<F::Accumulator>,
+            /// Per-row product lanes (reduced and folded by `e_in` each row).
+            row_lanes: Vec<F::Accumulator>,
+            pairs: Vec<(F, F)>,
+            evals: Vec<F>,
+            steps: Vec<F>,
+        }
+
+        let block_lanes = self.gruen.par_fold_out_in(
+            || Scratch {
+                lanes: vec![F::Accumulator::default(); n],
+                row_lanes: vec![F::Accumulator::default(); n],
+                pairs: vec![(F::zero(), F::zero()); num_committed],
+                evals: vec![F::zero(); n],
+                steps: vec![F::zero(); n],
             },
-            |(acc, evals, steps), row, _x_in, e_in| {
-                for position in 0..num_committed {
-                    let (lo, hi) = self.folded_ra.lo_hi(position, row);
-                    evals[position] = lo;
-                    steps[position] = hi - lo;
+            |scratch, row, _x_in, e_in| {
+                folded_ra.lo_hi_all(row, &mut scratch.pairs);
+                for lane in &mut scratch.row_lanes {
+                    *lane = F::Accumulator::default();
                 }
-                for value in acc.iter_mut() {
-                    let mut sum = F::zero();
-                    for (v, gamma_power) in self.gamma_powers.iter().enumerate() {
-                        let base = v * self.num_committed_per_virtual;
-                        let mut product = evals[base];
-                        for eval in &evals[base + 1..base + self.num_committed_per_virtual] {
-                            product *= *eval;
+                for pairs in scratch.pairs.chunks_exact(n) {
+                    for ((pair, eval), step) in pairs
+                        .iter()
+                        .zip(scratch.evals.iter_mut())
+                        .zip(scratch.steps.iter_mut())
+                    {
+                        *eval = pair.1;
+                        *step = pair.1 - pair.0;
+                    }
+                    accumulate_product(&scratch.evals, &mut scratch.row_lanes[0]);
+                    for lane in 1..n - 1 {
+                        for (eval, step) in scratch.evals.iter_mut().zip(&scratch.steps) {
+                            *eval += *step;
                         }
-                        sum += *gamma_power * product;
+                        accumulate_product(&scratch.evals, &mut scratch.row_lanes[lane]);
                     }
-                    *value += e_in * sum;
-                    for (eval, step) in evals.iter_mut().zip(steps.iter()) {
-                        *eval += *step;
-                    }
+                    accumulate_product(&scratch.steps, &mut scratch.row_lanes[n - 1]);
+                }
+                for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
+                    lane.fmadd(e_in, row_lane.reduce());
                 }
             },
-            |_x_out, e_out, (mut acc, _, _)| {
+            |_x_out, e_out, scratch| {
+                let mut out = vec![F::Accumulator::default(); n];
+                for (out, lane) in out.iter_mut().zip(scratch.lanes) {
+                    out.fmadd(e_out, lane.reduce());
+                }
+                out
+            },
+            |mut a, b| {
+                for (a, b) in a.iter_mut().zip(b) {
+                    a.merge(b);
+                }
+                a
+            },
+        );
+
+        let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        Ok(self.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+    }
+
+    /// Degenerate `N = 1` geometry (virtual = committed): the grid recovery
+    /// assumes `q(1)` is sampled, so fall back to explicit `t = 0..=2`
+    /// sampling of the quadratic summand.
+    fn message_single_factor(
+        &self,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let num_committed = self.folded_ra.num_polys();
+        let folded_ra = &self.folded_ra;
+        let q_evals = self.gruen.par_fold_out_in(
+            || ([F::zero(); 3], vec![(F::zero(), F::zero()); num_committed]),
+            |(acc, pairs), row, _x_in, e_in| {
+                folded_ra.lo_hi_all(row, pairs);
+                let mut at_0 = F::zero();
+                let mut at_1 = F::zero();
+                let mut at_2 = F::zero();
+                for (lo, hi) in pairs.iter() {
+                    at_0 += *lo;
+                    at_1 += *hi;
+                    at_2 += *hi + *hi - *lo;
+                }
+                acc[0] += e_in * at_0;
+                acc[1] += e_in * at_1;
+                acc[2] += e_in * at_2;
+            },
+            |_x_out, e_out, (mut acc, _)| {
                 for value in &mut acc {
                     *value *= e_out;
                 }
@@ -269,13 +361,11 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
 
         let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
         let l_step = l_at_1 - l_at_0;
-        let mut l_eval = l_at_0;
-        let mut evals = Vec::with_capacity(points);
-        for q in &q_evals {
-            evals.push(l_eval * *q);
-            l_eval += l_step;
-        }
-
+        let evals = [
+            l_at_0 * q_evals[0],
+            l_at_1 * q_evals[1],
+            (l_at_1 + l_step) * q_evals[2],
+        ];
         let round_sum = evals[0] + evals[1];
         if round_sum != previous_claim {
             return Err(SumcheckError::RoundCheckFailed {
@@ -329,8 +419,16 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
                 remaining: self.log_t - self.rounds_bound,
             });
         }
+        // Unscale the batch-first tables' γ^v pre-scaling back to the
+        // committed polynomials' claims.
+        let mut committed_instruction_ra = self.folded_ra.final_values();
+        for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
+            if index % self.num_committed_per_virtual == 0 {
+                *value *= self.gamma_powers_inv[index / self.num_committed_per_virtual];
+            }
+        }
         Ok(InstructionRaVirtualizationOutputClaims {
-            committed_instruction_ra: self.folded_ra.final_values(),
+            committed_instruction_ra,
         })
     }
 
@@ -387,7 +485,24 @@ mod tests {
     use crate::reference::views::{address_fold, eq_table};
     use crate::{NaiveSumcheckProver, ProverInputs, SumcheckKernel};
 
+    use super::super::instruction_read_raf::InstructionCycleRow;
     use super::OptimizedInstructionRaVirtualizationKernel;
+
+    /// Packs reference-typed fixture rows into the optimized kernels' shared
+    /// row form (this kernel reads only the lookup index).
+    fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
+        rows.iter()
+            .map(|row| {
+                InstructionCycleRow::new(
+                    row.lookup_index.0,
+                    row.table_index.0,
+                    row.raf_flag.0,
+                    None,
+                    None,
+                )
+            })
+            .collect()
+    }
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -529,7 +644,7 @@ mod tests {
             &instruction_address,
             &r_cycle,
             chunk_bits,
-            Arc::new(rows.clone()),
+            Arc::new(pack(&rows)),
             gamma,
         )
         .unwrap();
