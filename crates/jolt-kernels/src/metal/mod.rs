@@ -48,8 +48,8 @@ pub use runtime::{
     ComputePass, KernelId, MetalContext, PendingPass, MAX_EVAL_POINTS, THREADGROUP_SIZE,
 };
 pub use slots::{
-    MetalHammingWeightClaimReduction, MetalIncClaimReduction, MetalRamHammingBooleanity,
-    MetalRamRafEvaluation,
+    MetalHammingWeightClaimReduction, MetalIncClaimReduction, MetalInstructionReadRaf,
+    MetalRamHammingBooleanity, MetalRamRafEvaluation,
 };
 
 use jolt_field::Fr;
@@ -138,6 +138,7 @@ where
         backend.ram_raf_evaluation = Box::new(MetalRamRafEvaluation {
             fallback: OptimizedBackend,
         });
+        backend.instruction_read_raf = Box::new(MetalInstructionReadRaf);
         if let Some(slot) = commitment::dory_commit_slot::<Fr, PCS>() {
             backend.commit = slot;
             tracing::info!(device = %context.device_name(), "Metal backend ready (commit on device)");

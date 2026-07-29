@@ -52,10 +52,14 @@ pub enum KernelId {
     TablePairsRound,
     HammingRound,
     G1SegSum,
+    IrrPhaseScan,
+    IrrSuffixScan,
+    IrrReduce,
+    SuffixProbe,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 15] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -67,6 +71,10 @@ impl KernelId {
         Self::TablePairsRound,
         Self::HammingRound,
         Self::G1SegSum,
+        Self::IrrPhaseScan,
+        Self::IrrSuffixScan,
+        Self::IrrReduce,
+        Self::SuffixProbe,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -82,6 +90,10 @@ impl KernelId {
             Self::TablePairsRound => "jk_table_pairs_round",
             Self::HammingRound => "jk_hamming_round",
             Self::G1SegSum => "jk_g1_seg_sum",
+            Self::IrrPhaseScan => "jk_irr_phase_scan",
+            Self::IrrSuffixScan => "jk_irr_suffix_scan",
+            Self::IrrReduce => "jk_irr_reduce",
+            Self::SuffixProbe => "jk_suffix_probe",
         }
     }
 
@@ -116,11 +128,12 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}",
             field::constants_preamble(),
             include_str!("shaders/fr.metal"),
             include_str!("shaders/kernels.metal"),
             include_str!("shaders/g1.metal"),
+            include_str!("shaders/instruction.metal"),
         );
         let library = device
             .newLibraryWithSource_options_error(&NSString::from_str(&source), None)
