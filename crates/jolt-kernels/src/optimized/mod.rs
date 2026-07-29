@@ -27,6 +27,9 @@ use crate::reference::spartan_product::ReferenceProductRemainder;
 use crate::{JoltBackend, ReferenceBackend};
 
 pub mod booleanity;
+pub mod bytecode_read_raf;
+pub mod hamming_weight_claim_reduction;
+pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
 pub mod instruction_input;
 pub mod instruction_ra_virtualization;
@@ -43,6 +46,11 @@ pub mod registers_val_evaluation;
 mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
+mod support;
+
+pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
+pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
+pub use inc_claim_reduction::OptimizedIncClaimReduction;
 
 /// The optimized implementations' marker type: implements the RAM-family
 /// [`PrepareKernel`](crate::PrepareKernel) slots (each module here hosts its
@@ -111,5 +119,7 @@ where
     }
 }
 
+#[cfg(test)]
+pub(crate) mod harness;
 #[cfg(test)]
 pub(crate) mod testing;
