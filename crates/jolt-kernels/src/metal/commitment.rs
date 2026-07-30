@@ -111,9 +111,9 @@ const MILLER_CPU_SHARD: usize = 64;
 /// while the device carries tier-1 + Miller; giving them a pair share
 /// balances the lanes. Tier2Accumulator is partition-invariant, so ANY
 /// split is byte-identical — the knob is pure load balance. In-pipeline
-/// sweep (sha2-chain @2^22, stage-0 wall): 0 → 3.25 s, 0.3 → 3.15,
-/// **0.5 → 2.82**, 0.65 → 3.34, 0.8 → 4.02, gate-closed → 4.78.
-const MILLER_CPU_FRACTION_DEFAULT: f64 = 0.5;
+/// M5 Max sweep (sha2-chain @2^22, stage-0 wall) selected 0.15; override
+/// this per device when its CPU/device balance differs.
+const MILLER_CPU_FRACTION_DEFAULT: f64 = 0.15;
 
 /// `JOLT_METAL_MILLER_CPU_FRACTION` — CPU share of Miller pairs in
 /// `[0, 1]`; `0` = all-device, `1` = all-CPU (the ablation arm). Read once
