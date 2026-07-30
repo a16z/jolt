@@ -1,0 +1,43 @@
+wall span: 277.4s   threads seen: 22
+
+ INCLUSIVE s     EXCL s    count  name
+      222.30     118.42        1  prove_packed
+      118.22       0.11        1  AkitaCommitmentScheme::commit
+      116.07       0.00        1  TracePackedOneHot::commit_inner
+      115.95     115.95        1  trace_onehot_commit_accumulate
+       52.50      52.50        2  trace_with_cycle_sink
+       29.26       0.00        1  jolt_trace_row_stream
+       26.17       0.00        1  AkitaNativeBatching::prove_batch
+       26.17      26.17        1  AkitaNativeBatching::backend_batched_prove
+       26.17       0.13        1  AkitaCommitmentScheme::batched_prove
+       23.24       0.00        1  Program::trace
+       23.24       0.00        1  trace
+       21.09       0.08        1  prove_stage6b_lattice
+       16.05       0.00        1  prove_stage5
+       16.05      12.24     3199  MultilinearPolynomial::bind_parallel
+       12.30       0.00        1  prove_stage1
+       12.03       0.00        1  prove_stage4
+        9.59       0.03      156  InstructionReadRafSumcheckProver::ingest_challenge
+        8.46       0.00        8  InstructionReadRafProver::init_phase
+        8.29       0.00        8  RingRelationProver::new
+        8.25       6.07        8  ring_switch_build_w
+        7.86       7.86       28  LatticeBooleanityCycleSumcheckProver::compute_message
+        7.38       7.38        1  OuterUniSkipInstanceProver::initialize
+        7.36       0.00        8  ring_relation_fold_grind
+        7.36       0.28        8  fold_grind_sample
+        7.14       0.57       35  RegistersReadWriteCheckingProver::ingest_challenge
+        6.70       0.00        1  TracePackedOneHot::decompose_fold
+        6.66       6.66        1  trace_onehot_decompose_accumulate
+        6.56       6.56       56  ReadWriteMatrixCycleMajor::bind
+        5.06       5.06       28  InstructionRaSumcheckProver::compute_message
+        4.40       4.40        2  shared_ra_polys::compute_all_G_from_ra_indices
+        4.34       4.34        8  InstructionReadRafProver::init_suffix_polys
+        4.18       0.00        1  prove_stage3
+        3.79       0.00       16  stage2_sumcheck
+        3.67       0.00        8  prove_sumcheck
+        3.67       0.00      175  sumcheck_round
+        3.60       0.00        1  prove_stage2
+        3.47       0.00        1  prove_stage6a_lattice
+        3.43       3.43        8  PrefixSuffix::init_Q_raf
+        2.76       0.00        1  OuterLinearStage::initialize
+        2.76       2.76        1  OuterLinearStage::fused_materialise_polynomials_round_zero

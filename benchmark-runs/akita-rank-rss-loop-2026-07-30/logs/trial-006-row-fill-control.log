@@ -1,0 +1,20 @@
+────────────
+ Nextest run ID d6902409-3825-4275-b7d7-d8f2af1850be with nextest profile: default
+    Starting 1 test across 2 binaries (456 tests skipped)
+       START [         ] (1/1) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+
+running 1 test
+sha2-chain/akita: 8892 iterations, target 2^25
+trace length: 33554432
+OneHotTrace one-hot K: 256
+akita setup: 1.08s
+akita prove: 27.57s
+akita verifier preprocessing: 16.42ms
+akita verify: 102.44ms
+test zkvm::packed::committed_tests::sha2_chain_akita_perf ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 456 filtered out; finished in 35.59s
+
+        PASS [  35.630s] (1/1) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+────────────
+     Summary [  35.632s] 1 test run: 1 passed, 456 skipped

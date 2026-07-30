@@ -1,0 +1,44 @@
+────────────
+ Nextest run ID 3ee6a6e3-8fab-4bad-933f-bceac73be6b6 with nextest profile: default
+    Starting 1 test across 8 binaries (50 tests skipped)
+       START [         ] (1/1) jolt-akita::schedule_probe audit_k256_packed_2e28_ring_dimensions
+
+running 1 test
+d,basis,selection,rank,rank_coeffs,positions,blocks,a_bound,fold_digits,payload,setup_gib
+64,2,MinEstimatedProofPayload,7,448,1048576,32768,8388607,7,100464,28.000
+64,2,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },7,448,1048576,32768,8388607,7,100464,28.000
+64,3,MinEstimatedProofPayload,8,512,4194304,8192,8388607,5,102504,32.000
+64,3,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },7,448,1048576,32768,8388607,5,102924,18.812
+64,4,MinEstimatedProofPayload,8,512,1048576,32768,16777215,4,102860,16.000
+64,4,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },7,448,8388608,4096,1048575,3,106556,56.000
+64,5,MinEstimatedProofPayload,7,448,524288,65536,8388607,3,106380,22.750
+64,5,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },7,448,524288,65536,8388607,3,106380,22.750
+64,6,MinEstimatedProofPayload,8,512,524288,65536,67108863,3,112492,22.000
+64,6,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },6,384,4294967296,8,16383,1,121512,24576.000
+128,2,MinEstimatedProofPayload,4,512,524288,32768,4194303,7,123192,16.000
+128,2,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },3,384,536870912,32,65535,4,128828,3072.000
+128,3,MinEstimatedProofPayload,4,512,1048576,16384,8388607,5,123304,8.000
+128,3,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },3,384,2147483648,8,16383,2,131692,12288.000
+128,4,MinEstimatedProofPayload,4,512,524288,32768,16777215,4,125016,8.000
+128,4,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },3,384,536870912,32,65535,2,131412,3072.000
+128,5,MinEstimatedProofPayload,4,512,524288,32768,4194303,3,127368,6.500
+128,5,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },3,384,65536,262144,4194303,3,127896,39.000
+128,6,MinEstimatedProofPayload,4,512,262144,65536,33554431,3,130056,11.000
+128,6,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },3,384,2097152,8192,524287,2,130056,12.000
+256,2,MinEstimatedProofPayload,2,512,524288,16384,2097151,7,172232,8.000
+256,2,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },2,512,524288,16384,2097151,7,172232,8.000
+256,3,MinEstimatedProofPayload,2,512,524288,16384,4194303,5,172024,5.375
+256,3,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },2,512,524288,16384,4194303,5,172024,5.375
+256,4,MinEstimatedProofPayload,2,512,524288,16384,8388607,4,173736,4.000
+256,4,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },2,512,524288,16384,8388607,4,173736,4.000
+256,5,MinEstimatedProofPayload,2,512,262144,32768,4194303,3,176616,6.500
+256,5,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },2,512,262144,32768,4194303,3,176616,6.500
+256,6,MinEstimatedProofPayload,2,512,262144,32768,33554431,3,179624,5.500
+256,6,MinRootRankThenPayloadWithinSlack { slack_permille: 100000 },2,512,262144,32768,33554431,3,179624,5.500
+test audit_k256_packed_2e28_ring_dimensions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.19s
+
+        PASS [   0.202s] (1/1) jolt-akita::schedule_probe audit_k256_packed_2e28_ring_dimensions
+────────────
+     Summary [   0.203s] 1 test run: 1 passed, 50 skipped

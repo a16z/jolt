@@ -1,0 +1,43 @@
+────────────
+ Nextest run ID adab4683-3b5d-4718-a574-addc6d3f8009 with nextest profile: default
+    Starting 1 test across 2 binaries (456 tests skipped)
+       START [         ] (1/1) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+
+running 1 test
+sha2-chain/akita: 71140 iterations, target 2^28
+trace length: 268435456
+OneHotTrace one-hot K: 256
+akita setup: 2.00s
+        SLOW [> 60.000s] (───) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+test zkvm::packed::committed_tests::sha2_chain_akita_perf has been running for over 60 seconds
+        SLOW [>120.000s] (───) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+        SLOW [>180.000s] (───) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+        SLOW [>240.000s] (───) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+akita prove: 198.23s
+akita verifier preprocessing: 16.34ms
+akita verify: 173.78ms
+test zkvm::packed::committed_tests::sha2_chain_akita_perf ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 456 filtered out; finished in 253.50s
+
+        PASS [ 253.555s] (1/1) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+────────────
+     Summary [ 253.557s] 1 test run: 1 passed (1 slow), 456 skipped
+      254.58 real      2677.78 user       138.67 sys
+         91499266048  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+            30182972  page reclaims
+                1184  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   5  messages sent
+                   5  messages received
+                   7  signals received
+                4083  voluntary context switches
+             3431673  involuntary context switches
+           934979438  instructions retired
+           884637196  cycles elapsed
+            20890152  peak memory footprint

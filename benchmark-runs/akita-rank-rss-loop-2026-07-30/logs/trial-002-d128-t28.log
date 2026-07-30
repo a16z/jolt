@@ -1,0 +1,27 @@
+────────────
+ Nextest run ID 4fe6a895-507d-4d42-925c-67cba5a56a35 with nextest profile: default
+    Starting 1 test across 2 binaries (456 tests skipped)
+       START [         ] (1/1) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+
+running 1 test
+sha2-chain/akita: 71140 iterations, target 2^28
+trace length: 268435456
+OneHotTrace one-hot K: 256
+akita setup: 2.04s
+        SLOW [> 60.000s] (───) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+test zkvm::packed::committed_tests::sha2_chain_akita_perf has been running for over 60 seconds
+        SLOW [>120.000s] (───) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+        SLOW [>180.000s] (───) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+        SLOW [>240.000s] (───) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+akita prove: 202.30s
+akita verifier preprocessing: 17.75ms
+akita verify: 172.04ms
+test zkvm::packed::committed_tests::sha2_chain_akita_perf ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 456 filtered out; finished in 257.55s
+
+        PASS [ 257.595s] (1/1) jolt-prover-legacy zkvm::packed::committed_tests::sha2_chain_akita_perf
+────────────
+     Summary [ 257.598s] 1 test run: 1 passed (1 slow), 456 skipped
+      553.76 real      3356.18 user       144.84 sys
+time: sysctl kern.clockrate: Operation not permitted

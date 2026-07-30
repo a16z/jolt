@@ -1,0 +1,43 @@
+wall span: 282.6s   threads seen: 22
+
+ INCLUSIVE s     EXCL s    count  name
+      225.90     122.26        1  prove_packed
+      121.99       0.10        1  AkitaCommitmentScheme::commit
+      119.16       0.00        1  TracePackedOneHot::commit_inner
+      119.06     119.06        1  trace_onehot_commit_accumulate
+       52.37      52.37        2  trace_with_cycle_sink
+       30.56      23.93     3199  MultilinearPolynomial::bind_parallel
+       29.17       0.00        1  jolt_trace_row_stream
+       23.20       0.00        1  Program::trace
+       23.20       0.00        1  trace
+       22.96       0.00        1  AkitaNativeBatching::prove_batch
+       22.96      22.96        1  AkitaNativeBatching::backend_batched_prove
+       22.96       0.06        1  AkitaCommitmentScheme::batched_prove
+       22.12       0.13        1  prove_stage6b_lattice
+       15.85       0.00        1  prove_stage5
+       13.50       0.00        1  prove_stage4
+       12.48       0.00        1  prove_stage1
+        9.49       0.04      156  InstructionReadRafSumcheckProver::ingest_challenge
+        8.33       0.00        8  InstructionReadRafProver::init_phase
+        8.32       5.32        8  ring_switch_build_w
+        7.80       7.80       28  LatticeBooleanityCycleSumcheckProver::compute_message
+        7.45       7.45        1  OuterUniSkipInstanceProver::initialize
+        7.39       0.52       35  RegistersReadWriteCheckingProver::ingest_challenge
+        6.73       6.73       56  ReadWriteMatrixCycleMajor::bind
+        5.11       5.11       28  InstructionRaSumcheckProver::compute_message
+        4.90       4.90        2  shared_ra_polys::compute_all_G_from_ra_indices
+        4.44       0.00        8  RingRelationProver::new
+        4.32       4.32        8  InstructionReadRafProver::init_suffix_polys
+        4.17       0.00        1  prove_stage3
+        3.84       0.00       16  stage2_sumcheck
+        3.70       0.00        1  prove_stage2
+        3.67       0.00        8  ring_relation_fold_grind
+        3.67       0.37        8  fold_grind_sample
+        3.62       0.00        8  prove_sumcheck
+        3.62       0.00      164  sumcheck_round
+        3.46       0.01        3  new_prover_setup
+        3.45       0.00        3  AkitaProverSetup::generate_with_capacity
+        3.45       3.45        3  derive_public_matrix_flat
+        3.41       0.00        1  prove_stage6a_lattice
+        3.33       3.33        8  PrefixSuffix::init_Q_raf
+        3.06       0.31        1  prove_stage7_lattice

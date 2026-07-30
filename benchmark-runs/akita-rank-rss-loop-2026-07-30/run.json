@@ -1,0 +1,27 @@
+{
+  "budget": {
+    "max_seconds": 10800,
+    "max_trials": 8
+  },
+  "controller": "Codex bounded greedy hypothesis-test loop; proof verification, peak RSS, total prover time, and swap counters are hard guards",
+  "created_at": "2026-07-30T21:06:00.044351Z",
+  "goal": "Determine whether the current secure D64 K256 2^28 root rank 7 is avoidable, then improve 2^28 Akita prover time or analytical peak memory without regressing the other guard",
+  "metric": {
+    "baseline": 116.50216,
+    "direction": "min",
+    "name": "commit_seconds"
+  },
+  "schema_version": 1,
+  "scope": {
+    "editable": [
+      "crates/jolt-akita/src",
+      "crates/jolt-prover-legacy/src",
+      ".akita-opening-lifetime/crates/akita-planner/src",
+      ".akita-opening-lifetime/crates/akita-prover/src"
+    ],
+    "frozen": [
+      "crates/jolt-prover-legacy/src/zkvm/packed/committed_tests.rs",
+      "benchmark-runs/perfetto_traces/akita_28_relation.json"
+    ]
+  }
+}
