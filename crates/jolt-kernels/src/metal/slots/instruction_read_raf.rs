@@ -95,6 +95,10 @@ impl PrepareKernel<Fr, InstructionReadRaf<Fr>> for MetalInstructionReadRaf {
             1 << dimensions.log_t(),
         )?);
         session.park(SharedInstructionRows(Arc::clone(&rows)));
+        // The scanner retires its flat cycle pair on drop (stage end) for
+        // the stage-6b adoptions to reuse; the guard drains whatever is
+        // still parked when the proof's session drops.
+        session.park(super::RetiredPoolGuard);
         Ok(Box::new(
             OptimizedInstructionReadRafKernel::new_with_scanner(
                 dimensions,
@@ -150,6 +154,19 @@ struct DeviceIrrScanner {
     /// re-expresses it in Montgomery form (the exact element the CPU
     /// accumulator reduces to).
     r_mont: Fr,
+}
+
+/// Retire the flat cycle ping-pong at scanner drop (the stage-5 kernel is
+/// dropped at its stage's end, before stage 6b prepares): the stage-6b
+/// dense adoptions fit inside this proof's largest pair, so
+/// [`super::own_uninit_frs`] hands the pages back instead of page-zeroing
+/// fresh ones. Every pass completed synchronously — nothing is in flight.
+impl Drop for DeviceIrrScanner {
+    fn drop(&mut self) {
+        if let Some(cycle) = self.cycle.take() {
+            super::retire_frs([cycle.cur, cycle.nxt]);
+        }
+    }
 }
 
 /// Phase-scan schedule and working buffers (static across the 16 phases).
@@ -516,10 +533,14 @@ impl PhaseScanner<Fr> for DeviceIrrScanner {
         let len = cycle.len;
         let flat = cycle.cur.as_slice();
         let table = |f: usize| flat[f * len..(f + 1) * len].to_vec();
-        Some(CycleTables {
+        let tables = CycleTables {
             combined_val: table(0),
             ra: (1..cycle.factors).map(table).collect(),
-        })
+        };
+        // The live values are host-owned now; the pair is dead weight —
+        // park it for the stage-6b adoptions.
+        super::retire_frs([cycle.cur, cycle.nxt]);
+        Some(tables)
     }
 }
 

@@ -49,6 +49,8 @@ pub use ra_lazy::{
 pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 pub use ram_raf_evaluation::MetalRamRafEvaluation;
 
+use std::sync::Mutex;
+
 use jolt_field::{Fr, FromPrimitiveInt};
 
 use super::buffers::{OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE};
@@ -162,13 +164,86 @@ pub(super) fn num_threadgroups(threads: usize) -> usize {
     threads.div_ceil(THREADGROUP_SIZE).max(1)
 }
 
-/// An uninitialized device-owned field-element buffer, or `None` when the
-/// allocation would not wrap no-copy (see the SAFETY-adjacent contract on
-/// [`uninit_frs`] — a copy would read the uninitialized memory).
+/// Retired device buffers awaiting reuse: a slot whose device phase ended
+/// parks its big ping-pong pair here ([`retire_frs`]) so a LATER stage's
+/// [`own_uninit_frs`] hands the pages back instead of allocating fresh ones
+/// (a fresh unified allocation page-zeroes on first touch — the stage-5
+/// scanner's flat pair alone is GiB-scale at production traces, and the
+/// stage-6b dense adoptions fit inside it). Stale contents satisfy the
+/// uninit contract: every consumer device-writes before any read.
+///
+/// Process-global because the consumers (mid-sumcheck adoptions) have no
+/// session access; proof-scoped because the producing slot's `prepare`
+/// parks a [`RetiredPoolGuard`] whose drop drains the pool — buffers never
+/// outlive the proof that retired them.
+struct RetiredPool(Mutex<Vec<OwnedDeviceBuffer<Fr>>>);
+
+// SAFETY: `OwnedDeviceBuffer` is a Metal buffer handle plus its host
+// backing memory. `MTLBuffer` is an `MTLResource`, which Metal documents as
+// thread-safe (only command encoders are not); the backing memory is plain
+// bytes with no thread affinity; the mutex serializes every pool access.
+unsafe impl Send for RetiredPool {}
+// SAFETY: as for `Send` — all access goes through the mutex.
+unsafe impl Sync for RetiredPool {}
+
+static RETIRED: RetiredPool = RetiredPool(Mutex::new(Vec::new()));
+
+/// Park device buffers for reuse by a later stage's [`own_uninit_frs`].
+/// Callers (or an earlier slot in the same proof) must have parked a
+/// [`RetiredPoolGuard`] in the session so the pool drains at proof end.
+#[expect(
+    clippy::expect_used,
+    reason = "pool mutex cannot be poisoned: no panics inside"
+)]
+pub(super) fn retire_frs(buffers: impl IntoIterator<Item = OwnedDeviceBuffer<Fr>>) {
+    RETIRED
+        .0
+        .lock()
+        .expect("retired-buffer pool poisoned")
+        .extend(buffers);
+}
+
+/// The smallest retired buffer holding at least `len` elements, if any.
+#[expect(
+    clippy::expect_used,
+    reason = "pool mutex cannot be poisoned: no panics inside"
+)]
+fn take_retired(len: usize) -> Option<OwnedDeviceBuffer<Fr>> {
+    let mut pool = RETIRED.0.lock().expect("retired-buffer pool poisoned");
+    let best = pool
+        .iter()
+        .enumerate()
+        .filter(|(_, buffer)| buffer.as_slice().len() >= len)
+        .min_by_key(|(_, buffer)| buffer.as_slice().len())
+        .map(|(index, _)| index)?;
+    Some(pool.swap_remove(best))
+}
+
+/// Session-parked drain guard: dropping it (with the proof's session)
+/// releases every still-parked retired buffer, so pooled pages never leak
+/// across proofs.
+pub(super) struct RetiredPoolGuard;
+
+impl Drop for RetiredPoolGuard {
+    fn drop(&mut self) {
+        if let Ok(mut pool) = RETIRED.0.lock() {
+            pool.clear();
+        }
+    }
+}
+
+/// An uninitialized device-owned field-element buffer — reusing a retired
+/// buffer when one fits — or `None` when a fresh allocation would not wrap
+/// no-copy (see the SAFETY-adjacent contract on [`uninit_frs`] — a copy
+/// would read the uninitialized memory).
 pub(super) fn own_uninit_frs(
     context: &'static MetalContext,
     len: usize,
 ) -> Result<Option<OwnedDeviceBuffer<Fr>>, MetalError> {
+    if let Some(buffer) = take_retired(len) {
+        testing::note_pool_reuse();
+        return Ok(Some(buffer));
+    }
     let vec = uninit_frs(len);
     let len_bytes = std::mem::size_of_val(vec.as_slice());
     let aligned = (vec.as_ptr() as usize).is_multiple_of(PAGE_SIZE);
@@ -248,5 +323,39 @@ impl DeviceRound {
             "device round failed; finishing this sumcheck on the CPU"
         );
         self.context = None;
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use super::*;
+
+    /// Retire → smallest-fit reuse → guard drain. Pointer identity proves
+    /// the pages came back; the drained pool allocates fresh again.
+    #[test]
+    fn retired_pool_roundtrip() {
+        let _lock = testing::gpu_lock();
+        let context = MetalContext::global().unwrap();
+
+        let small = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
+        let large = own_uninit_frs(context, 1 << 15).unwrap().unwrap();
+        let small_ptr = small.as_slice().as_ptr();
+        let large_ptr = large.as_slice().as_ptr();
+        retire_frs([large, small]);
+
+        // Smallest fitting buffer wins; an oversized backing is fine.
+        let reused = own_uninit_frs(context, 1 << 12).unwrap().unwrap();
+        assert_eq!(reused.as_slice().as_ptr(), small_ptr);
+        assert!(reused.as_slice().len() >= 1 << 13);
+        let reuses_before = testing::pool_reuse_count();
+        let reused_large = own_uninit_frs(context, 1 << 14).unwrap().unwrap();
+        assert_eq!(reused_large.as_slice().as_ptr(), large_ptr);
+        assert_eq!(testing::pool_reuse_count(), reuses_before + 1);
+
+        // Guard drop drains whatever is still parked.
+        retire_frs([reused, reused_large]);
+        drop(RetiredPoolGuard);
+        assert!(take_retired(1).is_none());
     }
 }

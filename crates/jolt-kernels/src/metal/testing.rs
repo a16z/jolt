@@ -19,6 +19,10 @@ static DEVICE_ROUNDS: AtomicU64 = AtomicU64::new(0);
 /// Buffers whose construction fell back to allocate+copy (no-copy declined).
 static COPIED_BUFFERS: AtomicU64 = AtomicU64::new(0);
 
+/// Device-buffer requests served from the retired pool instead of a fresh
+/// allocation.
+static POOL_REUSES: AtomicU64 = AtomicU64::new(0);
+
 pub(crate) fn note_device_round() {
     let _ = DEVICE_ROUNDS.fetch_add(1, Ordering::Relaxed);
 }
@@ -29,6 +33,10 @@ pub(crate) fn note_copied_buffers(count: u64) {
     }
 }
 
+pub(crate) fn note_pool_reuse() {
+    let _ = POOL_REUSES.fetch_add(1, Ordering::Relaxed);
+}
+
 /// How many sumcheck rounds have run on the device in this process.
 pub fn device_probe_count() -> u64 {
     DEVICE_ROUNDS.load(Ordering::Relaxed)
@@ -37,6 +45,11 @@ pub fn device_probe_count() -> u64 {
 /// How many slot buffers fell back to allocate+copy in this process.
 pub fn copied_buffer_count() -> u64 {
     COPIED_BUFFERS.load(Ordering::Relaxed)
+}
+
+/// How many device-buffer requests the retired pool served in this process.
+pub fn pool_reuse_count() -> u64 {
+    POOL_REUSES.load(Ordering::Relaxed)
 }
 
 /// Exclusive advisory lock on `/tmp/jolt-gpu.lock`, the campaign convention
