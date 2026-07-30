@@ -214,11 +214,9 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
-            witness,
-            1 << dimensions.log_t(),
-        )?);
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        // Reclaims the rows the trace record's walk co-produced (parked at
+        // stage 1); collects fresh only when no record was built.
+        let rows = shared_instruction_rows(session, witness, 1 << dimensions.log_t())?;
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,

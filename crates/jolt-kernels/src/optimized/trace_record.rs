@@ -17,13 +17,23 @@
 //! pre/post/remapped columns live in the session's [`RamAccessColumns`]
 //! (built by the same walk, no second RAM pass), which stage 6b's
 //! virtualization kernel drops early as before; the record itself is taken
-//! by its last consumer.
+//! by its last consumer (stage 4).
+//!
+//! The walk also co-produces the two downstream shared scans — the 48 B/cycle
+//! [`SharedInstructionRows`] (stage 5's walk today, reused by 6a/6b) and the
+//! 8 B/cycle bytecode [`PcRow`] scan (stage 6a's walk) — extending their
+//! session lifetime from their first consumer back to stage 1: +56 B/cycle
+//! across stages 1-4, well under the ~150 B/cycle the record conversions
+//! freed there, and nothing new at the stage-5/6b peaks where they already
+//! lived.
 
 use std::sync::Arc;
 
 use jolt_field::signed::S128;
 use jolt_field::Field;
-use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlagSet, InstructionFlags};
+use jolt_riscv::{
+    CircuitFlagSet, CircuitFlags, InstructionFlagSet, InstructionFlags, InterleavedBitsMarker as _,
+};
 use jolt_witness::witnesses::{
     Imm, InstructionFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput,
     NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc,
@@ -31,12 +41,19 @@ use jolt_witness::witnesses::{
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc,
 };
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, TraceRecordRow};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
+use super::bytecode_read_raf::{park_pc_rows, PcRow};
 use super::instruction_claim_reduction::InstructionOperandRow;
+use super::instruction_read_raf::{InstructionCycleRow, SharedInstructionRows};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::spartan_outer::SpartanOuterRow;
 use super::spartan_product::SpartanProductRow;
 use crate::{KernelError, ProofSession};
+
+/// [`InstructionFlags::IsNoop`]'s bit inside the packed flags lane.
+const IS_NOOP_MASK: u32 = 1 << (INSTRUCTION_FLAGS_SHIFT + InstructionFlags::IsNoop as u32);
 
 /// Register-index lane sentinel for cycles where the operand is absent.
 pub(crate) const NO_REGISTER: u8 = u8::MAX;
@@ -112,6 +129,9 @@ struct LaneBuffers {
     addresses: Vec<u64>,
     pre_values: Vec<u64>,
     post_values: Vec<u64>,
+    /// The stage-5/6 shared packed rows, co-produced by the same walk
+    /// (their extra sources — lookup index, table index — live only here).
+    instruction_rows: Vec<InstructionCycleRow>,
 }
 
 impl LaneBuffers {
@@ -139,6 +159,7 @@ impl LaneBuffers {
             addresses: Vec::with_capacity(cycles),
             pre_values: Vec::with_capacity(cycles),
             post_values: Vec::with_capacity(cycles),
+            instruction_rows: Vec::with_capacity(cycles),
         }
     }
 
@@ -192,6 +213,17 @@ impl LaneBuffers {
             .push(row.remapped_ram_address.unwrap_or(NO_ACCESS));
         self.pre_values.push(row.ram_read_value);
         self.post_values.push(row.ram_write_value);
+        // The stage-5 packed row: `raf_flag` is `InstructionRafFlag`'s
+        // formula over the same flag set; `mapped_pc = Some(pc)` because the
+        // record's own `pc` extraction (which requires the mapping) succeeded
+        // for this row.
+        self.instruction_rows.push(InstructionCycleRow::new(
+            row.lookup_index,
+            row.table_index,
+            !row.circuit_flags.is_interleaved_operands(),
+            Some(row.pc as usize),
+            row.remapped_ram_address,
+        ));
     }
 }
 
@@ -235,6 +267,26 @@ impl TraceRecord {
             if session.state::<Arc<RamAccessColumns>>().is_none() {
                 session.park(Arc::clone(&ram));
             }
+            session.park(SharedInstructionRows(Arc::new(lanes.instruction_rows)));
+            // The bytecode PC scan, packed from the pc/noop lanes (fallible
+            // u32-range guards, so it runs after the walk).
+            let pack_pc =
+                |(&pc, &flags): (&u64, &u32)| PcRow::from_lanes::<F>(pc, flags & IS_NOOP_MASK != 0);
+            #[cfg(feature = "parallel")]
+            let pc_rows: Vec<PcRow> = lanes
+                .pc
+                .par_iter()
+                .zip(&lanes.flags)
+                .map(pack_pc)
+                .collect::<Result<_, _>>()?;
+            #[cfg(not(feature = "parallel"))]
+            let pc_rows: Vec<PcRow> = lanes
+                .pc
+                .iter()
+                .zip(&lanes.flags)
+                .map(pack_pc)
+                .collect::<Result<_, _>>()?;
+            park_pc_rows(session, pc_rows);
             let record = Arc::new(Self {
                 pc: lanes.pc,
                 unexpanded_pc: lanes.unexpanded_pc,
@@ -497,6 +549,44 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(inc, oracle_inc);
+
+            // The co-produced stage-5 rows and bytecode PC scan match their
+            // own walks' packing (fresh sessions force the collect paths).
+            let walked = super::super::instruction_read_raf::collect_instruction_cycle_rows::<
+                jolt_field::Fr,
+            >(witness, 1 << shape.log_t)
+            .unwrap();
+            let parked = super::super::instruction_read_raf::shared_instruction_rows::<
+                jolt_field::Fr,
+            >(&mut session, witness, 1 << shape.log_t)
+            .unwrap();
+            assert_eq!(parked.len(), walked.len());
+            for (t, (packed, fresh)) in parked.iter().zip(&walked).enumerate() {
+                assert_eq!(packed.lookup_index, fresh.lookup_index, "cycle {t}");
+                assert_eq!(packed.table_index(), fresh.table_index(), "cycle {t}");
+                assert_eq!(packed.raf_flag, fresh.raf_flag, "cycle {t}");
+                assert_eq!(packed.mapped_pc(), fresh.mapped_pc(), "cycle {t}");
+                assert_eq!(
+                    packed.remapped_ram_address(),
+                    fresh.remapped_ram_address(),
+                    "cycle {t}"
+                );
+            }
+
+            let parked_pc = super::super::bytecode_read_raf::pc_rows::<jolt_field::Fr>(
+                &mut session,
+                witness,
+                1 << shape.log_t,
+            )
+            .unwrap();
+            let mut fresh_session = ProofSession::default();
+            let walked_pc = super::super::bytecode_read_raf::pc_rows::<jolt_field::Fr>(
+                &mut fresh_session,
+                witness,
+                1 << shape.log_t,
+            )
+            .unwrap();
+            assert_eq!(*parked_pc, *walked_pc);
 
             let register_rows: Vec<RegisterCycleRow> =
                 collect_rows(witness, 1 << shape.log_t).unwrap();

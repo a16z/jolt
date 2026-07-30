@@ -75,14 +75,48 @@ const COLD: u32 = u32::MAX;
 /// One cycle's packed bytecode PC facts: the pushforward slot (no-ops and
 /// unmapped rows land on 0 — the address-phase convention) and the committed
 /// one-hot hot index (unmapped rows are cold — the cycle-phase convention).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PcRow {
     push_pc: u32,
     mapped_pc: u32,
 }
 
+impl PcRow {
+    /// The row from the trace record's lanes. On any trace the record builds
+    /// from, `Pc` extraction succeeded for every row, so `MappedPc` is
+    /// `Some(pc)` everywhere and `BytecodePc` is `pc` gated on the no-op
+    /// flag — the packed values (and the u32-range guards) match
+    /// [`pc_rows`]'s bundle pack exactly.
+    pub(crate) fn from_lanes<F: Field>(pc: u64, is_noop: bool) -> Result<Self, KernelError<F>> {
+        let mapped = match pc {
+            pc if pc as u32 as u64 == pc && pc as u32 != COLD => pc as u32,
+            _ => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "bytecode PC exceeds the packed u32 range",
+                })
+            }
+        };
+        let push_pc = if is_noop { 0 } else { pc };
+        if push_pc as u32 as u64 != push_pc {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode PC exceeds the packed u32 range",
+            });
+        }
+        Ok(Self {
+            push_pc: push_pc as u32,
+            mapped_pc: mapped,
+        })
+    }
+}
+
 /// The session key of the shared per-cycle PC scan.
 struct PcRowsKey(Arc<Vec<PcRow>>);
+
+/// Park a lane-packed PC scan (the trace record's walk co-produces it), so
+/// [`pc_rows`] serves it without a second trace pass.
+pub(crate) fn park_pc_rows(session: &mut ProofSession, rows: Vec<PcRow>) {
+    session.park(PcRowsKey(Arc::new(rows)));
+}
 
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct PcBundle {
@@ -91,7 +125,7 @@ struct PcBundle {
 }
 
 /// One trace scan per proof, shared by both phases through the session.
-fn pc_rows<F: Field>(
+pub(crate) fn pc_rows<F: Field>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,

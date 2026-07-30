@@ -21,9 +21,11 @@
 
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::signed::{S128, S64};
-use jolt_lookup_tables::LookupQuery;
+use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
 use jolt_program::execution::{RamAccess, TraceRow};
-use jolt_riscv::{CircuitFlagSet, CircuitFlags, Flags as _, InstructionFlagSet, InstructionFlags};
+use jolt_riscv::{
+    CircuitFlagSet, CircuitFlags, Flags as _, InstructionFlagSet, InstructionFlags, JoltInstruction,
+};
 
 use crate::witnesses::{
     decode_instruction, lookup_query, pc_for_row, ram_access_address, row_is_noop, WitnessEnv,
@@ -69,6 +71,11 @@ pub struct TraceRecordRow {
     pub product: S128,
     /// [`crate::witnesses::LookupOutput`].
     pub lookup_output: u64,
+    /// [`crate::witnesses::LookupIndex`] — the 128-bit lookup index.
+    pub lookup_index: u128,
+    /// [`crate::witnesses::TableIndex`] — which lookup table the
+    /// instruction's lookup targets, if any.
+    pub table_index: Option<usize>,
     /// The instruction's full circuit-flag set
     /// ([`crate::witnesses::OpFlag`] per flag).
     pub circuit_flags: CircuitFlagSet,
@@ -101,6 +108,10 @@ impl WitnessBundle for TraceRecordRow {
         let (left_instruction_input, right_instruction_input) =
             LookupQuery::<RV64_XLEN>::to_instruction_inputs(&query);
         let lookup_output = LookupQuery::<RV64_XLEN>::to_lookup_output(&query);
+        let lookup_index = LookupQuery::<RV64_XLEN>::to_lookup_index(&query);
+        let table_index =
+            <JoltInstruction as InstructionLookupTable<RV64_XLEN>>::lookup_table(&instruction)
+                .map(|kind| kind.index());
         let product = S64::from_u64(left_instruction_input)
             .mul_trunc::<2, 2>(&S128::from_i128(right_instruction_input));
 
@@ -142,6 +153,8 @@ impl WitnessBundle for TraceRecordRow {
             right_instruction_input,
             product,
             lookup_output,
+            lookup_index,
+            table_index,
             circuit_flags,
             instruction_flags,
             should_branch: instruction_flags[InstructionFlags::Branch] && lookup_output == 1,
@@ -243,6 +256,14 @@ mod tests {
             assert_eq!(
                 record.lookup_output,
                 LookupOutput::extract(row, next, env)?.0
+            );
+            assert_eq!(
+                record.lookup_index,
+                crate::witnesses::LookupIndex::extract(row, next, env)?.0
+            );
+            assert_eq!(
+                record.table_index,
+                crate::witnesses::TableIndex::extract(row, next, env)?.0
             );
             for flag in CIRCUIT_FLAGS {
                 assert_eq!(
