@@ -924,13 +924,11 @@ impl AkitaPackedProver<'_> {
         AkitaNoCurve,
         AkitaTranscript,
     > {
+        let trace_len = self.trace.len();
         let ram_hamming_booleanity_params =
             HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
-        let ram_ra_virtual_params = RamRaVirtualParams::new(
-            self.trace.len(),
-            &self.one_hot_params,
-            &self.opening_accumulator,
-        );
+        let ram_ra_virtual_params =
+            RamRaVirtualParams::new(trace_len, &self.one_hot_params, &self.opening_accumulator);
         let lookups_ra_virtual_params = InstructionRaSumcheckParams::new(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -959,6 +957,17 @@ impl AkitaPackedProver<'_> {
         );
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
+        let trace = std::mem::take(&mut self.trace);
+        let trace_bytes = trace
+            .capacity()
+            .saturating_mul(std::mem::size_of::<JoltTraceRow>());
+        let remaining_owners = Arc::strong_count(&trace).saturating_sub(1);
+        drop(trace);
+        tracing::info!(
+            trace_bytes,
+            remaining_owners,
+            "released compact trace after final reader"
+        );
         let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
             Arc::clone(&ra_indices),
@@ -975,7 +984,7 @@ impl AkitaPackedProver<'_> {
         // canonical tail, exactly as in the base 6b assembly (the lattice
         // batch has no inc slot — the fused-inc claims are discharged inside
         // the read-raf's fused stages).
-        let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
+        let main_total_vars = trace_len.log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
             self.preprocessing.is_committed_mode(),
             self.advice.trusted_advice_polynomial.is_some(),
@@ -1566,13 +1575,6 @@ impl AkitaPackedProver<'_> {
         );
         let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns, &ra_indices);
         drop(ra_indices);
-        let trace = std::mem::replace(&mut self.trace, Arc::new(Vec::new()));
-        debug_assert_eq!(
-            Arc::strong_count(&trace),
-            1,
-            "packed trace still has a live owner after Stage 7"
-        );
-        drop(trace);
         let reconstruction_proof =
             self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice);
 
