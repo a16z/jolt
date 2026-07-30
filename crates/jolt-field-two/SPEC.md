@@ -54,10 +54,10 @@ capability subset with defaulted members".
 
 | Trait | Replaces | Contents |
 |---|---|---|
-| `PseudoMersenne` (defined unconditionally in `algebra.rs`, per the file table) | `PseudoMersenneField` + `ExtMulBackend` | `const OFFSET: u128` (bits live on `CanonicalEncoding`) + the degree-4/8 ext-mul kernel hooks with generic coefficient-formula defaults (only `Fp32` overrides, fusing i64 accumulation) |
+| `PseudoMersenne` (defined unconditionally in `algebra.rs`, per the file table) | `PseudoMersenneField` + `ExtMulBackend` | `const OFFSET: u128` (bits live on `CanonicalEncoding`) + the degree-4/8 ext-mul/square kernel hooks (`ext4_mul`, `ext4_square`, `ext8_mul`, `ext8_square`) with generic coefficient-formula defaults (`schedules.rs`). No base field overrides them: the baseline's fused-accumulation `Fp32` override lost the checkpoint-6 bench gate (see dropped-specialization evidence) |
 | `ExtField<F>` | same | degree, `lift_base`, `mul_base`, coeff access, Frobenius |
 | `Ext2Config<F>` | `FpExt2Config` | quadratic non-residue config (ZST pattern), `IS_NEG_ONE` fast path |
-| `MulBaseUnreduced<F>` | same | tiny overridable ext×base deferred multiply |
+| `MulBaseUnreduced<F>` | same | tiny overridable ext×base deferred multiply — **deferred to checkpoint 7**: its contract is stated in terms of `Unreduced::Product`, which does not exist until the unreduced checkpoint |
 | `Unreduced` | `HasUnreducedOps` + `HasWide` + `ReduceTo` | **one deferred-reduction companion surface**: `type Product`, `type SmallProduct`, `type Wide` (i32-lane), `SUM_IS_EXACT`, widening muls + `reduce_*` for each, `scale_wide`. Rationale: these were three fragments of one concept — "the unreduced value algebra around a field"; routing reduction through the field type kills `ReduceTo`'s ambiguity workarounds |
 | `Fold` | `HasOptimizedFold` | `precompute(r) -> Ctx`, `fold_one(ctx, even, odd)` — documented honestly as the multilinear bind `even + r·(odd − even)`, a protocol-support hook that lives here because implementations exploit field representation |
 | `Packed` | `PackedField` | lanes: `Scalar`, `WIDTH`, `from_fn`/`extract`/`broadcast` + defaulted slice helpers + packed ext2 kernel hook |
@@ -120,6 +120,33 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
 - **Dropped:** `from_i64_const` (const-evaluable embedding): akita-only
   (its `MONTGOMERY_R` constants).
 
+**Dropped-specialization evidence (checkpoint 6, extensions):**
+
+- **Dropped:** the baseline's fused `Fp32` deg-4 ext-mul/square override
+  (u128 column accumulation with `P²` biases, one reduction per output
+  coefficient). Bench gate (`benches/ext4_kernels.rs`, aarch64 / Apple M4,
+  release codegen, 4096 batched ops × 100 reps, best of 7, over
+  `Prime32Offset99`): generic-schedule mul **12.3 ns/op** vs fused port
+  **31.1 ns/op** (fused 2.5x slower; the baseline crate's own fused
+  override measured 31.0 ns — the port reproduces it exactly); square
+  **15.3 ns** vs **28.3 ns** (1.85x slower; baseline 28.6 ns).
+  Keep-threshold was a >10% fused win, so all
+  four `PseudoMersenne` kernel hooks retain their generic defaults and no
+  base field overrides them. Caveat: measured on aarch64 only (immediate
+  word-sized reductions pipeline better than u128 accumulation chains
+  there); the fused port stays in the bench harness — rerun it on x86-64
+  before reintroducing an override.
+- **Deferred:** the `MulBaseUnreduced` contract to checkpoint 7 — its
+  baseline definition (`mul_base_to_product_accum`) returns
+  `Unreduced::Product`, which does not exist until the unreduced surface
+  lands; inventing a placeholder shape now would just be churn.
+- **Added (not in baseline):** an `ext8_square` hook on `PseudoMersenne`
+  defaulting to the deg-8 squaring schedule. The baseline computed
+  `FpExt8::square` as a full multiply and used its square schedule only in
+  the packed kernels; routing scalar squaring through the same schedule is
+  value-identical (pure ring ops), saves base ops, and gives the schedule
+  its scalar consumer.
+
 ## Design pillars
 
 1. **Const-generic scalar core**: `Fp64<const P: u64>` etc., fold constants
@@ -173,10 +200,11 @@ on them.
 | **Contract layer (root, unconditional)** | | |
 | `src/lib.rs` | 70 | crate docs, feature gates, re-exports, `FieldError` |
 | `src/algebra.rs` | 260 | spine: 7 traits + `NaiveAccumulator` + `PseudoMersenne` |
-| `src/extension.rs` | 60 | contracts: `ExtField`, `Ext2Config`, `MulBaseUnreduced` |
+| `src/extension.rs` | 60 | contracts: `ExtField`, `Ext2Config` + NR config ZSTs (`MulBaseUnreduced` lands with checkpoint 7) |
 | `src/unreduced.rs` | 70 | contracts: `Unreduced`, `Fold` |
 | `src/packed.rs` | 90 | contracts: `Packed`, `WithPacking` + generic `NoPacking` |
 | `src/ops.rs` | 180 | `impl_ring_ops!`, `impl_serde_bytes!` (backend-neutral) |
+| `src/schedules.rs` | 140 | lane-generic deg-4/8 ext coefficient schedules — unconditional because the `PseudoMersenne` hook defaults (algebra.rs) and the packed lanes (checkpoint 8) share them; carved out of the old `ext.rs` budget (890 → 750, component total unchanged) |
 | `src/limbs.rs` | 220 | `Limbs<N>` |
 | `src/signed.rs` | 420 | signed bigint families (consumer-audited surface) |
 | **bn254 backend** | | |
@@ -186,7 +214,7 @@ on them.
 | `src/solinas/mod.rs` | 90 | offset registry, aliases, shared helpers |
 | `src/solinas/word.rs` | 380 | `define_solinas_prime!` → `Fp32`, `Fp64` |
 | `src/solinas/fp128.rs` | 700 | two-limb add/sub/mul/reduce/wide |
-| `src/solinas/ext.rs` | 890 | FpExt2/4/8 impls, schedules, Frobenius + Moore |
+| `src/solinas/ext.rs` | 750 | FpExt2/4/8 impls, ExtField impls, Frobenius + Moore |
 | `src/solinas/unreduced.rs` | 530 | lane accumulators, fold matrices, contract impls |
 | `src/solinas/parallel.rs` | 80 | rayon helpers |
 | `src/solinas/packed/mod.rs` | 30 | backend selection |
@@ -198,7 +226,7 @@ on them.
 
 Component budgets are unchanged — the contract/impl split carves each
 component's contracts out of its old single-file budget (extensions 950 =
-60 + 890, unreduced 600 = 70 + 530, packed selection 120 = 90 + 30).
+60 + 140 + 750, unreduced 600 = 70 + 530, packed selection 120 = 90 + 30).
 
 Baseline per component (same metric): packed 3,720 → 1,600 · prime 2,140 →
 1,170 · ext 1,661 → 950 · arkworks 1,170 → 700 · unreduced 1,073 → 600 ·

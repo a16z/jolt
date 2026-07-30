@@ -35,3 +35,8 @@ bincode = { workspace = true }
 jolt-field = { path = "../jolt-field", features = ["solinas"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+
+[[bench]]
+name = "ext4_kernels"
+harness = false
+required-features = ["solinas"]

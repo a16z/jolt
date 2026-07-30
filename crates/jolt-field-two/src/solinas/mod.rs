@@ -4,9 +4,14 @@
 //! algebra; `fp128.rs` is the hand-written two-limb field; this module holds
 //! the family trait, the `2^k − offset` registry, and shared helpers.
 
+mod ext;
 mod fp128;
 mod word;
 
+pub use ext::{
+    canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas, Ext2,
+    FpExt2, FpExt4, FpExt8,
+};
 pub use fp128::Fp128;
 pub use word::{Fp32, Fp64};
 

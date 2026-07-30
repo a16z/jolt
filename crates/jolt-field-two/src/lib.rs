@@ -20,8 +20,10 @@
 mod algebra;
 #[cfg(feature = "bn254")]
 mod bn254;
+mod extension;
 mod limbs;
 mod ops;
+mod schedules;
 pub mod signed;
 #[cfg(feature = "solinas")]
 pub mod solinas;
@@ -32,15 +34,18 @@ pub use algebra::{
 };
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, WideAccumulator};
+pub use extension::{Ext2Config, ExtField, NegOneNr, TwoNr};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 #[cfg(feature = "solinas")]
 pub use solinas::{
-    balanced_digit_lut, is_registered_prime_offset, pseudo_mersenne_modulus,
-    registered_prime_offset_spec, Fp128, Fp32, Fp64, Prime128Offset159, Prime128Offset2355,
-    Prime128Offset275, Prime128OffsetA7F7, Prime24Offset3, Prime30Offset35, Prime31Offset19,
-    Prime32Offset99, Prime40Offset195, Prime48Offset59, Prime56Offset27, Prime64Offset59,
-    PrimeOffsetSpec, PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    balanced_digit_lut, canonical_frobenius_thetas, is_registered_prime_offset,
+    pseudo_mersenne_modulus, registered_prime_offset_spec, solve_frobenius_moore,
+    validate_canonical_frobenius_thetas, Ext2, Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8,
+    Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, Prime24Offset3,
+    Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59,
+    Prime56Offset27, Prime64Offset59, PrimeOffsetSpec, PRIME_OFFSET_IMPLEMENTED_MAX_BITS,
+    PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 
 /// Backend-independent input and shape failures.
