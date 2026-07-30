@@ -27,15 +27,14 @@ pub struct ChunkCheckpoint {
     /// so they are live per-chunk state (inputs/advice regions are static).
     outputs: Vec<u8>,
     panic: bool,
-    /// PC of the tick before the boundary (termination-heuristic seed; kept
-    /// for asserts — workers replay by tick count, not by stall detection).
-    pub prev_pc: u64,
 }
 
 impl ChunkCheckpoint {
-    /// Capture at a tick boundary of a pass-1 emulator.
+    /// Capture at a tick boundary of a pass-1 emulator. Workers replay by
+    /// tick count, never by stall detection, so no termination-heuristic
+    /// state is carried.
     #[expect(clippy::expect_used)]
-    pub fn capture(emulator: &Emulator, prev_pc: u64) -> Self {
+    pub fn capture(emulator: &Emulator) -> Self {
         let cpu = emulator.get_cpu();
         let device = cpu
             .mmu
@@ -47,7 +46,6 @@ impl ChunkCheckpoint {
             mmu: cpu.mmu.capture_chunk_state(),
             outputs: device.outputs.clone(),
             panic: device.panic,
-            prev_pc,
         }
     }
 
@@ -285,7 +283,7 @@ impl PassOne {
 
     /// Capture a chunk checkpoint at the current tick boundary.
     pub fn checkpoint(&self) -> ChunkCheckpoint {
-        ChunkCheckpoint::capture(&self.emulator, self.prev_pc)
+        ChunkCheckpoint::capture(&self.emulator)
     }
 
     pub fn emulator(&self) -> &Emulator {
@@ -371,6 +369,28 @@ struct ChunkJob<'trace> {
     window: Option<&'trace mut [core::mem::MaybeUninit<Cycle>]>,
 }
 
+/// Flags worker death on unwind. Without it, a systematic replay divergence
+/// (every worker tripping its row-count assert) would leave pass-1 blocked
+/// forever on the full job queue — the receiver lives until the scope ends,
+/// and `thread::scope` only re-raises worker panics after the closure
+/// returns.
+struct WorkerPanicGuard<'flag>(&'flag std::sync::atomic::AtomicBool);
+
+impl Drop for WorkerPanicGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+/// Test-only fault injection: inflate every chunk's expected row count so
+/// replay workers trip the divergence tripwire (exercises the panic
+/// propagation path, which no divergence-free gate reaches).
+#[cfg(test)]
+pub(crate) static TEST_CORRUPT_ROW_COUNTS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Two-pass parallel trace: pass-1 executes on the calling thread, cutting
 /// row-bounded chunks into a bounded job queue; `workers` threads re-trace
 /// chunks concurrently, writing rows straight into disjoint windows of the
@@ -409,17 +429,24 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
     let job_rx = Mutex::new(job_rx);
     let (buf_tx, buf_rx) = mpsc::channel::<Vec<u64>>();
     let (out_tx, out_rx) = mpsc::channel::<(usize, Vec<Cycle>)>();
+    let worker_panicked = std::sync::atomic::AtomicBool::new(false);
 
     let mut pass1 = PassOne::new(emulator);
 
     let windowed_rows = std::thread::scope(|scope| {
+        // Owned by the scope closure: ANY pass-1-side panic must drop the
+        // sender before the scope joins, or workers blocked in `recv` would
+        // deadlock the join itself.
+        let job_tx = job_tx;
         for _ in 0..workers {
             let job_rx = &job_rx;
+            let worker_panicked = &worker_panicked;
             let buf_tx = buf_tx.clone();
             let out_tx = out_tx.clone();
             let seed_device = seed_device.clone();
             let seed_decode = seed_decode.clone();
             scope.spawn(move || {
+                let _panic_guard = WorkerPanicGuard(worker_panicked);
                 demote_worker_thread();
                 let mut worker = ChunkWorker::from_seed(seed_device, seed_decode);
                 // Per-tick row buffer, reused across ticks and chunks: it
@@ -476,6 +503,13 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
         let mut windowed_rows = 0usize;
         let mut overflowed = false;
         loop {
+            // Fail at the next chunk boundary (not only when the queue
+            // fills) so a dead pool surfaces promptly even on long traces.
+            assert!(
+                !worker_panicked.load(std::sync::atomic::Ordering::Acquire),
+                "a replay worker panicked; aborting the two-pass trace \
+                 (the worker's panic message precedes this one)"
+            );
             while let Ok(buffer) = buf_rx.try_recv() {
                 pool.put(buffer);
             }
@@ -496,6 +530,9 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                 pool.put(image);
                 break;
             }
+            #[cfg(test)]
+            let rows = rows
+                + usize::from(TEST_CORRUPT_ROW_COUNTS.load(std::sync::atomic::Ordering::Relaxed));
             // Once a chunk misses the reserved capacity, all later chunks
             // fall back too — the windowed region must stay a contiguous,
             // in-order prefix for the final set_len.
@@ -508,16 +545,34 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                 windowed_rows += rows;
                 Some(window)
             };
-            job_tx
-                .send(ChunkJob {
-                    index: chunk_index,
-                    checkpoint,
-                    image,
-                    ticks,
-                    rows,
-                    window,
-                })
-                .expect("worker pool hung up");
+            // Poll rather than block on the bounded queue: a blocking send
+            // would hang forever if every worker died (the receiver lives
+            // until the scope ends), turning a divergence panic into a hang.
+            let mut job = ChunkJob {
+                index: chunk_index,
+                checkpoint,
+                image,
+                ticks,
+                rows,
+                window,
+            };
+            loop {
+                match job_tx.try_send(job) {
+                    Ok(()) => break,
+                    Err(mpsc::TrySendError::Full(returned)) => {
+                        assert!(
+                            !worker_panicked.load(std::sync::atomic::Ordering::Acquire),
+                            "a replay worker panicked; aborting the two-pass trace \
+                             (the worker's panic message precedes this one)"
+                        );
+                        job = returned;
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                    }
+                    Err(mpsc::TrySendError::Disconnected(_)) => {
+                        unreachable!("job queue receiver outlives the scope")
+                    }
+                }
+            }
             send_time += t2.elapsed();
             chunk_index += 1;
             if pass1.is_done() {

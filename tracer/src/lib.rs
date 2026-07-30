@@ -155,8 +155,9 @@ pub fn trace(
 ///
 /// Termination is *almost* the same as [`trace`]: both stop on a PC stall,
 /// but [`trace`] additionally stops on any step that emits zero rows (a
-/// trap or WFI-sleep tick), which this path cannot observe. No valid Jolt
-/// guest hits a zero-row step mid-program.
+/// trap or WFI-sleep tick), which this loop does not check — the parallel
+/// pass-1 driver does, via the `trace_len` delta. No valid Jolt guest hits
+/// a zero-row step mid-program.
 #[tracing::instrument(skip_all)]
 #[expect(clippy::expect_used)]
 pub fn execute(
@@ -1188,6 +1189,49 @@ mod tests {
                 "two-pass rows differ (workers={workers}, chunk_rows={chunk_rows}, capacity_rows={capacity_rows})"
             );
             assert_eq!(finished.get_cpu().trace_len, serial_rows.len());
+        }
+    }
+
+    #[test]
+    /// A replay divergence must fail the trace call promptly and loudly.
+    /// Regression test for the all-workers-dead hang: with a systematic
+    /// row-count divergence (fault-injected), every worker panics on its
+    /// first chunk; a blocking `send` on the full job queue would then hang
+    /// pass-1 forever instead of propagating the panic.
+    fn test_worker_divergence_panics_instead_of_hanging() {
+        use crate::parallel::{run_two_pass, TwoPassConfig, TEST_CORRUPT_ROW_COUNTS};
+        use std::sync::atomic::Ordering;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let elf = build_muldiv_guest();
+        let memory_config = MemoryConfig {
+            program_size: Some(elf.len() as u64),
+            ..Default::default()
+        };
+        let emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+        TEST_CORRUPT_ROW_COUNTS.store(true, Ordering::Relaxed);
+
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_two_pass(
+                    emulator,
+                    &TwoPassConfig {
+                        workers: 1,
+                        chunk_rows: 64,
+                        capacity_rows: 1 << 24,
+                    },
+                )
+            }));
+            let _ = done_tx.send(result.is_err());
+        });
+
+        match done_rx.recv_timeout(Duration::from_secs(60)) {
+            Ok(panicked) => assert!(panicked, "a corrupted chunk row count must panic the trace"),
+            Err(_) => {
+                panic!("two-pass trace hung on worker divergence instead of panicking")
+            }
         }
     }
 

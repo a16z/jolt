@@ -203,6 +203,13 @@ struct ActiveMarker {
 /// re-executing a chunk does not repeat what pass-1 already did.
 /// Guest-visible effects (JoltDevice loads/stores, advice reads) stay live
 /// in both modes: trace rows depend on them.
+///
+/// Load-bearing assumption: a guest never appends to the advice tape and
+/// reads those bytes back within the same run. The SDK's two-pass advice
+/// design guarantees this (writes happen in `compute_advice` execute passes,
+/// reads in trace passes); a same-chunk append-then-read would replay
+/// wrongly under suppression, and the chunk-boundary paranoia compare flags
+/// the tape divergence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostIo {
     Live,
@@ -241,8 +248,15 @@ impl ChunkCpuState {
     /// First difference between this captured boundary state and `cpu`'s
     /// current state (`None` = equal). Paranoia check: a worker finishing
     /// chunk k must land exactly on checkpoint k+1's capture. `trace_len` is
-    /// excluded — it counts rows in trace mode but ticks in execute mode.
+    /// row-uniform across modes and is compared too — a replay row-count
+    /// drift shows up here at the boundary that caused it.
     pub(crate) fn diff_vs_cpu(&self, cpu: &Cpu) -> Option<String> {
+        if self.trace_len != cpu.trace_len {
+            return Some(format!(
+                "trace_len: {} vs {}",
+                self.trace_len, cpu.trace_len
+            ));
+        }
         if self.pc != cpu.pc {
             return Some(format!("pc: {:#x} vs {:#x}", self.pc, cpu.pc));
         }
@@ -1460,11 +1474,17 @@ impl Cpu {
     /// Compares everything a trace-mode chunk replay depends on: pc, the full
     /// register file (including virtual registers), the CSR array, clock, wfi,
     /// privilege mode, the LR/SC reservation triple, the advice tape (data and
-    /// read position), `executed_instrs`, and JoltDevice outputs/panic.
-    /// Excludes bookkeeping that legitimately differs between trace and
-    /// execute modes (`trace_len`, markers, call stack) and the dead `f`
+    /// read position), `executed_instrs`, `trace_len` (row-uniform across
+    /// trace and execute modes), and JoltDevice outputs/panic. Excludes
+    /// host-side bookkeeping (markers, call stack) and the dead `f`
     /// registers. Memory is not compared — callers hash it separately.
     pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
+        if self.trace_len != other.trace_len {
+            return Some(format!(
+                "trace_len: {} vs {}",
+                self.trace_len, other.trace_len
+            ));
+        }
         if self.pc != other.pc {
             return Some(format!("pc: {:#x} vs {:#x}", self.pc, other.pc));
         }
