@@ -2,6 +2,8 @@
 //! bytecode and the execution driver.
 
 mod compile;
+#[doc(hidden)]
+pub mod harness;
 mod helpers;
 mod memory;
 mod state;
