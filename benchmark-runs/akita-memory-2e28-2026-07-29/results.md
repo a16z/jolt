@@ -328,6 +328,20 @@ where the control reads one contiguous Fp128 coefficient. The candidate was
 reverted at the small-trace gate, before a `2^26` run. Full measurements and
 the retained trace are in `stage6-ra-round4-experiment.md`.
 
+### Rejected: row-level RAM validity
+
+`RaIndices` repeats the same `Option<u8>` presence tag in all eight RAM
+slots. A row-level validity flag shrank the row from 54 to 47 bytes, removing
+7 B/cycle. At `2^26`, two runs lowered maximum RSS from 38.924 GB to 38.475
+and 38.415 GB.
+
+The directly affected `compute_all_G + SharedRaRound3::bind` aggregate
+regressed by 3.3–3.4%. Padding the row to a 48-byte, eight-byte-aligned stride
+recovered the `2^22` signal but regressed the target-scale aggregate by 6.5%.
+Both variants were reverted under the no-performance-regression policy.
+Measurements and all retained traces are in
+`ram-validity-layout-experiment.md`.
+
 ## Trace inventory
 
 Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
@@ -364,6 +378,8 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Deferred RA rows target | `mem-defer-ra-2e26.json` |
 | Lazy replay snapshot rejection | `mem-drop-lazy-2e22.json` |
 | Fourth delayed RA round rejection | `mem-ra-round4-2e22.json` |
+| RAM-validity 47-byte rejection | `mem-ram-valid-2e22.json`, `mem-ram-valid-2e22-b.json`, `mem-ram-valid-2e26.json`, `mem-ram-valid-2e26-b.json` |
+| RAM-validity 48-byte rejection | `mem-ram-valid-a8-2e22.json`, `mem-ram-valid-a8-2e22-b.json`, `mem-ram-valid-a8-2e22-c.json`, `mem-ram-valid-a8-2e26.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -395,9 +411,9 @@ operand presence, and canonical padding against the former `Cycle` path.
 Stage 6b now sets the sampled `2^26` peak at 34.16 GiB, with the earlier
 Stage-3/4 transient setting `/usr/bin/time`'s maximum. The next target is the
 Stage-6b field-vector overlap through allocation ownership or scheduling;
-another generic indexed RA round is now rejected. After that, audit the
-opening hint. Releasing the setup matrix remains rejected under the current
-implementation because its late reconstruction regresses both opening and
-verifier performance.
+another generic indexed RA round and a RAM-tag-only row compaction are now
+rejected. After that, audit the opening hint. Releasing the setup matrix
+remains rejected under the current implementation because its late
+reconstruction regresses both opening and verifier performance.
 
 K16 is not part of this campaign. K256 remains the fixed performance choice.
