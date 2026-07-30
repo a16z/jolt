@@ -36,6 +36,7 @@ mod field;
 mod g1;
 mod g2;
 mod hint_combine;
+pub mod miller;
 mod runtime;
 mod slots;
 pub mod testing;

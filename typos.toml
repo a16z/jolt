@@ -24,3 +24,6 @@ extend-exclude = ["patches/*.patch", "vendor/"]
 # (A_tru, A_unt) in the packed (Akita) prove path docs.
 "tru" = "tru"
 "unt" = "unt"
+# "Hom" is homogeneous-projective (G2Hom / arkworks G2HomProjective) in the
+# Miller-loop kernels.
+"Hom" = "Hom"

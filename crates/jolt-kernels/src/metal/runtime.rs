@@ -75,10 +75,17 @@ pub enum KernelId {
     BoolDenseRound,
     RavLazyRound,
     RavDenseRound,
+    Fq6Mul,
+    Fq6Sqr,
+    Fq12Mul,
+    Fq12Sqr,
+    Fq12Mul034,
+    MillerTable,
+    MillerFly,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 35] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -107,6 +114,13 @@ impl KernelId {
         Self::BoolDenseRound,
         Self::RavLazyRound,
         Self::RavDenseRound,
+        Self::Fq6Mul,
+        Self::Fq6Sqr,
+        Self::Fq12Mul,
+        Self::Fq12Sqr,
+        Self::Fq12Mul034,
+        Self::MillerTable,
+        Self::MillerFly,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -139,6 +153,13 @@ impl KernelId {
             Self::BoolDenseRound => "jk_bool_dense_round",
             Self::RavLazyRound => "jk_rav_lazy_round",
             Self::RavDenseRound => "jk_rav_dense_round",
+            Self::Fq6Mul => "jk_fq6_mul",
+            Self::Fq6Sqr => "jk_fq6_sqr",
+            Self::Fq12Mul => "jk_fq12_mul",
+            Self::Fq12Sqr => "jk_fq12_sqr",
+            Self::Fq12Mul034 => "jk_fq12_mul034",
+            Self::MillerTable => "jk_miller_table",
+            Self::MillerFly => "jk_miller_fly",
         }
     }
 
@@ -173,12 +194,14 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             field::constants_preamble(),
+            super::miller::pairing_preamble(),
             include_str!("shaders/fr.metal"),
             include_str!("shaders/kernels.metal"),
             include_str!("shaders/g1.metal"),
             include_str!("shaders/g2.metal"),
+            include_str!("shaders/fq12.metal"),
             include_str!("shaders/instruction.metal"),
             include_str!("shaders/ra_lazy.metal"),
         );
