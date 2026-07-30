@@ -63,16 +63,17 @@ use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
 use crate::optimized::OptimizedBackend;
 use crate::JoltBackend;
 
-/// Default [`metal_gate`] threshold, from `metal_microbench` on the target
-/// M4 (2026-07-29): a synchronous dispatch round trip floors at ~97 µs
-/// (D1), and the pure-streaming bind — the LEAST compute-dense kernel —
-/// crosses over against the all-core CPU between 2^18 (device 12% behind)
-/// and 2^19 (device 15% ahead) input elements (D2b). Real sumcheck kernels
-/// do strictly more arithmetic per byte than a bare fold, which moves their
-/// cutover below bind's, so 2^18 is the break-even-or-better default;
-/// bind-shaped outliers can be raised per slot via
-/// `JOLT_METAL_MIN_TERMS_<SLOT>`.
-pub const DEFAULT_MIN_TERMS: usize = 1 << 18;
+/// Default [`metal_gate`] threshold. W1's `metal_microbench` put the
+/// pure-streaming bind's cutover at 2^18–2^19 elements (D2b, ~97 µs
+/// dispatch floor), the original default. With every W2–W5 slot live, the
+/// W5b end-to-end sweep (sha2-chain @2^16/2^18/2^20, modular_benchmark,
+/// same-arm pairs) moved the optimum DOWN: 2^16 beat 2^18 at every scale
+/// (−2-3% e2e — real slots are more compute-dense than a bare bind, and
+/// the big slots' shrinking tail rounds stay on device two rounds longer),
+/// while 2^14 overshot the dispatch floor and 2^20 lost outright. No slot
+/// regressed at small scales, so no per-slot override ships;
+/// `JOLT_METAL_MIN_TERMS_<SLOT>` remains for outliers.
+pub const DEFAULT_MIN_TERMS: usize = 1 << 16;
 
 /// Should `kind` run on the device for `work_items` elements? See the
 /// module docs for the environment convention.
