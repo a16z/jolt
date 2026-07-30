@@ -42,6 +42,7 @@
 //! reference's own `jolt-poly` interpolation path.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
@@ -76,7 +77,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::trace_record::TraceRecord;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -91,7 +92,7 @@ const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 
 /// The per-cycle Spartan outer witness: all 35 R1CS inputs as their native
 /// small scalars, extracted in one typed trace-row walk.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct SpartanOuterRow {
     #[opening(LeftInstructionInput)]
     pub left_instruction_input: LeftInstructionInput,
@@ -354,6 +355,37 @@ fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (
     (az.reduce(), bz.reduce())
 }
 
+/// Row access for the outer kernels: collected bundles (tests and synthetic
+/// fixtures) or the session-shared trace record's lanes (production). Both
+/// yield the same `SpartanOuterRow` values — the record's lanes are the
+/// atomic extractors' scalars — so every downstream computation is
+/// byte-identical either way.
+pub(crate) enum OuterRows {
+    /// Directly constructed rows — the in-module parity tests' seam (their
+    /// synthetic rows encode `Next*` values no shifted lane read could).
+    #[cfg_attr(not(test), expect(dead_code, reason = "constructed by tests only"))]
+    Collected(Vec<SpartanOuterRow>),
+    Record(Arc<TraceRecord>),
+}
+
+impl OuterRows {
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Self::Collected(rows) => rows.len(),
+            Self::Record(record) => record.len(),
+        }
+    }
+
+    #[inline]
+    fn row(&self, t: usize) -> SpartanOuterRow {
+        match self {
+            Self::Collected(rows) => rows[t],
+            Self::Record(record) => record.outer_row(t),
+        }
+    }
+}
+
 /// The uni-skip carry: everything the uni-skip front computes that the
 /// remainder slot reclaims — the typed rows (reused for materialization and
 /// the final opening walk), the stage challenge vector, and the extended-node
@@ -361,7 +393,7 @@ fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (
 struct SpartanOuterCarry<F: Field> {
     log_t: usize,
     tau: Vec<F>,
-    rows: Vec<SpartanOuterRow>,
+    rows: OuterRows,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
     t1_values: Vec<F>,
@@ -371,7 +403,7 @@ struct SpartanOuterCarry<F: Field> {
 /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
 /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
 /// integer extension pipeline.
-fn extended_t1_values<F: Field>(rows: &[SpartanOuterRow], tau_low: &[F]) -> Vec<F> {
+fn extended_t1_values<F: Field>(rows: &OuterRows, tau_low: &[F]) -> Vec<F> {
     let split = tau_low.len() / 2;
     let (out_point, in_point) = tau_low.split_at(split);
     let e_out = EqPolynomial::<F>::evals(out_point, None);
@@ -386,7 +418,7 @@ fn extended_t1_values<F: Field>(rows: &[SpartanOuterRow], tau_low: &[F]) -> Vec<
             vec![Default::default(); EXTENDED_NODE_COUNT];
         for pair in 0..pairs_per_block {
             let t = x_out * pairs_per_block + pair;
-            let values = row_group_values(&rows[t]);
+            let values = row_group_values(&rows.row(t));
             let products = extended_products(&values, &coefficients);
             for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
                 accumulator.fmadd_s256(e_in[2 * pair], first);
@@ -427,13 +459,23 @@ fn extended_t1_values<F: Field>(rows: &[SpartanOuterRow], tau_low: &[F]) -> Vec<
 pub struct OptimizedOuterUniskip;
 
 impl OptimizedOuterUniskip {
-    /// The post-collection half of [`UniskipKernel::prepare`], shared with
-    /// the in-module parity tests (which construct rows directly).
+    /// [`Self::prepare_from_source`] over directly constructed rows — the
+    /// in-module parity tests' entry.
+    #[cfg(test)]
     fn prepare_from_rows<F: Field>(
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
         rows: Vec<SpartanOuterRow>,
+    ) -> Result<(), KernelError<F>> {
+        Self::prepare_from_source(session, log_t, tau, OuterRows::Collected(rows))
+    }
+
+    fn prepare_from_source<F: Field>(
+        session: &mut ProofSession,
+        log_t: usize,
+        tau: &[F],
+        rows: OuterRows,
     ) -> Result<(), KernelError<F>> {
         if rows.len() != 1usize << log_t {
             return Err(KernelError::InvariantViolation {
@@ -466,8 +508,8 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
         tau: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows: Vec<SpartanOuterRow> = collect_rows(witness, 1usize << log_t)?;
-        Self::prepare_from_rows(session, log_t, tau, rows)
+        let record = TraceRecord::shared(session, witness, log_t)?;
+        Self::prepare_from_source(session, log_t, tau, OuterRows::Record(record))
     }
 
     #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::first_round_poly")]
@@ -537,7 +579,7 @@ struct OuterRemainderKernel<F: Field> {
     /// Round-0 endpoints, fused into the materialization pass.
     pending_endpoints: Option<(F, F)>,
     challenges: Vec<F>,
-    rows: Vec<SpartanOuterRow>,
+    rows: OuterRows,
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
@@ -592,7 +634,7 @@ impl<F: Field> OuterRemainderKernel<F> {
             let mut inner_infinity = F::zero();
             for x_in in 0..in_len {
                 let t = x_out * in_len + x_in;
-                let values = row_group_values(&rows_ref[t]);
+                let values = row_group_values(&rows_ref.row(t));
                 let (az_zero, bz_zero) = fold_group(lagrange, &values.a_first, &values.b_first);
                 let (az_one, bz_one) = fold_group(
                     &lagrange[..SECOND_GROUP_LEN],
@@ -734,8 +776,8 @@ impl<F: Field> OuterRemainderKernel<F> {
             let start = index * block_size;
             let end = (start + block_size).min(self.rows.len());
             let mut accumulator = ClaimAccumulator::<F>::default();
-            for (row, &weight) in self.rows[start..end].iter().zip(&weights[start..end]) {
-                accumulator.add_row(weight, row);
+            for (t, &weight) in (start..end).zip(&weights[start..end]) {
+                accumulator.add_row(weight, &self.rows.row(t));
             }
             accumulator.finish()
         };
