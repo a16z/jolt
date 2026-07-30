@@ -8,6 +8,8 @@ mod ark_proof;
 mod ark_serde;
 mod ark_setup;
 mod blake2b_transcript;
+// Jolt vendored addition: device-tier multi-pairing injection seam.
+pub mod pairing_hook;
 
 #[cfg(feature = "cache")]
 pub mod ark_cache;

@@ -374,6 +374,14 @@ impl PairingCurve for BN254 {
             return Self::GT::identity();
         }
 
+        // Jolt vendored addition: identical GT from an installed device
+        // evaluator; a decline falls through to the CPU path.
+        if let Some(hook) = super::pairing_hook::multi_pair_hook() {
+            if let Some(gt) = hook(ps, qs) {
+                return gt;
+            }
+        }
+
         pairing_helpers::multi_pair_optimized(ps, qs)
     }
 
@@ -389,6 +397,13 @@ impl PairingCurve for BN254 {
             return Self::GT::identity();
         }
 
+        // Jolt vendored addition (see multi_pair).
+        if let Some(hook) = super::pairing_hook::multi_pair_hook() {
+            if let Some(gt) = hook(ps, qs) {
+                return gt;
+            }
+        }
+
         pairing_helpers::multi_pair_g2_setup_optimized(ps, qs)
     }
 
@@ -402,6 +417,13 @@ impl PairingCurve for BN254 {
 
         if ps.is_empty() {
             return Self::GT::identity();
+        }
+
+        // Jolt vendored addition (see multi_pair).
+        if let Some(hook) = super::pairing_hook::multi_pair_hook() {
+            if let Some(gt) = hook(ps, qs) {
+                return gt;
+            }
         }
 
         pairing_helpers::multi_pair_g1_setup_optimized(ps, qs)

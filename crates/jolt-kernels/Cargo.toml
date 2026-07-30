@@ -26,6 +26,7 @@ metal = [
   "dep:ark-bn254",
   "dep:ark-ec",
   "dep:ark-ff",
+  "dep:dory",
   "dep:jolt-crypto",
   "dep:jolt-dory",
   "dep:jolt-optimizations",
@@ -51,6 +52,8 @@ tracing.workspace = true
 ark-bn254 = { workspace = true, optional = true }
 ark-ec = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
+# The device multi-pair hook is typed over dory's arkworks backend wrappers.
+dory = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
 jolt-optimizations = { workspace = true, optional = true }

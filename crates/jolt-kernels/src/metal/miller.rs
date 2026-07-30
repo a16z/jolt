@@ -23,10 +23,11 @@
 //! and the structural facts the MSL specializes on (ξ = 9 + u, u² = −1,
 //! positive x) are asserted before any pipeline is built.
 
-use ark_bn254::{Bn254, Fq, Fq12, Fq2, Fq6, G1Affine, G2Affine};
-use ark_ec::pairing::Pairing;
-use ark_ec::AffineRepr;
+use ark_bn254::{Bn254, Fq, Fq12, Fq2, Fq6, G1Affine, G1Projective, G2Affine, G2Projective};
+use ark_ec::pairing::{MillerLoopOutput, Pairing};
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInt, Field, Fp6Config, One};
+use dory::backends::arkworks::{ArkG1, ArkG2, ArkGT};
 
 use super::error::MetalError;
 use super::field::{FR_U32_LIMBS, G1_AFFINE_U32_STRIDE, G2_AFFINE_U32_STRIDE};
@@ -343,6 +344,44 @@ pub fn miller_fly_partials(
     let mut partials = vec![0u32; n_pairs * FQ12_U32S];
     out_buf.copy_to_u32s(&mut partials);
     Ok(partials)
+}
+
+/// Per-pair Fq-mul-equivalents fed to [`super::metal_gate`] so the shared
+/// `JOLT_METAL_MIN_TERMS` scale keeps meaning "work items": the shift
+/// calibrates the default threshold (2^16) to the measured ~4k-pair
+/// crossover where the fly kernel beats dory's (internally parallel) CPU
+/// multi-pair. Below it, per-thread ate-ladder latency dominates (the W5a
+/// ladder-latency-floor lesson) while the CPU cost shrinks linearly.
+const MILLER_FLY_WORK_PER_PAIR_LOG2: usize = 4;
+
+/// The stage-8 device multi-pairing — dory's `multi_pair*` hook. Serves
+/// the call with the exact GT the CPU path computes (device Miller
+/// partials → Fq12 product → arkworks final exponentiation) or declines
+/// (`None`) below the gate or on any device error, letting dory's CPU
+/// path run. Both paths batch-normalize the same projective inputs, so
+/// the device sees the same affine pairs (identities included — the
+/// sentinel skip mirrors the CPU pair filter).
+#[tracing::instrument(skip_all, name = "miller_fly_device", fields(pairs = ps.len()))]
+pub fn multi_pair_device(ps: &[ArkG1], qs: &[ArkG2]) -> Option<ArkGT> {
+    if !super::metal_gate("miller_fly", ps.len() << MILLER_FLY_WORK_PER_PAIR_LOG2) {
+        return None;
+    }
+    let ctx = MetalContext::global().ok()?;
+    let ps_affine = G1Projective::normalize_batch(&ps.iter().map(|p| p.0).collect::<Vec<_>>());
+    let qs_affine = G2Projective::normalize_batch(&qs.iter().map(|q| q.0).collect::<Vec<_>>());
+    let partials = match miller_fly_partials(ctx, &ps_affine, &qs_affine) {
+        Ok(partials) => partials,
+        Err(error) => {
+            tracing::warn!(%error, "device multi-pair failed; falling back to the CPU path");
+            return None;
+        }
+    };
+    super::testing::note_miller_dispatch();
+    let miller = product_of_partials(&partials);
+    // A `None` final exponentiation (zero Miller product) cannot arise from
+    // well-formed pairs; decline and let the CPU path handle it identically.
+    let gt = Bn254::final_exponentiation(MillerLoopOutput(miller))?;
+    Some(ArkGT(gt))
 }
 
 #[cfg(test)]
@@ -670,6 +709,37 @@ mod tests {
             let got = product_of_partials(&partials[t * FQ12_U32S..(t + 1) * FQ12_U32S]);
             assert_eq!(got, expected, "segment {t} ({start}..{end})");
         }
+    }
+
+    /// The dory hook: `multi_pair_device` must produce the exact GT of
+    /// dory's CPU `multi_pair` (final exponentiation included) on
+    /// projective inputs with identities mixed in.
+    #[test]
+    fn multi_pair_device_matches_dory_cpu() {
+        let _lock = gpu_lock();
+        // nextest gives each test its own process; force the gate open at
+        // test sizes.
+        std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER_FLY", "1");
+        let mut rng = rng();
+        let n = 61usize;
+        let mut ps: Vec<ArkG1> = (0..n)
+            .map(|_| ArkG1(ark_bn254::G1Projective::rand(&mut rng)))
+            .collect();
+        let mut qs: Vec<ArkG2> = (0..n)
+            .map(|_| ArkG2(ark_bn254::G2Projective::rand(&mut rng)))
+            .collect();
+        ps[7] = ArkG1(ark_bn254::G1Projective::zero());
+        qs[23] = ArkG2(ark_bn254::G2Projective::zero());
+
+        let before = super::super::testing::miller_dispatch_count();
+        let device = multi_pair_device(&ps, &qs).expect("gate forced open");
+        assert!(
+            super::super::testing::miller_dispatch_count() > before,
+            "the hook silently fell back"
+        );
+        let cpu = <dory::backends::arkworks::BN254 as
+            dory::primitives::arithmetic::PairingCurve>::multi_pair(&ps, &qs);
+        assert_eq!(device.0, cpu.0);
     }
 
     /// Fly-kernel Miller product vs arkworks: random pairs, single pair,
