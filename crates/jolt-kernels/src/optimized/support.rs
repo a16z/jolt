@@ -233,3 +233,53 @@ impl<F: Field> SplitLt<F> {
         }
     }
 }
+
+/// Where a kernel's typed rows live: a slice-backed witness serves an
+/// owning handle and every pass re-extracts its windows on the fly — the
+/// materialized row vector never exists; re-emulating sources retain the
+/// collected rows. The generic twin of the spartan-outer kernel's store,
+/// for every carry-style typed-row consumer.
+pub(crate) enum BundleStore<B> {
+    Owned(jolt_witness::OwnedRows),
+    Retained(Vec<B>),
+}
+
+impl<B: WitnessBundle + Clone + Send + Sync> BundleStore<B> {
+    /// Resolve for a witness plane: the owning handle when the source is
+    /// slice-backed (and covers the cycle domain), a materialized collect
+    /// otherwise.
+    pub(crate) fn resolve<F: Field>(
+        witness: &dyn jolt_witness::JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Self, crate::KernelError<F>> {
+        match witness.owned_rows() {
+            Some(owned) if cycles <= owned.cycles() => Ok(Self::Owned(owned)),
+            _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
+        }
+    }
+
+    pub(crate) fn access(&self) -> BundleAccess<'_, B> {
+        match self {
+            Self::Owned(owned) => BundleAccess::View(owned.view()),
+            Self::Retained(rows) => BundleAccess::Retained(rows),
+        }
+    }
+}
+
+/// One pass's borrowed row provider over a [`BundleStore`].
+pub(crate) enum BundleAccess<'a, B> {
+    View(jolt_witness::RandomAccessRows<'a>),
+    Retained(&'a [B]),
+}
+
+impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
+    /// The typed row at cycle `t` — an extraction window over a slice-backed
+    /// source, an indexed copy from a retained vector. Pure per index.
+    #[inline]
+    pub(crate) fn row(&self, t: usize) -> Result<B, WitnessError> {
+        match self {
+            Self::View(view) => view.window(t),
+            Self::Retained(rows) => Ok(rows[t]),
+        }
+    }
+}
