@@ -60,6 +60,9 @@ use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
 
+#[cfg(feature = "akita")]
+use crate::zkvm::packed_witness::FusedIncDeltas;
+
 /// The five base read-checking val stages (Spartan outer, product-virtualized
 /// flags, shift, registers read-write, registers val-eval + instruction
 /// lookups), present in every build.
@@ -173,7 +176,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
         params: BytecodeReadRafSumcheckParams<F>,
         trace: Arc<Vec<JoltTraceRow>>,
         _bytecode_preprocessing: Arc<BytecodePreprocessing>,
-        #[cfg(feature = "akita")] fused_deltas: &[i128],
+        #[cfg(feature = "akita")] fused_deltas: &FusedIncDeltas,
     ) -> Self {
         let claim_per_stage: Vec<F> = (0..NUM_INPUT_CLAIMS)
             .map(|stage| {
@@ -280,7 +283,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
                         }
                         #[cfg(feature = "akita")]
                         {
-                            let weight = F::from_i128(fused_deltas[c]);
+                            let weight = F::from_i128(fused_deltas.value(c));
                             for stage in NUM_BASE_CLAIMS..NUM_INPUT_CLAIMS {
                                 inner[stage][pc] += E_lo[stage][c_lo] * weight;
                             }
@@ -590,6 +593,108 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 }
 
+#[cfg(feature = "akita")]
+#[derive(Allocative)]
+/// Fused-inc MLE that keeps signed coefficients compact until the first bind.
+///
+/// Its first-bind kernel decodes pairs in sign-word-sized blocks and retains
+/// the one-multiply interpolation used by `CompactPolynomial<i128, F>`.
+struct PackedFusedIncPolynomial<F: JoltField> {
+    coeffs: FusedIncDeltas,
+    bound_coeffs: Vec<F>,
+    len: usize,
+}
+
+#[cfg(feature = "akita")]
+impl<F: JoltField> PackedFusedIncPolynomial<F> {
+    fn new(coeffs: FusedIncDeltas) -> Self {
+        assert!(
+            coeffs.len() >= 2 && coeffs.len().is_power_of_two(),
+            "fused-inc polynomial length must be a power of two"
+        );
+        let len = coeffs.len();
+        Self {
+            coeffs,
+            bound_coeffs: Vec::new(),
+            len,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    fn get_bound_coeff(&self, index: usize) -> F {
+        if self.bound_coeffs.is_empty() {
+            F::from_i128(self.coeffs.value(index))
+        } else {
+            self.bound_coeffs[index]
+        }
+    }
+
+    #[inline]
+    fn bind_pair(a: i128, b: i128, r: F) -> F {
+        match a.cmp(&b) {
+            std::cmp::Ordering::Equal => F::from_i128(a),
+            std::cmp::Ordering::Less => F::from_i128(a) + r.mul_u128(b.abs_diff(a)),
+            std::cmp::Ordering::Greater => F::from_i128(a) - r.mul_u128(a.abs_diff(b)),
+        }
+    }
+
+    fn bind_parallel(&mut self, r: F::Challenge) {
+        let n = self.len / 2;
+        let mut bound_coeffs = Vec::with_capacity(n);
+        if self.bound_coeffs.is_empty() {
+            let r = r.into();
+            (
+                bound_coeffs.spare_capacity_mut().par_chunks_mut(32),
+                self.coeffs.magnitudes().par_chunks(64),
+                self.coeffs.negative_words().par_iter(),
+            )
+                .into_par_iter()
+                .for_each(|(output, magnitudes, &negative_word)| {
+                    for (index, output) in output.iter_mut().enumerate() {
+                        let left = 2 * index;
+                        let right = left + 1;
+                        let signed = |index| {
+                            let magnitude = magnitudes[index] as i128;
+                            if negative_word >> index & 1 == 1 {
+                                -magnitude
+                            } else {
+                                magnitude
+                            }
+                        };
+                        output.write(Self::bind_pair(signed(left), signed(right), r));
+                    }
+                });
+            self.coeffs = FusedIncDeltas::default();
+        } else {
+            (
+                bound_coeffs.spare_capacity_mut(),
+                self.bound_coeffs.par_chunks_exact(2),
+            )
+                .into_par_iter()
+                .with_min_len(512 * 32 / F::NUM_BYTES)
+                .for_each(|(output, coeffs)| {
+                    output.write(coeffs[0] + (coeffs[1] - coeffs[0]) * r);
+                });
+        }
+        // SAFETY: Both branches write every one of the `n` spare slots exactly
+        // once before publishing the initialized length.
+        unsafe { bound_coeffs.set_len(n) };
+        self.bound_coeffs = bound_coeffs;
+        self.len = n;
+    }
+
+    fn final_sumcheck_claim(&self) -> F {
+        assert_eq!(self.len, 1);
+        self.bound_coeffs[0]
+    }
+}
+
 #[derive(Allocative)]
 pub struct BytecodeReadRafCycleSumcheckProver<F: JoltField> {
     /// Chunked RA polynomials over address variables (one per dimension `d`), used to form
@@ -613,7 +718,7 @@ pub struct BytecodeReadRafCycleSumcheckProver<F: JoltField> {
     /// Lattice mode: the fused-inc stream, the shared cycle factor of the four
     /// fused stages (raises their degree by one over the base stages).
     #[cfg(feature = "akita")]
-    fused_inc: MultilinearPolynomial<F>,
+    fused_inc: PackedFusedIncPolynomial<F>,
     params: BytecodeReadRafCyclePhaseParams<F>,
 }
 
@@ -623,7 +728,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
         mut params: BytecodeReadRafSumcheckParams<F>,
         ra_indices: &[RaIndices],
         accumulator: &ProverOpeningAccumulator<F>,
-        #[cfg(feature = "akita")] fused_deltas: Vec<i128>,
+        #[cfg(feature = "akita")] fused_deltas: FusedIncDeltas,
     ) -> Self {
         let (r_address_point, _) = accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::BytecodeReadRafAddrClaim,
@@ -700,7 +805,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
             prev_entry_claim,
             prev_entry_poly: None,
             #[cfg(feature = "akita")]
-            fused_inc: MultilinearPolynomial::from(fused_deltas),
+            fused_inc: PackedFusedIncPolynomial::new(fused_deltas),
             params: BytecodeReadRafCyclePhaseParams::new(params, r_address_low_to_high),
         }
     }
@@ -887,7 +992,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             .iter_mut()
             .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh));
         #[cfg(feature = "akita")]
-        self.fused_inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.fused_inc.bind_parallel(r_j);
         self.gruen_eq_polys
             .iter_mut()
             .for_each(|poly| poly.bind(r_j));
@@ -2377,5 +2482,53 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         }
 
         sum
+    }
+}
+
+#[cfg(all(test, feature = "akita"))]
+mod fused_inc_tests {
+    use super::*;
+    use crate::{field::akita::AkitaFp128, zkvm::packed_witness::FusedIncDeltas};
+
+    #[test]
+    fn packed_fused_inc_polynomial_matches_i128_binding() {
+        let deltas = (0..128)
+            .map(|index| match index % 8 {
+                0 => 0,
+                1 => -1,
+                2 => 1,
+                3 => -(1i128 << 64) + 1,
+                4 => (1i128 << 64) - 1,
+                5 => -(index as i128),
+                6 => index as i128,
+                _ => (index as i128) << 48,
+            })
+            .collect::<Vec<_>>();
+        let mut expected = MultilinearPolynomial::<AkitaFp128>::from(deltas.clone());
+        let mut actual: PackedFusedIncPolynomial<AkitaFp128> =
+            PackedFusedIncPolynomial::new(FusedIncDeltas::from_values(&deltas));
+
+        for index in 0..deltas.len() {
+            assert_eq!(
+                actual.get_bound_coeff(index),
+                expected.get_bound_coeff(index)
+            );
+        }
+        for challenge in [3, 5, 11, 17, 29, 41, 67] {
+            let challenge = AkitaFp128::from_u64(challenge);
+            expected.bind_parallel(challenge, BindingOrder::LowToHigh);
+            actual.bind_parallel(challenge);
+            assert_eq!(actual.len(), expected.len());
+            for index in 0..actual.len() {
+                assert_eq!(
+                    actual.get_bound_coeff(index),
+                    expected.get_bound_coeff(index)
+                );
+            }
+        }
+        assert_eq!(
+            actual.final_sumcheck_claim(),
+            expected.final_sumcheck_claim()
+        );
     }
 }

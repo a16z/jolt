@@ -7,11 +7,15 @@ pub use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_openings::PrefixPacking;
 use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
+#[cfg(any(feature = "akita", test))]
+use rayon::prelude::*;
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
 use crate::zkvm::instruction::{CircuitFlags, Flags, InstructionLookup, InterleavedBitsMarker};
 use crate::zkvm::lookup_table::LookupTables;
+#[cfg(any(feature = "akita", test))]
+use allocative::Allocative;
 use common::constants::XLEN;
 
 /// Sparse unit-valued multilinear polynomial: value `1` at each listed
@@ -179,6 +183,134 @@ impl FusedIncValue {
         let carry = self.biased_for_balanced_digits(width) >> UNSIGNED_INC_BITS;
         debug_assert!((-1..=1).contains(&carry));
         carry.rem_euclid(radix) as usize
+    }
+}
+
+/// Sign-magnitude storage for the per-cycle fused increment stream.
+///
+/// Every fused delta is the difference of two `u64` values, so its magnitude
+/// fits in one limb. Signs are stored separately at one bit per cycle.
+#[cfg(any(feature = "akita", test))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Allocative)]
+pub struct FusedIncDeltas {
+    magnitudes: Vec<u64>,
+    negative_words: Vec<u64>,
+}
+
+#[cfg(any(feature = "akita", test))]
+impl FusedIncDeltas {
+    #[cfg(feature = "akita")]
+    /// Builds the packed stream directly from trace rows without a full-width
+    /// signed temporary.
+    pub fn from_trace(trace: &[JoltTraceRow]) -> Self {
+        let mut magnitudes = vec![0; trace.len()];
+        let mut negative_words = vec![0; trace.len().div_ceil(64)];
+        magnitudes
+            .par_chunks_mut(64)
+            .zip(negative_words.par_iter_mut())
+            .zip(trace.par_chunks(64))
+            .for_each(|((magnitudes, negative_word), rows)| {
+                let mut signs = 0;
+                for (index, (magnitude, row)) in magnitudes.iter_mut().zip(rows).enumerate() {
+                    let delta = FusedIncValue::from_trace_row(row).delta;
+                    let absolute = delta.unsigned_abs();
+                    debug_assert!(absolute <= u64::MAX as u128);
+                    *magnitude = absolute as u64;
+                    if delta.is_negative() {
+                        signs |= 1 << index;
+                    }
+                }
+                *negative_word = signs;
+            });
+        Self {
+            magnitudes,
+            negative_words,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_values(values: &[i128]) -> Self {
+        assert!(values
+            .iter()
+            .all(|value| value.unsigned_abs() <= u64::MAX as u128));
+        let magnitudes = values
+            .iter()
+            .map(|value| value.unsigned_abs() as u64)
+            .collect();
+        let negative_words = values
+            .chunks(64)
+            .map(|chunk| {
+                chunk.iter().enumerate().fold(0, |word, (index, value)| {
+                    word | (u64::from(value.is_negative()) << index)
+                })
+            })
+            .collect();
+        Self {
+            magnitudes,
+            negative_words,
+        }
+    }
+
+    #[inline]
+    /// Number of cycle coefficients in the stream.
+    pub fn len(&self) -> usize {
+        self.magnitudes.len()
+    }
+
+    #[inline]
+    /// Whether the stream contains no cycle coefficients.
+    pub fn is_empty(&self) -> bool {
+        self.magnitudes.is_empty()
+    }
+
+    #[inline]
+    /// Decodes one signed coefficient.
+    pub fn value(&self, index: usize) -> i128 {
+        let magnitude = self.magnitudes[index] as i128;
+        if self.negative_words[index / 64] >> (index % 64) & 1 == 1 {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    pub(crate) fn magnitudes(&self) -> &[u64] {
+        &self.magnitudes
+    }
+
+    #[cfg(feature = "akita")]
+    pub(crate) fn negative_words(&self) -> &[u64] {
+        &self.negative_words
+    }
+
+    pub(crate) fn par_map_values<T, M>(&self, map: M) -> Vec<T>
+    where
+        T: Send,
+        M: Fn(i128) -> T + Send + Sync,
+    {
+        let mut output = Vec::with_capacity(self.len());
+        (
+            output.spare_capacity_mut().par_chunks_mut(64),
+            self.magnitudes.par_chunks(64),
+            self.negative_words.par_iter(),
+        )
+            .into_par_iter()
+            .for_each(|(output, magnitudes, &negative_word)| {
+                for (index, (output, &magnitude)) in output.iter_mut().zip(magnitudes).enumerate() {
+                    let magnitude = magnitude as i128;
+                    let value = if negative_word >> index & 1 == 1 {
+                        -magnitude
+                    } else {
+                        magnitude
+                    };
+                    output.write(map(value));
+                }
+            });
+        // SAFETY: The parallel chunks cover every spare slot exactly once,
+        // and each slot is initialized before the vector length is published.
+        unsafe { output.set_len(self.len()) };
+        output
     }
 }
 
@@ -387,6 +519,29 @@ mod tests {
             }
             assert_eq!(zero.balanced_carry_hot_lane_bits(width), 0);
         }
+    }
+
+    #[test]
+    fn packed_fused_inc_deltas_round_trip_boundaries() {
+        let values = [
+            -(1i128 << 64) + 1,
+            -(1i128 << 63),
+            -1,
+            0,
+            1,
+            (1i128 << 63) - 1,
+            (1i128 << 64) - 1,
+        ];
+        let packed = FusedIncDeltas::from_values(&values);
+
+        assert_eq!(packed.len(), values.len());
+        assert_eq!(
+            (0..values.len())
+                .map(|index| packed.value(index))
+                .collect::<Vec<_>>(),
+            values
+        );
+        assert_eq!(packed.par_map_values(|value| value), values);
     }
 
     #[test]

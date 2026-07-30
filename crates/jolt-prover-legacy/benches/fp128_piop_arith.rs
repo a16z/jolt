@@ -1,13 +1,21 @@
 use std::{hint::black_box, time::Duration};
 
 use ark_bn254::Fr;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_prover_legacy::field::{akita::AkitaFp128, JoltField};
-use num_traits::Zero;
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use jolt_prover_legacy::{
+    field::{akita::AkitaFp128, JoltField},
+    poly::{
+        compact_polynomial::CompactPolynomial,
+        multilinear_polynomial::{BindingOrder, PolynomialBinding},
+    },
+};
+use num_traits::{One, Zero};
 use rand::{rngs::StdRng, SeedableRng};
+use rayon::prelude::*;
 
 const BOOLEANITY_COLUMNS: usize = 32;
 const D4_PRODUCTS: usize = 4;
+const FUSED_DELTA_LEN: usize = 1 << 20;
 
 fn random_fields<F: JoltField>(len: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -295,12 +303,213 @@ fn bench_d4(c: &mut Criterion) {
     }
 }
 
+fn fused_delta_input(len: usize) -> (Vec<i128>, Vec<u64>, Vec<u64>) {
+    let mut state = 0x243f_6a88_85a3_08d3_u64;
+    let mut deltas = Vec::with_capacity(len);
+    let mut magnitudes = Vec::with_capacity(len);
+    let mut negative_words = vec![0_u64; len.div_ceil(64)];
+    for index in 0..len {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let magnitude = if index.is_multiple_of(4) { 0 } else { state };
+        let negative = magnitude != 0 && index & 1 == 1;
+        let delta = if negative {
+            -(magnitude as i128)
+        } else {
+            magnitude as i128
+        };
+        deltas.push(delta);
+        magnitudes.push(magnitude);
+        if negative {
+            negative_words[index / 64] |= 1 << (index % 64);
+        }
+    }
+    (deltas, magnitudes, negative_words)
+}
+
+#[inline]
+fn is_negative(negative_words: &[u64], index: usize) -> bool {
+    negative_words[index / 64] >> (index % 64) & 1 == 1
+}
+
+#[inline]
+fn signed_u64_to_field(magnitude: u64, negative: bool) -> AkitaFp128 {
+    let value = AkitaFp128::from_u64(magnitude);
+    if negative {
+        -value
+    } else {
+        value
+    }
+}
+
+#[inline(never)]
+fn convert_i128(deltas: &[i128]) -> AkitaFp128 {
+    deltas
+        .par_iter()
+        .map(|&delta| AkitaFp128::from_i128(delta))
+        .reduce(AkitaFp128::zero, |left, right| left + right)
+}
+
+#[inline(never)]
+fn convert_signed_magnitude(magnitudes: &[u64], negative_words: &[u64]) -> AkitaFp128 {
+    (0..magnitudes.len())
+        .into_par_iter()
+        .map(|index| signed_u64_to_field(magnitudes[index], is_negative(negative_words, index)))
+        .reduce(AkitaFp128::zero, |left, right| left + right)
+}
+
+#[inline(never)]
+fn bind_i128(deltas: Vec<i128>, r: AkitaFp128) -> Vec<AkitaFp128> {
+    let mut polynomial: CompactPolynomial<i128, AkitaFp128> =
+        CompactPolynomial::from_coeffs(deltas);
+    polynomial.bind_parallel(r, BindingOrder::LowToHigh);
+    polynomial.bound_coeffs
+}
+
+#[inline]
+fn packed_delta(magnitude: u64, negative: bool) -> i128 {
+    if negative {
+        -(magnitude as i128)
+    } else {
+        magnitude as i128
+    }
+}
+
+#[inline]
+fn bind_i128_pair(a: i128, b: i128, r: AkitaFp128) -> AkitaFp128 {
+    match a.cmp(&b) {
+        std::cmp::Ordering::Equal => AkitaFp128::from_i128(a),
+        std::cmp::Ordering::Less => AkitaFp128::from_i128(a) + r.mul_u128(b.abs_diff(a)),
+        std::cmp::Ordering::Greater => AkitaFp128::from_i128(a) - r.mul_u128(a.abs_diff(b)),
+    }
+}
+
+#[inline(never)]
+fn bind_i128_kernel(deltas: &[i128], r: AkitaFp128) -> Vec<AkitaFp128> {
+    let n = deltas.len() / 2;
+    let mut result = Vec::with_capacity(n);
+    result
+        .spare_capacity_mut()
+        .par_chunks_mut(32)
+        .zip(deltas.par_chunks_exact(64))
+        .for_each(|(output, deltas)| {
+            for (index, output) in output.iter_mut().enumerate() {
+                output.write(bind_i128_pair(deltas[2 * index], deltas[2 * index + 1], r));
+            }
+        });
+    // SAFETY: The parallel chunks initialize every one of the `n` spare slots.
+    unsafe { result.set_len(n) };
+    result
+}
+
+#[inline(never)]
+fn bind_packed_i128(magnitudes: &[u64], negative_words: &[u64], r: AkitaFp128) -> Vec<AkitaFp128> {
+    let n = magnitudes.len() / 2;
+    let mut result = Vec::with_capacity(n);
+    (
+        result.spare_capacity_mut().par_chunks_mut(32),
+        magnitudes.par_chunks_exact(64),
+        negative_words.par_iter(),
+    )
+        .into_par_iter()
+        .for_each(|(output, magnitudes, &negative_word)| {
+            for (index, output) in output.iter_mut().enumerate() {
+                let left = 2 * index;
+                let right = left + 1;
+                let a = packed_delta(magnitudes[left], negative_word >> left & 1 == 1);
+                let b = packed_delta(magnitudes[right], negative_word >> right & 1 == 1);
+                output.write(bind_i128_pair(a, b, r));
+            }
+        });
+    // SAFETY: The parallel chunks initialize every one of the `n` spare slots.
+    unsafe { result.set_len(n) };
+    result
+}
+
+#[inline]
+fn signed_u64_mul_field(field: AkitaFp128, magnitude: u64, negative: bool) -> AkitaFp128 {
+    let value = field.mul_u64(magnitude);
+    if negative {
+        -value
+    } else {
+        value
+    }
+}
+
+#[inline(never)]
+fn bind_signed_magnitude(
+    magnitudes: &[u64],
+    negative_words: &[u64],
+    r: AkitaFp128,
+) -> Vec<AkitaFp128> {
+    let one_minus_r = AkitaFp128::one() - r;
+    (0..magnitudes.len() / 2)
+        .into_par_iter()
+        .map(|index| {
+            let left = 2 * index;
+            let right = left + 1;
+            signed_u64_mul_field(
+                one_minus_r,
+                magnitudes[left],
+                is_negative(negative_words, left),
+            ) + signed_u64_mul_field(r, magnitudes[right], is_negative(negative_words, right))
+        })
+        .collect()
+}
+
+fn bench_fused_delta(c: &mut Criterion) {
+    let (deltas, magnitudes, negative_words) = fused_delta_input(FUSED_DELTA_LEN);
+    let r = AkitaFp128::from_u64(0x9e37_79b9_7f4a_7c15);
+    assert_eq!(
+        convert_i128(&deltas),
+        convert_signed_magnitude(&magnitudes, &negative_words)
+    );
+    assert_eq!(bind_i128(deltas.clone(), r), bind_i128_kernel(&deltas, r));
+    assert_eq!(
+        bind_i128(deltas.clone(), r),
+        bind_packed_i128(&magnitudes, &negative_words, r)
+    );
+    assert_eq!(
+        bind_i128(deltas.clone(), r),
+        bind_signed_magnitude(&magnitudes, &negative_words, r)
+    );
+
+    let mut conversion = c.benchmark_group("fused_delta/field_conversion");
+    conversion.throughput(Throughput::Elements(FUSED_DELTA_LEN as u64));
+    conversion.bench_function("i128", |b| b.iter(|| black_box(convert_i128(&deltas))));
+    conversion.bench_function("signed_magnitude", |b| {
+        b.iter(|| black_box(convert_signed_magnitude(&magnitudes, &negative_words)))
+    });
+    conversion.finish();
+
+    let mut bind = c.benchmark_group("fused_delta/first_bind");
+    bind.throughput(Throughput::Elements(FUSED_DELTA_LEN as u64));
+    bind.bench_function("i128", |b| {
+        b.iter_batched(
+            || deltas.clone(),
+            |input| black_box(bind_i128(input, r)),
+            BatchSize::LargeInput,
+        )
+    });
+    bind.bench_function("i128_kernel", |b| {
+        b.iter(|| black_box(bind_i128_kernel(&deltas, r)))
+    });
+    bind.bench_function("packed_i128_kernel", |b| {
+        b.iter(|| black_box(bind_packed_i128(&magnitudes, &negative_words, r)))
+    });
+    bind.bench_function("signed_magnitude", |b| {
+        b.iter(|| black_box(bind_signed_magnitude(&magnitudes, &negative_words, r)))
+    });
+    bind.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(20)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_dot_products, bench_booleanity, bench_d4
+    targets = bench_dot_products, bench_booleanity, bench_d4, bench_fused_delta
 }
 criterion_main!(benches);

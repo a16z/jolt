@@ -26,6 +26,8 @@ use std::sync::Arc;
 
 #[cfg(all(feature = "prover", feature = "akita"))]
 use crate::poly::ra_poly::RaPolynomial;
+#[cfg(all(feature = "prover", feature = "akita"))]
+use crate::zkvm::packed_witness::FusedIncDeltas;
 
 use common::jolt_device::MemoryLayout;
 use jolt_riscv::JoltTraceRow;
@@ -690,7 +692,7 @@ pub struct FusedIncColumns {
     /// batching order of [`lattice_booleanity_params`].
     pub one_hot: Vec<Arc<Vec<u8>>>,
     /// The signed fused delta per cycle.
-    pub fused: Vec<i128>,
+    pub fused: FusedIncDeltas,
 }
 
 /// Pushforward of one-hot lane columns through a split eq table:
