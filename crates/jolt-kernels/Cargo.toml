@@ -76,3 +76,8 @@ rayon.workspace = true
 [[example]]
 name = "metal_microbench"
 required-features = ["metal"]
+
+# The W6 Miller-loop go/no-go microbenchmark; same measurement protocol.
+[[example]]
+name = "miller_microbench"
+required-features = ["metal"]
