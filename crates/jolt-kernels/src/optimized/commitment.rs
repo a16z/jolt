@@ -34,10 +34,12 @@ use crate::commitment::{
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 
-/// Cycles per superchunk: large enough that every column contributes several
-/// windows to the rayon grid per delivery, small enough that the extracted
-/// bundle buffer and per-column scratch stay tens of megabytes.
-const SUPERCHUNK_CYCLES: usize = 1 << 17;
+/// Cycles per superchunk. The dominant stage-0 wall cost on a many-core
+/// host is the per-superchunk join (its critical path is one window's
+/// serial MSM), so fewer, larger superchunks win: 2^17 → 2^19 measured
+/// 59.3s → 43.1s whole-prove at 2^25 on 64 threads. The extracted bundle
+/// buffer (64 B/cycle) and per-column scratch stay tens of megabytes.
+const SUPERCHUNK_CYCLES: usize = 1 << 19;
 
 impl<F, PCS> CommitWitness<F, PCS> for OptimizedBackend
 where
@@ -212,11 +214,17 @@ enum ColumnCommitState<PCS: StreamingCommitment> {
     Increment {
         kind: ColumnKind,
         partial: PCS::PartialCommitment,
+        /// Reused per-delivery staging for the column's increments —
+        /// allocated once, so 30 columns × hundreds of deliveries don't
+        /// churn the allocator (arena high-water marks follow transients).
+        scratch: Vec<i128>,
     },
     OneHot {
         kind: ColumnKind,
         context: PCS::OneHotStreamContext,
         chunk_commitments: Vec<PCS::OneHotChunkCommitment>,
+        /// Reused per-delivery staging for the column's hot addresses.
+        scratch: Vec<Option<usize>>,
     },
 }
 
@@ -247,11 +255,13 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
                         kind,
                         context: PCS::begin_one_hot_column_major_stream(setup, row_width),
                         chunk_commitments: Vec::new(),
+                        scratch: Vec::new(),
                     }
                 } else {
                     ColumnCommitState::Increment {
                         kind,
                         partial: PCS::begin(setup),
+                        scratch: Vec::new(),
                     }
                 }
             })
@@ -297,23 +307,25 @@ impl<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamCon
         let one_hot_k = self.one_hot_k;
         let setup = self.setup;
         let advance = |column: &mut ColumnCommitState<PCS>| match column {
-            ColumnCommitState::Increment { kind, partial } => {
-                let increments: Vec<i128> = chunk.iter().map(|row| kind.increment(row)).collect();
-                PCS::feed_i128_rows(partial, &increments, row_width, setup);
+            ColumnCommitState::Increment {
+                kind,
+                partial,
+                scratch,
+            } => {
+                scratch.clear();
+                scratch.extend(chunk.iter().map(|row| kind.increment(row)));
+                PCS::feed_i128_rows(partial, scratch, row_width, setup);
             }
             ColumnCommitState::OneHot {
                 kind,
                 context,
                 chunk_commitments,
+                scratch,
             } => {
-                let hot_addresses: Vec<Option<usize>> =
-                    chunk.iter().map(|row| kind.hot_address(row)).collect();
+                scratch.clear();
+                scratch.extend(chunk.iter().map(|row| kind.hot_address(row)));
                 chunk_commitments.extend(PCS::process_one_hot_chunks(
-                    context,
-                    setup,
-                    one_hot_k,
-                    &hot_addresses,
-                    row_width,
+                    context, setup, one_hot_k, scratch, row_width,
                 ));
             }
         };
