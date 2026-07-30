@@ -687,9 +687,8 @@ pub fn lattice_booleanity_params<F: JoltField>(
 pub struct FusedIncColumns {
     /// One-hot hot-address lanes: the unsigned-inc chunk columns in index
     /// order, then the MSB column (hot address zero or one) last — the
-    /// batching order of [`lattice_booleanity_params`]. Lanes are never
-    /// `None`; the `Option` is the [`RaPolynomial`] index encoding.
-    pub one_hot: Vec<Arc<Vec<Option<u8>>>>,
+    /// batching order of [`lattice_booleanity_params`].
+    pub one_hot: Vec<Arc<Vec<u8>>>,
     /// The signed fused delta per cycle.
     pub fused: Vec<i128>,
 }
@@ -702,7 +701,7 @@ pub struct FusedIncColumns {
 /// columns are nearly free compared to per-column passes.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub fn one_hot_pushforwards<F: JoltField>(
-    columns: &[Arc<Vec<Option<u8>>>],
+    columns: &[Arc<Vec<u8>>],
     e_hi: &[F],
     e_lo: &[F],
     k_chunk: usize,
@@ -720,9 +719,7 @@ pub fn one_hot_pushforwards<F: JoltField>(
             for j in start..end {
                 let eq_eval = e_hi[j >> lo_bits] * e_lo[j & mask];
                 for (column, g) in columns.iter().zip(acc.iter_mut()) {
-                    if let Some(lane) = column[j] {
-                        g[lane as usize] += eq_eval;
-                    }
+                    g[column[j] as usize] += eq_eval;
                 }
             }
             acc
@@ -742,7 +739,7 @@ pub fn one_hot_pushforwards<F: JoltField>(
 pub struct LatticeBooleanityCycleInput<F: JoltField> {
     base: BooleanityCycleInput<F>,
     #[allocative(skip)]
-    one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
+    one_hot_columns: Vec<Arc<Vec<u8>>>,
 }
 
 #[cfg(all(feature = "prover", feature = "akita"))]
@@ -762,14 +759,14 @@ impl<F: JoltField> LatticeBooleanityCycleInput<F> {
 pub struct LatticeBooleanityAddressSumcheckProver<F: JoltField> {
     inner: BooleanityAddressSumcheckProver<F>,
     #[allocative(skip)]
-    one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
+    one_hot_columns: Vec<Arc<Vec<u8>>>,
 }
 
 #[cfg(all(feature = "prover", feature = "akita"))]
 impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
     fn from_inner(
         mut inner: BooleanityAddressSumcheckProver<F>,
-        one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
+        one_hot_columns: Vec<Arc<Vec<u8>>>,
     ) -> Self {
         // Chunk pushforwards `G_i(k) = Σ_{j: hot_lane_i(j) = k} eq(r_cycle, j)`,
         // with the same two-table split-eq as `compute_all_G`.
@@ -801,7 +798,7 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
         trace: &[JoltTraceRow],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
+        one_hot_columns: Vec<Arc<Vec<u8>>>,
     ) -> Self {
         let inner =
             BooleanityAddressSumcheckProver::initialize(params, trace, bytecode, memory_layout);
@@ -815,7 +812,7 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
     pub fn initialize_with_ra_indices(
         params: BooleanitySumcheckParams<F>,
         ra_indices: Arc<Vec<RaIndices>>,
-        one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
+        one_hot_columns: Vec<Arc<Vec<u8>>>,
     ) -> Self {
         let inner = BooleanityAddressSumcheckProver::initialize_with_ra_indices(params, ra_indices);
         Self::from_inner(inner, one_hot_columns)
@@ -919,7 +916,7 @@ impl<F: JoltField> LatticeBooleanityCycleSumcheckProver<F> {
             .map(|(index, column)| {
                 let rho = gamma_powers[num_base + index];
                 let table: Vec<F> = base_eq.iter().map(|v| rho * *v).collect();
-                RaPolynomial::new(Arc::clone(column), table)
+                RaPolynomial::new_dense(Arc::clone(column), table)
             })
             .collect();
         Self {
@@ -1348,10 +1345,10 @@ mod tests {
             input_claim,
         );
 
-        let one_hot_columns: Vec<Arc<Vec<Option<u8>>>> = hot_lanes
+        let one_hot_columns: Vec<Arc<Vec<u8>>> = hot_lanes
             .iter()
             .chain(core::iter::once(&msb))
-            .map(|column| Arc::new(column.iter().map(|lane| Some(*lane)).collect()))
+            .map(|column| Arc::new(column.clone()))
             .collect();
         let input = LatticeBooleanityCycleInput {
             base: BooleanityCycleInput {

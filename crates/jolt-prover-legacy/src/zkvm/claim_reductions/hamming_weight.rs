@@ -562,7 +562,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
         params: HammingWeightClaimReductionParams<F>,
         ra_indices: &[RaIndices],
         one_hot_params: &OneHotParams,
-        one_hot_columns: &[std::sync::Arc<Vec<Option<u8>>>],
+        one_hot_columns: &[std::sync::Arc<Vec<u8>>],
     ) -> Self {
         // `params.r_cycle` is BIG_ENDIAN, so the head half of the point
         // indexes the high cycle bits: eq(r, j) = e_hi[j >> lo] · e_lo[j & mask].

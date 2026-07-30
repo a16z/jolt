@@ -778,22 +778,19 @@ impl AkitaPackedProver<'_> {
     }
 
     #[tracing::instrument(skip_all, name = "fused_inc_one_hot_columns")]
-    fn fused_inc_one_hot_columns(&self, fused: &[i128]) -> Vec<Arc<Vec<Option<u8>>>> {
+    fn fused_inc_one_hot_columns(&self, fused: &[i128]) -> Vec<Arc<Vec<u8>>> {
         use rayon::prelude::*;
         use std::sync::Arc;
 
         let chunk_count = UNSIGNED_INC_BITS / self.one_hot_params.log_k_chunk;
         let width = self.one_hot_params.log_k_chunk;
-        let one_hot: Vec<Arc<Vec<Option<u8>>>> = (0..chunk_count)
+        let one_hot: Vec<Arc<Vec<u8>>> = (0..chunk_count)
             .map(|index| {
                 Arc::new(
                     fused
                         .par_iter()
                         .map(|&delta| {
-                            Some(
-                                FusedIncValue { delta }.balanced_chunk_hot_lane_bits(width, index)
-                                    as u8,
-                            )
+                            FusedIncValue { delta }.balanced_chunk_hot_lane_bits(width, index) as u8
                         })
                         .collect(),
                 )
@@ -801,9 +798,7 @@ impl AkitaPackedProver<'_> {
             .chain(core::iter::once(Arc::new(
                 fused
                     .par_iter()
-                    .map(|&delta| {
-                        Some(FusedIncValue { delta }.balanced_carry_hot_lane_bits(width) as u8)
-                    })
+                    .map(|&delta| FusedIncValue { delta }.balanced_carry_hot_lane_bits(width) as u8)
                     .collect(),
             )))
             .collect();
