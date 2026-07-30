@@ -70,6 +70,19 @@ impl FusedInc {
         debug_assert!(self.0.unsigned_abs() < 1u128 << UNSIGNED_INC_BITS);
         (self.0 + (1i128 << UNSIGNED_INC_BITS)) as u128
     }
+
+    /// The hot address of one lane of the shifted encoding's one-hot
+    /// decomposition.
+    pub fn hot_lane(self, lane: UnsignedIncLane) -> usize {
+        let shifted = self.shifted();
+        match lane {
+            UnsignedIncLane::Chunk { width, index } => {
+                let low = shifted & ((1u128 << UNSIGNED_INC_BITS) - 1);
+                ((low >> (width * index)) & ((1u128 << width) - 1)) as usize
+            }
+            UnsignedIncLane::Msb => (shifted >> UNSIGNED_INC_BITS) as usize,
+        }
+    }
 }
 
 impl ToField for FusedInc {
@@ -126,13 +139,6 @@ impl ExtractIndexed<UnsignedIncLane> for UnsignedIncHot {
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let shifted = FusedInc::extract(row, next, env)?.shifted();
-        Ok(Self(match lane {
-            UnsignedIncLane::Chunk { width, index } => {
-                let low = shifted & ((1u128 << UNSIGNED_INC_BITS) - 1);
-                ((low >> (width * index)) & ((1u128 << width) - 1)) as usize
-            }
-            UnsignedIncLane::Msb => (shifted >> UNSIGNED_INC_BITS) as usize,
-        }))
+        Ok(Self(FusedInc::extract(row, next, env)?.hot_lane(lane)))
     }
 }
