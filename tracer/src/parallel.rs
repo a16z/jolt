@@ -94,6 +94,9 @@ impl ChunkCheckpoint {
 #[derive(Debug, Default)]
 pub struct SnapshotPool {
     free: Vec<Vec<u64>>,
+    /// Total bytes ever allocated for image buffers (the pool's RAM
+    /// footprint: buffers cycle, they are never freed mid-run).
+    allocated_bytes: usize,
 }
 
 impl SnapshotPool {
@@ -108,7 +111,10 @@ impl SnapshotPool {
             Some(buf) if buf.len() == image.len() => buf,
             // First capture (or a size change): allocate the full zeroed
             // image once; it stays resident through pool reuse.
-            _ => vec![0; image.len()],
+            _ => {
+                self.allocated_bytes += core::mem::size_of_val(image);
+                vec![0; image.len()]
+            }
         };
         buf[..touched].copy_from_slice(&image[..touched]);
         buf
@@ -117,6 +123,10 @@ impl SnapshotPool {
     /// Return a buffer for reuse.
     pub fn put(&mut self, buf: Vec<u64>) {
         self.free.push(buf);
+    }
+
+    pub fn allocated_bytes(&self) -> usize {
+        self.allocated_bytes
     }
 }
 
@@ -323,8 +333,9 @@ fn demote_worker_thread() {
 /// traces; at 100M+ rows both effects are negligible for any size here).
 pub const DEFAULT_CHUNK_ROWS: usize = 1 << 20;
 
-/// Default output capacity in rows. Chunks beyond this fall back to a
-/// copy-assembled suffix (correct, just slower) — see `run_two_pass`.
+/// Default output capacity in rows (matches the serial path's reserve).
+/// Chunks beyond this fall back to a copy-assembled suffix (correct, just
+/// slower) — see `run_two_pass`; `JOLT_TRACER_CAPACITY_ROWS` overrides.
 pub const DEFAULT_CAPACITY_ROWS: usize = 1 << 24;
 
 #[derive(Clone, Copy, Debug)]
@@ -517,7 +528,8 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
         let pass1_done = started.elapsed();
         if timing {
             eprintln!(
-                "two-pass timing: pass-1 {pass1_done:?} (exec {exec_time:?}, capture {capture_time:?}, send-block {send_time:?}, {chunk_index} chunks)"
+                "two-pass timing: pass-1 {pass1_done:?} (exec {exec_time:?}, capture {capture_time:?}, send-block {send_time:?}, {chunk_index} chunks, {:.1} MiB image pool)",
+                pool.allocated_bytes() as f64 / (1024.0 * 1024.0)
             );
         }
         (windowed_rows, started, timing)

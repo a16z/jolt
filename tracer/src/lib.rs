@@ -293,12 +293,13 @@ pub fn trace_checkpoints(
     )
 }
 
-/// Opt-in parallel tracing: `TRACER_PARALLEL=<workers>` (unset, 0, or
-/// unparsable = serial); `JOLT_TRACER_CHUNK_ROWS` overrides the default
-/// chunk size.
+/// Opt-in parallel tracing: `TRACER_PARALLEL=<workers>` (unset, 0, 1, or
+/// unparsable = serial — a single worker would only re-trace what pass-1
+/// already executed); `JOLT_TRACER_CHUNK_ROWS` overrides the default chunk
+/// size.
 fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
     let workers: usize = std::env::var("TRACER_PARALLEL").ok()?.parse().ok()?;
-    if workers == 0 {
+    if workers <= 1 {
         return None;
     }
     let chunk_rows = std::env::var("JOLT_TRACER_CHUNK_ROWS")
@@ -306,10 +307,15 @@ fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
         .and_then(|value| value.parse().ok())
         .filter(|&rows| rows > 0)
         .unwrap_or(parallel::DEFAULT_CHUNK_ROWS);
+    let capacity_rows = std::env::var("JOLT_TRACER_CAPACITY_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|&rows| rows > 0)
+        .unwrap_or(parallel::DEFAULT_CAPACITY_ROWS);
     Some(parallel::TwoPassConfig {
         workers,
         chunk_rows,
-        ..Default::default()
+        capacity_rows,
     })
 }
 
