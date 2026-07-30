@@ -35,7 +35,7 @@ use crate::AkitaField;
 const NO_HOT_LANE: u8 = 0;
 const MAX_WIDE_ACCUMULATIONS: usize = 1 << 15;
 const TASKS_PER_RAYON_WORKER: usize = 4;
-const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 26;
+const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
 const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
 const D64_K16_SHIFT_KEY_SPACE: usize = 1 << 16;
 const SHARED_SHIFT_MIN_COLUMNS: u8 = 3;
@@ -2373,6 +2373,13 @@ mod tests {
         .unwrap();
         assert_eq!(dense, materialized);
         assert_eq!(sparse, materialized);
+    }
+
+    #[test]
+    fn d64_k256_2e28_dense_rotations_fit_the_table_budget() {
+        let table_bytes = 1024 * 29 * 64 * std::mem::size_of::<[i16; 64]>();
+        assert_eq!(table_bytes, 243_269_632);
+        assert!(table_bytes <= ROTATED_CHALLENGE_TABLE_BUDGET);
     }
 
     #[test]
