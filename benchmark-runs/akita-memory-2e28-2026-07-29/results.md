@@ -4,14 +4,18 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-The source-derived capacity ledger and the resulting ordered attack plan are
-in [`analytical-memory-model.md`](analytical-memory-model.md). Its current
-`2^28` ceilings are 90.52 GiB in commit, 87.18 GiB in the Stage-6b
-materialization transition, and 79.25 GiB in the root evaluation proof. The
-next work targets the exact structures responsible for those values rather
-than extrapolating sampled RSS.
+The source-derived capacity ledger and ordered attack plan are in
+[`analytical-memory-model.md`](analytical-memory-model.md). The first three
+structural targets have landed; their derivation and measurements are in
+[`structural-cuts-results.md`](structural-cuts-results.md).
 
-This pass kept K256 and the proof protocol fixed. Fourteen independently committed
+At `2^28`, the commit projection is now 67.00 GiB, the Stage-6b transition is
+71.18 GiB, and the evaluation proof is about 33.3 GiB. The conservative
+structural ceiling is Stage 5 at no more than 81.15 GiB, or 324.6 B/cycle.
+That leaves 8.85 GiB below the 90 GiB working target for background
+destruction, allocator residency, and unmodelled state.
+
+This pass kept K256 and the proof protocol fixed. Seventeen independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -31,8 +35,11 @@ prover slowdown:
 | `7afb90166` | Release compact trace rows after Stage 7 | 64 B/cycle before reconstruction/opening |
 | `5d1ff81a1` | Materialize RA rows after Stage 5 | 53 B/cycle during commitment and Stages 1–5 |
 | `cffef8618` | Release packed lane rows after the accepted root fold | 29 B/cycle during the recursive opening tail |
+| `8232e5828` | Cache only the negacyclic packed-row transform | 23.515625 GiB from the `2^28` commit peak |
+| `a6c5ed811` | Release the compact trace at its final reader | 64 B/cycle from Stage 6b onward |
+| `095ae7eb5` | Stream capacity-safe root quotient chunks | 47.03125 GiB from the `2^28` evaluation proof |
 
-At `2^26`, the lowest measured maximum RSS is 38.876 GB with zero process
+At `2^26`, the lowest measured maximum RSS is now 36.264 GB with zero process
 swaps, down from the 44.157 GB packed-delta control, 50.49 GB after the
 R1CS-row policy change, and 50.72 GB before it. The three-round
 instruction-input change removes 4.128 GB (-9.35%) from the process maximum.
@@ -43,18 +50,20 @@ retained state before Stage 6 and lowers the process maximum by 0.999 GB. The
 opening lifecycle hook then releases 1.8125 GiB of packed rows after the
 accepted root fold. It lowers the sampled opening tail but leaves the
 Stage-6b headline peak effectively unchanged.
+The compact trace's earlier final-reader release removes another exact 4 GiB
+before Stage 6b and lowers maximum RSS by 2.56 GB. Streamed root quotient
+chunks then remove the later 10 GiB fallback cache and improve packed opening
+from 10.977 to 10.547 seconds; the process maximum remains in the earlier
+PIOP window.
 Earlier phase-local cuts are not always fully visible in headline RSS. The
 R1CS change, for example, drops Stage 1 by the exact 13 GiB row allocation.
 
-The previous 128 GiB `2^28` extrapolation predates the Stage-3 result.
-Scaling only its exact 3 GiB live-state reduction gives roughly 116 GiB;
-scaling the observed maximum-RSS reduction gives roughly 113 GiB. These are
-not capacity forecasts: different phases become maximal at different sizes,
-and Stage 6b is now the measured late limiter. The 16 GiB `2^28` trace release
-also helps only after Stage 7. These estimates are sufficient to show that the
-current stack is still above the 95 GiB low-swap objective. The opening
-lifecycle change does not alter that peak extrapolation, but it removes
-7.25 GiB from the `2^28` recursive opening tail.
+The final observed target maximum is still 541.85 B/cycle. It must not be
+scaled linearly to `2^28`: setup ranks, matrix rounding, program state,
+allocator arenas, and thread stacks do not scale as `4T`. The source-derived
+post-cut ceiling is 324.6 B/cycle. The remaining capacity question is whether
+logically dead and allocator-resident pages stay inside the 8.85 GiB working
+reserve.
 
 ## Measurements
 

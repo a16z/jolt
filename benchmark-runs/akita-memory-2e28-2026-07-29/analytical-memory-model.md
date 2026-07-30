@@ -4,9 +4,12 @@ Date: 2026-07-30 EDT
 
 ## Decision
 
-The current Akita K256 prover does not have a safe `2^28` capacity margin on a
-95 GiB machine, even though its source-level allocations narrowly fit. The
-current analytical peaks are:
+The first three structural cuts in this model have landed and passed
+forced-K256 `2^26` validation. The source-derived `2^28` working set now fits
+under 90 GiB, but a low-swap `2^28` run still depends on bounding background
+destruction and allocator-resident pages.
+
+Before the cuts, the analytical peaks were:
 
 | Window | Current `2^28` live/transition peak |
 |---|---:|
@@ -15,21 +18,21 @@ current analytical peaks are:
 | Root evaluation proof | **79.25 GiB** |
 | Stage 5 conservative transition | **81.15 GiB** |
 
-The commit peak leaves only 4.48 GiB for allocator metadata, thread stacks,
+The old commit peak left only 4.48 GiB for allocator metadata, thread stacks,
 unmodelled fixed state, and resident pages from earlier allocations. It also
-exceeds the 90 GiB working target before any such overhead. Running `2^28`
-now would therefore be a swap-risk experiment, not a capacity-safe run.
+exceeded the 90 GiB working target before any such overhead.
 
-The model identifies three changes that attack different maxima and stack:
+The model identified three changes that attack different maxima and stack:
 
-1. Build negacyclic-only NTT slots for `digit_rows`. This removes exactly
-   23.515625 GiB from the `2^28` commit and 5 GiB from root `compute_v`.
-2. Chunk the streamed `t_hat` arm of the root ring quotient. This prevents its
-   current capacity fallback and removes a 47.03125 GiB full-matrix NTT slot
-   from the evaluation proof.
-3. Release the 64-byte trace row allocation after the RAM Hamming prover has
-   read it at the start of Stage 6b. This removes exactly 16 GiB from the
-   Stage-6b materialization window.
+1. Akita `b3c9bc50` builds negacyclic-only NTT slots for `digit_rows`. This
+   removes exactly 23.515625 GiB from the `2^28` commit and 5 GiB from root
+   `compute_v`.
+2. Akita `32caef7c` chunks the streamed `t_hat` and `z` arms of the root ring
+   quotient. This prevents the capacity fallback and removes a 47.03125 GiB
+   full-matrix NTT slot from the evaluation proof.
+3. Jolt `a6c5ed811` releases the 64-byte trace row allocation after the RAM
+   Hamming prover reads it at the start of Stage 6b. This removes exactly
+   16 GiB from the Stage-6b materialization window.
 
 After those changes, the modeled `2^28` structural maximum is the conservative
 Stage-5 transition at no more than 81.15 GiB for the current proof shape. That
@@ -40,6 +43,9 @@ then keep logically dead pages inside that 8.85 GiB reserve.
 This is a capacity model, not an RSS fit. Measurements are used only to check
 that the predicted ownership transitions occur; they do not determine which
 data structure is targeted.
+
+The implementation and target measurements are recorded in
+[`structural-cuts-results.md`](structural-cuts-results.md).
 
 ## Scope and units
 
@@ -704,7 +710,7 @@ accepted only if prover time does not regress.
 
 ## Ordered implementation plan
 
-### A. Negacyclic-only `digit_rows` cache
+### A. Negacyclic-only `digit_rows` cache — landed
 
 Add a cache path whose key distinguishes a negacyclic-only slot from a
 both-transform slot. Route `digit_rows` through it; retain both transforms for
@@ -718,9 +724,10 @@ Expected exact `2^28` changes:
 - less transform work and half the cache write/read traffic, so a runtime
   regression is not expected.
 
-This is the first implementation target.
+Landed in Akita `b3c9bc50` and pinned by Jolt `8232e5828`. The `2^26`
+commit cache is exactly 5 GiB instead of 10 GiB.
 
-### B. Stream and chunk the root `t_hat` quotient
+### B. Stream and chunk the root `t_hat` quotient — landed
 
 Extend the existing streamed quotient kernel so `t_hat` uses capacity-safe
 chunks instead of requiring `t_safe == true` for the entire vector. This is
@@ -732,10 +739,11 @@ Expected exact `2^28` change:
 - avoid writing and rereading that transformed matrix;
 - retain only bounded CRT accumulators and field-form setup reads.
 
-This is likely a performance win at large `T`, but it needs a focused kernel
-benchmark and a full `2^26` proof before promotion.
+Landed in Akita `32caef7c` and pinned by Jolt `095ae7eb5`. The target trace
+contains no 4,194,304-ring fallback slot, and packed opening time fell from
+10.977 to 10.547 seconds.
 
-### C. Release trace at its actual final reader
+### C. Release trace at its actual final reader — landed
 
 Capture `trace_len`, initialize the RAM Hamming Booleanity source, then replace
 and drop `self.trace` before Stage 6b allocates its large field tables. Stage 7
@@ -746,9 +754,8 @@ Expected exact `2^28` change:
 - remove 16 GiB from Stage 6b and Stage 7;
 - add no scan, conversion, or protocol work.
 
-The implementation must account for any outstanding `Arc` held by background
-drops. A debug ownership check or explicit drop barrier should make the
-lifetime claim testable.
+Landed in Jolt `a6c5ed811`. The target marker releases exactly 4 GiB with
+zero remaining `Arc` owners; the corresponding `2^28` allocation is 16 GiB.
 
 ### D. Make phase drops observable and reclaimable
 
