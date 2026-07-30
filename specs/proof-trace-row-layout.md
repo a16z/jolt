@@ -4,12 +4,12 @@
 |-------------|-------|
 | Author(s)   | Quang Dao |
 | Created     | 2026-05-14 |
-| Status      | in progress (foundation implemented) |
+| Status      | in progress (consumer cutover implemented) |
 | PR          | follow-up to [#1522](https://github.com/a16z/jolt/pull/1522) |
 
-> **Implementation status (foundation slice).** The accessor API, builder,
-> parity tests, and one default layout have landed; consumer cutover and the
-> performance gate are deferred follow-ups.
+> **Implementation status.** The accessor API, builder, 64-byte layout, legacy
+> prover consumer cutover, bounded trace sink, and performance gate have landed.
+> The consumer cutover is commit `937319abb`.
 >
 > The type lives in the new `crates/` (not the deprecating `jolt-prover-legacy`):
 >
@@ -36,13 +36,14 @@
 >   fibonacci-trace** parity test in `jolt-prover-legacy` comparing every accessor (built
 >   via the tracer conversion) against `R1CSCycleInputs::from_trace`.
 >
-> **Deferred (Execution slices 4–11):** the `jolt-eval`
-> `trace_row_accessor_parity` invariant; consumer cutover (R1CS inputs, Spartan
-> outer, RAM/register/instruction-lookup/bytecode phases);
-> `JoltTraceCycle::try_new` hot-path removal; `CompactBytecodeRow` co-design; and
-> the ≤2% end-to-end prover-time benchmark gate. The layout choice is documented
-> as the conservative default; it must be confirmed against that gate before the
-> hot-path cutover relies on it.
+> **Landed consumer slice:** witness commitment, R1CS inputs, Spartan, RAM,
+> register, instruction-lookup, bytecode, and claim-reduction hot paths consume
+> `JoltTraceRow`. A real-trace parity test covers every R1CS input, flags, lookup
+> routing, logical values, operand presence, and padding. At `2^26`, the cutover
+> reduced maximum RSS by 2.213 GB and proof time by 18.2%.
+>
+> **Deferred:** the `jolt-eval` `trace_row_accessor_parity` invariant and
+> `CompactBytecodeRow` co-design.
 
 ## Summary
 

@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Five independently committed
+This pass kept K256 and the proof protocol fixed. Six independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -15,15 +15,16 @@ prover slowdown:
 | `e3ada4ee0` | Release `RaIndices` after Stage 7 | 54 B/cycle before reconstruction/opening |
 | `ca6fb8e52` | Materialize fused-inc lane columns at Stage 6 | 18 B/cycle during commitment and Stages 1–5 |
 | `a1edad11d` | Materialize signed fused deltas at Stage 6 | 16 B/cycle during commitment and Stages 1–5 |
+| `937319abb` | Retain compact proof rows and stream trace conversion | 32 B/cycle throughout proving |
 
-At `2^26`, the final measured maximum RSS is 46.33–46.46 GB with zero
-process swaps, down from 50.49 GB after the R1CS-row policy change and 50.72 GB
-before it. The R1CS change has a much larger phase-local effect than the
-headline maximum: Stage 1 drops by the exact 13 GiB row allocation.
+At `2^26`, the final measured maximum RSS is 44.244 GB with zero process
+swaps, down from 50.49 GB after the R1CS-row policy change and 50.72 GB before
+it. The R1CS change has a much larger phase-local effect than the headline
+maximum: Stage 1 drops by the exact 13 GiB row allocation.
 
 The effective maximum-RSS slope between the measured `2^22` and `2^26`
-points falls from approximately 566 to 501 B/cycle. A linear extrapolation of
-the final measurements is approximately 137 GiB at `2^28`. Different phases
+points falls from approximately 566 to 469 B/cycle. A linear extrapolation of
+the final measurements is approximately 129 GiB at `2^28`. Different phases
 can become the maximum at different sizes, so this is not a capacity forecast,
 but it is sufficient to reject the idea that the current stack is ready for a
 low-swap `2^28` run.
@@ -111,6 +112,24 @@ promotion threshold. The retained early-phase saving is 1 GiB at `2^26` and
 4 GiB at `2^28`; avoiding the old temporary allocation also lowers observed
 resident pressure during cache construction.
 
+### Compact proof trace rows
+
+The prover now retains the existing 64-byte `JoltTraceRow` instead of the
+96-byte tracer `Cycle`. A bounded sink converts `2^18` cycles at a time, so a
+trace-sized raw vector is never allocated. The compatibility adapter confirmed
+why this matters: dropping a 5.230 GB raw allocation before proving did not
+return its pages to the OS, and maximum RSS remained 46.321 GB.
+
+At `2^26`, the bounded path measured 44.244 GB, 2.213 GB below the 46.457 GB
+control and close to the exact 2 GiB retained-byte prediction. Trace generation
+plus conversion took 7.293 s versus 7.273 s for the full-vector adapter.
+
+This representation change also reduced the proof from 67.184 s to 54.95 s.
+Cached flags, logical values, and bytecode indexes remove repeated decoding in
+Stages 1, 3, and 6a, while witness commitment scans the compact rows instead of
+replaying the lazy emulator trace. This does not change proof messages or
+verifier inputs.
+
 ### Rejected: shared packed RA source
 
 The next experiment replaced the retained 54-byte `RaIndices` row with views
@@ -143,16 +162,16 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Packed RA source v1 screens | `mem-ra-source-2e22-b.json`, `mem-ra-source-2e22-c.json` |
 | Packed RA source v2 screen/target | `mem-ra-source-v2-2e22-b.json`, `mem-ra-source-2e26.json` |
 | Packed RA source v3 screen/target | `mem-ra-source-v3-2e22.json`, `mem-ra-source-v3-2e26.json` |
+| Compact proof rows | `mem-trace-row-2e22.json`, `mem-trace-row-2e26.json` |
+| Full-vector row adapter | `mem-trace-row-adapter-2e22.json`, `mem-trace-row-adapter-2e26.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
 
-## `JoltTraceRow`: what it buys and how to land it
+## `JoltTraceRow` layout
 
-The current tracer `Cycle` is 96 bytes. `JoltTraceRow` already exists in
-`jolt-riscv`, is statically checked to be 64 bytes, and has a real-trace parity
-test. Its 32-byte value area aliases columns that are equal or mutually
-exclusive on final rows:
+`JoltTraceRow` is statically checked to be 64 bytes. Its 32-byte value area
+aliases columns that are equal or mutually exclusive on final rows:
 
 | Row class | Four physical value slots |
 |---|---|
@@ -167,42 +186,25 @@ The other 32 bytes cache source PC, compact bytecode PC, immediate, flags,
 instruction tag, and three register ids.
 
 Replacing `Cycle` with this row saves 32 B/cycle: 2 GiB at `2^26` and 8 GiB at
-`2^28`, while cutting trace bandwidth by one third. Merely building
-`Vec<JoltTraceRow>` beside `Vec<Cycle>` is not an optimization: it temporarily
-adds 4 GiB at `2^26` and 16 GiB at `2^28`.
-
-The safe cutover order is:
-
-1. Make proof consumers depend on logical trace accessors rather than tracer
-   enums. The current legacy prover has about 75 `Cycle`-typed references in
-   33 source files.
-2. Port lookup-index, RAM/register, Spartan, and claim-reduction consumers,
-   preserving the real-trace parity test as the contract.
-3. Change the trace handoff to transfer ownership to `JoltTraceRow` and release
-   `Cycle` before any large prover allocation. Direct tracer emission is the
-   final form; a full second vector is acceptable only as an isolated
-   transition benchmark.
-4. Benchmark trace conversion, Stage 1–7 kernels, and the full prover. Cached
-   flags and denser reads should be neutral or faster, but that must be
-   measured.
+`2^28`, while cutting trace bandwidth by one third. The real-trace parity test
+compares all R1CS inputs, logical values, flags, lookup indexes, table routing,
+operand presence, and canonical padding against the former `Cycle` path.
 
 ## Next memory targets
 
 The next targets are ordered by retained bytes and likelihood of remaining
 performance-neutral:
 
-1. **Land the `JoltTraceRow` ownership cutover.** Potential saving: 8 GiB at
-   `2^28`, with lower trace bandwidth.
-2. **Avoid Stage 6 RA transposes.** K256 currently gathers roughly 20 active
+1. **Avoid Stage 6 RA transposes.** K256 currently gathers roughly 20 active
    `Option<u8>` columns, about 40 B/cycle or 10 GiB at `2^28`. Prefer direct
    row-major kernels or family-at-a-time ownership over another long-lived
    duplicate.
-3. **Use dense fused-inc lanes and compact signed deltas in Stage 6.** These
+2. **Use dense fused-inc lanes and compact signed deltas in Stage 6.** These
    lanes are always present, so `Option<u8>` spends two bytes for a one-byte
    value. A dense polynomial input or typed all-present source can save up to
    2.25 GiB at `2^28`; a magnitude/sign-bit delta encoding can save roughly
    another 2 GiB. These require focused kernel benchmarks.
-4. **Audit field-vector and setup lifetimes at the Stage 3/4 and opening
+3. **Audit field-vector and setup lifetimes at the Stage 3/4 and opening
    peaks.** Even the three structural cuts above do not by themselves reach
    the 95 GiB objective under the current slope, so phase-local `Fp128`
    vectors and setup matrices must be counted and streamed/reused.
