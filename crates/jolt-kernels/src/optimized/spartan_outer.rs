@@ -42,7 +42,6 @@
 //! reference's own `jolt-poly` interpolation path.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
@@ -77,7 +76,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::trace_record::TraceRecord;
+use super::trace_record::{RecordRows, TraceRecord};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -355,36 +354,11 @@ fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (
     (az.reduce(), bz.reduce())
 }
 
-/// Row access for the outer kernels: collected bundles (tests and synthetic
-/// fixtures) or the session-shared trace record's lanes (production). Both
-/// yield the same `SpartanOuterRow` values — the record's lanes are the
-/// atomic extractors' scalars — so every downstream computation is
-/// byte-identical either way.
-pub(crate) enum OuterRows {
-    /// Directly constructed rows — the in-module parity tests' seam (their
-    /// synthetic rows encode `Next*` values no shifted lane read could).
-    #[cfg_attr(not(test), expect(dead_code, reason = "constructed by tests only"))]
-    Collected(Vec<SpartanOuterRow>),
-    Record(Arc<TraceRecord>),
-}
-
-impl OuterRows {
-    #[inline]
-    fn len(&self) -> usize {
-        match self {
-            Self::Collected(rows) => rows.len(),
-            Self::Record(record) => record.len(),
-        }
-    }
-
-    #[inline]
-    fn row(&self, t: usize) -> SpartanOuterRow {
-        match self {
-            Self::Collected(rows) => rows[t],
-            Self::Record(record) => record.outer_row(t),
-        }
-    }
-}
+/// Row access for the outer kernels: `RecordRows<SpartanOuterRow>` — either
+/// directly collected bundles (tests) or the session-shared trace record's
+/// lanes (production); both yield the same row values, so every downstream
+/// computation is byte-identical.
+type OuterRows = RecordRows<SpartanOuterRow>;
 
 /// The uni-skip carry: everything the uni-skip front computes that the
 /// remainder slot reclaims — the typed rows (reused for materialization and

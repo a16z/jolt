@@ -28,7 +28,6 @@
 //! the address rounds is a data-structure choice with no effect on the round
 //! polynomials, so this kernel binds all `log_K` address rounds sparse.
 
-use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
@@ -300,7 +299,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
             })
             .collect();
 
-        let inc = Polynomial::new(witness.oracle_table(ram_inc().polynomial_id())?);
+        let inc = Polynomial::new(columns.inc_column::<F>());
         let val_final = witness.oracle_table(JoltPolynomialId::Virtual(
             JoltVirtualPolynomial::RamValFinal,
         ))?;
@@ -329,7 +328,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
-    use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
+    use jolt_claims::protocols::jolt::geometry::ram::{ram_inc, ram_ra, ram_val};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,

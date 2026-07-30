@@ -23,17 +23,19 @@ use std::sync::Arc;
 
 use jolt_field::signed::S128;
 use jolt_field::Field;
-use jolt_riscv::{CircuitFlagSet, CircuitFlags};
+use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlagSet, InstructionFlags};
 use jolt_witness::witnesses::{
-    Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput, NextIsFirstInSequence,
-    NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamReadValue,
-    RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
-    ShouldBranch, ShouldJump, UnexpandedPc,
+    Imm, InstructionFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+    NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc,
+    Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
+    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc,
 };
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, TraceRecordRow};
 
+use super::instruction_claim_reduction::InstructionOperandRow;
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::spartan_outer::SpartanOuterRow;
+use super::spartan_product::SpartanProductRow;
 use crate::{KernelError, ProofSession};
 
 /// Register-index lane sentinel for cycles where the operand is absent.
@@ -283,6 +285,11 @@ impl TraceRecord {
     }
 
     #[inline]
+    pub(crate) fn instruction_flag(&self, t: usize, flag: InstructionFlags) -> bool {
+        InstructionFlagSet::from_bits((self.flags[t] >> INSTRUCTION_FLAGS_SHIFT) as u8).get(flag)
+    }
+
+    #[inline]
     pub(crate) fn should_branch(&self, t: usize) -> bool {
         self.flags[t] & SHOULD_BRANCH_BIT != 0
     }
@@ -293,47 +300,92 @@ impl TraceRecord {
     }
 
     #[inline]
+    pub(crate) fn next_is_noop(&self, t: usize) -> bool {
+        self.flags[t] & NEXT_IS_NOOP_BIT != 0
+    }
+
+    #[inline]
     pub(crate) fn product(&self, t: usize) -> S128 {
         S128::new(
             [self.product_magnitude_lo[t], self.product_magnitude_hi[t]],
             self.flags[t] & PRODUCT_POSITIVE_BIT != 0,
         )
     }
+}
 
-    /// The stage-1 Spartan outer bundle at cycle `t`, rebuilt from the lanes.
-    /// The `Next*` fields follow the extractors' lookahead semantics exactly:
-    /// the successor row's own lanes, zero/false at `t = T - 1`.
+/// A per-cycle typed bundle reconstructible from the record's lanes. Views
+/// rebuild the exact bundle the kernel's own `collect_rows` walk would have
+/// extracted — same scalars, so downstream computation is byte-identical.
+pub(crate) trait RecordView: Copy {
+    fn from_record(record: &TraceRecord, t: usize) -> Self;
+}
+
+/// Row access for kernels that keep typed rows across their sumcheck:
+/// directly collected bundles (the parity tests' seam — their synthetic rows
+/// encode `Next*` values no shifted lane read could) or the session-shared
+/// record's lanes (production).
+pub(crate) enum RecordRows<R> {
+    #[cfg_attr(not(test), expect(dead_code, reason = "constructed by tests only"))]
+    Collected(Vec<R>),
+    Record(Arc<TraceRecord>),
+}
+
+impl<R: RecordView> RecordRows<R> {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Collected(rows) => rows.len(),
+            Self::Record(record) => record.len(),
+        }
+    }
+
     #[inline]
-    pub(crate) fn outer_row(&self, t: usize) -> SpartanOuterRow {
-        let next = t + 1 < self.len();
-        let circuit_flags = self.circuit_flags(t);
+    pub(crate) fn row(&self, t: usize) -> R {
+        match self {
+            Self::Collected(rows) => rows[t],
+            Self::Record(record) => R::from_record(record, t),
+        }
+    }
+}
+
+/// The stage-1 Spartan outer bundle: the `Next*` fields follow the
+/// extractors' lookahead semantics exactly — the successor row's own lanes,
+/// zero/false at `t = T - 1`.
+impl RecordView for SpartanOuterRow {
+    #[inline]
+    fn from_record(record: &TraceRecord, t: usize) -> Self {
+        let next = t + 1 < record.len();
+        let circuit_flags = record.circuit_flags(t);
         let flag = |flag: CircuitFlags| OpFlag(circuit_flags.get(flag));
         SpartanOuterRow {
-            left_instruction_input: LeftInstructionInput(self.left_instruction_input[t]),
-            right_instruction_input: RightInstructionInput(self.right_instruction_input[t]),
-            product: Product(self.product(t)),
-            should_branch: ShouldBranch(self.should_branch(t)),
-            pc: Pc(self.pc[t]),
-            unexpanded_pc: UnexpandedPc(self.unexpanded_pc[t]),
-            imm: Imm(self.imm[t]),
-            ram_address: RamAddress(self.ram_address[t]),
-            rs1_value: Rs1Value(self.rs1_value[t]),
-            rs2_value: Rs2Value(self.rs2_value[t]),
-            rd_write_value: RdWriteValue(self.rd_post_value[t]),
-            ram_read_value: RamReadValue(self.ram.pre_values[t]),
-            ram_write_value: RamWriteValue(self.ram.post_values[t]),
-            left_lookup_operand: LeftLookupOperand(self.left_lookup_operand[t]),
-            right_lookup_operand: RightLookupOperand(self.right_lookup_operand[t]),
-            next_unexpanded_pc: NextUnexpandedPc(if next { self.unexpanded_pc[t + 1] } else { 0 }),
-            next_pc: NextPc(if next { self.pc[t + 1] } else { 0 }),
+            left_instruction_input: LeftInstructionInput(record.left_instruction_input[t]),
+            right_instruction_input: RightInstructionInput(record.right_instruction_input[t]),
+            product: Product(record.product(t)),
+            should_branch: ShouldBranch(record.should_branch(t)),
+            pc: Pc(record.pc[t]),
+            unexpanded_pc: UnexpandedPc(record.unexpanded_pc[t]),
+            imm: Imm(record.imm[t]),
+            ram_address: RamAddress(record.ram_address[t]),
+            rs1_value: Rs1Value(record.rs1_value[t]),
+            rs2_value: Rs2Value(record.rs2_value[t]),
+            rd_write_value: RdWriteValue(record.rd_post_value[t]),
+            ram_read_value: RamReadValue(record.ram.pre_values[t]),
+            ram_write_value: RamWriteValue(record.ram.post_values[t]),
+            left_lookup_operand: LeftLookupOperand(record.left_lookup_operand[t]),
+            right_lookup_operand: RightLookupOperand(record.right_lookup_operand[t]),
+            next_unexpanded_pc: NextUnexpandedPc(if next {
+                record.unexpanded_pc[t + 1]
+            } else {
+                0
+            }),
+            next_pc: NextPc(if next { record.pc[t + 1] } else { 0 }),
             next_is_virtual: NextIsVirtual(
-                next && self.circuit_flag(t + 1, CircuitFlags::VirtualInstruction),
+                next && record.circuit_flag(t + 1, CircuitFlags::VirtualInstruction),
             ),
             next_is_first_in_sequence: NextIsFirstInSequence(
-                next && self.circuit_flag(t + 1, CircuitFlags::IsFirstInSequence),
+                next && record.circuit_flag(t + 1, CircuitFlags::IsFirstInSequence),
             ),
-            lookup_output: LookupOutput(self.lookup_output[t]),
-            should_jump: ShouldJump(self.should_jump(t)),
+            lookup_output: LookupOutput(record.lookup_output[t]),
+            should_jump: ShouldJump(record.should_jump(t)),
             add_operands: flag(CircuitFlags::AddOperands),
             subtract_operands: flag(CircuitFlags::SubtractOperands),
             multiply_operands: flag(CircuitFlags::MultiplyOperands),
@@ -348,6 +400,40 @@ impl TraceRecord {
             is_compressed: flag(CircuitFlags::IsCompressed),
             is_first_in_sequence: flag(CircuitFlags::IsFirstInSequence),
             is_last_in_sequence: flag(CircuitFlags::IsLastInSequence),
+        }
+    }
+}
+
+/// The stage-2 product-virtualization bundle ([`NextIsNoop`]'s
+/// missing-successor-is-noop convention is stored, not shifted).
+impl RecordView for SpartanProductRow {
+    #[inline]
+    fn from_record(record: &TraceRecord, t: usize) -> Self {
+        SpartanProductRow {
+            left_instruction_input: LeftInstructionInput(record.left_instruction_input[t]),
+            right_instruction_input: RightInstructionInput(record.right_instruction_input[t]),
+            jump_flag: OpFlag(record.circuit_flag(t, CircuitFlags::Jump)),
+            write_lookup_output_to_rd: OpFlag(
+                record.circuit_flag(t, CircuitFlags::WriteLookupOutputToRD),
+            ),
+            lookup_output: LookupOutput(record.lookup_output[t]),
+            branch_flag: InstructionFlag(record.instruction_flag(t, InstructionFlags::Branch)),
+            next_is_noop: NextIsNoop(record.next_is_noop(t)),
+            virtual_instruction: OpFlag(record.circuit_flag(t, CircuitFlags::VirtualInstruction)),
+        }
+    }
+}
+
+/// The stage-2 instruction claim-reduction bundle.
+impl RecordView for InstructionOperandRow {
+    #[inline]
+    fn from_record(record: &TraceRecord, t: usize) -> Self {
+        InstructionOperandRow {
+            lookup_output: LookupOutput(record.lookup_output[t]),
+            left_lookup_operand: LeftLookupOperand(record.left_lookup_operand[t]),
+            right_lookup_operand: RightLookupOperand(record.right_lookup_operand[t]),
+            left_instruction_input: LeftInstructionInput(record.left_instruction_input[t]),
+            right_instruction_input: RightInstructionInput(record.right_instruction_input[t]),
         }
     }
 }
@@ -380,8 +466,34 @@ mod tests {
             let rows: Vec<SpartanOuterRow> = collect_rows(witness, 1 << shape.log_t).unwrap();
             assert_eq!(record.len(), rows.len());
             for (t, row) in rows.iter().enumerate() {
-                assert_eq!(&record.outer_row(t), row, "cycle {t}");
+                assert_eq!(&SpartanOuterRow::from_record(&record, t), row, "cycle {t}");
             }
+
+            let product_rows: Vec<SpartanProductRow> =
+                collect_rows(witness, 1 << shape.log_t).unwrap();
+            for (t, row) in product_rows.iter().enumerate() {
+                assert_eq!(
+                    &SpartanProductRow::from_record(&record, t),
+                    row,
+                    "cycle {t}"
+                );
+            }
+            let operand_rows: Vec<InstructionOperandRow> =
+                collect_rows(witness, 1 << shape.log_t).unwrap();
+            for (t, row) in operand_rows.iter().enumerate() {
+                assert_eq!(
+                    &InstructionOperandRow::from_record(&record, t),
+                    row,
+                    "cycle {t}"
+                );
+            }
+            let inc: Vec<jolt_field::Fr> = record.ram.inc_column();
+            let oracle_inc: Vec<jolt_field::Fr> = witness
+                .oracle_table(
+                    jolt_claims::protocols::jolt::geometry::ram::ram_inc().polynomial_id(),
+                )
+                .unwrap();
+            assert_eq!(inc, oracle_inc);
 
             let register_rows: Vec<RegisterCycleRow> =
                 collect_rows(witness, 1 << shape.log_t).unwrap();
