@@ -57,8 +57,11 @@ pub use runtime::{
 };
 pub use slots::{
     MetalBooleanityCycle, MetalHammingWeightClaimReduction, MetalIncClaimReduction,
-    MetalInstructionInput, MetalInstructionRaVirtualization, MetalInstructionReadRaf,
-    MetalJointOpening, MetalRamHammingBooleanity, MetalRamRaVirtualization, MetalRamRafEvaluation,
+    MetalInstructionClaimReduction, MetalInstructionInput, MetalInstructionRaVirtualization,
+    MetalInstructionReadRaf, MetalJointOpening, MetalOuterRemainder, MetalOuterUniskip,
+    MetalProductRemainder, MetalProductUniskip, MetalRamHammingBooleanity,
+    MetalRamRaVirtualization, MetalRamRafEvaluation, MetalRamReadWriteChecking,
+    MetalRegistersReadWriteChecking,
 };
 
 use jolt_field::Fr;
@@ -66,6 +69,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::optimized::hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 use crate::optimized::inc_claim_reduction::OptimizedIncClaimReduction;
+use crate::optimized::instruction_claim_reduction::OptimizedInstructionClaimReduction;
 use crate::optimized::instruction_input::OptimizedInstructionInput;
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
 use crate::optimized::OptimizedBackend;
@@ -137,11 +141,18 @@ where
     {
         let context = MetalContext::global()?;
         let mut backend = Self::optimized();
+        backend.spartan_outer_uniskip = Box::new(MetalOuterUniskip::new());
+        backend.spartan_outer_remainder = Box::new(MetalOuterRemainder::new());
+        backend.spartan_product_uniskip = Box::new(MetalProductUniskip::new());
+        backend.spartan_product_remainder = Box::new(MetalProductRemainder::new());
         backend.inc_claim_reduction = Box::new(MetalIncClaimReduction {
             fallback: OptimizedIncClaimReduction,
         });
         backend.hamming_weight_claim_reduction = Box::new(MetalHammingWeightClaimReduction {
             fallback: OptimizedHammingWeightClaimReduction,
+        });
+        backend.instruction_claim_reduction = Box::new(MetalInstructionClaimReduction {
+            fallback: OptimizedInstructionClaimReduction,
         });
         backend.ram_hamming_booleanity = Box::new(MetalRamHammingBooleanity {
             fallback: OptimizedRamHammingBooleanity,
@@ -152,6 +163,8 @@ where
         backend.ram_raf_evaluation = Box::new(MetalRamRafEvaluation {
             fallback: OptimizedBackend,
         });
+        backend.ram_read_write = Box::new(MetalRamReadWriteChecking::new());
+        backend.registers_read_write = Box::new(MetalRegistersReadWriteChecking::new());
         backend.joint_opening = Box::new(MetalJointOpening {
             fallback: OptimizedBackend,
         });

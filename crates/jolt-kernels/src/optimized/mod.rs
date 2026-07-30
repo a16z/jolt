@@ -53,7 +53,7 @@ pub mod ram_val_check;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;
-mod rw_matrix;
+pub(crate) mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;

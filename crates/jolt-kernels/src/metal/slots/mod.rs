@@ -33,15 +33,21 @@
 
 mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
+mod instruction_claim_reduction;
 mod instruction_input;
 mod instruction_read_raf;
 mod joint_opening;
 mod ra_lazy;
 mod ram_hamming_booleanity;
 mod ram_raf_evaluation;
+mod ram_read_write;
+mod registers_read_write;
+mod spartan_outer;
+mod spartan_product;
 
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
+pub use instruction_claim_reduction::MetalInstructionClaimReduction;
 pub use instruction_input::MetalInstructionInput;
 pub use instruction_read_raf::MetalInstructionReadRaf;
 pub use joint_opening::MetalJointOpening;
@@ -50,6 +56,10 @@ pub use ra_lazy::{
 };
 pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 pub use ram_raf_evaluation::MetalRamRafEvaluation;
+pub use ram_read_write::MetalRamReadWriteChecking;
+pub use registers_read_write::MetalRegistersReadWriteChecking;
+pub use spartan_outer::{MetalOuterRemainder, MetalOuterUniskip};
+pub use spartan_product::{MetalProductRemainder, MetalProductUniskip};
 
 use std::sync::{Arc, Mutex, Weak};
 
