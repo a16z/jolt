@@ -39,7 +39,7 @@ const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
 const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
 const D64_K16_SHIFT_KEY_SPACE: usize = 1 << 16;
 const SHARED_SHIFT_MIN_COLUMNS: u8 = 3;
-const D64_K256_ROW_BATCH: usize = 1 << 13;
+const K256_ROW_BATCH: usize = 1 << 13;
 
 type AkitaWideRing<const D: usize> = WideCyclotomicRing<<AkitaField as HasWide>::Wide, D>;
 
@@ -853,8 +853,9 @@ fn commit_packed<const D: usize>(
                 );
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
-                let rank_tiled_k256 =
-                    D == 64 && source.one_hot_k == 256 && num_columns <= u32::BITS as usize;
+                let rank_tiled_k256 = matches!(D, 64 | 128)
+                    && source.one_hot_k == 256
+                    && num_columns <= u32::BITS as usize;
                 let mut wide = if rank_tiled_k256 {
                     Vec::new()
                 } else {
@@ -967,20 +968,20 @@ fn commit_packed<const D: usize>(
                 } else if rank_tiled_k256 {
                     // Stream one A rank at a time so the active wide accumulators stay in cache.
                     let rings_per_row = source.one_hot_k / D;
-                    debug_assert_eq!(rings_per_row, 4);
+                    debug_assert!(matches!(rings_per_row, 2 | 4));
                     debug_assert_eq!(ring_start % rings_per_row, 0);
                     debug_assert_eq!(ring_end % rings_per_row, 0);
                     let row_start = ring_start / rings_per_row;
                     let row_end = ring_end / rings_per_row;
                     let mut lanes = vec![NO_HOT_LANE; num_columns];
-                    let mut hot_values = vec![0u8; D64_K256_ROW_BATCH * num_columns];
-                    let mut quarter_masks = vec![[0u32; 4]; D64_K256_ROW_BATCH];
+                    let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
+                    let mut ring_masks = vec![[0u32; 4]; K256_ROW_BATCH];
                     let mut rank_wide = vec![WideCyclotomicRing::zero(); num_columns];
-                    for tile_start in (row_start..row_end).step_by(D64_K256_ROW_BATCH) {
-                        let tile_len = (row_end - tile_start).min(D64_K256_ROW_BATCH);
+                    for tile_start in (row_start..row_end).step_by(K256_ROW_BATCH) {
+                        let tile_len = (row_end - tile_start).min(K256_ROW_BATCH);
                         for row_offset in 0..tile_len {
                             source.rows.fill_row(tile_start + row_offset, &mut lanes);
-                            let masks = &mut quarter_masks[row_offset];
+                            let masks = &mut ring_masks[row_offset];
                             *masks = [0; 4];
                             for (column, &hot) in lanes.iter().enumerate() {
                                 if hot == NO_HOT_LANE {
@@ -999,12 +1000,13 @@ fn commit_packed<const D: usize>(
                         for (a, a_row) in a_rows.iter().enumerate() {
                             for row_offset in 0..tile_len {
                                 let trace_row = tile_start + row_offset;
-                                for (quarter, &mask) in quarter_masks[row_offset].iter().enumerate()
+                                for (ring_offset, &mask) in
+                                    ring_masks[row_offset][..rings_per_row].iter().enumerate()
                                 {
                                     if mask == 0 {
                                         continue;
                                     }
-                                    let ring = trace_row * rings_per_row + quarter;
+                                    let ring = trace_row * rings_per_row + ring_offset;
                                     let position = ring - block_ring_start;
                                     let a_col = position * plan.num_digits_inner;
                                     let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);

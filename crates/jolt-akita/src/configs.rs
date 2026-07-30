@@ -72,7 +72,15 @@ fn catalog_setup_envelope<Cfg: CommitmentConfig>(
 /// multi-group layouts (never produced by Jolt's shapes) fall back to the base
 /// preset's DP planning.
 macro_rules! delegate_preset {
-    ($(#[$doc:meta])* $name:ident, $base:ty, $catalog:expr, $slack_permille:expr) => {
+    (
+        $(#[$doc:meta])*
+        $name:ident,
+        $base:ty,
+        $catalog:expr,
+        $slack_permille:expr,
+        $basis_range:expr,
+        $onehot_chunk_size:expr
+    ) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, Default)]
         pub struct $name;
@@ -146,11 +154,11 @@ macro_rules! delegate_preset {
             }
 
             fn basis_range() -> (u32, u32) {
-                <$base>::basis_range()
+                $basis_range
             }
 
             fn onehot_chunk_size() -> usize {
-                <$base>::onehot_chunk_size()
+                $onehot_chunk_size
             }
 
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
@@ -219,7 +227,9 @@ delegate_preset!(
     // Accept up to 1% larger proofs when that buys a smaller root inner rank
     // `n_a` — the rank multiplies the whole one-hot commit kernel, the
     // dominant prover cost at large T.
-    10
+    10,
+    akita_config::proof_optimized::fp128::D64OneHotK16::basis_range(),
+    akita_config::proof_optimized::fp128::D64OneHotK16::onehot_chunk_size()
 );
 
 delegate_preset!(
@@ -227,7 +237,19 @@ delegate_preset!(
     JoltD64OneHotK256,
     akita_config::proof_optimized::fp128::D64OneHot,
     crate::schedules::jolt_fp128_d64_onehot_k256_table(),
-    10
+    10,
+    akita_config::proof_optimized::fp128::D64OneHot::basis_range(),
+    akita_config::proof_optimized::fp128::D64OneHot::onehot_chunk_size()
+);
+
+delegate_preset!(
+    /// D128, K=256 policy for the largest packed trace.
+    JoltD128OneHotK256,
+    akita_config::proof_optimized::fp128::D128OneHot,
+    None,
+    10,
+    (6, 6),
+    256
 );
 
 delegate_preset!(
@@ -237,7 +259,9 @@ delegate_preset!(
     JoltD64Dense,
     akita_config::proof_optimized::fp128::D64Dense,
     None,
-    0
+    0,
+    akita_config::proof_optimized::fp128::D64Dense::basis_range(),
+    akita_config::proof_optimized::fp128::D64Dense::onehot_chunk_size()
 );
 
 #[cfg(test)]
@@ -306,5 +330,21 @@ mod tests {
                 .output_rank()
         };
         assert!(root_rank(&rank_plan) <= root_rank(&payload_plan));
+    }
+
+    #[test]
+    fn d128_k256_policy_uses_the_large_trace_geometry() {
+        assert_eq!(JoltD128OneHotK256::D, 128);
+        assert_eq!(JoltD128OneHotK256::onehot_chunk_size(), 256);
+        assert_eq!(JoltD128OneHotK256::basis_range(), (6, 6));
+
+        let layout = akita_types::OpeningClaimsLayout::new(41, 1).unwrap();
+        let schedule = JoltD128OneHotK256::get_params_for_prove(&layout).unwrap();
+        let root = &schedule.root.params.final_group.commitment;
+        assert_eq!(root.inner_commit_matrix.output_rank(), 3);
+        assert_eq!(root.num_positions_per_block, 1 << 21);
+
+        let envelope = JoltD128OneHotK256::max_setup_matrix_size(41, 1).unwrap();
+        assert_eq!(envelope.max_setup_len * 128 * 16, 12usize << 30);
     }
 }
