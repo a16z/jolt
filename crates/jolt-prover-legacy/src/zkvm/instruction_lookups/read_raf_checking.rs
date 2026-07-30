@@ -733,8 +733,14 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
         let m = 1 << log_m;
         let m_mask = m - 1;
         let num_cycles = self.lookup_indices.len();
-        // Drop stuff that's no longer needed
-        drop_in_background_thread(std::mem::take(&mut self.u_evals));
+        let grouped_index_bytes = self
+            .lookup_indices_by_table
+            .iter()
+            .map(|indices| indices.capacity() * std::mem::size_of::<usize>())
+            .sum::<usize>();
+        drop(std::mem::take(&mut self.lookup_indices_by_table));
+        let mut combined_val_poly = std::mem::take(&mut self.u_evals);
+        debug_assert_eq!(combined_val_poly.len(), num_cycles);
 
         let ra_polys: Vec<MultilinearPolynomial<F>> = {
             let span = tracing::span!(tracing::Level::INFO, "Materialize ra polynomials");
@@ -786,7 +792,12 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 .collect()
         };
 
-        drop_in_background_thread(std::mem::take(&mut self.v));
+        drop(std::mem::take(&mut self.v));
+        let lookup_index_bytes = self.lookup_indices.capacity() * std::mem::size_of::<LookupBits>();
+        drop((
+            std::mem::take(&mut self.lookup_indices),
+            std::mem::take(&mut self.suffix_polys),
+        ));
 
         let prefixes: Vec<PrefixEval<F>> = std::mem::take(&mut self.prefix_checkpoints)
             .into_iter()
@@ -794,7 +805,6 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             .collect();
         // Materialize combined_val_poly = Val_j(k) + γ·RafVal_j(k)
         // combining lookup table values with RAF operand contributions in a single pass.
-        let mut combined_val_poly: Vec<F> = unsafe_allocate_zero_vec(num_cycles);
         {
             let span = tracing::span!(tracing::Level::INFO, "Materialize combined_val_poly");
             let _guard = span.enter();
@@ -839,31 +849,31 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 .zip(std::mem::take(&mut self.is_interleaved_operands))
                 .for_each(|((val, cycle), is_interleaved_operands)| {
                     // Add lookup table value (Val_j(k)) - derive table from trace
-                    if let Some(table) = InstructionLookup::<XLEN>::lookup_table(cycle) {
-                        let t_idx = LookupTables::<XLEN>::enum_index(&table);
-                        *val += table_values_at_r_addr[t_idx];
-                    }
+                    let table_value =
+                        if let Some(table) = InstructionLookup::<XLEN>::lookup_table(cycle) {
+                            let t_idx = LookupTables::<XLEN>::enum_index(&table);
+                            table_values_at_r_addr[t_idx]
+                        } else {
+                            F::zero()
+                        };
                     // Add RAF operand contribution (γ·RafVal_j(k))
-                    if is_interleaved_operands {
-                        *val += raf_interleaved;
+                    let raf_value = if is_interleaved_operands {
+                        raf_interleaved
                     } else {
-                        *val += raf_identity;
-                    }
+                        raf_identity
+                    };
+                    *val = table_value + raf_value;
                 });
         }
 
+        tracing::info!(
+            recycled_field_bytes = combined_val_poly.capacity() * std::mem::size_of::<F>(),
+            lookup_index_bytes,
+            grouped_index_bytes,
+            "reused read-RAF transition storage"
+        );
         self.combined_val_polynomial = Some(MultilinearPolynomial::from(combined_val_poly));
         self.ra_polys = Some(ra_polys);
-
-        // After the address rounds are complete and we have materialized `ra_polys` and the
-        // `combined_val_polynomial`, the following buffers are no longer needed for the remaining
-        // log(T) cycle rounds:
-        // - `lookup_indices` (used only to build `ra_polys` and to size `combined_val_poly`)
-        // - `suffix_polys` (used only during the first LOG_K address rounds)
-        drop_in_background_thread((
-            std::mem::take(&mut self.lookup_indices),
-            std::mem::take(&mut self.suffix_polys),
-        ));
     }
 }
 
@@ -1685,6 +1695,10 @@ mod tests {
             vec![&mut prover_sumcheck],
             &mut prover_opening_accumulator,
             prover_transcript,
+        );
+        assert!(
+            prover_sumcheck.lookup_indices_by_table.is_empty(),
+            "cycle buckets must be released before the cycle-round polynomials are retained"
         );
 
         // Take claims
