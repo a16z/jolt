@@ -348,11 +348,13 @@ pub fn miller_fly_partials(
 
 /// Per-pair Fq-mul-equivalents fed to [`super::metal_gate`] so the shared
 /// `JOLT_METAL_MIN_TERMS` scale keeps meaning "work items": the shift
-/// calibrates the default threshold (2^16) to the measured ~4k-pair
-/// crossover where the fly kernel beats dory's (internally parallel) CPU
-/// multi-pair. Below it, per-thread ate-ladder latency dominates (the W5a
-/// ladder-latency-floor lesson) while the CPU cost shrinks linearly.
-const MILLER_FLY_WORK_PER_PAIR_LOG2: usize = 4;
+/// calibrates the default threshold (2^16) to a 2048-pair floor. Below
+/// it, per-thread ate-ladder latency dominates (the W5a
+/// ladder-latency-floor lesson) while dory's internally parallel CPU
+/// multi-pair shrinks linearly. In-pipeline sweep (sha2-chain @2^22,
+/// stage-8 wall): hook off → 2.20/2.18 s, ≥4096 pairs → 2.12,
+/// **≥2048 → 2.02/2.02**, ≥1024 → 2.11 (the third reduce round loses).
+const MILLER_FLY_WORK_PER_PAIR_LOG2: usize = 5;
 
 /// The stage-8 device multi-pairing — dory's `multi_pair*` hook. Serves
 /// the call with the exact GT the CPU path computes (device Miller
