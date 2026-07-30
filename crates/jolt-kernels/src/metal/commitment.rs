@@ -100,6 +100,12 @@ const MAX_SEGMENT_LEN: usize = 256;
 /// squaring ladders.
 const MILLER_SEG_PAIRS: usize = 2;
 
+/// Pairs per CPU absorb sub-shard. Small enough that rayon can steal a big
+/// column off a straggler core mid-superchunk, large enough that the
+/// per-shard squaring ladder stays noise (64 Fq12 squarings per shard
+/// ≈ +1% of its line-fold work).
+const MILLER_CPU_SHARD: usize = 64;
+
 /// Default CPU share of each superchunk's Miller pairs (see
 /// [`miller_cpu_fraction`]). The CPU cores idle once extraction is fed
 /// while the device carries tier-1 + Miller; giving them a pair share
@@ -768,20 +774,32 @@ fn absorb_superchunk(
             .collect();
 
     let cpu_absorb = |accumulators: &mut [Tier2Accumulator]| {
-        accumulators
-            .par_iter_mut()
-            .zip(pending.par_iter())
-            .for_each(|(accumulator, pending_column)| {
-                if let Some(p) = pending_column {
-                    if p.cpu_len > 0 {
-                        accumulator.absorb(
-                            prep,
-                            &p.points[..p.cpu_len],
-                            &p.row_indices[..p.cpu_len],
-                        );
-                    }
-                }
-            });
+        // (column, sub-shard) tasks instead of one task per column: the
+        // fresh absorb loop is serial within a call, so a big column on a
+        // straggler core would stretch the closure past the dispatch
+        // window. Shards absorb independently and merge per column —
+        // partition-invariant, so the value is unchanged.
+        let tasks: Vec<(usize, &PendingPairs, std::ops::Range<usize>)> = pending
+            .iter()
+            .enumerate()
+            .filter_map(|(column, pending_column)| pending_column.as_ref().map(|p| (column, p)))
+            .flat_map(|(column, p)| {
+                (0..p.cpu_len)
+                    .step_by(MILLER_CPU_SHARD)
+                    .map(move |at| (column, p, at..(at + MILLER_CPU_SHARD).min(p.cpu_len)))
+            })
+            .collect();
+        let partials: Vec<(usize, Tier2Accumulator)> = tasks
+            .into_par_iter()
+            .map(|(column, p, range)| {
+                let mut shard = Tier2Accumulator::new();
+                shard.absorb(prep, &p.points[range.clone()], &p.row_indices[range]);
+                (column, shard)
+            })
+            .collect();
+        for (column, shard) in partials {
+            accumulators[column].merge(shard);
+        }
     };
 
     // Queue the device share — every column's tail slice, per-thread

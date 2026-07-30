@@ -40,9 +40,10 @@ pub struct DoryTier2Prep {
 }
 
 /// Pairs per parallel Miller-loop chunk. Value-invariant (see module docs);
-/// sized so a chunk's G1 preparation stays cache-resident while giving rayon
-/// enough tasks per column finish.
-const MILLER_CHUNK: usize = 512;
+/// small enough that a single column finish yields useful parallelism now
+/// that each chunk folds serially through one shared ladder (the ladder
+/// costs 64 Fq12 squarings per chunk ≈ +0.4% of its line-fold work).
+const MILLER_CHUNK: usize = 128;
 
 impl DoryTier2Prep {
     pub(crate) fn new(setup: &DoryProverSetup, max_rows: usize) -> Self {
