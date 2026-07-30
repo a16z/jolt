@@ -298,15 +298,19 @@ pub fn g2_fixed_base_mul_device(
 }
 
 /// Gate scaling, calibrated to the MEASURED crossovers (@2^22 in-proof
-/// trace, M4), not to a per-point work model: the G2 ladder is latency-
-/// floored at ~21 ms below ~2k threads (254 iterations × ~90 Fq muls per
-/// lane), so its profitable region starts higher than its 3× throughput
-/// cost would suggest. Under the 2^18 default these shifts land the
-/// crossovers at len ≥ 1024 for G1 (3.2× at 8192, 1.7× at 1024, wash
-/// below) and len ≥ 2048 for G2 (2.6× at 8192, 2.3× at 2048, wash at
-/// 1024, loss at 512).
+/// traces, M4), not to a per-point work model: the per-lane ladder is
+/// latency-floored below a few thousand threads, so each kernel's
+/// profitable region starts where its floor undercuts the CPU. Under the
+/// 2^18 default these shifts land the crossovers at:
+/// - G1 fold (254-bit ladder): len ≥ 1024 (3.2× at 8192, 1.7× at 1024).
+/// - G2 fold (4-GLV ~64-iteration ladder): len ≥ 512 (1.5× at 8192 over
+///   the plain-ladder device, 1.6× at 2048, floor ~7 ms).
+/// - G2 fixed-base (plain 254-bit ladder, ~21 ms floor): len ≥ 2048 —
+///   the device lost to the CPU at 512 pre-GLV, and this kernel still
+///   walks the full scalar width.
 const G1_WORK_PER_POINT_LOG2: usize = 8;
-const G2_WORK_PER_POINT_LOG2: usize = 7;
+const G2_FOLD_WORK_LOG2: usize = 9;
+const G2_FIXED_BASE_WORK_LOG2: usize = 7;
 
 /// The `RoutineHooks::g1_scalar_mul_add` candidate: `Some(out)` when the
 /// device served the call, `None` (undersized, dead device, or failed) for
@@ -335,7 +339,7 @@ pub(super) fn g2_scalar_mul_add_hook(
     qs: &[G2Projective],
     scalar: &ArkFr,
 ) -> Option<Vec<G2Projective>> {
-    if !metal_gate("dory_fold_g2", ps.len() << G2_WORK_PER_POINT_LOG2) {
+    if !metal_gate("dory_fold_g2", ps.len() << G2_FOLD_WORK_LOG2) {
         return None;
     }
     let context = MetalContext::global().ok()?;
@@ -353,7 +357,7 @@ pub(super) fn g2_fixed_base_mul_hook(
     base: &G2Projective,
     scalars: &[ArkFr],
 ) -> Option<Vec<G2Projective>> {
-    if !metal_gate("dory_fixed_base", scalars.len() << G2_WORK_PER_POINT_LOG2) {
+    if !metal_gate("dory_fixed_base", scalars.len() << G2_FIXED_BASE_WORK_LOG2) {
         return None;
     }
     let context = MetalContext::global().ok()?;
