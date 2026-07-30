@@ -13,10 +13,10 @@
 //! [`JoltWitnessOracle`] (the naive interpreter's path — one exhaustive match
 //! over jolt-claims ids, no wildcard) and typed bundles over the streaming
 //! pass. This crate defines **no id vocabulary of its own** — all ids are
-//! jolt-claims'. Every public contract is sequential over cycle ranges;
-//! random access to trace rows is deliberately inexpressible, so a
-//! checkpointed, re-emulating trace source can implement every signature
-//! honestly.
+//! jolt-claims'. [`RowSource`]'s required contract is sequential over cycle
+//! ranges, so a checkpointed, re-emulating source can implement it honestly.
+//! Slice-backed sources may additionally expose read-only random access for
+//! order-insensitive whole-domain collectors.
 
 // Lets derive-generated `::jolt_witness::...` paths resolve inside this
 // crate's own tests.
@@ -44,8 +44,8 @@ pub use backend::{
 };
 pub use bundle::WitnessBundle;
 pub use consumer::{
-    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RowSource,
-    StreamConsumer,
+    collect_bundles, collect_bundles_par, collect_bundles_par_map, stream_witnesses, ChunkVisitor,
+    CollectBundles, ConsumerSet, RandomAccessRows, RowSource, StreamConsumer,
 };
 pub use error::WitnessError;
 pub use record::TraceRecordRow;

@@ -40,6 +40,8 @@ use jolt_witness::witnesses::{
     Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc,
 };
+#[cfg(feature = "parallel")]
+use jolt_witness::RandomAccessRows;
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, TraceRecordRow};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -142,6 +144,93 @@ struct LaneBuffers {
     instruction_rows: Vec<InstructionCycleRow>,
 }
 
+struct PackedRecordRow {
+    pc: u64,
+    unexpanded_pc: u64,
+    imm: i128,
+    rs1_value: u64,
+    rs2_value: u64,
+    rd_pre_value: u64,
+    rd_post_value: u64,
+    rs1_index: u8,
+    rs2_index: u8,
+    rd_index: u8,
+    ram_address: u64,
+    left_lookup_operand: u64,
+    right_lookup_operand: u128,
+    left_instruction_input: u64,
+    right_instruction_input: i128,
+    product_magnitude_lo: u64,
+    product_magnitude_hi: u64,
+    lookup_output: u64,
+    flags: u32,
+    address: u64,
+    pre_value: u64,
+    post_value: u64,
+    instruction_row: InstructionCycleRow,
+}
+
+impl From<&TraceRecordRow> for PackedRecordRow {
+    fn from(row: &TraceRecordRow) -> Self {
+        let (rs1_index, rs1_value) = row
+            .rs1
+            .map_or((NO_REGISTER, 0), |(index, value)| (index, value));
+        let (rs2_index, rs2_value) = row
+            .rs2
+            .map_or((NO_REGISTER, 0), |(index, value)| (index, value));
+        let (rd_index, rd_pre_value, rd_post_value) = row
+            .rd
+            .map_or((NO_REGISTER, 0, 0), |(index, pre, post)| (index, pre, post));
+        let product_limbs = row.product.magnitude_limbs();
+        let mut flags = u32::from(row.circuit_flags.bits())
+            | (u32::from(row.instruction_flags.bits()) << INSTRUCTION_FLAGS_SHIFT);
+        if row.should_branch {
+            flags |= SHOULD_BRANCH_BIT;
+        }
+        if row.should_jump {
+            flags |= SHOULD_JUMP_BIT;
+        }
+        if row.next_is_noop {
+            flags |= NEXT_IS_NOOP_BIT;
+        }
+        if row.product.is_positive {
+            flags |= PRODUCT_POSITIVE_BIT;
+        }
+
+        Self {
+            pc: row.pc,
+            unexpanded_pc: row.unexpanded_pc,
+            imm: row.imm,
+            rs1_value,
+            rs2_value,
+            rd_pre_value,
+            rd_post_value,
+            rs1_index,
+            rs2_index,
+            rd_index,
+            ram_address: row.ram_address,
+            left_lookup_operand: row.left_lookup_operand,
+            right_lookup_operand: row.right_lookup_operand,
+            left_instruction_input: row.left_instruction_input,
+            right_instruction_input: row.right_instruction_input,
+            product_magnitude_lo: product_limbs[0],
+            product_magnitude_hi: product_limbs[1],
+            lookup_output: row.lookup_output,
+            flags,
+            address: row.remapped_ram_address.unwrap_or(NO_ACCESS),
+            pre_value: row.ram_read_value,
+            post_value: row.ram_write_value,
+            instruction_row: InstructionCycleRow::new(
+                row.lookup_index,
+                row.table_index,
+                !row.circuit_flags.is_interleaved_operands(),
+                Some(row.pc as usize),
+                row.remapped_ram_address,
+            ),
+        }
+    }
+}
+
 impl LaneBuffers {
     fn with_capacity(cycles: usize) -> Self {
         Self {
@@ -172,67 +261,265 @@ impl LaneBuffers {
     }
 
     fn push(&mut self, row: &TraceRecordRow) {
-        let (rs1_index, rs1_value) = row
-            .rs1
-            .map_or((NO_REGISTER, 0), |(index, value)| (index, value));
-        let (rs2_index, rs2_value) = row
-            .rs2
-            .map_or((NO_REGISTER, 0), |(index, value)| (index, value));
-        let (rd_index, rd_pre, rd_post) = row
-            .rd
-            .map_or((NO_REGISTER, 0, 0), |(index, pre, post)| (index, pre, post));
-        let product_limbs = row.product.magnitude_limbs();
-        let mut flags = u32::from(row.circuit_flags.bits())
-            | (u32::from(row.instruction_flags.bits()) << INSTRUCTION_FLAGS_SHIFT);
-        if row.should_branch {
-            flags |= SHOULD_BRANCH_BIT;
-        }
-        if row.should_jump {
-            flags |= SHOULD_JUMP_BIT;
-        }
-        if row.next_is_noop {
-            flags |= NEXT_IS_NOOP_BIT;
-        }
-        if row.product.is_positive {
-            flags |= PRODUCT_POSITIVE_BIT;
-        }
-
+        let row = PackedRecordRow::from(row);
         self.pc.push(row.pc);
         self.unexpanded_pc.push(row.unexpanded_pc);
         self.imm.push(row.imm);
-        self.rs1_value.push(rs1_value);
-        self.rs2_value.push(rs2_value);
-        self.rd_pre_value.push(rd_pre);
-        self.rd_post_value.push(rd_post);
-        self.rs1_index.push(rs1_index);
-        self.rs2_index.push(rs2_index);
-        self.rd_index.push(rd_index);
+        self.rs1_value.push(row.rs1_value);
+        self.rs2_value.push(row.rs2_value);
+        self.rd_pre_value.push(row.rd_pre_value);
+        self.rd_post_value.push(row.rd_post_value);
+        self.rs1_index.push(row.rs1_index);
+        self.rs2_index.push(row.rs2_index);
+        self.rd_index.push(row.rd_index);
         self.ram_address.push(row.ram_address);
         self.left_lookup_operand.push(row.left_lookup_operand);
         self.right_lookup_operand.push(row.right_lookup_operand);
         self.left_instruction_input.push(row.left_instruction_input);
         self.right_instruction_input
             .push(row.right_instruction_input);
-        self.product_magnitude_lo.push(product_limbs[0]);
-        self.product_magnitude_hi.push(product_limbs[1]);
+        self.product_magnitude_lo.push(row.product_magnitude_lo);
+        self.product_magnitude_hi.push(row.product_magnitude_hi);
         self.lookup_output.push(row.lookup_output);
-        self.flags.push(flags);
-        self.addresses
-            .push(row.remapped_ram_address.unwrap_or(NO_ACCESS));
-        self.pre_values.push(row.ram_read_value);
-        self.post_values.push(row.ram_write_value);
-        // The stage-5 packed row: `raf_flag` is `InstructionRafFlag`'s
-        // formula over the same flag set; `mapped_pc = Some(pc)` because the
-        // record's own `pc` extraction (which requires the mapping) succeeded
-        // for this row.
-        self.instruction_rows.push(InstructionCycleRow::new(
-            row.lookup_index,
-            row.table_index,
-            !row.circuit_flags.is_interleaved_operands(),
-            Some(row.pc as usize),
-            row.remapped_ram_address,
-        ));
+        self.flags.push(row.flags);
+        self.addresses.push(row.address);
+        self.pre_values.push(row.pre_value);
+        self.post_values.push(row.post_value);
+        self.instruction_rows.push(row.instruction_row);
     }
+
+    #[cfg(feature = "parallel")]
+    fn collect_parallel(
+        access: &RandomAccessRows<'_>,
+        cycles: usize,
+    ) -> Result<Self, jolt_witness::WitnessError> {
+        let empty_instruction = InstructionCycleRow::new(0, None, false, None, None);
+        let mut lanes = Self {
+            pc: vec![0; cycles],
+            unexpanded_pc: vec![0; cycles],
+            imm: vec![0; cycles],
+            rs1_value: vec![0; cycles],
+            rs2_value: vec![0; cycles],
+            rd_pre_value: vec![0; cycles],
+            rd_post_value: vec![0; cycles],
+            rs1_index: vec![NO_REGISTER; cycles],
+            rs2_index: vec![NO_REGISTER; cycles],
+            rd_index: vec![NO_REGISTER; cycles],
+            ram_address: vec![0; cycles],
+            left_lookup_operand: vec![0; cycles],
+            right_lookup_operand: vec![0; cycles],
+            left_instruction_input: vec![0; cycles],
+            right_instruction_input: vec![0; cycles],
+            product_magnitude_lo: vec![0; cycles],
+            product_magnitude_hi: vec![0; cycles],
+            lookup_output: vec![0; cycles],
+            flags: vec![0; cycles],
+            addresses: vec![NO_ACCESS; cycles],
+            pre_values: vec![0; cycles],
+            post_values: vec![0; cycles],
+            instruction_rows: vec![empty_instruction; cycles],
+        };
+        fill_record_lanes(access, lanes.as_slices_mut(), 0)?;
+        Ok(lanes)
+    }
+
+    #[cfg(feature = "parallel")]
+    fn as_slices_mut(&mut self) -> LaneSlices<'_> {
+        LaneSlices {
+            pc: &mut self.pc,
+            unexpanded_pc: &mut self.unexpanded_pc,
+            imm: &mut self.imm,
+            rs1_value: &mut self.rs1_value,
+            rs2_value: &mut self.rs2_value,
+            rd_pre_value: &mut self.rd_pre_value,
+            rd_post_value: &mut self.rd_post_value,
+            rs1_index: &mut self.rs1_index,
+            rs2_index: &mut self.rs2_index,
+            rd_index: &mut self.rd_index,
+            ram_address: &mut self.ram_address,
+            left_lookup_operand: &mut self.left_lookup_operand,
+            right_lookup_operand: &mut self.right_lookup_operand,
+            left_instruction_input: &mut self.left_instruction_input,
+            right_instruction_input: &mut self.right_instruction_input,
+            product_magnitude_lo: &mut self.product_magnitude_lo,
+            product_magnitude_hi: &mut self.product_magnitude_hi,
+            lookup_output: &mut self.lookup_output,
+            flags: &mut self.flags,
+            addresses: &mut self.addresses,
+            pre_values: &mut self.pre_values,
+            post_values: &mut self.post_values,
+            instruction_rows: &mut self.instruction_rows,
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+struct LaneSlices<'a> {
+    pc: &'a mut [u64],
+    unexpanded_pc: &'a mut [u64],
+    imm: &'a mut [i128],
+    rs1_value: &'a mut [u64],
+    rs2_value: &'a mut [u64],
+    rd_pre_value: &'a mut [u64],
+    rd_post_value: &'a mut [u64],
+    rs1_index: &'a mut [u8],
+    rs2_index: &'a mut [u8],
+    rd_index: &'a mut [u8],
+    ram_address: &'a mut [u64],
+    left_lookup_operand: &'a mut [u64],
+    right_lookup_operand: &'a mut [u128],
+    left_instruction_input: &'a mut [u64],
+    right_instruction_input: &'a mut [i128],
+    product_magnitude_lo: &'a mut [u64],
+    product_magnitude_hi: &'a mut [u64],
+    lookup_output: &'a mut [u64],
+    flags: &'a mut [u32],
+    addresses: &'a mut [u64],
+    pre_values: &'a mut [u64],
+    post_values: &'a mut [u64],
+    instruction_rows: &'a mut [InstructionCycleRow],
+}
+
+#[cfg(feature = "parallel")]
+impl LaneSlices<'_> {
+    fn len(&self) -> usize {
+        self.pc.len()
+    }
+
+    fn split_at_mut(self, mid: usize) -> (Self, Self) {
+        let (pc_l, pc_r) = self.pc.split_at_mut(mid);
+        let (unexpanded_pc_l, unexpanded_pc_r) = self.unexpanded_pc.split_at_mut(mid);
+        let (imm_l, imm_r) = self.imm.split_at_mut(mid);
+        let (rs1_value_l, rs1_value_r) = self.rs1_value.split_at_mut(mid);
+        let (rs2_value_l, rs2_value_r) = self.rs2_value.split_at_mut(mid);
+        let (rd_pre_value_l, rd_pre_value_r) = self.rd_pre_value.split_at_mut(mid);
+        let (rd_post_value_l, rd_post_value_r) = self.rd_post_value.split_at_mut(mid);
+        let (rs1_index_l, rs1_index_r) = self.rs1_index.split_at_mut(mid);
+        let (rs2_index_l, rs2_index_r) = self.rs2_index.split_at_mut(mid);
+        let (rd_index_l, rd_index_r) = self.rd_index.split_at_mut(mid);
+        let (ram_address_l, ram_address_r) = self.ram_address.split_at_mut(mid);
+        let (left_lookup_operand_l, left_lookup_operand_r) =
+            self.left_lookup_operand.split_at_mut(mid);
+        let (right_lookup_operand_l, right_lookup_operand_r) =
+            self.right_lookup_operand.split_at_mut(mid);
+        let (left_instruction_input_l, left_instruction_input_r) =
+            self.left_instruction_input.split_at_mut(mid);
+        let (right_instruction_input_l, right_instruction_input_r) =
+            self.right_instruction_input.split_at_mut(mid);
+        let (product_magnitude_lo_l, product_magnitude_lo_r) =
+            self.product_magnitude_lo.split_at_mut(mid);
+        let (product_magnitude_hi_l, product_magnitude_hi_r) =
+            self.product_magnitude_hi.split_at_mut(mid);
+        let (lookup_output_l, lookup_output_r) = self.lookup_output.split_at_mut(mid);
+        let (flags_l, flags_r) = self.flags.split_at_mut(mid);
+        let (addresses_l, addresses_r) = self.addresses.split_at_mut(mid);
+        let (pre_values_l, pre_values_r) = self.pre_values.split_at_mut(mid);
+        let (post_values_l, post_values_r) = self.post_values.split_at_mut(mid);
+        let (instruction_rows_l, instruction_rows_r) = self.instruction_rows.split_at_mut(mid);
+        (
+            Self {
+                pc: pc_l,
+                unexpanded_pc: unexpanded_pc_l,
+                imm: imm_l,
+                rs1_value: rs1_value_l,
+                rs2_value: rs2_value_l,
+                rd_pre_value: rd_pre_value_l,
+                rd_post_value: rd_post_value_l,
+                rs1_index: rs1_index_l,
+                rs2_index: rs2_index_l,
+                rd_index: rd_index_l,
+                ram_address: ram_address_l,
+                left_lookup_operand: left_lookup_operand_l,
+                right_lookup_operand: right_lookup_operand_l,
+                left_instruction_input: left_instruction_input_l,
+                right_instruction_input: right_instruction_input_l,
+                product_magnitude_lo: product_magnitude_lo_l,
+                product_magnitude_hi: product_magnitude_hi_l,
+                lookup_output: lookup_output_l,
+                flags: flags_l,
+                addresses: addresses_l,
+                pre_values: pre_values_l,
+                post_values: post_values_l,
+                instruction_rows: instruction_rows_l,
+            },
+            Self {
+                pc: pc_r,
+                unexpanded_pc: unexpanded_pc_r,
+                imm: imm_r,
+                rs1_value: rs1_value_r,
+                rs2_value: rs2_value_r,
+                rd_pre_value: rd_pre_value_r,
+                rd_post_value: rd_post_value_r,
+                rs1_index: rs1_index_r,
+                rs2_index: rs2_index_r,
+                rd_index: rd_index_r,
+                ram_address: ram_address_r,
+                left_lookup_operand: left_lookup_operand_r,
+                right_lookup_operand: right_lookup_operand_r,
+                left_instruction_input: left_instruction_input_r,
+                right_instruction_input: right_instruction_input_r,
+                product_magnitude_lo: product_magnitude_lo_r,
+                product_magnitude_hi: product_magnitude_hi_r,
+                lookup_output: lookup_output_r,
+                flags: flags_r,
+                addresses: addresses_r,
+                pre_values: pre_values_r,
+                post_values: post_values_r,
+                instruction_rows: instruction_rows_r,
+            },
+        )
+    }
+
+    fn write(&mut self, index: usize, row: &TraceRecordRow) {
+        let row = PackedRecordRow::from(row);
+        self.pc[index] = row.pc;
+        self.unexpanded_pc[index] = row.unexpanded_pc;
+        self.imm[index] = row.imm;
+        self.rs1_value[index] = row.rs1_value;
+        self.rs2_value[index] = row.rs2_value;
+        self.rd_pre_value[index] = row.rd_pre_value;
+        self.rd_post_value[index] = row.rd_post_value;
+        self.rs1_index[index] = row.rs1_index;
+        self.rs2_index[index] = row.rs2_index;
+        self.rd_index[index] = row.rd_index;
+        self.ram_address[index] = row.ram_address;
+        self.left_lookup_operand[index] = row.left_lookup_operand;
+        self.right_lookup_operand[index] = row.right_lookup_operand;
+        self.left_instruction_input[index] = row.left_instruction_input;
+        self.right_instruction_input[index] = row.right_instruction_input;
+        self.product_magnitude_lo[index] = row.product_magnitude_lo;
+        self.product_magnitude_hi[index] = row.product_magnitude_hi;
+        self.lookup_output[index] = row.lookup_output;
+        self.flags[index] = row.flags;
+        self.addresses[index] = row.address;
+        self.pre_values[index] = row.pre_value;
+        self.post_values[index] = row.post_value;
+        self.instruction_rows[index] = row.instruction_row;
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn fill_record_lanes(
+    access: &RandomAccessRows<'_>,
+    mut lanes: LaneSlices<'_>,
+    base: usize,
+) -> Result<(), jolt_witness::WitnessError> {
+    const GRAIN: usize = 1 << 12;
+    if lanes.len() <= GRAIN {
+        for index in 0..lanes.len() {
+            let row = access.bundle_at::<TraceRecordRow>(base + index)?;
+            lanes.write(index, &row);
+        }
+        return Ok(());
+    }
+    let mid = lanes.len() / 2;
+    let (left, right) = lanes.split_at_mut(mid);
+    let (left_result, right_result) = rayon::join(
+        || fill_record_lanes(access, left, base),
+        || fill_record_lanes(access, right, base + mid),
+    );
+    left_result?;
+    right_result
 }
 
 impl StreamConsumer for CollectRecord {
@@ -262,11 +549,26 @@ impl TraceRecord {
     ) -> Result<Arc<Self>, KernelError<F>> {
         if session.state::<Arc<Self>>().is_none() {
             let cycles = 1usize << log_t;
-            let mut consumers = (CollectRecord {
-                record: LaneBuffers::with_capacity(cycles),
-            },);
-            stream_witnesses(witness, 0..cycles, RECORD_CHUNK, &mut consumers)?;
-            let lanes = consumers.0.record;
+            let collect_streaming = || {
+                let mut consumers = (CollectRecord {
+                    record: LaneBuffers::with_capacity(cycles),
+                },);
+                stream_witnesses(witness, 0..cycles, RECORD_CHUNK, &mut consumers)?;
+                Ok::<_, jolt_witness::WitnessError>(consumers.0.record)
+            };
+            #[cfg(feature = "parallel")]
+            // The record is the shared SoA substrate for stages 1-6. Fill
+            // its final lanes directly; staging chunk-local AoS rows made
+            // the serial lane scatter the collection wall.
+            let lanes = match witness
+                .random_access()
+                .filter(|access| cycles <= access.cycles)
+            {
+                Some(access) => LaneBuffers::collect_parallel(&access, cycles)?,
+                None => collect_streaming()?,
+            };
+            #[cfg(not(feature = "parallel"))]
+            let lanes = collect_streaming()?;
             let ram = Arc::new(RamAccessColumns {
                 addresses: lanes.addresses,
                 pre_values: lanes.pre_values,
