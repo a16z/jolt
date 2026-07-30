@@ -35,7 +35,8 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage5::registers_val_evaluation::{
     RegistersValEvaluation, RegistersValEvaluationOutputClaims,
 };
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::witnesses::{RdInc, ToField};
+use jolt_witness::{collect_par_map, JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -129,14 +130,27 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
         let (r_address, r_cycle) = registers_val_point.split_at(REGISTER_ADDRESS_BITS);
         let cycles = 1usize << log_t;
 
-        let inc_table: Vec<F> = witness.oracle_table(rd_inc_val_evaluation().polynomial_id())?;
-        if inc_table.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{:?}", rd_inc_val_evaluation()),
-                expected: cycles,
-                got: inc_table.len(),
-            });
-        }
+        // Slice-backed sources defer the dense increment table to the
+        // member's first active round: the member is tail-aligned in the
+        // stage-5 batch, so a prepare-time table would co-inhabit the
+        // prover's peak moment (the instruction kernel's address/cycle
+        // handoff) doing nothing. Values are identical either way — the
+        // same extractor over the same rows.
+        let inc = match witness.owned_rows() {
+            Some(owned) if owned.cycles() == cycles => IncSource::Deferred(owned),
+            _ => {
+                let inc_table: Vec<F> =
+                    witness.oracle_table(rd_inc_val_evaluation().polynomial_id())?;
+                if inc_table.len() != cycles {
+                    return Err(KernelError::TableSizeMismatch {
+                        table: format!("{:?}", rd_inc_val_evaluation()),
+                        expected: cycles,
+                        got: inc_table.len(),
+                    });
+                }
+                IncSource::Ready(Polynomial::new(inc_table))
+            }
+        };
 
         // Reclaim the rd hot indices the stage-4 kernel parked; collect them
         // from the row source otherwise (reference-only stage 4, tests).
@@ -150,7 +164,7 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
 
         Ok(Box::new(ValEvaluationKernel {
             rounds: log_t,
-            inc: Polynomial::new(inc_table),
+            inc,
             wa: WaState::Indices {
                 rd,
                 eq_address: EqPolynomial::<F>::evals(r_address, None),
@@ -161,9 +175,22 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
     }
 }
 
+/// The increment table's lifecycle: deferred to the member's first active
+/// round on slice-backed sources, dense from prepare otherwise.
+enum IncSource<F: Field> {
+    Deferred(jolt_witness::OwnedRows),
+    Ready(Polynomial<F>),
+}
+
+/// The single-column bundle behind the deferred increment table.
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct RdIncRow {
+    rd_inc: RdInc,
+}
+
 struct ValEvaluationKernel<F: Field> {
     rounds: usize,
-    inc: Polynomial<F>,
+    inc: IncSource<F>,
     wa: WaState<F>,
     lt: SplitLt<F>,
     rounds_bound: usize,
@@ -178,6 +205,20 @@ impl<F: Field> ValEvaluationKernel<F> {
             Err(SumcheckKernelError::NotFullyBound { remaining })
         }
     }
+
+    /// Materialize the deferred increment table; a no-op once ready.
+    fn ensure_inc(&mut self) -> Result<(), SumcheckError<F>> {
+        if let IncSource::Deferred(owned) = &self.inc {
+            let table: Vec<F> = collect_par_map(&owned.view(), owned.cycles(), |row: RdIncRow| {
+                row.rd_inc.to_field()
+            })
+            .map_err(|_| SumcheckError::MissingEvaluationSource {
+                kind: "deferred registers increment table",
+            })?;
+            self.inc = IncSource::Ready(Polynomial::new(table));
+        }
+        Ok(())
+    }
 }
 
 impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
@@ -191,15 +232,23 @@ impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
         _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.ensure_inc()?;
         if let Some(challenge) = bind {
-            self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);
+            if let IncSource::Ready(inc) = &mut self.inc {
+                inc.bind_with_order(challenge, BindingOrder::LowToHigh);
+            }
             self.wa.bind(challenge);
             self.lt.bind(challenge);
             self.rounds_bound += 1;
         }
 
-        let half = self.inc.len() / 2;
-        let inc = self.inc.evals();
+        let IncSource::Ready(inc_poly) = &self.inc else {
+            return Err(SumcheckError::MissingEvaluationSource {
+                kind: "registers increment table",
+            });
+        };
+        let half = inc_poly.len() / 2;
+        let inc = inc_poly.evals();
         let accumulate = |y: usize, acc: &mut [F::Accumulator; 3]| {
             let (inc_0, inc_1) = (inc[2 * y], inc[2 * y + 1]);
             let (wa_0, wa_1) = self.wa.pair(y);
@@ -240,7 +289,10 @@ impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.inc.bind_with_order(bind, BindingOrder::LowToHigh);
+        self.ensure_inc()?;
+        if let IncSource::Ready(inc) = &mut self.inc {
+            inc.bind_with_order(bind, BindingOrder::LowToHigh);
+        }
         self.wa.bind(bind);
         self.lt.bind(bind);
         self.rounds_bound += 1;
@@ -256,8 +308,13 @@ impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RegistersValEvaluationOutputClaims<F>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
+        let IncSource::Ready(inc) = &self.inc else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "increment table absent after full binding",
+            });
+        };
         Ok(RegistersValEvaluationOutputClaims {
-            rd_inc: self.inc.evals()[0],
+            rd_inc: inc.evals()[0],
             rd_wa: self.wa.final_value(),
         })
     }

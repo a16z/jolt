@@ -511,6 +511,11 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
+    /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
+    /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
+    /// handoff so the full 48 B rows can free — the final flag walk needs
+    /// only this byte per cycle.
+    claim_columns: Vec<u8>,
     rounds_bound: usize,
 }
 
@@ -590,6 +595,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             phase_challenges: Vec::new(),
             cycle_challenges: Vec::new(),
             cycle: None,
+            claim_columns: Vec::new(),
             rounds_bound: 0,
         };
         kernel.init_phase(0);
@@ -1013,25 +1019,26 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
         }
 
+        // Snap the packed output-claim facts first: past this handoff the
+        // final flag walk reads one byte per cycle, not the 48 B row.
         let rows = self.rows.as_slice();
-        let combined_val: Vec<F> = map_indices(rows.len(), |j| {
+        const {
+            assert!(
+                LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
+                "table indices must fit the packed claim byte"
+            );
+        }
+        self.claim_columns = map_indices(rows.len(), |j| {
             let row = &rows[j];
-            let table_value = row
-                .table_index()
-                .map_or_else(F::zero, |index| table_values[index]);
-            let raf_value = if !row.raf_flag {
-                raf_interleaved
-            } else {
-                raf_identity
-            };
-            table_value + raf_value
+            let table = row.table_index().map_or(0, |index| index as u8 + 1);
+            table | (u8::from(row.raf_flag) << 7)
         });
 
         let ra_count = self.dimensions.num_virtual_ra_polys();
         let phases_per_ra = self.phases() / ra_count;
         let address_bits = self.address_bits();
         let v_tables = self.v_tables.as_slice();
-        let ra = (0..ra_count)
+        let ra: Vec<Polynomial<F>> = (0..ra_count)
             .map(|i| {
                 Polynomial::new(map_indices(rows.len(), |j| {
                     let index = rows[j].lookup_index;
@@ -1048,6 +1055,26 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 }))
             })
             .collect();
+
+        // The rows' last read is behind us: free the 48 B × T vector before
+        // materializing `combined_val` — that ordering takes the row vector
+        // out of the prover's peak co-residency (the peak sits exactly at
+        // this handoff).
+        self.rows = Arc::new(Vec::new());
+        let claim_columns = self.claim_columns.as_slice();
+        let combined_val: Vec<F> = map_indices(claim_columns.len(), |j| {
+            let packed = claim_columns[j];
+            let table_value = match packed & 0x7f {
+                0 => F::zero(),
+                table => table_values[usize::from(table) - 1],
+            };
+            let raf_value = if packed & 0x80 == 0 {
+                raf_interleaved
+            } else {
+                raf_identity
+            };
+            table_value + raf_value
+        });
 
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
@@ -1185,15 +1212,15 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         let r_cycle: Vec<F> = self.cycle_challenges.iter().rev().copied().collect();
         let eq_cycle = TensorEqTable::<F>::new(&r_cycle);
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
-        let rows = self.rows.as_slice();
+        let claim_columns = self.claim_columns.as_slice();
         let (lookup_table_flags, instruction_raf_flag) = eq_cycle.par_fold_out_in(
             || vec![F::Accumulator::default(); num_tables + 1],
             |accumulators, row_index, _x_in, e_in| {
-                let row = &rows[row_index];
-                if let Some(index) = row.table_index() {
-                    accumulators[index].add(e_in);
+                let packed = claim_columns[row_index];
+                if packed & 0x7f != 0 {
+                    accumulators[usize::from(packed & 0x7f) - 1].add(e_in);
                 }
-                if row.raf_flag {
+                if packed & 0x80 != 0 {
                     accumulators[num_tables].add(e_in);
                 }
             },
