@@ -250,6 +250,18 @@ The same trace is 16 GiB at `2^28`, making this a material capacity cut even
 though it cannot change phases that precede Stage 7. Full ownership analysis,
 measurements, and validation are in `opening-drop-trace-experiment.md`.
 
+### Rejected: drop lazy replay snapshot
+
+`JoltCpuProver` retains a `LazyTraceIterator` clone of the initial emulator,
+although neither current prover reads it after compact trace rows are built.
+Dropping it at construction reduced every `2^22` phase baseline by only
+0.04 GB. Proving measured 5.69 seconds versus the 5.72–5.77-second controls,
+with the same 2.64-second opening.
+
+The saving is fixed rather than per-cycle and is too small to justify removing
+a public prover field. The candidate was reverted. Its trace is retained as
+`mem-drop-lazy-2e22.json`.
+
 ### Rejected: dense bytecode RA
 
 The bytecode transpose was changed from `Option<u8>` to `u8` while preserving
@@ -316,6 +328,7 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Instruction-input three-round target | `mem-svo3-2e26.json` |
 | Late trace release screen | `mem-drop-trace-2e22.json` |
 | Late trace release target | `mem-drop-trace-2e26.json` |
+| Lazy replay snapshot rejection | `mem-drop-lazy-2e22.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -345,14 +358,11 @@ operand presence, and canonical padding against the former `Cycle` path.
 ## Next memory targets
 
 Stage 6b now sets the sampled `2^26` peak at 34.16 GiB, with the earlier
-Stage-3/4 transient setting `/usr/bin/time`'s maximum. Before changing a hot
-kernel, remove the vestigial `LazyTraceIterator` snapshot retained by
-`JoltCpuProver`: neither the packed nor Dory prover reads it after proof-facing
-trace rows are built. Measure its actual resident footprint as an isolated
-candidate because it is independent of `T`.
-
-Then audit Stage-6b field-vector overlap and the opening hint. Releasing the
-setup matrix remains rejected under the current implementation because its
-late reconstruction regresses both opening and verifier performance.
+Stage-3/4 transient setting `/usr/bin/time`'s maximum. The next target is the
+Stage-6b field-vector overlap, especially short-lived transposes and
+first-bind field expansions that scale with `T`. After that, audit the opening
+hint. Releasing the setup matrix remains rejected under the current
+implementation because its late reconstruction regresses both opening and
+verifier performance.
 
 K16 is not part of this campaign. K256 remains the fixed performance choice.
