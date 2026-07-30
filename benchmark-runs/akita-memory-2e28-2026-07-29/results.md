@@ -296,6 +296,18 @@ does not erase a repeatable hot-path regression. All candidate code was
 reverted; the experiment log and named traces are retained as negative
 evidence.
 
+### Rejected: fourth delayed RA round
+
+Akita's shared and per-polynomial RA sources were kept indexed for one extra
+sumcheck round, moving field materialization from `T / 8` to `T / 16`. At
+`2^22`, the reported Stage-6b plateau fell from 5.52 to 5.30 GB, but Stage 6b
+regressed from 324.133 to 401.518 ms (+23.9%).
+
+The generic fourth-round coefficient path performs eight indexed table reads
+where the control reads one contiguous Fp128 coefficient. The candidate was
+reverted at the small-trace gate, before a `2^26` run. Full measurements and
+the retained trace are in `stage6-ra-round4-experiment.md`.
+
 ## Trace inventory
 
 Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
@@ -329,6 +341,7 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Late trace release screen | `mem-drop-trace-2e22.json` |
 | Late trace release target | `mem-drop-trace-2e26.json` |
 | Lazy replay snapshot rejection | `mem-drop-lazy-2e22.json` |
+| Fourth delayed RA round rejection | `mem-ra-round4-2e22.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -359,9 +372,9 @@ operand presence, and canonical padding against the former `Cycle` path.
 
 Stage 6b now sets the sampled `2^26` peak at 34.16 GiB, with the earlier
 Stage-3/4 transient setting `/usr/bin/time`'s maximum. The next target is the
-Stage-6b field-vector overlap, especially short-lived transposes and
-first-bind field expansions that scale with `T`. After that, audit the opening
-hint. Releasing the setup matrix remains rejected under the current
+Stage-6b field-vector overlap through allocation ownership or scheduling;
+another generic indexed RA round is now rejected. After that, audit the
+opening hint. Releasing the setup matrix remains rejected under the current
 implementation because its late reconstruction regresses both opening and
 verifier performance.
 
