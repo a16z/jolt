@@ -309,6 +309,7 @@ fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
     Some(parallel::TwoPassConfig {
         workers,
         chunk_rows,
+        ..Default::default()
     })
 }
 
@@ -1157,18 +1158,28 @@ mod tests {
         };
         let (serial_rows, _) = serial_reference(&elf, &memory_config);
 
-        for (workers, chunk_rows) in [(1usize, 64usize), (4, 64), (4, 128), (4, 1 << 21)] {
+        // capacity_rows=100 forces the overflow fallback path on muldiv's
+        // 473 rows (windowed prefix, then copy-assembled suffix).
+        for (workers, chunk_rows, capacity_rows) in [
+            (1usize, 64usize, 1usize << 24),
+            (4, 64, 1 << 24),
+            (4, 128, 1 << 24),
+            (4, 1 << 21, 1 << 24),
+            (4, 64, 100),
+            (4, 64, 1),
+        ] {
             let emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
             let (rows, finished) = run_two_pass(
                 emulator,
                 &TwoPassConfig {
                     workers,
                     chunk_rows,
+                    capacity_rows,
                 },
             );
             assert_eq!(
                 rows, serial_rows,
-                "two-pass rows differ (workers={workers}, chunk_rows={chunk_rows})"
+                "two-pass rows differ (workers={workers}, chunk_rows={chunk_rows}, capacity_rows={capacity_rows})"
             );
             assert_eq!(finished.get_cpu().trace_len, serial_rows.len());
         }

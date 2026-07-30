@@ -23,6 +23,10 @@ pub struct MemoryData {
     backing: MemoryBacking,
     /// The number of doublewords that can be stored in this memory.
     num_doublewords: usize,
+    /// One past the highest doubleword index ever accessed through
+    /// `access_u64` on a flat backing. Everything at or beyond this index is
+    /// still zero, so memory snapshots only need to copy the prefix below it.
+    high_water: usize,
     /// Checkpoint memory. If this is `Some`, the initial values of all memory accesses will be
     /// stored.
     checkpoint: Option<HashMap<usize, u64>>,
@@ -40,6 +44,7 @@ impl MemoryData {
         Self {
             backing: MemoryBacking::Flat(Vec::new()),
             num_doublewords: 0,
+            high_water: 0,
             checkpoint: None,
         }
     }
@@ -48,6 +53,7 @@ impl MemoryData {
     fn init_with_capacity(&mut self, capacity: u64) {
         self.num_doublewords = capacity.div_ceil(8) as usize;
         self.backing = MemoryBacking::Flat(vec![0; self.num_doublewords]);
+        self.high_water = 0;
     }
 
     /// Get the number of entries in the doubleword-aligned memory storage backend.
@@ -65,6 +71,9 @@ impl MemoryData {
             MemoryBacking::Flat(dwords) => {
                 if index >= dwords.len() {
                     out_of_bounds(index, dwords.len());
+                }
+                if index >= self.high_water {
+                    self.high_water = index + 1;
                 }
                 // We store only the initial value of each index accessed (read or written) over
                 // the course of a chunk. If the access is a read, the value is the value read. If
@@ -121,6 +130,7 @@ impl MemoryData {
         Self {
             backing: MemoryBacking::Sparse(memory),
             num_doublewords: self.num_doublewords,
+            high_water: self.num_doublewords,
             checkpoint: None,
         }
     }
@@ -129,15 +139,12 @@ impl MemoryData {
         self.checkpoint.is_some()
     }
 
-    /// Copy the flat backing into `dst` as a full image (len-exact memcpy).
-    /// Panics if the backing is sparse — checkpoint-replay memories are not
-    /// snapshot sources.
-    pub(crate) fn clone_flat_into(&self, dst: &mut Vec<u64>) {
+    /// The flat backing and its touched prefix length (everything at or past
+    /// the prefix is zero). Panics if the backing is sparse —
+    /// checkpoint-replay memories are not snapshot sources.
+    pub(crate) fn flat_parts(&self) -> (&[u64], usize) {
         match &self.backing {
-            MemoryBacking::Flat(dwords) => {
-                dst.clear();
-                dst.extend_from_slice(dwords);
-            }
+            MemoryBacking::Flat(dwords) => (dwords, self.high_water.min(dwords.len())),
             MemoryBacking::Sparse(_) => {
                 panic!("cannot snapshot sparse (checkpoint-replay) memory")
             }
@@ -149,6 +156,9 @@ impl MemoryData {
     /// buffer pooling. Panics if the previous backing was sparse.
     pub(crate) fn replace_flat(&mut self, image: Vec<u64>) -> Vec<u64> {
         self.num_doublewords = image.len();
+        // Conservative: replay memories are never snapshot sources, so the
+        // exact touched prefix is not tracked for them.
+        self.high_water = image.len();
         match std::mem::replace(&mut self.backing, MemoryBacking::Flat(image)) {
             MemoryBacking::Flat(old) => old,
             MemoryBacking::Sparse(_) => {
@@ -441,10 +451,12 @@ impl Memory {
             data: MemoryData {
                 backing: std::mem::replace(&mut self.data.backing, MemoryBacking::Flat(Vec::new())),
                 num_doublewords: self.data.num_doublewords,
+                high_water: self.data.high_water,
                 checkpoint: None,
             },
         };
         self.data.num_doublewords = 0;
+        self.data.high_water = 0;
         taken
     }
 }
