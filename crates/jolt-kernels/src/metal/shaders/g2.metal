@@ -188,16 +188,23 @@ inline void g2_store_jac(device uint* dst, G2Jac p) {
 }
 
 // out[i] = s·P[i] + Q[i], one scalar shared by the whole vector — the G2
-// twin of jk_g1_scalar_mul_add (see g1.metal for the ladder rationale).
+// twin of jk_g1_scalar_mul_add, accelerated by the 4-GLV ψ-decomposition:
+// the host splits s = Σ_k ±s_k·λ^k (|s_k| ≲ 2^64) and expands P into four
+// ψ^k-transformed, sign-folded affine base vectors (block k at k·n), so
+// the ladder sweeps only max_bits(s_k) ≈ 64 iterations — 4× fewer
+// doublings than a 254-bit ladder, the dominant term of the per-lane
+// latency floor. Bit branches stay warp-uniform (subscalars are shared by
+// every lane); the identity sentinel survives ψ (it scales coordinates),
+// so dead bases still contribute nothing.
 struct G2MulAddParams {
     uint n;
-    uint start_bit;               // highest set bit of the scalar (0 if s = 0)
-    uint scalar[FR_LIMBS];        // CANONICAL (integer) LE limbs
+    uint start_bit;               // highest set bit across the subscalars
+    uint coeffs[4u * FR_LIMBS];   // CANONICAL LE limbs of |s_0|‖|s_1|‖|s_2|‖|s_3|
 };
 
 kernel void jk_g2_scalar_mul_add(
-    device const uint* ps [[buffer(0)]],   // affine, stride JK_G2_AFFINE_STRIDE
-    device const uint* qs [[buffer(1)]],   // affine, stride JK_G2_AFFINE_STRIDE
+    device const uint* ps [[buffer(0)]],   // 4n affine bases, ψ^k block k at k·n
+    device const uint* qs [[buffer(1)]],   // n affine addends
     device uint* out [[buffer(2)]],        // n Jacobian results (6·FR_LIMBS u32s)
     constant G2MulAddParams& p [[buffer(3)]],
     uint tid [[thread_position_in_grid]])
@@ -205,13 +212,15 @@ kernel void jk_g2_scalar_mul_add(
     if (tid >= p.n) {
         return;
     }
-    G2AffinePt base = g2_load_base(ps, tid);
     G2Jac acc = g2_identity();
-    if (!(fq2_is_zero(base.x) && fq2_is_zero(base.y))) {
-        for (int bit = (int)p.start_bit; bit >= 0; bit--) {
-            acc = g2_dbl(acc);
-            if ((p.scalar[(uint)bit >> 5] >> ((uint)bit & 31u)) & 1u) {
-                acc = g2_madd(acc, base);
+    for (int bit = (int)p.start_bit; bit >= 0; bit--) {
+        acc = g2_dbl(acc);
+        for (uint k = 0; k < 4u; k++) {
+            if ((p.coeffs[k * FR_LIMBS + ((uint)bit >> 5)] >> ((uint)bit & 31u)) & 1u) {
+                G2AffinePt base = g2_load_base(ps, k * p.n + tid);
+                if (!(fq2_is_zero(base.x) && fq2_is_zero(base.y))) {
+                    acc = g2_madd(acc, base);
+                }
             }
         }
     }

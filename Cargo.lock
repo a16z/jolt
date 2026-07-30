@@ -3485,6 +3485,7 @@ dependencies = [
  "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
+ "jolt-optimizations",
  "jolt-poly",
  "jolt-program",
  "jolt-r1cs",

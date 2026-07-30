@@ -145,8 +145,54 @@ fn g2_affine_sentinels(points: &[G2Projective]) -> Vec<G2Affine> {
         .collect()
 }
 
-/// One `jk_g2_scalar_mul_add` dispatch: `out[i] = scalar·ps[i] + qs[i]`.
-/// Synchronous; both vectors must have equal length.
+/// Canonical LE u32 limbs of one 4-GLV subscalar.
+fn bigint_limbs(big: &ark_ff::BigInt<4>) -> [u32; FR_U32_LIMBS] {
+    let mut limbs = [0u32; FR_U32_LIMBS];
+    for (word_index, word) in big.0.iter().enumerate() {
+        limbs[2 * word_index] = *word as u32;
+        limbs[2 * word_index + 1] = (*word >> 32) as u32;
+    }
+    limbs
+}
+
+/// The four ψ^k-transformed, sign-folded affine base blocks for the GLV
+/// ladder, block-major (`[k·n + i]`). ψ on affine points is conjugation
+/// plus one Fq2 coefficient multiplication per coordinate — no inversions
+/// — and maps the `(0, 0)` identity sentinel to itself.
+fn g2_psi_blocks(ps_affine: &[G2Affine], signs: &[bool; 4]) -> Vec<G2Affine> {
+    let coeffs = jolt_optimizations::constants::get_frobenius_coefficients();
+    let psi_xy: [(ArkFq2, ArkFq2); 3] = [
+        (coeffs.psi1_coef2, coeffs.psi1_coef3),
+        (coeffs.psi2_coef2, coeffs.psi2_coef3),
+        (coeffs.psi3_coef2, coeffs.psi3_coef3),
+    ];
+    let n = ps_affine.len();
+    let mut blocks = Vec::with_capacity(4 * n);
+    for (k, block_sign) in signs.iter().enumerate() {
+        for a in ps_affine {
+            let (mut x, mut y) = (a.x, a.y);
+            if k > 0 {
+                if k & 1 == 1 {
+                    let _ = x.conjugate_in_place();
+                    let _ = y.conjugate_in_place();
+                }
+                let (cx, cy) = psi_xy[k - 1];
+                x *= cx;
+                y *= cy;
+            }
+            if *block_sign {
+                y = -y;
+            }
+            blocks.push(G2Affine::new_unchecked(x, y));
+        }
+    }
+    blocks
+}
+
+/// One `jk_g2_scalar_mul_add` dispatch: `out[i] = scalar·ps[i] + qs[i]`,
+/// via the 4-GLV ψ-decomposition (`s = Σ ±s_k·λ^k`, ~64-bit subscalars —
+/// a 4× shorter ladder than the scalar's 254 bits). Synchronous; both
+/// vectors must have equal length.
 pub fn g2_scalar_mul_add_device(
     ctx: &MetalContext,
     ps: &[G2Projective],
@@ -158,22 +204,31 @@ pub fn g2_scalar_mul_add_device(
     if n == 0 {
         return Ok(vec![]);
     }
-    let (scalar_limbs, start_bit) = scalar_limbs_and_start_bit(scalar);
+    let (coeffs, signs) = jolt_optimizations::decomp_4d::decompose_scalar_4d(*scalar);
+    let start_bit = coeffs
+        .iter()
+        .map(ark_ff::BigInteger::num_bits)
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(1);
 
-    let ps_affine = g2_affine_sentinels(ps);
+    let ps_blocks = g2_psi_blocks(&g2_affine_sentinels(ps), &signs);
     let qs_affine = g2_affine_sentinels(qs);
-    let ps_buffer = ctx.wrap_slice(g2_bases_as_u32s(&ps_affine))?;
+    let ps_buffer = ctx.wrap_slice(g2_bases_as_u32s(&ps_blocks))?;
     let qs_buffer = ctx.wrap_slice(g2_bases_as_u32s(&qs_affine))?;
     let out_buffer = ctx.alloc_u32s(n * G2_JAC_U32S)?;
     testing::note_copied_buffers(
         u64::from(ps_buffer.was_copied()) + u64::from(qs_buffer.was_copied()),
     );
 
-    let mut params = [0u32; 2 + FR_U32_LIMBS];
+    let mut params = [0u32; 2 + 4 * FR_U32_LIMBS];
     params[0] = u32::try_from(n)
         .map_err(|_| MetalError::Execution("fold vector length overflows u32".to_owned()))?;
     params[1] = start_bit;
-    params[2..].copy_from_slice(&scalar_limbs);
+    for (k, coeff) in coeffs.iter().enumerate() {
+        params[2 + k * FR_U32_LIMBS..2 + (k + 1) * FR_U32_LIMBS]
+            .copy_from_slice(&bigint_limbs(coeff));
+    }
     ctx.run_once(
         KernelId::G2ScalarMulAdd,
         &params,
