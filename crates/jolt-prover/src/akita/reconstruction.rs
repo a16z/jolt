@@ -403,19 +403,35 @@ where
         let imm_byte_width = <F as FixedByteSize>::NUM_BYTES;
         let imm_place_bits = imm_byte_width.ilog2() as usize;
         let pc_place_bits = WORD_BYTES.ilog2() as usize;
-        let lookup_vars = (layout.raf_flag_idx - layout.lookup_start).ilog2() as usize;
+        // The lookup block pads the (non-power-of-two) table count up; the
+        // padded cells carry zero weight and no column mass.
+        let lookup_vars = (layout.raf_flag_idx - layout.lookup_start)
+            .next_power_of_two()
+            .ilog2() as usize;
         let selector_vars = REGISTER_ADDRESS_BITS;
         let pc_vars = BYTE_BITS + pc_place_bits;
         let imm_vars = BYTE_BITS + imm_place_bits;
         debug_assert_eq!(rounds, imm_vars.max(pc_vars));
 
         // Every leg's own variables are the LOW-order bits of the sumcheck
-        // index; the missing high coordinates are zero-pinned, so the tables
-        // place their row-folded values at the low indices and zero the rest.
+        // index. The missing high coordinates are zero-pinned through the
+        // DERIVED weight (`Π (1 − v_i)` — the verifier folds the pin into the
+        // leg's public), so the COLUMN table is constant in them: replicated
+        // across the high bits, its bound value is exactly
+        // `column(v_own ‖ r_row)` — the packed-slot claim the final opening
+        // consumes. Zero-extending the column too would square the pin and
+        // shift every claim off the committed column.
         let cells = 1usize << rounds;
         let zero_extended = |own_values: Vec<F>| -> Vec<F> {
             let mut table = vec![F::zero(); cells];
             table[..own_values.len()].copy_from_slice(&own_values);
+            table
+        };
+        let replicated = |own_values: Vec<F>| -> Vec<F> {
+            let mut table = Vec::with_capacity(cells);
+            while table.len() < cells {
+                table.extend_from_slice(&own_values);
+            }
             table
         };
 
@@ -445,13 +461,13 @@ where
                 }
                 let _ = opening_tables.insert(
                     bytecode_register_selector_opening(chunk, lane),
-                    Polynomial::new(zero_extended(own)),
+                    Polynomial::new(replicated(own)),
                 );
             }
             for (flag, circuit_flag) in CIRCUIT_FLAGS.iter().enumerate() {
                 let _ = opening_tables.insert(
                     bytecode_circuit_flag_opening(chunk, flag),
-                    Polynomial::new(zero_extended(fold_flag(&|instruction| {
+                    Polynomial::new(replicated(fold_flag(&|instruction| {
                         decode_row(instruction).circuit_flags()[*circuit_flag]
                     }))),
                 );
@@ -459,7 +475,7 @@ where
             for (flag, instruction_flag) in INSTRUCTION_FLAG_ORDER.iter().enumerate() {
                 let _ = opening_tables.insert(
                     bytecode_instruction_flag_opening(chunk, flag),
-                    Polynomial::new(zero_extended(fold_flag(&|instruction| {
+                    Polynomial::new(replicated(fold_flag(&|instruction| {
                         decode_row(instruction).instruction_flags()[*instruction_flag]
                     }))),
                 );
@@ -475,12 +491,12 @@ where
                 }
                 let _ = opening_tables.insert(
                     bytecode_lookup_selector_opening(chunk),
-                    Polynomial::new(zero_extended(own)),
+                    Polynomial::new(replicated(own)),
                 );
             }
             let _ = opening_tables.insert(
                 bytecode_raf_flag_opening(chunk),
-                Polynomial::new(zero_extended(fold_flag(&|instruction| {
+                Polynomial::new(replicated(fold_flag(&|instruction| {
                     !decode_row(instruction).circuit_flags().is_interleaved_operands()
                 }))),
             );
@@ -498,7 +514,7 @@ where
                 }
                 let _ = opening_tables.insert(
                     bytecode_unexpanded_pc_bytes_opening(chunk),
-                    Polynomial::new(zero_extended(own)),
+                    Polynomial::new(replicated(own)),
                 );
             }
             {
@@ -519,7 +535,7 @@ where
                 }
                 let _ = opening_tables.insert(
                     bytecode_imm_bytes_opening(chunk),
-                    Polynomial::new(zero_extended(own)),
+                    Polynomial::new(replicated(own)),
                 );
             }
         }

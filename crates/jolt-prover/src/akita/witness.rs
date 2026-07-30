@@ -10,7 +10,7 @@ use jolt_claims::protocols::jolt::lattice::{
 };
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_field::{Field, FixedByteSize};
-use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind, XLEN};
+use jolt_lookup_tables::{InstructionLookupTable, XLEN};
 use jolt_openings::{CommitmentScheme, OpeningsError, PrefixPacking, TransparentObjectSetup};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -59,6 +59,11 @@ impl<F: Field> SparseUnitPolynomial<F> {
             one_positions,
             _field: core::marker::PhantomData,
         }
+    }
+
+    #[must_use]
+    pub fn one_positions(&self) -> &[usize] {
+        &self.one_positions
     }
 }
 
@@ -304,7 +309,13 @@ where
             reason: "bytecode chunk count must divide bytecode length",
         });
     }
-    let log_bytecode_rows = (bytecode_len / bytecode_chunk_count).ilog2() as usize;
+    let chunk_rows = bytecode_len / bytecode_chunk_count;
+    if !chunk_rows.is_power_of_two() {
+        return Err(ProverError::InvariantViolation {
+            reason: "bytecode chunk row count must be a power of two",
+        });
+    }
+    let log_bytecode_rows = chunk_rows.ilog2() as usize;
     let image_words = program_image_words_padded(program);
     let shape = PrecommittedPackingShape {
         bytecode_chunks: bytecode_chunk_count,
@@ -500,10 +511,4 @@ pub fn assemble_precommitted_witness<F: Field>(
         }
     }
     Ok(one_positions)
-}
-
-/// The per-lane lookup-selector block size the reconstruction legs decode
-/// over (padded lookup-table count — see `BYTECODE_LANE_LAYOUT`).
-pub fn lookup_selector_values() -> usize {
-    LookupTableKind::<XLEN>::COUNT.next_power_of_two()
 }

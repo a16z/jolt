@@ -3,13 +3,10 @@
 //! `muldiv_e2e_akita_forced_k256`, `advice_e2e_akita`,
 //! `advice_e2e_akita_full_advice`, `muldiv_e2e_akita_committed_program`).
 //!
-//! Every test is `#[ignore]`d until the packed prove path is ported
-//! (`jolt_prover::akita::prove` is a stub): the bodies compile
-//! against the final pipeline shape — legacy hosts the guest compilation and
-//! the packed preprocessing artifacts (shared preprocessing, transparent
-//! OneHotTrace setup, verifier preprocessing), the modular stack traces,
-//! derives the config, generates the witness, and proves — so un-ignoring
-//! them is the port's acceptance gate.
+//! Legacy hosts the guest compilation and the packed preprocessing
+//! artifacts (shared preprocessing, transparent OneHotTrace setup, verifier
+//! preprocessing); the modular stack traces, derives the config, generates
+//! the witness, and proves.
 //!
 //! Deviations from the legacy suite: the advice tests run the purpose-built
 //! `advice-consumer-guest` (asserts `trusted + untrusted == public`) instead
@@ -185,7 +182,6 @@ mod muldiv {
     /// analog of legacy's `muldiv_e2e_akita`, including its live tampers on
     /// the fused-inc pipeline's claim wires.
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn muldiv_e2e_akita() {
         let mut program = host::Program::new("muldiv-guest");
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
@@ -309,7 +305,6 @@ mod muldiv {
     /// proof's one-hot config and bound by the digest) — the analog of
     /// legacy's `muldiv_e2e_akita_forced_k256`.
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn muldiv_e2e_akita_forced_k256() {
         let mut program = host::Program::new("muldiv-guest");
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
@@ -424,7 +419,6 @@ mod advice {
     /// of legacy's `advice_e2e_akita` (7 + 5 == 12 on the advice-consumer
     /// guest instead of the merkle leaves).
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn advice_e2e_akita() {
         let mut program = host::Program::new("advice-consumer-guest");
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
@@ -569,7 +563,6 @@ mod advice {
     /// prefix; the remaining filler bytes still enter the committed column —
     /// the analog of legacy's `advice_e2e_akita_full_advice`.
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn advice_e2e_akita_full_advice() {
         let mut program = host::Program::new("advice-consumer-guest");
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
@@ -824,7 +817,6 @@ mod committed {
     }
 
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn muldiv_e2e_akita_committed_program() {
         committed_e2e(1);
         committed_e2e(2);
