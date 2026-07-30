@@ -2,6 +2,7 @@ use allocative::Allocative;
 use ark_ff::Zero;
 use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
+use std::cmp::Ordering;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
@@ -13,7 +14,7 @@ use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
+        multilinear_polynomial::BindingOrder,
         opening_proof::{
             AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, PolynomialId,
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
@@ -30,6 +31,7 @@ use crate::{
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
     transcripts::Transcript,
+    utils::small_scalar::SmallScalar,
     zkvm::{
         instruction::{Flags, InstructionFlags},
         witness::VirtualPolynomial,
@@ -215,17 +217,130 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionInputParams<F> {
     }
 }
 
-// TODO: do 3 round compression SVO on each of the 8 multilinears, then bind directly
+const MAX_SVO_ROUNDS: usize = 3;
+
+/// For Fp128, retains small coefficients through the first three low-to-high
+/// binds and materializes the field representation at one eighth the length.
+#[derive(Allocative)]
+struct SvoPolynomial<T: SmallScalar, F: JoltField> {
+    coeffs: Vec<T>,
+    bound_coeffs: Vec<F>,
+    delayed_challenges: Vec<F::Challenge>,
+    len: usize,
+}
+
+impl<T: SmallScalar, F: JoltField> SvoPolynomial<T, F> {
+    const MATERIALIZATION_ROUND: usize = if F::NUM_BYTES == 16 {
+        MAX_SVO_ROUNDS
+    } else {
+        1
+    };
+
+    fn new(coeffs: Vec<T>) -> Self {
+        assert!(coeffs.len().is_power_of_two());
+        let len = coeffs.len();
+        Self {
+            coeffs,
+            bound_coeffs: Vec::new(),
+            delayed_challenges: Vec::with_capacity(Self::MATERIALIZATION_ROUND),
+            len,
+        }
+    }
+
+    #[cfg(all(test, feature = "akita"))]
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    fn interpolate_small(a: T, b: T, r: F::Challenge) -> F {
+        match a.cmp(&b) {
+            Ordering::Equal => a.to_field(),
+            Ordering::Less => a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into()),
+            Ordering::Greater => a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into()),
+        }
+    }
+
+    #[inline]
+    fn evaluate_delayed(coeffs: &[T], challenges: &[F::Challenge], index: usize) -> F {
+        if challenges.is_empty() {
+            return coeffs[index].to_field();
+        }
+
+        let block_len = 1 << challenges.len();
+        let block = &coeffs[index * block_len..(index + 1) * block_len];
+        let mut values = [F::zero(); 1 << MAX_SVO_ROUNDS];
+        let mut width = block_len / 2;
+        for i in 0..width {
+            values[i] = Self::interpolate_small(block[2 * i], block[2 * i + 1], challenges[0]);
+        }
+        for &challenge in &challenges[1..] {
+            for i in 0..width / 2 {
+                values[i] = values[2 * i] + (values[2 * i + 1] - values[2 * i]) * challenge;
+            }
+            width /= 2;
+        }
+        values[0]
+    }
+
+    #[inline]
+    fn get_bound_coeff(&self, index: usize) -> F {
+        if self.bound_coeffs.is_empty() {
+            Self::evaluate_delayed(&self.coeffs, &self.delayed_challenges, index)
+        } else {
+            self.bound_coeffs[index]
+        }
+    }
+
+    fn bind_parallel(&mut self, r: F::Challenge) {
+        let n = self.len / 2;
+        if self.bound_coeffs.is_empty() {
+            self.delayed_challenges.push(r);
+            self.len = n;
+            if self.delayed_challenges.len() == Self::MATERIALIZATION_ROUND || n == 1 {
+                self.bound_coeffs = (0..n)
+                    .into_par_iter()
+                    .map(|index| {
+                        Self::evaluate_delayed(&self.coeffs, &self.delayed_challenges, index)
+                    })
+                    .collect();
+                self.coeffs = Vec::new();
+                self.delayed_challenges = Vec::new();
+            }
+        } else {
+            let mut bound_coeffs = Vec::with_capacity(n);
+            (
+                bound_coeffs.spare_capacity_mut(),
+                self.bound_coeffs.par_chunks_exact(2),
+            )
+                .into_par_iter()
+                .with_min_len(512 * 32 / F::NUM_BYTES)
+                .for_each(|(bound_coeff, coeffs)| {
+                    bound_coeff.write(coeffs[0] + (coeffs[1] - coeffs[0]) * r);
+                });
+            // SAFETY: every spare-capacity element was initialized above.
+            unsafe { bound_coeffs.set_len(n) };
+            self.bound_coeffs = bound_coeffs;
+            self.len = n;
+        }
+    }
+
+    fn final_sumcheck_claim(&self) -> F {
+        assert_eq!(self.len, 1);
+        self.get_bound_coeff(0)
+    }
+}
+
 #[derive(Allocative)]
 pub struct InstructionInputSumcheckProver<F: JoltField> {
-    left_is_rs1_poly: MultilinearPolynomial<F>,
-    left_is_pc_poly: MultilinearPolynomial<F>,
-    right_is_rs2_poly: MultilinearPolynomial<F>,
-    right_is_imm_poly: MultilinearPolynomial<F>,
-    rs1_value_poly: MultilinearPolynomial<F>,
-    rs2_value_poly: MultilinearPolynomial<F>,
-    imm_poly: MultilinearPolynomial<F>,
-    unexpanded_pc_poly: MultilinearPolynomial<F>,
+    left_is_rs1_poly: SvoPolynomial<bool, F>,
+    left_is_pc_poly: SvoPolynomial<bool, F>,
+    right_is_rs2_poly: SvoPolynomial<bool, F>,
+    right_is_imm_poly: SvoPolynomial<bool, F>,
+    rs1_value_poly: SvoPolynomial<u64, F>,
+    rs2_value_poly: SvoPolynomial<u64, F>,
+    imm_poly: SvoPolynomial<i128, F>,
+    unexpanded_pc_poly: SvoPolynomial<u64, F>,
     eq_r_cycle_stage_2: GruenSplitEqPolynomial<F>,
     pub params: InstructionInputParams<F>,
 }
@@ -286,14 +401,14 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
             GruenSplitEqPolynomial::new(&params.r_cycle_stage_2.r, BindingOrder::LowToHigh);
 
         Self {
-            left_is_rs1_poly: left_is_rs1_poly.into(),
-            left_is_pc_poly: left_is_pc_poly.into(),
-            right_is_rs2_poly: right_is_rs2_poly.into(),
-            right_is_imm_poly: right_is_imm_poly.into(),
-            rs1_value_poly: rs1_value_poly.into(),
-            rs2_value_poly: rs2_value_poly.into(),
-            imm_poly: imm_poly.into(),
-            unexpanded_pc_poly: unexpanded_pc_poly.into(),
+            left_is_rs1_poly: SvoPolynomial::new(left_is_rs1_poly),
+            left_is_pc_poly: SvoPolynomial::new(left_is_pc_poly),
+            right_is_rs2_poly: SvoPolynomial::new(right_is_rs2_poly),
+            right_is_imm_poly: SvoPolynomial::new(right_is_imm_poly),
+            rs1_value_poly: SvoPolynomial::new(rs1_value_poly),
+            rs2_value_poly: SvoPolynomial::new(rs2_value_poly),
+            imm_poly: SvoPolynomial::new(imm_poly),
+            unexpanded_pc_poly: SvoPolynomial::new(unexpanded_pc_poly),
             eq_r_cycle_stage_2,
             params,
         }
@@ -400,14 +515,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             eq_r_cycle_stage_2,
             params: _,
         } = self;
-        left_is_rs1_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        left_is_pc_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        right_is_rs2_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        right_is_imm_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        rs1_value_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        rs2_value_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        imm_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-        unexpanded_pc_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
+        left_is_rs1_poly.bind_parallel(r_j);
+        left_is_pc_poly.bind_parallel(r_j);
+        right_is_rs2_poly.bind_parallel(r_j);
+        right_is_imm_poly.bind_parallel(r_j);
+        rs1_value_poly.bind_parallel(r_j);
+        rs2_value_poly.bind_parallel(r_j);
+        imm_poly.bind_parallel(r_j);
+        unexpanded_pc_poly.bind_parallel(r_j);
         eq_r_cycle_stage_2.bind(r_j);
     }
 
@@ -676,5 +791,61 @@ impl<F: JoltField> SumcheckFrontend<F> for InstructionInputSumcheckVerifier<F> {
             ],
             output_sumcheck_id: SumcheckId::InstructionInputVirtualization,
         }
+    }
+}
+
+#[cfg(all(test, feature = "akita"))]
+mod tests {
+    use super::*;
+    use crate::field::akita::AkitaFp128;
+    use crate::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding};
+
+    fn svo_matches_compact<T>(coeffs: Vec<T>)
+    where
+        T: crate::utils::small_scalar::SmallScalar,
+        MultilinearPolynomial<AkitaFp128>: From<Vec<T>>,
+    {
+        let num_vars = coeffs.len().ilog2() as usize;
+        let mut expected = MultilinearPolynomial::<AkitaFp128>::from(coeffs.clone());
+        let mut actual = SvoPolynomial::<T, AkitaFp128>::new(coeffs);
+        let challenges = [3, 5, 11, 19, 27, 41]
+            .map(<AkitaFp128 as JoltField>::from_u64)
+            .into_iter()
+            .take(num_vars);
+
+        for challenge in challenges {
+            assert_eq!(actual.len(), expected.len());
+            for index in 0..actual.len() {
+                assert_eq!(
+                    actual.get_bound_coeff(index),
+                    expected.get_bound_coeff(index)
+                );
+            }
+            actual.bind_parallel(challenge);
+            expected.bind_parallel(challenge, BindingOrder::LowToHigh);
+        }
+
+        assert_eq!(
+            actual.final_sumcheck_claim(),
+            expected.final_sumcheck_claim()
+        );
+    }
+
+    #[test]
+    fn svo_polynomial_matches_compact_bindings() {
+        svo_matches_compact(vec![false, true]);
+        svo_matches_compact(vec![2u64, 7, 1, 8]);
+        svo_matches_compact(vec![3i128, -5, 8, 13, -21, 34, 55, -89]);
+        svo_matches_compact((0..64).map(|i| i % 7 == 0).collect::<Vec<_>>());
+        svo_matches_compact(
+            (0..64)
+                .map(|i| ((i * 0x9e37) ^ (i >> 2)) as u64)
+                .collect::<Vec<_>>(),
+        );
+        svo_matches_compact(
+            (0..64)
+                .map(|i| (i as i128 - 17) * (i as i128 + 3))
+                .collect::<Vec<_>>(),
+        );
     }
 }
