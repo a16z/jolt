@@ -117,11 +117,10 @@ where
                     reason: "program-image init contribution without a committed layout",
                 },
             )?;
-            let program = preprocessing
-                .program()
-                .ok_or(ProverError::InvariantViolation {
-                    reason: "full program preprocessing is unavailable",
-                })?;
+            // The full program rides the witness plane (witness generation
+            // requires it in every mode, including committed-program runs
+            // whose PREPROCESSING retains only commitments).
+            let program = witness.program_preprocessing();
             let value = sparse_segments_mle_msb(
                 std::iter::once((
                     layout.start_index() as u128,
