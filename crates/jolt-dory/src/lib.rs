@@ -27,6 +27,7 @@
 
 mod hint_hook;
 mod routines;
+mod routines_hook;
 mod scheme;
 mod streaming;
 mod tier2;
@@ -36,6 +37,10 @@ mod types;
 mod urs_lock;
 
 pub use hint_hook::{install_combine_hints_hook, CombineHintsFn, CombineHintsHookGuard};
+pub use routines_hook::{
+    install_routine_hooks, G1ScalarMulAddFn, G2FixedBaseMulFn, G2ScalarMulAddFn, RoutineHooks,
+    RoutineHooksGuard,
+};
 pub use scheme::DoryScheme;
 pub use tier2::{one_hot_output_from_rows, DoryTier2Prep, Tier2Accumulator};
 pub use types::{
