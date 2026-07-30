@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Nine independently committed
+This pass kept K256 and the proof protocol fixed. Ten independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -19,17 +19,18 @@ prover slowdown:
 | `0be326e83` | Read instruction RA from the row-major index source | 32 B/cycle during the first three Stage-6b rounds |
 | `39bc6ce38` | Read RAM RA from the row-major index source | `2 * ram_d` B/cycle during the first three Stage-6b rounds |
 | `1f3652bc4` | Store fused-increment one-hot lanes as dense bytes | 9 B/cycle during Stages 6–7 |
+| `1355fab03` | Pack signed fused-increment deltas | 7.875 B/cycle until the first Stage-6 cycle bind |
 
-At `2^26`, the lowest measured maximum RSS is 44.244 GB with zero process
+At `2^26`, the lowest measured maximum RSS is 44.157 GB with zero process
 swaps, down from 50.49 GB after the R1CS-row policy change and 50.72 GB before
-it. The latest dense-lane run measured 44.310 GB; another phase determines
-that peak, so the 576 MiB Stage 6/7 reduction is not visible in headline RSS.
+it. Another phase determines that peak, so the 576 MiB dense-lane reduction
+and 504 MiB packed-delta reduction are not fully visible in headline RSS.
 The R1CS change has a much larger phase-local effect than the headline maximum:
 Stage 1 drops by the exact 13 GiB row allocation.
 
 The effective maximum-RSS slope between the measured `2^22` and `2^26`
-points falls from approximately 566 to 469 B/cycle. A linear extrapolation of
-the final measurements is approximately 129 GiB at `2^28`. Different phases
+points falls from approximately 566 to 465 B/cycle. A linear extrapolation of
+the final measurements is approximately 128 GiB at `2^28`. Different phases
 can become the maximum at different sizes, so this is not a capacity forecast,
 but it is sufficient to reject the idea that the current stack is ready for a
 low-swap `2^28` run.
@@ -183,6 +184,25 @@ This removes 9 B/cycle while the columns are live: 576 MiB at `2^26` and
 proof measured 53.84 seconds versus 53.48 seconds; an unchanged commitment
 span accounts for 0.260 seconds of the 0.36-second movement.
 
+### Packed fused-increment deltas
+
+The signed fused-increment stream now uses one `u64` magnitude plus one sign
+bit per cycle instead of one `i128`. This removes 7.875 B/cycle until the first
+Stage-6 cycle bind: 504 MiB at `2^26` and 1.96875 GiB at `2^28`.
+
+A naive first bind using two field-by-`u64` multiplies regressed 5.0% in the
+microbenchmark and was rejected. The accepted word-aligned kernel reconstructs
+signed pairs and preserves the existing one-multiply interpolation. It
+measured 442.09 µs per `2^20` inputs versus 523.94 µs for the generic current
+path.
+
+At `2^26`, the proof measured 53.35 seconds and 44.157 GB maximum RSS with
+zero swaps. The Stage 6a+6b+7 aggregate was 6.697 seconds versus 6.642 seconds
+for the control (+0.83%), while the directly changed or adjacent instrumented
+spans improved by 37.6 ms in aggregate. The whole-proof improvement is not
+claimed because the unchanged commitment span moved more than the headline.
+The result is accepted as a performance-neutral 504 MiB phase-local cut.
+
 ### Rejected: dense bytecode RA
 
 The bytecode transpose was changed from `Option<u8>` to `u8` while preserving
@@ -242,6 +262,9 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Row-major RAM RA | `mem-ra-ram-2e22.json`, `mem-ra-ram-2e22-b.json`, `mem-ra-ram-2e26.json` |
 | Dense fused-increment lanes | `mem-dense-inc-2e22.json`, `mem-dense-inc-2e22-b.json`, `mem-dense-inc-2e26.json` |
 | Dense bytecode RA rejection | `mem-dense-bytecode-2e22.json`, `mem-dense-bytecode-2e22-b.json`, `mem-dense-bytecode-2e26.json`, `mem-dense-bytecode-2e26-b.json` |
+| Packed fused deltas, accepted | `mem-packed-delta-2e22-c.json`, `mem-packed-delta-2e22-d.json`, `mem-packed-delta-2e26-b.json` |
+| Packed fused deltas, untuned | `mem-packed-delta-2e22.json`, `mem-packed-delta-2e22-b.json`, `mem-packed-delta-2e26.json` |
+| Packed fused deltas, K16 side data | `mem-packed-delta-k16-2e22.json`, `mem-packed-delta-k16-2e22-b.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -270,17 +293,9 @@ operand presence, and canonical padding against the former `Cycle` path.
 
 ## Next memory targets
 
-The next targets are ordered by retained bytes and likelihood of remaining
-performance-neutral:
-
-1. **Compact signed deltas in Stage 6.** A magnitude vector plus sign bitset
-   can reduce the 16-byte `i128` stream to about 8.125 B/cycle, saving roughly
-   2 GiB at `2^28`. The representation must preserve the bytecode read-RAF
-   conversion and the first bind of the fused-increment MLE without adding a
-   hot-loop regression.
-2. **Audit field-vector and setup lifetimes at the Stage 3/4 and opening
-   peaks.** The remaining structural cuts do not by themselves reach
-   the 95 GiB objective under the current slope, so phase-local `Fp128`
-   vectors and setup matrices must be counted and streamed/reused.
+The next target is an audit of field-vector and setup lifetimes at the
+Stage 3/4 and opening peaks. The remaining structural cuts do not by
+themselves reach the 95 GiB objective under the current slope, so phase-local
+`Fp128` vectors and setup matrices must be counted and streamed or reused.
 
 K16 is not part of this campaign. K256 remains the fixed performance choice.
