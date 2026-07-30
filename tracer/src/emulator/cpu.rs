@@ -643,8 +643,10 @@ impl Cpu {
 
         match trace {
             None => {
+                // Rows are counted inside the walk (`RISCVTrace::trace` with
+                // no sink bumps trace_len once per suppressed row), keeping
+                // trace_len row-uniform across modes.
                 instr.execute(self);
-                self.trace_len += 1;
             }
             Some(trace_vec) => {
                 let rows_before = trace_vec.len();

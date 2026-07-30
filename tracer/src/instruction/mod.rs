@@ -436,8 +436,13 @@ where
         self.execute(cpu, &mut cycle.ram_access);
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
-        if let Some(trace_vec) = trace {
-            trace_vec.push(cycle.into());
+        match trace {
+            Some(trace_vec) => trace_vec.push(cycle.into()),
+            // This is the single point every emitted row passes through, so
+            // counting row-suppressed executions here makes `trace_len`
+            // row-uniform across trace and execute modes (two-pass parallel
+            // tracing cuts chunks by row count during the execute pass).
+            None => cpu.trace_len += 1,
         }
     }
 }

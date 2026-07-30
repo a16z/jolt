@@ -124,10 +124,22 @@ impl ChunkWorker {
     /// progress; outputs and panic are patched per chunk.
     pub fn new(emulator: &Emulator) -> Self {
         let src = emulator.get_cpu();
+        Self::from_seed(
+            src.mmu.jolt_device.clone(),
+            src.mmu.decode_cache.snapshot_with_empty_entries(),
+        )
+    }
+
+    /// Like [`ChunkWorker::new`], but from pre-cloned static parts — the
+    /// pipeline takes the seed before pass-1 starts mutating the emulator
+    /// and each worker thread builds its own CPU from it.
+    pub fn from_seed(
+        jolt_device: Option<common::jolt_device::JoltDevice>,
+        decode_template: DecodeCache,
+    ) -> Self {
         let mut cpu = Cpu::new(Box::new(DummyTerminal {}));
         cpu.set_host_io(HostIo::Replay);
-        cpu.mmu.jolt_device = src.mmu.jolt_device.clone();
-        let decode_template = src.mmu.decode_cache.snapshot_with_empty_entries();
+        cpu.mmu.jolt_device = jolt_device;
         cpu.mmu.decode_cache = decode_template.clone();
         ChunkWorker {
             cpu,
@@ -212,6 +224,12 @@ impl PassOne {
         self.done
     }
 
+    /// Trace rows produced so far (`trace_len` is row-uniform across modes:
+    /// the execute path counts each suppressed row).
+    pub fn rows(&self) -> usize {
+        self.emulator.get_cpu().trace_len
+    }
+
     /// Capture a chunk checkpoint at the current tick boundary.
     pub fn checkpoint(&self) -> ChunkCheckpoint {
         ChunkCheckpoint::capture(&self.emulator, self.prev_pc)
@@ -224,4 +242,149 @@ impl PassOne {
     pub fn into_emulator(self) -> Emulator {
         self.emulator
     }
+}
+
+/// Default chunk size in rows (~2M): large enough that snapshot memcpy and
+/// dispatch stay ≪ chunk replay time, small enough that the final worker
+/// wave doesn't dominate the wall clock.
+pub const DEFAULT_CHUNK_ROWS: usize = 1 << 21;
+
+#[derive(Clone, Copy, Debug)]
+pub struct TwoPassConfig {
+    pub workers: usize,
+    /// Chunks close at the first tick boundary at or past this many rows.
+    pub chunk_rows: usize,
+}
+
+struct ChunkJob {
+    index: usize,
+    checkpoint: ChunkCheckpoint,
+    image: Vec<u64>,
+    ticks: usize,
+    rows: usize,
+}
+
+/// Two-pass parallel trace: pass-1 executes on the calling thread, cutting
+/// row-bounded chunks into a bounded job queue; `workers` threads re-trace
+/// chunks concurrently; rows are assembled in chunk order afterwards.
+///
+/// Returns the assembled trace (bit-identical to what `Cpu::tick(Some(..))`
+/// over the whole program produces) and the finished pass-1 emulator, which
+/// is the authoritative source for final memory, device and advice state.
+///
+/// In-flight memory is bounded by the job-queue depth: at most
+/// `2*workers (queued) + workers (executing) + 1 (capturing)` full images.
+#[expect(clippy::expect_used)]
+pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, Emulator) {
+    use std::sync::mpsc;
+    use std::sync::Mutex;
+
+    let workers = config.workers.max(1);
+    let chunk_rows = config.chunk_rows.max(1);
+
+    // Static worker seed, taken before pass-1 starts mutating the emulator.
+    let seed_device = emulator.get_cpu().mmu.jolt_device.clone();
+    let seed_decode = emulator
+        .get_cpu()
+        .mmu
+        .decode_cache
+        .snapshot_with_empty_entries();
+
+    let (job_tx, job_rx) = mpsc::sync_channel::<ChunkJob>(2 * workers);
+    let job_rx = Mutex::new(job_rx);
+    let (buf_tx, buf_rx) = mpsc::channel::<Vec<u64>>();
+    let (out_tx, out_rx) = mpsc::channel::<(usize, Vec<Cycle>)>();
+
+    let mut pass1 = PassOne::new(emulator);
+    let mut chunk_count = 0usize;
+
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let job_rx = &job_rx;
+            let buf_tx = buf_tx.clone();
+            let out_tx = out_tx.clone();
+            let seed_device = seed_device.clone();
+            let seed_decode = seed_decode.clone();
+            scope.spawn(move || {
+                let mut worker = ChunkWorker::from_seed(seed_device, seed_decode);
+                loop {
+                    // Hold the lock only for the dequeue; idle workers block
+                    // here, which is fine — there is no work for them anyway.
+                    let job = {
+                        let receiver = job_rx.lock().expect("job queue lock poisoned");
+                        receiver.recv()
+                    };
+                    let Ok(job) = job else { break };
+                    let previous = worker.install_chunk(&job.checkpoint, job.image);
+                    // First install returns the (empty) construction-time
+                    // backing; recycling it is harmless.
+                    let _ = buf_tx.send(previous);
+                    let mut rows: Vec<Cycle> = Vec::with_capacity(job.rows);
+                    worker.run_ticks(job.ticks, &mut rows);
+                    assert_eq!(
+                        rows.len(),
+                        job.rows,
+                        "chunk {}: replay emitted a different row count than pass-1",
+                        job.index
+                    );
+                    out_tx.send((job.index, rows)).expect("collector hung up");
+                }
+            });
+        }
+        // Workers hold clones; the originals must drop so the collector's
+        // recv loop terminates once all workers exit.
+        drop(out_tx);
+        drop(buf_tx);
+
+        // Pass-1 on the calling thread.
+        let mut pool = SnapshotPool::new();
+        loop {
+            while let Ok(buffer) = buf_rx.try_recv() {
+                pool.put(buffer);
+            }
+            let checkpoint = pass1.checkpoint();
+            let image = pool.capture(&pass1.emulator().get_cpu().mmu.memory.memory);
+            let rows_before = pass1.rows();
+            let mut ticks = 0usize;
+            while pass1.rows() - rows_before < chunk_rows && pass1.step() {
+                ticks += 1;
+            }
+            let rows = pass1.rows() - rows_before;
+            if ticks == 0 {
+                pool.put(image);
+                break;
+            }
+            job_tx
+                .send(ChunkJob {
+                    index: chunk_count,
+                    checkpoint,
+                    image,
+                    ticks,
+                    rows,
+                })
+                .expect("worker pool hung up");
+            chunk_count += 1;
+            if pass1.is_done() {
+                break;
+            }
+        }
+        drop(job_tx);
+    });
+
+    // All workers joined; collect and assemble in chunk order.
+    let mut per_chunk: Vec<Option<Vec<Cycle>>> = (0..chunk_count).map(|_| None).collect();
+    while let Ok((index, rows)) = out_rx.recv() {
+        per_chunk[index] = Some(rows);
+    }
+    let total: usize = per_chunk
+        .iter()
+        .map(|chunk| chunk.as_ref().map_or(0, Vec::len))
+        .sum();
+    // Next-pow2 capacity so the prover's padding resize never reallocates;
+    // untouched capacity is lazily committed by the OS.
+    let mut trace: Vec<Cycle> = Vec::with_capacity(total.next_power_of_two());
+    for chunk in per_chunk {
+        trace.extend(chunk.expect("worker dropped a chunk"));
+    }
+    (trace, pass1.into_emulator())
 }

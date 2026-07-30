@@ -374,8 +374,8 @@ impl Program {
     }
 
     /// Execute the program to completion without materializing trace rows
-    /// (the emulator's execute-only path). Returns the executed source
-    /// instruction count.
+    /// (the emulator's execute-only path). Returns the trace row count (the
+    /// number of rows `trace` would have produced).
     #[tracing::instrument(skip_all, name = "Program::execute")]
     pub fn execute(
         &mut self,

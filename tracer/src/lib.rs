@@ -54,6 +54,9 @@ const TRACE_CAPACITY_RESERVE: usize = 1 << 24;
 /// * `Memory` — final guest memory state
 /// * `JoltDevice` — final I/O device state
 /// * `AdviceTape` — the populated advice tape
+///
+/// Tracing is serial by default. Setting `TRACER_PARALLEL=<workers>` opts
+/// into two-pass parallel tracing (bit-identical output); see [`parallel`].
 #[tracing::instrument(skip_all)]
 #[expect(clippy::expect_used)]
 pub fn trace(
@@ -84,19 +87,29 @@ pub fn trace(
     // the streaming-commitment prover re-executes the program from it.
     let lazy_trace_iter = LazyTraceIterator::new(CheckpointingTracer::new(emulator.clone()));
 
-    // Drive the emulator straight into the output vec, bypassing the lazy
-    // iterator's per-cycle buffer/reverse/pop round-trip. Termination matches
-    // the lazy path: stop on the first step that emits no rows (PC stall or
-    // a trap that produced no trace).
-    let mut trace: Vec<Cycle> = Vec::with_capacity(TRACE_CAPACITY_RESERVE);
-    let mut prev_pc: u64 = 0;
-    loop {
-        let rows_before = trace.len();
-        step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace));
-        if trace.len() == rows_before {
-            break;
+    let trace: Vec<Cycle> = match parallel_config_from_env() {
+        Some(config) => {
+            let (trace, finished) = parallel::run_two_pass(emulator, &config);
+            emulator = finished;
+            trace
         }
-    }
+        None => {
+            // Drive the emulator straight into the output vec, bypassing the
+            // lazy iterator's per-cycle buffer/reverse/pop round-trip.
+            // Termination matches the lazy path: stop on the first step that
+            // emits no rows (PC stall or a trap that produced no trace).
+            let mut trace: Vec<Cycle> = Vec::with_capacity(TRACE_CAPACITY_RESERVE);
+            let mut prev_pc: u64 = 0;
+            loop {
+                let rows_before = trace.len();
+                step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace));
+                if trace.len() == rows_before {
+                    break;
+                }
+            }
+            trace
+        }
+    };
 
     if emulator
         .get_cpu()
@@ -131,8 +144,8 @@ pub fn trace(
 }
 
 /// Executes a RISC-V program to completion without materializing trace rows
-/// (the emulator's execute-only path). Returns the executed instruction count
-/// (source instructions, not expanded trace rows), the final `JoltDevice`,
+/// (the emulator's execute-only path). Returns the trace row count (the
+/// number of rows [`trace`] would have produced), the final `JoltDevice`,
 /// and the populated advice tape.
 ///
 /// This is the fast first-pass seam for two-pass parallel tracing: the CPU
@@ -278,6 +291,25 @@ pub fn trace_checkpoints(
         checkpoints,
         emulator_trace_iter.lazy_tracer.get_jolt_device(),
     )
+}
+
+/// Opt-in parallel tracing: `TRACER_PARALLEL=<workers>` (unset, 0, or
+/// unparsable = serial); `JOLT_TRACER_CHUNK_ROWS` overrides the default
+/// chunk size.
+fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
+    let workers: usize = std::env::var("TRACER_PARALLEL").ok()?.parse().ok()?;
+    if workers == 0 {
+        return None;
+    }
+    let chunk_rows = std::env::var("JOLT_TRACER_CHUNK_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|&rows| rows > 0)
+        .unwrap_or(parallel::DEFAULT_CHUNK_ROWS);
+    Some(parallel::TwoPassConfig {
+        workers,
+        chunk_rows,
+    })
 }
 
 fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
@@ -959,6 +991,9 @@ mod tests {
             tick_idx += 1;
         }
         assert!(tick_idx > 0, "program did not execute");
+        // trace_len is row-uniform across modes (execute mode counts
+        // suppressed rows).
+        assert_eq!(em_trace.get_cpu().trace_len, em_exec.get_cpu().trace_len);
         assert_eq!(
             em_trace
                 .get_cpu()
@@ -1105,6 +1140,37 @@ mod tests {
                 replayed, all_rows,
                 "replayed rows differ at chunk size {chunk_ticks}"
             );
+        }
+    }
+
+    #[test]
+    /// The threaded two-pass pipeline must reproduce the serial trace
+    /// bit-exactly across chunk sizes (many tiny chunks → single-chunk
+    /// degenerate) and worker counts.
+    fn test_run_two_pass_matches_serial() {
+        use crate::parallel::{run_two_pass, TwoPassConfig};
+
+        let elf = build_muldiv_guest();
+        let memory_config = MemoryConfig {
+            program_size: Some(elf.len() as u64),
+            ..Default::default()
+        };
+        let (serial_rows, _) = serial_reference(&elf, &memory_config);
+
+        for (workers, chunk_rows) in [(1usize, 64usize), (4, 64), (4, 128), (4, 1 << 21)] {
+            let emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+            let (rows, finished) = run_two_pass(
+                emulator,
+                &TwoPassConfig {
+                    workers,
+                    chunk_rows,
+                },
+            );
+            assert_eq!(
+                rows, serial_rows,
+                "two-pass rows differ (workers={workers}, chunk_rows={chunk_rows})"
+            );
+            assert_eq!(finished.get_cpu().trace_len, serial_rows.len());
         }
     }
 
