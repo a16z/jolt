@@ -50,6 +50,42 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
     fn index(&self, i: usize, j: usize) -> Option<usize>;
 }
 
+/// A device tier for the round-message mass of a lazy-RA consumer: the
+/// summand is baked into the driver instance at construction (each consumer
+/// kernel installs a driver that emits ITS lane layout — see the consumers'
+/// `device_lanes` call sites for the contracts). Every method is effect-free
+/// on `None`/`false` so the CPU paths can always run the same round from
+/// unchanged state; the dense fused round writes only its ping-pong target
+/// and partials, never the live table.
+pub(crate) trait LazyRaDevice<F: Field>: Send + Sync {
+    /// Lazy-phase message lanes against the CURRENT branch tables
+    /// (offset-major, per-poly `width · 2^w` entries) and gruen levels.
+    fn lazy_lanes(
+        &mut self,
+        tables: &[Vec<F>],
+        width: usize,
+        e_in: &[F],
+        e_out: &[F],
+    ) -> Option<Vec<F>>;
+
+    /// The third bind's materialization: gather every polynomial dense at
+    /// `cycles / 8` into device-resident round state (from the DOUBLED
+    /// width-8 branch tables). `true` = adopted; the driver owns the dense
+    /// tables until [`take_dense`](Self::take_dense).
+    fn adopt_dense(&mut self, tables: &[Vec<F>]) -> bool;
+
+    /// One fused dense round: fold `bind` (when present) low-to-high, then
+    /// the message lanes against the CURRENT (post-bind) gruen levels.
+    /// `None` steps aside pre-round — the live tables are still the
+    /// pre-`bind` state.
+    fn dense_round(&mut self, bind: Option<F>, e_in: &[F], e_out: &[F]) -> Option<Vec<F>>;
+
+    /// Hand the live dense tables back at their current length. Infallible
+    /// for an adopted driver: the buffers are host-visible whatever the
+    /// device's health.
+    fn take_dense(&mut self) -> Vec<Vec<F>>;
+}
+
 /// `N` address-folded selector columns bound `LowToHigh`, lazily for the
 /// first three binds.
 pub(crate) enum LazyFoldedRa<F: Field, S> {
@@ -62,6 +98,17 @@ pub(crate) enum LazyFoldedRa<F: Field, S> {
         /// Bound-bit branch count (`2^binds`: 1, 2, or 4).
         width: usize,
         source: S,
+        /// Optional device tier; `None` keeps every phase on the CPU.
+        driver: Option<Box<dyn LazyRaDevice<F>>>,
+    },
+    /// Three or more binds with a device driver: the dense tables live in
+    /// the driver's buffers; `pending_bind` is a challenge not yet folded
+    /// (the device folds it fused with the next round, or
+    /// [`ensure_host`](Self::ensure_host) applies it on the CPU).
+    DeviceDense {
+        driver: Box<dyn LazyRaDevice<F>>,
+        pending_bind: Option<F>,
+        num_polys: usize,
     },
     /// Three or more binds: plain dense multilinears (`T/8` at entry).
     Dense(Vec<Polynomial<F>>),
@@ -70,24 +117,38 @@ pub(crate) enum LazyFoldedRa<F: Field, S> {
 impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     /// One scale table per selector polynomial, in polynomial order.
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
+        Self::new_with_driver(tables, source, None)
+    }
+
+    /// As [`new`](Self::new) with a device tier installed.
+    pub(crate) fn new_with_driver(
+        tables: Vec<Vec<F>>,
+        source: S,
+        driver: Option<Box<dyn LazyRaDevice<F>>>,
+    ) -> Self {
         debug_assert_eq!(tables.len(), source.num_polys());
         Self::Lazy {
             tables,
             width: 1,
             source,
+            driver,
         }
     }
 
     pub(crate) fn num_polys(&self) -> usize {
         match self {
             Self::Lazy { tables, .. } => tables.len(),
+            Self::DeviceDense { num_polys, .. } => *num_polys,
             Self::Dense(polys) => polys.len(),
         }
     }
 
     /// The current (bound) evaluation of polynomial `i` at index `j` —
     /// exactly the value a dense representation would hold after the same
-    /// binds.
+    /// binds. Callers reach device-resident state only through
+    /// [`device_lanes`](Self::device_lanes) /
+    /// [`ensure_host`](Self::ensure_host), so the `DeviceDense` arm is
+    /// unreachable here by sequencing.
     #[inline]
     pub(crate) fn value(&self, i: usize, j: usize) -> F {
         match self {
@@ -95,7 +156,9 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 tables,
                 width,
                 source,
+                ..
             } => gather(&tables[i], *width, source, i, j),
+            Self::DeviceDense { .. } => unreachable!("device-resident tables: ensure_host first"),
             Self::Dense(polys) => polys[i].evals()[j],
         }
     }
@@ -118,6 +181,7 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 tables,
                 width,
                 source,
+                ..
             } => {
                 let width = *width;
                 for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
@@ -127,6 +191,7 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     );
                 }
             }
+            Self::DeviceDense { .. } => unreachable!("device-resident tables: ensure_host first"),
             Self::Dense(polys) => {
                 for (out, poly) in out.iter_mut().zip(polys) {
                     let evals = poly.evals();
@@ -143,14 +208,18 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// for the first two binds, materialize dense (and drop the source) at
-    /// the third, plain multilinear binds after.
+    /// for the first two binds, materialize dense at the third — into the
+    /// driver's device buffers when it adopts, on the CPU (dropping the
+    /// source) otherwise — plain multilinear binds after. A device-resident
+    /// bind is only RECORDED here; the driver folds it fused with the next
+    /// round's message (or [`ensure_host`](Self::ensure_host) applies it).
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
                 tables,
                 width,
                 source,
+                mut driver,
             } => {
                 let tables = double_branches(tables, challenge);
                 if width < 4 {
@@ -158,9 +227,35 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                         tables,
                         width: width * 2,
                         source,
+                        driver,
+                    }
+                } else if driver
+                    .as_mut()
+                    .is_some_and(|driver| driver.adopt_dense(&tables))
+                {
+                    Self::DeviceDense {
+                        num_polys: tables.len(),
+                        // The `is_some_and` above just proved it.
+                        #[expect(clippy::unwrap_used, reason = "adoption implies presence")]
+                        driver: driver.unwrap(),
+                        pending_bind: None,
                     }
                 } else {
                     Self::Dense(materialize(&tables, &source))
+                }
+            }
+            Self::DeviceDense {
+                driver,
+                pending_bind,
+                num_polys,
+            } => {
+                // Never two challenges deep: every bind is followed by a
+                // message or the terminal ensure_host.
+                debug_assert!(pending_bind.is_none());
+                Self::DeviceDense {
+                    driver,
+                    pending_bind: Some(challenge),
+                    num_polys,
                 }
             }
             Self::Dense(mut polys) => {
@@ -170,6 +265,64 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 Self::Dense(polys)
             }
         };
+    }
+
+    /// The device tier's shot at this round's message: lazy-phase lanes
+    /// against the current branch tables, or the fused dense round (folding
+    /// any pending challenge). `None` means the CPU must produce this
+    /// round's message — from state this call has already normalized
+    /// (a declined dense round hands the tables back and applies the
+    /// pending fold, so the ordinary CPU paths just work).
+    pub(crate) fn device_lanes(&mut self, e_in: &[F], e_out: &[F]) -> Option<Vec<F>> {
+        match self {
+            Self::Lazy {
+                tables,
+                width,
+                driver: Some(driver),
+                ..
+            } => driver.lazy_lanes(tables, *width, e_in, e_out),
+            Self::DeviceDense {
+                driver,
+                pending_bind,
+                ..
+            } => {
+                if let Some(lanes) = driver.dense_round(*pending_bind, e_in, e_out) {
+                    *pending_bind = None;
+                    Some(lanes)
+                } else {
+                    self.ensure_host();
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Reclaim device-resident tables into ordinary dense state, applying
+    /// any pending fold. No-op otherwise. Consumers call this before any
+    /// direct table access (`value`, `lo_hi_all`, `final_values`) that could
+    /// follow a device phase — e.g. at output claims.
+    pub(crate) fn ensure_host(&mut self) {
+        let Self::DeviceDense {
+            driver,
+            pending_bind,
+            ..
+        } = self
+        else {
+            return;
+        };
+        let pending = *pending_bind;
+        let mut polys: Vec<Polynomial<F>> = driver
+            .take_dense()
+            .into_iter()
+            .map(Polynomial::new)
+            .collect();
+        if let Some(challenge) = pending {
+            for poly in &mut polys {
+                poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+            }
+        }
+        *self = Self::Dense(polys);
     }
 }
 

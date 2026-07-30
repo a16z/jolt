@@ -61,10 +61,21 @@ pub enum KernelId {
     G1CombineRows,
     OpeningFoldDense,
     OpeningFoldOneHot,
+    IrrPhaseScan,
+    IrrSuffixScan,
+    IrrReduce,
+    IrrCycleInit,
+    IrrCycleRound,
+    SuffixProbe,
+    RaMaterialize,
+    BoolLazyRound,
+    BoolDenseRound,
+    RavLazyRound,
+    RavDenseRound,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 25] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -79,6 +90,17 @@ impl KernelId {
         Self::G1CombineRows,
         Self::OpeningFoldDense,
         Self::OpeningFoldOneHot,
+        Self::IrrPhaseScan,
+        Self::IrrSuffixScan,
+        Self::IrrReduce,
+        Self::IrrCycleInit,
+        Self::IrrCycleRound,
+        Self::SuffixProbe,
+        Self::RaMaterialize,
+        Self::BoolLazyRound,
+        Self::BoolDenseRound,
+        Self::RavLazyRound,
+        Self::RavDenseRound,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -97,6 +119,17 @@ impl KernelId {
             Self::G1CombineRows => "jk_g1_combine_rows",
             Self::OpeningFoldDense => "jk_opening_fold_dense",
             Self::OpeningFoldOneHot => "jk_opening_fold_onehot",
+            Self::IrrPhaseScan => "jk_irr_phase_scan",
+            Self::IrrSuffixScan => "jk_irr_suffix_scan",
+            Self::IrrReduce => "jk_irr_reduce",
+            Self::IrrCycleInit => "jk_irr_cycle_init",
+            Self::IrrCycleRound => "jk_irr_cycle_round",
+            Self::SuffixProbe => "jk_suffix_probe",
+            Self::RaMaterialize => "jk_ra_materialize",
+            Self::BoolLazyRound => "jk_bool_lazy_round",
+            Self::BoolDenseRound => "jk_bool_dense_round",
+            Self::RavLazyRound => "jk_rav_lazy_round",
+            Self::RavDenseRound => "jk_rav_dense_round",
         }
     }
 
@@ -131,11 +164,13 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}",
             field::constants_preamble(),
             include_str!("shaders/fr.metal"),
             include_str!("shaders/kernels.metal"),
             include_str!("shaders/g1.metal"),
+            include_str!("shaders/instruction.metal"),
+            include_str!("shaders/ra_lazy.metal"),
         );
         let library = device
             .newLibraryWithSource_options_error(&NSString::from_str(&source), None)

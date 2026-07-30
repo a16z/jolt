@@ -33,19 +33,23 @@
 
 mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
+mod instruction_read_raf;
 mod joint_opening;
+mod ra_lazy;
 mod ram_hamming_booleanity;
 mod ram_raf_evaluation;
 
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
+pub use instruction_read_raf::MetalInstructionReadRaf;
 pub use joint_opening::MetalJointOpening;
+pub use ra_lazy::{MetalBooleanityCycle, MetalInstructionRaVirtualization};
 pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 pub use ram_raf_evaluation::MetalRamRafEvaluation;
 
 use jolt_field::{Fr, FromPrimitiveInt};
 
-use super::buffers::{OwnedDeviceBuffer, PageAlignedVec};
+use super::buffers::{OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE};
 use super::error::MetalError;
 use super::field::fr_to_u32_limbs;
 use super::runtime::{MetalContext, THREADGROUP_SIZE};
@@ -154,6 +158,41 @@ impl Partials {
 
 pub(super) fn num_threadgroups(threads: usize) -> usize {
     threads.div_ceil(THREADGROUP_SIZE).max(1)
+}
+
+/// An uninitialized device-owned field-element buffer, or `None` when the
+/// allocation would not wrap no-copy (see the SAFETY-adjacent contract on
+/// [`uninit_frs`] — a copy would read the uninitialized memory).
+pub(super) fn own_uninit_frs(
+    context: &'static MetalContext,
+    len: usize,
+) -> Result<Option<OwnedDeviceBuffer<Fr>>, MetalError> {
+    let vec = uninit_frs(len);
+    let len_bytes = std::mem::size_of_val(vec.as_slice());
+    let aligned = (vec.as_ptr() as usize).is_multiple_of(PAGE_SIZE);
+    let page_granular = len_bytes.is_multiple_of(PAGE_SIZE) || len_bytes >= MALLOC_LARGE_THRESHOLD;
+    if len_bytes == 0 || !aligned || !page_granular {
+        return Ok(None);
+    }
+    let buffer = context.own_vec(vec)?;
+    debug_assert!(!buffer.was_copied());
+    Ok(Some(buffer))
+}
+
+/// An uninitialized field-element buffer for device fills.
+///
+/// SAFETY-adjacent contract: callers must guarantee every element the host
+/// (or a later device pass) reads was device-written first. `Fr` is plain
+/// limb data — no drop glue, no invalid representations.
+#[expect(clippy::uninit_vec, reason = "device-filled before any read")]
+pub(super) fn uninit_frs(len: usize) -> Vec<Fr> {
+    let mut buffer = Vec::with_capacity(len);
+    // SAFETY: capacity == len, and per the contract above the contents are
+    // fully overwritten by the device before being read.
+    unsafe {
+        buffer.set_len(len);
+    }
+    buffer
 }
 
 /// `[groups, do_bind, num_tgs, r]` — the shared `SlotRoundParams` head of

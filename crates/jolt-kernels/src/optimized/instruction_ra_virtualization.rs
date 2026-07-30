@@ -54,7 +54,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
 use super::support::accumulate_product;
 use crate::reference::views::eq_table;
 use crate::{
@@ -157,6 +157,42 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
+        Self::new_with_driver(
+            log_t,
+            num_virtual,
+            num_committed_per_virtual,
+            instruction_address,
+            instruction_read_raf_cycle,
+            committed_chunk_bits,
+            rows,
+            gamma,
+            None,
+        )
+    }
+
+    /// As [`new`](Self::new) with a [`LazyRaDevice`] tier installed on the
+    /// folded tables. Lane contract: the driver emits the product grid
+    /// `[q(1), …, q(n−1), q(∞)]` this kernel's
+    /// [`gruen_poly_from_evals`](GruenSplitEqPolynomial::gruen_poly_from_evals)
+    /// recipe consumes — installers must keep `n ≥ 2` (the single-factor
+    /// geometry samples a different grid).
+    #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
+    pub(crate) fn new_with_driver(
+        log_t: usize,
+        num_virtual: usize,
+        num_committed_per_virtual: usize,
+        instruction_address: &[F],
+        instruction_read_raf_cycle: &[F],
+        committed_chunk_bits: usize,
+        rows: Arc<Vec<InstructionCycleRow>>,
+        gamma: F,
+        driver: Option<Box<dyn LazyRaDevice<F>>>,
+    ) -> Result<Self, KernelError<F>> {
+        if driver.is_some() && num_committed_per_virtual < 2 {
+            return Err(KernelError::Unsupported {
+                reason: "device RA virtualization requires the product-grid geometry",
+            });
+        }
         let num_committed = num_virtual * num_committed_per_virtual;
         let chunks = committed_address_chunks(instruction_address, committed_chunk_bits);
         if chunks.len() != num_committed
@@ -216,13 +252,14 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             }
             table
         });
-        let folded_ra = LazyFoldedRa::new(
+        let folded_ra = LazyFoldedRa::new_with_driver(
             chunk_tables,
             LookupIndexChunks {
                 rows,
                 num_committed,
                 committed_chunk_bits,
             },
+            driver,
         );
 
         Ok(Self {
@@ -244,13 +281,22 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     /// [`GruenSplitEqPolynomial::gruen_poly_from_evals`] recomposes the
     /// unique degree-`(N+1)` coefficient vector.
     fn message(
-        &self,
+        &mut self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let n = self.num_committed_per_virtual;
         if n < 2 {
             return self.message_single_factor(round, previous_claim);
+        }
+        // Device tier first (lazy scan or fused dense round); a decline has
+        // already normalized the state for the CPU paths below.
+        if let Some(lanes) = self
+            .folded_ra
+            .device_lanes(self.gruen.e_in_current(), self.gruen.e_out_current())
+        {
+            debug_assert_eq!(lanes.len(), n);
+            return Ok(self.gruen.gruen_poly_from_evals(&lanes, previous_claim));
         }
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
@@ -421,6 +467,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
         }
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
+        self.folded_ra.ensure_host();
         let mut committed_instruction_ra = self.folded_ra.final_values();
         for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
             if index % self.num_committed_per_virtual == 0 {
