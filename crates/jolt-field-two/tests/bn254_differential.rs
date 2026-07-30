@@ -9,7 +9,9 @@
 use jolt_field as base;
 use jolt_field_two as two;
 
-use base::{Accumulator as _, CanonicalRepr, FieldCore, FromPrimitiveInt, RingCore};
+use base::{
+    Accumulator as _, CanonicalBytes, CanonicalRepr, FieldCore, FromPrimitiveInt, RingCore,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use two::{Accumulator as _, CanonicalEncoding, Field as _, Ring};
