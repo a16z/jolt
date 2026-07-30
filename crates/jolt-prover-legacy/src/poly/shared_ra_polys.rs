@@ -1017,34 +1017,20 @@ mod tests {
         zkvm::config::OneHotParams,
     };
 
-    #[test]
-    fn instruction_subset_matches_transposed_polynomials() {
-        let params = OneHotParams::new(26, 1 << 12, 1 << 16);
-        let T = 1 << 6;
-        let indices: Vec<RaIndices> = (0..T)
-            .map(|cycle| {
-                let mut row = RaIndices::default();
-                for i in 0..params.instruction_d {
-                    row.instruction[i] = ((cycle * 17 + i * 29) % params.k_chunk) as u8;
-                }
-                row
-            })
+    fn assert_subset_matches_transposed(
+        params: OneHotParams,
+        indices: Vec<RaIndices>,
+        tables: Vec<Vec<Fr>>,
+        columns: Vec<Vec<Option<u8>>>,
+        index_offset: usize,
+    ) {
+        let mut transposed: Vec<RaPolynomial<u8, Fr>> = columns
+            .into_iter()
+            .zip(&tables)
+            .map(|(column, table)| RaPolynomial::new(Arc::new(column), table.clone()))
             .collect();
-        let tables: Vec<Vec<Fr>> = (0..params.instruction_d)
-            .map(|i| {
-                (0..params.k_chunk)
-                    .map(|k| Fr::from((i * params.k_chunk + k + 1) as u64))
-                    .collect()
-            })
-            .collect();
-
-        let mut transposed: Vec<RaPolynomial<u8, Fr>> = (0..params.instruction_d)
-            .map(|i| {
-                let column = indices.iter().map(|row| Some(row.instruction[i])).collect();
-                RaPolynomial::new(Arc::new(column), tables[i].clone())
-            })
-            .collect();
-        let mut shared = SharedRaPolynomials::new_subset(tables, Arc::new(indices), params, 0);
+        let mut shared =
+            SharedRaPolynomials::new_subset(tables, Arc::new(indices), params, index_offset);
         let mut rng = test_rng();
 
         while shared.len() > 1 {
@@ -1072,5 +1058,61 @@ mod tests {
                 expected.final_sumcheck_claim()
             );
         }
+    }
+
+    #[test]
+    fn instruction_subset_matches_transposed_polynomials() {
+        let params = OneHotParams::new(26, 1 << 12, 1 << 16);
+        let T = 1 << 6;
+        let indices: Vec<RaIndices> = (0..T)
+            .map(|cycle| {
+                let mut row = RaIndices::default();
+                for i in 0..params.instruction_d {
+                    row.instruction[i] = ((cycle * 17 + i * 29) % params.k_chunk) as u8;
+                }
+                row
+            })
+            .collect();
+        let tables: Vec<Vec<Fr>> = (0..params.instruction_d)
+            .map(|i| {
+                (0..params.k_chunk)
+                    .map(|k| Fr::from((i * params.k_chunk + k + 1) as u64))
+                    .collect()
+            })
+            .collect();
+        let columns = (0..params.instruction_d)
+            .map(|i| indices.iter().map(|row| Some(row.instruction[i])).collect())
+            .collect();
+
+        assert_subset_matches_transposed(params, indices, tables, columns, 0);
+    }
+
+    #[test]
+    fn ram_subset_matches_transposed_polynomials() {
+        let params = OneHotParams::new(26, 1 << 12, 1 << 16);
+        let T = 1 << 6;
+        let indices: Vec<RaIndices> = (0..T)
+            .map(|cycle| {
+                let mut row = RaIndices::default();
+                for i in 0..params.ram_d {
+                    row.ram[i] =
+                        (cycle % 5 != 0).then_some(((cycle * 19 + i * 31) % params.k_chunk) as u8);
+                }
+                row
+            })
+            .collect();
+        let tables: Vec<Vec<Fr>> = (0..params.ram_d)
+            .map(|i| {
+                (0..params.k_chunk)
+                    .map(|k| Fr::from((i * params.k_chunk + k + 1) as u64))
+                    .collect()
+            })
+            .collect();
+        let columns = (0..params.ram_d)
+            .map(|i| indices.iter().map(|row| row.ram[i]).collect())
+            .collect();
+        let ram_offset = params.instruction_d + params.bytecode_d;
+
+        assert_subset_matches_transposed(params, indices, tables, columns, ram_offset);
     }
 }

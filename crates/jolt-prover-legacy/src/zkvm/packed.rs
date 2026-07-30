@@ -942,8 +942,11 @@ impl AkitaPackedProver<'_> {
         );
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
-        let mut ram_ra_virtual =
-            RamRaVirtualSumcheckProver::initialize(ram_ra_virtual_params, &ra_indices);
+        let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
+            ram_ra_virtual_params,
+            Arc::clone(&ra_indices),
+            self.one_hot_params.clone(),
+        );
         let mut lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, Arc::clone(&ra_indices));
         // Release the handle so the indices' lifetime stays owned by the
