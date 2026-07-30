@@ -912,7 +912,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::super::instruction_read_raf::{
-        collect_instruction_cycle_rows, SharedInstructionRows,
+        collect_instruction_cycle_rows, SharedInstructionRows, SharedInstructionRowsWeak,
     };
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
@@ -1043,8 +1043,11 @@ mod tests {
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap(),
             );
-            // The 6a prepare parks the shared rows for the 6b consumers.
-            assert!(session.state::<SharedInstructionRows>().is_some());
+            // The 6a prepare parks a shared-rows carry for the 6b consumers.
+            assert!(
+                session.state::<SharedInstructionRows>().is_some()
+                    || session.state::<SharedInstructionRowsWeak>().is_some()
+            );
         });
     }
 
@@ -1122,8 +1125,9 @@ mod tests {
                 .unwrap();
             if carried_indices {
                 assert!(
-                    session.state::<SharedInstructionRows>().is_some(),
-                    "cycle prepare must park the shared rows back for later consumers"
+                    session.state::<SharedInstructionRows>().is_some()
+                        || session.state::<SharedInstructionRowsWeak>().is_some(),
+                    "cycle prepare must park a shared-rows carry back for later consumers"
                 );
             }
 
@@ -1286,8 +1290,9 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                session.state::<SharedInstructionRows>().is_some(),
-                "cycle prepare must park the 6a-shared rows back"
+                session.state::<SharedInstructionRows>().is_some()
+                    || session.state::<SharedInstructionRowsWeak>().is_some(),
+                "cycle prepare must park a shared-rows carry back"
             );
             let (mut reference, mut optimized, cycle_challenges_drawn) =
                 drive_lockstep(reference, optimized, input_claim);

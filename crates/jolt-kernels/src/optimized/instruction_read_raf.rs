@@ -191,6 +191,12 @@ pub(crate) fn collect_instruction_cycle_rows<F: Field>(
 /// carry back for the later stages.
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
 
+/// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
+/// so same-stage co-consumers share one collection but the 48 B × T rows
+/// never outlive their stage — later stages re-derive them index-parallel
+/// instead of carrying them across the prover's peak window.
+pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
+
 /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
 /// impossible to consume) or collect them fresh, and park the carry back
 /// for later consumers.
@@ -199,9 +205,32 @@ pub(crate) fn shared_instruction_rows<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<Arc<Vec<InstructionCycleRow>>, KernelError<F>> {
-    let rows = match session.take::<SharedInstructionRows>() {
-        Some(SharedInstructionRows(rows)) if rows.len() == cycles => rows,
-        _ => Arc::new(collect_instruction_cycle_rows(witness, cycles)?),
+    // A parked strong carry is always honored (re-emulating sources, and
+    // tests that inject rows a witness would not produce).
+    let carried = match session.take::<SharedInstructionRows>() {
+        Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
+        _ => None,
+    };
+    if witness.random_access().is_some() {
+        // Slice-backed: consumers share within a stage through a weak
+        // handle; once the stage's kernels drop, the rows free, and later
+        // stages re-derive them index-parallel.
+        let upgraded = || {
+            session
+                .state::<SharedInstructionRowsWeak>()
+                .and_then(|weak| weak.0.upgrade())
+                .filter(|rows| rows.len() == cycles)
+        };
+        let rows = match carried.or_else(upgraded) {
+            Some(rows) => rows,
+            None => Arc::new(collect_instruction_cycle_rows(witness, cycles)?),
+        };
+        session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+        return Ok(rows);
+    }
+    let rows = match carried {
+        Some(rows) => rows,
+        None => Arc::new(collect_instruction_cycle_rows(witness, cycles)?),
     };
     session.park(SharedInstructionRows(Arc::clone(&rows)));
     Ok(rows)

@@ -485,7 +485,9 @@ mod tests {
     use crate::reference::views::{address_fold, eq_table};
     use crate::{NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-    use super::super::instruction_read_raf::{InstructionCycleRow, SharedInstructionRows};
+    use super::super::instruction_read_raf::{
+        InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
+    };
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
@@ -665,8 +667,9 @@ mod tests {
                         )
                         .unwrap();
                     assert!(
-                        session.state::<SharedInstructionRows>().is_some(),
-                        "prepare must park the shared rows back for later consumers"
+                        session.state::<SharedInstructionRows>().is_some()
+                            || session.state::<SharedInstructionRowsWeak>().is_some(),
+                        "prepare must park a shared-rows carry back for later consumers"
                     );
                     kernel
                 })
