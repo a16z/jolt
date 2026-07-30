@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Eleven independently committed
+This pass kept K256 and the proof protocol fixed. Twelve independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -21,20 +21,24 @@ prover slowdown:
 | `1f3652bc4` | Store fused-increment one-hot lanes as dense bytes | 9 B/cycle during Stages 6–7 |
 | `1355fab03` | Pack signed fused-increment deltas | 7.875 B/cycle until the first Stage-6 cycle bind |
 | `2d08372ec` | Delay Fp128 expansion of instruction-input columns | 3 GiB of Stage-3 field state at `2^26` |
+| `7afb90166` | Release compact trace rows after Stage 7 | 64 B/cycle before reconstruction/opening |
 
-At `2^26`, the lowest measured maximum RSS is 40.029 GB with zero process
+At `2^26`, the lowest measured maximum RSS is 39.923 GB with zero process
 swaps, down from the 44.157 GB packed-delta control, 50.49 GB after the
 R1CS-row policy change, and 50.72 GB before it. The three-round
-instruction-input change removes 4.128 GB (-9.35%) from the process maximum
-and moves the sampled global peak from Stage 3 to packed opening. Earlier
-phase-local cuts are not always fully visible in headline RSS. The R1CS
-change, for example, drops Stage 1 by the exact 13 GiB row allocation.
+instruction-input change removes 4.128 GB (-9.35%) from the process maximum.
+Releasing the trace then removes 4.01 GiB at the end of opening and moves the
+sampled global peak to Stage 6b, although the earlier `/usr/bin/time` maximum
+moves by only 0.106 GB. Earlier phase-local cuts are not always fully visible
+in headline RSS. The R1CS change, for example, drops Stage 1 by the exact
+13 GiB row allocation.
 
 The previous 128 GiB `2^28` extrapolation predates the Stage-3 result.
 Scaling only its exact 3 GiB live-state reduction gives roughly 116 GiB;
 scaling the observed maximum-RSS reduction gives roughly 113 GiB. These are
 not capacity forecasts: different phases become maximal at different sizes,
-and opening is now the measured limiter. They are sufficient to show that the
+and Stage 6b is now the measured late limiter. The 16 GiB `2^28` trace release
+also helps only after Stage 7. These estimates are sufficient to show that the
 current stack is still above the 95 GiB low-swap objective.
 
 ## Measurements
@@ -228,6 +232,24 @@ sampled global peak is now 36.29 GiB inside packed opening. Full measurements,
 the binding-equivalence argument, and validation are in
 `stage3-svo-experiment.md`.
 
+### Release compact trace before opening
+
+The 64-byte `JoltTraceRow` vector is no longer read after Stage 7. Akita
+opening reads the independently owned packed byte-lane cache in its hint, so
+the final 4 GiB trace owner at `2^26` can be dropped without a rebuild or
+conversion.
+
+At `2^26`, proving measured 53.66 seconds versus the 53.59-second control, and
+packed opening measured 11.11 versus 11.04 seconds. The opening-end RSS sample
+fell from 23.95 to 19.94 GiB, matching the exact allocation. Opening maximum
+fell by 3.11 GiB, and the whole-proof sampled maximum fell by 2.13 GiB. The
+headline maximum moved only from 40.029 to 39.923 GB because an earlier
+Stage-3/4 transient now determines it.
+
+The same trace is 16 GiB at `2^28`, making this a material capacity cut even
+though it cannot change phases that precede Stage 7. Full ownership analysis,
+measurements, and validation are in `opening-drop-trace-experiment.md`.
+
 ### Rejected: dense bytecode RA
 
 The bytecode transpose was changed from `Option<u8>` to `u8` while preserving
@@ -292,6 +314,8 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Packed fused deltas, K16 side data | `mem-packed-delta-k16-2e22.json`, `mem-packed-delta-k16-2e22-b.json` |
 | Instruction-input three-round screens | `mem-svo3-2e22.json`, `mem-svo3-2e22-b.json` |
 | Instruction-input three-round target | `mem-svo3-2e26.json` |
+| Late trace release screen | `mem-drop-trace-2e22.json` |
+| Late trace release target | `mem-drop-trace-2e26.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -320,16 +344,15 @@ operand presence, and canonical padding against the former `Cycle` path.
 
 ## Next memory targets
 
-The next target is packed opening, which now sets the sampled `2^26` peak at
-36.29 GiB. The first low-risk experiment is to release the compact execution
-trace after Stage 7/reconstruction if no opening source owns it. At 64
-B/cycle, that owner is 4 GiB at `2^26` and 16 GiB at `2^28`; the experiment
-must confirm both that the final `Arc` is actually released and that allocator
-behavior turns the logical cut into resident-memory relief.
+Stage 6b now sets the sampled `2^26` peak at 34.16 GiB, with the earlier
+Stage-3/4 transient setting `/usr/bin/time`'s maximum. Before changing a hot
+kernel, remove the vestigial `LazyTraceIterator` snapshot retained by
+`JoltCpuProver`: neither the packed nor Dory prover reads it after proof-facing
+trace rows are built. Measure its actual resident footprint as an isolated
+candidate because it is independent of `T`.
 
-After that, audit the opening hint, setup-matrix lifetime, and Stage-6b
-field-vector overlap. Releasing the setup matrix remains rejected under the
-current implementation because its late reconstruction regresses both opening
-and verifier performance.
+Then audit Stage-6b field-vector overlap and the opening hint. Releasing the
+setup matrix remains rejected under the current implementation because its
+late reconstruction regresses both opening and verifier performance.
 
 K16 is not part of this campaign. K256 remains the fixed performance choice.
