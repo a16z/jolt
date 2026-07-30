@@ -475,6 +475,7 @@ fn commit_streaming_metal(
                         n_rows: prep_ref.prepared().len(),
                         cpu_share: miller_cpu_share,
                         failed: false,
+                        queue: MillerBatch::new(),
                     }),
                     Err(error) => {
                         tracing::warn!(%error, "miller table wrap failed; tier-2 stays on CPU");
@@ -499,6 +500,9 @@ fn commit_streaming_metal(
                 if let Some((inc_segs, inc_jac)) = &done.inc {
                     reduce_inc_superchunk(inc_segs, inc_jac, &mut inc_rows);
                 }
+            }
+            if let Some(lane) = miller_lane.as_mut() {
+                drain_miller_lane(ctx, prep_ref, lane, &mut accumulators);
             }
             (accumulators, rows, inc_rows)
         });
@@ -569,15 +573,106 @@ fn commit_streaming_metal(
     })
 }
 
+/// Queued device pairs flush when they reach this count: one superchunk's
+/// share sits well under the device's ~4k-thread saturation knee at the
+/// deeper geometries (2^23: ~2.5 k pairs/superchunk at the default split),
+/// so dispatches batch across superchunks — byte-free by the same
+/// partition invariance as the split itself. Override:
+/// `JOLT_METAL_MILLER_FLUSH_PAIRS` (tests force mid-stream flushes with
+/// it).
+const MILLER_FLUSH_PAIRS_DEFAULT: usize = 8192;
+
+fn miller_flush_pairs() -> usize {
+    std::env::var("JOLT_METAL_MILLER_FLUSH_PAIRS")
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(MILLER_FLUSH_PAIRS_DEFAULT)
+}
+
 /// The tier-2 Miller device lane's pass-scoped state: the wrapped shared
-/// coefficient table and the CPU pair share. `failed` latches on the first
-/// device error — the rest of the pass absorbs on the CPU (the recovered
-/// superchunk included), byte-identically.
+/// coefficient table, the CPU pair share, and the cross-superchunk device
+/// queue. `failed` latches on the first device error — the rest of the
+/// pass absorbs on the CPU (the recovered batch included),
+/// byte-identically.
 struct MillerLane<'b> {
     coeffs: DeviceBuffer<'b>,
     n_rows: usize,
     cpu_share: f64,
     failed: bool,
+    queue: MillerBatch,
+}
+
+/// One device dispatch's worth of queued pairs: per-thread segments never
+/// straddle a column, and each fold entry maps a thread range back to its
+/// column ordinal.
+struct MillerBatch {
+    points: Vec<G1Affine>,
+    row_indices: Vec<u32>,
+    seg_starts: Vec<u32>,
+    folds: Vec<(usize, usize, usize)>,
+}
+
+impl MillerBatch {
+    fn new() -> Self {
+        Self {
+            points: Vec::new(),
+            row_indices: Vec::new(),
+            seg_starts: vec![0],
+            folds: Vec::new(),
+        }
+    }
+}
+
+impl MillerLane<'_> {
+    fn take_queue(&mut self) -> MillerBatch {
+        std::mem::replace(&mut self.queue, MillerBatch::new())
+    }
+}
+
+/// Fold a dispatched batch's partials into the per-column accumulators, or
+/// recover the whole batch on the CPU (latching the lane off) when the
+/// dispatch failed.
+fn settle_miller_batch(
+    prep: &DoryTier2Prep,
+    lane: &mut MillerLane<'_>,
+    accumulators: &mut [Tier2Accumulator],
+    batch: &MillerBatch,
+    dispatched: Result<Vec<u32>, MetalError>,
+) {
+    match dispatched {
+        Ok(partials) => {
+            let products: Vec<_> = batch
+                .folds
+                .par_iter()
+                .map(|&(column, start, end)| {
+                    (
+                        column,
+                        product_of_partials(&partials[start * FQ12_U32S..end * FQ12_U32S]),
+                    )
+                })
+                .collect();
+            for (column, product) in products {
+                accumulators[column].merge_miller(product);
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "device miller dispatch failed; absorbing this batch and later \
+                 superchunks on the CPU"
+            );
+            lane.failed = true;
+            for &(column, thread_start, thread_end) in &batch.folds {
+                let start = batch.seg_starts[thread_start] as usize;
+                let end = batch.seg_starts[thread_end] as usize;
+                accumulators[column].absorb(
+                    prep,
+                    &batch.points[start..end],
+                    &batch.row_indices[start..end],
+                );
+            }
+        }
+    }
 }
 
 /// One column's decoded pair set, split for the hybrid absorb:
@@ -672,32 +767,6 @@ fn absorb_superchunk(
             })
             .collect();
 
-    // The device share: every column's tail slice concatenated into one
-    // dispatch, per-thread segments kept inside their column so each
-    // partial folds into exactly one accumulator.
-    let mut gpu_points: Vec<G1Affine> = Vec::new();
-    let mut gpu_rows: Vec<u32> = Vec::new();
-    let mut seg_starts: Vec<u32> = vec![0];
-    // (column, first thread, one past last thread)
-    let mut folds: Vec<(usize, usize, usize)> = Vec::new();
-    if lane.is_some() {
-        for (column, pending_column) in pending.iter().enumerate() {
-            let Some(p) = pending_column else { continue };
-            if p.cpu_len == p.points.len() {
-                continue;
-            }
-            let thread_start = seg_starts.len() - 1;
-            gpu_points.extend_from_slice(&p.points[p.cpu_len..]);
-            gpu_rows.extend_from_slice(&p.row_indices[p.cpu_len..]);
-            let mut at = seg_starts[thread_start] as usize;
-            while at < gpu_points.len() {
-                at = (at + MILLER_SEG_PAIRS).min(gpu_points.len());
-                seg_starts.push(at as u32);
-            }
-            folds.push((column, thread_start, seg_starts.len() - 1));
-        }
-    }
-
     let cpu_absorb = |accumulators: &mut [Tier2Accumulator]| {
         accumulators
             .par_iter_mut()
@@ -715,61 +784,74 @@ fn absorb_superchunk(
             });
     };
 
+    // Queue the device share — every column's tail slice, per-thread
+    // segments kept inside their column — and flush once enough pairs have
+    // accumulated to occupy the device, overlapping the dispatch with this
+    // superchunk's CPU share.
     match lane {
-        Some(lane) if !gpu_points.is_empty() => {
-            let dispatched = run_miller_dispatch(
-                ctx,
-                &lane.coeffs,
-                lane.n_rows,
-                &gpu_points,
-                &gpu_rows,
-                &seg_starts,
-                || cpu_absorb(accumulators),
-            );
-            match dispatched {
-                Ok(partials) => {
-                    let products: Vec<_> = folds
-                        .par_iter()
-                        .map(|&(column, start, end)| {
-                            (
-                                column,
-                                product_of_partials(&partials[start * FQ12_U32S..end * FQ12_U32S]),
-                            )
-                        })
-                        .collect();
-                    for (column, product) in products {
-                        accumulators[column].merge_miller(product);
-                    }
+        Some(lane) => {
+            for (column, pending_column) in pending.iter().enumerate() {
+                let Some(p) = pending_column else { continue };
+                if p.cpu_len == p.points.len() {
+                    continue;
                 }
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        "device miller dispatch failed; absorbing this and later \
-                         superchunks on the CPU"
-                    );
-                    lane.failed = true;
-                    // The CPU shares already ran (the dispatch helper calls
-                    // the overlap exactly once on every path); recover the
-                    // device shares.
-                    accumulators
-                        .par_iter_mut()
-                        .zip(pending.par_iter())
-                        .for_each(|(accumulator, pending_column)| {
-                            if let Some(p) = pending_column {
-                                if p.cpu_len < p.points.len() {
-                                    accumulator.absorb(
-                                        prep,
-                                        &p.points[p.cpu_len..],
-                                        &p.row_indices[p.cpu_len..],
-                                    );
-                                }
-                            }
-                        });
+                let queue = &mut lane.queue;
+                let thread_start = queue.seg_starts.len() - 1;
+                queue.points.extend_from_slice(&p.points[p.cpu_len..]);
+                queue
+                    .row_indices
+                    .extend_from_slice(&p.row_indices[p.cpu_len..]);
+                let mut at = queue.seg_starts[thread_start] as usize;
+                while at < queue.points.len() {
+                    at = (at + MILLER_SEG_PAIRS).min(queue.points.len());
+                    queue.seg_starts.push(at as u32);
                 }
+                queue
+                    .folds
+                    .push((column, thread_start, queue.seg_starts.len() - 1));
+            }
+            if lane.queue.points.len() >= miller_flush_pairs() {
+                let batch = lane.take_queue();
+                let dispatched = run_miller_dispatch(
+                    ctx,
+                    &lane.coeffs,
+                    lane.n_rows,
+                    &batch.points,
+                    &batch.row_indices,
+                    &batch.seg_starts,
+                    || cpu_absorb(accumulators),
+                );
+                settle_miller_batch(prep, lane, accumulators, &batch, dispatched);
+            } else {
+                cpu_absorb(accumulators);
             }
         }
-        _ => cpu_absorb(accumulators),
+        None => cpu_absorb(accumulators),
     }
+}
+
+/// Flush whatever the lane still queues (stream end, or a lane that never
+/// reached the flush threshold).
+fn drain_miller_lane(
+    ctx: &MetalContext,
+    prep: &DoryTier2Prep,
+    lane: &mut MillerLane<'_>,
+    accumulators: &mut [Tier2Accumulator],
+) {
+    if lane.failed || lane.queue.points.is_empty() {
+        return;
+    }
+    let batch = lane.take_queue();
+    let dispatched = run_miller_dispatch(
+        ctx,
+        &lane.coeffs,
+        lane.n_rows,
+        &batch.points,
+        &batch.row_indices,
+        &batch.seg_starts,
+        || {},
+    );
+    settle_miller_batch(prep, lane, accumulators, &batch, dispatched);
 }
 
 /// Encode, commit, and collect one `jk_miller_table` dispatch, running
@@ -1355,8 +1437,10 @@ mod tests {
     fn metal_commit_matches_optimized() {
         let _lock = gpu_lock();
         // nextest runs one process per test, so the env writes cannot race
-        // another test.
+        // another test. The tiny flush threshold forces mid-stream batch
+        // flushes (production only reaches them at deep geometries).
         std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER", "1");
+        std::env::set_var("JOLT_METAL_MILLER_FLUSH_PAIRS", "8");
         let shape = FixtureShape {
             log_t: 6,
             ram_k: 16,
