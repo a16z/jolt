@@ -109,7 +109,6 @@ impl JoltOneHotTraceRows {
     #[tracing::instrument(skip_all, name = "jolt_one_hot_trace_cache_build")]
     fn new(
         trace: &[Cycle],
-        fused_inc: &[FusedIncValue],
         num_columns: usize,
         ranges: &OneHotTraceColumnRanges,
         params: &crate::zkvm::config::OneHotParams,
@@ -130,7 +129,7 @@ impl JoltOneHotTraceRows {
                 Self::fill_row_from_indices(
                     lanes,
                     ra_index,
-                    fused_inc[row],
+                    FusedIncValue::from_cycle(&trace[row]),
                     ranges,
                     params.log_k_chunk,
                 );
@@ -756,11 +755,9 @@ impl AkitaPackedProver<'_> {
     fn one_hot_trace_rows(
         &self,
         plan: &OneHotTraceLayoutPlan,
-        fused_inc: &[FusedIncValue],
     ) -> (Arc<JoltOneHotTraceRows>, Arc<Vec<RaIndices>>) {
         let (rows, ra_indices) = JoltOneHotTraceRows::new(
             &self.trace,
-            fused_inc,
             plan.columns.len(),
             &plan.ranges,
             &self.one_hot_params,
@@ -770,17 +767,14 @@ impl AkitaPackedProver<'_> {
         (Arc::new(rows), ra_indices)
     }
 
-    /// The per-cycle fused increments, shared by the inc-column witness
-    /// build and OneHotTrace assembly.
-    fn fused_inc_values(&self) -> Arc<Vec<FusedIncValue>> {
+    #[tracing::instrument(skip_all, name = "fused_inc_deltas")]
+    fn fused_inc_deltas(&self) -> Vec<i128> {
         use rayon::prelude::*;
 
-        Arc::new(
-            self.trace
-                .par_iter()
-                .map(FusedIncValue::from_cycle)
-                .collect(),
-        )
+        self.trace
+            .par_iter()
+            .map(|cycle| FusedIncValue::from_cycle(cycle).delta)
+            .collect()
     }
 
     #[tracing::instrument(skip_all, name = "fused_inc_one_hot_columns")]
@@ -1493,18 +1487,10 @@ impl AkitaPackedProver<'_> {
             Some(DoryLayout::CycleMajor),
         );
 
-        let fused_cycles = self.fused_inc_values();
-        use rayon::prelude::*;
-        let fused = fused_cycles.par_iter().map(|cycle| cycle.delta).collect();
-        let mut fused_inc_columns = FusedIncColumns {
-            one_hot: Vec::new(),
-            fused,
-        };
         let plan = ONE_HOT_TRACE_LAYOUT
             .plan(&self.one_hot_trace_shape())
             .expect("canonical OneHotTrace layout must exist");
-        let (one_hot_trace_rows, ra_indices) = self.one_hot_trace_rows(&plan, &fused_cycles);
-        drop(fused_cycles);
+        let (one_hot_trace_rows, ra_indices) = self.one_hot_trace_rows(&plan);
         let one_hot_trace_source: Arc<dyn jolt_akita::TraceOneHotRows> = one_hot_trace_rows.clone();
         let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
             object_setup,
@@ -1544,7 +1530,9 @@ impl AkitaPackedProver<'_> {
         let (stage3_sumcheck_proof, _r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, _r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
-        fused_inc_columns.one_hot = self.fused_inc_one_hot_columns(&fused_inc_columns.fused);
+        let fused = self.fused_inc_deltas();
+        let one_hot = self.fused_inc_one_hot_columns(&fused);
+        let mut fused_inc_columns = FusedIncColumns { one_hot, fused };
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
             self.prove_stage6a_lattice(&fused_inc_columns, Arc::clone(&ra_indices));
         let stage6b_sumcheck_proof = self.prove_stage6b_lattice(
@@ -2047,11 +2035,10 @@ mod tests {
             );
             set_test_one_hot_config(&mut prover, config.clone());
 
-            let fused_cycles = prover.fused_inc_values();
             let plan = ONE_HOT_TRACE_LAYOUT
                 .plan(&prover.one_hot_trace_shape())
                 .expect("canonical OneHotTrace layout must exist");
-            let (cached, cached_indices) = prover.one_hot_trace_rows(&plan, &fused_cycles);
+            let (cached, cached_indices) = prover.one_hot_trace_rows(&plan);
             assert_eq!(cached_indices.len(), prover.trace.len());
 
             let bytecode = &prover.preprocessing.materialized_program().bytecode;
@@ -2100,12 +2087,12 @@ mod tests {
                     .enumerate()
                 {
                     *hot_lane = committed_nonzero_lane(
-                        fused_cycles[row]
+                        FusedIncValue::from_cycle(cycle)
                             .balanced_chunk_hot_lane_bits(prover.one_hot_params.log_k_chunk, index),
                     );
                 }
                 expected[plan.ranges.unsigned_inc_msb] = committed_nonzero_lane(
-                    fused_cycles[row]
+                    FusedIncValue::from_cycle(cycle)
                         .balanced_carry_hot_lane_bits(prover.one_hot_params.log_k_chunk),
                 );
 
