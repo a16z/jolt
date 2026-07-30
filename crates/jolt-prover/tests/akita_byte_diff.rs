@@ -11,12 +11,9 @@
 //! legacy verifier replay of stage-boundary transcript states) lands once
 //! the port exposes per-stage packed drivers.
 //!
-//! Every test is `#[ignore]`d until the packed prove path is ported
-//! (`jolt_prover::akita::prove` is a stub); the bodies compile
-//! against the final pipeline shape, so un-ignoring them is the port's
-//! acceptance gate. The Dory harness lives in `dory_byte_diff.rs` — one compiled
-//! prover proves exactly one protocol, so the two harnesses are mutually
-//! exclusive by feature.
+//! The Dory harness lives in `dory_byte_diff.rs` — one compiled prover
+//! proves exactly one protocol, so the two harnesses are mutually exclusive
+//! by feature.
 
 /// Shared scaffolding: every test runs the same legacy-side packed pipeline
 /// (decode + trace + preprocess + prove) and the same modular-side pipeline
@@ -283,7 +280,6 @@ mod muldiv {
     /// of the assembled packed proofs and verify the modular proof
     /// end-to-end.
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn prover_matches_legacy_on_muldiv_akita() {
         let mut program = host::Program::new("muldiv-guest");
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
@@ -390,7 +386,6 @@ mod advice_consumer {
     /// both sides; assert wire-for-wire equality and verify the modular
     /// proof against the trusted commitment.
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn prover_matches_legacy_on_advice_consumer_akita() {
         let mut program = host::Program::new("advice-consumer-guest");
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
@@ -516,7 +511,6 @@ mod committed_muldiv {
     /// assembled and committed once at preprocessing time and shared by
     /// both sides.
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn prover_matches_legacy_on_committed_muldiv_akita() {
         committed_muldiv_matches_legacy(1);
     }
@@ -524,7 +518,6 @@ mod committed_muldiv {
     /// The multi-chunk arm: the bytecode splits across two chunk lanes of
     /// the precommitted packing, exercising the chunked reconstruction.
     #[test]
-    #[ignore = "the packed (Akita) prove path is not yet ported to the modular prover"]
     fn prover_matches_legacy_on_committed_muldiv_akita_two_chunks() {
         committed_muldiv_matches_legacy(2);
     }
