@@ -29,27 +29,18 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::witnesses::{LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress};
-use jolt_witness::{JoltWitnessPlane, WitnessBundle};
+use jolt_witness::witnesses::RaChunkSelector;
+use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
-use super::support::{bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals};
+use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-
-/// The per-cycle hot-address sources of the three RA families: the
-/// instruction lookup index, the mapped bytecode PC (cold when unmapped), and
-/// the remapped RAM word address (cold for no-ops/unremappable).
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-struct RaIndexBundle {
-    lookup_index: LookupIndex,
-    mapped_pc: MappedPc,
-    ram_address: RemappedRamAddress,
-}
 
 /// Per-family chunk selectors in canonical layout order.
 struct FamilySelectors {
@@ -78,10 +69,11 @@ impl FamilySelectors {
     }
 }
 
-/// All `N` pushforwards from one bundle walk against the shared cycle-eq
-/// table, in canonical (instruction, bytecode, RAM) order.
+/// All `N` pushforwards from one pass over the shared stage-5 rows against
+/// the shared cycle-eq table, in canonical (instruction, bytecode, RAM)
+/// order.
 fn pushforwards<F: Field>(
-    rows: &[RaIndexBundle],
+    rows: &[InstructionCycleRow],
     eq_cycle: &[F],
     selectors: &FamilySelectors,
     k_chunk: usize,
@@ -94,17 +86,17 @@ fn pushforwards<F: Field>(
             let eq = eq_cycle[j];
             let mut slot = 0;
             for selector in &selectors.instruction {
-                partial[slot][selector.chunk_u128(row.lookup_index.0)] += eq;
+                partial[slot][selector.chunk_u128(row.lookup_index)] += eq;
                 slot += 1;
             }
             for selector in &selectors.bytecode {
-                if let Some(pc) = row.mapped_pc.0 {
+                if let Some(pc) = row.mapped_pc() {
                     partial[slot][selector.chunk_usize(pc)] += eq;
                 }
                 slot += 1;
             }
             for selector in &selectors.ram {
-                if let Some(address) = row.ram_address.0 {
+                if let Some(address) = row.remapped_ram_address() {
                     partial[slot][selector.chunk_usize(address as usize)] += eq;
                 }
                 slot += 1;
@@ -157,6 +149,7 @@ pub(crate) struct HammingWeightTables<F> {
 }
 
 pub(crate) fn build_hamming_weight_tables<F: Field>(
+    session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     inputs: &ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
 ) -> Result<HammingWeightTables<F>, KernelError<F>> {
@@ -174,7 +167,10 @@ pub(crate) fn build_hamming_weight_tables<F: Field>(
     let k_chunk = 1usize << dimensions.log_k_chunk;
     let cycles = 1usize << r_cycle.len();
 
-    let rows: Vec<RaIndexBundle> = collect_rows(witness, cycles)?;
+    // The three hot-address lanes (lookup index, mapped PC, RAM address) are
+    // exactly the shared stage-5 rows the record walk co-produced — reclaim
+    // them instead of re-walking the trace.
+    let rows = shared_instruction_rows(session, witness, cycles)?;
     let eq_cycle = eq_table(r_cycle);
     let selectors = FamilySelectors::new(
         (layout.instruction(), layout.bytecode(), layout.ram()),
@@ -226,12 +222,12 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
 {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
     {
-        let tables = build_hamming_weight_tables(witness, &inputs)?;
+        let tables = build_hamming_weight_tables(session, witness, &inputs)?;
         Ok(Box::new(HammingWeightKernel {
             rounds: tables.rounds,
             g_tables: tables.g_tables.into_iter().map(Polynomial::new).collect(),

@@ -63,7 +63,7 @@ impl PrepareKernel<Fr, HammingWeightClaimReduction<Fr>> for MetalHammingWeightCl
                 Ok(context) => {
                     // Structural errors propagate — the fallback would fail
                     // identically; only device failures fall back.
-                    let tables = build_hamming_weight_tables(witness, &inputs)?;
+                    let tables = build_hamming_weight_tables(session, witness, &inputs)?;
                     match MetalHammingWeightKernel::new(context, tables) {
                         Ok(kernel) => return Ok(Box::new(kernel)),
                         Err(error) => tracing::warn!(
