@@ -20,6 +20,7 @@ pub mod emulator;
 pub mod execution_backend;
 pub mod instruction;
 mod jolt_cycle_adapter;
+pub mod parallel;
 pub mod trace_row;
 pub mod utils;
 
@@ -973,6 +974,138 @@ mod tests {
                 .materialized_nonzero_bytes(),
             "final memory diverged"
         );
+    }
+
+    /// Serial trace-mode reference: all rows plus per-tick row counts
+    /// (termination identical to `trace()`).
+    fn serial_reference(elf: &[u8], memory_config: &MemoryConfig) -> (Vec<Cycle>, Vec<usize>) {
+        let mut emulator = setup_emulator(elf, &INPUTS, &[], &[], memory_config);
+        let mut rows: Vec<Cycle> = Vec::new();
+        let mut rows_per_tick: Vec<usize> = Vec::new();
+        let mut prev_pc: u64 = 0;
+        loop {
+            let pc = emulator.get_cpu().read_pc();
+            if pc == prev_pc {
+                break;
+            }
+            let before = rows.len();
+            emulator.tick(Some(&mut rows));
+            if rows.len() == before {
+                break;
+            }
+            rows_per_tick.push(rows.len() - before);
+            prev_pc = pc;
+        }
+        (rows, rows_per_tick)
+    }
+
+    #[test]
+    /// Capture a chunk checkpoint at tick N of an execute-mode pass, replay
+    /// M ticks in a fresh worker, and require the emitted rows to be
+    /// bit-exact against the serial trace's rows for ticks N..N+M.
+    fn test_chunk_capture_replay() {
+        use crate::parallel::{ChunkWorker, PassOne, SnapshotPool};
+
+        let elf = build_muldiv_guest();
+        let memory_config = MemoryConfig {
+            program_size: Some(elf.len() as u64),
+            ..Default::default()
+        };
+        let (all_rows, rows_per_tick) = serial_reference(&elf, &memory_config);
+        let total_ticks = rows_per_tick.len();
+        assert!(total_ticks > 150, "muldiv should run a few hundred ticks");
+        let row_offset = |tick: usize| rows_per_tick[..tick].iter().sum::<usize>();
+
+        let cases = [
+            (0usize, 40usize),
+            (7, 64),
+            (100, 100),
+            (total_ticks - 25, 25),
+        ];
+        for (n, m) in cases {
+            let mut pass1 = PassOne::new(setup_emulator(&elf, &INPUTS, &[], &[], &memory_config));
+            for _ in 0..n {
+                assert!(pass1.step(), "pass-1 ended before tick {n}");
+            }
+            let checkpoint = pass1.checkpoint();
+            let mut pool = SnapshotPool::new();
+            let image = pool.capture(&pass1.emulator().get_cpu().mmu.memory.memory);
+
+            let mut worker = ChunkWorker::new(pass1.emulator());
+            let _previous = worker.install_chunk(&checkpoint, image);
+            let mut rows: Vec<Cycle> = Vec::new();
+            worker.run_ticks(m, &mut rows);
+
+            let expected = &all_rows[row_offset(n)..row_offset(n + m)];
+            assert_eq!(
+                rows.as_slice(),
+                expected,
+                "rows differ for chunk N={n} M={m}"
+            );
+        }
+    }
+
+    #[test]
+    /// Cut the whole program into fixed-tick chunks from a single continuous
+    /// execute-mode pass, replay every chunk through one resident worker,
+    /// and require (a) each boundary state to match the next checkpoint
+    /// exactly and (b) the concatenated rows to equal the serial trace.
+    fn test_chunked_replay_reconstructs_full_trace() {
+        use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
+
+        let elf = build_muldiv_guest();
+        let memory_config = MemoryConfig {
+            program_size: Some(elf.len() as u64),
+            ..Default::default()
+        };
+        let (all_rows, rows_per_tick) = serial_reference(&elf, &memory_config);
+        let total_ticks = rows_per_tick.len();
+
+        for chunk_ticks in [1usize, 29, 97, total_ticks + 5] {
+            let mut pass1 = PassOne::new(setup_emulator(&elf, &INPUTS, &[], &[], &memory_config));
+            let mut pool = SnapshotPool::new();
+            let mut chunks: Vec<(ChunkCheckpoint, Vec<u64>, usize)> = Vec::new();
+            loop {
+                let checkpoint = pass1.checkpoint();
+                let image = pool.capture(&pass1.emulator().get_cpu().mmu.memory.memory);
+                let mut ticks = 0;
+                while ticks < chunk_ticks && pass1.step() {
+                    ticks += 1;
+                }
+                if ticks > 0 {
+                    chunks.push((checkpoint, image, ticks));
+                } else {
+                    pool.put(image);
+                }
+                if pass1.is_done() {
+                    break;
+                }
+            }
+            assert_eq!(
+                chunks.iter().map(|(_, _, t)| t).sum::<usize>(),
+                total_ticks,
+                "chunk tick counts must cover the program"
+            );
+
+            let mut worker = ChunkWorker::new(pass1.emulator());
+            let mut replayed: Vec<Cycle> = Vec::new();
+            for (idx, (checkpoint, image, ticks)) in chunks.iter().enumerate() {
+                let previous = worker.install_chunk(checkpoint, image.clone());
+                pool.put(previous);
+                worker.run_ticks(*ticks, &mut replayed);
+                // Boundary paranoia: worker end state must equal the next
+                // chunk's captured start state.
+                if let Some((next, _, _)) = chunks.get(idx + 1) {
+                    if let Some(diff) = next.diff_vs_cpu(worker.cpu()) {
+                        panic!("boundary mismatch after chunk {idx} (size {chunk_ticks}): {diff}");
+                    }
+                }
+            }
+            assert_eq!(
+                replayed, all_rows,
+                "replayed rows differ at chunk size {chunk_ticks}"
+            );
+        }
     }
 
     #[test]

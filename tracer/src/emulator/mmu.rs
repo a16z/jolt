@@ -1002,6 +1002,49 @@ impl Mmu {
             mstatus: self.mstatus,
         }
     }
+
+    /// Capture chunk-replay MMU translation state. Static for Jolt guests
+    /// (no virtual addressing) but tiny; the destructure is exhaustive so
+    /// new fields must be classified.
+    pub(crate) fn capture_chunk_state(&self) -> ChunkMmuState {
+        let Mmu {
+            clock,
+            ppn,
+            addressing_mode,
+            privilege_mode,
+            // Snapshotted separately (pooled image / checkpoint layer).
+            memory: _,
+            decode_cache: _,
+            jolt_device: _,
+            mstatus,
+        } = self;
+        ChunkMmuState {
+            clock: *clock,
+            ppn: *ppn,
+            addressing_mode: *addressing_mode,
+            privilege_mode: *privilege_mode,
+            mstatus: *mstatus,
+        }
+    }
+
+    /// Counterpart of [`Mmu::capture_chunk_state`].
+    pub(crate) fn install_chunk_state(&mut self, state: &ChunkMmuState) {
+        self.clock = state.clock;
+        self.ppn = state.ppn;
+        self.addressing_mode = state.addressing_mode;
+        self.privilege_mode = state.privilege_mode;
+        self.mstatus = state.mstatus;
+    }
+}
+
+/// MMU translation state captured with a chunk checkpoint.
+#[derive(Clone, Copy, Debug)]
+pub struct ChunkMmuState {
+    clock: u64,
+    ppn: u64,
+    addressing_mode: AddressingMode,
+    privilege_mode: PrivilegeMode,
+    mstatus: u64,
 }
 
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory

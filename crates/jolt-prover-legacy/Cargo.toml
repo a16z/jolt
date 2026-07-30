@@ -206,5 +206,9 @@ required-features = ["host"]
 name = "trace_lockstep"
 required-features = ["host"]
 
+[[example]]
+name = "trace_chunk_replay"
+required-features = ["host"]
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true

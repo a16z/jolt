@@ -129,6 +129,34 @@ impl MemoryData {
         self.checkpoint.is_some()
     }
 
+    /// Copy the flat backing into `dst` as a full image (len-exact memcpy).
+    /// Panics if the backing is sparse — checkpoint-replay memories are not
+    /// snapshot sources.
+    pub(crate) fn clone_flat_into(&self, dst: &mut Vec<u64>) {
+        match &self.backing {
+            MemoryBacking::Flat(dwords) => {
+                dst.clear();
+                dst.extend_from_slice(dwords);
+            }
+            MemoryBacking::Sparse(_) => {
+                panic!("cannot snapshot sparse (checkpoint-replay) memory")
+            }
+        }
+    }
+
+    /// Replace the backing with a full flat image — the image *becomes* the
+    /// working memory, no copy — returning the previous flat backing for
+    /// buffer pooling. Panics if the previous backing was sparse.
+    pub(crate) fn replace_flat(&mut self, image: Vec<u64>) -> Vec<u64> {
+        self.num_doublewords = image.len();
+        match std::mem::replace(&mut self.backing, MemoryBacking::Flat(image)) {
+            MemoryBacking::Flat(old) => old,
+            MemoryBacking::Sparse(_) => {
+                panic!("cannot pool sparse (checkpoint-replay) memory")
+            }
+        }
+    }
+
     /// Enable checkpoint saving for this memory. If this is true, all memory accesses will have
     /// their initial values stored to `self.checkpoint`.
     /// NOTE: This is necessary because memory accesses used to store the bytecode in memory should

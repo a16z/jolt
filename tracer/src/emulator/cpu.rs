@@ -197,6 +197,119 @@ struct ActiveMarker {
     start_trace_len: usize, // trace.len()      at ‘start’
 }
 
+/// Host-side I/O mode. `Replay` suppresses effects that must happen exactly
+/// once per program run — stdout prints, cycle-marker bookkeeping,
+/// advice-tape appends, call-stack tracking — so a parallel-trace worker
+/// re-executing a chunk does not repeat what pass-1 already did.
+/// Guest-visible effects (JoltDevice loads/stores, advice reads) stay live
+/// in both modes: trace rows depend on them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostIo {
+    Live,
+    Replay,
+}
+
+/// Architectural CPU state captured at a tick boundary — everything a
+/// bit-exact trace-mode chunk replay needs, and nothing run-scoped: cycle
+/// markers and the call stack stay with pass-1 (host-side logging), and the
+/// virtual-register allocator is rebuilt fresh per worker (its guards are
+/// strictly intra-tick, and cloning would share the `Arc<Mutex>` across
+/// threads).
+#[derive(Clone, Debug)]
+pub struct ChunkCpuState {
+    clock: u64,
+    privilege_mode: PrivilegeMode,
+    wfi: bool,
+    x: [i64; REGISTER_COUNT as usize],
+    f: [f64; 32],
+    pc: u64,
+    /// Boxed: 32 KB, keeps checkpoints cheap to move.
+    csr: Box<[u64; CSR_CAPACITY]>,
+    reservation: u64,
+    is_reservation_set: bool,
+    reservation_width: ReservationWidth,
+    trace_len: usize,
+    executed_instrs: u64,
+    /// Unread advice-tape suffix; the replay tape is exactly this suffix
+    /// with read position 0. Appends are suppressed in replay ([`HostIo`]).
+    advice_suffix: Vec<u8>,
+    #[cfg(feature = "field-inline")]
+    field_registers: FieldRegisterFile,
+}
+
+impl ChunkCpuState {
+    /// First difference between this captured boundary state and `cpu`'s
+    /// current state (`None` = equal). Paranoia check: a worker finishing
+    /// chunk k must land exactly on checkpoint k+1's capture. `trace_len` is
+    /// excluded — it counts rows in trace mode but ticks in execute mode.
+    pub(crate) fn diff_vs_cpu(&self, cpu: &Cpu) -> Option<String> {
+        if self.pc != cpu.pc {
+            return Some(format!("pc: {:#x} vs {:#x}", self.pc, cpu.pc));
+        }
+        for i in 0..REGISTER_COUNT as usize {
+            if self.x[i] != cpu.x[i] {
+                return Some(format!("x[{i}]: {:#x} vs {:#x}", self.x[i], cpu.x[i]));
+            }
+        }
+        for i in 0..CSR_CAPACITY {
+            if self.csr[i] != cpu.csr[i] {
+                return Some(format!(
+                    "csr[{i:#x}]: {:#x} vs {:#x}",
+                    self.csr[i], cpu.csr[i]
+                ));
+            }
+        }
+        if self.clock != cpu.clock {
+            return Some(format!("clock: {} vs {}", self.clock, cpu.clock));
+        }
+        if self.wfi != cpu.wfi {
+            return Some(format!("wfi: {} vs {}", self.wfi, cpu.wfi));
+        }
+        if core::mem::discriminant(&self.privilege_mode)
+            != core::mem::discriminant(&cpu.privilege_mode)
+        {
+            return Some(format!(
+                "privilege_mode: {:?} vs {:?}",
+                self.privilege_mode, cpu.privilege_mode
+            ));
+        }
+        if (
+            self.reservation,
+            self.is_reservation_set,
+            self.reservation_width,
+        ) != (
+            cpu.reservation,
+            cpu.is_reservation_set,
+            cpu.reservation_width,
+        ) {
+            return Some(format!(
+                "reservation: ({:#x}, {}, {:?}) vs ({:#x}, {}, {:?})",
+                self.reservation,
+                self.is_reservation_set,
+                self.reservation_width,
+                cpu.reservation,
+                cpu.is_reservation_set,
+                cpu.reservation_width
+            ));
+        }
+        if self.executed_instrs != cpu.executed_instrs {
+            return Some(format!(
+                "executed_instrs: {} vs {}",
+                self.executed_instrs, cpu.executed_instrs
+            ));
+        }
+        let cpu_suffix = &cpu.advice_tape.data[cpu.advice_tape.read_position..];
+        if self.advice_suffix != cpu_suffix {
+            return Some(format!(
+                "advice suffix: {} bytes vs {} bytes (or contents differ)",
+                self.advice_suffix.len(),
+                cpu_suffix.len()
+            ));
+        }
+        None
+    }
+}
+
 /// Emulates a RISC-V CPU core
 #[derive(Clone, Debug)]
 pub struct Cpu {
@@ -226,6 +339,8 @@ pub struct Cpu {
     capture_backtrace_registers: bool,
     /// Advice tape for runtime advice system
     pub advice_tape: AdviceTape,
+    /// Live in pass-1/serial runs; Replay in parallel-trace workers.
+    host_io: HostIo,
     #[cfg(feature = "field-inline")]
     pub field_registers: FieldRegisterFile,
 }
@@ -396,12 +511,19 @@ impl Cpu {
                 .map(|v| v.eq_ignore_ascii_case("full"))
                 .unwrap_or(false),
             advice_tape: AdviceTape::new(),
+            host_io: HostIo::Live,
             #[cfg(feature = "field-inline")]
             field_registers: FieldRegisterFile::default(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
         cpu
+    }
+
+    /// Set the host-I/O mode (see [`HostIo`]). Workers replaying chunks run
+    /// in `Replay` for their whole lifetime.
+    pub(crate) fn set_host_io(&mut self, mode: HostIo) {
+        self.host_io = mode;
     }
 
     /// trap wrapper for cycle tracking tool
@@ -1091,6 +1213,9 @@ impl Cpu {
     }
 
     pub fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
+        if self.host_io == HostIo::Replay {
+            return Ok(());
+        }
         match event {
             JOLT_CYCLE_MARKER_START => {
                 let label = self.read_string(ptr, len)?; // guest NUL-string
@@ -1135,6 +1260,9 @@ impl Cpu {
     }
 
     pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u32) -> Result<(), Trap> {
+        if self.host_io == HostIo::Replay {
+            return Ok(());
+        }
         let message = self.read_string(ptr, len)?;
         if event_type == JOLT_PRINT_STRING {
             print!("{message}");
@@ -1147,6 +1275,11 @@ impl Cpu {
     }
 
     pub fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
+        // Pass-1 already appended these bytes; a replay append would corrupt
+        // the worker's suffix-relative read offsets.
+        if self.host_io == HostIo::Replay {
+            return Ok(());
+        }
         // Read bytes from guest memory and write to advice tape
         let mut bytes = Vec::with_capacity(len as usize);
         for i in 0..len {
@@ -1172,6 +1305,10 @@ impl Cpu {
     /// Optimized for minimal overhead - just append to a circular buffer (VecDeque)
     #[inline]
     pub fn track_call(&mut self, return_address: u64) {
+        // Backtraces are pass-1's job; workers do not maintain a call stack.
+        if self.host_io == HostIo::Replay {
+            return;
+        }
         // Simple circular buffer - if full, overwrite oldest
         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
             self.call_stack.pop_front();
@@ -1215,8 +1352,103 @@ impl Cpu {
             call_stack: self.call_stack.clone(),
             capture_backtrace_registers: self.capture_backtrace_registers,
             advice_tape: self.advice_tape.clone(),
+            host_io: self.host_io,
             #[cfg(feature = "field-inline")]
             field_registers: self.field_registers.clone(),
+        }
+    }
+
+    /// Capture chunk-replay CPU state. Must be called at a tick boundary.
+    ///
+    /// The destructure is exhaustive on purpose: adding a `Cpu` field fails
+    /// compilation here until the field is classified as captured, dropped,
+    /// or worker-fresh.
+    pub(crate) fn capture_chunk_state(&self) -> ChunkCpuState {
+        let Cpu {
+            clock,
+            privilege_mode,
+            wfi,
+            x,
+            f,
+            pc,
+            csr,
+            // Memory image, JoltDevice and decode cache are captured by the
+            // checkpoint layer (see `parallel::ChunkCheckpoint`).
+            mmu: _,
+            reservation,
+            is_reservation_set,
+            reservation_width,
+            // Constants, re-established by worker construction.
+            _dump_flag: _,
+            unsigned_data_mask: _,
+            trace_len,
+            executed_instrs,
+            // Pass-1-only logging/bookkeeping.
+            active_markers: _,
+            // Fresh per worker: guards are strictly intra-tick, and cloning
+            // would share the Arc<Mutex> across threads.
+            vr_allocator,
+            // Pass-1 owns panic backtraces.
+            call_stack: _,
+            capture_backtrace_registers: _,
+            advice_tape,
+            // Worker-owned mode flag.
+            host_io: _,
+            #[cfg(feature = "field-inline")]
+            field_registers,
+        } = self;
+        debug_assert!(
+            vr_allocator.is_quiescent(),
+            "chunk capture with outstanding virtual-register guards (mid-tick capture?)"
+        );
+        ChunkCpuState {
+            clock: *clock,
+            privilege_mode: *privilege_mode,
+            wfi: *wfi,
+            x: *x,
+            f: *f,
+            pc: *pc,
+            csr: Box::new(*csr),
+            reservation: *reservation,
+            is_reservation_set: *is_reservation_set,
+            reservation_width: *reservation_width,
+            trace_len: *trace_len,
+            executed_instrs: *executed_instrs,
+            advice_suffix: advice_tape.data[advice_tape.read_position..].to_vec(),
+            #[cfg(feature = "field-inline")]
+            field_registers: field_registers.clone(),
+        }
+    }
+
+    /// Install captured chunk state into this (worker) CPU. Counterpart of
+    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDevice outputs and
+    /// decode cache are installed by the checkpoint layer.
+    pub(crate) fn install_chunk_state(&mut self, state: &ChunkCpuState) {
+        debug_assert!(
+            self.vr_allocator.is_quiescent(),
+            "chunk install with outstanding virtual-register guards"
+        );
+        self.clock = state.clock;
+        self.privilege_mode = state.privilege_mode;
+        self.wfi = state.wfi;
+        self.x = state.x;
+        self.f = state.f;
+        self.pc = state.pc;
+        self.csr = *state.csr;
+        self.reservation = state.reservation;
+        self.is_reservation_set = state.is_reservation_set;
+        self.reservation_width = state.reservation_width;
+        self.trace_len = state.trace_len;
+        self.executed_instrs = state.executed_instrs;
+        self.active_markers.clear();
+        self.call_stack.clear();
+        self.advice_tape = AdviceTape {
+            data: state.advice_suffix.clone(),
+            read_position: 0,
+        };
+        #[cfg(feature = "field-inline")]
+        {
+            self.field_registers = state.field_registers.clone();
         }
     }
 
