@@ -393,9 +393,10 @@ const fn fp64_folds_in_word(p: u64) -> bool {
     bits < 64 && (((1u64 << bits) - p) as u128) < (1u128 << (64 - bits))
 }
 
-/// `a * b` widening to 128 bits; returns `(lo, hi)`.
+/// `a * b` widening to 128 bits; returns `(lo, hi)`. Shared with the
+/// two-limb field (`fp128.rs`).
 #[inline(always)]
-fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
+pub(super) fn mul64_wide(a: u64, b: u64) -> (u64, u64) {
     #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
     {
         let mut hi = 0;

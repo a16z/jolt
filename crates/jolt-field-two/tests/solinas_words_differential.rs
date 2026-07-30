@@ -9,7 +9,8 @@ use jolt_field as base;
 use jolt_field_two as two;
 
 use base::{
-    CanonicalField, CanonicalRepr, FromPrimitiveInt, HalvingField, PseudoMersenneField, RingCore,
+    CanonicalBytes, CanonicalField, CanonicalRepr, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RingCore,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -48,7 +49,7 @@ macro_rules! check_prime {
         );
         assert_eq!(
             <$two as CanonicalEncoding>::NUM_BYTES,
-            <$base as CanonicalRepr>::NUM_BYTES
+            <$base as CanonicalBytes>::NUM_BYTES
         );
 
         let cfg = bincode::config::standard();

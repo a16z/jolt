@@ -1,11 +1,13 @@
 //! Solinas backend: pseudo-Mersenne prime fields `p = 2^k − c`.
 //!
 //! `word.rs` stamps the `u32`- and `u64`-backed field types from one fold
-//! algebra; this module holds the family trait, the `2^k − offset` registry,
-//! and shared helpers.
+//! algebra; `fp128.rs` is the hand-written two-limb field; this module holds
+//! the family trait, the `2^k − offset` registry, and shared helpers.
 
+mod fp128;
 mod word;
 
+pub use fp128::Fp128;
 pub use word::{Fp32, Fp64};
 
 use crate::Ring;
@@ -45,8 +47,8 @@ pub const fn pseudo_mersenne_modulus(bits: u32, offset: u128) -> Option<u128> {
     clippy::panic,
     reason = "CTFE-only: all call sites are const registry entries"
 )]
-const fn pm(bits: u32, offset: u16) -> u128 {
-    match pseudo_mersenne_modulus(bits, offset as u128) {
+const fn pm(bits: u32, offset: u128) -> u128 {
+    match pseudo_mersenne_modulus(bits, offset) {
         Some(m) => m,
         None => panic!("invalid pseudo-Mersenne parameters"),
     }
@@ -56,7 +58,7 @@ const fn spec(bits: u32, offset: u16) -> PrimeOffsetSpec {
     PrimeOffsetSpec {
         bits,
         offset,
-        modulus: pm(bits, offset),
+        modulus: pm(bits, offset as u128),
     }
 }
 
@@ -108,6 +110,17 @@ pub type Prime48Offset59 = Fp64<{ pm(48, 59) as u64 }>;
 pub type Prime56Offset27 = Fp64<{ pm(56, 27) as u64 }>;
 /// Prime field for `2^64 - 59`.
 pub type Prime64Offset59 = Fp64<{ pm(64, 59) as u64 }>;
+/// Prime field for `2^128 − 275`.
+pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
+/// Prime field for `2^128 − 159`. Split-NTT-only helper prime.
+pub type Prime128Offset159 = Fp128<{ pm(128, 159) }>;
+/// Prime field for `2^128 − 2355` (`p ≡ 5 mod 8`): smooth multiplicative
+/// subgroup of order `14700 = 2² · 3 · 5² · 7²` for mixed-radix FFT.
+pub type Prime128Offset2355 = Fp128<{ pm(128, 2355) }>;
+/// Prime field for `2^128 − 2^32 + 22537` (`C = 0xFFFF_A7F7`): smooth
+/// multiplicative subgroup of order `2^3 · 3^7 = 17496` (pure radix-3
+/// subgroup `3^7 = 2187`). The default protocol prime.
+pub type Prime128OffsetA7F7 = Fp128<{ pm(128, 0xFFFF_A7F7) }>;
 
 /// Builds the balanced signed-digit table for `1 <= log_basis <= 6`.
 pub fn balanced_digit_lut<F: Ring>(log_basis: u32) -> [F; 64] {

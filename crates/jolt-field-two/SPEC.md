@@ -92,6 +92,34 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
 
 **Dropped (approved):** `akita` bootstrap feature/module, `MontgomeryConstants`.
 
+**Dropped-specialization evidence (checkpoint 5, fp128):**
+
+- **Kept:** the baseline's AArch64 inline-asm `mul`/`sqr` kernels — the only
+  per-arch specializations with recorded evidence (1.29x throughput on Apple
+  M4, per the baseline's own doc comment) and the prover hot path. An
+  AArch64-only unit test in `fp128.rs` cross-checks them against the portable
+  fold on random + boundary inputs for all four registered offsets.
+- **Dropped:** AArch64 and x86-64 inline-asm add/sub kernels
+  (`add_raw_{aarch64,x86_64}_{imm,reg}` + dispatchers, ~470 source lines).
+  Same carry-chain algorithm as the portable path with hand-scheduled flag
+  flow (`ccmp`/`sbb`-mask selects); no benchmark recorded in-tree, only
+  qualitative comments. The portable path is branchless and compiles to a
+  near-identical adds/adcs/csel (resp. add/adc/cmov) sequence. The x86-64
+  imm-vs-reg dispatch subtlety (sign-extended imm32 unusable for C ≥ 2^31,
+  i.e. `Prime128OffsetA7F7`) dies with it. Baseline x86-64 `mul` was already
+  portable — nothing dropped there.
+- **Dropped:** the AArch64 `mul_add` asm kernel together with the
+  `mul_add`/`add_128_into_256` fused multiply-add surface: no consumer
+  anywhere in the parity scope (only baseline fp128's own tests call it).
+- **Dropped:** `mul_wide_limbs<M, OUT>` (generic loop + M/OUT-unrolled
+  hot-path specializations, ~270 lines): its only workspace consumer is
+  `jolt-prover-legacy`'s akita field glue, and the akita bootstrap is
+  dropped (approved above). `mul_wide`/`mul_wide_u64`/`mul_wide_u128` and
+  the ≤10-limb `solinas_reduce` — the surfaces the in-scope unreduced
+  accumulators use — are ported.
+- **Dropped:** `from_i64_const` (const-evaluable embedding): akita-only
+  (its `MONTGOMERY_R` constants).
+
 ## Design pillars
 
 1. **Const-generic scalar core**: `Fp64<const P: u64>` etc., fold constants
