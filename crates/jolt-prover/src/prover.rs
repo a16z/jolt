@@ -280,31 +280,6 @@ where
             transcript.state(),
         )?;
 
-        let JoltProof {
-            protocol,
-            commitments,
-            stages,
-            joint_opening_proof,
-            untrusted_advice_commitment,
-            claims: _,
-            trace_length,
-            ram_K,
-            rw_config,
-            one_hot_config,
-            trace_polynomial_order,
-        } = shell;
-        Ok(JoltProof {
-            protocol,
-            commitments,
-            stages,
-            joint_opening_proof,
-            untrusted_advice_commitment,
-            claims: JoltProofClaims::Zk { blindfold_proof },
-            trace_length,
-            ram_K,
-            rw_config,
-            one_hot_config,
-            trace_polynomial_order,
-        })
+        Ok(shell.with_claims(JoltProofClaims::Zk { blindfold_proof }))
     }
 }
