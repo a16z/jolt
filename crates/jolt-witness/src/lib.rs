@@ -43,8 +43,8 @@ pub use backend::{
 };
 pub use bundle::WitnessBundle;
 pub use consumer::{
-    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RowSource,
-    StreamConsumer,
+    collect_bundles, collect_bundles_par, collect_par_map, stream_witnesses, ChunkVisitor,
+    CollectBundles, ConsumerSet, RandomAccessRows, RowSource, StreamConsumer,
 };
 pub use error::WitnessError;
 pub use shape::{PolynomialEncoding, Shape};

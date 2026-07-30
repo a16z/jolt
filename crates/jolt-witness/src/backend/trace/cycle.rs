@@ -4,8 +4,6 @@
 use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 use std::ops::Range;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
@@ -99,7 +97,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 value(current, next, &env)
             };
             #[cfg(feature = "parallel")]
-            return (0..rows).into_par_iter().map(window).collect();
+            return crate::consumer::par_collect_windows(rows, window);
             #[cfg(not(feature = "parallel"))]
             return (0..rows).map(window).collect();
         }
@@ -118,6 +116,19 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
 }
 
 impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
+    fn random_access(&self) -> Option<crate::RandomAccessRows<'_>> {
+        let cycles = checked_pow2(self.config.log_t).ok()?;
+        self.trace.trace.rows().map(|rows| {
+            crate::RandomAccessRows::new(
+                rows,
+                cycles,
+                WitnessEnv {
+                    preprocessing: self.preprocessing,
+                },
+            )
+        })
+    }
+
     fn visit_chunks(
         &self,
         range: Range<usize>,

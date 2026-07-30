@@ -2,7 +2,9 @@
 
 use jolt_field::{Field, RingAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial, UnivariatePoly};
-use jolt_witness::{stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError};
+use jolt_witness::{
+    collect_bundles_par, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
+};
 
 /// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
 /// rayon extraction dispatch amortizes (the stock bundle pass uses 2^12-row
@@ -19,6 +21,14 @@ pub(crate) fn collect_rows<B: WitnessBundle + Clone + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
+    // Slice-backed sources collect index-parallel — no chunk staging, no
+    // serial consume copy (out-of-range requests fall through for the
+    // walk's validation).
+    if let Some(access) = source.random_access() {
+        if cycles <= access.cycles() {
+            return collect_bundles_par(&access, cycles);
+        }
+    }
     struct Presized<B> {
         rows: Vec<B>,
     }

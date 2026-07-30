@@ -52,7 +52,9 @@ use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::witnesses::{
     InstructionRafFlag, LookupIndex, MappedPc, RemappedRamAddress, TableIndex,
 };
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
+use jolt_witness::{
+    collect_par_map, stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -157,6 +159,22 @@ pub(crate) fn collect_instruction_cycle_rows<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
+    // Slice-backed sources pack index-parallel (the wide bundle row still
+    // never exists beyond a register); re-emulating sources stream.
+    if let Some(access) = witness.random_access() {
+        if cycles <= access.cycles() {
+            let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
+                InstructionCycleRow::new(
+                    row.lookup_index.0,
+                    row.table_index.0,
+                    row.raf_flag.0,
+                    row.mapped_pc.0,
+                    row.remapped_ram_address.0,
+                )
+            })?;
+            return Ok(rows);
+        }
+    }
     let mut consumers = (PackRows {
         rows: Vec::with_capacity(cycles),
     },);
