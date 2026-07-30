@@ -103,12 +103,38 @@ pub fn bytecode_stage_points<F: Field>(
     #[cfg(not(feature = "akita"))]
     let fused_inc_cycle_points = Vec::new();
     #[cfg(feature = "akita")]
-    let fused_inc_cycle_points = vec![
-        stage2.ram_read_write.inc().to_vec(),
-        stage4.ram_val_check.ram_inc().to_vec(),
-        stage4.registers_read_write.rd_inc().to_vec(),
-        stage5.registers_val_evaluation.rd_inc().to_vec(),
-    ];
+    let fused_inc_cycle_points = {
+        // The RAM legs' recorded points are `(address ‖ cycle)`; the fused
+        // pushforwards bind their `log_t` cycle suffixes (the register legs
+        // are the already-split stage 4/5 cycle legs).
+        let log_t = register_read_write_cycle.len();
+        let cycle_suffix = |label: &'static str, point: &[F]| {
+            stage6_checked_split(
+                label,
+                point,
+                point.len().checked_sub(log_t).ok_or_else(|| {
+                    VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::BytecodeReadRaf,
+                        reason: format!("{label} is shorter than the cycle domain"),
+                    }
+                })?,
+                JoltRelationId::BytecodeReadRaf,
+            )
+            .map(|(_, cycle)| cycle.to_vec())
+        };
+        vec![
+            cycle_suffix(
+                "Stage 6 RAM read-write inc opening",
+                stage2.ram_read_write.inc(),
+            )?,
+            cycle_suffix(
+                "Stage 6 RAM value-check inc opening",
+                stage4.ram_val_check.ram_inc(),
+            )?,
+            register_read_write_cycle.to_vec(),
+            register_val_evaluation_cycle.to_vec(),
+        ]
+    };
     Ok(BytecodeStagePoints {
         stage_cycle_points,
         register_read_write_point,
