@@ -444,7 +444,7 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Trace final-reader release | `mem-trace-early-2e22.json`, `mem-trace-early-2e26.json` |
 | Streamed root quotient | `mem-stream-t-2e22.json`, `mem-stream-t-2e26.json` |
 | Stage-5 read-RAF reuse | `mem-stage5-reuse-2e22.json`, `mem-stage5-reuse-2e26.json` |
-| Full K256 `2^28` fit | `mem-fit-2e28.json` |
+| Full K256 `2^28` fit | `akita_28.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.

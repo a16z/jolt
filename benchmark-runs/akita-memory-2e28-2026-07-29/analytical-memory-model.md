@@ -867,7 +867,7 @@ Each optimization lands in its own commit.
 6. Reject any capacity change that causes a reproducible prover regression.
 7. Attempt `2^28` only after the analytical structural ceiling plus measured
    non-owned reserve is below 90 GiB. This gate passed; the retained target
-   trace is `benchmark-runs/perfetto_traces/mem-fit-2e28.json`.
+   trace is `benchmark-runs/perfetto_traces/akita_28.json`.
 
 ## Source map
 

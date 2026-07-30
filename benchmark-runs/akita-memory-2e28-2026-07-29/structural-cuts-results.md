@@ -262,4 +262,4 @@ than revisiting background phase drops.
 - `benchmark-runs/perfetto_traces/mem-stream-t-2e26.json`
 - `benchmark-runs/perfetto_traces/mem-stage5-reuse-2e22.json`
 - `benchmark-runs/perfetto_traces/mem-stage5-reuse-2e26.json`
-- `benchmark-runs/perfetto_traces/mem-fit-2e28.json`
+- `benchmark-runs/perfetto_traces/akita_28.json`
