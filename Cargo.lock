@@ -3612,6 +3612,7 @@ dependencies = [
  "jolt-poly",
  "jolt-program",
  "jolt-prover-legacy",
+ "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",

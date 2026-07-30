@@ -434,6 +434,24 @@ impl jolt_openings::GroupSetupMetadata for AkitaVerifierSetup {
     }
 }
 
+impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
+    fn max_num_vars(&self) -> usize {
+        self.max_num_vars()
+    }
+
+    fn max_num_polys_per_commitment_group(&self) -> usize {
+        self.max_num_polys_per_commitment_group()
+    }
+
+    fn default_layout_digest(&self) -> [u8; 32] {
+        self.default_layout_digest()
+    }
+
+    fn one_hot_k(&self) -> usize {
+        self.one_hot_k()
+    }
+}
+
 impl AkitaCommitment {
     pub fn backend_flavor(&self) -> AkitaBackendFlavor {
         self.backend_flavor
