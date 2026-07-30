@@ -18,16 +18,20 @@
 //! way. Commitments and hints are therefore byte-identical to the unprepared
 //! path (pinned by parity tests in `streaming`).
 
-use ark_bn254::{Bn254, G1Affine};
+use ark_bn254::{Bn254, Fq12, Fq2, Fq6, G1Affine, G1Projective};
+use ark_ec::bn::BnConfig;
 use ark_ec::pairing::{MillerLoopOutput, Pairing};
-use ark_ec::CurveGroup;
-use ark_ff::One;
+use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::{Field, Fp6Config, One};
 use dory::Mode;
 use jolt_crypto::Bn254G1;
 use rayon::prelude::*;
 
 use crate::scheme::{ark_to_jolt_fr, ark_to_jolt_gt, ArkFr, ArkG1, ArkGT};
 use crate::types::{DoryCommitment, DoryHint, DoryProverSetup};
+
+/// One prepared line's coefficients (arkworks D-twist order).
+type EllCoeff = ark_ec::bn::g2::EllCoeff<ark_bn254::Config>;
 
 /// Miller-loop-prepared `g2_vec[..max_rows]` setup generators, shared
 /// read-only across every column finish of one commit pass.
@@ -62,6 +66,127 @@ impl DoryTier2Prep {
     }
 }
 
+// --- fresh prepared-coefficient multi-Miller (W10b) ---------------------------
+//
+// `Bn254::multi_miller_loop`'s value, computed cheaper for the fixed-G2
+// absorb shape: ONE squaring ladder shared by the whole pair set (arkworks
+// re-chunks pairs by 4, paying 16 Fq12 squarings per pair), coefficients
+// borrowed from the prep (arkworks' by-value API forces a per-pair
+// G2Prepared clone), and line values folded pairwise (Scott, eprint
+// 2019/077 — the same combining `fq12.metal` uses on the device lane).
+// Every regrouping multiplies the same Fp12 factors in a different order,
+// so the output limbs are bit-identical; `fresh_multi_miller_matches_arkworks`
+// and the streaming parity suites pin it.
+
+/// (c0 + c1·v + c2·v²)·v with v³ = ξ — arkworks `mul_by_nonresidue` on the
+/// Fq6 tower slot.
+#[inline]
+fn mul_fq6_by_v(x: &Fq6) -> Fq6 {
+    Fq6::new(
+        x.c2 * <ark_bn254::Fq6Config as Fp6Config>::NONRESIDUE,
+        x.c0,
+        x.c1,
+    )
+}
+
+/// The product of two evaluated D-twist lines, collected over w² = v:
+/// even part a full Fq6, odd part two populated slots (v² identically
+/// zero) — 6 Fq2 muls with Karatsuba cross terms.
+struct LinePair {
+    c0: Fq6,
+    c1a: Fq2,
+    c1b: Fq2,
+}
+
+#[inline]
+fn combine_lines(l1: &(Fq2, Fq2, Fq2), l2: &(Fq2, Fq2, Fq2)) -> LinePair {
+    let (a1, b1, c1) = l1;
+    let (a2, b2, c2) = l2;
+    let aa = *a1 * a2;
+    let bb = *b1 * b2;
+    let cc = *c1 * c2;
+    let ab = (*a1 + b1) * (*a2 + b2) - aa - bb;
+    let ac = (*a1 + c1) * (*a2 + c2) - aa - cc;
+    let bc = (*b1 + c1) * (*b2 + c2) - bb - cc;
+    LinePair {
+        c0: Fq6::new(
+            aa + cc * <ark_bn254::Fq6Config as Fp6Config>::NONRESIDUE,
+            bb,
+            bc,
+        ),
+        c1a: ab,
+        c1b: ac,
+    }
+}
+
+/// f ← f·(l.c0 + (l.c1a + l.c1b·v)·w): quadratic Karatsuba with the odd
+/// part's sparse `mul_by_01` leg — 17 Fq2 muls against 26 for two
+/// `mul_by_034`s.
+#[inline]
+fn mul_by_line_pair(f: &mut Fq12, l: &LinePair) {
+    let v0 = f.c0 * l.c0;
+    let mut v1 = f.c1;
+    v1.mul_by_01(&l.c1a, &l.c1b);
+    let sum = Fq6::new(l.c0.c0 + l.c1a, l.c0.c1 + l.c1b, l.c0.c2);
+    let mut c1 = f.c0 + f.c1;
+    c1 *= &sum;
+    c1 -= &v0;
+    c1 -= &v1;
+    f.c0 = v0 + mul_fq6_by_v(&v1);
+    f.c1 = c1;
+}
+
+/// Evaluate coefficient `step` of every live pair at its G1 point and fold
+/// the line values into `f`, combined pairwise (an odd tail falls back to
+/// the single sparse mul).
+#[inline]
+fn fold_step(f: &mut Fq12, pairs: &[(G1Affine, &[EllCoeff])], step: usize) {
+    let mut held: Option<(Fq2, Fq2, Fq2)> = None;
+    for (point, coeffs) in pairs {
+        let c = &coeffs[step];
+        let mut c0 = c.0;
+        c0.mul_assign_by_fp(&point.y);
+        let mut c1 = c.1;
+        c1.mul_assign_by_fp(&point.x);
+        let line = (c0, c1, c.2);
+        match held.take() {
+            Some(h) => mul_by_line_pair(f, &combine_lines(&h, &line)),
+            None => held = Some(line),
+        }
+    }
+    if let Some((c0, c3, c4)) = held {
+        f.mul_by_034(&c0, &c3, &c4);
+    }
+}
+
+/// The multi-Miller Fp12 value of the given (non-identity) pairs over one
+/// shared squaring ladder. Coefficient slices must be full arkworks
+/// preparations (one per ate iteration, one more per nonzero digit, two
+/// Frobenius steps) — asserted per pair by `fold_step` indexing.
+fn multi_miller_prepared(pairs: &[(G1Affine, &[EllCoeff])]) -> Fq12 {
+    let mut f = Fq12::one();
+    if pairs.is_empty() {
+        return f;
+    }
+    let ate = <ark_bn254::Config as BnConfig>::ATE_LOOP_COUNT;
+    let iters = ate.len() - 1;
+    let mut step = 0usize;
+    for k in 0..iters {
+        if k != 0 {
+            let _ = f.square_in_place();
+        }
+        fold_step(&mut f, pairs, step);
+        step += 1;
+        if ate[iters - 1 - k] != 0 {
+            fold_step(&mut f, pairs, step);
+            step += 1;
+        }
+    }
+    fold_step(&mut f, pairs, step);
+    fold_step(&mut f, pairs, step + 1);
+    f
+}
+
 /// The `multi_pair_g2_setup` Fp12 product of `ps` against the prepared
 /// generator prefix, without the per-call G2 re-preparation.
 pub(crate) fn multi_pair_g2_prepared(ps: &[ArkG1], prep: &DoryTier2Prep) -> ArkGT {
@@ -76,14 +201,20 @@ pub(crate) fn multi_pair_g2_prepared(ps: &[ArkG1], prep: &DoryTier2Prep) -> ArkG
         .par_chunks(MILLER_CHUNK)
         .zip(qs.par_chunks(MILLER_CHUNK))
         .map(|(ps_chunk, qs_chunk)| {
-            let ps_prep: Vec<<Bn254 as Pairing>::G1Prepared> =
-                ps_chunk.iter().map(|p| p.0.into_affine().into()).collect();
-            Bn254::multi_miller_loop(ps_prep, qs_chunk.iter().cloned())
+            // Batch normalization is one inversion per chunk instead of one
+            // per point; affine coordinates are the same field values.
+            let affine =
+                G1Projective::normalize_batch(&ps_chunk.iter().map(|p| p.0).collect::<Vec<_>>());
+            let pairs: Vec<(G1Affine, &[EllCoeff])> = affine
+                .iter()
+                .zip(qs_chunk)
+                .filter(|(p, q)| !p.is_zero() && !q.infinity)
+                .map(|(p, q)| (*p, q.ell_coeffs.as_slice()))
+                .collect();
+            multi_miller_prepared(&pairs)
         })
-        .reduce(
-            || MillerLoopOutput(<Bn254 as Pairing>::TargetField::one()),
-            |a, b| MillerLoopOutput(a.0 * b.0),
-        );
+        .reduce(Fq12::one, |a, b| a * b);
+    let combined = MillerLoopOutput(combined);
     #[expect(
         clippy::expect_used,
         reason = "final exponentiation only fails on a zero Miller product, which no pair set produces"
@@ -139,15 +270,14 @@ impl Tier2Accumulator {
             row_indices.len(),
             "tier-2 absorb: one row index per point",
         );
-        if points.is_empty() {
-            return;
-        }
-        let qs: Vec<<Bn254 as Pairing>::G2Prepared> = row_indices
+        let pairs: Vec<(G1Affine, &[EllCoeff])> = points
             .iter()
-            .map(|&row| prep.prepared[row as usize].clone())
+            .zip(row_indices)
+            .map(|(p, &row)| (p, &prep.prepared[row as usize]))
+            .filter(|(p, q)| !p.is_zero() && !q.infinity)
+            .map(|(p, q)| (*p, q.ell_coeffs.as_slice()))
             .collect();
-        let out = Bn254::multi_miller_loop(points.iter().copied(), qs);
-        self.miller *= out.0;
+        self.miller *= multi_miller_prepared(&pairs);
     }
 
     /// Fold another accumulator in (parallel absorb lanes).
@@ -202,6 +332,40 @@ mod tests {
     use super::*;
     use crate::scheme::commit_rows_tier_2;
     use crate::DoryScheme;
+
+    /// The fresh shared-ladder, pairwise-combined loop must reproduce
+    /// arkworks' multi-Miller value bit for bit at every pair-count shape
+    /// (empty, single, odd tail, even) with identities mixed in.
+    #[test]
+    fn fresh_multi_miller_matches_arkworks() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0x1077);
+        for n in [0usize, 1, 2, 3, 7, 8, 64] {
+            let mut points: Vec<G1Affine> = (0..n)
+                .map(|_| ark_bn254::G1Projective::rand(&mut rng).into_affine())
+                .collect();
+            if n > 4 {
+                points[1] = G1Affine::zero();
+                points[4] = G1Affine::zero();
+            }
+            let preps: Vec<<Bn254 as Pairing>::G2Prepared> = (0..n)
+                .map(|_| ark_bn254::G2Projective::rand(&mut rng).into_affine().into())
+                .collect();
+
+            let expected =
+                Bn254::multi_miller_loop(points.iter().copied(), preps.iter().cloned()).0;
+            let pairs: Vec<(G1Affine, &[EllCoeff])> = points
+                .iter()
+                .zip(&preps)
+                .filter(|(p, q)| !p.is_zero() && !q.infinity)
+                .map(|(p, q)| (*p, q.ell_coeffs.as_slice()))
+                .collect();
+            assert_eq!(
+                multi_miller_prepared(&pairs),
+                expected,
+                "fresh loop diverged at {n} pairs"
+            );
+        }
+    }
 
     /// Absorbing rows in shards, out of order, across merged accumulators
     /// must reproduce `commit_rows_tier_2`'s GT exactly — including skipped
