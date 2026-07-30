@@ -34,19 +34,23 @@ mod dory_folds;
 mod error;
 mod field;
 mod g1;
+mod g2;
 mod hint_combine;
 mod runtime;
 mod slots;
 pub mod testing;
 
 pub use buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec, PAGE_SIZE};
-pub use dory_folds::g1_scalar_mul_add_device;
+pub use dory_folds::{
+    g1_scalar_mul_add_device, g2_fixed_base_mul_device, g2_scalar_mul_add_device,
+};
 pub use error::MetalError;
 pub use field::{
     fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS,
-    G1_AFFINE_U32_STRIDE,
+    G1_AFFINE_U32_STRIDE, G2_AFFINE_U32_STRIDE,
 };
 pub use g1::{bases_as_u32s, g1_seg_sum_dispatch, g1_seg_sums, jac_from_device_limbs, JAC_U32S};
+pub use g2::{g2_bases_as_u32s, g2_jac_from_device_limbs, G2_JAC_U32S};
 pub use runtime::{
     ComputePass, KernelId, MetalContext, PendingPass, MAX_EVAL_POINTS, THREADGROUP_SIZE,
 };

@@ -42,6 +42,24 @@ const _: () = assert!(std::mem::offset_of!(ark_bn254::G1Affine, y) == FR_U32_LIM
 const _: () = assert!(size_of::<ark_bn254::G1Affine>().is_multiple_of(4));
 const _: () = assert!(align_of::<ark_bn254::G1Affine>() >= align_of::<u32>());
 
+/// u32 stride between consecutive `ark_bn254::G2Affine` elements viewed as a
+/// device `uint` array (x = Fq2 c0‖c1 limbs at +0, y at +2·[`FR_U32_LIMBS`];
+/// the trailing `infinity` flag is padding to the shader). Pinned by the
+/// assertions below and the `g2_affine_layout_matches_u32_view` test in
+/// [`super::g2`].
+pub const G2_AFFINE_U32_STRIDE: usize = size_of::<ark_bn254::G2Affine>() / 4;
+
+// The zero-copy G2Affine view contract, one level deeper than G1's: the
+// point's x/y are Fq2 values whose c0/c1 must also sit at their declared
+// offsets.
+const _: () = assert!(std::mem::offset_of!(ark_bn254::G2Affine, x) == 0);
+const _: () = assert!(std::mem::offset_of!(ark_bn254::G2Affine, y) == 2 * FR_U32_LIMBS * 4);
+const _: () = assert!(std::mem::offset_of!(ark_bn254::Fq2, c0) == 0);
+const _: () = assert!(std::mem::offset_of!(ark_bn254::Fq2, c1) == FR_U32_LIMBS * 4);
+const _: () = assert!(size_of::<ark_bn254::Fq2>() == 2 * FR_U32_LIMBS * 4);
+const _: () = assert!(size_of::<ark_bn254::G2Affine>().is_multiple_of(4));
+const _: () = assert!(align_of::<ark_bn254::G2Affine>() >= align_of::<u32>());
+
 /// The generated MSL preamble: field constants off the
 /// [`MontgomeryConstants`] seam plus the dispatch-geometry defines shared
 /// with [`super::runtime`]. Prepended to every shader source before
@@ -55,6 +73,7 @@ pub(super) fn constants_preamble() -> String {
     let _ = writeln!(out, "#define JK_TG_SIZE {THREADGROUP_SIZE}u");
     let _ = writeln!(out, "#define JK_MAX_EVAL_POINTS {MAX_EVAL_POINTS}u");
     let _ = writeln!(out, "#define JK_G1_AFFINE_STRIDE {G1_AFFINE_U32_STRIDE}u");
+    let _ = writeln!(out, "#define JK_G2_AFFINE_STRIDE {G2_AFFINE_U32_STRIDE}u");
     let _ = writeln!(out, "#define JK_OPENING_MAX_SEL {OPENING_MAX_SEL}u");
     let _ = writeln!(
         out,

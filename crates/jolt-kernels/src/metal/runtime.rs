@@ -60,6 +60,8 @@ pub enum KernelId {
     G1SegSum,
     G1CombineRows,
     G1ScalarMulAdd,
+    G2ScalarMulAdd,
+    G2FixedBaseMul,
     OpeningFoldDense,
     OpeningFoldOneHot,
     IrrPhaseScan,
@@ -76,7 +78,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 28] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -90,6 +92,8 @@ impl KernelId {
         Self::G1SegSum,
         Self::G1CombineRows,
         Self::G1ScalarMulAdd,
+        Self::G2ScalarMulAdd,
+        Self::G2FixedBaseMul,
         Self::OpeningFoldDense,
         Self::OpeningFoldOneHot,
         Self::IrrPhaseScan,
@@ -120,6 +124,8 @@ impl KernelId {
             Self::G1SegSum => "jk_g1_seg_sum",
             Self::G1CombineRows => "jk_g1_combine_rows",
             Self::G1ScalarMulAdd => "jk_g1_scalar_mul_add",
+            Self::G2ScalarMulAdd => "jk_g2_scalar_mul_add",
+            Self::G2FixedBaseMul => "jk_g2_fixed_base_mul",
             Self::OpeningFoldDense => "jk_opening_fold_dense",
             Self::OpeningFoldOneHot => "jk_opening_fold_onehot",
             Self::IrrPhaseScan => "jk_irr_phase_scan",
@@ -167,11 +173,12 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}",
             field::constants_preamble(),
             include_str!("shaders/fr.metal"),
             include_str!("shaders/kernels.metal"),
             include_str!("shaders/g1.metal"),
+            include_str!("shaders/g2.metal"),
             include_str!("shaders/instruction.metal"),
             include_str!("shaders/ra_lazy.metal"),
         );
