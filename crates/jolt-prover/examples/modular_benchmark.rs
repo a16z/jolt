@@ -394,7 +394,12 @@ fn pad_trace(
     trace_output: TraceOutput<OwnedTrace>,
     trace_length: usize,
 ) -> TraceOutput<OwnedTrace> {
-    let mut rows = trace_output.trace.rows().to_vec();
+    // Exact capacity up front: `to_vec` + `resize` would grow amortized,
+    // leaving ~2x the padded length as dead capacity (8.7 GB of heap at
+    // 2^25) and paying an extra whole-trace realloc copy.
+    let source = trace_output.trace.rows();
+    let mut rows = Vec::with_capacity(trace_length.max(source.len()));
+    rows.extend_from_slice(source);
     rows.resize(trace_length, TraceRow::default());
     TraceOutput::new(
         OwnedTrace::new(rows),
