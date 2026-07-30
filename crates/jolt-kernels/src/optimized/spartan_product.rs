@@ -31,7 +31,6 @@ use jolt_field::{
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -311,8 +310,7 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemaind
 /// (bound `LowToHigh`).
 struct ProductRemainderKernel<F: Field> {
     rounds: usize,
-    left: Polynomial<F>,
-    right: Polynomial<F>,
+    tables: ProductTables<F>,
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     pending_endpoints: Option<(F, F)>,
@@ -320,6 +318,18 @@ struct ProductRemainderKernel<F: Field> {
     rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
+}
+
+/// The weighted left/right tables' lifecycle: pending across the first
+/// round (whose message is the prepare-time endpoints), materialized at
+/// half domain by the first bind straight from the row cells — the full-T
+/// tables never exist. Values are identical to materialize-then-bind.
+enum ProductTables<F: Field> {
+    Pending,
+    Dense {
+        left: Polynomial<F>,
+        right: Polynomial<F>,
+    },
 }
 
 impl<F: Field> ProductRemainderKernel<F> {
@@ -355,13 +365,9 @@ impl<F: Field> ProductRemainderKernel<F> {
         // its 5-limb window holds exactly this shape (two full-u64 lanes and
         // a flag stay under 2^319); right's i128 lane goes through the
         // signed-product path.
-        let cycles = 1usize << log_t;
-        let mut left: Vec<F> = unsafe_allocate_zero_vec(cycles);
-        let mut right: Vec<F> = unsafe_allocate_zero_vec(cycles);
         let e_out = split_eq.e_out_current();
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
-        let width = 2 * in_len;
         let access = rows.access();
         let weights_ref = &weights;
         let cell = |row: &SpartanProductRow| -> (F, F) {
@@ -385,20 +391,15 @@ impl<F: Field> ProductRemainderKernel<F> {
             );
             (left_acc.reduce(), right_acc.reduce())
         };
-        let block = |x_out: usize,
-                     left_chunk: &mut [F],
-                     right_chunk: &mut [F]|
-         -> Result<(F, F), WitnessError> {
+        // Endpoints-only round-0 pass: the tables stay pending — the first
+        // bind materializes them at half domain straight from the cells.
+        let block = |x_out: usize| -> Result<(F, F), WitnessError> {
             let mut inner_zero = F::zero();
             let mut inner_infinity = F::zero();
             for (x_in, &e) in e_in.iter().enumerate() {
                 let pair = x_out * in_len + x_in;
                 let (left_low, right_low) = cell(&access.row(2 * pair)?);
                 let (left_high, right_high) = cell(&access.row(2 * pair + 1)?);
-                left_chunk[2 * x_in] = left_low;
-                left_chunk[2 * x_in + 1] = left_high;
-                right_chunk[2 * x_in] = right_low;
-                right_chunk[2 * x_in + 1] = right_high;
                 inner_zero += e * (left_low * right_low);
                 inner_infinity += e * ((left_high - left_low) * (right_high - right_low));
             }
@@ -407,32 +408,21 @@ impl<F: Field> ProductRemainderKernel<F> {
         let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
 
         #[cfg(feature = "parallel")]
-        let endpoints = left
-            .par_chunks_mut(width)
-            .zip(right.par_chunks_mut(width))
-            .enumerate()
-            .map(|(x_out, (left_chunk, right_chunk))| block(x_out, left_chunk, right_chunk))
-            .try_reduce(
-                || (F::zero(), F::zero()),
-                |left, right| Ok(add(left, right)),
-            )?;
+        let endpoints = (0..e_out.len()).into_par_iter().map(block).try_reduce(
+            || (F::zero(), F::zero()),
+            |left, right| Ok(add(left, right)),
+        )?;
         #[cfg(not(feature = "parallel"))]
         let endpoints = {
             let mut folded = (F::zero(), F::zero());
-            for (x_out, (left_chunk, right_chunk)) in left
-                .chunks_mut(width)
-                .zip(right.chunks_mut(width))
-                .enumerate()
-            {
-                folded = add(folded, block(x_out, left_chunk, right_chunk)?);
+            for x_out in 0..e_out.len() {
+                folded = add(folded, block(x_out)?);
             }
             folded
         };
-
         Ok(Self {
             rounds,
-            left: Polynomial::new(left),
-            right: Polynomial::new(right),
+            tables: ProductTables::Pending,
             scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
@@ -443,8 +433,13 @@ impl<F: Field> ProductRemainderKernel<F> {
     }
 
     fn endpoints(&self) -> (F, F) {
-        let left = self.left.evals();
-        let right = self.right.evals();
+        let ProductTables::Dense { left, right } = &self.tables else {
+            // Unreachable in the round flow: round 0 consumes
+            // `pending_endpoints`, and the first bind materializes.
+            return (F::zero(), F::zero());
+        };
+        let left = left.evals();
+        let right = right.evals();
         let e_out = self.split_eq.e_out_current();
         let e_in = self.split_eq.e_in_current();
         let in_len = e_in.len();
@@ -481,14 +476,73 @@ impl<F: Field> ProductRemainderKernel<F> {
         }
     }
 
-    fn bind(&mut self, challenge: F) {
-        self.left
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
-        self.right
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+    fn bind(&mut self, challenge: F) -> Result<(), WitnessError> {
+        match &mut self.tables {
+            ProductTables::Dense { left, right } => {
+                left.bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+                right.bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+            }
+            ProductTables::Pending => {
+                // First bind: materialize the half-domain tables straight
+                // from the row cells under this challenge — the same values
+                // a full-T materialization would bind to.
+                let access = self.rows.access();
+                let weights_ref = &self.lagrange_weights;
+                let cell = |row: &SpartanProductRow| -> (F, F) {
+                    let mut left_acc =
+                        <F as WithSmallScalarAccumulator>::SmallScalarAccumulator::default();
+                    left_acc.fmadd_u64(weights_ref[0], row.left_instruction_input.0);
+                    left_acc.fmadd_u64(weights_ref[1], row.lookup_output.0);
+                    left_acc.fmadd_u64(weights_ref[2], u64::from(row.jump_flag.0));
+                    let mut right_acc =
+                        <F as WithSignedProductAccumulator>::SignedProductAccumulator::default();
+                    right_acc.fmadd_s256(
+                        weights_ref[0],
+                        &S256::from_i128(row.right_instruction_input.0),
+                    );
+                    right_acc.fmadd_s256(
+                        weights_ref[1],
+                        &S256::from_u64(u64::from(row.branch_flag.0)),
+                    );
+                    right_acc.fmadd_s256(
+                        weights_ref[2],
+                        &S256::from_u64(1 - u64::from(row.next_is_noop.0)),
+                    );
+                    (left_acc.reduce(), right_acc.reduce())
+                };
+                let half = (1usize << self.rounds) / 2;
+                let build = |position: usize| -> Result<(F, F), WitnessError> {
+                    let (left_low, right_low) = cell(&access.row(2 * position)?);
+                    let (left_high, right_high) = cell(&access.row(2 * position + 1)?);
+                    Ok((
+                        left_low + challenge * (left_high - left_low),
+                        right_low + challenge * (right_high - right_low),
+                    ))
+                };
+                #[cfg(feature = "parallel")]
+                let pairs: Vec<(F, F)> = {
+                    let results: Result<Vec<(F, F)>, WitnessError> =
+                        (0..half).into_par_iter().map(build).collect();
+                    results?
+                };
+                #[cfg(not(feature = "parallel"))]
+                let pairs: Vec<(F, F)> = (0..half).map(build).collect::<Result<_, _>>()?;
+                let mut left: Vec<F> = Vec::with_capacity(half);
+                let mut right: Vec<F> = Vec::with_capacity(half);
+                for (l, r) in pairs {
+                    left.push(l);
+                    right.push(r);
+                }
+                self.tables = ProductTables::Dense {
+                    left: Polynomial::new(left),
+                    right: Polynomial::new(right),
+                };
+            }
+        }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
+        Ok(())
     }
 
     /// The eight produced opening values at the bound cycle point: one
@@ -570,7 +624,10 @@ impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)
+                .map_err(|_| SumcheckError::MissingEvaluationSource {
+                    kind: "product table materialization",
+                })?;
         }
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
@@ -582,8 +639,10 @@ impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
+            .map_err(|_| SumcheckError::MissingEvaluationSource {
+                kind: "product table materialization",
+            })
     }
 }
 
