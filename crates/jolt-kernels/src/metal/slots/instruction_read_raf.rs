@@ -47,9 +47,9 @@ use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::instruction_read_raf::{
-    collect_instruction_cycle_rows, CycleInitRequest, CycleTables, InstructionCycleRow,
+    shared_instruction_rows, CycleInitRequest, CycleTables, InstructionCycleRow,
     OptimizedInstructionReadRafKernel, PhaseScanRequest, PhaseScanSums, PhaseScanner, RafSums,
-    ScanOutcome, ScannerInputs, SharedInstructionRows,
+    ScanOutcome, ScannerInputs,
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
@@ -90,11 +90,10 @@ impl PrepareKernel<Fr, InstructionReadRaf<Fr>> for MetalInstructionReadRaf {
     ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = InstructionReadRaf<Fr>>>, KernelError<Fr>>
     {
         let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
-            witness,
-            1 << dimensions.log_t(),
-        )?);
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        // Reclaims the rows the trace record's walk co-produced (parked at
+        // stage 1, carried back by every consumer); collects fresh only when
+        // no record was built.
+        let rows = shared_instruction_rows(session, witness, 1 << dimensions.log_t())?;
         // The scanner retires its flat cycle pair on drop (stage end) for
         // the stage-6b adoptions to reuse; the guard drains whatever is
         // still parked when the proof's session drops.
