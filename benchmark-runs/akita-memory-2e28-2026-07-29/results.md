@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Seven independently committed
+This pass kept K256 and the proof protocol fixed. Eight independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -17,6 +17,7 @@ prover slowdown:
 | `a1edad11d` | Materialize signed fused deltas at Stage 6 | 16 B/cycle during commitment and Stages 1–5 |
 | `937319abb` | Retain compact proof rows and stream trace conversion | 32 B/cycle throughout proving |
 | `0be326e83` | Read instruction RA from the row-major index source | 32 B/cycle during the first three Stage-6b rounds |
+| `39bc6ce38` | Read RAM RA from the row-major index source | `2 * ram_d` B/cycle during the first three Stage-6b rounds |
 
 At `2^26`, the final measured maximum RSS is 44.244 GB with zero process
 swaps, down from 50.49 GB after the R1CS-row policy change and 50.72 GB before
@@ -148,6 +149,32 @@ phase still determines the global peak at this size. The result is accepted as
 a phase-local allocation and runtime improvement, not claimed as a new
 headline RSS low.
 
+### Row-major RAM RA
+
+The RAM virtualization prover now reads optional RAM chunk indices directly
+from `RaIndices` for three rounds and then materializes the same field
+polynomials at `T / 8`. This removes one `Option<u8>` column per RAM chunk, or
+`2 * ram_d` B/cycle, from the early Stage-6b working set.
+
+At `2^26`, RAM initialization, message generation, and binding changed from a
+218.1 ms aggregate to 201.0 ms. Total Stage 6b was effectively identical:
+5.1289 versus 5.1330 seconds. Maximum RSS was also effectively unchanged
+(44.325 versus 44.304 GB) because another phase determines the process peak.
+
+The full proof measured 53.48 seconds versus 52.63 seconds, but unchanged
+commitment and packed-opening spans account for 0.81 seconds of the 0.85-second
+difference. The change is accepted as a performance-neutral phase-local
+allocation cut, not a claimed speedup.
+
+### Rejected: row-major bytecode RA
+
+The analogous bytecode port removed its transpose but made the sparse
+coefficient-read kernel slower in both `2^22` screens: +11.7% and +2.9%.
+Initialization and binding savings kept Stage 6 neutral, but the direct
+row-major access shape is not the right primitive for this low-density family.
+The candidate code was reverted. A dense `u8` column can retain contiguous
+access while halving bytecode's current `Option<u8>` storage.
+
 ### Rejected: shared packed RA source
 
 The next experiment replaced the retained 54-byte `RaIndices` row with views
@@ -183,6 +210,8 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Compact proof rows | `mem-trace-row-2e22.json`, `mem-trace-row-2e26.json` |
 | Full-vector row adapter | `mem-trace-row-adapter-2e22.json`, `mem-trace-row-adapter-2e26.json` |
 | Row-major instruction RA | `mem-ra-row-2e22.json`, `mem-ra-row-2e22-b.json`, `mem-ra-row-2e26.json` |
+| Row-major bytecode RA rejection | `mem-ra-bytecode-2e22.json`, `mem-ra-bytecode-2e22-b.json` |
+| Row-major RAM RA | `mem-ra-ram-2e22.json`, `mem-ra-ram-2e22-b.json`, `mem-ra-ram-2e26.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -214,9 +243,9 @@ operand presence, and canonical padding against the former `Cycle` path.
 The next targets are ordered by retained bytes and likelihood of remaining
 performance-neutral:
 
-1. **Avoid the remaining Stage 6 RA transposes.** The dominant 16-column
-   instruction family is now row-major. Apply the same measured representation
-   to bytecode and RAM only if their focused kernels remain neutral or faster.
+1. **Use a dense bytecode RA column.** Direct row-major reads regress the sparse
+   bytecode kernel. Its indices are always present, so a `Vec<u8>`-backed RA
+   input can preserve contiguous reads while halving `Option<u8>` storage.
 2. **Use dense fused-inc lanes and compact signed deltas in Stage 6.** These
    lanes are always present, so `Option<u8>` spends two bytes for a one-byte
    value. A dense polynomial input or typed all-present source can save up to
