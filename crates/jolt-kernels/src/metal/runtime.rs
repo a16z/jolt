@@ -14,6 +14,7 @@ use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -168,6 +169,53 @@ impl KernelId {
     }
 }
 
+/// `JOLT_METAL_CB_TRACE=1` prints one stderr line per committed command
+/// buffer: commit time (relative to the first traced CB), device execution
+/// window from `GPUStartTime`/`GPUEndTime`, CPU blocked-wait time, and the
+/// dispatch mix. The dispatch-batching audit tool; free when unset.
+fn cb_trace_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("JOLT_METAL_CB_TRACE").is_some_and(|v| v != "0"))
+}
+
+fn trace_epoch() -> Instant {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
+}
+
+/// Dispatch mix of one traced command buffer, in encode order.
+struct CbTrace {
+    /// (kernel, logical threads) per dispatch.
+    dispatches: Vec<(KernelId, usize)>,
+}
+
+impl CbTrace {
+    /// Run-length-collapsed dispatch summary: `FrBind×3(2048)` = three
+    /// consecutive FrBind dispatches, 2048 threads max among them.
+    fn summary(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let mut runs = self.dispatches.iter().peekable();
+        while let Some(&(kernel, threads)) = runs.next() {
+            let mut count = 1usize;
+            let mut max_threads = threads;
+            while let Some(&&(next, t)) = runs.peek() {
+                if next != kernel {
+                    break;
+                }
+                count += 1;
+                max_threads = max_threads.max(t);
+                let _ = runs.next();
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            let _ = write!(out, "{:?}×{count}({max_threads})", kernel);
+        }
+        out
+    }
+}
+
 /// Device + queue + prewarmed pipelines. One per process, behind
 /// [`MetalContext::global`]; all members are documented thread-safe by Metal
 /// (command buffers and encoders, which are not, live in [`ComputePass`] and
@@ -263,6 +311,9 @@ impl MetalContext {
             ctx: self,
             cb,
             encoder,
+            trace: cb_trace_enabled().then(|| CbTrace {
+                dispatches: Vec::new(),
+            }),
             _buffers: PhantomData,
         })
     }
@@ -288,6 +339,7 @@ pub struct ComputePass<'c, 'b> {
     ctx: &'c MetalContext,
     cb: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     encoder: Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>,
+    trace: Option<CbTrace>,
     _buffers: PhantomData<&'b ()>,
 }
 
@@ -305,6 +357,9 @@ impl<'b> ComputePass<'_, 'b> {
         buffers: &[&DeviceBuffer<'b>],
         threads: usize,
     ) {
+        if let Some(trace) = &mut self.trace {
+            trace.dispatches.push((kernel, threads));
+        }
         self.encoder
             .setComputePipelineState(&self.ctx.pipelines[kernel.index()]);
         for (index, buffer) in buffers.iter().enumerate() {
@@ -349,9 +404,14 @@ impl<'b> ComputePass<'_, 'b> {
     /// memory stays alive until the wait.
     pub fn commit(self) -> PendingPass<'b> {
         self.encoder.endEncoding();
+        let committed_at = self.trace.as_ref().map(|_| {
+            let epoch = trace_epoch();
+            Instant::now().duration_since(epoch)
+        });
         self.cb.commit();
         PendingPass {
             cb: self.cb,
+            trace: self.trace.zip(committed_at),
             _buffers: PhantomData,
         }
     }
@@ -362,12 +422,15 @@ impl<'b> ComputePass<'_, 'b> {
 /// before reading results.
 pub struct PendingPass<'b> {
     cb: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    trace: Option<(CbTrace, std::time::Duration)>,
     _buffers: PhantomData<&'b ()>,
 }
 
 impl PendingPass<'_> {
     /// Block until the GPU finishes; surfaces device-side errors.
+    #[expect(clippy::print_stderr, reason = "env-gated audit trace")]
     pub fn wait(self) -> Result<(), MetalError> {
+        let wait_start = self.trace.as_ref().map(|_| Instant::now());
         self.cb.waitUntilCompleted();
         if self.cb.status() != MTLCommandBufferStatus::Completed {
             let reason = self.cb.error().map_or_else(
@@ -375,6 +438,19 @@ impl PendingPass<'_> {
                 |e| e.localizedDescription().to_string(),
             );
             return Err(MetalError::Execution(reason));
+        }
+        if let Some((trace, committed_at)) = &self.trace {
+            // GPUStartTime/GPUEndTime are device timestamps in seconds on a
+            // shared mach timebase; their difference is the CB's execution
+            // window (includes any queue wait ahead of it).
+            let gpu_us = (self.cb.GPUEndTime() - self.cb.GPUStartTime()) * 1e6;
+            let blocked_us = wait_start.map_or(0.0, |w| w.elapsed().as_secs_f64() * 1e6);
+            eprintln!(
+                "[jk-cb] commit=+{:.6}s gpu_us={gpu_us:.0} blocked_us={blocked_us:.0} disp={} {}",
+                committed_at.as_secs_f64(),
+                trace.dispatches.len(),
+                trace.summary(),
+            );
         }
         Ok(())
     }

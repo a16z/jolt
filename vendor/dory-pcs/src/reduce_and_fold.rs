@@ -20,6 +20,43 @@ use crate::primitives::transcript::Transcript;
 
 type Scalar<E> = <<E as PairingCurve>::G1 as Group>::Scalar;
 
+/// Whether reduce rounds run their independent per-message computations
+/// (pairings, MSMs, vector folds — all value-identical exact arithmetic) on
+/// concurrent rayon lanes. Enabled only while a device multi-pair hook is
+/// installed, i.e. a GPU lane is serving this proof: concurrent calls then
+/// keep the device queue fed (hook-served calls co-run on the GPU instead of
+/// serializing wait-idle-wait, and CPU-served calls overlap device ones).
+/// Without a hook the sequential arms below run unchanged, preserving the
+/// pure-CPU path's schedule exactly as published.
+#[cfg(all(feature = "parallel", feature = "arkworks"))]
+fn reduce_rounds_concurrent() -> bool {
+    static FORCE_SEQUENTIAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let forced = *FORCE_SEQUENTIAL.get_or_init(|| {
+        std::env::var_os("JOLT_DORY_REDUCE_SEQUENTIAL").is_some_and(|v| v != "0")
+    });
+    !forced && crate::backends::arkworks::pairing_hook::multi_pair_hook().is_some()
+}
+
+#[cfg(not(all(feature = "parallel", feature = "arkworks")))]
+fn reduce_rounds_concurrent() -> bool {
+    false
+}
+
+/// `rayon::join` under `parallel`; sequential otherwise (the concurrency
+/// gate above is always false there, this keeps the call sites compiling).
+#[cfg(feature = "parallel")]
+use rayon::join as par_join;
+#[cfg(not(feature = "parallel"))]
+fn par_join<A, B, RA, RB>(a: A, b: B) -> (RA, RB)
+where
+    A: FnOnce() -> RA + Send,
+    B: FnOnce() -> RB + Send,
+    RA: Send,
+    RB: Send,
+{
+    (a(), b())
+}
+
 /// Prover state for the Dory opening protocol
 ///
 /// Maintains the current state of the prover during the interactive protocol.
@@ -229,41 +266,63 @@ where
         self.round_d2 = [M::sample(), M::sample()];
 
         // D₁L = ⟨v₁L, Γ₂'⟩, D₁R = ⟨v₁R, Γ₂'⟩
+        // D₂L = ⟨Γ₁', v₂L⟩, D₂R = ⟨Γ₁', v₂R⟩ — if v2 was constructed as
+        // h2 * scalars (first round), compute MSM(Γ₁', scalars) then one
+        // pairing.
+        // E₁β = ⟨Γ₁, s₂⟩, E₂β = ⟨Γ₂, s₁⟩
+        // All six depend only on the pre-round state, so the concurrent arm
+        // may run them on a join tree (see `reduce_rounds_concurrent`).
         let ht = &self.setup.ht;
-        let d1_left = M::mask(
-            E::multi_pair_g2_setup(v1_l, g2_prime),
-            ht,
-            &self.round_d1[0],
-        );
-        let d1_right = M::mask(
-            E::multi_pair_g2_setup(v1_r, g2_prime),
-            ht,
-            &self.round_d1[1],
-        );
-
-        // D₂L = ⟨Γ₁', v₂L⟩, D₂R = ⟨Γ₁', v₂R⟩
-        // If v2 was constructed as h2 * scalars (first round), compute MSM(Γ₁', scalars) then one pairing.
-        let (d2_left_base, d2_right_base) = if let Some(scalars) = self.v2_scalars.as_ref() {
-            let (s_l, s_r) = scalars.split_at(n2);
-            let sum_left = M1::msm(g1_prime, s_l);
-            let sum_right = M1::msm(g1_prime, s_r);
-            let g2_fin = &self.setup.g2_vec[0];
-            (E::pair(&sum_left, g2_fin), E::pair(&sum_right, g2_fin))
+        let g1_full = &self.setup.g1_vec[..1 << self.num_rounds];
+        let g2_full = &self.setup.g2_vec[..1 << self.num_rounds];
+        let (s1, s2) = (&self.s1[..], &self.s2[..]);
+        let v2_scalars = self.v2_scalars.as_ref();
+        let g2_fin = &self.setup.g2_vec[0];
+        let compute_d2 = || {
+            if let Some(scalars) = v2_scalars {
+                let (s_l, s_r) = scalars.split_at(n2);
+                let sum_left = M1::msm(g1_prime, s_l);
+                let sum_right = M1::msm(g1_prime, s_r);
+                (E::pair(&sum_left, g2_fin), E::pair(&sum_right, g2_fin))
+            } else {
+                (
+                    E::multi_pair_g1_setup(g1_prime, v2_l),
+                    E::multi_pair_g1_setup(g1_prime, v2_r),
+                )
+            }
+        };
+        let (((d1_left_base, d1_right_base), (d2_left_base, d2_right_base)), (e1_beta, e2_beta)) =
+            if reduce_rounds_concurrent() {
+            par_join(
+                || {
+                    par_join(
+                        || {
+                            par_join(
+                                || E::multi_pair_g2_setup(v1_l, g2_prime),
+                                || E::multi_pair_g2_setup(v1_r, g2_prime),
+                            )
+                        },
+                        compute_d2,
+                    )
+                },
+                || par_join(|| M1::msm(g1_full, s2), || M2::msm(g2_full, s1)),
+            )
         } else {
             (
-                E::multi_pair_g1_setup(g1_prime, v2_l),
-                E::multi_pair_g1_setup(g1_prime, v2_r),
+                (
+                    (
+                        E::multi_pair_g2_setup(v1_l, g2_prime),
+                        E::multi_pair_g2_setup(v1_r, g2_prime),
+                    ),
+                    compute_d2(),
+                ),
+                (M1::msm(g1_full, s2), M2::msm(g2_full, s1)),
             )
         };
+        let d1_left = M::mask(d1_left_base, ht, &self.round_d1[0]);
+        let d1_right = M::mask(d1_right_base, ht, &self.round_d1[1]);
         let d2_left = M::mask(d2_left_base, ht, &self.round_d2[0]);
         let d2_right = M::mask(d2_right_base, ht, &self.round_d2[1]);
-
-        // Compute E values for extended protocol: MSMs with scalar vectors
-        // E₁β = ⟨Γ₁, s₂⟩
-        let e1_beta = M1::msm(&self.setup.g1_vec[..1 << self.num_rounds], &self.s2[..]);
-
-        // E₂β = ⟨Γ₂, s₁⟩
-        let e2_beta = M2::msm(&self.setup.g2_vec[..1 << self.num_rounds], &self.s1[..]);
 
         FirstReduceMessage {
             d1_left,
@@ -287,9 +346,19 @@ where
         let beta_inv = beta.inv().expect("beta must be invertible");
         let n = 1 << self.num_rounds;
 
-        // v₁ ← v₁ + β·Γ₁, v₂ ← v₂ + β⁻¹·Γ₂
-        M1::fixed_scalar_mul_bases_then_add(&self.setup.g1_vec[..n], &mut self.v1, beta);
-        M2::fixed_scalar_mul_bases_then_add(&self.setup.g2_vec[..n], &mut self.v2, &beta_inv);
+        // v₁ ← v₁ + β·Γ₁, v₂ ← v₂ + β⁻¹·Γ₂ — independent vectors, so the
+        // concurrent arm folds both at once (device calls share the GPU).
+        let (g1_vec, g2_vec) = (&self.setup.g1_vec[..n], &self.setup.g2_vec[..n]);
+        let (v1, v2) = (&mut self.v1, &mut self.v2);
+        if reduce_rounds_concurrent() {
+            let ((), ()) = par_join(
+                || M1::fixed_scalar_mul_bases_then_add(g1_vec, v1, beta),
+                || M2::fixed_scalar_mul_bases_then_add(g2_vec, v2, &beta_inv),
+            );
+        } else {
+            M1::fixed_scalar_mul_bases_then_add(g1_vec, v1, beta);
+            M2::fixed_scalar_mul_bases_then_add(g2_vec, v2, &beta_inv);
+        }
         self.v2_scalars = None;
 
         self.r_c = self.r_c + self.r_d2 * beta + self.r_d1 * beta_inv;
@@ -316,16 +385,41 @@ where
         self.round_e1 = [M::sample(), M::sample()];
         self.round_e2 = [M::sample(), M::sample()];
 
-        // C₊ = ⟨v₁L, v₂R⟩, C₋ = ⟨v₁R, v₂L⟩
+        // C₊ = ⟨v₁L, v₂R⟩, C₋ = ⟨v₁R, v₂L⟩, plus the four extended-protocol
+        // cross MSMs — six independent reads of the pre-challenge state, so
+        // the concurrent arm runs them on a join tree.
         let ht = &self.setup.ht;
-        let c_plus = M::mask(E::multi_pair(v1_l, v2_r), ht, &self.round_c[0]);
-        let c_minus = M::mask(E::multi_pair(v1_r, v2_l), ht, &self.round_c[1]);
-
-        // Compute E terms for extended protocol: cross products with scalars
-        let e1_plus = M::mask(M1::msm(v1_l, s2_r), &self.setup.h1, &self.round_e1[0]);
-        let e1_minus = M::mask(M1::msm(v1_r, s2_l), &self.setup.h1, &self.round_e1[1]);
-        let e2_plus = M::mask(M2::msm(v2_r, s1_l), &self.setup.h2, &self.round_e2[0]);
-        let e2_minus = M::mask(M2::msm(v2_l, s1_r), &self.setup.h2, &self.round_e2[1]);
+        let ((c_plus_base, c_minus_base), ((e1_plus_base, e1_minus_base), (e2_plus_base, e2_minus_base))) =
+            if reduce_rounds_concurrent() {
+                par_join(
+                    || {
+                        par_join(
+                            || E::multi_pair(v1_l, v2_r),
+                            || E::multi_pair(v1_r, v2_l),
+                        )
+                    },
+                    || {
+                        par_join(
+                            || par_join(|| M1::msm(v1_l, s2_r), || M1::msm(v1_r, s2_l)),
+                            || par_join(|| M2::msm(v2_r, s1_l), || M2::msm(v2_l, s1_r)),
+                        )
+                    },
+                )
+            } else {
+                (
+                    (E::multi_pair(v1_l, v2_r), E::multi_pair(v1_r, v2_l)),
+                    (
+                        (M1::msm(v1_l, s2_r), M1::msm(v1_r, s2_l)),
+                        (M2::msm(v2_r, s1_l), M2::msm(v2_l, s1_r)),
+                    ),
+                )
+            };
+        let c_plus = M::mask(c_plus_base, ht, &self.round_c[0]);
+        let c_minus = M::mask(c_minus_base, ht, &self.round_c[1]);
+        let e1_plus = M::mask(e1_plus_base, &self.setup.h1, &self.round_e1[0]);
+        let e1_minus = M::mask(e1_minus_base, &self.setup.h1, &self.round_e1[1]);
+        let e2_plus = M::mask(e2_plus_base, &self.setup.h2, &self.round_e2[0]);
+        let e2_minus = M::mask(e2_minus_base, &self.setup.h2, &self.round_e2[1]);
 
         SecondReduceMessage {
             c_plus,
@@ -348,24 +442,38 @@ where
         let alpha_inv = alpha.inv().expect("alpha must be invertible");
         let n2 = 1 << (self.num_rounds - 1); // n/2
 
-        // Fold v₁: v₁ ← α·v₁L + v₁R
+        // Fold v₁ ← α·v₁L + v₁R, v₂ ← α⁻¹·v₂L + v₂R, s₁ ← α·s₁L + s₁R,
+        // s₂ ← α⁻¹·s₂L + s₂R — four disjoint vectors; the concurrent arm
+        // runs the two device-shaped point folds together and the field
+        // folds beside them.
         let (v1_l, v1_r) = self.v1.split_at_mut(n2);
-        M1::fixed_scalar_mul_vs_then_add(v1_l, v1_r, alpha);
-        self.v1.truncate(n2);
-
-        // Fold v₂: v₂ ← α⁻¹·v₂L + v₂R
         let (v2_l, v2_r) = self.v2.split_at_mut(n2);
-        M2::fixed_scalar_mul_vs_then_add(v2_l, v2_r, &alpha_inv);
-        self.v2.truncate(n2);
-
-        // Fold s₁: s₁ ← α·s₁L + s₁R
         let (s1_l, s1_r) = self.s1.split_at_mut(n2);
-        M1::fold_field_vectors(s1_l, s1_r, alpha);
-        self.s1.truncate(n2);
-
-        // Fold s₂: s₂ ← α⁻¹·s₂L + s₂R
         let (s2_l, s2_r) = self.s2.split_at_mut(n2);
-        M1::fold_field_vectors(s2_l, s2_r, &alpha_inv);
+        if reduce_rounds_concurrent() {
+            let (((), ()), ((), ())) = par_join(
+                || {
+                    par_join(
+                        || M1::fixed_scalar_mul_vs_then_add(v1_l, v1_r, alpha),
+                        || M2::fixed_scalar_mul_vs_then_add(v2_l, v2_r, &alpha_inv),
+                    )
+                },
+                || {
+                    par_join(
+                        || M1::fold_field_vectors(s1_l, s1_r, alpha),
+                        || M1::fold_field_vectors(s2_l, s2_r, &alpha_inv),
+                    )
+                },
+            );
+        } else {
+            M1::fixed_scalar_mul_vs_then_add(v1_l, v1_r, alpha);
+            M2::fixed_scalar_mul_vs_then_add(v2_l, v2_r, &alpha_inv);
+            M1::fold_field_vectors(s1_l, s1_r, alpha);
+            M1::fold_field_vectors(s2_l, s2_r, &alpha_inv);
+        }
+        self.v1.truncate(n2);
+        self.v2.truncate(n2);
+        self.s1.truncate(n2);
         self.s2.truncate(n2);
 
         self.r_c = self.r_c + self.round_c[0] * alpha + self.round_c[1] * alpha_inv;
