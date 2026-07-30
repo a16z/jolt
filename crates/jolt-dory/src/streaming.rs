@@ -204,6 +204,52 @@ impl StreamingCommitment for crate::DoryScheme {
         partial.row_commitments.extend(commitments);
     }
 
+    /// The parallel closure-fed batch: windows materialize their own
+    /// `row_width` values on the worker (a transient hundreds of KiB each)
+    /// and commit in parallel, appended in window order — the same
+    /// row-commitment sequence as [`feed_i128_rows`](Self::feed_i128_rows)
+    /// over a staged batch, without the batch.
+    #[tracing::instrument(
+        skip_all,
+        name = "DoryScheme::stream_feed_i128_rows_with",
+        fields(rows = count / row_width.max(1))
+    )]
+    fn feed_i128_rows_with(
+        partial: &mut Self::PartialCommitment,
+        value: impl Fn(usize) -> i128 + Sync,
+        count: usize,
+        row_width: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        assert!(
+            row_width.is_power_of_two(),
+            "streaming: row width ({row_width}) must be a power of two",
+        );
+        assert!(
+            row_width <= setup.0.g1_vec.len(),
+            "streaming: row width ({}) exceeds Dory SRS size ({})",
+            row_width,
+            setup.0.g1_vec.len(),
+        );
+        assert!(
+            count.is_multiple_of(row_width),
+            "streaming: batch length ({count}) must be a multiple of the row width ({row_width})",
+        );
+
+        let bases = scalar_affine_bases(&mut partial.scalar_affine_bases, row_width, setup);
+        let commitments: Vec<Bn254G1> = (0..count / row_width)
+            .into_par_iter()
+            .map(|window| {
+                let base = window * row_width;
+                let chunk: Vec<i128> = (base..base + row_width).map(&value).collect();
+                ark_to_jolt_g1(ArkG1(ark_ec::scalar_mul::variable_base::msm_i128::<
+                    ark_bn254::G1Projective,
+                >(bases, &chunk, true)))
+            })
+            .collect();
+        partial.row_commitments.extend(commitments);
+    }
+
     fn begin_one_hot_column_major_stream(
         setup: &Self::ProverSetup,
         row_width: usize,
@@ -258,6 +304,40 @@ impl StreamingCommitment for crate::DoryScheme {
         chunks
             .par_chunks(chunk_width)
             .map(|chunk| one_hot_chunk_commitments(context, setup, one_hot_k, chunk))
+            .collect()
+    }
+
+    /// The parallel closure-fed one-hot batch: windows materialize their own
+    /// `chunk_width` hot addresses on the worker and commit in parallel,
+    /// collected in window order — the same chunk-commitment sequence as
+    /// [`process_one_hot_chunks`](Self::process_one_hot_chunks) over a
+    /// staged batch, without the batch.
+    #[tracing::instrument(
+        skip_all,
+        name = "DoryScheme::stream_process_one_hot_chunks_with",
+        fields(chunks = count / chunk_width.max(1))
+    )]
+    fn process_one_hot_chunks_with(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        hot_address: impl Fn(usize) -> Option<usize> + Sync,
+        count: usize,
+        chunk_width: usize,
+    ) -> Vec<Self::OneHotChunkCommitment> {
+        assert!(
+            chunk_width != 0,
+            "streaming one-hot: chunk width must be nonzero",
+        );
+        let context: &Self::OneHotStreamContext = context;
+        (0..count.div_ceil(chunk_width))
+            .into_par_iter()
+            .map(|window| {
+                let base = window * chunk_width;
+                let top = (base + chunk_width).min(count);
+                let chunk: Vec<Option<usize>> = (base..top).map(&hot_address).collect();
+                one_hot_chunk_commitments(context, setup, one_hot_k, &chunk)
+            })
             .collect()
     }
 

@@ -36,10 +36,11 @@ use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 
 /// Cycles per superchunk. The dominant stage-0 wall cost on a many-core
 /// host is the per-superchunk join (its critical path is one window's
-/// serial MSM), so fewer, larger superchunks win: 2^17 → 2^19 measured
-/// 59.3s → 43.1s whole-prove at 2^25 on 64 threads. The extracted bundle
-/// buffer (64 B/cycle) and per-column scratch stay tens of megabytes.
-const SUPERCHUNK_CYCLES: usize = 1 << 19;
+/// serial MSM), so fewer, larger superchunks win: 2^17 → 2^21 measured
+/// 59.3s → 41.1s whole-prove at 2^25 on 64 threads. The extracted bundle
+/// buffer (64 B/cycle, two reused buffers) is the only staging that scales
+/// with the superchunk — columns feed the commit windows by closure.
+const SUPERCHUNK_CYCLES: usize = 1 << 21;
 
 impl<F, PCS> CommitWitness<F, PCS> for OptimizedBackend
 where
@@ -214,17 +215,11 @@ enum ColumnCommitState<PCS: StreamingCommitment> {
     Increment {
         kind: ColumnKind,
         partial: PCS::PartialCommitment,
-        /// Reused per-delivery staging for the column's increments —
-        /// allocated once, so 30 columns × hundreds of deliveries don't
-        /// churn the allocator (arena high-water marks follow transients).
-        scratch: Vec<i128>,
     },
     OneHot {
         kind: ColumnKind,
         context: PCS::OneHotStreamContext,
         chunk_commitments: Vec<PCS::OneHotChunkCommitment>,
-        /// Reused per-delivery staging for the column's hot addresses.
-        scratch: Vec<Option<usize>>,
     },
 }
 
@@ -255,13 +250,11 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
                         kind,
                         context: PCS::begin_one_hot_column_major_stream(setup, row_width),
                         chunk_commitments: Vec::new(),
-                        scratch: Vec::new(),
                     }
                 } else {
                     ColumnCommitState::Increment {
                         kind,
                         partial: PCS::begin(setup),
-                        scratch: Vec::new(),
                     }
                 }
             })
@@ -306,26 +299,31 @@ impl<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamCon
         let row_width = self.row_width;
         let one_hot_k = self.one_hot_k;
         let setup = self.setup;
+        // Columns feed by closure straight off the shared bundle chunk —
+        // the commit windows materialize their own values worker-side, so
+        // no per-column batch staging exists at any superchunk size.
         let advance = |column: &mut ColumnCommitState<PCS>| match column {
-            ColumnCommitState::Increment {
-                kind,
-                partial,
-                scratch,
-            } => {
-                scratch.clear();
-                scratch.extend(chunk.iter().map(|row| kind.increment(row)));
-                PCS::feed_i128_rows(partial, scratch, row_width, setup);
+            ColumnCommitState::Increment { kind, partial } => {
+                PCS::feed_i128_rows_with(
+                    partial,
+                    |index| kind.increment(&chunk[index]),
+                    chunk.len(),
+                    row_width,
+                    setup,
+                );
             }
             ColumnCommitState::OneHot {
                 kind,
                 context,
                 chunk_commitments,
-                scratch,
             } => {
-                scratch.clear();
-                scratch.extend(chunk.iter().map(|row| kind.hot_address(row)));
-                chunk_commitments.extend(PCS::process_one_hot_chunks(
-                    context, setup, one_hot_k, scratch, row_width,
+                chunk_commitments.extend(PCS::process_one_hot_chunks_with(
+                    context,
+                    setup,
+                    one_hot_k,
+                    |index| kind.hot_address(&chunk[index]),
+                    chunk.len(),
+                    row_width,
                 ));
             }
         };
