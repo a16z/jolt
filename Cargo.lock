@@ -2226,8 +2226,6 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c6a5b6aa708db35ced06eeef3d2b4408004c76279091e0bc387f8fd42796555"
 dependencies = [
  "ark-bn254 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2244,6 +2242,13 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
 ]
+
+[[package]]
+name = "dory-pcs"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c6a5b6aa708db35ced06eeef3d2b4408004c76279091e0bc387f8fd42796555"
+replace = "dory-pcs 0.4.0"
 
 [[package]]
 name = "dunce"
@@ -3235,7 +3240,7 @@ dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "criterion",
- "dory-pcs",
+ "dory-pcs 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
@@ -3674,7 +3679,7 @@ dependencies = [
  "common",
  "criterion",
  "derive_more",
- "dory-pcs",
+ "dory-pcs 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "eyre",
  "fixedbitset 0.5.7",
  "iai-callgrind",

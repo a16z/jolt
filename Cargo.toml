@@ -124,7 +124,7 @@ members = [
   "jolt-eval/macros",
   "jolt-eval/guest-sandbox",
 ]
-exclude = ["jolt-eval/fuzz"]
+exclude = ["jolt-eval/fuzz", "vendor"]
 
 [features]
 host = ["jolt-sdk/host"]
@@ -191,6 +191,9 @@ codegen-units = 1
 "ark-ff:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 "ark-ec:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 "ark-serialize:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# Vendored byte-exact from crates.io (Apache-2.0 OR MIT); [replace] because it
+# cannot coexist with [patch] and the arkworks pins above already use it.
+"dory-pcs:0.4.0" = { path = "vendor/dory-pcs" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
