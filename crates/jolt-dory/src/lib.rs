@@ -37,6 +37,7 @@ mod types;
 mod urs_lock;
 
 pub use hint_hook::{install_combine_hints_hook, CombineHintsFn, CombineHintsHookGuard};
+pub use routines::{JoltG1Routines, JoltG2Routines};
 pub use routines_hook::{
     install_routine_hooks, G1ScalarMulAddFn, G2FixedBaseMulFn, G2ScalarMulAddFn, RoutineHooks,
     RoutineHooksGuard,

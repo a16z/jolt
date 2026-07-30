@@ -60,6 +60,7 @@ objc2-metal = { workspace = true, optional = true }
 [dev-dependencies]
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
+dory.workspace = true
 jolt-dory.workspace = true
 jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }

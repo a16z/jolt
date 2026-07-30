@@ -26,7 +26,7 @@ use super::field::FR_U32_LIMBS;
 use super::g1::{bases_as_u32s, jac_from_device_limbs, JAC_U32S};
 use super::g2::{g2_bases_as_u32s, g2_jac_from_device_limbs, G2_JAC_U32S};
 use super::runtime::{KernelId, MetalContext};
-use super::{testing, MetalError};
+use super::{metal_gate, testing, MetalError};
 
 /// Canonical (integer) little-endian u32 limbs of a scalar plus its highest
 /// set bit — the kernel ladder's start. A zero scalar reports bit 0; the
@@ -242,6 +242,86 @@ pub fn g2_fixed_base_mul_device(
         .collect())
 }
 
+/// Work-item scaling for the gates: one G1 point costs ~2^8 group ops
+/// (254 doublings + ~127 mixed adds), one G2 point ~2^9 (the same ladder
+/// over Fq2 at ~3 Fq muls per mul), where the gate's threshold calibration
+/// is one stream element. Under the 2^18 default the crossovers land at
+/// len ≥ 1024 (G1) and len ≥ 512 (G2).
+const G1_WORK_PER_POINT_LOG2: usize = 8;
+const G2_WORK_PER_POINT_LOG2: usize = 9;
+
+/// The `RoutineHooks::g1_scalar_mul_add` candidate: `Some(out)` when the
+/// device served the call, `None` (undersized, dead device, or failed) for
+/// the CPU path.
+pub(super) fn g1_scalar_mul_add_hook(
+    ps: &[G1Projective],
+    qs: &[G1Projective],
+    scalar: &ArkFr,
+) -> Option<Vec<G1Projective>> {
+    if !metal_gate("dory_fold_g1", ps.len() << G1_WORK_PER_POINT_LOG2) {
+        return None;
+    }
+    let context = MetalContext::global().ok()?;
+    match g1_scalar_mul_add_device(context, ps, qs, scalar) {
+        Ok(out) => Some(out),
+        Err(error) => {
+            tracing::warn!(slot = "dory_fold_g1", %error, "device G1 fold failed; CPU fallback");
+            None
+        }
+    }
+}
+
+/// The `RoutineHooks::g2_scalar_mul_add` candidate.
+pub(super) fn g2_scalar_mul_add_hook(
+    ps: &[G2Projective],
+    qs: &[G2Projective],
+    scalar: &ArkFr,
+) -> Option<Vec<G2Projective>> {
+    if !metal_gate("dory_fold_g2", ps.len() << G2_WORK_PER_POINT_LOG2) {
+        return None;
+    }
+    let context = MetalContext::global().ok()?;
+    match g2_scalar_mul_add_device(context, ps, qs, scalar) {
+        Ok(out) => Some(out),
+        Err(error) => {
+            tracing::warn!(slot = "dory_fold_g2", %error, "device G2 fold failed; CPU fallback");
+            None
+        }
+    }
+}
+
+/// The `RoutineHooks::g2_fixed_base_mul` candidate.
+pub(super) fn g2_fixed_base_mul_hook(
+    base: &G2Projective,
+    scalars: &[ArkFr],
+) -> Option<Vec<G2Projective>> {
+    if !metal_gate("dory_fixed_base", scalars.len() << G2_WORK_PER_POINT_LOG2) {
+        return None;
+    }
+    let context = MetalContext::global().ok()?;
+    match g2_fixed_base_mul_device(context, base, scalars) {
+        Ok(out) => Some(out),
+        Err(error) => {
+            tracing::warn!(
+                slot = "dory_fixed_base",
+                %error,
+                "device G2 fixed-base sweep failed; CPU fallback"
+            );
+            None
+        }
+    }
+}
+
+/// The [`jolt_dory::RoutineHooks`] bundle the metal joint-opening slot
+/// installs for the proof's Dory reduce rounds.
+pub(super) fn routine_hooks() -> jolt_dory::RoutineHooks {
+    jolt_dory::RoutineHooks {
+        g1_scalar_mul_add: g1_scalar_mul_add_hook,
+        g2_scalar_mul_add: g2_scalar_mul_add_hook,
+        g2_fixed_base_mul: g2_fixed_base_mul_hook,
+    }
+}
+
 /// Group-level parity against arkworks on random, identity-planted, and
 /// adversarial (equal / inverse at the final add) inputs.
 #[cfg(test)]
@@ -387,6 +467,86 @@ mod tests {
             device[2].is_zero(),
             "identity ⊕ identity must stay identity"
         );
+    }
+
+    /// The full seam through jolt-dory's routines: installed hooks serve the
+    /// fold calls on the device (probe-verified — a silent CPU fallback
+    /// fails), results match the CPU routines, and the dropped guard
+    /// uninstalls. nextest's process-per-test isolates the env + global.
+    #[test]
+    fn routine_hooks_serve_dory_folds_on_device() {
+        use dory::backends::arkworks::{ArkFr as DoryFr, ArkG1, ArkG2};
+        use dory::primitives::arithmetic::DoryRoutines;
+        use jolt_dory::install_routine_hooks;
+
+        let _lock = gpu_lock();
+        // nextest runs one process per test, so env mutation is safe.
+        std::env::remove_var("JOLT_METAL_DISABLE");
+        std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
+
+        let mut rng = ChaCha20Rng::seed_from_u64(10);
+        let scalar = DoryFr(ArkFr::rand(&mut rng));
+        let bases_g1: Vec<ArkG1> = (0..33)
+            .map(|_| ArkG1(G1Projective::rand(&mut rng)))
+            .collect();
+        let vs_g1: Vec<ArkG1> = (0..33)
+            .map(|_| ArkG1(G1Projective::rand(&mut rng)))
+            .collect();
+        let bases_g2: Vec<ArkG2> = (0..33)
+            .map(|_| ArkG2(G2Projective::rand(&mut rng)))
+            .collect();
+        let vs_g2: Vec<ArkG2> = (0..33)
+            .map(|_| ArkG2(G2Projective::rand(&mut rng)))
+            .collect();
+        let scalars: Vec<DoryFr> = (0..33).map(|_| DoryFr(ArkFr::rand(&mut rng))).collect();
+
+        // CPU references, computed unhooked.
+        let mut cpu_g1 = vs_g1.clone();
+        jolt_dory::JoltG1Routines::fixed_scalar_mul_bases_then_add(&bases_g1, &mut cpu_g1, &scalar);
+        let mut cpu_g2 = vs_g2.clone();
+        jolt_dory::JoltG2Routines::fixed_scalar_mul_bases_then_add(&bases_g2, &mut cpu_g2, &scalar);
+        let cpu_fixed =
+            jolt_dory::JoltG2Routines::fixed_base_vector_scalar_mul(&bases_g2[0], &scalars);
+
+        let guard = install_routine_hooks(super::routine_hooks());
+        let probes_before = device_probe_count();
+        let mut hooked_g1 = vs_g1.clone();
+        jolt_dory::JoltG1Routines::fixed_scalar_mul_bases_then_add(
+            &bases_g1,
+            &mut hooked_g1,
+            &scalar,
+        );
+        let mut hooked_g2 = vs_g2.clone();
+        jolt_dory::JoltG2Routines::fixed_scalar_mul_bases_then_add(
+            &bases_g2,
+            &mut hooked_g2,
+            &scalar,
+        );
+        let hooked_fixed =
+            jolt_dory::JoltG2Routines::fixed_base_vector_scalar_mul(&bases_g2[0], &scalars);
+        assert_eq!(
+            device_probe_count() - probes_before,
+            3,
+            "each hooked op must run as one device dispatch"
+        );
+        assert_eq!(hooked_g1, cpu_g1);
+        assert_eq!(hooked_g2, cpu_g2);
+        assert_eq!(hooked_fixed, cpu_fixed);
+        drop(guard);
+
+        let probes_after = device_probe_count();
+        let mut unhooked_g1 = vs_g1.clone();
+        jolt_dory::JoltG1Routines::fixed_scalar_mul_bases_then_add(
+            &bases_g1,
+            &mut unhooked_g1,
+            &scalar,
+        );
+        assert_eq!(
+            device_probe_count(),
+            probes_after,
+            "a dropped guard must uninstall the hooks"
+        );
+        assert_eq!(unhooked_g1, cpu_g1);
     }
 
     /// Fixed-base sweep against arkworks: random scalars plus the degenerate
