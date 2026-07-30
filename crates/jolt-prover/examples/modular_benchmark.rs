@@ -340,6 +340,14 @@ fn run_benchmark(
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
     }
+    if let Some(footprint) = jolt_profiling::phys_footprint() {
+        println!(
+            "modular {} (2^{}, {backend_label}): Peak footprint {}",
+            bench_name,
+            scale,
+            format_memory_size(footprint.lifetime_peak_bytes as f64 / BYTES_PER_GIB),
+        );
+    }
     report_stage_memory();
 
     // The same 7-field CSV line the legacy harness writes, under a
