@@ -33,7 +33,7 @@ use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRa
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-use super::{num_threadgroups, own_uninit_frs, DeviceRound, Partials};
+use super::{num_threadgroups, own_eq, own_uninit_frs, DeviceRound, Partials};
 use crate::metal::buffers::{DeviceBuffer, OwnedDeviceBuffer};
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
@@ -516,23 +516,6 @@ fn wrap_eq<'a>(
         u64::from(e_in_buffer.was_copied()) + u64::from(e_out_buffer.was_copied()),
     );
     Ok((e_in_buffer, e_out_buffer))
-}
-
-/// Copy the current gruen levels into flight-owned buffers: a parked flight
-/// must not reference the consumer's eq backings (they drop with the
-/// consumer on paths the flight doesn't control), so the launch tier pays a
-/// small per-round copy the synchronous tier avoids.
-fn own_eq(
-    context: &'static MetalContext,
-    e_in: &[Fr],
-    e_out: &[Fr],
-) -> Result<(OwnedDeviceBuffer<Fr>, OwnedDeviceBuffer<Fr>), MetalError> {
-    let own = |values: &[Fr]| -> Result<OwnedDeviceBuffer<Fr>, MetalError> {
-        let buffer = context.own_vec(values.to_vec())?;
-        testing::note_copied_buffers(u64::from(buffer.was_copied()));
-        Ok(buffer)
-    };
-    Ok((own(e_in)?, own(e_out)?))
 }
 
 /// Booleanity-cycle driver: lanes `[q_constant, q_leading]`.

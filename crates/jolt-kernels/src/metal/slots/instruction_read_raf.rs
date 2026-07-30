@@ -41,10 +41,10 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
-use super::{num_threadgroups, own_uninit_frs, uninit_frs, DeviceRound, Partials};
-use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
+use super::{num_threadgroups, own_eq, own_uninit_frs, uninit_frs, DeviceRound, Partials};
+use crate::metal::buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec};
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
-use crate::metal::runtime::{KernelId, MetalContext};
+use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::instruction_read_raf::{
     shared_instruction_rows, CycleInitRequest, CycleTables, InstructionCycleRow,
@@ -141,7 +141,23 @@ struct SlotMeta {
     is_01: [bool; MAX_SUFFIXES],
 }
 
+/// One two-phase cycle round in flight (committed, not yet waited).
+struct IrrInFlight {
+    pass: DetachedPass,
+    num_tgs: usize,
+    /// The fused kernel folded a challenge: advance the ping-pong on
+    /// collect.
+    bound: bool,
+    /// The round's gruen levels, copied into flight-owned buffers (see
+    /// [`own_eq`](super::own_eq)).
+    _eq: (OwnedDeviceBuffer<Fr>, OwnedDeviceBuffer<Fr>),
+}
+
+/// The scanner's `Drop` settles `in_flight` before retiring the cycle
+/// ping-pong (see below); `in_flight` also precedes `cycle` in declaration
+/// order as second-line defense.
 struct DeviceIrrScanner {
+    in_flight: Option<IrrInFlight>,
     device: DeviceRound,
     rows: Arc<Vec<InstructionCycleRow>>,
     /// Address-phase scan state; dropped when the cycle tables are adopted
@@ -162,6 +178,9 @@ struct DeviceIrrScanner {
 /// fresh ones. Every pass completed synchronously — nothing is in flight.
 impl Drop for DeviceIrrScanner {
     fn drop(&mut self) {
+        // A round left in flight must complete (DetachedPass waits on drop)
+        // BEFORE the ping-pong it reads/writes retires into the reuse pool.
+        drop(self.in_flight.take());
         if let Some(cycle) = self.cycle.take() {
             super::retire_frs([cycle.cur, cycle.nxt]);
         }
@@ -271,6 +290,7 @@ impl DeviceIrrScanner {
         };
         let zero = Fr::from_u64(0);
         Ok(Self {
+            in_flight: None,
             device: DeviceRound::new(context, KIND),
             rows,
             address: Some(AddressState {
@@ -541,6 +561,69 @@ impl PhaseScanner<Fr> for DeviceIrrScanner {
         super::retire_frs([cycle.cur, cycle.nxt]);
         Some(tables)
     }
+
+    fn launch_cycle_round(&mut self, bind: Option<Fr>, e_in: &[Fr], e_out: &[Fr]) -> bool {
+        // The same admission as the synchronous `cycle_round`.
+        let Some(len) = self.cycle.as_ref().map(|cycle| cycle.len) else {
+            return false;
+        };
+        let Some(context) = self.device.gated(len) else {
+            return false;
+        };
+        let groups = if bind.is_some() { len / 4 } else { len / 2 };
+        if groups == 0 || e_in.len() * e_out.len() != groups || !e_in.len().is_power_of_two() {
+            return false;
+        }
+        let launch = |scanner: &Self| -> Result<IrrInFlight, MetalError> {
+            let eq = own_eq(context, e_in, e_out)?;
+            let pass = scanner.commit_cycle_round(
+                context,
+                bind,
+                e_in.len().trailing_zeros(),
+                (&eq.0.device_buffer(), &eq.1.device_buffer()),
+                groups,
+            )?;
+            Ok(IrrInFlight {
+                pass,
+                num_tgs: num_threadgroups(groups),
+                bound: bind.is_some(),
+                _eq: eq,
+            })
+        };
+        match launch(self) {
+            Ok(flight) => {
+                self.in_flight = Some(flight);
+                true
+            }
+            Err(error) => {
+                // Nothing committed — `cur` intact for the host handoff.
+                self.device.failed(&error);
+                false
+            }
+        }
+    }
+
+    fn collect_cycle_round(&mut self) -> Option<Vec<Fr>> {
+        let flight = self.in_flight.take()?;
+        match flight.pass.wait() {
+            Ok(()) => {
+                testing::note_device_round();
+                let cycle = self.cycle.as_mut()?;
+                let lanes = cycle.partials.sums(flight.num_tgs);
+                if flight.bound {
+                    std::mem::swap(&mut cycle.cur, &mut cycle.nxt);
+                    cycle.len /= 2;
+                }
+                Some(lanes)
+            }
+            Err(error) => {
+                // The fused kernel writes only `nxt` and the partials —
+                // `cur` (the pre-bind tables) is intact for the handoff.
+                self.device.failed(&error);
+                None
+            }
+        }
+    }
 }
 
 impl DeviceIrrScanner {
@@ -664,17 +747,19 @@ impl DeviceIrrScanner {
         }))
     }
 
-    /// One fused cycle round: fold (when binding) + product-grid lanes, one
-    /// dispatch, one command buffer, one wait. The eq levels are the CURRENT
-    /// (post-`gruen.bind`) ones — the kernel binds gruen host-side first.
-    fn dispatch_cycle_round(
+    /// Encode + commit one fused cycle round (fold-when-binding +
+    /// product-grid lanes, one dispatch) without blocking. The caller
+    /// supplies the eq buffers — wait-in-scope borrows on the synchronous
+    /// path, flight-owned copies on the launch path — and decides whether
+    /// to wait in place or park the flight.
+    fn commit_cycle_round(
         &self,
         context: &'static MetalContext,
         bind: Option<Fr>,
-        e_in: &[Fr],
-        e_out: &[Fr],
+        e_in_log2: u32,
+        eq: (&DeviceBuffer<'_>, &DeviceBuffer<'_>),
         groups: usize,
-    ) -> Result<Vec<Fr>, MetalError> {
+    ) -> Result<DetachedPass, MetalError> {
         let cycle = self.cycle.as_ref().ok_or(MetalError::UnsupportedShape(
             "cycle round dispatched before adoption",
         ))?;
@@ -685,16 +770,11 @@ impl DeviceIrrScanner {
             groups as u32,
             u32::from(bind.is_some()),
             num_tgs as u32,
-            e_in.len().trailing_zeros(),
+            e_in_log2,
             cycle.factors as u32,
             cycle.len as u32,
         ];
         params.extend_from_slice(&fr_to_u32_limbs(bind.unwrap_or_else(|| Fr::from_u64(0))));
-        let e_in_buffer = context.wrap_slice(fr_as_u32s(e_in))?;
-        let e_out_buffer = context.wrap_slice(fr_as_u32s(e_out))?;
-        testing::note_copied_buffers(
-            u64::from(e_in_buffer.was_copied()) + u64::from(e_out_buffer.was_copied()),
-        );
         let cur = cycle.cur.device_buffer();
         let nxt = cycle.nxt.device_buffer();
         let partials = cycle.partials.buffer().device_buffer();
@@ -702,11 +782,46 @@ impl DeviceIrrScanner {
         pass.dispatch(
             KernelId::IrrCycleRound,
             &params,
-            &[&cur, &nxt, &e_in_buffer, &e_out_buffer, &partials],
+            &[&cur, &nxt, eq.0, eq.1, &partials],
             groups,
         );
-        pass.run()?;
+        // SAFETY: the ping-pong and partials are scanner-owned and next
+        // touched after the wait (the scanner's Drop settles an in-flight
+        // pass before retiring them); the eq buffers are the caller's per
+        // the signature contract; copied uploads are Metal-owned (retained
+        // by the command buffer).
+        Ok(unsafe { pass.commit().detach() })
+    }
+
+    /// One fused cycle round: commit + wait + read. The eq levels are the
+    /// CURRENT (post-`gruen.bind`) ones — the kernel binds gruen host-side
+    /// first.
+    fn dispatch_cycle_round(
+        &self,
+        context: &'static MetalContext,
+        bind: Option<Fr>,
+        e_in: &[Fr],
+        e_out: &[Fr],
+        groups: usize,
+    ) -> Result<Vec<Fr>, MetalError> {
+        let e_in_buffer = context.wrap_slice(fr_as_u32s(e_in))?;
+        let e_out_buffer = context.wrap_slice(fr_as_u32s(e_out))?;
+        testing::note_copied_buffers(
+            u64::from(e_in_buffer.was_copied()) + u64::from(e_out_buffer.was_copied()),
+        );
+        self.commit_cycle_round(
+            context,
+            bind,
+            e_in.len().trailing_zeros(),
+            (&e_in_buffer, &e_out_buffer),
+            groups,
+        )?
+        .wait()?;
         testing::note_device_round();
+        let num_tgs = num_threadgroups(groups);
+        let cycle = self.cycle.as_ref().ok_or(MetalError::UnsupportedShape(
+            "cycle round dispatched before adoption",
+        ))?;
         Ok(cycle.partials.sums(num_tgs))
     }
 }
@@ -942,6 +1057,7 @@ mod tests {
         skewed: bool,
         min_terms: usize,
         device_cycle_rounds: usize,
+        two_phase: bool,
     ) {
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS", min_terms.to_string());
@@ -979,7 +1095,14 @@ mod tests {
         for round in 0..rounds {
             let bind = round.checked_sub(1).map(challenge);
             let cpu_poly = cpu.prove_round(bind, round, claim).unwrap();
-            let device_poly = device.prove_round(bind, round, claim).unwrap();
+            // Two-phase mode mirrors the engine: begin (a cycle round with a
+            // device driver launches), then collect.
+            let device_poly = if two_phase {
+                let _launched = device.begin_round(bind, round, claim).unwrap();
+                device.collect_round(bind, round, claim).unwrap()
+            } else {
+                device.prove_round(bind, round, claim).unwrap()
+            };
             assert_eq!(
                 cpu_poly.coefficients(),
                 device_poly.coefficients(),
@@ -1020,13 +1143,22 @@ mod tests {
     #[test]
     fn scanner_parity_random_indices() {
         let _lock = gpu_lock();
-        assert_scanner_parity(13, 12345, false, 0, 13);
+        assert_scanner_parity(13, 12345, false, 0, 13, false);
+    }
+
+    /// Full-device run through the engine's two-phase path: cycle rounds
+    /// launch in `begin_round` and collect after — byte-equal to the CPU
+    /// twin, same dispatch count.
+    #[test]
+    fn scanner_parity_random_indices_two_phase() {
+        let _lock = gpu_lock();
+        assert_scanner_parity(13, 12345, false, 0, 13, true);
     }
 
     #[test]
     fn scanner_parity_skewed_indices() {
         let _lock = gpu_lock();
-        assert_scanner_parity(13, 67890, true, 0, 13);
+        assert_scanner_parity(13, 67890, true, 0, 13, false);
     }
 
     /// The gate declines mid-sumcheck: the device runs the phases, adopts,
@@ -1036,6 +1168,15 @@ mod tests {
     #[test]
     fn scanner_parity_cycle_handoff() {
         let _lock = gpu_lock();
-        assert_scanner_parity(13, 424_242, false, 2048, 4);
+        assert_scanner_parity(13, 424_242, false, 2048, 4, false);
+    }
+
+    /// Two-phase drive across the mid-sumcheck gate handoff: launches
+    /// decline below the gate and `collect_round` recomputes through the
+    /// reclaimed host tables.
+    #[test]
+    fn scanner_parity_cycle_handoff_two_phase() {
+        let _lock = gpu_lock();
+        assert_scanner_parity(13, 424_242, false, 2048, 4, true);
     }
 }

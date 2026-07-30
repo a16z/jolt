@@ -309,6 +309,24 @@ pub(super) fn uninit_frs(len: usize) -> Vec<Fr> {
     buffer
 }
 
+/// Copy the current gruen levels into flight-owned buffers: a parked flight
+/// (a committed round awaiting its two-phase collect) must not reference
+/// the consumer's eq backings — they drop with the consumer on paths the
+/// flight doesn't control — so the launch tier pays a small per-round copy
+/// the synchronous tier avoids.
+pub(super) fn own_eq(
+    context: &'static MetalContext,
+    e_in: &[Fr],
+    e_out: &[Fr],
+) -> Result<(OwnedDeviceBuffer<Fr>, OwnedDeviceBuffer<Fr>), MetalError> {
+    let own = |values: &[Fr]| -> Result<OwnedDeviceBuffer<Fr>, MetalError> {
+        let buffer = context.own_vec(values.to_vec())?;
+        testing::note_copied_buffers(u64::from(buffer.was_copied()));
+        Ok(buffer)
+    };
+    Ok((own(e_in)?, own(e_out)?))
+}
+
 /// `[groups, do_bind, num_tgs, r]` — the shared `SlotRoundParams` head of
 /// the slot round kernels (`shaders/kernels.metal`).
 pub(super) fn slot_round_params(groups: usize, bind: Option<Fr>, num_tgs: usize) -> Vec<u32> {

@@ -621,6 +621,24 @@ pub(crate) trait PhaseScanner<F: Field> {
     fn take_cycle_tables(&mut self) -> Option<CycleTables<F>> {
         None
     }
+
+    /// Launch a fused cycle round without blocking, leaving the dispatch in
+    /// flight for [`collect_cycle_round`](Self::collect_cycle_round).
+    /// `false` = nothing launched (gate declined, unhealthy device) with NO
+    /// effect — the caller uses the synchronous paths. A flight owns copies
+    /// of its per-round eq uploads, so the caller's backings stay free.
+    fn launch_cycle_round(&mut self, bind: Option<F>, e_in: &[F], e_out: &[F]) -> bool {
+        let _ = (bind, e_in, e_out);
+        false
+    }
+
+    /// Collect a launched cycle round's product-grid lanes: `Some` advances
+    /// the ping-pong (the fold happened in flight); `None` = the wait
+    /// surfaced a device failure — the scanner latched off with the
+    /// pre-bind tables intact, exactly like a synchronous failure.
+    fn collect_cycle_round(&mut self) -> Option<Vec<F>> {
+        None
+    }
 }
 
 pub struct OptimizedInstructionReadRafKernel<F: Field> {
@@ -652,6 +670,9 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
     rounds_bound: usize,
+    /// A `begin_round` device launch is in flight (its `collect_round`
+    /// pending).
+    launched: bool,
 }
 
 impl<F: Field> OptimizedInstructionReadRafKernel<F> {
@@ -766,6 +787,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             cycle_challenges: Vec::new(),
             cycle: None,
             rounds_bound: 0,
+            launched: false,
         };
         kernel.init_phase(0);
         Ok(kernel)
@@ -1497,6 +1519,69 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
         self.bind(bind)
+    }
+
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        // Only device-resident cycle rounds launch; address rounds are host
+        // assembly (their phase scans dispatch synchronously inside `bind`).
+        if self.rounds_bound < self.address_bits() {
+            return Ok(false);
+        }
+        let Some(cycle) = self.cycle.as_ref() else {
+            return Ok(false);
+        };
+        let CycleTablesDriver::Device { pending_bind } = &cycle.tables else {
+            return Ok(false);
+        };
+        let pending = *pending_bind;
+        let gruen = &cycle.gruen;
+        self.launched = self.scanner.as_mut().is_some_and(|scanner| {
+            scanner.launch_cycle_round(pending, gruen.e_in_current(), gruen.e_out_current())
+        });
+        Ok(self.launched)
+    }
+
+    fn collect_round(
+        &mut self,
+        _bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if std::mem::take(&mut self.launched) {
+            let lanes = self
+                .scanner
+                .as_mut()
+                .and_then(|scanner| scanner.collect_cycle_round());
+            let cycle = self
+                .cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+            match lanes {
+                Some(lanes) => {
+                    cycle.tables = CycleTablesDriver::Device { pending_bind: None };
+                    return Ok(cycle.gruen.gruen_poly_from_evals(&lanes, previous_claim));
+                }
+                // Wait failure: the scanner latched off with the pre-bind
+                // tables intact — reclaim them (applying the pending fold)
+                // and recompute the SAME round on the CPU below.
+                None => self.ensure_host_cycle_tables()?,
+            }
+        }
+        // `begin_round` already bound, so recompute with no bind. The
+        // device tier inside declines (latched off or already reclaimed).
+        if self.rounds_bound < self.address_bits() {
+            Ok(self.address_message(previous_claim))
+        } else {
+            self.cycle_message(round, previous_claim)
+        }
     }
 }
 
