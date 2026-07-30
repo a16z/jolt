@@ -4,6 +4,13 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
+The source-derived capacity ledger and the resulting ordered attack plan are
+in [`analytical-memory-model.md`](analytical-memory-model.md). Its current
+`2^28` ceilings are 90.52 GiB in commit, 87.18 GiB in the Stage-6b
+materialization transition, and 79.25 GiB in the root evaluation proof. The
+next work targets the exact structures responsible for those values rather
+than extrapolating sampled RSS.
+
 This pass kept K256 and the proof protocol fixed. Fourteen independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
