@@ -1377,6 +1377,7 @@ fn opening_fold_packed<const D: usize>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DecomposeRotationMode {
     Auto,
+    Compact,
     Dense,
     Sparse,
 }
@@ -1384,11 +1385,12 @@ enum DecomposeRotationMode {
 impl DecomposeRotationMode {
     fn from_env() -> Result<Self, AkitaError> {
         match std::env::var("JOLT_AKITA_DECOMPOSE_MODE").as_deref() {
+            Ok("compact") => Ok(Self::Compact),
             Ok("dense") => Ok(Self::Dense),
             Ok("sparse") => Ok(Self::Sparse),
             Ok("auto") | Err(std::env::VarError::NotPresent) => Ok(Self::Auto),
             Ok(value) => Err(AkitaError::InvalidInput(format!(
-                "JOLT_AKITA_DECOMPOSE_MODE must be auto, dense, or sparse; got {value:?}"
+                "JOLT_AKITA_DECOMPOSE_MODE must be auto, compact, dense, or sparse; got {value:?}"
             ))),
             Err(error) => Err(AkitaError::InvalidInput(format!(
                 "failed to read JOLT_AKITA_DECOMPOSE_MODE: {error}"
@@ -1454,6 +1456,7 @@ impl PreparedSparseChallenge {
 }
 
 enum PreparedRotations<const D: usize> {
+    Compact(Vec<[i8; D]>),
     Dense(Vec<[i16; D]>),
     Sparse(Vec<PreparedSparseChallenge>),
 }
@@ -1491,8 +1494,24 @@ fn prepare_rotations<const D: usize>(
         .ok_or_else(|| {
             AkitaError::InvalidInput("dense rotation table size overflow".to_string())
         })?;
+    if mode == DecomposeRotationMode::Compact || (mode == DecomposeRotationMode::Auto && D == 128) {
+        let compact = (0..prepared_blocks)
+            .into_par_iter()
+            .map(|prepared_block| {
+                let challenge = &challenges
+                    [active_challenge_index(prepared_block, blocks_per_column, num_columns)];
+                let mut dense = [0i8; D];
+                for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+                    dense[position as usize] = coefficient;
+                }
+                dense
+            })
+            .collect();
+        return Ok(PreparedRotations::Compact(compact));
+    }
     let use_dense = match mode {
         DecomposeRotationMode::Auto => D == 64 && dense_bytes <= ROTATED_CHALLENGE_TABLE_BUDGET,
+        DecomposeRotationMode::Compact => unreachable!("compact rotations returned above"),
         DecomposeRotationMode::Dense => {
             if dense_bytes > ROTATED_CHALLENGE_TABLE_BUDGET {
                 return Err(AkitaError::InvalidInput(format!(
@@ -1555,6 +1574,17 @@ fn add_rotated_dense<const D: usize>(dst: &mut [i32; D], rotated: &[i16; D]) {
 }
 
 #[inline(always)]
+fn add_rotated_compact<const D: usize>(dst: &mut [i32; D], dense: &[i8; D], shift: usize) {
+    let split = D - shift;
+    for (dst, &value) in dst[shift..].iter_mut().zip(&dense[..split]) {
+        *dst += i32::from(value);
+    }
+    for (dst, &value) in dst[..shift].iter_mut().zip(&dense[split..]) {
+        *dst -= i32::from(value);
+    }
+}
+
+#[inline(always)]
 fn add_rotated_dense_tables<const D: usize, const N: usize>(
     dst: &mut [i32; D],
     tables: [&[i16; D]; N],
@@ -1576,6 +1606,9 @@ fn add_rotated<const D: usize>(
     coefficient: usize,
 ) {
     match rotations {
+        PreparedRotations::Compact(challenges) => {
+            add_rotated_compact(dst, &challenges[prepared_block], coefficient);
+        }
         PreparedRotations::Dense(rotated) => {
             add_rotated_dense(dst, &rotated[prepared_block * D + coefficient]);
         }
@@ -1659,6 +1692,12 @@ fn add_rotated_rows<const D: usize>(
     coefficients: &[usize],
 ) {
     match rotations {
+        PreparedRotations::Compact(challenges) => {
+            let challenge = &challenges[prepared_block];
+            for &coefficient in coefficients {
+                add_rotated_compact(dst, challenge, coefficient);
+            }
+        }
         PreparedRotations::Dense(rotated) => {
             add_rotated_dense_rows(dst, rotated, prepared_block, coefficients);
         }
@@ -1680,6 +1719,19 @@ fn add_rotated_contributions<const D: usize>(
     num_columns: usize,
 ) {
     match rotations {
+        PreparedRotations::Compact(challenges) => {
+            let mut sum = [0i32; D];
+            for &(column, coefficient) in contributions {
+                add_rotated_compact(
+                    &mut sum,
+                    &challenges[trace_block * num_columns + column],
+                    coefficient,
+                );
+            }
+            for (dst, value) in dst.iter_mut().zip(sum) {
+                *dst += value;
+            }
+        }
         PreparedRotations::Dense(rotated) => {
             let table = |&(column, coefficient): &(usize, usize)| {
                 &rotated[((trace_block * num_columns + column) * D) + coefficient]
@@ -2373,8 +2425,17 @@ mod tests {
             DecomposeRotationMode::Sparse,
         )
         .unwrap();
+        let compact = decompose_fold_packed_with_mode::<D>(
+            &source,
+            &challenges,
+            num_positions,
+            2,
+            DecomposeRotationMode::Compact,
+        )
+        .unwrap();
         assert_eq!(dense, materialized);
         assert_eq!(sparse, materialized);
+        assert_eq!(compact, materialized);
     }
 
     #[test]
@@ -2382,6 +2443,17 @@ mod tests {
         let table_bytes = 1024 * 29 * 64 * std::mem::size_of::<[i16; 64]>();
         assert_eq!(table_bytes, 243_269_632);
         assert!(table_bytes <= ROTATED_CHALLENGE_TABLE_BUDGET);
+    }
+
+    #[test]
+    fn d128_auto_uses_compact_rotations() {
+        let challenges = [SparseChallenge {
+            positions: vec![0, 127],
+            coeffs: vec![1, -1],
+        }];
+        let rotations =
+            prepare_rotations::<128>(&challenges, None, 1, DecomposeRotationMode::Auto).unwrap();
+        assert!(matches!(rotations, PreparedRotations::Compact(_)));
     }
 
     #[test]
