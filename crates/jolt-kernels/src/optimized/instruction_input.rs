@@ -113,13 +113,13 @@ impl RecordView for InstructionInputRow {
             is_rs1: InstructionFlag(
                 record.instruction_flag(t, InstructionFlags::LeftOperandIsRs1Value),
             ),
-            rs1_value: Rs1Value(record.rs1_value[t]),
+            rs1_value: Rs1Value(record.registers.rs1_value[t]),
             is_pc: InstructionFlag(record.instruction_flag(t, InstructionFlags::LeftOperandIsPC)),
             unexpanded_pc: UnexpandedPc(record.unexpanded_pc[t]),
             is_rs2: InstructionFlag(
                 record.instruction_flag(t, InstructionFlags::RightOperandIsRs2Value),
             ),
-            rs2_value: Rs2Value(record.rs2_value[t]),
+            rs2_value: Rs2Value(record.registers.rs2_value[t]),
             is_imm: InstructionFlag(
                 record.instruction_flag(t, InstructionFlags::RightOperandIsImm),
             ),

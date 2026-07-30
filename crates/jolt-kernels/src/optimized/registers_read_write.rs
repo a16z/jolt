@@ -42,6 +42,8 @@
 //! Like the reference kernel, only the default read-write config (phase 1 =
 //! all cycle rounds, phase 2 = 0) is supported.
 
+use std::sync::Arc;
+
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_read_write;
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltPolynomialId, RegistersReadWritePublic};
 use jolt_field::{AdditiveAccumulator, Field, OptimizedMul, RingAccumulator};
@@ -57,7 +59,7 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
 use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 
-use super::trace_record::{RecordView, TraceRecord, NO_REGISTER};
+use super::trace_record::{RegisterLanes, TraceRecord, NO_REGISTER};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -103,19 +105,21 @@ impl WitnessBundle for RegisterCycleRow {
     }
 }
 
-impl RecordView for RegisterCycleRow {
+impl RegisterCycleRow {
+    /// The row from the record's register lanes — held alone by this kernel
+    /// (the record's other lanes free before the sparse-entry build).
     #[inline]
-    fn from_record(record: &TraceRecord, t: usize) -> Self {
+    fn from_lanes(registers: &RegisterLanes, t: usize) -> Self {
         Self {
-            rs1: (record.rs1_index[t] != NO_REGISTER)
-                .then(|| (record.rs1_index[t], record.rs1_value[t])),
-            rs2: (record.rs2_index[t] != NO_REGISTER)
-                .then(|| (record.rs2_index[t], record.rs2_value[t])),
-            rd: (record.rd_index[t] != NO_REGISTER).then(|| {
+            rs1: (registers.rs1_index[t] != NO_REGISTER)
+                .then(|| (registers.rs1_index[t], registers.rs1_value[t])),
+            rs2: (registers.rs2_index[t] != NO_REGISTER)
+                .then(|| (registers.rs2_index[t], registers.rs2_value[t])),
+            rd: (registers.rd_index[t] != NO_REGISTER).then(|| {
                 (
-                    record.rd_index[t],
-                    record.rd_pre_value[t],
-                    record.rd_post_value[t],
+                    registers.rd_index[t],
+                    registers.rd_pre_value[t],
+                    registers.rd_post_value[t],
                 )
             }),
         }
@@ -586,10 +590,20 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
                 got: record.len(),
             });
         }
+        // This kernel reads only the register lanes: keep those (their own
+        // Arc) and release everything else BEFORE the sparse-entry
+        // reservation below — the record + entries coexistence window is
+        // otherwise the proof's RSS high-water mark.
+        let registers = Arc::clone(&record.registers);
+        drop(record);
+        TraceRecord::release(session);
+
         // RdInc from the rd lanes: `post − pre` per cycle (absent operands
         // store 0/0), exactly the extractor's value.
         let rd_inc = |t: usize| {
-            F::from_i128(i128::from(record.rd_post_value[t]) - i128::from(record.rd_pre_value[t]))
+            F::from_i128(
+                i128::from(registers.rd_post_value[t]) - i128::from(registers.rd_pre_value[t]),
+            )
         };
         #[cfg(feature = "parallel")]
         let inc_table: Vec<F> = (0..cycles).into_par_iter().map(rd_inc).collect();
@@ -599,25 +613,22 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // Sparse entry construction from the record's register lanes.
-        // `entries` reserves the ≤ 3-per-cycle upper bound; the overshoot
-        // lives only until the first merge bind rebuilds the vector exactly
-        // sized.
+        // Sparse entry construction from the register lanes. `entries`
+        // reserves the ≤ 3-per-cycle upper bound; the overshoot lives only
+        // until the first merge bind rebuilds the vector exactly sized.
         let mut entries = Vec::with_capacity(cycles * 3);
         let mut rs1_indices = Vec::with_capacity(cycles);
         let mut rs2_indices = Vec::with_capacity(cycles);
         let mut rd_indices = Vec::with_capacity(cycles);
         for t in 0..cycles {
-            let cycle = RegisterCycleRow::from_record(&record, t);
+            let cycle = RegisterCycleRow::from_lanes(&registers, t);
             let (cells, len) = cycle_entries::<F>(t, &cycle);
             entries.extend_from_slice(&cells[..len]);
             rs1_indices.push(cycle.rs1.map(|(k, _)| k));
             rs2_indices.push(cycle.rs2.map(|(k, _)| k));
             rd_indices.push(cycle.rd.map(|(k, ..)| k));
         }
-        drop(record);
-        // Last record consumer: free the lanes before the stage-5 peak.
-        TraceRecord::release(session);
+        drop(registers);
         let entries = SparseEntries::Indexed {
             entries,
             ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),

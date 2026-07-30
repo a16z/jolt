@@ -70,14 +70,12 @@ const SHOULD_JUMP_BIT: u32 = 1 << 25;
 const NEXT_IS_NOOP_BIT: u32 = 1 << 26;
 const PRODUCT_POSITIVE_BIT: u32 = 1 << 27;
 
-/// Column-major branch-resolved witness lanes over the padded cycle domain.
-/// Lane semantics are [`TraceRecordRow`]'s field semantics, position `t` per
-/// cycle; absent register operands store 0 values and [`NO_REGISTER`]
-/// indices.
-pub(crate) struct TraceRecord {
-    pub pc: Vec<u64>,
-    pub unexpanded_pc: Vec<u64>,
-    pub imm: Vec<i128>,
+/// The per-cycle register lanes, in their own [`Arc`] so stage 4's kernel
+/// can hold JUST these (~27 B/cycle) while the released record's remaining
+/// ~124 B/cycle free BEFORE its sparse-entry reservation — the stage-4
+/// coexistence window is the proof's RSS high-water mark otherwise. Absent
+/// operands store 0 values and [`NO_REGISTER`] indices.
+pub(crate) struct RegisterLanes {
     pub rs1_value: Vec<u64>,
     pub rs2_value: Vec<u64>,
     pub rd_pre_value: Vec<u64>,
@@ -85,6 +83,16 @@ pub(crate) struct TraceRecord {
     pub rs1_index: Vec<u8>,
     pub rs2_index: Vec<u8>,
     pub rd_index: Vec<u8>,
+}
+
+/// Column-major branch-resolved witness lanes over the padded cycle domain.
+/// Lane semantics are [`TraceRecordRow`]'s field semantics, position `t` per
+/// cycle.
+pub(crate) struct TraceRecord {
+    pub pc: Vec<u64>,
+    pub unexpanded_pc: Vec<u64>,
+    pub imm: Vec<i128>,
+    pub registers: Arc<RegisterLanes>,
     /// Raw (unremapped) RAM address; 0 when the cycle makes no access.
     pub ram_address: Vec<u64>,
     pub left_lookup_operand: Vec<u64>,
@@ -291,13 +299,15 @@ impl TraceRecord {
                 pc: lanes.pc,
                 unexpanded_pc: lanes.unexpanded_pc,
                 imm: lanes.imm,
-                rs1_value: lanes.rs1_value,
-                rs2_value: lanes.rs2_value,
-                rd_pre_value: lanes.rd_pre_value,
-                rd_post_value: lanes.rd_post_value,
-                rs1_index: lanes.rs1_index,
-                rs2_index: lanes.rs2_index,
-                rd_index: lanes.rd_index,
+                registers: Arc::new(RegisterLanes {
+                    rs1_value: lanes.rs1_value,
+                    rs2_value: lanes.rs2_value,
+                    rd_pre_value: lanes.rd_pre_value,
+                    rd_post_value: lanes.rd_post_value,
+                    rs1_index: lanes.rs1_index,
+                    rs2_index: lanes.rs2_index,
+                    rd_index: lanes.rd_index,
+                }),
                 ram_address: lanes.ram_address,
                 left_lookup_operand: lanes.left_lookup_operand,
                 right_lookup_operand: lanes.right_lookup_operand,
@@ -420,9 +430,9 @@ impl RecordView for SpartanOuterRow {
             unexpanded_pc: UnexpandedPc(record.unexpanded_pc[t]),
             imm: Imm(record.imm[t]),
             ram_address: RamAddress(record.ram_address[t]),
-            rs1_value: Rs1Value(record.rs1_value[t]),
-            rs2_value: Rs2Value(record.rs2_value[t]),
-            rd_write_value: RdWriteValue(record.rd_post_value[t]),
+            rs1_value: Rs1Value(record.registers.rs1_value[t]),
+            rs2_value: Rs2Value(record.registers.rs2_value[t]),
+            rd_write_value: RdWriteValue(record.registers.rd_post_value[t]),
             ram_read_value: RamReadValue(record.ram.pre_values[t]),
             ram_write_value: RamWriteValue(record.ram.post_values[t]),
             left_lookup_operand: LeftLookupOperand(record.left_lookup_operand[t]),
@@ -596,13 +606,13 @@ mod tests {
                 let (rd_index, rd_pre, rd_post) = row
                     .rd
                     .map_or((NO_REGISTER, 0, 0), |(i, pre, post)| (i, pre, post));
-                assert_eq!(record.rs1_index[t], rs1_index, "cycle {t}");
-                assert_eq!(record.rs1_value[t], rs1_value, "cycle {t}");
-                assert_eq!(record.rs2_index[t], rs2_index, "cycle {t}");
-                assert_eq!(record.rs2_value[t], rs2_value, "cycle {t}");
-                assert_eq!(record.rd_index[t], rd_index, "cycle {t}");
-                assert_eq!(record.rd_pre_value[t], rd_pre, "cycle {t}");
-                assert_eq!(record.rd_post_value[t], rd_post, "cycle {t}");
+                assert_eq!(record.registers.rs1_index[t], rs1_index, "cycle {t}");
+                assert_eq!(record.registers.rs1_value[t], rs1_value, "cycle {t}");
+                assert_eq!(record.registers.rs2_index[t], rs2_index, "cycle {t}");
+                assert_eq!(record.registers.rs2_value[t], rs2_value, "cycle {t}");
+                assert_eq!(record.registers.rd_index[t], rd_index, "cycle {t}");
+                assert_eq!(record.registers.rd_pre_value[t], rd_pre, "cycle {t}");
+                assert_eq!(record.registers.rd_post_value[t], rd_post, "cycle {t}");
             }
 
             let mut fresh = ProofSession::default();

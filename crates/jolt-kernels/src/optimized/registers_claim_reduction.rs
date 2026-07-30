@@ -74,9 +74,9 @@ impl RecordView for RegisterValuesRow {
     #[inline]
     fn from_record(record: &TraceRecord, t: usize) -> Self {
         Self([
-            record.rd_post_value[t],
-            record.rs1_value[t],
-            record.rs2_value[t],
+            record.registers.rd_post_value[t],
+            record.registers.rs1_value[t],
+            record.registers.rs2_value[t],
         ])
     }
 }
