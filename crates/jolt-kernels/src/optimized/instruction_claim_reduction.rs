@@ -43,7 +43,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::trace_record::{RecordRows, TraceRecord};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -54,7 +54,7 @@ const NUM_TABLES: usize = 5;
 /// One cycle's five reduced instruction operands as native scalars — the
 /// compact backing of the γ-combined table build and the post-hoc
 /// output-claim walk.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct InstructionOperandRow {
     pub lookup_output: LookupOutput,
     pub left_lookup_operand: LeftLookupOperand,
@@ -87,16 +87,15 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>>
 {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
     {
-        let rows: Vec<InstructionOperandRow> =
-            collect_rows(witness, 1usize << inputs.relation.tau_low().len())?;
+        let record = TraceRecord::shared(session, witness, inputs.relation.tau_low().len())?;
         Ok(Box::new(OptimizedInstructionClaimReductionKernel::new(
             inputs.relation.tau_low(),
-            rows,
+            RecordRows::Record(record),
             inputs.challenges.gamma,
         )?))
     }
@@ -109,16 +108,16 @@ pub struct OptimizedInstructionClaimReductionKernel<F: Field> {
     combined: Polynomial<F>,
     /// Native per-cycle operand values, kept for the post-hoc output-claim
     /// walk.
-    rows: Vec<InstructionOperandRow>,
+    rows: RecordRows<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
     bound_challenges: Vec<F>,
     rounds_bound: usize,
 }
 
 impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
-    pub fn new(
+    pub(crate) fn new(
         tau_low: &[F],
-        rows: Vec<InstructionOperandRow>,
+        rows: RecordRows<InstructionOperandRow>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let log_t = tau_low.len();
@@ -169,9 +168,12 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
             acc.reduce()
         };
         #[cfg(feature = "parallel")]
-        let combined: Vec<F> = rows.par_iter().map(combine).collect();
+        let combined: Vec<F> = (0..rows.len())
+            .into_par_iter()
+            .map(|t| combine(&rows.row(t)))
+            .collect();
         #[cfg(not(feature = "parallel"))]
-        let combined: Vec<F> = rows.iter().map(combine).collect();
+        let combined: Vec<F> = (0..rows.len()).map(|t| combine(&rows.row(t))).collect();
 
         Ok(Self {
             log_t,
@@ -196,8 +198,8 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
         let block = |idx_hi: usize| -> [F; NUM_TABLES] {
             let mut sums = [F::zero(); NUM_TABLES];
             let start = idx_hi * lo_len;
-            for (row, &weight) in self.rows[start..start + lo_len].iter().zip(&e_lo) {
-                let values = row.field_values::<F>();
+            for (t, &weight) in (start..start + lo_len).zip(&e_lo) {
+                let values = self.rows.row(t).field_values::<F>();
                 for (sum, value) in sums.iter_mut().zip(values) {
                     *sum += weight * value;
                 }
@@ -480,8 +482,12 @@ mod tests {
         )
         .unwrap();
 
-        let mut optimized =
-            OptimizedInstructionClaimReductionKernel::new(&tau_low, rows, gamma).unwrap();
+        let mut optimized = OptimizedInstructionClaimReductionKernel::new(
+            &tau_low,
+            super::super::trace_record::RecordRows::Collected(rows),
+            gamma,
+        )
+        .unwrap();
 
         // True input claim: the full hypercube sum of the summand.
         let eq = eq_table(&tau_low);

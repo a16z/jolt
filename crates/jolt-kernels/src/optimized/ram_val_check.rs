@@ -82,7 +82,7 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         let columns = RamAccessColumns::shared(session, witness, log_t)?;
         columns.validate_addresses(1usize << ram_log_k)?;
 
-        let inc_table: Vec<F> = witness.oracle_table(ram_inc_val_check().polynomial_id())?;
+        let inc_table: Vec<F> = columns.inc_column();
         if inc_table.len() != 1usize << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: format!("{:?}", ram_inc_val_check()),

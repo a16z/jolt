@@ -48,7 +48,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::trace_record::{RecordRows, TraceRecord};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -61,7 +61,7 @@ const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 
 /// The per-cycle product-virtualization witness: the three left/right factor
 /// lanes plus the two wire passengers, as native small scalars.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct SpartanProductRow {
     #[opening(LeftInstructionInput)]
     pub left_instruction_input: LeftInstructionInput,
@@ -138,18 +138,22 @@ fn extended_products(
     out
 }
 
+/// Row access for the product kernels: collected bundles (tests) or the
+/// session-shared trace record's lanes (production) — same values either way.
+type ProductRows = RecordRows<SpartanProductRow>;
+
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
 /// challenge vector, and all extended-node values of `t1`.
 struct SpartanProductCarry<F: Field> {
     log_t: usize,
     tau_low: Vec<F>,
-    rows: Vec<SpartanProductRow>,
+    rows: ProductRows,
     t1_values: Vec<F>,
 }
 
 /// Extended-node evaluations of
 /// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
-fn extended_t1_values<F: Field>(rows: &[SpartanProductRow], tau_low: &[F]) -> Vec<F> {
+fn extended_t1_values<F: Field>(rows: &ProductRows, tau_low: &[F]) -> Vec<F> {
     let split = tau_low.len() / 2;
     let (out_point, in_point) = tau_low.split_at(split);
     let e_out = EqPolynomial::<F>::evals(out_point, None);
@@ -161,7 +165,7 @@ fn extended_t1_values<F: Field>(rows: &[SpartanProductRow], tau_low: &[F]) -> Ve
         let mut accumulators: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator> =
             vec![Default::default(); EXTENDED_SIZE];
         for (x_in, &e) in e_in.iter().enumerate() {
-            let products = extended_products(&rows[x_out * in_len + x_in], &coefficients);
+            let products = extended_products(&rows.row(x_out * in_len + x_in), &coefficients);
             for (accumulator, product) in accumulators.iter_mut().zip(&products) {
                 accumulator.fmadd_s256(e, product);
             }
@@ -198,13 +202,23 @@ fn extended_t1_values<F: Field>(rows: &[SpartanProductRow], tau_low: &[F]) -> Ve
 pub struct OptimizedProductUniskip;
 
 impl OptimizedProductUniskip {
-    /// The post-collection half of [`UniskipKernel::prepare`], shared with
-    /// the in-module parity tests.
+    /// [`Self::prepare_from_source`] over directly constructed rows — the
+    /// in-module parity tests' entry.
+    #[cfg(test)]
     fn prepare_from_rows<F: Field>(
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
         rows: Vec<SpartanProductRow>,
+    ) -> Result<(), KernelError<F>> {
+        Self::prepare_from_source(session, log_t, tau_low, ProductRows::Collected(rows))
+    }
+
+    fn prepare_from_source<F: Field>(
+        session: &mut ProofSession,
+        log_t: usize,
+        tau_low: &[F],
+        rows: ProductRows,
     ) -> Result<(), KernelError<F>> {
         if rows.len() != 1usize << log_t {
             return Err(KernelError::InvariantViolation {
@@ -236,8 +250,8 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
         tau_low: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows: Vec<SpartanProductRow> = collect_rows(witness, 1usize << log_t)?;
-        Self::prepare_from_rows(session, log_t, tau_low, rows)
+        let record = TraceRecord::shared(session, witness, log_t)?;
+        Self::prepare_from_source(session, log_t, tau_low, ProductRows::Record(record))
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProductUniskip::first_round_poly")]
@@ -300,7 +314,7 @@ struct ProductRemainderKernel<F: Field> {
     split_eq: GruenSplitEqPolynomial<F>,
     pending_endpoints: Option<(F, F)>,
     challenges: Vec<F>,
-    rows: Vec<SpartanProductRow>,
+    rows: ProductRows,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
 }
@@ -373,8 +387,8 @@ impl<F: Field> ProductRemainderKernel<F> {
             let mut inner_infinity = F::zero();
             for (x_in, &e) in e_in.iter().enumerate() {
                 let pair = x_out * in_len + x_in;
-                let (left_low, right_low) = cell(&rows_ref[2 * pair]);
-                let (left_high, right_high) = cell(&rows_ref[2 * pair + 1]);
+                let (left_low, right_low) = cell(&rows_ref.row(2 * pair));
+                let (left_high, right_high) = cell(&rows_ref.row(2 * pair + 1));
                 left_chunk[2 * x_in] = left_low;
                 left_chunk[2 * x_in + 1] = left_high;
                 right_chunk[2 * x_in] = right_low;
@@ -480,7 +494,8 @@ impl<F: Field> ProductRemainderKernel<F> {
                 [Default::default(), Default::default(), Default::default()];
             let mut flags: [<F as WithSmallScalarAccumulator>::SmallScalarAccumulator; 5] =
                 Default::default();
-            for (row, &weight) in self.rows[start..end].iter().zip(&weights[start..end]) {
+            for (t, &weight) in (start..end).zip(&weights[start..end]) {
+                let row = self.rows.row(t);
                 words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
                 words[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
                 words[2].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));

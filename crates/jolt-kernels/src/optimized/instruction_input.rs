@@ -41,7 +41,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::trace_record::{RecordRows, RecordView, TraceRecord};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -92,24 +92,46 @@ pub struct OptimizedInstructionInput;
 impl<F: Field> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
-        let rows: Vec<InstructionInputRow> = collect_rows(witness, 1usize << r_product.len())?;
+        let record = TraceRecord::shared(session, witness, r_product.len())?;
         Ok(Box::new(OptimizedInstructionInputKernel::new(
             r_product,
-            rows,
+            RecordRows::Record(record),
             inputs.challenges.gamma,
         )?))
+    }
+}
+
+impl RecordView for InstructionInputRow {
+    #[inline]
+    fn from_record(record: &TraceRecord, t: usize) -> Self {
+        Self {
+            is_rs1: InstructionFlag(
+                record.instruction_flag(t, InstructionFlags::LeftOperandIsRs1Value),
+            ),
+            rs1_value: Rs1Value(record.registers.rs1_value[t]),
+            is_pc: InstructionFlag(record.instruction_flag(t, InstructionFlags::LeftOperandIsPC)),
+            unexpanded_pc: UnexpandedPc(record.unexpanded_pc[t]),
+            is_rs2: InstructionFlag(
+                record.instruction_flag(t, InstructionFlags::RightOperandIsRs2Value),
+            ),
+            rs2_value: Rs2Value(record.registers.rs2_value[t]),
+            is_imm: InstructionFlag(
+                record.instruction_flag(t, InstructionFlags::RightOperandIsImm),
+            ),
+            imm: Imm(record.imm[t]),
+        }
     }
 }
 
 /// The column state: native rows until the first bind, eight dense tables
 /// afterwards.
 enum InputState<F: Field> {
-    Native(Vec<InstructionInputRow>),
+    Native(RecordRows<InstructionInputRow>),
     Dense(Vec<Polynomial<F>>),
 }
 
@@ -135,9 +157,9 @@ fn ext_flag(even: bool, odd: bool) -> (i64, i64) {
 }
 
 impl<F: Field> OptimizedInstructionInputKernel<F> {
-    pub fn new(
+    pub(crate) fn new(
         r_product: &[F],
-        rows: Vec<InstructionInputRow>,
+        rows: RecordRows<InstructionInputRow>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let log_t = r_product.len();
@@ -162,7 +184,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
     /// sample point, `left`/`right` are exact integers folded into the field
     /// through the signed-product accumulator; `Σ e_in·right + γ·Σ e_in·left`
     /// equals the dense per-point evaluation by distributivity.
-    fn native_q_evals(&self, rows: &[InstructionInputRow]) -> [F; 4] {
+    fn native_q_evals(&self, rows: &RecordRows<InstructionInputRow>) -> [F; 4] {
         const POINTS: usize = 4;
         type Accumulator<F> = <F as WithSignedProductAccumulator>::SignedProductAccumulator;
         self.gruen.par_fold_out_in(
@@ -173,8 +195,8 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
                 )
             },
             |(right_acc, left_acc), y, _x_in, e_in| {
-                let even = &rows[2 * y];
-                let odd = &rows[2 * y + 1];
+                let even = rows.row(2 * y);
+                let odd = rows.row(2 * y + 1);
                 let (is_rs1, is_rs1_m) = ext_flag(even.is_rs1.0, odd.is_rs1.0);
                 let (is_pc, is_pc_m) = ext_flag(even.is_pc.0, odd.is_pc.0);
                 let (is_rs2, is_rs2_m) = ext_flag(even.is_rs2.0, odd.is_rs2.0);
@@ -307,8 +329,8 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
                 let materialize = |table: usize| -> Polynomial<F> {
                     let mut values: Vec<F> = unsafe_allocate_zero_vec(half);
                     let fill = |(y, slot): (usize, &mut F)| {
-                        let even = rows[2 * y].field_values::<F>()[table];
-                        let odd = rows[2 * y + 1].field_values::<F>()[table];
+                        let even = rows.row(2 * y).field_values::<F>()[table];
+                        let odd = rows.row(2 * y + 1).field_values::<F>()[table];
                         *slot = even + challenge * (odd - even);
                     };
                     #[cfg(feature = "parallel")]
@@ -337,7 +359,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
     fn final_values(&self) -> [F; NUM_TABLES] {
         match &self.state {
             // Bindless extraction happens only for `log_t = 0` geometries.
-            InputState::Native(rows) => rows[0].field_values(),
+            InputState::Native(rows) => rows.row(0).field_values(),
             InputState::Dense(tables) => core::array::from_fn(|i| tables[i].evals()[0]),
         }
     }
@@ -532,7 +554,12 @@ mod tests {
         )
         .unwrap();
 
-        let mut optimized = OptimizedInstructionInputKernel::new(&r_product, rows, gamma).unwrap();
+        let mut optimized = OptimizedInstructionInputKernel::new(
+            &r_product,
+            super::super::trace_record::RecordRows::Collected(rows),
+            gamma,
+        )
+        .unwrap();
 
         // True input claim: the full hypercube sum of the summand.
         let eq = eq_table(&r_product);

@@ -33,6 +33,7 @@ mod alloc;
 mod bundle;
 mod consumer;
 mod error;
+mod record;
 mod shape;
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -47,6 +48,7 @@ pub use consumer::{
     StreamConsumer,
 };
 pub use error::WitnessError;
+pub use record::TraceRecordRow;
 pub use shape::{PolynomialEncoding, Shape};
 
 #[doc(hidden)]

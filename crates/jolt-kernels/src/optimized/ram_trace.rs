@@ -103,6 +103,29 @@ impl RamAccessColumns {
         Ok(())
     }
 
+    /// The `RamInc` column: `post − pre` per cycle — exactly the
+    /// `RamInc` extractor's value (reads and no-ops cancel to 0; the raw
+    /// pre/post values are remap-independent, matching the oracle walk on
+    /// every cycle including unremappable-address writes).
+    pub fn inc_column<F: Field>(&self) -> Vec<F> {
+        let inc = |(&post, &pre): (&u64, &u64)| F::from_i128(i128::from(post) - i128::from(pre));
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            self.post_values
+                .par_iter()
+                .zip(&self.pre_values)
+                .map(inc)
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        self.post_values
+            .iter()
+            .zip(&self.pre_values)
+            .map(inc)
+            .collect()
+    }
+
     /// The address-eq fold of the one-hot `ra` grid:
     /// `out[j] = Σ_k eq(r_address, k) · ra(k, j) = eq_address[addresses[j]]`
     /// (0 on no-access cycles). Reproduces `views::address_fold` of the dense

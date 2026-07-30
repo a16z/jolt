@@ -13,6 +13,11 @@ use crate::{BundleSource, RowSource, WitnessBundle};
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     /// Materializes one cycle-domain witness column by walking the trace
     /// once; all per-witness logic lives on `W`.
+    #[tracing::instrument(
+        skip_all,
+        name = "materialize_cycle",
+        fields(witness = core::any::type_name::<W>())
+    )]
     pub(crate) fn materialize_cycle<F: Field, W: Extract + ToField>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
