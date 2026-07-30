@@ -5,17 +5,17 @@ Date: 2026-07-29 EDT
 ## Outcome
 
 The source-derived capacity ledger and ordered attack plan are in
-[`analytical-memory-model.md`](analytical-memory-model.md). The first three
+[`analytical-memory-model.md`](analytical-memory-model.md). The first four
 structural targets have landed; their derivation and measurements are in
 [`structural-cuts-results.md`](structural-cuts-results.md).
 
 At `2^28`, the commit projection is now 67.00 GiB, the Stage-6b transition is
-71.18 GiB, and the evaluation proof is about 33.3 GiB. The conservative
-structural ceiling is Stage 5 at no more than 81.15 GiB, or 324.6 B/cycle.
-That leaves 8.85 GiB below the 90 GiB working target for background
+71.18 GiB, and the evaluation proof is about 33.3 GiB. The structural ceiling
+is Stage 5 at 75.18164 GiB, or 300.7266 B/cycle.
+That leaves 14.81836 GiB below the 90 GiB working target for background
 destruction, allocator residency, and unmodelled state.
 
-This pass kept K256 and the proof protocol fixed. Seventeen independently committed
+This pass kept K256 and the proof protocol fixed. Eighteen independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -38,6 +38,7 @@ prover slowdown:
 | `8232e5828` | Cache only the negacyclic packed-row transform | 23.515625 GiB from the `2^28` commit peak |
 | `a6c5ed811` | Release the compact trace at its final reader | 64 B/cycle from Stage 6b onward |
 | `095ae7eb5` | Stream capacity-safe root quotient chunks | 47.03125 GiB from the `2^28` evaluation proof |
+| `720e1a7d1` | Reuse read-RAF transition storage | `(16 + 8lambda)` B/cycle from the Stage-5 transition |
 
 At `2^26`, the lowest measured maximum RSS is now 36.264 GB with zero process
 swaps, down from the 44.157 GB packed-delta control, 50.49 GB after the
@@ -55,14 +56,18 @@ before Stage 6b and lowers maximum RSS by 2.56 GB. Streamed root quotient
 chunks then remove the later 10 GiB fallback cache and improve packed opening
 from 10.977 to 10.547 seconds; the process maximum remains in the earlier
 PIOP window.
+Reusing the read-RAF `u_evals` allocation and releasing lookup state at its
+final reader lowers the modeled Stage-5 transition by 4–6 GiB at `2^28`.
+The affected `2^26` span was 4.97 seconds versus 5.00 seconds in the
+immediate control.
 Earlier phase-local cuts are not always fully visible in headline RSS. The
 R1CS change, for example, drops Stage 1 by the exact 13 GiB row allocation.
 
-The final observed target maximum is still 541.85 B/cycle. It must not be
+The final observed target maximum is 539.67 B/cycle. It must not be
 scaled linearly to `2^28`: setup ranks, matrix rounding, program state,
 allocator arenas, and thread stacks do not scale as `4T`. The source-derived
-post-cut ceiling is 324.6 B/cycle. The remaining capacity question is whether
-logically dead and allocator-resident pages stay inside the 8.85 GiB working
+post-cut ceiling is 300.7266 B/cycle. The remaining capacity question is whether
+logically dead and allocator-resident pages stay inside the 14.81836 GiB working
 reserve.
 
 ## Measurements

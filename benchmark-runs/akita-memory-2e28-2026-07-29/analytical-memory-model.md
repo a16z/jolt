@@ -4,25 +4,25 @@ Date: 2026-07-30 EDT
 
 ## Decision
 
-The first three structural cuts in this model have landed and passed
+The first four structural cuts in this model have landed and passed
 forced-K256 `2^26` validation. The source-derived `2^28` working set now fits
 under 90 GiB, but a low-swap `2^28` run still depends on bounding background
 destruction and allocator-resident pages.
 
-Before the cuts, the analytical peaks were:
+Before the current cuts, the analytical peaks were:
 
-| Window | Current `2^28` live/transition peak |
+| Window | Pre-cut `2^28` live/transition peak |
 |---|---:|
 | Commit | **90.52 GiB** |
 | Stage 6b | **87.18 GiB** |
 | Root evaluation proof | **79.25 GiB** |
-| Stage 5 conservative transition | **81.15 GiB** |
+| Stage 5 conservative transition | **81.18 GiB** |
 
 The old commit peak left only 4.48 GiB for allocator metadata, thread stacks,
 unmodelled fixed state, and resident pages from earlier allocations. It also
 exceeded the 90 GiB working target before any such overhead.
 
-The model identified three changes that attack different maxima and stack:
+The model identified four changes that attack different maxima and stack:
 
 1. Akita `b3c9bc50` builds negacyclic-only NTT slots for `digit_rows`. This
    removes exactly 23.515625 GiB from the `2^28` commit and 5 GiB from root
@@ -33,12 +33,16 @@ The model identified three changes that attack different maxima and stack:
 3. Jolt `a6c5ed811` releases the 64-byte trace row allocation after the RAM
    Hamming prover reads it at the start of Stage 6b. This removes exactly
    16 GiB from the Stage-6b materialization window.
+4. Jolt `720e1a7d1` recycles the final read-RAF `u_evals` allocation as its
+   combined value polynomial and releases lookup buckets and keys at their
+   final readers. This lowers the Stage-5 transition from at most
+   `153.125T` to exactly `129.125T` of stage-local state.
 
-After those changes, the modeled `2^28` structural maximum is the conservative
-Stage-5 transition at no more than 81.15 GiB for the current proof shape. That
-leaves 13.85 GiB below the hard limit and 8.85 GiB below the 90 GiB working
-target. A drop-completion barrier and macOS allocator pressure relief must
-then keep logically dead pages inside that 8.85 GiB reserve.
+After those changes, the modeled `2^28` structural maximum is the Stage-5
+transition at 75.18164 GiB, or 300.7266 B/cycle, for the current proof shape.
+That leaves 19.81836 GiB below the hard limit and 14.81836 GiB below the
+90 GiB working target. A drop-completion barrier and macOS allocator pressure
+relief must then keep logically dead pages inside that reserve.
 
 This is a capacity model, not an RSS fit. Measurements are used only to check
 that the predicted ownership transitions occur; they do not determine which
@@ -158,7 +162,7 @@ budgets for state that scales with `T` are:
 
 | State | Formula | Lifetime |
 |---|---:|---|
-| Compact proof trace | `64T` | trace construction through Stage 7 currently |
+| Compact proof trace | `64T` | trace construction through the Stage-6b Hamming initializer |
 | Packed semantic lane rows | `29T` | commit through accepted root preparation |
 | Deferred RAM-valid byte | `T` | commit through RA materialization after Stage 5 |
 | Materialized `RaIndices` | `54T` | after Stage 5 through Stage 7 |
@@ -211,7 +215,7 @@ small compared with the NTT window. During the outer product, the original
 inner witness is gone but `b_input_flat` and the retained hint coexist, hence
 the commit peak contains `2H`.
 
-### Current outer NTT cache
+### Pre-cut outer NTT cache
 
 The outer commitment requests:
 
@@ -220,7 +224,7 @@ E_commit = n_b * B * n_a * d_o setup rings
 slot(E)  = min(setup_envelope, next_power_of_two(E))
 ```
 
-The current cache always stores both negacyclic and cyclic transforms:
+The pre-cut cache stored both negacyclic and cyclic transforms:
 
 ```text
 NTT bytes/ring = 2 transforms * D * q * sizeof(i32)
@@ -241,7 +245,7 @@ not used by this operation.
 At the outer product, the exact scaling terms are:
 
 ```text
-setup + current NTT + trace + packed rows/RAM-valid + 2H
+setup + pre-cut NTT + trace + packed rows/RAM-valid + 2H
 ```
 
 | `T` | Analytical peak | Gross B/cycle |
@@ -373,29 +377,47 @@ Initial storage consists of:
 - register `i128` increments;
 - grouped `usize` lookup indices, totaling `8L` bytes.
 
+Thus the three live Stage-5 instances initially retain:
+
+```text
+lookup keys             17T
+interleaved flags    0.125T
+u_evals                 16T
+RAM indices             16T
+register increments     16T
+grouped indices       8lambda*T
+----------------------------
+             (65.125 + 8lambda)T
+```
+
 At the handoff to the last `log T` rounds, read-RAF materializes four RA field
-polynomials plus one combined value polynomial:
+polynomials and one combined value polynomial. Previously, it allocated the
+combined polynomial separately and left the grouped index buckets retained.
+Including possible background destruction, that transition was:
 
 ```text
-5 * f * T = 80T
+(145.125 + 8lambda)T <= 153.125T
 ```
 
-The new steady state, while the other two instances remain live, is
-approximately:
+The current handoff first releases the grouped buckets, takes ownership of
+the `16T`-byte `u_evals` vector as the future combined polynomial, materializes
+the four RA polynomials, and then releases the lookup keys before overwriting
+the recycled field elements. Its maximum is therefore:
 
 ```text
-(112 + 8lambda)T
+lookup keys             17T
+interleaved flags    0.125T
+recycled u/combined     16T
+RAM/register instances 32T
+four RA polynomials     64T
+----------------------------
+                     129.125T
 ```
 
-Because the old compact lookup streams can coexist with the new field vectors
-while background drops run, the conservative transition bound is:
-
-```text
-(145 + 8lambda)T <= 153T
-```
-
-This is 38.25 GiB of stage-local state at `2^28`, or a total phase ceiling of
-81.15 GiB including the setup and common standing state.
+The steady cycle-round state is `112T`; neither value depends on `lambda`.
+The exact transition totals are 26.00830 GiB at `2^26` and 75.18164 GiB at
+`2^28`, including setup and common standing state. Relative to the former
+bound, the reduction is `(16 + 8lambda)T`, or 4–6 GiB at `2^28`.
 
 ### Stage 6a: address phases
 
@@ -455,16 +477,17 @@ then becomes 71.18164 GiB.
 
 ### Stage 7 and reconstruction
 
-Stage 7 retains the trace, packed lanes, RA rows, fused lanes, and hint:
+Stage 7 retains the packed lanes, RA rows, fused lanes, and hint. The trace
+has already been released:
 
 ```text
-setup + (64 + 29 + 54 + 9)T + H
+setup + (29 + 54 + 9)T + H
 ```
 
-This is 58.40039 GiB at `2^28`. The Hamming-weight reduction tables are
+This is 42.40039 GiB at `2^28`. The Hamming-weight reduction tables are
 `O(K * columns)`.
 
-After Stage 7, the RA rows and trace are dropped. Reconstruction retains:
+After Stage 7, the RA rows are dropped. Reconstruction retains:
 
 ```text
 setup + 29T + H
@@ -473,7 +496,7 @@ setup + 29T + H
 or 26.65039 GiB at `2^28`, plus advice/program-sized objects that do not scale
 with `T` for the SHA-2 target.
 
-### Stage summary
+### Current stage summary
 
 | Phase | Formula beyond setup | `2^26` | Representative `2^28` |
 |---|---|---:|---:|
@@ -481,17 +504,17 @@ with `T` for the SHA-2 target.
 | Stage 2 | common + `(48+64mu)T+16R` | 21.05 GiB | 55.33 GiB |
 | Stage 3 transition | common + `49T` | 21.00 GiB | 55.15 GiB |
 | Stage 4 | common + `(48+64rho)T` | 25.86 GiB | 74.58 GiB |
-| Stage 5 transition | common + at most `153T` | 27.50 GiB | 81.15 GiB |
+| Stage 5 transition | common + `129.125T` | 26.01 GiB | 75.18 GiB |
 | Stage 6a | `(164.125T+H)` | 22.32 GiB | 60.43 GiB |
-| Stage 6b steady | `(258T+H)` | 28.19 GiB | 83.90 GiB |
-| Stage 6b transition | `(271.125T+H)` | 29.01 GiB | 87.18 GiB |
-| Stage 7 | `(158T+H)` | 21.94 GiB | 58.40 GiB |
+| Stage 6b steady | `(194T+H)` | 24.19 GiB | 67.90 GiB |
+| Stage 6b transition | `(207.125T+H)` | 25.01 GiB | 71.18 GiB |
+| Stage 7 | `(92T+H)` | 17.81 GiB | 42.40 GiB |
 | Reconstruction | `(29T+H)` | 13.88 GiB | 26.65 GiB |
 
 The Stage-2 and Stage-4 representative values use `mu = 0.027` and
 `rho = 1.23`; `R/T` is negligible for this target. The Stage-5 row is a
-conservative transition bound, not a claim that all 153 bytes remain live for
-the entire stage.
+construction maximum, not a claim that all 129.125 bytes remain live for the
+entire stage.
 
 ## Akita evaluation proof
 
@@ -557,7 +580,7 @@ W0                = scheduled output bytes
 E_v = n_d * B * d_e
 ```
 
-The current both-transform slots are:
+The pre-cut both-transform slots were:
 
 | `T` | `E_v` | Rounded slot | Cache |
 |---:|---:|---:|---:|
@@ -574,7 +597,7 @@ t_len       = B * n_a * d_o
 E_t         = n_b * t_len
 ```
 
-Its streamed path currently requires all `t_len` terms to fit one CRT
+Its pre-cut streamed path required all `t_len` terms to fit one CRT
 accumulator. They do not. The fallback builds a both-transform cached slot:
 
 | `T` | `t_len` | `E_t` / slot | Cache |
@@ -609,7 +632,7 @@ Later folds are smaller. The root-level NTT slots remain cached until the
 root proof window ends, so the range transition must be compared with, rather
 than added after, the ring-switch construction peak.
 
-### Current evaluation-proof ceiling
+### Pre-cut evaluation-proof ceiling
 
 A conservative ring-switch construction peak includes:
 
@@ -644,12 +667,12 @@ transforms) at the first successor and becomes negligible thereafter.
 
 ## Capacity ceiling and required cuts
 
-### Current `2^28`
+### Pre-cut `2^28`
 
 | Window | B/cycle | GiB | Hard-cap reserve |
 |---|---:|---:|---:|
 | Commit | 362.08 | 90.52 | 4.48 GiB |
-| Stage 5 transition | 324.60 | 81.15 | 13.85 GiB |
+| Stage 5 transition | 324.73 | 81.18 | 13.82 GiB |
 | Stage 6b transition | 348.73 | 87.18 | 7.82 GiB |
 | Evaluation proof | 317.00 | 79.25 | 15.75 GiB |
 
@@ -657,18 +680,19 @@ The commit fails the 90 GiB working requirement and leaves too little hard-cap
 reserve. Stage 6b also leaves too little reserve if allocator-retained bytes
 scale with `T`.
 
-### After the three structural cuts
+### After the four structural cuts
 
 | Window | Change | Projected peak |
 |---|---|---:|
 | Commit | negacyclic-only `digit_rows` | 67.00 GiB |
 | Stage 6b transition | release trace after final reader | 71.18 GiB |
 | Evaluation proof | negacyclic `compute_v` + streamed chunked `t_hat` | about 33.3 GiB |
-| Stage 5 transition | unchanged conservative bound | at most 81.15 GiB |
+| Stage 5 transition | recycle `u_evals`; release lookup state | 75.18 GiB |
 | Stage 4, SHA-2 density | unchanged | about 74.58 GiB |
 
-The resulting structural ceiling is at most 81.15 GiB for the current target,
-leaving 13.85 GiB under 95 GiB and 8.85 GiB under the 90 GiB working target.
+The resulting structural ceiling is 75.18164 GiB for the current target, or
+300.7266 B/cycle. It leaves 19.81836 GiB under 95 GiB and 14.81836 GiB under
+the 90 GiB working target.
 
 This does not prove a universal trace guarantee. Stage 4 exceeds 95 GiB when
 `rho > 2.506`, so high-register-density workloads need a separate streamed or
@@ -695,13 +719,14 @@ prover struct accidentally retains them across all later stages. The missing
 piece is timely destruction and page reclamation, not another protocol
 polynomial.
 
-The current `2^26` Stage-6 window is about 5 GiB above the conservative
-source-level transition model. That observation is not extrapolated as a
-capacity formula, but it establishes that the allocator reserve is already
-material. After the structural cuts, the acceptance target is:
+The current `2^26` process maximum is 33.729 GiB versus the 26.008 GiB
+source-level Stage-5 maximum, a 7.721 GiB difference. That observation is not
+extrapolated as a capacity formula, but it establishes that allocator and
+fixed-state reserve is already material. After the structural cuts, the
+acceptance target is:
 
 ```text
-background-owned + allocator-resident + unmodelled fixed state <= 8 GiB
+background-owned + allocator-resident + unmodelled fixed state <= 14 GiB
 ```
 
 at the Stage-5/6 boundary. A completion barrier followed by
@@ -757,7 +782,26 @@ Expected exact `2^28` change:
 Landed in Jolt `a6c5ed811`. The target marker releases exactly 4 GiB with
 zero remaining `Arc` owners; the corresponding `2^28` allocation is 16 GiB.
 
-### D. Make phase drops observable and reclaimable
+### D. Reuse the read-RAF transition storage — landed
+
+Release the per-table cycle buckets before materializing the cycle-round RA
+polynomials. Reuse the now-final `u_evals` allocation for the combined value
+polynomial, then release lookup keys and suffix polynomials after the RA
+polynomials' final read.
+
+Expected exact `2^28` change:
+
+- old transition `(145.125 + 8lambda)T`;
+- new transition `129.125T`;
+- reduction `4 + 2lambda` GiB, with a 6 GiB worst-case reduction;
+- no extra pass over `T` and no proof, transcript, or protocol change.
+
+Landed in Jolt `720e1a7d1`. At `2^26`, the marker reports exactly 1 GiB
+recycled, 1.0625 GiB of lookup keys released, and 402.73 MiB of grouped
+buckets released. Stage 5 was 4.97 seconds versus 5.00 seconds in the
+immediate control.
+
+### E. Make phase drops observable and reclaimable
 
 Replace fire-and-forget destruction at the large phase boundaries with a
 completion mechanism. At the Stage-5/6 boundary, request allocator pressure
@@ -765,11 +809,11 @@ relief on macOS after all prior phase owners are gone.
 
 Acceptance:
 
-- at most 8 GiB non-owned reserve at the modeled `2^28` ceiling;
+- at most 14 GiB non-owned reserve at the modeled `2^28` ceiling;
 - no prover-time regression outside the established noise band;
 - no process swaps and no system swapouts.
 
-### E. Stage-4 universal-trace follow-up
+### F. Stage-4 universal-trace follow-up
 
 If `2^28` must be guaranteed for arbitrary valid traces rather than the SHA-2
 target, Stage 4 is next. Its `64N_reg` sparse entries should be streamed in
@@ -815,6 +859,8 @@ The formulas above are derived from:
 - root ring quotient and fallback:
   `akita-prover/src/protocol/ring_relation/relation_quotient.rs` and
   `akita-prover/src/kernels/linear/fused_quotients.rs`;
+- Stage-5 read-RAF transition:
+  `zkvm/instruction_lookups/read_raf_checking.rs`;
 - recursive witness schedule:
   `JoltD64OneHotK256::runtime_schedule`.
 
@@ -827,10 +873,10 @@ reserves:
 - advice and committed-program objects are program/input sized;
 - vector capacity rounding and Rayon stacks are not charged per object;
 - macOS allocator residency is not derivable from Rust ownership;
-- the Stage-5 transition bound is conservative because background destructor
-  timing is not deterministic.
+- background destruction in the other PIOP stages is not synchronized.
 
-None of these uncertainties changes the ordering of the first three targets:
-the current commit's unused cyclic NTT half, the root `t_hat` fallback, and
+None of these uncertainties changes the ordering of the first four targets:
+the pre-cut commit's unused cyclic NTT half, the root `t_hat` fallback, and
 the trace's late owner are respectively 23.5 GiB, 47.0 GiB, and 16 GiB at
-`2^28`.
+`2^28`; the read-RAF handoff then removes 4–6 GiB from the remaining
+Stage-5 maximum.

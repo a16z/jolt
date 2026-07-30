@@ -4,21 +4,22 @@ Date: 2026-07-30 EDT
 
 ## Outcome
 
-The first three targets from the
+The first four targets from the
 [analytical memory model](analytical-memory-model.md) are accepted. They
-remove a different dominant allocation from commit, Stage 6b, and the root
-evaluation proof:
+remove a different dominant allocation or construction overlap from commit,
+Stage 5, Stage 6b, and the root evaluation proof:
 
 | Window | Change | Exact `2^28` reduction |
 |---|---|---:|
 | Commit | Negacyclic-only packed-row NTT cache | 23.515625 GiB |
+| Stage 5 | Recycle `u_evals`; release lookup state | `(4 + 2lambda)` GiB, at most 6 GiB |
 | Stage 6b | Release the compact trace at its final reader | 16 GiB |
 | Root evaluation | Stream capacity-safe `t_hat`/`z` chunks | 47.03125 GiB |
 
 The reductions do not add: they affect different lifetime maxima. After all
-three, the conservative structural ceiling is Stage 5 at no more than
-81.15 GiB, or 324.6 B/cycle at `2^28`. This leaves 13.85 GiB below the
-machine's 95 GiB hard limit and 8.85 GiB below the 90 GiB working target.
+four, the structural ceiling is Stage 5 at 75.18164 GiB, or
+300.7266 B/cycle at `2^28`. This leaves 19.81836 GiB below the machine's
+95 GiB hard limit and 14.81836 GiB below the 90 GiB working target.
 
 No commitment, proof, transcript, verifier, or protocol message changed.
 
@@ -120,32 +121,72 @@ At `2^28`, this removes the modeled 47.03125 GiB root fallback. The
 evaluation-proof ceiling becomes about 33.3 GiB, set by an earlier
 root-preparation window rather than the quotient.
 
+## 4. Read-RAF transition reuse
+
+The Stage-5 instruction read-RAF prover enters its cycle rounds by
+materializing four `Fp128` RA polynomials and one combined value polynomial.
+Before this change, the new combined vector was allocated while the final
+`u_evals` vector, lookup keys, interleaved flags, and per-table cycle buckets
+could all still be live:
+
+```text
+old transition = (145.125 + 8lambda)T <= 153.125T
+```
+
+The address rounds are the final reader of `u_evals`, and the combined
+polynomial has the same `Vec<F>` shape. The prover now takes that allocation
+and overwrites every element in the existing combined-value pass. It also
+releases grouped buckets before RA materialization and lookup keys
+immediately afterward:
+
+```text
+new transition = 129.125T
+reduction       = (16 + 8lambda)T
+```
+
+At `2^28`, this is a 4–6 GiB reduction depending on instruction lookup
+density. The transition itself is now independent of that density. At
+`2^26`, the trace records:
+
+```text
+recycled field allocation = 1,073,741,824 bytes
+released lookup keys      = 1,140,850,688 bytes
+released grouped buckets  =   422,294,248 bytes
+```
+
+The existing materialization pass overwrites rather than accumulates into the
+recycled elements, so no zeroing pass was added. Standard, ZK, and Akita
+end-to-end proofs all pass.
+
 ## Target measurements
 
 All runs used the same release harness, printed K256, verified the proof, and
 reported zero swaps.
 
-| Revision | Prove | Commit | Stage 6b | Opening | Maximum RSS | Gross B/cycle |
-|---|---:|---:|---:|---:|---:|---:|
-| Pre-cut control | 53.697 s | 22.685 s | 5.241 s | 11.124 s | 38.876 GB | 579.29 |
-| Negacyclic cache | 54.379 s | 23.113 s | 5.278 s | 11.105 s | 38.824 GB | 578.53 |
-| Early trace release | 54.023 s | 23.062 s | 5.222 s | 10.977 s | **36.264 GB** | **540.38** |
-| Streamed quotient | **53.784 s** | 23.132 s | 5.275 s | **10.547 s** | 36.363 GB | 541.85 |
+| Revision | Prove | Commit | Stage 5 | Stage 6b | Opening | Maximum RSS | Gross B/cycle |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Pre-cut control | 53.697 s | 22.685 s | 4.940 s | 5.241 s | 11.124 s | 38.876 GB | 579.29 |
+| Negacyclic cache | 54.379 s | 23.113 s | 4.980 s | 5.278 s | 11.105 s | 38.824 GB | 578.53 |
+| Early trace release | 54.023 s | 23.062 s | 5.110 s | 5.222 s | 10.977 s | **36.264 GB** | **540.38** |
+| Streamed quotient | **53.784 s** | 23.132 s | 5.000 s | 5.275 s | **10.547 s** | 36.363 GB | 541.85 |
+| Stage-5 reuse | 54.130 s | 23.290 s | **4.970 s** | 5.330 s | 10.760 s | 36.216 GB | **539.67** |
 
 The whole-prover variation follows unchanged commitment and PIOP spans. The
 directly affected measurements show no regression:
 
 - the negacyclic cache build is 141 ms faster;
 - early trace release adds no scan or conversion;
-- streamed quotient opening is 429 ms faster than its immediate control.
+- streamed quotient opening is 429 ms faster than its immediate control;
+- Stage-5 reuse is 30 ms faster in its directly affected span.
 
-The final run's small maximum-RSS increase over the early-release run is
-noise in the unchanged Stage-6 window. The root allocation removed by the
-third change occurs later and therefore cannot lower that process maximum.
+The final run's process maximum remains in an unchanged later window, so its
+139 MiB decrease is not credited as the structural Stage-5 saving. The trace
+markers, rather than the unrelated process maximum, establish the exact
+ownership transition.
 
 ## Why `2^26` B/cycle cannot be extrapolated
 
-The final observed `2^26` maximum is 541.85 B/cycle, but multiplying it by
+The final observed `2^26` maximum is 539.67 B/cycle, but multiplying it by
 four would be the wrong `2^28` forecast:
 
 - the setup is 12 GiB at `2^26` and 18.8125 GiB at `2^28`, so its
@@ -155,9 +196,9 @@ four would be the wrong `2^28` forecast:
 - the measured maximum includes resident logically dead pages, while the
   structural model counts live ownership and necessary construction overlap.
 
-The post-cut source ceiling is 324.6 B/cycle. The remaining question is
+The post-cut source ceiling is 300.7266 B/cycle. The remaining question is
 whether background-owned and allocator-resident state can be kept within its
-8.85 GiB working reserve.
+14.81836 GiB working reserve.
 
 ## Commits
 
@@ -166,6 +207,7 @@ whether background-owned and allocator-resident state can be kept within its
 - Jolt `a6c5ed811`: release compact trace at its final reader
 - Akita `32caef7c`: stream CRT-chunked quotient roles
 - Jolt `095ae7eb5`: pin the streamed quotient change
+- Jolt `720e1a7d1`: reuse Stage-5 read-RAF transition storage
 
 ## Validation
 
@@ -174,7 +216,10 @@ whether background-owned and allocator-resident state can be kept within its
 - `cargo nextest run -p jolt-akita --cargo-quiet`: 43 passed, 5 skipped
 - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features
   host,akita`: 3 passed
-- forced-K256 `2^26` proofs: three passed and verified, zero swaps
+- Stage-5 read-RAF module tests: 57 passed in host and Akita modes
+- targeted clippy passed in host, host+zk, and Akita modes
+- muldiv passed in host, host+zk, and host+Akita modes
+- forced-K256 `2^26` proofs: four passed and verified, zero swaps
 
 ## Retained traces
 
@@ -184,3 +229,5 @@ whether background-owned and allocator-resident state can be kept within its
 - `benchmark-runs/perfetto_traces/mem-trace-early-2e26.json`
 - `benchmark-runs/perfetto_traces/mem-stream-t-2e22.json`
 - `benchmark-runs/perfetto_traces/mem-stream-t-2e26.json`
+- `benchmark-runs/perfetto_traces/mem-stage5-reuse-2e22.json`
+- `benchmark-runs/perfetto_traces/mem-stage5-reuse-2e26.json`
