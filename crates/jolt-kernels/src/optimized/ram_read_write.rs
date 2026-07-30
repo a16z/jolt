@@ -89,6 +89,47 @@ fn phase_error<F: Field>() -> SumcheckError<F> {
     }
 }
 
+#[cfg(feature = "metal")]
+impl<F: Field> RamReadWriteKernel<F> {
+    /// Resume the optimized kernel from an exactly bound cycle-phase state.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the full mid-flight state maps directly onto kernel fields"
+    )]
+    pub(crate) fn from_cycle_state(
+        matrix: CycleMajorMatrix<F>,
+        gruen: GruenSplitEqPolynomial<F>,
+        inc: Polynomial<F>,
+        val_init: Polynomial<F>,
+        gamma: F,
+        log_t: usize,
+        log_k: usize,
+        cycle_rounds_bound: usize,
+    ) -> Result<Self, SumcheckError<F>> {
+        let mut kernel = Self {
+            phase: Some(Phase::Cycle { matrix, gruen }),
+            inc,
+            val_init,
+            gamma,
+            log_t,
+            log_k,
+        };
+        if cycle_rounds_bound == log_t {
+            let Some(Phase::Cycle { matrix, gruen }) = kernel.phase.take() else {
+                return Err(phase_error());
+            };
+            kernel.phase = Some(Phase::Address {
+                matrix: matrix.into_address_major(),
+                merged_eq: gruen.merge(),
+            });
+            if log_k == 0 {
+                kernel.finalize()?;
+            }
+        }
+        Ok(kernel)
+    }
+}
+
 impl<F: Field> RamReadWriteKernel<F> {
     /// Bind the challenge of `round` (0-indexed over the member's window),
     /// advancing the phase machine at the boundaries.

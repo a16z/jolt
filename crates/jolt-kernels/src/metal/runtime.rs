@@ -81,6 +81,8 @@ pub enum KernelId {
     OuterT1,
     OuterAzbz,
     OuterRound,
+    RamRwMessage,
+    RamRwBind,
     Fq6Mul,
     Fq6Sqr,
     Fq12Mul,
@@ -91,7 +93,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 42] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -125,6 +127,8 @@ impl KernelId {
         Self::OuterT1,
         Self::OuterAzbz,
         Self::OuterRound,
+        Self::RamRwMessage,
+        Self::RamRwBind,
         Self::Fq6Mul,
         Self::Fq6Sqr,
         Self::Fq12Mul,
@@ -169,6 +173,8 @@ impl KernelId {
             Self::OuterT1 => "jk_outer_t1",
             Self::OuterAzbz => "jk_outer_azbz",
             Self::OuterRound => "jk_outer_round",
+            Self::RamRwMessage => "jk_ram_rw_message",
+            Self::RamRwBind => "jk_ram_rw_bind",
             Self::Fq6Mul => "jk_fq6_mul",
             Self::Fq6Sqr => "jk_fq6_sqr",
             Self::Fq12Mul => "jk_fq12_mul",
@@ -257,7 +263,7 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             field::constants_preamble(),
             super::miller::pairing_preamble(),
             include_str!("shaders/fr.metal"),
@@ -268,6 +274,7 @@ impl MetalContext {
             include_str!("shaders/instruction.metal"),
             include_str!("shaders/ra_lazy.metal"),
             include_str!("shaders/spartan.metal"),
+            include_str!("shaders/ram_read_write.metal"),
         );
         let library = device
             .newLibraryWithSource_options_error(&NSString::from_str(&source), None)

@@ -59,7 +59,7 @@ pub use slots::{
     MetalBooleanityCycle, MetalHammingWeightClaimReduction, MetalIncClaimReduction,
     MetalInstructionInput, MetalInstructionRaVirtualization, MetalInstructionReadRaf,
     MetalJointOpening, MetalOuterRemainder, MetalOuterUniskip, MetalRamHammingBooleanity,
-    MetalRamRaVirtualization, MetalRamRafEvaluation,
+    MetalRamRaVirtualization, MetalRamRafEvaluation, MetalRamReadWriteChecking,
 };
 
 use jolt_field::Fr;
@@ -155,6 +155,7 @@ where
         backend.ram_raf_evaluation = Box::new(MetalRamRafEvaluation {
             fallback: OptimizedBackend,
         });
+        backend.ram_read_write = Box::new(MetalRamReadWriteChecking::new());
         backend.joint_opening = Box::new(MetalJointOpening {
             fallback: OptimizedBackend,
         });
