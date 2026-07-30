@@ -55,9 +55,9 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
 use jolt_witness::witnesses::WitnessEnv;
-use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
-};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+
+use super::trace_record::{RecordView, TraceRecord, NO_REGISTER};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -103,39 +103,29 @@ impl WitnessBundle for RegisterCycleRow {
     }
 }
 
+impl RecordView for RegisterCycleRow {
+    #[inline]
+    fn from_record(record: &TraceRecord, t: usize) -> Self {
+        Self {
+            rs1: (record.rs1_index[t] != NO_REGISTER)
+                .then(|| (record.rs1_index[t], record.rs1_value[t])),
+            rs2: (record.rs2_index[t] != NO_REGISTER)
+                .then(|| (record.rs2_index[t], record.rs2_value[t])),
+            rd: (record.rd_index[t] != NO_REGISTER).then(|| {
+                (
+                    record.rd_index[t],
+                    record.rd_pre_value[t],
+                    record.rd_post_value[t],
+                )
+            }),
+        }
+    }
+}
+
 /// Cross-member carry: the per-cycle `rd` hot indices, parked by this kernel's
 /// `prepare` for the stage-5 val-evaluation kernel (which otherwise re-walks
 /// the trace to collect them).
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
-
-/// The row-window size of the streaming entry-collection pass (matches
-/// `support::collect_rows`: wide enough to amortize the per-chunk rayon
-/// extraction dispatch).
-const COLLECT_CHUNK: usize = 1 << 16;
-
-/// Streaming consumer building the sparse entries and the operand index
-/// columns in one trace pass, no whole-trace row materialization.
-struct CollectRegisterEntries<F: Field> {
-    entries: Vec<SparseEntry<F, LutIndex>>,
-    rs1_indices: Vec<Option<u8>>,
-    rs2_indices: Vec<Option<u8>>,
-    rd_indices: Vec<Option<u8>>,
-}
-
-impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
-    type Witness = RegisterCycleRow;
-
-    fn consume(&mut self, chunk: &[RegisterCycleRow]) {
-        for cycle in chunk {
-            let row = self.rs1_indices.len();
-            let (cells, len) = cycle_entries(row, cycle);
-            self.entries.extend_from_slice(&cells[..len]);
-            self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
-            self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
-            self.rd_indices.push(cycle.rd.map(|(k, ..)| k));
-        }
-    }
-}
 
 /// Growing lookup table of the possible values of one one-hot coefficient
 /// column (the legacy `OneHotCoeffLookupTable`). Seeded with the column's
@@ -588,36 +578,46 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         }
         let cycles = 1usize << log_t;
 
-        let inc_table: Vec<F> = witness.oracle_table(rd_inc_read_write().polynomial_id())?;
-        if inc_table.len() != cycles {
+        let record = TraceRecord::shared(session, witness, log_t)?;
+        if record.len() != cycles {
             return Err(KernelError::TableSizeMismatch {
                 table: format!("{:?}", rd_inc_read_write()),
                 expected: cycles,
-                got: inc_table.len(),
+                got: record.len(),
             });
         }
+        // RdInc from the rd lanes: `post − pre` per cycle (absent operands
+        // store 0/0), exactly the extractor's value.
+        let rd_inc = |t: usize| {
+            F::from_i128(i128::from(record.rd_post_value[t]) - i128::from(record.rd_pre_value[t]))
+        };
+        #[cfg(feature = "parallel")]
+        let inc_table: Vec<F> = (0..cycles).into_par_iter().map(rd_inc).collect();
+        #[cfg(not(feature = "parallel"))]
+        let inc_table: Vec<F> = (0..cycles).map(rd_inc).collect();
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // Sparse entry construction: one streaming trace pass — the typed
-        // rows are never materialized whole (80 bytes per cycle saved at the
-        // stage's peak moment). `entries` reserves the ≤ 3-per-cycle upper
-        // bound; the overshoot lives only until the first merge bind
-        // rebuilds the vector exactly sized.
-        let mut consumers = (CollectRegisterEntries::<F> {
-            entries: Vec::with_capacity(cycles * 3),
-            rs1_indices: Vec::with_capacity(cycles),
-            rs2_indices: Vec::with_capacity(cycles),
-            rd_indices: Vec::with_capacity(cycles),
-        },);
-        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-        let CollectRegisterEntries {
-            entries,
-            rs1_indices,
-            rs2_indices,
-            rd_indices,
-        } = consumers.0;
+        // Sparse entry construction from the record's register lanes.
+        // `entries` reserves the ≤ 3-per-cycle upper bound; the overshoot
+        // lives only until the first merge bind rebuilds the vector exactly
+        // sized.
+        let mut entries = Vec::with_capacity(cycles * 3);
+        let mut rs1_indices = Vec::with_capacity(cycles);
+        let mut rs2_indices = Vec::with_capacity(cycles);
+        let mut rd_indices = Vec::with_capacity(cycles);
+        for t in 0..cycles {
+            let cycle = RegisterCycleRow::from_record(&record, t);
+            let (cells, len) = cycle_entries::<F>(t, &cycle);
+            entries.extend_from_slice(&cells[..len]);
+            rs1_indices.push(cycle.rs1.map(|(k, _)| k));
+            rs2_indices.push(cycle.rs2.map(|(k, _)| k));
+            rd_indices.push(cycle.rd.map(|(k, ..)| k));
+        }
+        drop(record);
+        // Last record consumer: free the lanes before the stage-5 peak.
+        TraceRecord::release(session);
         let entries = SparseEntries::Indexed {
             entries,
             ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),

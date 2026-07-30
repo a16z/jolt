@@ -63,14 +63,10 @@ pub(crate) struct TraceRecord {
     pub imm: Vec<i128>,
     pub rs1_value: Vec<u64>,
     pub rs2_value: Vec<u64>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "stage-4 consumers land next"))]
     pub rd_pre_value: Vec<u64>,
     pub rd_post_value: Vec<u64>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "stage-4 consumers land next"))]
     pub rs1_index: Vec<u8>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "stage-4 consumers land next"))]
     pub rs2_index: Vec<u8>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "stage-4 consumers land next"))]
     pub rd_index: Vec<u8>,
     /// Raw (unremapped) RAM address; 0 when the cycle makes no access.
     pub ram_address: Vec<u64>,
@@ -270,6 +266,14 @@ impl TraceRecord {
         ))
     }
 
+    /// Drop the session's record — called by the LAST record consumer's
+    /// `prepare` (stage 4's registers read-write checking today) so the
+    /// lanes free before the stage-5 peak. The RAM access columns survive
+    /// under their own session `Arc` for stages 4-6b, exactly as before.
+    pub(crate) fn release(session: &mut ProofSession) {
+        let _ = session.take::<Arc<Self>>();
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.pc.len()
     }
@@ -322,10 +326,9 @@ pub(crate) trait RecordView: Copy {
 
 /// Row access for kernels that keep typed rows across their sumcheck:
 /// directly collected bundles (the parity tests' seam — their synthetic rows
-/// encode `Next*` values no shifted lane read could) or the session-shared
-/// record's lanes (production).
+/// encode `Next*` values no shifted lane read could — and the post-use empty
+/// state) or the session-shared record's lanes (production).
 pub(crate) enum RecordRows<R> {
-    #[cfg_attr(not(test), expect(dead_code, reason = "constructed by tests only"))]
     Collected(Vec<R>),
     Record(Arc<TraceRecord>),
 }

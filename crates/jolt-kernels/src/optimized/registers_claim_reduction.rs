@@ -42,7 +42,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::trace_record::{RecordRows, RecordView, TraceRecord};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -70,6 +70,21 @@ impl WitnessBundle for RegisterValuesRow {
     }
 }
 
+impl RecordView for RegisterValuesRow {
+    #[inline]
+    fn from_record(record: &TraceRecord, t: usize) -> Self {
+        Self([
+            record.rd_post_value[t],
+            record.rs1_value[t],
+            record.rs2_value[t],
+        ])
+    }
+}
+
+/// Row access for the claim-reduction kernel: the record's lanes in
+/// production, an empty collected vector after the dense transition.
+type ValueRows = RecordRows<RegisterValuesRow>;
+
 /// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
 /// accumulator without overflowing it: the accumulator's headroom is one
 /// extra limb, which ~4 full-magnitude `field × u64` products exhaust, so the
@@ -92,7 +107,7 @@ pub struct OptimizedRegistersClaimReduction;
 impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegistersClaimReduction {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>
@@ -111,7 +126,12 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegiste
             });
         }
         let cycles = 1usize << log_t;
-        let values: Vec<RegisterValuesRow> = collect_rows(witness, cycles)?;
+        let values = ValueRows::Record(TraceRecord::shared(session, witness, log_t)?);
+        if values.len() != cycles {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers claim-reduction row count disagrees with log_t",
+            });
+        }
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
@@ -133,7 +153,7 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegiste
                 let base = x_hi << prefix_vars;
                 for (i, fold) in folds.iter_mut().enumerate() {
                     let x_lo = block_index * BLOCK + i;
-                    let row = values[base + x_lo].0;
+                    let row = values.row(base + x_lo).0;
                     fmadd_u64_split(&mut fold[0], eq_hi, eq_hi_shifted, row[0]);
                     fmadd_u64_split(&mut fold[1], eq_hi, eq_hi_shifted, row[1]);
                     fmadd_u64_split(&mut fold[2], eq_hi, eq_hi_shifted, row[2]);
@@ -180,7 +200,7 @@ struct ClaimReductionKernel<F: Field> {
     /// The full `τ_low` point (big-endian) the summand's eq factor fixes.
     tau: Vec<F>,
     /// Raw per-cycle `u64` values, kept for the phase-2 regeneration.
-    values: Vec<RegisterValuesRow>,
+    values: ValueRows,
     phase: Phase<F>,
     bound_challenges: Vec<F>,
 }
@@ -210,26 +230,26 @@ impl<F: Field> ClaimReductionKernel<F> {
         let chunk = eq_prefix.len();
         let remaining = 1usize << (self.log_t - bound);
 
-        let fold_chunk = |rows: &[RegisterValuesRow]| -> [F; 3] {
+        let fold_chunk = |chunk_index: usize| -> [F; 3] {
             let mut fold = [F::SmallScalarAccumulator::default(); 3];
-            for (row, (&eq, &eq_shifted)) in rows
-                .iter()
-                .zip(eq_prefix.iter().zip(eq_prefix_shifted.iter()))
+            for (offset, (&eq, &eq_shifted)) in
+                eq_prefix.iter().zip(eq_prefix_shifted.iter()).enumerate()
             {
-                fmadd_u64_split(&mut fold[0], eq, eq_shifted, row.0[0]);
-                fmadd_u64_split(&mut fold[1], eq, eq_shifted, row.0[1]);
-                fmadd_u64_split(&mut fold[2], eq, eq_shifted, row.0[2]);
+                let row = self.values.row(chunk_index * chunk + offset).0;
+                fmadd_u64_split(&mut fold[0], eq, eq_shifted, row[0]);
+                fmadd_u64_split(&mut fold[1], eq, eq_shifted, row[1]);
+                fmadd_u64_split(&mut fold[2], eq, eq_shifted, row[2]);
             }
             fold.map(F::SmallScalarAccumulator::reduce)
         };
         #[cfg(feature = "parallel")]
-        let folds: Vec<[F; 3]> = self.values.par_chunks(chunk).map(fold_chunk).collect();
+        let folds: Vec<[F; 3]> = (0..remaining).into_par_iter().map(fold_chunk).collect();
         #[cfg(not(feature = "parallel"))]
-        let folds: Vec<[F; 3]> = self.values.chunks(chunk).map(fold_chunk).collect();
+        let folds: Vec<[F; 3]> = (0..remaining).map(fold_chunk).collect();
         debug_assert_eq!(folds.len(), remaining);
 
         // The raw values only feed this regeneration; free them now.
-        self.values = Vec::new();
+        self.values = ValueRows::Collected(Vec::new());
 
         let (tau_hi, tau_lo) = self.tau.split_at(self.log_t / 2);
         let eq_prefix_eval = EqPolynomial::<F>::mle(&r_prefix, tau_lo);
