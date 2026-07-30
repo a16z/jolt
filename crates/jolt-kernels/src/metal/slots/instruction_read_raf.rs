@@ -1052,6 +1052,6 @@ mod tests {
     #[test]
     fn scanner_parity_cycle_handoff() {
         let _lock = gpu_lock();
-        assert_scanner_parity(13, 424242, false, 2048, 4);
+        assert_scanner_parity(13, 424_242, false, 2048, 4);
     }
 }

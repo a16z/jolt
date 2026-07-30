@@ -81,7 +81,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -110,6 +110,31 @@ impl ColumnSelector {
                 .map(|address| selector.chunk_usize(address as usize)),
         }
     }
+
+    /// `(family, shift)` for a device tier re-expressing the selection over
+    /// the packed row words: family 0 selects the 128-bit lookup index,
+    /// 1 the (`+1`-sentinel) mapped PC, 2 the (`+1`-sentinel) remapped RAM
+    /// address.
+    fn device_meta(&self) -> (u32, u32) {
+        match self {
+            Self::Instruction(selector) => (0, selector.shift() as u32),
+            Self::Bytecode(selector) => (1, selector.shift() as u32),
+            Self::Ram(selector) => (2, selector.shift() as u32),
+        }
+    }
+}
+
+/// What a booleanity-cycle device driver captures at prepare (borrowed —
+/// the factory clones what it keeps).
+#[expect(dead_code, reason = "read only by the Metal driver factory")]
+pub(crate) struct BooleanityDeviceInputs<'a, F> {
+    pub(crate) rows: &'a Arc<Vec<InstructionCycleRow>>,
+    /// Per polynomial (layout order): [`ColumnSelector::device_meta`].
+    pub(crate) poly_meta: Vec<(u32, u32)>,
+    pub(crate) log_k_chunk: usize,
+    /// γ^i per polynomial — the summand's `H(H − γ^i)` needs the unscaled
+    /// power next to the pre-scaled tables.
+    pub(crate) gamma_powers: &'a [F],
 }
 
 /// The layout's chunk selectors, in canonical polynomial order, with the
@@ -440,74 +465,93 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let layout = dimensions.layout;
-        let r_address = relation.r_address();
-        let reference_address = relation.reference_address();
-        let reference_cycle = relation.reference_cycle();
-        if r_address.len() != dimensions.log_k_chunk || reference_cycle.len() != dimensions.log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "booleanity cycle-phase point lengths disagree with the dimensions",
-            });
-        }
-        // Fail closed on relation variants whose summand checks more
-        // openings than the base RA layout (the akita lattice cycle phase):
-        // this kernel serves exactly the layout's members.
-        let expression = relation.symbolic().output_expression::<F>();
-        let mut leaf_openings: Vec<JoltOpeningId> = expression
-            .terms
-            .iter()
-            .flat_map(|term| &term.factors)
-            .filter_map(|factor| match factor {
-                Source::Opening(id) => Some(*id),
-                _ => None,
-            })
-            .collect();
-        leaf_openings.sort_unstable();
-        leaf_openings.dedup();
-        let mut layout_openings: Vec<JoltOpeningId> =
-            layout.openings(JoltRelationId::Booleanity).collect();
-        layout_openings.sort_unstable();
-        if leaf_openings != layout_openings {
-            return Err(KernelError::Unsupported {
-                reason: "optimized booleanity cycle kernel serves the base RA layout only",
-            });
-        }
-
-        let selectors = column_selectors(witness, dimensions)?;
-        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
-
-        // The fixed address eq factor of the `EqAddressCycle` public; rides
-        // in the split-eq scaling so round messages and the bound scalar
-        // carry it exactly like the reference's derived table.
-        let address_scalar = try_eq_mle(r_address, reference_address).map_err(|_| {
-            KernelError::InvariantViolation {
-                reason: "booleanity address point and reference length mismatch",
-            }
-        })?;
-        let eq_address = eq_table(r_address);
-        let (gamma_powers, gamma_powers_inv) =
-            gamma_power_pairs(inputs.challenges.gamma, layout.total())?;
-        let tables: Vec<Vec<F>> = gamma_powers
-            .iter()
-            .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
-            .collect();
-
-        Ok(Box::new(OptimizedBooleanityCycleKernel {
-            rounds: relation.rounds(),
-            eq: GruenSplitEqPolynomial::new_with_scaling(
-                reference_cycle,
-                BindingOrder::LowToHigh,
-                Some(address_scalar),
-            ),
-            tables: LazyFoldedRa::new(tables, BooleanityChunks { rows, selectors }),
-            gamma_powers,
-            gamma_powers_inv,
-            layout,
-            rounds_bound: 0,
-        }))
+        prepare_booleanity_cycle(session, witness, inputs, |_| None)
     }
+}
+
+/// The cycle-phase prepare with a [`LazyRaDevice`] factory (the optimized
+/// slot passes `|_| None`; the Metal slot builds its driver from the
+/// [`BooleanityDeviceInputs`]). Lane contract for installed drivers:
+/// `[q_constant, q_leading]` — the two inner-quadratic coefficients
+/// [`GruenSplitEqPolynomial::gruen_poly_deg_3`] consumes.
+pub(crate) fn prepare_booleanity_cycle<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, Booleanity<F>>,
+    driver: impl FnOnce(BooleanityDeviceInputs<'_, F>) -> Option<Box<dyn LazyRaDevice<F>>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let layout = dimensions.layout;
+    let r_address = relation.r_address();
+    let reference_address = relation.reference_address();
+    let reference_cycle = relation.reference_cycle();
+    if r_address.len() != dimensions.log_k_chunk || reference_cycle.len() != dimensions.log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "booleanity cycle-phase point lengths disagree with the dimensions",
+        });
+    }
+    // Fail closed on relation variants whose summand checks more
+    // openings than the base RA layout (the akita lattice cycle phase):
+    // this kernel serves exactly the layout's members.
+    let expression = relation.symbolic().output_expression::<F>();
+    let mut leaf_openings: Vec<JoltOpeningId> = expression
+        .terms
+        .iter()
+        .flat_map(|term| &term.factors)
+        .filter_map(|factor| match factor {
+            Source::Opening(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    leaf_openings.sort_unstable();
+    leaf_openings.dedup();
+    let mut layout_openings: Vec<JoltOpeningId> =
+        layout.openings(JoltRelationId::Booleanity).collect();
+    layout_openings.sort_unstable();
+    if leaf_openings != layout_openings {
+        return Err(KernelError::Unsupported {
+            reason: "optimized booleanity cycle kernel serves the base RA layout only",
+        });
+    }
+
+    let selectors = column_selectors(witness, dimensions)?;
+    let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+
+    // The fixed address eq factor of the `EqAddressCycle` public; rides
+    // in the split-eq scaling so round messages and the bound scalar
+    // carry it exactly like the reference's derived table.
+    let address_scalar =
+        try_eq_mle(r_address, reference_address).map_err(|_| KernelError::InvariantViolation {
+            reason: "booleanity address point and reference length mismatch",
+        })?;
+    let eq_address = eq_table(r_address);
+    let (gamma_powers, gamma_powers_inv) =
+        gamma_power_pairs(inputs.challenges.gamma, layout.total())?;
+    let tables: Vec<Vec<F>> = gamma_powers
+        .iter()
+        .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
+        .collect();
+
+    let driver = driver(BooleanityDeviceInputs {
+        rows: &rows,
+        poly_meta: selectors.iter().map(ColumnSelector::device_meta).collect(),
+        log_k_chunk: dimensions.log_k_chunk,
+        gamma_powers: &gamma_powers,
+    });
+    Ok(Box::new(OptimizedBooleanityCycleKernel {
+        rounds: relation.rounds(),
+        eq: GruenSplitEqPolynomial::new_with_scaling(
+            reference_cycle,
+            BindingOrder::LowToHigh,
+            Some(address_scalar),
+        ),
+        tables: LazyFoldedRa::new_with_driver(tables, BooleanityChunks { rows, selectors }, driver),
+        gamma_powers,
+        gamma_powers_inv,
+        layout,
+        rounds_bound: 0,
+    }))
 }
 
 /// `(γ^i, γ^{-i})` pairs for the pre-scaled shared tables. The inverse
@@ -589,6 +633,15 @@ impl<F: Field> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
+        // Device tier first (lazy scan or fused dense round); a decline has
+        // already normalized the state for the CPU fold below.
+        if let Some(lanes) = self
+            .tables
+            .device_lanes(self.eq.e_in_current(), self.eq.e_out_current())
+        {
+            debug_assert_eq!(lanes.len(), 2);
+            return Ok(self.eq.gruen_poly_deg_3(lanes[0], lanes[1], previous_claim));
+        }
         let tables = &self.tables;
         let gamma_powers = &self.gamma_powers;
         let num_polys = gamma_powers.len();
@@ -662,6 +715,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         // Unscale the pre-scaled tables back to the committed polynomials'
         // claims; resolve by id so the output struct shape stays the
         // relation's business.
+        self.tables.ensure_host();
         let values: BTreeMap<JoltOpeningId, F> = self
             .layout
             .openings(JoltRelationId::Booleanity)
