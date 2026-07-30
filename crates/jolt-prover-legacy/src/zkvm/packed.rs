@@ -1449,12 +1449,13 @@ impl AkitaPackedProver<'_> {
             !self.program_io.trusted_advice.is_empty(),
             "the precommitted TrustedAdviceOneHot object must be passed exactly when trusted advice exists"
         );
+        let trace_length = self.trace.len();
 
         let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
             self.one_hot_params.ram_k,
-            self.trace.len(),
+            trace_length,
             self.preprocessing.shared.program_meta.entry_address,
             &self.rw_config,
             &self.one_hot_params.to_config(),
@@ -1465,10 +1466,10 @@ impl AkitaPackedProver<'_> {
 
         // One-hot machinery (RaPolynomial and friends) reads the global trace
         // dimensions; initialize them exactly like the base commit path.
-        let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
+        let main_total_vars = trace_length.log_2() + self.one_hot_params.log_k_chunk;
         let _guard = DoryGlobals::initialize_main_with_log_embedding(
             1 << self.one_hot_params.log_k_chunk,
-            self.trace.len(),
+            trace_length,
             main_total_vars,
             Some(DoryLayout::CycleMajor),
         );
@@ -1528,6 +1529,13 @@ impl AkitaPackedProver<'_> {
         );
         let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns, &ra_indices);
         drop(ra_indices);
+        let trace = std::mem::replace(&mut self.trace, Arc::new(Vec::new()));
+        debug_assert_eq!(
+            Arc::strong_count(&trace),
+            1,
+            "packed trace still has a live owner after Stage 7"
+        );
+        drop(trace);
         let reconstruction_proof =
             self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice);
 
@@ -1697,7 +1705,7 @@ impl AkitaPackedProver<'_> {
                 .as_ref()
                 .map(|object| object.commitment.clone()),
             claims: JoltProofClaims::Clear(claims),
-            trace_length: self.trace.len(),
+            trace_length,
             ram_K: self.one_hot_params.ram_k,
             rw_config: crate::zkvm::proof::convert_read_write_config(self.rw_config.clone()),
             one_hot_config: crate::zkvm::proof::convert_one_hot_config(
