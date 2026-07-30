@@ -109,7 +109,7 @@ impl JoltOneHotTraceRows {
     #[tracing::instrument(skip_all, name = "jolt_one_hot_trace_cache_build")]
     fn new(
         trace: &[Cycle],
-        fused_inc_one_hot: &[Arc<Vec<Option<u8>>>],
+        fused_inc: &[FusedIncValue],
         num_columns: usize,
         ranges: &OneHotTraceColumnRanges,
         params: &crate::zkvm::config::OneHotParams,
@@ -127,7 +127,13 @@ impl JoltOneHotTraceRows {
             .enumerate()
             .for_each(|(row, (ra_index, lanes))| {
                 *ra_index = RaIndices::from_cycle(&trace[row], bytecode, memory_layout, params);
-                Self::fill_row_from_indices(lanes, row, ra_index, fused_inc_one_hot, ranges);
+                Self::fill_row_from_indices(
+                    lanes,
+                    ra_index,
+                    fused_inc[row],
+                    ranges,
+                    params.log_k_chunk,
+                );
             });
 
         (
@@ -142,10 +148,10 @@ impl JoltOneHotTraceRows {
 
     fn fill_row_from_indices(
         lanes: &mut [u8],
-        row: usize,
         ra_indices: &RaIndices,
-        fused_inc_one_hot: &[Arc<Vec<Option<u8>>>],
+        fused_inc: FusedIncValue,
         ranges: &OneHotTraceColumnRanges,
+        log_k_chunk: usize,
     ) {
         debug_assert_eq!(lanes.len(), ranges.ram.end);
         for (index, lane) in lanes[ranges.instruction.clone()].iter_mut().enumerate() {
@@ -158,12 +164,9 @@ impl JoltOneHotTraceRows {
             *lane = ra_indices.ram[index].unwrap_or(0);
         }
         for (index, lane) in lanes[ranges.unsigned_inc.clone()].iter_mut().enumerate() {
-            *lane = fused_inc_one_hot[index][row].unwrap_or(0);
+            *lane = fused_inc.balanced_chunk_hot_lane_bits(log_k_chunk, index) as u8;
         }
-        lanes[ranges.unsigned_inc_msb] = fused_inc_one_hot
-            .last()
-            .and_then(|column| column[row])
-            .unwrap_or(0);
+        lanes[ranges.unsigned_inc_msb] = fused_inc.balanced_carry_hot_lane_bits(log_k_chunk) as u8;
     }
 }
 
@@ -753,11 +756,11 @@ impl AkitaPackedProver<'_> {
     fn one_hot_trace_rows(
         &self,
         plan: &OneHotTraceLayoutPlan,
-        fused_inc_one_hot: Vec<Arc<Vec<Option<u8>>>>,
+        fused_inc: &[FusedIncValue],
     ) -> (Arc<JoltOneHotTraceRows>, Arc<Vec<RaIndices>>) {
         let (rows, ra_indices) = JoltOneHotTraceRows::new(
             &self.trace,
-            &fused_inc_one_hot,
+            fused_inc,
             plan.columns.len(),
             &plan.ranges,
             &self.one_hot_params,
@@ -780,7 +783,8 @@ impl AkitaPackedProver<'_> {
         )
     }
 
-    fn fused_inc_columns(&self, fused_cycles: &[FusedIncValue]) -> FusedIncColumns {
+    #[tracing::instrument(skip_all, name = "fused_inc_one_hot_columns")]
+    fn fused_inc_one_hot_columns(&self, fused: &[i128]) -> Vec<Arc<Vec<Option<u8>>>> {
         use rayon::prelude::*;
         use std::sync::Arc;
 
@@ -789,21 +793,27 @@ impl AkitaPackedProver<'_> {
         let one_hot: Vec<Arc<Vec<Option<u8>>>> = (0..chunk_count)
             .map(|index| {
                 Arc::new(
-                    fused_cycles
+                    fused
                         .par_iter()
-                        .map(|cycle| Some(cycle.balanced_chunk_hot_lane_bits(width, index) as u8))
+                        .map(|&delta| {
+                            Some(
+                                FusedIncValue { delta }.balanced_chunk_hot_lane_bits(width, index)
+                                    as u8,
+                            )
+                        })
                         .collect(),
                 )
             })
             .chain(core::iter::once(Arc::new(
-                fused_cycles
+                fused
                     .par_iter()
-                    .map(|cycle| Some(cycle.balanced_carry_hot_lane_bits(width) as u8))
+                    .map(|&delta| {
+                        Some(FusedIncValue { delta }.balanced_carry_hot_lane_bits(width) as u8)
+                    })
                     .collect(),
             )))
             .collect();
-        let fused: Vec<i128> = fused_cycles.par_iter().map(|cycle| cycle.delta).collect();
-        FusedIncColumns { one_hot, fused }
+        one_hot
     }
 
     /// Builds and commits the untrusted-advice byte one-hot column (`UntrustedAdviceOneHot`).
@@ -1484,12 +1494,16 @@ impl AkitaPackedProver<'_> {
         );
 
         let fused_cycles = self.fused_inc_values();
-        let mut fused_inc_columns = self.fused_inc_columns(&fused_cycles);
+        use rayon::prelude::*;
+        let fused = fused_cycles.par_iter().map(|cycle| cycle.delta).collect();
+        let mut fused_inc_columns = FusedIncColumns {
+            one_hot: Vec::new(),
+            fused,
+        };
         let plan = ONE_HOT_TRACE_LAYOUT
             .plan(&self.one_hot_trace_shape())
             .expect("canonical OneHotTrace layout must exist");
-        let (one_hot_trace_rows, ra_indices) =
-            self.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
+        let (one_hot_trace_rows, ra_indices) = self.one_hot_trace_rows(&plan, &fused_cycles);
         drop(fused_cycles);
         let one_hot_trace_source: Arc<dyn jolt_akita::TraceOneHotRows> = one_hot_trace_rows.clone();
         let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
@@ -1530,6 +1544,7 @@ impl AkitaPackedProver<'_> {
         let (stage3_sumcheck_proof, _r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, _r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
+        fused_inc_columns.one_hot = self.fused_inc_one_hot_columns(&fused_inc_columns.fused);
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
             self.prove_stage6a_lattice(&fused_inc_columns, Arc::clone(&ra_indices));
         let stage6b_sumcheck_proof = self.prove_stage6b_lattice(
@@ -2033,12 +2048,10 @@ mod tests {
             set_test_one_hot_config(&mut prover, config.clone());
 
             let fused_cycles = prover.fused_inc_values();
-            let fused_inc_columns = prover.fused_inc_columns(&fused_cycles);
             let plan = ONE_HOT_TRACE_LAYOUT
                 .plan(&prover.one_hot_trace_shape())
                 .expect("canonical OneHotTrace layout must exist");
-            let (cached, cached_indices) =
-                prover.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
+            let (cached, cached_indices) = prover.one_hot_trace_rows(&plan, &fused_cycles);
             assert_eq!(cached_indices.len(), prover.trace.len());
 
             let bytecode = &prover.preprocessing.materialized_program().bytecode;
@@ -2086,18 +2099,15 @@ mod tests {
                     .iter_mut()
                     .enumerate()
                 {
-                    *hot_lane = fused_inc_columns.one_hot[index][row]
-                        .map_or_else(jolt_akita::no_hot_lane, |lane| {
-                            committed_nonzero_lane(lane as usize)
-                        });
+                    *hot_lane = committed_nonzero_lane(
+                        fused_cycles[row]
+                            .balanced_chunk_hot_lane_bits(prover.one_hot_params.log_k_chunk, index),
+                    );
                 }
-                expected[plan.ranges.unsigned_inc_msb] = fused_inc_columns
-                    .one_hot
-                    .last()
-                    .and_then(|column| column[row])
-                    .map_or_else(jolt_akita::no_hot_lane, |lane| {
-                        committed_nonzero_lane(lane as usize)
-                    });
+                expected[plan.ranges.unsigned_inc_msb] = committed_nonzero_lane(
+                    fused_cycles[row]
+                        .balanced_carry_hot_lane_bits(prover.one_hot_params.log_k_chunk),
+                );
 
                 jolt_akita::TraceOneHotRows::fill_row(cached.as_ref(), row, &mut actual);
                 assert_eq!(
