@@ -6,8 +6,9 @@ Date: 2026-07-30 EDT
 
 The first four structural cuts in this model have landed and passed
 forced-K256 `2^26` validation. The source-derived `2^28` working set now fits
-under 90 GiB, but a low-swap `2^28` run still depends on bounding background
-destruction and allocator-resident pages.
+under 90 GiB. A full forced-K256 `2^28` proof subsequently passed at
+80.65533 GiB maximum RSS, with no process swaps and no increase in the system
+swapout counter.
 
 Before the current cuts, the analytical peaks were:
 
@@ -41,14 +42,14 @@ The model identified four changes that attack different maxima and stack:
 After those changes, the modeled `2^28` structural maximum is the Stage-5
 transition at 75.18164 GiB, or 300.7266 B/cycle, for the current proof shape.
 That leaves 19.81836 GiB below the hard limit and 14.81836 GiB below the
-90 GiB working target. A drop-completion barrier and macOS allocator pressure
-relief must then keep logically dead pages inside that reserve.
+90 GiB working target. The target run consumed 5.47369 GiB of that modeled
+reserve and remained 9.34467 GiB below 90 GiB.
 
 This is a capacity model, not an RSS fit. Measurements are used only to check
 that the predicted ownership transitions occur; they do not determine which
 data structure is targeted.
 
-The implementation and target measurements are recorded in
+The implementations and target measurements are recorded in
 [`structural-cuts-results.md`](structural-cuts-results.md).
 
 ## Scope and units
@@ -698,7 +699,46 @@ This does not prove a universal trace guarantee. Stage 4 exceeds 95 GiB when
 `rho > 2.506`, so high-register-density workloads need a separate streamed or
 more compact sparse-matrix representation.
 
-## Why RSS remains above logical ownership
+## `2^28` validation
+
+The forced-K256 target proof passed and verified:
+
+| Metric | Result |
+|---|---:|
+| Prover time | 236.72 s |
+| Maximum RSS | 86,603,005,952 bytes |
+| Maximum RSS | 80.65533 GiB |
+| Gross RSS | 322.6213 B/cycle |
+| Reserve below 90 GiB | 9.34467 GiB |
+| Reserve below 95 GiB | 14.34467 GiB |
+| Process swaps | 0 |
+
+The system swap allocation remained at 734.12 MiB and the cumulative swapout
+counter remained at 8,060,781. macOS did use memory compression: occupied
+compressor pages rose by 14.49 GiB at the sampled high-water point. Thus the
+run fits without swap, but it is not pressure-free.
+
+The internal RSS markers compare with the source ceilings as follows. RSS
+markers report decimal GB; this table converts them to GiB.
+
+| Phase | Source ceiling | Sampled maximum |
+|---|---:|---:|
+| Stage 1 | 50.90 GiB | 41.83 GiB |
+| Stage 2 | 55.33 GiB | 47.99 GiB |
+| Stage 3 | 55.15 GiB | 47.03 GiB |
+| Stage 4 | 74.58 GiB | 74.08 GiB |
+| Stage 5 | 75.18 GiB | 67.82 GiB |
+| Stage 6a | 60.43 GiB | 63.40 GiB |
+| Stage 6b | 71.18 GiB | 77.95 GiB |
+| Stage 7 | 42.40 GiB | 40.62 GiB |
+
+Stage 6b is the operational high-water phase: its sampled maximum is within
+2.70 GiB of the process maximum. The source formula leaves out allocator
+residency and short-lived per-round scratch, which together consume
+6.77 GiB over its live-state estimate. That residual still fits within the
+14.82 GiB reserve established before running the target.
+
+## Why a background-drop barrier was rejected
 
 Stages 2–5 end with:
 
@@ -707,31 +747,22 @@ drop_in_background_thread(instances)
 ```
 
 which uses fire-and-forget `rayon::spawn`. There is no handle or barrier
-before the next phase allocates. This creates two distinct effects:
+before the next phase allocates. That looked like a possible source of
+cross-phase overlap, but the endpoint ownership snapshots reject it:
 
-1. old instance buffers can remain genuinely owned while the next stage
-   initializes;
-2. after the destructor runs, the allocator can retain the dirty pages.
+| Stage | Start heap at `2^22` | Endpoint heap |
+|---|---:|---:|
+| 2 | 199.097 MiB | 0.007 MiB |
+| 3 | 176.411 MiB | 0.223 MiB |
+| 4 | 507.928 MiB | 0.003 MiB |
+| 5, before read-RAF reuse | 298.195 MiB | 25.199 MiB |
 
-Allocative ownership snapshots show the large Stage-2/3/4 objects reach zero
-logical ownership by their endpoints, so there is no evidence that the
-prover struct accidentally retains them across all later stages. The missing
-piece is timely destruction and page reclamation, not another protocol
-polynomial.
-
-The current `2^26` process maximum is 33.729 GiB versus the 26.008 GiB
-source-level Stage-5 maximum, a 7.721 GiB difference. That observation is not
-extrapolated as a capacity formula, but it establishes that allocator and
-fixed-state reserve is already material. After the structural cuts, the
-acceptance target is:
-
-```text
-background-owned + allocator-resident + unmodelled fixed state <= 14 GiB
-```
-
-at the Stage-5/6 boundary. A completion barrier followed by
-`malloc_zone_pressure_relief` on macOS is the direct experiment. It is
-accepted only if prover time does not regress.
+The old Stage-5 endpoint was almost exactly the 25.17 MiB grouped-index
+allocation released by `720e1a7d1`; it is no longer retained. The sumcheck
+binds have already released or replaced the large phase vectors before the
+background task is spawned. A join would therefore serialize destruction
+without removing a meaningful `T`-scaled owner. No synchronization change was
+implemented.
 
 ## Ordered implementation plan
 
@@ -801,17 +832,17 @@ recycled, 1.0625 GiB of lookup keys released, and 402.73 MiB of grouped
 buckets released. Stage 5 was 4.97 seconds versus 5.00 seconds in the
 immediate control.
 
-### E. Make phase drops observable and reclaimable
+### E. Join background phase drops — rejected analytically
 
-Replace fire-and-forget destruction at the large phase boundaries with a
-completion mechanism. At the Stage-5/6 boundary, request allocator pressure
-relief on macOS after all prior phase owners are gone.
+The large Stage-2/3/4 heaps have already fallen to less than 0.25 MiB by
+their endpoints. The old Stage-5 remainder was the grouped-index allocation
+removed in D. Joining those tasks cannot remove a meaningful cross-phase
+owner, so no runtime experiment is warranted.
 
-Acceptance:
-
-- at most 14 GiB non-owned reserve at the modeled `2^28` ceiling;
-- no prover-time regression outside the established noise band;
-- no process swaps and no system swapouts.
+Allocator pressure relief remains a possible platform-specific way to reduce
+compression, but it is not required for capacity: the full target completed
+9.34 GiB below the working limit without swapping. It should be tested only
+as a performance experiment and rejected if it makes the prover slower.
 
 ### F. Stage-4 universal-trace follow-up
 
@@ -835,7 +866,8 @@ Each optimization lands in its own commit.
 5. Retain short, notable Perfetto traces and RSS logs in this benchmark run.
 6. Reject any capacity change that causes a reproducible prover regression.
 7. Attempt `2^28` only after the analytical structural ceiling plus measured
-   non-owned reserve is below 90 GiB.
+   non-owned reserve is below 90 GiB. This gate passed; the retained target
+   trace is `benchmark-runs/perfetto_traces/mem-fit-2e28.json`.
 
 ## Source map
 
@@ -873,7 +905,8 @@ reserves:
 - advice and committed-program objects are program/input sized;
 - vector capacity rounding and Rayon stacks are not charged per object;
 - macOS allocator residency is not derivable from Rust ownership;
-- background destruction in the other PIOP stages is not synchronized.
+- short-lived Stage-6b scratch is inferred from the source/RSS residual but
+  not yet decomposed by allocation.
 
 None of these uncertainties changes the ordering of the first four targets:
 the pre-cut commit's unused cyclic NTT half, the root `t_hat` fallback, and

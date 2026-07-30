@@ -22,6 +22,7 @@ four, the structural ceiling is Stage 5 at 75.18164 GiB, or
 95 GiB hard limit and 14.81836 GiB below the 90 GiB working target.
 
 No commitment, proof, transcript, verifier, or protocol message changed.
+The full `2^28` proof passed at 80.65533 GiB maximum RSS with zero swaps.
 
 ## 1. Negacyclic-only packed-row cache
 
@@ -196,9 +197,39 @@ four would be the wrong `2^28` forecast:
 - the measured maximum includes resident logically dead pages, while the
   structural model counts live ownership and necessary construction overlap.
 
-The post-cut source ceiling is 300.7266 B/cycle. The remaining question is
-whether background-owned and allocator-resident state can be kept within its
-14.81836 GiB working reserve.
+The post-cut source ceiling is 300.7266 B/cycle. The target run below tests
+whether background-owned, allocator-resident, and unmodelled state stay
+within its 14.81836 GiB working reserve.
+
+## Full `2^28` result
+
+The target was run only after the source ceiling fit below 90 GiB with a
+14.82 GiB reserve:
+
+| Metric | `2^26` | `2^28` |
+|---|---:|---:|
+| Prover time | 54.13 s | 236.72 s |
+| Commit | 23.29 s | 121.82 s |
+| Opening | 10.76 s | 35.38 s |
+| Maximum RSS | 36.216 GB | 86.603 GB |
+| Maximum RSS, GiB | 33.729 | 80.655 |
+| Gross B/cycle | 539.67 | **322.62** |
+| Process swaps | 0 | 0 |
+
+System swap usage remained at 734.12 MiB and the cumulative swapout count did
+not change. The maximum is 9.34467 GiB below the 90 GiB working target and
+14.34467 GiB below the 95 GiB hard target.
+
+macOS compressor occupancy increased by 14.49 GiB at the sampled high-water
+point. This is meaningful memory pressure, even though it caused no swapout.
+The proof was 4.37x the `2^26` prover time for 4x as many cycles. Commitment
+was the super-linear component at 5.23x; opening was 3.29x.
+
+The phase RSS markers identify Stage 6b as the operational high-water phase:
+77.95 GiB sampled versus the 80.66 GiB process maximum. Stage 4 sampled
+74.08 GiB and Stage 5 sampled 67.82 GiB. The next memory investigation should
+therefore decompose Stage-6b per-round scratch and allocator residency rather
+than revisiting background phase drops.
 
 ## Commits
 
@@ -231,3 +262,4 @@ whether background-owned and allocator-resident state can be kept within its
 - `benchmark-runs/perfetto_traces/mem-stream-t-2e26.json`
 - `benchmark-runs/perfetto_traces/mem-stage5-reuse-2e22.json`
 - `benchmark-runs/perfetto_traces/mem-stage5-reuse-2e26.json`
+- `benchmark-runs/perfetto_traces/mem-fit-2e28.json`

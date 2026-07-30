@@ -15,6 +15,11 @@ is Stage 5 at 75.18164 GiB, or 300.7266 B/cycle.
 That leaves 14.81836 GiB below the 90 GiB working target for background
 destruction, allocator residency, and unmodelled state.
 
+The full forced-K256 `2^28` proof then passed and verified in 236.72 seconds.
+Maximum RSS was 80.655 GiB (322.62 B/cycle), leaving 9.345 GiB below the
+90 GiB working target. The process reported zero swaps, and the system
+swapout counter did not increase.
+
 This pass kept K256 and the proof protocol fixed. Eighteen independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
@@ -63,12 +68,19 @@ immediate control.
 Earlier phase-local cuts are not always fully visible in headline RSS. The
 R1CS change, for example, drops Stage 1 by the exact 13 GiB row allocation.
 
-The final observed target maximum is 539.67 B/cycle. It must not be
+The latest `2^26` maximum is 539.67 B/cycle. It must not be
 scaled linearly to `2^28`: setup ranks, matrix rounding, program state,
 allocator arenas, and thread stacks do not scale as `4T`. The source-derived
-post-cut ceiling is 300.7266 B/cycle. The remaining capacity question is whether
-logically dead and allocator-resident pages stay inside the 14.81836 GiB working
-reserve.
+post-cut ceiling is 300.7266 B/cycle. The remaining capacity question was
+whether logically dead and allocator-resident pages would stay inside the
+14.81836 GiB working reserve.
+
+At `2^28`, the sampled PIOP maximum is Stage 6b at 77.95 GiB, followed by
+Stage 4 at 74.08 GiB and Stage 5 at 67.82 GiB. The source model successfully
+bounded capacity, while its 14.82 GiB reserve covered allocator residency and
+short-lived Stage-6b scratch. macOS compressed an additional 14.49 GiB at the
+sampled pressure peak, so further memory work can still improve operating
+margin even though the no-swap target now passes.
 
 ## Measurements
 
@@ -428,6 +440,11 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Fourth delayed RA round rejection | `mem-ra-round4-2e22.json` |
 | RAM-validity 47-byte rejection | `mem-ram-valid-2e22.json`, `mem-ram-valid-2e22-b.json`, `mem-ram-valid-2e26.json`, `mem-ram-valid-2e26-b.json` |
 | RAM-validity 48-byte rejection | `mem-ram-valid-a8-2e22.json`, `mem-ram-valid-a8-2e22-b.json`, `mem-ram-valid-a8-2e22-c.json`, `mem-ram-valid-a8-2e26.json` |
+| Negacyclic-only cache | `mem-neg-ntt-2e22.json`, `mem-neg-ntt-2e26.json` |
+| Trace final-reader release | `mem-trace-early-2e22.json`, `mem-trace-early-2e26.json` |
+| Streamed root quotient | `mem-stream-t-2e22.json`, `mem-stream-t-2e26.json` |
+| Stage-5 read-RAF reuse | `mem-stage5-reuse-2e22.json`, `mem-stage5-reuse-2e26.json` |
+| Full K256 `2^28` fit | `mem-fit-2e28.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
