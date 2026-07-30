@@ -163,7 +163,8 @@ impl JointOpeningPolynomials<Fr> for MetalJointOpening {
         };
 
         // Structural errors propagate — the fallback would fail identically.
-        let views = build_opening_views::<Fr>(witness, polynomials, precommitted_tables, grid)?;
+        let views =
+            build_opening_views::<Fr>(session, witness, polynomials, precommitted_tables, grid)?;
         let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
             .iter()
             .copied()

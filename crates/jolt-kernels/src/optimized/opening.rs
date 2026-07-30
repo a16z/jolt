@@ -48,10 +48,11 @@ use jolt_field::Field;
 use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
 use crate::opening::JointOpeningPolynomials;
 use crate::reference::commitment::{column_kinds, ColumnKind};
@@ -78,13 +79,13 @@ impl<F: Field> JointOpeningPolynomials<F> for OptimizedBackend {
     )]
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
-        let views = build_opening_views(witness, polynomials, precommitted_tables, grid)?;
+        let views = build_opening_views(session, witness, polynomials, precommitted_tables, grid)?;
         Ok(views.into_iter().map(OpeningView::into_boxed).collect())
     }
 }
@@ -111,6 +112,7 @@ impl<F: Field> OpeningView<F> {
 /// optimized `prepare` minus the boxing, shared with the metal twin so both
 /// tiers serve the same placement math and column pass.
 pub(crate) fn build_opening_views<F: Field>(
+    session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     polynomials: &[JoltCommittedPolynomial],
     precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
@@ -141,7 +143,9 @@ pub(crate) fn build_opening_views<F: Field>(
     let columns = if kind_by_id.is_empty() {
         None
     } else {
-        Some(Arc::new(OpeningColumns::collect(witness, grid.log_t)?))
+        Some(Arc::new(OpeningColumns::collect(
+            session, witness, grid.log_t,
+        )?))
     };
     let placement = TracePlacement::new(grid);
 
@@ -211,21 +215,52 @@ pub(crate) struct OpeningColumns {
 
 impl OpeningColumns {
     fn collect<F: Field>(
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
-        let mut consumers = (CollectOpeningColumns {
-            columns: Self {
-                rd_inc: Vec::with_capacity(cycles),
-                ram_inc: Vec::with_capacity(cycles),
-                lookup_index: Vec::with_capacity(cycles),
-                bytecode_pc: Vec::with_capacity(cycles),
-                ram_address: Vec::with_capacity(cycles),
-            },
+        // Three of the five columns are projections of the shared stage-5
+        // rows (parked at stage 1) — reclaim them; the sentinel collisions
+        // the old walk debug-asserted are structurally impossible in the
+        // rows' `+ 1` packing. Only the increment lanes walk the trace, as
+        // a two-extractor bundle with no lookup/decode work.
+        let rows = shared_instruction_rows(session, witness, cycles)?;
+        let map_rows = |view: fn(&InstructionCycleRow) -> u64| -> Vec<u64> {
+            #[cfg(feature = "parallel")]
+            {
+                rows.par_iter().map(view).collect()
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                rows.iter().map(view).collect()
+            }
+        };
+        let lookup_index = {
+            #[cfg(feature = "parallel")]
+            {
+                rows.par_iter().map(|row| row.lookup_index).collect()
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                rows.iter().map(|row| row.lookup_index).collect()
+            }
+        };
+        let bytecode_pc = map_rows(|row| row.mapped_pc().map_or(COLD, |pc| pc as u64));
+        let ram_address = map_rows(|row| row.remapped_ram_address().unwrap_or(COLD));
+
+        let mut consumers = (CollectIncColumns {
+            rd_inc: Vec::with_capacity(cycles),
+            ram_inc: Vec::with_capacity(cycles),
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-        let columns = consumers.0.columns;
+        let columns = Self {
+            rd_inc: consumers.0.rd_inc,
+            ram_inc: consumers.0.ram_inc,
+            lookup_index,
+            bytecode_pc,
+            ram_address,
+        };
         debug_assert_eq!(
             columns.cycles(),
             cycles,
@@ -253,33 +288,26 @@ impl OpeningColumns {
     }
 }
 
-struct CollectOpeningColumns {
-    columns: OpeningColumns,
+/// The two increment lanes of [`OpeningColumns`] — the only columns the
+/// shared stage-5 rows don't carry.
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct IncColumnsWitness {
+    rd_inc: RdInc,
+    ram_inc: RamInc,
 }
 
-impl StreamConsumer for CollectOpeningColumns {
-    type Witness = CommittedColumnsWitness;
+struct CollectIncColumns {
+    rd_inc: Vec<i128>,
+    ram_inc: Vec<i128>,
+}
 
-    fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
-        let columns = &mut self.columns;
+impl StreamConsumer for CollectIncColumns {
+    type Witness = IncColumnsWitness;
+
+    fn consume(&mut self, chunk: &[IncColumnsWitness]) {
         for row in chunk {
-            debug_assert_ne!(
-                row.bytecode_pc.0.map(|pc| pc as u64),
-                Some(COLD),
-                "a live mapped pc collides with the COLD sentinel"
-            );
-            debug_assert_ne!(
-                row.ram_address.0,
-                Some(COLD),
-                "a live remapped RAM address collides with the COLD sentinel"
-            );
-            columns.rd_inc.push(row.rd_inc.0);
-            columns.ram_inc.push(row.ram_inc.0);
-            columns.lookup_index.push(row.lookup_index.0);
-            columns
-                .bytecode_pc
-                .push(row.bytecode_pc.0.map_or(COLD, |pc| pc as u64));
-            columns.ram_address.push(row.ram_address.0.unwrap_or(COLD));
+            self.rd_inc.push(row.rd_inc.0);
+            self.ram_inc.push(row.ram_inc.0);
         }
     }
 }
