@@ -174,6 +174,55 @@ inline Fq12El fq12_mul_by_034(Fq12El f, Fq2El c0, Fq2El c3, Fq2El c4) {
     return r;
 }
 
+// --- pairwise line combining (idea: Scott, eprint 2019/077) -------------------
+//
+// The product of two D-twist line values, each a + b·w + c·vw over
+// w² = v, collects to (a₁a₂ + ξ·c₁c₂) + b₁b₂·v + (b₁c₂ + c₁b₂)·v² in the
+// even part and (a₁b₂ + b₁a₂) + (a₁c₂ + c₁a₂)·v in the odd part — 6 Fq2
+// muls with Karatsuba cross terms. Folding THAT into f is one
+// 5-slot-sparse Fq12 mul (17 Fq2 muls), so a line pair costs 23 Fq2 muls
+// against 26 for two mul_by_034s. Exact algebra either way — the Miller
+// parity pins it.
+
+struct LinePair {
+    Fq6El c0;
+    Fq2El c1a;   // odd part = c1a + c1b·v (v² slot identically zero)
+    Fq2El c1b;
+};
+
+inline LinePair fq12_combine_lines(
+    Fq2El a1, Fq2El b1, Fq2El c1, Fq2El a2, Fq2El b2, Fq2El c2)
+{
+    Fq2El aa = fq2_mul(a1, a2);
+    Fq2El bb = fq2_mul(b1, b2);
+    Fq2El cc = fq2_mul(c1, c2);
+    Fq2El ab = fq2_sub(fq2_sub(fq2_mul(fq2_add(a1, b1), fq2_add(a2, b2)), aa), bb);
+    Fq2El ac = fq2_sub(fq2_sub(fq2_mul(fq2_add(a1, c1), fq2_add(a2, c2)), aa), cc);
+    Fq2El bc = fq2_sub(fq2_sub(fq2_mul(fq2_add(b1, c1), fq2_add(b2, c2)), bb), cc);
+    LinePair r;
+    r.c0.c0 = fq2_add(aa, fq2_mul_by_xi(cc));
+    r.c0.c1 = bb;
+    r.c0.c2 = bc;
+    r.c1a = ab;
+    r.c1b = ac;
+    return r;
+}
+
+// f ← f·(l.c0 + (l.c1a + l.c1b·v)·w): quadratic Karatsuba with the odd
+// part's sparse mul_by_01 legs.
+inline Fq12El fq12_mul_by_line_pair(Fq12El f, LinePair l) {
+    Fq6El v0 = fq6_mul(f.c0, l.c0);
+    Fq6El v1 = fq6_mul_by_01(f.c1, l.c1a, l.c1b);
+    Fq6El sum;
+    sum.c0 = fq2_add(l.c0.c0, l.c1a);
+    sum.c1 = fq2_add(l.c0.c1, l.c1b);
+    sum.c2 = l.c0.c2;
+    Fq12El r;
+    r.c1 = fq6_sub(fq6_sub(fq6_mul(fq6_add(f.c0, f.c1), sum), v0), v1);
+    r.c0 = fq6_add(v0, fq6_mul_by_v(v1));
+    return r;
+}
+
 // --- host I/O ----------------------------------------------------------------
 //
 // An Fq12's device words are its 12 Fq Montgomery limb runs in arkworks
@@ -357,25 +406,45 @@ struct MillerTableParams {
     uint n_rows;                  // coefficient-table width
 };
 
-inline void jk_table_ell(
+// Apply one coefficient step's lines for pairs [start, end) into f,
+// combined pairwise (live lines buffer one deep; an odd tail falls back to
+// the single sparse mul). Sentinel pairs contribute no line.
+inline void jk_table_span(
     thread Fq12El &f,
     device const uint* ps,
     device const uint* row_idx,
     device const uint* coeffs,
     uint n_rows,
     uint step,
-    uint pair)
+    uint start,
+    uint end)
 {
-    G1AffinePt pt = g1_load_base(ps, pair);
-    if (fq_is_zero(pt.x) && fq_is_zero(pt.y)) {
-        return;
+    bool held = false;
+    Fq2El h0;
+    Fq2El h1;
+    Fq2El h2;
+    for (uint pair = start; pair < end; pair++) {
+        G1AffinePt pt = g1_load_base(ps, pair);
+        if (fq_is_zero(pt.x) && fq_is_zero(pt.y)) {
+            continue;
+        }
+        device const uint* c = coeffs + (step * n_rows + row_idx[pair]) * (6u * FR_LIMBS);
+        Fq2El l0 = fq2_mul_by_fq(fq2_load_at(c), pt.y);
+        Fq2El l1 = fq2_mul_by_fq(fq2_load_at(c + 2u * FR_LIMBS), pt.x);
+        Fq2El l2 = fq2_load_at(c + 4u * FR_LIMBS);
+        if (held) {
+            f = fq12_mul_by_line_pair(f, fq12_combine_lines(h0, h1, h2, l0, l1, l2));
+            held = false;
+        } else {
+            h0 = l0;
+            h1 = l1;
+            h2 = l2;
+            held = true;
+        }
     }
-    device const uint* c = coeffs + (step * n_rows + row_idx[pair]) * (6u * FR_LIMBS);
-    f = fq12_mul_by_034(
-        f,
-        fq2_mul_by_fq(fq2_load_at(c), pt.y),
-        fq2_mul_by_fq(fq2_load_at(c + 2u * FR_LIMBS), pt.x),
-        fq2_load_at(c + 4u * FR_LIMBS));
+    if (held) {
+        f = fq12_mul_by_034(f, h0, h1, h2);
+    }
 }
 
 kernel void jk_miller_table(
@@ -399,23 +468,17 @@ kernel void jk_miller_table(
         if (it != 0) {
             f = fq12_sqr(f);
         }
-        for (uint pair = start; pair < end; pair++) {
-            jk_table_ell(f, ps, row_idx, coeffs, p.n_rows, step, pair);
-        }
+        jk_table_span(f, ps, row_idx, coeffs, p.n_rows, step, start, end);
         step++;
         int digit = JK_ATE[JK_ATE_LEN - 1u - it];
         if (digit != 0) {
-            for (uint pair = start; pair < end; pair++) {
-                jk_table_ell(f, ps, row_idx, coeffs, p.n_rows, step, pair);
-            }
+            jk_table_span(f, ps, row_idx, coeffs, p.n_rows, step, start, end);
             step++;
         }
     }
     // The two Frobenius-twisted addition steps (q1, then q2).
     for (uint k = 0; k < 2u; k++) {
-        for (uint pair = start; pair < end; pair++) {
-            jk_table_ell(f, ps, row_idx, coeffs, p.n_rows, step, pair);
-        }
+        jk_table_span(f, ps, row_idx, coeffs, p.n_rows, step, start, end);
         step++;
     }
     fq12_store_at(out + tid * (12u * FR_LIMBS), f);
