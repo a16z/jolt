@@ -536,12 +536,25 @@ pub struct AkitaProverHint {
 /// time and reused when opening. The variant doubles as the source-kind
 /// discriminator, so a hint can never pair one kind's metadata with another
 /// kind's polynomials.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
     OneHot(Arc<[AkitaBackendOneHotPoly]>),
     TraceOneHot(Arc<[TracePackedOneHot]>),
     SparseUnit(Arc<[AkitaBackendSparsePoly]>),
+}
+
+impl Clone for AkitaHintPolynomials {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Dense(polys) => Self::Dense(Arc::clone(polys)),
+            Self::OneHot(polys) => Self::OneHot(Arc::clone(polys)),
+            Self::TraceOneHot(polys) => {
+                Self::TraceOneHot(polys.iter().cloned().collect::<Vec<_>>().into())
+            }
+            Self::SparseUnit(polys) => Self::SparseUnit(Arc::clone(polys)),
+        }
+    }
 }
 
 impl Default for AkitaHintPolynomials {

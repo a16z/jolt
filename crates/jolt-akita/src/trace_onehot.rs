@@ -7,7 +7,8 @@
 //! selector slots are zero.
 
 use std::fmt;
-use std::sync::Arc;
+use std::ops::Deref;
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use akita_algebra::ring::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
@@ -198,20 +199,40 @@ pub const fn no_hot_lane() -> u8 {
 
 /// One physical one-hot polynomial containing all trace-derived semantic
 /// columns and zero padding up to a protocol-fixed selector capacity.
-#[derive(Clone)]
 pub struct TracePackedOneHot {
-    rows: Arc<dyn TraceOneHotRows>,
+    rows: Arc<RwLock<Option<Arc<dyn TraceOneHotRows>>>>,
+    num_rows: usize,
+    num_columns: usize,
     one_hot_k: usize,
     column_capacity: usize,
     num_vars: usize,
     construction_ring_elems: usize,
 }
 
+impl Clone for TracePackedOneHot {
+    fn clone(&self) -> Self {
+        let rows = self
+            .rows
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        Self {
+            rows: Arc::new(RwLock::new(rows)),
+            num_rows: self.num_rows,
+            num_columns: self.num_columns,
+            one_hot_k: self.one_hot_k,
+            column_capacity: self.column_capacity,
+            num_vars: self.num_vars,
+            construction_ring_elems: self.construction_ring_elems,
+        }
+    }
+}
+
 impl fmt::Debug for TracePackedOneHot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TracePackedOneHot")
             .field("one_hot_k", &self.one_hot_k)
-            .field("num_columns", &self.rows.num_columns())
+            .field("num_columns", &self.num_columns)
             .field("column_capacity", &self.column_capacity)
             .field("num_vars", &self.num_vars)
             .finish_non_exhaustive()
@@ -250,8 +271,8 @@ impl TracePackedOneHot {
                 "trace one-hot has {num_columns} semantic columns for capacity {column_capacity}"
             )));
         }
-        let total_field_elems = rows
-            .num_rows()
+        let num_rows = rows.num_rows();
+        let total_field_elems = num_rows
             .checked_mul(one_hot_k)
             .and_then(|segment| segment.checked_mul(column_capacity))
             .ok_or_else(|| {
@@ -265,7 +286,9 @@ impl TracePackedOneHot {
             )));
         }
         Ok(Self {
-            rows,
+            rows: Arc::new(RwLock::new(Some(rows))),
+            num_rows,
+            num_columns,
             one_hot_k,
             column_capacity,
             num_vars: total_field_elems.trailing_zeros() as usize,
@@ -279,13 +302,9 @@ impl TracePackedOneHot {
 
     fn segment_ring_elems<const D: usize>(&self) -> Result<usize, AkitaError> {
         validate_dimension::<D>(self.one_hot_k)?;
-        let segment_field_elems = self
-            .rows
-            .num_rows()
-            .checked_mul(self.one_hot_k)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace one-hot segment ring count overflow".to_string())
-            })?;
+        let segment_field_elems = self.num_rows.checked_mul(self.one_hot_k).ok_or_else(|| {
+            AkitaError::InvalidInput("trace one-hot segment ring count overflow".to_string())
+        })?;
         if !segment_field_elems.is_multiple_of(D) {
             return Err(AkitaError::InvalidInput(format!(
                 "trace one-hot semantic segment {segment_field_elems} is not ring-aligned at D={D}"
@@ -293,16 +312,68 @@ impl TracePackedOneHot {
         }
         Ok(segment_field_elems / D)
     }
+
+    fn lock_rows(
+        &self,
+    ) -> Result<RwLockReadGuard<'_, Option<Arc<dyn TraceOneHotRows>>>, AkitaError> {
+        let rows = self
+            .rows
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if rows.is_none() {
+            return Err(AkitaError::InvalidInput(
+                "trace one-hot opening storage was already released".to_string(),
+            ));
+        }
+        Ok(rows)
+    }
 }
 
-#[derive(Clone, Copy)]
 pub struct TracePackedOneHotView<'a, const D: usize> {
     source: &'a TracePackedOneHot,
+    rows: RwLockReadGuard<'a, Option<Arc<dyn TraceOneHotRows>>>,
 }
 
-#[derive(Clone, Copy)]
 pub struct TracePackedOneHotBatchView<'a, const D: usize> {
     sources: &'a [&'a TracePackedOneHot],
+    rows: RwLockReadGuard<'a, Option<Arc<dyn TraceOneHotRows>>>,
+}
+
+struct TracePackedOneHotKernelSource<'a> {
+    source: &'a TracePackedOneHot,
+    rows: &'a dyn TraceOneHotRows,
+}
+
+impl Deref for TracePackedOneHotKernelSource<'_> {
+    type Target = TracePackedOneHot;
+
+    fn deref(&self) -> &Self::Target {
+        self.source
+    }
+}
+
+impl<const D: usize> TracePackedOneHotView<'_, D> {
+    fn kernel_source(&self) -> TracePackedOneHotKernelSource<'_> {
+        let Some(rows) = self.rows.as_deref() else {
+            unreachable!("trace one-hot view holds live row storage");
+        };
+        TracePackedOneHotKernelSource {
+            source: self.source,
+            rows,
+        }
+    }
+}
+
+impl<const D: usize> TracePackedOneHotBatchView<'_, D> {
+    fn kernel_source(&self) -> TracePackedOneHotKernelSource<'_> {
+        let Some(rows) = self.rows.as_deref() else {
+            unreachable!("trace one-hot batch view holds live row storage");
+        };
+        TracePackedOneHotKernelSource {
+            source: self.sources[0],
+            rows,
+        }
+    }
 }
 
 impl RootPolyMeta<AkitaField> for TracePackedOneHot {
@@ -316,6 +387,22 @@ impl RootPolyMeta<AkitaField> for TracePackedOneHot {
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         Some(self.one_hot_k)
+    }
+
+    fn release_root_opening_storage(&self) {
+        let rows = {
+            let mut rows = self
+                .rows
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            rows.take()
+        };
+        let _span = tracing::info_span!(
+            "TracePackedOneHot::release_opening_rows",
+            retained_bytes = self.num_rows * self.num_columns,
+        )
+        .entered();
+        drop(rows);
     }
 }
 
@@ -341,7 +428,10 @@ impl<const D: usize> RootCommitSource<AkitaField, D> for TracePackedOneHot {
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         validate_dimension::<D>(self.one_hot_k)?;
-        Ok(TracePackedOneHotView { source: self })
+        Ok(TracePackedOneHotView {
+            source: self,
+            rows: self.lock_rows()?,
+        })
     }
 }
 
@@ -357,13 +447,19 @@ impl<const D: usize> RootOpeningSource<AkitaField, D> for TracePackedOneHot {
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
         validate_dimension::<D>(self.one_hot_k)?;
-        Ok(TracePackedOneHotView { source: self })
+        Ok(TracePackedOneHotView {
+            source: self,
+            rows: self.lock_rows()?,
+        })
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
         validate_singleton_batch(polys)?;
         validate_dimension::<D>(polys[0].one_hot_k)?;
-        Ok(TracePackedOneHotBatchView { sources: polys })
+        Ok(TracePackedOneHotBatchView {
+            sources: polys,
+            rows: polys[0].lock_rows()?,
+        })
     }
 }
 
@@ -379,13 +475,19 @@ impl<const D: usize> RootTensorSource<AkitaField, D> for TracePackedOneHot {
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
         validate_dimension::<D>(self.one_hot_k)?;
-        Ok(TracePackedOneHotView { source: self })
+        Ok(TracePackedOneHotView {
+            source: self,
+            rows: self.lock_rows()?,
+        })
     }
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
         validate_singleton_batch(polys)?;
         validate_dimension::<D>(polys[0].one_hot_k)?;
-        Ok(TracePackedOneHotBatchView { sources: polys })
+        Ok(TracePackedOneHotBatchView {
+            sources: polys,
+            rows: polys[0].lock_rows()?,
+        })
     }
 }
 
@@ -415,7 +517,7 @@ fn validate_dimension<const D: usize>(one_hot_k: usize) -> Result<(), AkitaError
 /// receives the segment-relative ring index and `(column, coefficient)` pairs
 /// contributed by the same trace rows.
 fn visit_segment_ring_range<const D: usize>(
-    source: &TracePackedOneHot,
+    source: &TracePackedOneHotKernelSource<'_>,
     ring_start: usize,
     ring_end: usize,
     mut visit: impl FnMut(usize, &[(usize, usize)]),
@@ -493,7 +595,7 @@ fn visit_segment_ring_range<const D: usize>(
 /// into each ring. This avoids expanding the row buffer into contribution
 /// tuples when a kernel can consume lanes directly.
 fn visit_segment_ring_lane_range<const D: usize>(
-    source: &TracePackedOneHot,
+    source: &TracePackedOneHotKernelSource<'_>,
     ring_start: usize,
     ring_end: usize,
     mut visit: impl FnMut(usize, &[u8]),
@@ -670,7 +772,7 @@ fn trace_block_part_range(
 fn commit_packed<const D: usize>(
     backend: &CpuBackend,
     prepared: &<CpuBackend as ComputeBackendSetup<AkitaField>>::PreparedSetup,
-    source: &TracePackedOneHot,
+    source: &TracePackedOneHotKernelSource<'_>,
     plan: CommitInnerPlan,
 ) -> Result<CommitInnerWitness<AkitaField>, AkitaError> {
     let _span = tracing::info_span!(
@@ -1035,7 +1137,7 @@ fn commit_packed<const D: usize>(
 }
 
 fn opening_fold_packed<const D: usize>(
-    source: &TracePackedOneHot,
+    source: &TracePackedOneHotKernelSource<'_>,
     plan: OpeningFoldPlan<'_, AkitaField, D>,
 ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
     let num_positions = match plan {
@@ -1663,7 +1765,7 @@ fn add_rotated_contributions<const D: usize>(
 }
 
 fn decompose_fold_packed_with_mode<const D: usize>(
-    source: &TracePackedOneHot,
+    source: &TracePackedOneHotKernelSource<'_>,
     challenges: &[SparseChallenge],
     num_positions: usize,
     num_digits: usize,
@@ -1895,7 +1997,7 @@ fn decompose_fold_packed_with_mode<const D: usize>(
 }
 
 fn decompose_fold_packed<const D: usize>(
-    source: &TracePackedOneHot,
+    source: &TracePackedOneHotKernelSource<'_>,
     challenges: &[SparseChallenge],
     num_positions: usize,
     num_digits: usize,
@@ -1916,7 +2018,7 @@ impl<const D: usize> RootCommitKernel<TracePackedOneHotView<'_, D>, AkitaField, 
         source: TracePackedOneHotView<'_, D>,
         plan: CommitInnerPlan,
     ) -> Result<CommitInnerWitness<AkitaField>, AkitaError> {
-        commit_packed::<D>(self, prepared, source.source, plan)
+        commit_packed::<D>(self, prepared, &source.kernel_source(), plan)
     }
 }
 
@@ -1927,7 +2029,7 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         source: TracePackedOneHotView<'_, D>,
         plan: OpeningFoldPlan<'_, AkitaField, D>,
     ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
-        opening_fold_packed(source.source, plan)
+        opening_fold_packed(&source.kernel_source(), plan)
     }
 
     fn decompose_fold(
@@ -1937,7 +2039,7 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<akita_prover::DecomposeFoldWitness<AkitaField>, AkitaError> {
         decompose_fold_packed::<D>(
-            source.source,
+            &source.kernel_source(),
             plan.challenges,
             plan.num_positions_per_block,
             plan.num_digits,
@@ -1954,7 +2056,7 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
         source: TracePackedOneHotBatchView<'_, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
-        let source = source.sources[0];
+        let source = source.kernel_source();
         match plan {
             DecomposeFoldBatchPlan::Sparse {
                 challenges,
@@ -1963,7 +2065,7 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
                 ..
             } => Ok(BatchDecomposeFoldOutcome::Fused(
                 decompose_fold_packed::<D>(
-                    source,
+                    &source,
                     challenges,
                     num_positions_per_block,
                     num_digits,
@@ -2098,13 +2200,20 @@ mod tests {
         .unwrap();
         let segment_rings = source.segment_ring_elems::<D>().unwrap();
         let mut actual = Vec::new();
-        visit_segment_ring_range::<D>(&source, 0, segment_rings, |ring, contributions| {
-            actual.extend(
-                contributions
-                    .iter()
-                    .map(|&(column, coefficient)| (column, ring * D + coefficient)),
-            );
-        })
+        let view =
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap();
+        visit_segment_ring_range::<D>(
+            &view.kernel_source(),
+            0,
+            segment_rings,
+            |ring, contributions| {
+                actual.extend(
+                    contributions
+                        .iter()
+                        .map(|&(column, coefficient)| (column, ring * D + coefficient)),
+                );
+            },
+        )
         .unwrap();
         let expected = (0..rows)
             .flat_map(|row| {
@@ -2243,6 +2352,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(streamed, materialized);
+        let view =
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap();
+        let source = view.kernel_source();
         let dense = decompose_fold_packed_with_mode::<D>(
             &source,
             &challenges,
@@ -2261,6 +2373,66 @@ mod tests {
         .unwrap();
         assert_eq!(dense, materialized);
         assert_eq!(sparse, materialized);
+    }
+
+    #[test]
+    fn root_opening_storage_release_is_scoped_to_each_clone() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct DropRows(Arc<AtomicBool>);
+
+        impl Drop for DropRows {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+
+        impl TraceOneHotRows for DropRows {
+            fn num_rows(&self) -> usize {
+                32
+            }
+
+            fn num_columns(&self) -> usize {
+                3
+            }
+
+            fn fill_row(&self, _row: usize, hot_lanes: &mut [u8]) {
+                hot_lanes.fill(1);
+            }
+        }
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let source =
+            TracePackedOneHot::new(16, 64, 8, Arc::new(DropRows(Arc::clone(&dropped)))).unwrap();
+        let source_clone = {
+            let _view =
+                <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source)
+                    .unwrap();
+            assert!(!dropped.load(Ordering::Relaxed));
+            source.clone()
+        };
+
+        <TracePackedOneHot as RootPolyMeta<AkitaField>>::release_root_opening_storage(&source);
+
+        assert!(!dropped.load(Ordering::Relaxed));
+        assert!(
+            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source)
+                .is_err()
+        );
+        assert!(
+            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source_clone)
+                .is_ok()
+        );
+
+        <TracePackedOneHot as RootPolyMeta<AkitaField>>::release_root_opening_storage(
+            &source_clone,
+        );
+
+        assert!(dropped.load(Ordering::Relaxed));
+        assert!(
+            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source_clone)
+                .is_err()
+        );
     }
 
     #[test]

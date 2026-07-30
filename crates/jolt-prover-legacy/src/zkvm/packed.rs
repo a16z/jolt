@@ -1553,6 +1553,7 @@ impl AkitaPackedProver<'_> {
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
         let ra_indices =
             one_hot_trace_rows.materialize_ra_indices(&plan.ranges, &self.one_hot_params);
+        drop(one_hot_trace_rows);
         let fused = self.fused_inc_deltas();
         let one_hot = self.fused_inc_one_hot_columns(&fused);
         let mut fused_inc_columns = FusedIncColumns { one_hot, fused };
