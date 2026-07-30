@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Ten independently committed
+This pass kept K256 and the proof protocol fixed. Eleven independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -20,20 +20,22 @@ prover slowdown:
 | `39bc6ce38` | Read RAM RA from the row-major index source | `2 * ram_d` B/cycle during the first three Stage-6b rounds |
 | `1f3652bc4` | Store fused-increment one-hot lanes as dense bytes | 9 B/cycle during Stages 6–7 |
 | `1355fab03` | Pack signed fused-increment deltas | 7.875 B/cycle until the first Stage-6 cycle bind |
+| `2d08372ec` | Delay Fp128 expansion of instruction-input columns | 3 GiB of Stage-3 field state at `2^26` |
 
-At `2^26`, the lowest measured maximum RSS is 44.157 GB with zero process
-swaps, down from 50.49 GB after the R1CS-row policy change and 50.72 GB before
-it. Another phase determines that peak, so the 576 MiB dense-lane reduction
-and 504 MiB packed-delta reduction are not fully visible in headline RSS.
-The R1CS change has a much larger phase-local effect than the headline maximum:
-Stage 1 drops by the exact 13 GiB row allocation.
+At `2^26`, the lowest measured maximum RSS is 40.029 GB with zero process
+swaps, down from the 44.157 GB packed-delta control, 50.49 GB after the
+R1CS-row policy change, and 50.72 GB before it. The three-round
+instruction-input change removes 4.128 GB (-9.35%) from the process maximum
+and moves the sampled global peak from Stage 3 to packed opening. Earlier
+phase-local cuts are not always fully visible in headline RSS. The R1CS
+change, for example, drops Stage 1 by the exact 13 GiB row allocation.
 
-The effective maximum-RSS slope between the measured `2^22` and `2^26`
-points falls from approximately 566 to 465 B/cycle. A linear extrapolation of
-the final measurements is approximately 128 GiB at `2^28`. Different phases
-can become the maximum at different sizes, so this is not a capacity forecast,
-but it is sufficient to reject the idea that the current stack is ready for a
-low-swap `2^28` run.
+The previous 128 GiB `2^28` extrapolation predates the Stage-3 result.
+Scaling only its exact 3 GiB live-state reduction gives roughly 116 GiB;
+scaling the observed maximum-RSS reduction gives roughly 113 GiB. These are
+not capacity forecasts: different phases become maximal at different sizes,
+and opening is now the measured limiter. They are sufficient to show that the
+current stack is still above the 95 GiB low-swap objective.
 
 ## Measurements
 
@@ -203,6 +205,29 @@ spans improved by 37.6 ms in aggregate. The whole-proof improvement is not
 claimed because the unchanged commitment span moved more than the headline.
 The result is accepted as a performance-neutral 504 MiB phase-local cut.
 
+### Delayed instruction-input expansion
+
+Eight compact Stage-3 columns previously expanded to Fp128 at the first bind,
+allocating 4 GiB of field coefficients at `2^26`. They now remain as small
+`bool`, `u64`, and `i128` values for three rounds and materialize the same
+bound polynomials directly at `T / 8`, where they occupy 1 GiB.
+
+The optimization is prover-local and enabled only for 16-byte fields, so
+sumcheck messages and the Dory comparison baseline remain unchanged.
+
+At `2^26`, maximum RSS fell from 44.157 to 40.029 GB (-4.128 GB, -9.35%).
+Stage 3 improved from 1.127052 to 1.099730 seconds. On-demand message reads
+became 187.971 ms slower, but challenge binding became 221.715 ms faster, so
+the directly affected aggregate improved by 33.744 ms (-4.23%). The whole
+proof moved from 53.35 to 53.59 seconds; an unchanged commitment span accounts
+for 278 ms, so no prover regression is attributed to the change.
+
+Although the polynomials are dead after Stage 3, avoiding their large
+intermediate field allocations lowered the Stage 4 baseline by 4.79 GB. The
+sampled global peak is now 36.29 GiB inside packed opening. Full measurements,
+the binding-equivalence argument, and validation are in
+`stage3-svo-experiment.md`.
+
 ### Rejected: dense bytecode RA
 
 The bytecode transpose was changed from `Option<u8>` to `u8` while preserving
@@ -265,6 +290,8 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Packed fused deltas, accepted | `mem-packed-delta-2e22-c.json`, `mem-packed-delta-2e22-d.json`, `mem-packed-delta-2e26-b.json` |
 | Packed fused deltas, untuned | `mem-packed-delta-2e22.json`, `mem-packed-delta-2e22-b.json`, `mem-packed-delta-2e26.json` |
 | Packed fused deltas, K16 side data | `mem-packed-delta-k16-2e22.json`, `mem-packed-delta-k16-2e22-b.json` |
+| Instruction-input three-round screens | `mem-svo3-2e22.json`, `mem-svo3-2e22-b.json` |
+| Instruction-input three-round target | `mem-svo3-2e26.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -293,9 +320,16 @@ operand presence, and canonical padding against the former `Cycle` path.
 
 ## Next memory targets
 
-The next target is an audit of field-vector and setup lifetimes at the
-Stage 3/4 and opening peaks. The remaining structural cuts do not by
-themselves reach the 95 GiB objective under the current slope, so phase-local
-`Fp128` vectors and setup matrices must be counted and streamed or reused.
+The next target is packed opening, which now sets the sampled `2^26` peak at
+36.29 GiB. The first low-risk experiment is to release the compact execution
+trace after Stage 7/reconstruction if no opening source owns it. At 64
+B/cycle, that owner is 4 GiB at `2^26` and 16 GiB at `2^28`; the experiment
+must confirm both that the final `Arc` is actually released and that allocator
+behavior turns the logical cut into resident-memory relief.
+
+After that, audit the opening hint, setup-matrix lifetime, and Stage-6b
+field-vector overlap. Releasing the setup matrix remains rejected under the
+current implementation because its late reconstruction regresses both opening
+and verifier performance.
 
 K16 is not part of this campaign. K256 remains the fixed performance choice.
