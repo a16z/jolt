@@ -103,11 +103,18 @@ impl Extract for FusedInc {
             matches!(row.ram_access, RamAccess::Write(_)),
             "Store circuit flag disagrees with the cycle's RAM-write access"
         );
-        Ok(Self(if store {
-            RamInc::extract(row, next, env)?.0
-        } else {
-            RdInc::extract(row, next, env)?.0
-        }))
+        let ram_delta = RamInc::extract(row, next, env)?.0;
+        let rd_delta = RdInc::extract(row, next, env)?.0;
+        // One fused column serves both inc consumers only because no cycle
+        // increments RAM and rd at once (every read-modify-write instruction
+        // lowers into a sequence whose RAM-writing step is a plain store). A
+        // violation means an instruction shape the fused encoding cannot
+        // represent — fail here, not with an opaque sumcheck mismatch.
+        debug_assert!(
+            if store { rd_delta == 0 } else { ram_delta == 0 },
+            "cycle increments both RAM and rd; the fused inc encoding cannot represent it"
+        );
+        Ok(Self(if store { ram_delta } else { rd_delta }))
     }
 }
 
@@ -140,5 +147,66 @@ impl ExtractIndexed<UnsignedIncLane> for UnsignedIncHot {
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(FusedInc::extract(row, next, env)?.hot_lane(lane)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LOG_K_CHUNK: usize = 8;
+    const CHUNKS: usize = UNSIGNED_INC_BITS / LOG_K_CHUNK;
+
+    fn fused_trace() -> Vec<FusedInc> {
+        [
+            7i128,
+            -3,
+            0,
+            (1 << 40) + 5,
+            -(1 << 63),
+            (1i128 << 64) - 1,
+            -((1i128 << 64) - 1),
+            1,
+            -1,
+        ]
+        .into_iter()
+        .map(FusedInc)
+        .collect()
+    }
+
+    #[test]
+    fn chunks_and_msb_reconstruct_the_shifted_fused_increment() {
+        for (cycle, inc) in fused_trace().iter().enumerate() {
+            let mut reconstructed = 0u128;
+            for index in 0..CHUNKS {
+                let hot = inc.hot_lane(UnsignedIncLane::Chunk {
+                    width: LOG_K_CHUNK,
+                    index,
+                });
+                assert!(hot < 1 << LOG_K_CHUNK, "cycle {cycle}");
+                reconstructed |= (hot as u128) << (LOG_K_CHUNK * index);
+            }
+            reconstructed |= (inc.hot_lane(UnsignedIncLane::Msb) as u128) << UNSIGNED_INC_BITS;
+            assert_eq!(
+                reconstructed as i128 - (1i128 << UNSIGNED_INC_BITS),
+                inc.0,
+                "cycle {cycle}"
+            );
+        }
+    }
+
+    #[test]
+    fn padding_cycles_encode_msb_hot_and_zero_digits() {
+        let padding = FusedInc(0);
+        assert_eq!(padding.hot_lane(UnsignedIncLane::Msb), 1);
+        for index in 0..CHUNKS {
+            assert_eq!(
+                padding.hot_lane(UnsignedIncLane::Chunk {
+                    width: LOG_K_CHUNK,
+                    index,
+                }),
+                0
+            );
+        }
     }
 }
