@@ -42,6 +42,7 @@ mod ram_raf_evaluation;
 mod ram_read_write;
 mod registers_read_write;
 mod spartan_outer;
+mod spartan_product;
 
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
@@ -56,6 +57,7 @@ pub use ram_raf_evaluation::MetalRamRafEvaluation;
 pub use ram_read_write::MetalRamReadWriteChecking;
 pub use registers_read_write::MetalRegistersReadWriteChecking;
 pub use spartan_outer::{MetalOuterRemainder, MetalOuterUniskip};
+pub use spartan_product::{MetalProductRemainder, MetalProductUniskip};
 
 use std::sync::{Arc, Mutex, Weak};
 

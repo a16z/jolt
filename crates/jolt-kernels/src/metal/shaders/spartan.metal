@@ -442,3 +442,158 @@ kernel void jk_outer_round(
     jk_tg_sum(scratch, lid, tg, q0, partials, 0u, p.num_tgs);
     jk_tg_sum(scratch, lid, tg, qinf, partials, 1u, p.num_tgs);
 }
+
+struct JkI256 {
+    ulong m0;
+    ulong m1;
+    ulong m2;
+    ulong m3;
+    bool negative;
+};
+
+inline JkI256 jk_mul_i128_i192(JkI192 left, JkI192 right) {
+    bool negative = jk_i192_negative(left);
+    if (negative) {
+        left = jk_i192_neg(left);
+    }
+    if (jk_i192_negative(right)) {
+        negative = !negative;
+        right = jk_i192_neg(right);
+    }
+    ulong r0, h00, p01, h01, p02, h02, p10, h10, p11, h11, p12, ignored;
+    jk_mul64_wide(left.w0, right.w0, r0, h00);
+    jk_mul64_wide(left.w0, right.w1, p01, h01);
+    jk_mul64_wide(left.w0, right.w2, p02, h02);
+    jk_mul64_wide(left.w1, right.w0, p10, h10);
+    jk_mul64_wide(left.w1, right.w1, p11, h11);
+    jk_mul64_wide(left.w1, right.w2, p12, ignored);
+    ulong m1 = h00 + p01;
+    ulong carry2 = m1 < h00 ? 1ul : 0ul;
+    m1 += p10;
+    carry2 += m1 < p10 ? 1ul : 0ul;
+    ulong m2 = h01 + p02;
+    ulong carry3 = m2 < h01 ? 1ul : 0ul;
+    ulong t = h10 + p11;
+    carry3 += t < h10 ? 1ul : 0ul;
+    m2 += t;
+    carry3 += m2 < t ? 1ul : 0ul;
+    m2 += carry2;
+    carry3 += m2 < carry2 ? 1ul : 0ul;
+    return JkI256{r0, m1, m2, h02 + h11 + p12 + carry3, negative};
+}
+
+inline Fr256 jk_fr_from_i256(JkI256 value) {
+    Fr256 raw = fr_zero();
+    raw.v[0] = (uint)value.m0;
+    raw.v[1] = (uint)(value.m0 >> 32);
+    raw.v[2] = (uint)value.m1;
+    raw.v[3] = (uint)(value.m1 >> 32);
+    raw.v[4] = (uint)value.m2;
+    raw.v[5] = (uint)(value.m2 >> 32);
+    raw.v[6] = (uint)value.m3;
+    raw.v[7] = (uint)(value.m3 >> 32);
+    Fr256 out = fr_mont_mul(raw, fr_load_const(FR_R2, 0));
+    return value.negative ? fr_sub(fr_zero(), out) : out;
+}
+
+kernel void jk_product_t1(
+    device const ulong* left_input [[buffer(0)]],
+    device const uint* right_input [[buffer(1)]],
+    device const ulong* lookup_output [[buffer(2)]],
+    device const uint* flags [[buffer(3)]],
+    device const uint* e_in [[buffer(4)]],
+    device const uint* e_out [[buffer(5)]],
+    device const long* coefficients [[buffer(6)]],
+    device uint* partials [[buffer(7)]],
+    constant JkOuterPrepareParams& p [[buffer(8)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < p.len;
+    JkI192 left_lanes[3];
+    JkI192 right_wide;
+    long right_flags[2];
+    Fr256 weight = fr_zero();
+    if (active) {
+        uint f = flags[gid];
+        left_lanes[0] = jk_i192_u64(left_input[gid]);
+        left_lanes[1] = jk_i192_u64(lookup_output[gid]);
+        left_lanes[2] = jk_i192_u64(jk_outer_flag(f, 5u) ? 1ul : 0ul);
+        right_wide = jk_i192_i128(right_input + 4u * gid);
+        right_flags[0] = jk_outer_flag(f, 20u) ? 1 : 0;
+        right_flags[1] = jk_outer_flag(f, 26u) ? 0 : 1;
+        uint mask = (1u << p.log_in) - 1u;
+        weight = fr_mont_mul(
+            fr_load(e_out, gid >> p.log_in), fr_load(e_in, gid & mask));
+    }
+    for (uint node = 0u; node < 5u; node++) {
+        Fr256 value = fr_zero();
+        if (active) {
+            device const long* c = coefficients + 3u * node;
+            JkI192 left = JkI192{0ul, 0ul, 0ul};
+            for (uint i = 0u; i < 3u; i++) {
+                left = jk_i192_add(left, jk_i192_mul_i64(c[i], left_lanes[i]));
+            }
+            JkI192 right = jk_i192_mul_i64(c[0], right_wide);
+            right = jk_i192_add(
+                right, jk_i192_i64(c[1] * right_flags[0] + c[2] * right_flags[1]));
+            value = fr_mont_mul(weight, jk_fr_from_i256(jk_mul_i128_i192(left, right)));
+        }
+        jk_tg_sum(scratch, lid, tg, value, partials, node, p.num_tgs);
+    }
+}
+
+kernel void jk_product_lr(
+    device const ulong* left_input [[buffer(0)]],
+    device const uint* right_input [[buffer(1)]],
+    device const ulong* lookup_output [[buffer(2)]],
+    device const uint* flags [[buffer(3)]],
+    device const uint* lagrange [[buffer(4)]],
+    device const uint* e_in [[buffer(5)]],
+    device const uint* e_out [[buffer(6)]],
+    device uint* tables [[buffer(7)]],
+    device uint* partials [[buffer(8)]],
+    constant JkOuterPrepareParams& p [[buffer(9)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < (p.len >> 1);
+    Fr256 left[2];
+    Fr256 right[2];
+    Fr256 q0 = fr_zero();
+    Fr256 qinf = fr_zero();
+    if (active) {
+        for (uint side = 0u; side < 2u; side++) {
+            uint j = 2u * gid + side;
+            uint f = flags[j];
+            left[side] = fr_add(
+                fr_mont_mul(fr_load(lagrange, 0), jk_fr_from_i192(jk_i192_u64(left_input[j]))),
+                fr_mont_mul(fr_load(lagrange, 1), jk_fr_from_i192(jk_i192_u64(lookup_output[j]))));
+            if (jk_outer_flag(f, 5u)) {
+                left[side] = fr_add(left[side], fr_load(lagrange, 2));
+            }
+            right[side] = fr_mont_mul(
+                fr_load(lagrange, 0), jk_fr_from_i192(jk_i192_i128(right_input + 4u * j)));
+            if (jk_outer_flag(f, 20u)) {
+                right[side] = fr_add(right[side], fr_load(lagrange, 1));
+            }
+            if (!jk_outer_flag(f, 26u)) {
+                right[side] = fr_add(right[side], fr_load(lagrange, 2));
+            }
+            fr_store(tables, j, left[side]);
+            fr_store(tables, p.len + j, right[side]);
+        }
+        uint mask = (1u << p.log_in) - 1u;
+        Fr256 eq = fr_mont_mul(
+            fr_load(e_out, gid >> p.log_in), fr_load(e_in, gid & mask));
+        q0 = fr_mont_mul(eq, fr_mont_mul(left[0], right[0]));
+        qinf = fr_mont_mul(
+            eq, fr_mont_mul(fr_sub(left[1], left[0]), fr_sub(right[1], right[0])));
+    }
+    jk_tg_sum(scratch, lid, tg, q0, partials, 0u, p.num_tgs);
+    jk_tg_sum(scratch, lid, tg, qinf, partials, 1u, p.num_tgs);
+}

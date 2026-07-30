@@ -12,6 +12,8 @@
 //! Lagrange selectors, so one integer pipeline serves every node.
 
 use std::collections::BTreeMap;
+#[cfg(feature = "metal")]
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{
@@ -84,7 +86,7 @@ pub struct SpartanProductRow {
 /// The exact integer Lagrange coefficients `L_i(node)` of the 3-node base
 /// window at every node of the extended window (in-domain nodes included —
 /// there they are the 0/1 selectors).
-fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
+pub(crate) fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     let mut out = [[0i64; DOMAIN]; EXTENDED_SIZE];
     for (position, coefficients) in out.iter_mut().enumerate() {
         let node = EXTENDED_START + position as i64;
@@ -202,6 +204,16 @@ fn extended_t1_values<F: Field>(rows: &ProductRows, tau_low: &[F]) -> Vec<F> {
 pub struct OptimizedProductUniskip;
 
 impl OptimizedProductUniskip {
+    #[cfg(feature = "metal")]
+    pub(crate) fn prepare_from_record<F: Field>(
+        session: &mut ProofSession,
+        log_t: usize,
+        tau_low: &[F],
+        record: Arc<TraceRecord>,
+    ) -> Result<(), KernelError<F>> {
+        Self::prepare_from_source(session, log_t, tau_low, ProductRows::Record(record))
+    }
+
     /// [`Self::prepare_from_source`] over directly constructed rows — the
     /// in-module parity tests' entry.
     #[cfg(test)]

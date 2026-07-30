@@ -81,6 +81,8 @@ pub enum KernelId {
     OuterT1,
     OuterAzbz,
     OuterRound,
+    ProductT1,
+    ProductLr,
     RamRwMessage,
     RamRwBind,
     RegRwMessageIdx,
@@ -98,7 +100,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 47] = [
+    pub const ALL: [Self; 49] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -132,6 +134,8 @@ impl KernelId {
         Self::OuterT1,
         Self::OuterAzbz,
         Self::OuterRound,
+        Self::ProductT1,
+        Self::ProductLr,
         Self::RamRwMessage,
         Self::RamRwBind,
         Self::RegRwMessageIdx,
@@ -183,6 +187,8 @@ impl KernelId {
             Self::OuterT1 => "jk_outer_t1",
             Self::OuterAzbz => "jk_outer_azbz",
             Self::OuterRound => "jk_outer_round",
+            Self::ProductT1 => "jk_product_t1",
+            Self::ProductLr => "jk_product_lr",
             Self::RamRwMessage => "jk_ram_rw_message",
             Self::RamRwBind => "jk_ram_rw_bind",
             Self::RegRwMessageIdx => "jk_reg_rw_message_idx",
