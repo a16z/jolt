@@ -101,12 +101,13 @@ const MAX_SEGMENT_LEN: usize = 256;
 const MILLER_SEG_PAIRS: usize = 2;
 
 /// Default CPU share of each superchunk's Miller pairs (see
-/// [`miller_cpu_fraction`]). The driver lane finishes its extraction work
-/// early and idles while the device carries tier-1 + Miller; giving the
-/// idle cores a pair fraction balances the lanes. Tier2Accumulator is
-/// partition-invariant, so ANY split is byte-identical. Tuned in-pipeline
-/// (sha2-chain @2^22): 0.4 and 0.2 both lose ~2-3% of stage-0 wall to 0.3.
-const MILLER_CPU_FRACTION_DEFAULT: f64 = 0.3;
+/// [`miller_cpu_fraction`]). The CPU cores idle once extraction is fed
+/// while the device carries tier-1 + Miller; giving them a pair share
+/// balances the lanes. Tier2Accumulator is partition-invariant, so ANY
+/// split is byte-identical — the knob is pure load balance. In-pipeline
+/// sweep (sha2-chain @2^22, stage-0 wall): 0 → 3.25 s, 0.3 → 3.15,
+/// **0.5 → 2.82**, 0.65 → 3.34, 0.8 → 4.02, gate-closed → 4.78.
+const MILLER_CPU_FRACTION_DEFAULT: f64 = 0.5;
 
 /// `JOLT_METAL_MILLER_CPU_FRACTION` — CPU share of Miller pairs in
 /// `[0, 1]`; `0` = all-device, `1` = all-CPU (the ablation arm). Read once
