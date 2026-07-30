@@ -40,6 +40,7 @@ mod ra_lazy;
 mod ram_hamming_booleanity;
 mod ram_raf_evaluation;
 mod ram_read_write;
+mod registers_read_write;
 mod spartan_outer;
 
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
@@ -53,6 +54,7 @@ pub use ra_lazy::{
 pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 pub use ram_raf_evaluation::MetalRamRafEvaluation;
 pub use ram_read_write::MetalRamReadWriteChecking;
+pub use registers_read_write::MetalRegistersReadWriteChecking;
 pub use spartan_outer::{MetalOuterRemainder, MetalOuterUniskip};
 
 use std::sync::{Arc, Mutex, Weak};

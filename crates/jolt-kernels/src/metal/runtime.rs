@@ -83,6 +83,11 @@ pub enum KernelId {
     OuterRound,
     RamRwMessage,
     RamRwBind,
+    RegRwMessageIdx,
+    RegRwMessageF,
+    RegRwBindIdx,
+    RegRwBindIdxToF,
+    RegRwBindF,
     Fq6Mul,
     Fq6Sqr,
     Fq12Mul,
@@ -93,7 +98,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 47] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -129,6 +134,11 @@ impl KernelId {
         Self::OuterRound,
         Self::RamRwMessage,
         Self::RamRwBind,
+        Self::RegRwMessageIdx,
+        Self::RegRwMessageF,
+        Self::RegRwBindIdx,
+        Self::RegRwBindIdxToF,
+        Self::RegRwBindF,
         Self::Fq6Mul,
         Self::Fq6Sqr,
         Self::Fq12Mul,
@@ -175,6 +185,11 @@ impl KernelId {
             Self::OuterRound => "jk_outer_round",
             Self::RamRwMessage => "jk_ram_rw_message",
             Self::RamRwBind => "jk_ram_rw_bind",
+            Self::RegRwMessageIdx => "jk_reg_rw_message_idx",
+            Self::RegRwMessageF => "jk_reg_rw_message_f",
+            Self::RegRwBindIdx => "jk_reg_rw_bind_idx",
+            Self::RegRwBindIdxToF => "jk_reg_rw_bind_idx_to_f",
+            Self::RegRwBindF => "jk_reg_rw_bind_f",
             Self::Fq6Mul => "jk_fq6_mul",
             Self::Fq6Sqr => "jk_fq6_sqr",
             Self::Fq12Mul => "jk_fq12_mul",
@@ -263,7 +278,7 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             field::constants_preamble(),
             super::miller::pairing_preamble(),
             include_str!("shaders/fr.metal"),
@@ -275,6 +290,7 @@ impl MetalContext {
             include_str!("shaders/ra_lazy.metal"),
             include_str!("shaders/spartan.metal"),
             include_str!("shaders/ram_read_write.metal"),
+            include_str!("shaders/registers_read_write.metal"),
         );
         let library = device
             .newLibraryWithSource_options_error(&NSString::from_str(&source), None)
