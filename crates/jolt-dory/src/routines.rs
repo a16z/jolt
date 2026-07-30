@@ -77,6 +77,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         ArkG1(G1Projective::msm_unchecked(&affines, ark_fr_slice(scalars)))
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG1Routines::fixed_base_vector_scalar_mul", fields(len = scalars.len()))]
     fn fixed_base_vector_scalar_mul(base: &ArkG1, scalars: &[ArkFr]) -> Vec<ArkG1> {
         if scalars.is_empty() {
             return vec![];
@@ -85,6 +86,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         results.into_iter().map(ArkG1).collect()
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG1Routines::fixed_scalar_mul_bases_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_bases_then_add(bases: &[ArkG1], vs: &mut [ArkG1], scalar: &ArkFr) {
         assert_eq!(bases.len(), vs.len(), "lengths must match");
         // v[i] = v[i] + scalar * bases[i]
@@ -95,6 +97,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         );
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG1Routines::fixed_scalar_mul_vs_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG1], addends: &[ArkG1], scalar: &ArkFr) {
         assert_eq!(vs.len(), addends.len(), "lengths must match");
         // v[i] = scalar * v[i] + addends[i]
@@ -123,6 +126,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         ArkG2(G2Projective::msm_unchecked(&affines, ark_fr_slice(scalars)))
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG2Routines::fixed_base_vector_scalar_mul", fields(len = scalars.len()))]
     fn fixed_base_vector_scalar_mul(base: &ArkG2, scalars: &[ArkFr]) -> Vec<ArkG2> {
         if scalars.is_empty() {
             return vec![];
@@ -136,6 +140,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG2Routines::fixed_scalar_mul_bases_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_bases_then_add(bases: &[ArkG2], vs: &mut [ArkG2], scalar: &ArkFr) {
         assert_eq!(bases.len(), vs.len(), "lengths must match");
         // v[i] = v[i] + scalar * bases[i]
@@ -146,6 +151,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         );
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG2Routines::fixed_scalar_mul_vs_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG2], addends: &[ArkG2], scalar: &ArkFr) {
         assert_eq!(vs.len(), addends.len(), "lengths must match");
         // v[i] = scalar * v[i] + addends[i]
