@@ -250,6 +250,11 @@ pub fn commit_advice_one_hot<PCS>(
 where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
+    if advice_bytes.len() > max_advice_bytes {
+        return Err(ProverError::Unsupported {
+            reason: "advice bytes exceed the configured maximum advice size",
+        });
+    }
     let words = (max_advice_bytes / 8).next_power_of_two().max(1);
     let word_vars = words.ilog2() as usize;
     let cell_vars = word_byte_num_vars(word_vars);
@@ -375,6 +380,16 @@ pub const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
     InstructionFlags::Branch,
     InstructionFlags::IsNoop,
 ];
+
+// Compile-time pin: the hand-listed order IS the enum's discriminant order
+// (the lane index the layout and the reconstruction verifier both use).
+const _: () = {
+    let mut index = 0;
+    while index < NUM_INSTRUCTION_FLAGS {
+        assert!(INSTRUCTION_FLAG_ORDER[index] as usize == index);
+        index += 1;
+    }
+};
 
 /// Scatters the precommitted `ProgramOneHot` sub-columns (per-chunk bytecode
 /// lanes and the program image) into one-positions of the packed precommitted

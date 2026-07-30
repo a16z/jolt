@@ -428,10 +428,12 @@ where
             table
         };
         let replicated = |own_values: Vec<F>| -> Vec<F> {
+            debug_assert!(cells.is_multiple_of(own_values.len().max(1)));
             let mut table = Vec::with_capacity(cells);
             while table.len() < cells {
                 table.extend_from_slice(&own_values);
             }
+            table.truncate(cells);
             table
         };
 

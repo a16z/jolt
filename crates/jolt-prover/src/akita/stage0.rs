@@ -73,6 +73,18 @@ where
             reason: "ProgramOneHot commitment presence disagrees with the preprocessing mode",
         });
     }
+    // The verifier absorbs the PREPROCESSING-held ProgramOneHot commitment;
+    // a disagreeing argument would only surface as an opaque Fiat-Shamir
+    // divergence at verification, so reject it by name here.
+    if let (Some(argument), Some(committed)) =
+        (program_one_hot, preprocessing.verifier.program.committed())
+    {
+        if *argument != committed.program_one_hot_commitment {
+            return Err(ProverError::Unsupported {
+                reason: "the ProgramOneHot commitment argument disagrees with the preprocessing",
+            });
+        }
+    }
     let untrusted_advice_present = !public_io.untrusted_advice.is_empty();
     // The verifier's own input validation doubles as the prover's self-check
     // and produces the normalized `CheckedInputs` the preamble absorbs.
@@ -128,6 +140,18 @@ where
     if preprocessing.pcs_setup.default_layout_digest() != canonical_digest {
         return Err(ProverError::Unsupported {
             reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
+        });
+    }
+    // The setup's declared dimensions must equal the canonical group shape
+    // (the verifier enforces the same equalities on its setup before the
+    // native opening) — a shape-exact setup with the right digest but the
+    // wrong arity would otherwise fail minutes later inside the backend.
+    if preprocessing.pcs_setup.max_num_vars() != plan.column_arity
+        || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != plan.columns.len()
+        || preprocessing.pcs_setup.one_hot_k() != 1usize << log_k_chunk
+    {
+        return Err(ProverError::Unsupported {
+            reason: "the packed setup's dimensions disagree with the canonical OneHotTrace shape",
         });
     }
 
