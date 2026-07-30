@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use ark_std::Zero;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 use crate::field::BarrettReduce;
 use crate::field::{FMAdd, JoltField, MontgomeryReduce};
@@ -162,7 +162,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
     #[tracing::instrument(skip_all, name = "OuterUniSkipInstanceProver::initialize")]
     pub fn initialize(
         params: OuterUniSkipParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         bytecode_preprocessing: &BytecodePreprocessing,
     ) -> Self {
         let extended = Self::compute_univariate_skip_extended_evals(
@@ -199,7 +199,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
     ///     + eq(tau_in, (x_in', 1)) * Az(x_out, x_in', 1, y) * Bz(x_out, x_in', 1, y)
     fn compute_univariate_skip_extended_evals(
         bytecode_preprocessing: &BytecodePreprocessing,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         tau: &[F::Challenge],
     ) -> [F; OUTER_UNIVARIATE_SKIP_DEGREE] {
         // Build split-eq over full τ; new_with_scaling drops the last variable (τ_high) for the split,
@@ -761,7 +761,7 @@ pub struct OuterSharedState<F: JoltField> {
     #[allocative(skip)]
     bytecode_preprocessing: BytecodePreprocessing,
     #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
+    trace: Arc<Vec<JoltTraceRow>>,
     split_eq_poly: GruenSplitEqPolynomial<F>,
     t_prime_poly: Option<MultiquadraticPolynomial<F>>,
     r_grid: ExpandingTable<F>,
@@ -773,7 +773,7 @@ pub struct OuterSharedState<F: JoltField> {
 impl<F: JoltField> OuterSharedState<F> {
     #[tracing::instrument(skip_all, name = "OuterSharedState::new")]
     pub fn new(
-        trace: Arc<Vec<Cycle>>,
+        trace: Arc<Vec<JoltTraceRow>>,
         bytecode_preprocessing: &BytecodePreprocessing,
         uni_skip_params: &OuterUniSkipParams<F>,
         opening_accumulator: &ProverOpeningAccumulator<F>,

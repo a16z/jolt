@@ -50,8 +50,8 @@ use std::sync::Arc;
 use allocative::Allocative;
 use ark_ff::biginteger::S64;
 use ark_std::Zero;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::{Cycle, RAMAccess};
 
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;
@@ -229,7 +229,10 @@ enum IncClaimReductionPhase<F: JoltField> {
 
 impl<F: JoltField> IncClaimReductionSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "IncClaimReductionSumcheckProver::initialize")]
-    pub fn initialize(params: IncClaimReductionSumcheckParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
+    pub fn initialize(
+        params: IncClaimReductionSumcheckParams<F>,
+        trace: Arc<Vec<JoltTraceRow>>,
+    ) -> Self {
         let phase = IncClaimReductionPhase::Phase1(IncClaimReductionPhase1State::initialize(
             trace, &params,
         ));
@@ -328,13 +331,16 @@ struct IncClaimReductionPhase1State<F: JoltField> {
     Q_rd: [MultilinearPolynomial<F>; 2],
 
     #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
+    trace: Arc<Vec<JoltTraceRow>>,
     sumcheck_challenges: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> IncClaimReductionPhase1State<F> {
     #[tracing::instrument(skip_all, name = "IncClaimReductionPhase1State::initialize")]
-    fn initialize(trace: Arc<Vec<Cycle>>, params: &IncClaimReductionSumcheckParams<F>) -> Self {
+    fn initialize(
+        trace: Arc<Vec<JoltTraceRow>>,
+        params: &IncClaimReductionSumcheckParams<F>,
+    ) -> Self {
         let n_vars = params.n_cycle_vars;
         let prefix_n_vars = n_vars / 2;
         let suffix_n_vars = n_vars - prefix_n_vars;
@@ -393,14 +399,15 @@ impl<F: JoltField> IncClaimReductionPhase1State<F> {
                         let cycle = &trace[x];
 
                         // RamInc = post_value - pre_value for RAM writes
-                        let ram_inc: S64 = match cycle.ram_access() {
-                            RAMAccess::Write(w) => s64_from_diff_u64s(w.post_value, w.pre_value),
-                            _ => S64::from(0i64),
+                        let ram_inc: S64 = if cycle.is_store() {
+                            s64_from_diff_u64s(cycle.ram_write_value(), cycle.ram_read_value())
+                        } else {
+                            S64::from(0i64)
                         };
 
                         // RdInc = post_value - pre_value for rd writes
-                        let (_, pre_rd, post_rd) = cycle.rd_write().unwrap_or_default();
-                        let rd_inc: S64 = s64_from_diff_u64s(post_rd, pre_rd);
+                        let rd_inc: S64 =
+                            s64_from_diff_u64s(cycle.rd_write_value(), cycle.rd_pre_value());
 
                         acc_ram_0.fmadd(&eq_r2_hi[x_hi], &ram_inc);
                         acc_ram_1.fmadd(&eq_r4_hi[x_hi], &ram_inc);
@@ -512,7 +519,7 @@ struct IncClaimReductionPhase2State<F: JoltField> {
 impl<F: JoltField> IncClaimReductionPhase2State<F> {
     #[tracing::instrument(skip_all, name = "IncClaimReductionPhase2State::gen")]
     fn gen(
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         sumcheck_challenges: &[F::Challenge],
         params: &IncClaimReductionSumcheckParams<F>,
     ) -> Self {
@@ -594,12 +601,13 @@ impl<F: JoltField> IncClaimReductionPhase2State<F> {
                         let x = x_lo + (x_hi << prefix_len.log_2());
                         let cycle = &trace[x];
 
-                        let ram_inc_val: S64 = match cycle.ram_access() {
-                            RAMAccess::Write(w) => s64_from_diff_u64s(w.post_value, w.pre_value),
-                            _ => S64::from(0i64),
+                        let ram_inc_val: S64 = if cycle.is_store() {
+                            s64_from_diff_u64s(cycle.ram_write_value(), cycle.ram_read_value())
+                        } else {
+                            S64::from(0i64)
                         };
-                        let (_, pre_rd, post_rd) = cycle.rd_write().unwrap_or_default();
-                        let rd_inc_val: S64 = s64_from_diff_u64s(post_rd, pre_rd);
+                        let rd_inc_val: S64 =
+                            s64_from_diff_u64s(cycle.rd_write_value(), cycle.rd_pre_value());
 
                         acc_ram.fmadd(eq_val, &ram_inc_val);
                         acc_rd.fmadd(eq_val, &rd_inc_val);

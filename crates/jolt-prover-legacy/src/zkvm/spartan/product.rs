@@ -42,8 +42,8 @@ use crate::zkvm::r1cs::constraints::{
 use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
 use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
 use crate::zkvm::witness::VirtualPolynomial;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 // Product virtualization with univariate skip
 //
@@ -192,7 +192,7 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
     /// Initialize a new prover for the univariate skip round
     /// The 5 base evaluations are the claimed evaluations of the 5 product terms from Spartan outer
     #[tracing::instrument(skip_all, name = "ProductVirtualUniSkipInstanceProver::initialize")]
-    pub fn initialize(params: ProductVirtualUniSkipParams<F>, trace: &[Cycle]) -> Self {
+    pub fn initialize(params: ProductVirtualUniSkipParams<F>, trace: &[JoltTraceRow]) -> Self {
         // Compute extended univariate-skip evals using split-eq fold-in-out (includes R^2 scaling)
         let extended_evals = Self::compute_univariate_skip_extended_evals(trace, &params.tau);
         let instance = Self {
@@ -226,7 +226,7 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
     /// - ShouldBranch: LookupOutput is u64 → i128; Branch flag is bool/u8 → i32.
     /// - ShouldJump: Jump flag (left) is bool/u8 → i32; Right^eff = (1 − NextIsNoop) is bool/u8 → i32.
     fn compute_univariate_skip_extended_evals(
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         tau: &[F::Challenge],
     ) -> [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE] {
         // Build split-eq over full τ; new_with_scaling drops τ_high from the split and
@@ -589,7 +589,7 @@ impl<F: JoltField> ProductVirtualRemainderParams<F> {
 #[derive(Allocative)]
 pub struct ProductVirtualRemainderProver<F: JoltField> {
     #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
+    trace: Arc<Vec<JoltTraceRow>>,
     split_eq_poly: GruenSplitEqPolynomial<F>,
     left: DensePolynomial<F>,
     right: DensePolynomial<F>,
@@ -600,7 +600,10 @@ pub struct ProductVirtualRemainderProver<F: JoltField> {
 
 impl<F: JoltField> ProductVirtualRemainderProver<F> {
     #[tracing::instrument(skip_all, name = "ProductVirtualRemainderProver::initialize")]
-    pub fn initialize(params: ProductVirtualRemainderParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
+    pub fn initialize(
+        params: ProductVirtualRemainderParams<F>,
+        trace: Arc<Vec<JoltTraceRow>>,
+    ) -> Self {
         let lagrange_evals_r = LagrangePolynomial::<F>::evals::<
             F::Challenge,
             PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
@@ -654,7 +657,7 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
     /// - We follow outer's delayed-reduction pattern across x_in to reduce modular reductions.
     #[inline]
     fn compute_first_quadratic_evals_and_bound_polys(
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         weights_at_r0: &[F; NUM_PRODUCT_VIRTUAL],
         split_eq_poly: &GruenSplitEqPolynomial<F>,
     ) -> (F, F, DensePolynomial<F>, DensePolynomial<F>) {

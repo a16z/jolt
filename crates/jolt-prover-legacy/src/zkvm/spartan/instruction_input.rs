@@ -1,8 +1,7 @@
-use ark_ff::Zero;
-
 use allocative::Allocative;
+use ark_ff::Zero;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
@@ -32,7 +31,7 @@ use crate::{
     },
     transcripts::Transcript,
     zkvm::{
-        instruction::{Flags, InstructionFlags, JoltTraceCycle},
+        instruction::{Flags, InstructionFlags},
         witness::VirtualPolynomial,
     },
 };
@@ -235,7 +234,7 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionInputSumcheckProver::initialize")]
     pub fn initialize(
         params: InstructionInputParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         _opening_accumulator: &ProverOpeningAccumulator<F>,
     ) -> Self {
         // Compute MLEs.
@@ -269,19 +268,17 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
                     rs2_value_eval,
                     imm_eval,
                     unexpanded_pc_eval,
-                    cycle,
+                    trace_row,
                 )| {
-                    let jolt_cycle = JoltTraceCycle::try_new(cycle)
-                        .expect("trace cycle must be backed by a final Jolt instruction row");
-                    let flags = jolt_cycle.instruction_flags();
+                    let flags = Flags::instruction_flags(trace_row);
                     *left_is_rs1_eval = flags[InstructionFlags::LeftOperandIsRs1Value];
                     *left_is_pc_eval = flags[InstructionFlags::LeftOperandIsPC];
                     *right_is_rs2_eval = flags[InstructionFlags::RightOperandIsRs2Value];
                     *right_is_imm_eval = flags[InstructionFlags::RightOperandIsImm];
-                    *rs1_value_eval = cycle.rs1_read().unwrap_or_default().1;
-                    *rs2_value_eval = cycle.rs2_read().unwrap_or_default().1;
-                    *imm_eval = jolt_cycle.instruction().operands.imm;
-                    *unexpanded_pc_eval = jolt_cycle.instruction().address as u64;
+                    *rs1_value_eval = trace_row.rs1_value();
+                    *rs2_value_eval = trace_row.rs2_value();
+                    *imm_eval = trace_row.imm();
+                    *unexpanded_pc_eval = trace_row.unexpanded_pc();
                 },
             );
 

@@ -5,10 +5,10 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::constants::XLEN;
+use jolt_riscv::JoltTraceRow;
 use num_traits::Zero;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::Cycle;
 
 use super::LOG_K;
 
@@ -43,9 +43,7 @@ use crate::{
     },
     zkvm::{
         config::{self, OneHotParams},
-        instruction::{
-            Flags, InstructionLookup, InterleavedBitsMarker, JoltTraceCycle, LookupQuery,
-        },
+        instruction::{Flags, InstructionLookup, InterleavedBitsMarker, LookupQuery},
         lookup_table::{
             prefixes::{PrefixCheckpoint, PrefixEval, Prefixes},
             suffixes::Suffixes,
@@ -321,7 +319,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionReadRafSumcheckParam
 pub struct InstructionReadRafSumcheckProver<F: JoltField> {
     /// The execution trace, shared via Arc for efficient access in cache_openings.
     #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
+    trace: Arc<Vec<JoltTraceRow>>,
 
     /// Running list of sumcheck challenges r_j (address then cycle) in binding order.
     r: Vec<F::Challenge>,
@@ -380,7 +378,10 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     /// - Allocates per-table suffix accumulators and u-evals for rv/raf parts
     /// - Instantiates the three RAF decompositions and Gruen EQs over cycles
     #[tracing::instrument(skip_all, name = "InstructionReadRafSumcheckProver::initialize")]
-    pub fn initialize(params: InstructionReadRafSumcheckParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
+    pub fn initialize(
+        params: InstructionReadRafSumcheckParams<F>,
+        trace: Arc<Vec<JoltTraceRow>>,
+    ) -> Self {
         let log_T = trace.len().log_2();
 
         let log_m = LOG_K / params.phases;
@@ -420,12 +421,9 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
             .par_iter()
             .enumerate()
             .map(|(idx, cycle)| {
-                let jolt_cycle = JoltTraceCycle::try_new(cycle)
-                    .expect("trace cycle must be backed by a final Jolt instruction row");
-                let bits =
-                    LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(&jolt_cycle), LOG_K);
-                let is_interleaved = jolt_cycle.circuit_flags().is_interleaved_operands();
-                let table = jolt_cycle.lookup_table();
+                let bits = LookupBits::new(LookupQuery::<XLEN>::to_lookup_index(cycle), LOG_K);
+                let is_interleaved = Flags::circuit_flags(cycle).is_interleaved_operands();
+                let table = InstructionLookup::<XLEN>::lookup_table(cycle);
 
                 CycleData {
                     idx,
@@ -841,9 +839,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 .zip(std::mem::take(&mut self.is_interleaved_operands))
                 .for_each(|((val, cycle), is_interleaved_operands)| {
                     // Add lookup table value (Val_j(k)) - derive table from trace
-                    let jolt_cycle = JoltTraceCycle::try_new(cycle)
-                        .expect("trace cycle must be backed by a final Jolt instruction row");
-                    if let Some(table) = jolt_cycle.lookup_table() {
+                    if let Some(table) = InstructionLookup::<XLEN>::lookup_table(cycle) {
                         let t_idx = LookupTables::<XLEN>::enum_index(&table);
                         *val += table_values_at_r_addr[t_idx];
                     }
@@ -1301,15 +1297,13 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                         let e_lo_unreduced = E_lo[c_lo].to_unreduced();
 
                         // Accumulate table flag
-                        let jolt_cycle = JoltTraceCycle::try_new(cycle)
-                            .expect("trace cycle must be backed by a final Jolt instruction row");
-                        if let Some(table) = jolt_cycle.lookup_table() {
+                        if let Some(table) = InstructionLookup::<XLEN>::lookup_table(cycle) {
                             let t_idx = LookupTables::<XLEN>::enum_index(&table);
                             local_flags[t_idx] += e_lo_unreduced;
                         }
 
                         // Accumulate RAF flag (identity = not interleaved)
-                        if !jolt_cycle.circuit_flags().is_interleaved_operands() {
+                        if !Flags::circuit_flags(cycle).is_interleaved_operands() {
                             local_raf += e_lo_unreduced;
                         }
                     }
@@ -1498,9 +1492,10 @@ mod tests {
     use crate::transcripts::Blake2bTranscript;
     use ark_bn254::Fr;
     use ark_std::Zero;
+    use jolt_riscv::{CapturedState, JoltTraceRow, LoadState, NonMemoryState, StoreState};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use tracer::instruction::{Cycle, RAMAccess};
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
@@ -1577,6 +1572,39 @@ mod tests {
         }
     }
 
+    fn trace_row_from_cycle(cycle: &Cycle) -> JoltTraceRow {
+        let mut instruction = cycle.instruction().try_jolt_instruction_row().unwrap();
+        // Some synthetic instruction generators use unconstrained i128
+        // immediates, outside the proof-row contract.
+        if instruction.operands.imm.unsigned_abs() > u64::MAX as u128 {
+            instruction.operands.imm = 0;
+        }
+        let rs1_value = cycle.rs1_read().unwrap_or_default().1;
+        let rs2_value = cycle.rs2_read().unwrap_or_default().1;
+        let (_, rd_pre_value, rd_write_value) = cycle.rd_write().unwrap_or_default();
+        let state = match cycle.ram_access() {
+            RAMAccess::Read(read) => CapturedState::Load(LoadState {
+                rs1_value,
+                ram_address: read.address,
+                rd_pre_value,
+                rd_write_value,
+            }),
+            RAMAccess::Write(write) => CapturedState::Store(StoreState {
+                rs1_value,
+                rs2_value,
+                ram_read_value: write.pre_value,
+                ram_address: write.address,
+            }),
+            RAMAccess::NoOp => CapturedState::NonMemory(NonMemoryState {
+                rs1_value,
+                rs2_value,
+                rd_pre_value,
+                rd_write_value,
+            }),
+        };
+        JoltTraceRow::from_components(state, &instruction, 0).unwrap()
+    }
+
     fn test_read_raf_sumcheck(instruction: Option<Cycle>) {
         let mut rng = StdRng::seed_from_u64(12345);
 
@@ -1585,6 +1613,7 @@ mod tests {
                 .map(|_| random_instruction(&mut rng, &instruction))
                 .collect(),
         );
+        let trace_rows = Arc::new(trace.iter().map(trace_row_from_cycle).collect::<Vec<_>>());
 
         let prover_transcript = &mut Blake2bTranscript::new(&[]);
         let mut prover_opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
@@ -1602,18 +1631,17 @@ mod tests {
         let mut left_operand_claim = Fr::zero();
         let mut right_operand_claim = Fr::zero();
 
-        for (i, cycle) in trace.iter().enumerate() {
-            let jolt_cycle = JoltTraceCycle::try_new(cycle)
-                .expect("trace cycle must be backed by a final Jolt instruction row");
-            let lookup_index = LookupQuery::<XLEN>::to_lookup_index(&jolt_cycle);
-            let table: Option<LookupTables<XLEN>> = jolt_cycle.lookup_table();
+        for (i, trace_row) in trace_rows.iter().enumerate() {
+            let lookup_index = LookupQuery::<XLEN>::to_lookup_index(trace_row);
+            let table: Option<LookupTables<XLEN>> =
+                InstructionLookup::<XLEN>::lookup_table(trace_row);
             if let Some(table) = table {
                 rv_claim +=
                     JoltField::mul_u64(&eq_r_cycle[i], table.materialize_entry(lookup_index));
             }
 
             // Compute left and right operand claims
-            let (lo, ro) = LookupQuery::<XLEN>::to_lookup_operands(cycle);
+            let (lo, ro) = LookupQuery::<XLEN>::to_lookup_operands(trace_row);
             left_operand_claim += JoltField::mul_u64(&eq_r_cycle[i], lo);
             right_operand_claim += JoltField::mul_u128(&eq_r_cycle[i], ro);
         }
@@ -1651,8 +1679,7 @@ mod tests {
             &prover_opening_accumulator,
             prover_transcript,
         );
-        let mut prover_sumcheck =
-            InstructionReadRafSumcheckProver::initialize(params, Arc::clone(&trace));
+        let mut prover_sumcheck = InstructionReadRafSumcheckProver::initialize(params, trace_rows);
 
         let (proof, r_sumcheck, _initial_claim) = BatchedSumcheck::prove(
             vec![&mut prover_sumcheck],

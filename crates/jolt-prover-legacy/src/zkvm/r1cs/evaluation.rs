@@ -39,9 +39,9 @@
 
 use ark_ff::biginteger::{S128, S160, S192, S256, S64};
 use ark_std::Zero;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
-use tracer::instruction::Cycle;
 
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;
@@ -955,7 +955,7 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
     #[tracing::instrument(skip_all, name = "R1CSEval::compute_claimed_inputs")]
     pub fn compute_claimed_inputs(
         bytecode_preprocessing: &BytecodePreprocessing,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
     ) -> [F; NUM_R1CS_INPUTS] {
         let m = r_cycle.len() / 2;
@@ -1081,7 +1081,7 @@ impl ProductVirtualEval {
     /// 7: OpFlags(VirtualInstruction) (bool) — not a product factor, opened for downstream stages
     #[tracing::instrument(skip_all, name = "ProductVirtualEval::compute_claimed_factors")]
     pub fn compute_claimed_factors<F: JoltField>(
-        trace: &[tracer::instruction::Cycle],
+        trace: &[JoltTraceRow],
         r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
     ) -> [F; 8] {
         let m = r_cycle.len() / 2;

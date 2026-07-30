@@ -4,7 +4,7 @@ use allocative::Allocative;
 use jolt_riscv::{
     CircuitFlagSet as RiscvCircuitFlagSet, Flags as RiscvFlags,
     InstructionFlagSet as RiscvInstructionFlagSet, JoltInstruction, JoltInstructionKind,
-    JoltInstructionRow, SourceInstructionKind,
+    JoltInstructionRow, JoltTraceRow, NormalizedOperands, SourceInstructionKind,
 };
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
@@ -374,6 +374,17 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltTraceCycle<'_> {
     }
 }
 
+impl<const XLEN: usize> InstructionLookup<XLEN> for JoltTraceRow {
+    #[inline(always)]
+    fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
+        let instruction = JoltInstructionRow {
+            instruction_kind: self.instruction_kind()?,
+            ..JoltInstructionRow::default()
+        };
+        instruction.lookup_table()
+    }
+}
+
 impl Flags for JoltTraceCycle<'_> {
     #[inline(always)]
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
@@ -383,6 +394,18 @@ impl Flags for JoltTraceCycle<'_> {
     #[inline(always)]
     fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
         self.instruction.instruction_flags()
+    }
+}
+
+impl Flags for JoltTraceRow {
+    #[inline(always)]
+    fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
+        circuit_flags_from_riscv(JoltTraceRow::circuit_flags(self))
+    }
+
+    #[inline(always)]
+    fn instruction_flags(&self) -> [bool; NUM_INSTRUCTION_FLAGS] {
+        instruction_flags_from_riscv(JoltTraceRow::instruction_flags(self))
     }
 }
 
@@ -406,6 +429,111 @@ impl<const XLEN: usize> LookupQuery<XLEN> for JoltTraceCycle<'_> {
     fn to_lookup_output(&self) -> u64 {
         LookupQuery::<XLEN>::to_lookup_output(self.cycle)
     }
+}
+
+#[cfg(feature = "prover")]
+#[derive(Clone, Copy)]
+struct TraceRowLookupCycle<'a>(&'a JoltTraceRow);
+
+#[cfg(feature = "prover")]
+impl jolt_riscv::JoltCycle for TraceRowLookupCycle<'_> {
+    type Instruction = JoltInstructionRow;
+
+    #[inline(always)]
+    fn instruction(&self) -> Self::Instruction {
+        JoltInstructionRow {
+            instruction_kind: trace_row_instruction_kind(self.0),
+            address: self.0.unexpanded_pc() as usize,
+            operands: NormalizedOperands {
+                rs1: self.0.rs1_index(),
+                rs2: self.0.rs2_index(),
+                rd: self.0.rd_index(),
+                imm: self.0.imm(),
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        }
+    }
+
+    #[inline(always)]
+    fn rs1_val(&self) -> Option<u64> {
+        self.0.rs1_index().map(|_| self.0.rs1_value())
+    }
+
+    #[inline(always)]
+    fn rs2_val(&self) -> Option<u64> {
+        self.0.rs2_index().map(|_| self.0.rs2_value())
+    }
+
+    #[inline(always)]
+    fn rd_vals(&self) -> Option<(u64, u64)> {
+        self.0
+            .rd_index()
+            .map(|_| (self.0.rd_pre_value(), self.0.rd_write_value()))
+    }
+
+    #[inline(always)]
+    fn ram_access_address(&self) -> Option<u64> {
+        (self.0.is_load() || self.0.is_store()).then(|| self.0.ram_address())
+    }
+
+    #[inline(always)]
+    fn ram_read_value(&self) -> Option<u64> {
+        (self.0.is_load() || self.0.is_store()).then(|| self.0.ram_read_value())
+    }
+
+    #[inline(always)]
+    fn ram_write_value(&self) -> Option<u64> {
+        (self.0.is_load() || self.0.is_store()).then(|| self.0.ram_write_value())
+    }
+}
+
+#[cfg(feature = "prover")]
+impl<const XLEN: usize> LookupQuery<XLEN> for JoltTraceRow {
+    #[inline(always)]
+    fn to_instruction_inputs(&self) -> (u64, i128) {
+        let query = jolt_lookup_tables::JoltLookupQuery::new(
+            trace_row_instruction_kind(self),
+            TraceRowLookupCycle(self),
+        );
+        jolt_lookup_tables::LookupQuery::<XLEN>::to_instruction_inputs(&query)
+    }
+
+    #[inline(always)]
+    fn to_lookup_index(&self) -> u128 {
+        let query = jolt_lookup_tables::JoltLookupQuery::new(
+            trace_row_instruction_kind(self),
+            TraceRowLookupCycle(self),
+        );
+        jolt_lookup_tables::LookupQuery::<XLEN>::to_lookup_index(&query)
+    }
+
+    #[inline(always)]
+    fn to_lookup_operands(&self) -> (u64, u128) {
+        let query = jolt_lookup_tables::JoltLookupQuery::new(
+            trace_row_instruction_kind(self),
+            TraceRowLookupCycle(self),
+        );
+        jolt_lookup_tables::LookupQuery::<XLEN>::to_lookup_operands(&query)
+    }
+
+    #[inline(always)]
+    fn to_lookup_output(&self) -> u64 {
+        let query = jolt_lookup_tables::JoltLookupQuery::new(
+            trace_row_instruction_kind(self),
+            TraceRowLookupCycle(self),
+        );
+        jolt_lookup_tables::LookupQuery::<XLEN>::to_lookup_output(&query)
+    }
+}
+
+#[cfg(feature = "prover")]
+#[inline(always)]
+fn trace_row_instruction_kind(row: &JoltTraceRow) -> JoltInstructionKind {
+    let kind = row.instruction_kind();
+    debug_assert!(kind.is_some());
+    kind.unwrap_or(JoltInstructionKind::NoOp)
 }
 
 fn circuit_flags_from_riscv(flags: RiscvCircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {

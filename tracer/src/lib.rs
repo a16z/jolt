@@ -91,6 +91,45 @@ pub fn trace(
     JoltDevice,
     cpu::AdviceTape,
 ) {
+    let mut trace = Vec::new();
+    let (lazy_trace, final_memory_state, jolt_device, advice_tape_result) = trace_with_cycle_sink(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+        advice_tape,
+        |cycle| trace.push(cycle),
+    );
+    (
+        lazy_trace,
+        trace,
+        final_memory_state,
+        jolt_device,
+        advice_tape_result,
+    )
+}
+
+/// Executes a RISC-V program and sends each trace cycle to `sink` in execution order.
+///
+/// Unlike [`trace`], this function does not retain a full `Vec<Cycle>`. The sink
+/// controls the trace representation and may buffer a bounded number of cycles.
+#[tracing::instrument(skip_all)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "trace configuration is shared with the existing trace API"
+)]
+pub fn trace_with_cycle_sink(
+    elf_contents: &[u8],
+    elf_path: Option<&std::path::PathBuf>,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+    memory_config: &MemoryConfig,
+    advice_tape: Option<cpu::AdviceTape>,
+    mut sink: impl FnMut(Cycle),
+) -> (LazyTraceIterator, Memory, JoltDevice, cpu::AdviceTape) {
     let mut lazy_trace_iter = trace_lazy(
         elf_contents,
         elf_path,
@@ -101,7 +140,9 @@ pub fn trace(
         advice_tape,
     );
     let lazy_trace_iter_ = lazy_trace_iter.clone();
-    let trace: Vec<Cycle> = lazy_trace_iter.by_ref().collect();
+    for cycle in lazy_trace_iter.by_ref() {
+        sink(cycle);
+    }
 
     // Extract the populated advice tape before moving lazy_tracer
     let advice_tape_result = lazy_trace_iter.lazy_tracer.take_advice_tape();
@@ -111,7 +152,6 @@ pub fn trace(
     let jolt_device = lazy_trace_iter.lazy_tracer.get_jolt_device();
     (
         lazy_trace_iter_, // Return the clone since lazy_tracer was moved
-        trace,
         final_memory_state,
         jolt_device,
         advice_tape_result, // Return the populated advice tape

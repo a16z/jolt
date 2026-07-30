@@ -16,8 +16,8 @@ use crate::subprotocols::read_write_matrix::ReadWriteMatrixCycleMajor;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::ram::remap_address;
 use common::jolt_device::MemoryLayout;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::{Cycle, RAMAccess};
 
 /// Represents a non-zero entry in the ra(k, j) and Val(k, j) polynomials.
 /// Conceptually, both ra and Val can be seen as K x T matrices.
@@ -64,34 +64,25 @@ pub struct RamCycleMajorEntry<F: JoltField> {
 }
 
 impl<F: JoltField> RamCycleMajorEntry<F> {
-    fn from_cycle(cycle: &Cycle, cycle_index: usize, memory_layout: &MemoryLayout) -> Option<Self> {
-        let ram_op = cycle.ram_access();
-        match ram_op {
-            RAMAccess::Write(write) => {
-                let pre_value = write.pre_value;
-                let post_value = write.post_value;
-                Some(RamCycleMajorEntry {
-                    row: cycle_index,
-                    col: remap_address(write.address, memory_layout).unwrap() as usize,
-                    ra_coeff: F::one(),
-                    val_coeff: F::from_u64(pre_value),
-                    prev_val: pre_value,
-                    next_val: post_value,
-                })
-            }
-            RAMAccess::Read(read) => {
-                let read_value = read.value;
-                Some(RamCycleMajorEntry {
-                    row: cycle_index,
-                    col: remap_address(read.address, memory_layout).unwrap() as usize,
-                    ra_coeff: F::one(),
-                    val_coeff: F::from_u64(read_value),
-                    prev_val: read_value,
-                    next_val: read_value,
-                })
-            }
-            _ => None,
+    fn from_trace_row(
+        trace_row: &JoltTraceRow,
+        cycle_index: usize,
+        memory_layout: &MemoryLayout,
+    ) -> Option<Self> {
+        if !trace_row.is_load() && !trace_row.is_store() {
+            return None;
         }
+
+        let pre_value = trace_row.ram_read_value();
+        let post_value = trace_row.ram_write_value();
+        Some(RamCycleMajorEntry {
+            row: cycle_index,
+            col: remap_address(trace_row.ram_address(), memory_layout).unwrap() as usize,
+            ra_coeff: F::one(),
+            val_coeff: F::from_u64(pre_value),
+            prev_val: pre_value,
+            next_val: post_value,
+        })
     }
 }
 
@@ -99,11 +90,13 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RamCycleMajorEntry<F>> {
     /// Creates a new `ReadWriteMatrixCycleMajor` to represent the ra and Val polynomials
     /// for the RAM read/write checking sumcheck.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::new")]
-    pub fn new(trace: &[Cycle], val_init: Vec<F>, memory_layout: &MemoryLayout) -> Self {
+    pub fn new(trace: &[JoltTraceRow], val_init: Vec<F>, memory_layout: &MemoryLayout) -> Self {
         let entries: Vec<_> = trace
             .par_iter()
             .enumerate()
-            .filter_map(|(j, cycle)| RamCycleMajorEntry::from_cycle(cycle, j, memory_layout))
+            .filter_map(|(j, trace_row)| {
+                RamCycleMajorEntry::from_trace_row(trace_row, j, memory_layout)
+            })
             .collect();
 
         ReadWriteMatrixCycleMajor {

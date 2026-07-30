@@ -1,6 +1,6 @@
+use jolt_riscv::JoltTraceRow;
 use num_traits::Zero;
 use std::{array, sync::Arc};
-use tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
@@ -161,7 +161,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersValEvaluationSumcheckProver::initialize")]
     pub fn initialize(
         params: RegistersValEvaluationSumcheckParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
@@ -173,16 +173,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
         );
 
         let eq_r_address = EqPolynomial::evals(&params.r_address.r);
-        let wa: Vec<Option<u8>> = trace
-            .par_iter()
-            .map(|cycle| {
-                let instr = cycle
-                    .instruction()
-                    .try_jolt_instruction_row()
-                    .expect("trace cycle must be a final Jolt instruction row");
-                instr.operands.rd
-            })
-            .collect();
+        let wa: Vec<Option<u8>> = trace.par_iter().map(JoltTraceRow::rd_index).collect();
         let wa = RaPolynomial::new(Arc::new(wa), eq_r_address);
         let lt = LtPolynomial::new(&params.r_cycle);
 

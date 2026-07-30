@@ -11,7 +11,7 @@ use crate::zkvm::ram::remap_address;
 use crate::zkvm::{
     bytecode::{
         chunks::{committed_lanes, for_each_active_lane_value, ActiveLaneValue},
-        get_pc_for_cycle, BytecodePreprocessing,
+        BytecodePreprocessing,
     },
     witness::CommittedPolynomial,
 };
@@ -19,6 +19,7 @@ use allocative::Allocative;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
 use itertools::Itertools;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,7 +36,7 @@ pub struct RLCStreamingData {
 #[derive(Clone, Debug)]
 pub enum TraceSource {
     /// Pre-materialized trace in memory (default, efficient single pass)
-    Materialized(Arc<Vec<Cycle>>),
+    Materialized(Arc<Vec<JoltTraceRow>>),
     /// Lazy trace iterator (experimental, re-runs tracer)
     /// Boxed to avoid large enum size difference (LazyTraceIterator is ~34KB)
     Lazy(Box<LazyTraceIterator>),
@@ -595,7 +596,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
     fn materialize_from_context(
         &self,
         ctx: &StreamingRLCContext<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
     ) -> RLCPolynomial<F> {
         let T = DoryGlobals::get_T();
         let mut dense_rlc: Vec<F> = unsafe_allocate_zero_vec(T);
@@ -645,7 +646,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
         &self,
         left_vec: &[F],
         num_columns: usize,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         ctx: &StreamingRLCContext<F>,
         T: usize,
     ) -> Vec<F> {
@@ -682,23 +683,23 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
 
                     // Split into valid trace range vs padding range.
                     let valid_end = std::cmp::min(chunk_start + num_columns, trace_len);
-                    let row_cycles = if chunk_start < valid_end {
+                    let trace_rows = if chunk_start < valid_end {
                         &trace[chunk_start..valid_end]
                     } else {
                         &trace[0..0] // Fully padded row
                     };
 
                     // Process valid trace elements.
-                    for (col_idx, cycle) in row_cycles.iter().enumerate() {
+                    for (col_idx, trace_row) in trace_rows.iter().enumerate() {
                         if main_embedding_mode {
-                            setup.process_cycle_dense(
-                                cycle,
+                            setup.process_trace_row_dense(
+                                trace_row,
                                 scaled_rd_inc,
                                 scaled_ram_inc,
                                 &mut dense_accs[col_idx],
                             );
-                            setup.process_cycle_onehot_prefix(
-                                cycle,
+                            setup.process_trace_row_onehot_prefix(
+                                trace_row,
                                 chunk_start + col_idx,
                                 trace_len,
                                 num_columns,
@@ -708,8 +709,8 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                             );
                         } else {
                             let row_factor = setup.row_factors[row_idx];
-                            setup.process_cycle(
-                                cycle,
+                            setup.process_trace_row(
+                                trace_row,
                                 scaled_rd_inc,
                                 scaled_ram_inc,
                                 row_factor,
@@ -764,19 +765,29 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     let row_weight = left_vec[row_idx];
                     let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
                     let scaled_ram_inc = row_weight * setup.ram_inc_coeff;
+                    let trace_rows: Vec<JoltTraceRow> = chunk
+                        .iter()
+                        .map(|cycle| {
+                            tracer::cycle_to_trace_row(cycle, setup.bytecode).unwrap_or_else(
+                                |err| {
+                                    panic!("failed to convert lazy trace cycle to proof row: {err}")
+                                },
+                            )
+                        })
+                        .collect();
 
                     // Process columns within chunk sequentially.
-                    for (col_idx, cycle) in chunk.iter().enumerate() {
+                    for (col_idx, trace_row) in trace_rows.iter().enumerate() {
                         let cycle_idx = row_idx * num_columns + col_idx;
                         if main_embedding_mode && cycle_idx < trace_len {
-                            setup.process_cycle_dense(
-                                cycle,
+                            setup.process_trace_row_dense(
+                                trace_row,
                                 scaled_rd_inc,
                                 scaled_ram_inc,
                                 &mut dense_accs[col_idx],
                             );
-                            setup.process_cycle_onehot_prefix(
-                                cycle,
+                            setup.process_trace_row_onehot_prefix(
+                                trace_row,
                                 cycle_idx,
                                 trace_len,
                                 num_columns,
@@ -786,8 +797,8 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                             );
                         } else {
                             let row_factor = setup.row_factors[row_idx];
-                            setup.process_cycle(
-                                cycle,
+                            setup.process_trace_row(
+                                trace_row,
                                 scaled_rd_inc,
                                 scaled_ram_inc,
                                 row_factor,
@@ -917,19 +928,18 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
     }
 
     #[inline(always)]
-    fn process_cycle_dense(
+    fn process_trace_row_dense(
         &self,
-        cycle: &Cycle,
+        trace_row: &JoltTraceRow,
         scaled_rd_inc: F,
         scaled_ram_inc: F,
         dense_acc: &mut MedAccumS<F>,
     ) {
-        let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
-        let diff = s64_from_diff_u64s(post_value, pre_value);
+        let diff = s64_from_diff_u64s(trace_row.rd_write_value(), trace_row.rd_pre_value());
         dense_acc.fmadd(&scaled_rd_inc, &diff);
 
-        if let tracer::instruction::RAMAccess::Write(write) = cycle.ram_access() {
-            let diff = s64_from_diff_u64s(write.post_value, write.pre_value);
+        if trace_row.is_store() {
+            let diff = s64_from_diff_u64s(trace_row.ram_write_value(), trace_row.ram_read_value());
             dense_acc.fmadd(&scaled_ram_inc, &diff);
         }
     }
@@ -939,9 +949,9 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         reason = "hot-path helper keeps inputs explicit to avoid allocation"
     )]
     #[inline(always)]
-    fn process_cycle_onehot_prefix(
+    fn process_trace_row_onehot_prefix(
         &self,
-        cycle: &Cycle,
+        trace_row: &JoltTraceRow,
         cycle_idx: usize,
         trace_len: usize,
         num_columns: usize,
@@ -949,10 +959,9 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         onehot_polys: &[(CommittedPolynomial, F)],
         onehot_accs: &mut [F::UnreducedProductAccum],
     ) {
-        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
-        let pc = get_pc_for_cycle(self.bytecode, cycle);
-        let remapped_address =
-            remap_address(cycle.ram_access().address() as u64, self.memory_layout);
+        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(trace_row);
+        let pc = trace_row.pc() as usize;
+        let remapped_address = remap_address(trace_row.ram_address(), self.memory_layout);
 
         for (poly_id, coeff) in onehot_polys.iter() {
             if coeff.is_zero() {
@@ -1038,38 +1047,38 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         }
     }
 
-    /// Process a single cycle.
+    /// Process a single trace row.
     #[inline(always)]
-    fn process_cycle(
+    fn process_trace_row(
         &self,
-        cycle: &Cycle,
+        trace_row: &JoltTraceRow,
         scaled_rd_inc: F,
         scaled_ram_inc: F,
         row_factor: F,
         dense_acc: &mut MedAccumS<F>,
         onehot_acc: &mut F::UnreducedProductAccum,
     ) {
-        self.process_cycle_dense(cycle, scaled_rd_inc, scaled_ram_inc, dense_acc);
+        self.process_trace_row_dense(trace_row, scaled_rd_inc, scaled_ram_inc, dense_acc);
 
         // One-hot polynomials: accumulate using pre-folded K tables (unreduced)
         let mut inner_sum = F::UnreducedMulU64::default();
 
         // Instruction RA chunks
-        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(trace_row);
         for (i, table) in self.folded_tables.instruction.iter().enumerate() {
             let k = self.one_hot_params.lookup_index_chunk(lookup_index, i) as usize;
             inner_sum += table[k].to_unreduced();
         }
 
         // Bytecode RA chunks
-        let pc = crate::zkvm::bytecode::get_pc_for_cycle(self.bytecode, cycle);
+        let pc = trace_row.pc() as usize;
         for (i, table) in self.folded_tables.bytecode.iter().enumerate() {
             let k = self.one_hot_params.bytecode_pc_chunk(pc, i) as usize;
             inner_sum += table[k].to_unreduced();
         }
 
         // RAM RA chunks
-        let address = cycle.ram_access().address() as u64;
+        let address = trace_row.ram_address();
         if let Some(remapped) = remap_address(address, self.memory_layout) {
             for (i, table) in self.folded_tables.ram.iter().enumerate() {
                 let k = self.one_hot_params.ram_address_chunk(remapped, i) as usize;

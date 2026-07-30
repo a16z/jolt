@@ -79,9 +79,9 @@
 
 use allocative::Allocative;
 #[cfg(feature = "prover")]
-use rayon::prelude::*;
+use jolt_riscv::JoltTraceRow;
 #[cfg(feature = "prover")]
-use tracer::instruction::Cycle;
+use rayon::prelude::*;
 
 #[cfg(feature = "prover")]
 use crate::curve::JoltCurve;
@@ -537,7 +537,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::initialize")]
     pub fn initialize<C, PCS>(
         params: HammingWeightClaimReductionParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         preprocessing: &JoltProverPreprocessing<F, C, PCS>,
         one_hot_params: &OneHotParams,
     ) -> Self

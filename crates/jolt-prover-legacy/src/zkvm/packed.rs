@@ -35,6 +35,7 @@ use jolt_openings::{
     prove_packed_openings, CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim,
     PackedProverGroup, PackedProverObject, PrefixPackedStatement, PrefixPacking,
 };
+use jolt_riscv::JoltTraceRow;
 use jolt_transcript::{append_length_prefixed, Transcript as VerifierTranscript};
 use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
 use jolt_verifier::preprocessing::JoltVerifierPreprocessing;
@@ -81,7 +82,6 @@ use crate::zkvm::ram::hamming_booleanity::{
 use crate::zkvm::ram::populate_memory_states;
 use crate::zkvm::ram::ra_virtual::{RamRaVirtualParams, RamRaVirtualSumcheckProver};
 use crate::zkvm::witness::CommittedPolynomial;
-use tracer::instruction::Cycle;
 
 pub type AkitaField = jolt_akita::AkitaField;
 pub type AkitaScheme = jolt_akita::AkitaScheme;
@@ -108,7 +108,7 @@ struct JoltOneHotTraceRows {
 impl JoltOneHotTraceRows {
     #[tracing::instrument(skip_all, name = "jolt_one_hot_trace_cache_build")]
     fn new(
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         num_columns: usize,
         ranges: &OneHotTraceColumnRanges,
         params: &crate::zkvm::config::OneHotParams,
@@ -125,11 +125,11 @@ impl JoltOneHotTraceRows {
             .zip(lanes.par_chunks_exact_mut(num_columns))
             .enumerate()
             .for_each(|(row, (ra_index, lanes))| {
-                *ra_index = RaIndices::from_cycle(&trace[row], bytecode, memory_layout, params);
+                *ra_index = RaIndices::from_trace_row(&trace[row], bytecode, memory_layout, params);
                 Self::fill_row_from_indices(
                     lanes,
                     ra_index,
-                    FusedIncValue::from_cycle(&trace[row]),
+                    FusedIncValue::from_trace_row(&trace[row]),
                     ranges,
                     params.log_k_chunk,
                 );
@@ -773,7 +773,7 @@ impl AkitaPackedProver<'_> {
 
         self.trace
             .par_iter()
-            .map(|cycle| FusedIncValue::from_cycle(cycle).delta)
+            .map(|row| FusedIncValue::from_trace_row(row).delta)
             .collect()
     }
 
@@ -2045,15 +2045,19 @@ mod tests {
             let memory_layout = &prover.preprocessing.shared.memory_layout;
             let mut expected = vec![0u8; plan.columns.len()];
             let mut actual = vec![0u8; plan.columns.len()];
-            for (row, cycle) in prover.trace.iter().enumerate() {
-                let reference_indices =
-                    RaIndices::from_cycle(cycle, bytecode, memory_layout, &prover.one_hot_params);
+            for (row, trace_row) in prover.trace.iter().enumerate() {
+                let reference_indices = RaIndices::from_trace_row(
+                    trace_row,
+                    bytecode,
+                    memory_layout,
+                    &prover.one_hot_params,
+                );
                 assert_eq!(
                     cached_indices[row], reference_indices,
                     "cached RA indices differ at row {row} for {config:?}"
                 );
 
-                let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+                let lookup_index = LookupQuery::<XLEN>::to_lookup_index(trace_row);
                 for (index, hot_lane) in expected[plan.ranges.instruction.clone()]
                     .iter_mut()
                     .enumerate()
@@ -2065,7 +2069,7 @@ mod tests {
                             as usize,
                     );
                 }
-                let pc = crate::zkvm::bytecode::get_pc_for_cycle(bytecode, cycle);
+                let pc = trace_row.pc() as usize;
                 for (index, hot_lane) in expected[plan.ranges.bytecode.clone()]
                     .iter_mut()
                     .enumerate()
@@ -2074,7 +2078,7 @@ mod tests {
                         prover.one_hot_params.bytecode_pc_chunk(pc, index) as usize,
                     );
                 }
-                let ram_address = remap_address(cycle.ram_access().address() as u64, memory_layout);
+                let ram_address = remap_address(trace_row.ram_address(), memory_layout);
                 for (index, hot_lane) in expected[plan.ranges.ram.clone()].iter_mut().enumerate() {
                     *hot_lane = ram_address.map_or_else(jolt_akita::no_hot_lane, |address| {
                         committed_nonzero_lane(
@@ -2087,12 +2091,12 @@ mod tests {
                     .enumerate()
                 {
                     *hot_lane = committed_nonzero_lane(
-                        FusedIncValue::from_cycle(cycle)
+                        FusedIncValue::from_trace_row(trace_row)
                             .balanced_chunk_hot_lane_bits(prover.one_hot_params.log_k_chunk, index),
                     );
                 }
                 expected[plan.ranges.unsigned_inc_msb] = committed_nonzero_lane(
-                    FusedIncValue::from_cycle(cycle)
+                    FusedIncValue::from_trace_row(trace_row)
                         .balanced_carry_hot_lane_bits(prover.one_hot_params.log_k_chunk),
                 );
 

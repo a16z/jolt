@@ -32,15 +32,15 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::zkvm::bytecode::{get_pc_for_cycle, BytecodePreprocessing};
+use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::ram::remap_address;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
 use std::sync::Arc;
-use tracer::instruction::Cycle;
 
 /// Maximum number of instruction RA chunks (lookup index splits into at most 32 chunks)
 pub const MAX_INSTRUCTION_D: usize = 32;
@@ -117,9 +117,9 @@ impl Zero for RaIndices {
 impl RaIndices {
     /// Compute all RA chunk indices for a single cycle.
     #[inline]
-    pub fn from_cycle(
-        cycle: &Cycle,
-        bytecode: &BytecodePreprocessing,
+    pub fn from_trace_row(
+        row: &JoltTraceRow,
+        _bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
     ) -> Self {
@@ -144,21 +144,21 @@ impl RaIndices {
         );
 
         // Instruction indices from lookup index
-        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+        let lookup_index = LookupQuery::<XLEN>::to_lookup_index(row);
         let mut instruction = [0u8; MAX_INSTRUCTION_D];
         for i in 0..one_hot_params.instruction_d {
             instruction[i] = one_hot_params.lookup_index_chunk(lookup_index, i);
         }
 
         // Bytecode indices from PC
-        let pc = get_pc_for_cycle(bytecode, cycle);
+        let pc = row.pc() as usize;
         let mut bytecode_arr = [0u8; MAX_BYTECODE_D];
         for i in 0..one_hot_params.bytecode_d {
             bytecode_arr[i] = one_hot_params.bytecode_pc_chunk(pc, i);
         }
 
         // RAM indices from remapped address (None for non-memory cycles)
-        let address = cycle.ram_access().address() as u64;
+        let address = row.ram_address();
         let remapped = remap_address(address, memory_layout);
         let mut ram = [None; MAX_RAM_D];
         for i in 0..one_hot_params.ram_d {
@@ -203,14 +203,14 @@ impl RaIndices {
 /// Each inner Vec has length k_chunk.
 #[tracing::instrument(skip_all, name = "shared_ra_polys::compute_all_G")]
 pub fn compute_all_G<F: JoltField>(
-    trace: &[Cycle],
+    trace: &[JoltTraceRow],
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
     r_cycle: &[F::Challenge],
 ) -> Vec<Vec<F>> {
     compute_all_G_impl::<F, _>(trace.len(), one_hot_params, r_cycle, None, |j| {
-        RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params)
+        RaIndices::from_trace_row(&trace[j], bytecode, memory_layout, one_hot_params)
     })
 }
 
@@ -223,7 +223,7 @@ pub fn compute_all_G<F: JoltField>(
 /// - ra_indices[j] = RA chunk indices for cycle j
 #[tracing::instrument(skip_all, name = "shared_ra_polys::compute_all_G_and_ra_indices")]
 pub fn compute_all_G_and_ra_indices<F: JoltField>(
-    trace: &[Cycle],
+    trace: &[JoltTraceRow],
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
@@ -238,7 +238,7 @@ pub fn compute_all_G_and_ra_indices<F: JoltField>(
         one_hot_params,
         r_cycle,
         Some(&mut ra_indices),
-        |j| RaIndices::from_cycle(&trace[j], bytecode, memory_layout, one_hot_params),
+        |j| RaIndices::from_trace_row(&trace[j], bytecode, memory_layout, one_hot_params),
     );
 
     (G, ra_indices)
@@ -879,14 +879,14 @@ impl<F: JoltField> SharedRaRound3<F> {
 /// Returns one `RaIndices` per cycle.
 #[tracing::instrument(skip_all, name = "shared_ra_polys::compute_ra_indices")]
 pub fn compute_ra_indices(
-    trace: &[Cycle],
+    trace: &[JoltTraceRow],
     bytecode: &BytecodePreprocessing,
     memory_layout: &MemoryLayout,
     one_hot_params: &OneHotParams,
 ) -> Vec<RaIndices> {
     trace
         .par_iter()
-        .map(|cycle| RaIndices::from_cycle(cycle, bytecode, memory_layout, one_hot_params))
+        .map(|row| RaIndices::from_trace_row(row, bytecode, memory_layout, one_hot_params))
         .collect()
 }
 

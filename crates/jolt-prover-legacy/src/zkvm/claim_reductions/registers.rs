@@ -25,8 +25,8 @@ use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::witness::VirtualPolynomial;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 /// Degree bound of the sumcheck round polynomials in [`RegistersClaimReductionSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;
@@ -162,7 +162,7 @@ impl<F: JoltField> RegistersClaimReductionSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersClaimReductionSumcheckProver::initialize")]
     pub fn initialize(
         params: RegistersClaimReductionSumcheckParams<F>,
-        trace: Arc<Vec<Cycle>>,
+        trace: Arc<Vec<JoltTraceRow>>,
     ) -> Self {
         let phase =
             RegistersClaimReductionPhase::Phase1(RegistersPhase1State::initialize(trace, &params));
@@ -264,13 +264,13 @@ struct RegistersPhase1State<F: JoltField> {
     P: MultilinearPolynomial<F>,
     Q: MultilinearPolynomial<F>,
     #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
+    trace: Arc<Vec<JoltTraceRow>>,
     sumcheck_challenges: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> RegistersPhase1State<F> {
     fn initialize(
-        trace: Arc<Vec<Cycle>>,
+        trace: Arc<Vec<JoltTraceRow>>,
         params: &RegistersClaimReductionSumcheckParams<F>,
     ) -> Self {
         let (r_hi, r_lo) = params.r_spartan.split_at(params.r_spartan.len() / 2);
@@ -300,9 +300,9 @@ impl<F: JoltField> RegistersPhase1State<F> {
                         let x_lo = chunk_i * BLOCK_SIZE + i;
                         let x = x_lo + (x_hi << prefix_n_vars);
                         let cycle = &trace[x];
-                        let rd_write_value = cycle.rd_write().unwrap_or_default().2;
-                        let rs1_read_value = cycle.rs1_read().unwrap_or_default().1;
-                        let rs2_read_value = cycle.rs2_read().unwrap_or_default().1;
+                        let rd_write_value = cycle.rd_write_value();
+                        let rs1_read_value = cycle.rs1_value();
+                        let rs2_read_value = cycle.rs2_value();
 
                         q_rd_write_value[i] +=
                             eq_suffix_evals[x_hi].mul_u64_unreduced(rd_write_value);
@@ -367,7 +367,7 @@ struct RegistersPhase2State<F: JoltField> {
 
 impl<F: JoltField> RegistersPhase2State<F> {
     fn gen(
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         sumcheck_challenges: &[F::Challenge],
         params: &RegistersClaimReductionSumcheckParams<F>,
     ) -> Self {
@@ -393,9 +393,9 @@ impl<F: JoltField> RegistersPhase2State<F> {
                     let mut rs2_read_value_eval_unreduced = F::UnreducedMulU128::zero();
 
                     for (i, cycle) in trace_chunk.iter().enumerate() {
-                        let rd_write_value = cycle.rd_write().unwrap_or_default().2;
-                        let rs1_value_eval = cycle.rs1_read().unwrap_or_default().1;
-                        let rs2_value_eval = cycle.rs2_read().unwrap_or_default().1;
+                        let rd_write_value = cycle.rd_write_value();
+                        let rs1_value_eval = cycle.rs1_value();
+                        let rs2_value_eval = cycle.rs2_value();
                         rd_write_value_eval_unreduced +=
                             eq_evals[i].mul_u64_unreduced(rd_write_value);
                         rs1_read_value_eval_unreduced +=

@@ -6,13 +6,11 @@ use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
 pub use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_openings::PrefixPacking;
-use jolt_riscv::JoltInstructionRow;
+use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
-use crate::zkvm::instruction::{
-    CircuitFlags, Flags, InstructionLookup, InterleavedBitsMarker, JoltTraceCycle,
-};
+use crate::zkvm::instruction::{CircuitFlags, Flags, InstructionLookup, InterleavedBitsMarker};
 use crate::zkvm::lookup_table::LookupTables;
 use common::constants::XLEN;
 
@@ -120,25 +118,23 @@ pub struct FusedIncValue {
 impl FusedIncValue {
     /// The per-cycle fused delta: the RAM write delta on store cycles, the
     /// rd write delta otherwise.
-    pub fn from_cycle(cycle: &tracer::instruction::Cycle) -> Self {
-        Self::from_cycle_with_store(cycle).0
+    pub fn from_trace_row(row: &JoltTraceRow) -> Self {
+        Self::from_trace_row_with_store(row).0
     }
 
-    /// [`from_cycle`](Self::from_cycle) plus the store selector itself, so
+    /// [`from_trace_row`](Self::from_trace_row) plus the store selector itself, so
     /// witness generation and the read-raf fused stages read one
     /// predicate: the same `OpFlags(Store)` circuit flag the sumcheck
     /// selector opens.
-    pub fn from_cycle_with_store(cycle: &tracer::instruction::Cycle) -> (Self, bool) {
-        let store = JoltTraceCycle::try_new(cycle)
-            .expect("OneHotTrace cycles must be final Jolt instruction rows")
-            .circuit_flags()[CircuitFlags::Store];
-        let ram_delta = match cycle.ram_access() {
-            tracer::instruction::RAMAccess::Write(write) => {
-                write.post_value as i128 - write.pre_value as i128
-            }
-            _ => 0,
+    pub fn from_trace_row_with_store(row: &JoltTraceRow) -> (Self, bool) {
+        let store = Flags::circuit_flags(row)[CircuitFlags::Store];
+        let ram_delta = if store {
+            row.ram_write_value() as i128 - row.ram_read_value() as i128
+        } else {
+            0
         };
-        let (_, rd_pre_value, rd_post_value) = cycle.rd_write().unwrap_or_default();
+        let rd_pre_value = row.rd_pre_value();
+        let rd_post_value = row.rd_write_value();
         let rd_delta = rd_post_value as i128 - rd_pre_value as i128;
         // One fused column can serve both inc consumers only because no
         // cycle increments RAM and rd at once (every RMW instruction lowers
@@ -147,12 +143,12 @@ impl FusedIncValue {
         // represent — fail here, not with an opaque sumcheck mismatch.
         debug_assert_eq!(
             store,
-            matches!(cycle.ram_access(), tracer::instruction::RAMAccess::Write(_)),
-            "Store circuit flag disagrees with the cycle's RAM-write access: {cycle:?}"
+            row.is_store(),
+            "Store circuit flag disagrees with the trace-row class: {row:?}"
         );
         debug_assert!(
             if store { rd_delta == 0 } else { ram_delta == 0 },
-            "cycle increments both RAM and rd; the fused inc encoding cannot represent it: {cycle:?}"
+            "trace row increments both RAM and rd; the fused inc encoding cannot represent it: {row:?}"
         );
         let delta = if store { ram_delta } else { rd_delta };
         (Self { delta }, store)

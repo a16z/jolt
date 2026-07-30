@@ -40,8 +40,8 @@ use crate::{
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 // RAM read-write checking sumcheck
 //
@@ -247,7 +247,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RamReadWriteCheckingProver::initialize")]
     pub fn initialize(
         params: RamReadWriteCheckingParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
         initial_ram_state: &[u64],

@@ -28,7 +28,7 @@ use std::sync::Arc;
 use crate::poly::ra_poly::RaPolynomial;
 
 use common::jolt_device::MemoryLayout;
-use tracer::instruction::Cycle;
+use jolt_riscv::JoltTraceRow;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
@@ -279,7 +279,7 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
     /// - Initialize the address expanding table (`F`)
     pub fn initialize(
         params: BooleanitySumcheckParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
@@ -798,7 +798,7 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "LatticeBooleanityAddressSumcheckProver::initialize")]
     pub fn initialize(
         params: BooleanitySumcheckParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
         one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,

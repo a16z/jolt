@@ -158,11 +158,10 @@ use crate::{
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::jolt_device::MemoryConfig;
-use itertools::{zip_eq, Itertools};
+use itertools::zip_eq;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::{
-    emulator::memory::Memory, instruction::Cycle, ChunksIterator, JoltDevice, LazyTraceIterator,
-};
+use tracer::{emulator::memory::Memory, instruction::Cycle, JoltDevice, LazyTraceIterator};
 
 use crate::curve::JoltCurve;
 #[cfg(feature = "zk")]
@@ -189,6 +188,29 @@ use crate::zkvm::r1cs::constraints::{
     PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS, PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
 };
 
+const TRACE_ROW_CONVERSION_CHUNK_SIZE: usize = 1 << 18;
+
+fn flush_trace_row_chunk(
+    cycles: &mut Vec<Cycle>,
+    converted_rows: &mut Vec<JoltTraceRow>,
+    trace_rows: &mut Vec<JoltTraceRow>,
+    bytecode: &jolt_program::preprocess::BytecodePreprocessing,
+) {
+    if cycles.is_empty() {
+        return;
+    }
+
+    cycles
+        .par_iter()
+        .map(|cycle| match tracer::cycle_to_trace_row(cycle, bytecode) {
+            Ok(row) => row,
+            Err(error) => panic!("failed to build proof-facing trace row: {error}"),
+        })
+        .collect_into_vec(converted_rows);
+    trace_rows.extend_from_slice(converted_rows);
+    cycles.clear();
+}
+
 /// Jolt CPU prover for RV64IMAC.
 pub struct JoltCpuProver<
     'a,
@@ -200,7 +222,7 @@ pub struct JoltCpuProver<
     pub preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
     pub program_io: JoltDevice,
     pub lazy_trace: LazyTraceIterator,
-    pub trace: Arc<Vec<Cycle>>,
+    pub trace: Arc<Vec<JoltTraceRow>>,
     pub advice: JoltAdvice<F, PCS>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the prover state here between stages.
@@ -261,9 +283,15 @@ impl<
             program_size: Some(preprocessing.shared.memory_layout.program_size),
         };
 
-        let (lazy_trace, trace, final_memory_state, program_io, _advice_tape_out) = {
+        let bytecode = &preprocessing.materialized_program().bytecode;
+        let mut trace_rows = Vec::with_capacity(preprocessing.shared.max_padded_trace_length);
+        let mut cycle_chunk = Vec::with_capacity(TRACE_ROW_CONVERSION_CHUNK_SIZE);
+        let mut converted_rows = Vec::with_capacity(TRACE_ROW_CONVERSION_CHUNK_SIZE);
+        let mut num_riscv_cycles = 0;
+        let (lazy_trace, final_memory_state, program_io, _advice_tape_out) = {
             let _pprof_trace = pprof_scope!("trace");
-            guest::program::trace(
+            let _span = tracing::info_span!("jolt_trace_row_stream").entered();
+            let result = guest::program::trace_with_cycle_sink(
                 elf_contents,
                 None,
                 inputs,
@@ -271,38 +299,46 @@ impl<
                 trusted_advice,
                 &memory_config,
                 advice_tape,
-            )
+                |cycle| {
+                    let virtual_sequence_remaining = cycle
+                        .instruction()
+                        .try_jolt_instruction_row()
+                        .expect("trace cycle must be a final Jolt instruction row")
+                        .virtual_sequence_remaining;
+                    if virtual_sequence_remaining.is_none_or(|remaining| remaining == 0) {
+                        num_riscv_cycles += 1;
+                    }
+
+                    cycle_chunk.push(cycle);
+                    if cycle_chunk.len() == TRACE_ROW_CONVERSION_CHUNK_SIZE {
+                        flush_trace_row_chunk(
+                            &mut cycle_chunk,
+                            &mut converted_rows,
+                            &mut trace_rows,
+                            bytecode,
+                        );
+                    }
+                },
+            );
+            flush_trace_row_chunk(
+                &mut cycle_chunk,
+                &mut converted_rows,
+                &mut trace_rows,
+                bytecode,
+            );
+            result
         };
 
-        let num_riscv_cycles: usize = trace
-            .par_iter()
-            .map(|cycle| {
-                // Count the cycle if the instruction is not part of a inline sequence
-                // (`virtual_sequence_remaining` is `None`) or if it's the first instruction
-                // in a inline sequence (`virtual_sequence_remaining` is `Some(0)`)
-                if let Some(virtual_sequence_remaining) = cycle
-                    .instruction()
-                    .try_jolt_instruction_row()
-                    .expect("trace cycle must be a final Jolt instruction row")
-                    .virtual_sequence_remaining
-                {
-                    if virtual_sequence_remaining > 0 {
-                        return 0;
-                    }
-                }
-                1
-            })
-            .sum();
         tracing::info!(
             "{num_riscv_cycles} raw RISC-V instructions + {} virtual instructions = {} total cycles",
-            trace.len() - num_riscv_cycles,
-            trace.len(),
+            trace_rows.len() - num_riscv_cycles,
+            trace_rows.len(),
         );
 
-        Self::gen_from_trace(
+        Self::gen_from_trace_rows(
             preprocessing,
             lazy_trace,
-            trace,
+            trace_rows,
             program_io,
             trusted_advice_commitment,
             trusted_advice_hint,
@@ -327,7 +363,44 @@ impl<
     pub fn gen_from_trace(
         preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
         lazy_trace: LazyTraceIterator,
-        mut trace: Vec<Cycle>,
+        trace: Vec<Cycle>,
+        program_io: JoltDevice,
+        trusted_advice_commitment: Option<PCS::Commitment>,
+        trusted_advice_hint: Option<PCS::OpeningProofHint>,
+        final_memory_state: Memory,
+    ) -> Self {
+        let trace_rows = {
+            let _span = tracing::info_span!("jolt_trace_row_build").entered();
+            match trace
+                .par_iter()
+                .map(|cycle| {
+                    tracer::cycle_to_trace_row(
+                        cycle,
+                        &preprocessing.materialized_program().bytecode,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(rows) => rows,
+                Err(error) => panic!("failed to build proof-facing trace rows: {error}"),
+            }
+        };
+        drop(trace);
+        Self::gen_from_trace_rows(
+            preprocessing,
+            lazy_trace,
+            trace_rows,
+            program_io,
+            trusted_advice_commitment,
+            trusted_advice_hint,
+            final_memory_state,
+        )
+    }
+
+    fn gen_from_trace_rows(
+        preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
+        lazy_trace: LazyTraceIterator,
+        mut trace_rows: Vec<JoltTraceRow>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
@@ -344,11 +417,11 @@ impl<
                 .map_or(0, |pos| pos + 1),
         );
 
-        let unpadded_trace_len = trace.len();
+        let unpadded_trace_len = trace_rows.len();
         let padded_trace_len = if unpadded_trace_len < PCS::MIN_PADDED_TRACE_LENGTH {
             PCS::MIN_PADDED_TRACE_LENGTH
         } else {
-            (trace.len() + 1).next_power_of_two()
+            (trace_rows.len() + 1).next_power_of_two()
         };
         let max_padded_trace_length = preprocessing.shared.max_padded_trace_length;
         if padded_trace_len > max_padded_trace_length {
@@ -359,17 +432,10 @@ impl<
             );
         }
 
-        trace.resize(padded_trace_len, Cycle::NoOp);
-
         // Calculate K for DoryGlobals initialization
-        let ram_K = trace
+        let ram_K = trace_rows
             .par_iter()
-            .filter_map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &preprocessing.shared.memory_layout,
-                )
-            })
+            .filter_map(|row| remap_address(row.ram_address(), &preprocessing.shared.memory_layout))
             .max()
             .unwrap_or(0)
             .max(
@@ -383,10 +449,12 @@ impl<
             )
             .next_power_of_two() as usize;
 
-        let transcript = ProofTranscript::new(b"Jolt");
-        let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
+        trace_rows.resize(padded_trace_len, JoltTraceRow::default());
 
-        let spartan_key = UniformSpartanKey::new(trace.len());
+        let transcript = ProofTranscript::new(b"Jolt");
+        let opening_accumulator = ProverOpeningAccumulator::new(trace_rows.len().log_2());
+
+        let spartan_key = UniformSpartanKey::new(trace_rows.len());
 
         let (initial_ram_state, final_ram_state) = gen_ram_memory_states::<F>(
             ram_K,
@@ -395,7 +463,7 @@ impl<
             &final_memory_state,
         );
 
-        let log_T = trace.len().log_2();
+        let log_T = trace_rows.len().log_2();
         let ram_log_K = ram_K.log_2();
         let rw_config = ReadWriteConfig::new(log_T, ram_log_K);
         let one_hot_params = OneHotParams::new(log_T, preprocessing.shared.bytecode_size(), ram_K);
@@ -410,7 +478,7 @@ impl<
             preprocessing,
             program_io,
             lazy_trace,
-            trace: trace.into(),
+            trace: trace_rows.into(),
             advice: JoltAdvice {
                 untrusted_advice_polynomial: None,
                 trusted_advice_commitment,
@@ -746,19 +814,16 @@ impl<
             // Tier 1: Compute row commitments for each polynomial
             let mut row_commitments: Vec<Vec<PCS::ChunkState>> = vec![vec![]; num_rows];
 
-            self.lazy_trace
-                .clone()
-                .pad_using(T, |_| Cycle::NoOp)
-                .iter_chunks(row_len)
-                .zip(row_commitments.iter_mut())
-                .par_bridge()
+            trace
+                .par_chunks(row_len)
+                .zip(row_commitments.par_iter_mut())
                 .for_each(|(chunk, row_tier1_commitments)| {
                     let res: Vec<_> = polys
                         .par_iter()
                         .map(|poly| {
                             poly.stream_witness_and_commit_rows::<_, _, PCS>(
                                 self.preprocessing,
-                                &chunk,
+                                chunk,
                                 &self.one_hot_params,
                             )
                         })

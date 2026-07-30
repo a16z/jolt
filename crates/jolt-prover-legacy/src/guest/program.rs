@@ -153,6 +153,32 @@ pub fn trace(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "guest tracing forwards the tracer configuration"
+)]
+pub fn trace_with_cycle_sink(
+    elf_contents: &[u8],
+    elf_path: Option<&PathBuf>,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+    memory_config: &MemoryConfig,
+    advice_tape: Option<tracer::AdviceTape>,
+    sink: impl FnMut(Cycle),
+) -> (LazyTraceIterator, Memory, JoltDevice, tracer::AdviceTape) {
+    tracer::trace_with_cycle_sink(
+        elf_contents,
+        elf_path,
+        inputs,
+        untrusted_advice,
+        trusted_advice,
+        memory_config,
+        advice_tape,
+        sink,
+    )
+}
+
 pub fn trace_to_file(
     elf_contents: &[u8],
     elf_path: Option<&PathBuf>,

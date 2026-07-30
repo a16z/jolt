@@ -56,9 +56,9 @@ use allocative::FlameGraphBuilder;
 use common::constants::{REGISTER_COUNT, XLEN};
 use itertools::{zip_eq, Itertools};
 use jolt_riscv::JoltInstructionRow;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
 use strum::{EnumCount, IntoEnumIterator};
-use tracer::instruction::Cycle;
 
 /// The five base read-checking val stages (Spartan outer, product-virtualized
 /// flags, shift, registers read-write, registers val-eval + instruction
@@ -171,8 +171,8 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafAddressSumcheckProver::initialize")]
     pub fn initialize(
         params: BytecodeReadRafSumcheckParams<F>,
-        trace: Arc<Vec<Cycle>>,
-        bytecode_preprocessing: Arc<BytecodePreprocessing>,
+        trace: Arc<Vec<JoltTraceRow>>,
+        _bytecode_preprocessing: Arc<BytecodePreprocessing>,
         #[cfg(feature = "akita")] fused_deltas: &[i128],
     ) -> Self {
         let claim_per_stage: Vec<F> = (0..NUM_INPUT_CLAIMS)
@@ -268,7 +268,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
                             break;
                         }
 
-                        let pc = super::get_pc_for_cycle(&bytecode_preprocessing, &trace[c]);
+                        let pc = trace[c].pc() as usize;
 
                         // Track touched PCs (avoid duplicates with a simple check)
                         if inner[0][pc].is_zero() {
@@ -343,7 +343,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
             F.into_iter().map(MultilinearPolynomial::from).collect();
         drop(span);
 
-        let pc_0 = super::get_pc_for_cycle(&bytecode_preprocessing, &trace[0]);
+        let pc_0 = trace[0].pc() as usize;
         assert!(
             pc_0 < params.K,
             "pc_0 ({pc_0}) out of bounds for K ({})",

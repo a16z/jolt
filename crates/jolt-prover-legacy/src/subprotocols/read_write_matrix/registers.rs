@@ -20,8 +20,8 @@ use crate::subprotocols::read_write_matrix::ReadWriteMatrixAddressMajor;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixCycleMajor;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 /// Represents a non-zero entry in the ra(k, j) and Val(k, j) polynomials.
 /// Conceptually, both ra and Val can be seen as K x T matrices.
@@ -71,23 +71,23 @@ pub struct RegistersCycleMajorEntry<F: JoltField, C: OneHotCoeff<F>> {
 impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, LookupTableIndex>> {
     /// Count how many distinct registers this cycle touches (0–3).
     #[inline]
-    fn entry_count_for_cycle(cycle: &Cycle) -> u8 {
+    fn entry_count_for_trace_row(trace_row: &JoltTraceRow) -> u8 {
         let mut regs: [Option<_>; 3] = [None, None, None];
         let mut len = 0;
 
-        if let Some((rs1, _)) = cycle.rs1_read() {
+        if let Some(rs1) = trace_row.rs1_index() {
             if !regs[..len].contains(&Some(rs1)) {
                 regs[len] = Some(rs1);
                 len += 1;
             }
         }
-        if let Some((rs2, _)) = cycle.rs2_read() {
+        if let Some(rs2) = trace_row.rs2_index() {
             if !regs[..len].contains(&Some(rs2)) {
                 regs[len] = Some(rs2);
                 len += 1;
             }
         }
-        if let Some((rd, ..)) = cycle.rd_write() {
+        if let Some(rd) = trace_row.rd_index() {
             if !regs[..len].contains(&Some(rd)) {
                 len += 1;
             }
@@ -100,13 +100,14 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
     #[inline]
     fn fill_entries_for_cycle(
         row: usize,
-        cycle: &Cycle,
+        trace_row: &JoltTraceRow,
         out: &mut [RegistersCycleMajorEntry<F, LookupTableIndex>],
     ) {
         debug_assert!(out.len() <= 3);
         let mut len = 0usize;
 
-        if let Some((rs1, rs1_val)) = cycle.rs1_read() {
+        if let Some(rs1) = trace_row.rs1_index() {
+            let rs1_val = trace_row.rs1_value();
             out[len] = RegistersCycleMajorEntry {
                 row,
                 col: rs1,
@@ -119,7 +120,8 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
             len += 1;
         }
 
-        if let Some((rs2, rs2_val)) = cycle.rs2_read() {
+        if let Some(rs2) = trace_row.rs2_index() {
+            let rs2_val = trace_row.rs2_value();
             if let Some(e) = out[..len].iter_mut().find(|e| e.column() as u8 == rs2) {
                 e.ra_coeff = LookupTableIndex(3); // rs1_ra = rs2_ra = 1
             } else {
@@ -136,7 +138,9 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
             }
         }
 
-        if let Some((rd, rd_pre_val, rd_post_val)) = cycle.rd_write() {
+        if let Some(rd) = trace_row.rd_index() {
+            let rd_pre_val = trace_row.rd_pre_value();
+            let rd_post_val = trace_row.rd_write_value();
             if let Some(e) = out[..len].iter_mut().find(|e| e.column() as u8 == rd) {
                 // Same register is read and then written this cycle.
                 e.wa_coeff = LookupTableIndex(1);
@@ -184,11 +188,11 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
     /// Creates a new `ReadWriteMatrixCycleMajor` to represent the ra, wa and Val polynomials
     /// for the registers read/write checking sumcheck.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::new")]
-    pub fn new(trace: &[Cycle], gamma: F) -> Self {
+    pub fn new(trace: &[JoltTraceRow], gamma: F) -> Self {
         // ---- Pass 1: per-cycle entry counts (parallel) ----
         let counts: Vec<u8> = trace
             .par_iter()
-            .map(|cycle| Self::entry_count_for_cycle(cycle))
+            .map(Self::entry_count_for_trace_row)
             .collect();
 
         // ---- Prefix sum: counts -> offsets (sequential, linear) ----

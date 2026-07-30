@@ -41,8 +41,8 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use common::jolt_device::MemoryLayout;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
@@ -96,7 +96,7 @@ impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRaClaimReductionSumcheckProver::initialize")]
     pub fn initialize(
         params: RaReductionParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
     ) -> Self {
@@ -207,7 +207,7 @@ impl<F: JoltField> Phase1State<F> {
     #[tracing::instrument(skip_all, name = "Phase1State::initialize_from_aligned_address")]
     fn initialize_from_aligned_address(
         params: &RaReductionParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         memory_layout: &MemoryLayout,
         one_hot_params: &OneHotParams,
     ) -> Self {
@@ -216,8 +216,7 @@ impl<F: JoltField> Phase1State<F> {
             trace
                 .par_iter()
                 .map(|cycle| {
-                    remap_address(cycle.ram_access().address() as u64, memory_layout)
-                        .map(|addr| addr as usize)
+                    remap_address(cycle.ram_address(), memory_layout).map(|addr| addr as usize)
                 })
                 .collect(),
         );

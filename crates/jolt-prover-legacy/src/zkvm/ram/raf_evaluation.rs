@@ -4,8 +4,8 @@ use num_traits::Zero;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
@@ -199,7 +199,7 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheckProver::initialize")]
     pub fn initialize(
         params: RafEvaluationSumcheckParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         memory_layout: &MemoryLayout,
     ) -> Self {
         let T = trace.len();
@@ -243,9 +243,7 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
                             break;
                         }
 
-                        if let Some(k) =
-                            remap_address(trace[j].ram_access().address() as u64, memory_layout)
-                        {
+                        if let Some(k) = remap_address(trace[j].ram_address(), memory_layout) {
                             partial[k as usize] += e_hi * E_lo[c_lo];
                         }
                     }

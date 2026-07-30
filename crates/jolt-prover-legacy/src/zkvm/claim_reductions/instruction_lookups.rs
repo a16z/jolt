@@ -25,8 +25,8 @@ use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::instruction::LookupQuery;
 use crate::zkvm::witness::VirtualPolynomial;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 /// Degree bound of the sumcheck round polynomials in [`InstructionLookupsClaimReductionSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;
@@ -199,7 +199,7 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionClaimReductionSumcheckProver::initialize")]
     pub fn initialize(
         params: InstructionLookupsClaimReductionSumcheckParams<F>,
-        trace: Arc<Vec<Cycle>>,
+        trace: Arc<Vec<JoltTraceRow>>,
     ) -> Self {
         let phase = InstructionLookupsClaimReductionPhase::Phase1(
             InstructionLookupsPhase1State::initialize(trace, &params),
@@ -319,13 +319,13 @@ struct InstructionLookupsPhase1State<F: JoltField> {
     P: MultilinearPolynomial<F>,
     Q: MultilinearPolynomial<F>,
     #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
+    trace: Arc<Vec<JoltTraceRow>>,
     sumcheck_challenges: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> InstructionLookupsPhase1State<F> {
     fn initialize(
-        trace: Arc<Vec<Cycle>>,
+        trace: Arc<Vec<JoltTraceRow>>,
         params: &InstructionLookupsClaimReductionSumcheckParams<F>,
     ) -> Self {
         let (r_hi, r_lo) = params.r_spartan.split_at(params.r_spartan.len() / 2);
@@ -447,7 +447,7 @@ struct InstructionLookupsPhase2State<F: JoltField> {
 
 impl<F: JoltField> InstructionLookupsPhase2State<F> {
     fn gen(
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         sumcheck_challenges: &[F::Challenge],
         params: &InstructionLookupsClaimReductionSumcheckParams<F>,
     ) -> Self {

@@ -24,8 +24,8 @@ use crate::zkvm::witness::VirtualPolynomial;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 // RAM Hamming booleanity sumcheck
 //
@@ -136,10 +136,10 @@ pub struct HammingBooleanitySumcheckProver<F: JoltField> {
 
 impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamHammingBooleanitySumcheckProver::initialize")]
-    pub fn initialize(params: HammingBooleanitySumcheckParams<F>, trace: &[Cycle]) -> Self {
+    pub fn initialize(params: HammingBooleanitySumcheckParams<F>, trace: &[JoltTraceRow]) -> Self {
         let H = trace
             .par_iter()
-            .map(|cycle| cycle.ram_access().address() != 0)
+            .map(|row| row.ram_address() != 0)
             .collect::<Vec<bool>>();
         let H = MultilinearPolynomial::from(H);
 

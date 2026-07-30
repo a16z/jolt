@@ -4,7 +4,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use ark_std::Zero;
 use itertools::chain;
-use tracer::instruction::Cycle;
+use jolt_riscv::JoltTraceRow;
 
 use crate::field::JoltField;
 use crate::poly::eq_plus_one_poly::{EqPlusOnePolynomial, EqPlusOnePrefixSuffixPoly};
@@ -269,7 +269,7 @@ impl<F: JoltField> ShiftSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "ShiftSumcheckProver::initialize")]
     pub fn initialize(
         params: ShiftSumcheckParams<F>,
-        trace: Arc<Vec<Cycle>>,
+        trace: Arc<Vec<JoltTraceRow>>,
         bytecode_preprocessing: &BytecodePreprocessing,
     ) -> Self {
         let phase =
@@ -573,7 +573,7 @@ struct Phase1State<F: JoltField> {
     prefix_suffix_pairs: Vec<(MultilinearPolynomial<F>, MultilinearPolynomial<F>)>,
     // Below all stored to gen phase 2 state.
     #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
+    trace: Arc<Vec<JoltTraceRow>>,
     #[allocative(skip)]
     bytecode_preprocessing: BytecodePreprocessing,
     sumcheck_challenges: Vec<F::Challenge>,
@@ -581,7 +581,7 @@ struct Phase1State<F: JoltField> {
 
 impl<F: JoltField> Phase1State<F> {
     fn gen(
-        trace: Arc<Vec<Cycle>>,
+        trace: Arc<Vec<JoltTraceRow>>,
         bytecode_preprocessing: &BytecodePreprocessing,
         params: &ShiftSumcheckParams<F>,
     ) -> Self {
@@ -753,7 +753,7 @@ struct Phase2State<F: JoltField> {
 
 impl<F: JoltField> Phase2State<F> {
     fn gen(
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         bytecode_preprocessing: &BytecodePreprocessing,
         sumcheck_challenges: &[F::Challenge],
         params: &ShiftSumcheckParams<F>,

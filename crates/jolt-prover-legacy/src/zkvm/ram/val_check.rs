@@ -1,7 +1,8 @@
 use common::jolt_device::MemoryLayout;
+use jolt_riscv::JoltTraceRow;
 use num_traits::Zero;
 use std::{array, iter::zip, sync::Arc};
-use tracer::{instruction::Cycle, JoltDevice};
+use tracer::JoltDevice;
 
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
@@ -376,17 +377,14 @@ impl<F: JoltField> RamValCheckSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "RamValCheckSumcheckProver::initialize")]
     pub fn initialize(
         params: RamValCheckSumcheckParams<F>,
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
         // Shared witness indices for the write address at each cycle.
         let wa_indices: Vec<Option<usize>> = trace
             .par_iter()
-            .map(|cycle| {
-                remap_address(cycle.ram_access().address() as u64, memory_layout)
-                    .map(|k| k as usize)
-            })
+            .map(|cycle| remap_address(cycle.ram_address(), memory_layout).map(|k| k as usize))
             .collect();
         let wa_indices = Arc::new(wa_indices);
 

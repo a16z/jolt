@@ -43,10 +43,10 @@ use allocative::Allocative;
 use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use common::jolt_device::MemoryLayout;
+use jolt_riscv::JoltTraceRow;
 use num::Integer;
 use num_traits::Zero;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
 // Register read-write checking sumcheck
 //
@@ -327,7 +327,7 @@ pub struct RegistersReadWriteCheckingProver<F: JoltField> {
     gruen_eq: Option<GruenSplitEqPolynomial<F>>,
     inc: MultilinearPolynomial<F>,
     #[allocative(skip)]
-    trace: Arc<Vec<Cycle>>,
+    trace: Arc<Vec<JoltTraceRow>>,
     // The following polynomials are instantiated after
     // the second phase
     ra: Option<MultilinearPolynomial<F>>,
@@ -341,7 +341,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     #[tracing::instrument(skip_all, name = "RegistersReadWriteCheckingProver::initialize")]
     pub fn initialize(
         params: RegistersReadWriteCheckingParams<F>,
-        trace: Arc<Vec<Cycle>>,
+        trace: Arc<Vec<JoltTraceRow>>,
         bytecode_preprocessing: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
@@ -722,7 +722,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         name = "RegistersReadWriteCheckingProver::compute_rs2_ra_claim"
     )]
     fn compute_rs2_ra_claim(
-        trace: &[Cycle],
+        trace: &[JoltTraceRow],
         r_address: &[F::Challenge],
         r_cycle: &[F::Challenge],
     ) -> F {
@@ -770,7 +770,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
                 // Inner sum: iterate over cycles in this block
                 let inner_sum: F = (block_start..block_end)
                     .filter_map(|j| {
-                        trace[j].rs2_read().map(|(rs2, _)| {
+                        trace[j].rs2_index().map(|rs2| {
                             // idx_lo = ((j & cycle_lo_mask) << addr_bits) | rs2
                             let j_in_block = j & cycle_lo_mask;
                             let idx_lo = (j_in_block << addr_bits) | (rs2 as usize);
