@@ -434,30 +434,87 @@ pub struct PendingPass<'b> {
 
 impl PendingPass<'_> {
     /// Block until the GPU finishes; surfaces device-side errors.
-    #[expect(clippy::print_stderr, reason = "env-gated audit trace")]
     pub fn wait(self) -> Result<(), MetalError> {
-        let wait_start = self.trace.as_ref().map(|_| Instant::now());
-        self.cb.waitUntilCompleted();
-        if self.cb.status() != MTLCommandBufferStatus::Completed {
-            let reason = self.cb.error().map_or_else(
-                || format!("status {:?}", self.cb.status()),
-                |e| e.localizedDescription().to_string(),
-            );
-            return Err(MetalError::Execution(reason));
+        wait_completed(&self.cb, self.trace.as_ref())
+    }
+
+    /// Erase the dispatched buffers' borrows, so the pass can stay in
+    /// flight across two `&mut self` calls on the struct that owns the
+    /// buffers (the two-phase round contract).
+    ///
+    /// # Safety
+    ///
+    /// The caller must uphold what the erased `'b` borrows proved: every
+    /// dispatched buffer's backing memory stays alive — and is neither read
+    /// (kernel-written buffers) nor written (any buffer) by the host —
+    /// until [`DetachedPass::wait`] returns or the detached pass drops.
+    pub unsafe fn detach(self) -> DetachedPass {
+        DetachedPass {
+            cb: self.cb,
+            trace: self.trace,
+            waited: false,
         }
-        if let Some((trace, committed_at)) = &self.trace {
-            // GPUStartTime/GPUEndTime are device timestamps in seconds on a
-            // shared mach timebase; their difference is the CB's execution
-            // window (includes any queue wait ahead of it).
-            let gpu_us = (self.cb.GPUEndTime() - self.cb.GPUStartTime()) * 1e6;
-            let blocked_us = wait_start.map_or(0.0, |w| w.elapsed().as_secs_f64() * 1e6);
-            eprintln!(
-                "[jk-cb] commit=+{:.6}s gpu_us={gpu_us:.0} blocked_us={blocked_us:.0} disp={} {}",
-                committed_at.as_secs_f64(),
-                trace.dispatches.len(),
-                trace.summary(),
-            );
+    }
+}
+
+/// Block until `cb` finishes; surfaces device-side errors and emits the
+/// env-gated `[jk-cb]` audit line. `blocked_us` measures from this call, so
+/// a command buffer that already finished (overlapped execution) reports a
+/// near-zero blocked time against its full `gpu_us` window.
+#[expect(clippy::print_stderr, reason = "env-gated audit trace")]
+fn wait_completed(
+    cb: &ProtocolObject<dyn MTLCommandBuffer>,
+    trace: Option<&(CbTrace, std::time::Duration)>,
+) -> Result<(), MetalError> {
+    let wait_start = trace.map(|_| Instant::now());
+    cb.waitUntilCompleted();
+    if cb.status() != MTLCommandBufferStatus::Completed {
+        let reason = cb.error().map_or_else(
+            || format!("status {:?}", cb.status()),
+            |e| e.localizedDescription().to_string(),
+        );
+        return Err(MetalError::Execution(reason));
+    }
+    if let Some((trace, committed_at)) = trace {
+        // GPUStartTime/GPUEndTime are device timestamps in seconds on a
+        // shared mach timebase; their difference is the CB's execution
+        // window (includes any queue wait ahead of it).
+        let gpu_us = (cb.GPUEndTime() - cb.GPUStartTime()) * 1e6;
+        let blocked_us = wait_start.map_or(0.0, |w| w.elapsed().as_secs_f64() * 1e6);
+        eprintln!(
+            "[jk-cb] commit=+{:.6}s gpu_us={gpu_us:.0} blocked_us={blocked_us:.0} disp={} {}",
+            committed_at.as_secs_f64(),
+            trace.dispatches.len(),
+            trace.summary(),
+        );
+    }
+    Ok(())
+}
+
+/// A committed command buffer released from [`PendingPass`]'s borrow
+/// tracking (see [`PendingPass::detach`]). Dropping without
+/// [`wait`](Self::wait) blocks until the GPU finishes: with the borrows
+/// erased, nothing else proves the dispatched buffers' backing memory
+/// outlives the in-flight work, so the drop path must not let it free under
+/// a running command buffer.
+pub struct DetachedPass {
+    cb: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+    trace: Option<(CbTrace, std::time::Duration)>,
+    waited: bool,
+}
+
+impl DetachedPass {
+    /// Block until the GPU finishes; surfaces device-side errors.
+    pub fn wait(mut self) -> Result<(), MetalError> {
+        self.waited = true;
+        wait_completed(&self.cb, self.trace.take().as_ref())
+    }
+}
+
+impl Drop for DetachedPass {
+    fn drop(&mut self) {
+        if !self.waited {
+            self.cb.waitUntilCompleted();
         }
-        Ok(())
     }
 }

@@ -68,6 +68,46 @@ pub trait ProveRounds<F: Field> {
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
+
+    /// Start this member's round, optionally launching asynchronous work
+    /// (a device dispatch left in flight). Returns `true` when the member
+    /// launched and will produce the round polynomial in
+    /// [`collect_round`](Self::collect_round); `false` for a synchronous
+    /// member, whose compute then runs inside its `collect_round` call.
+    ///
+    /// The engine calls `begin_round` on every active member (declaration
+    /// order) before any member's `collect_round`, then collects the
+    /// synchronous members first — so their CPU work overlaps the launched
+    /// members' device execution — and the launched members last. Both
+    /// calls receive the same `(bind, round, previous_claim)` arguments.
+    ///
+    /// The default never launches, keeping the member's whole round inside
+    /// the default `collect_round` (= [`prove_round`](Self::prove_round)).
+    /// **An override must pair with a `collect_round` override** that skips
+    /// whatever `begin_round` already did (typically the bind) — the default
+    /// `collect_round` would redo the full round.
+    fn begin_round(
+        &mut self,
+        _bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        Ok(false)
+    }
+
+    /// Produce the round polynomial for the round most recently begun. For
+    /// a member whose `begin_round` returned `false` this IS the round's
+    /// compute; a launched member waits for its in-flight work and
+    /// assembles the polynomial (falling back to a CPU recompute on device
+    /// failure, exactly like its synchronous path).
+    fn collect_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.prove_round(bind, round, previous_claim)
+    }
 }
 
 /// A proved batch: the round challenges (the batch opening point), the final
@@ -99,8 +139,16 @@ fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F
 /// `s(0) + s(1)` against the running claim, record the round through the
 /// recorder (clear: compressed append; committed: Pedersen), and stash the
 /// squeezed challenge as each active member's pending bind — delivered with
-/// its next `prove_round` (the fused contract) or, after the loop, through
-/// the terminal `finish_rounds`.
+/// its next round's `begin_round`/`collect_round` (the fused contract) or,
+/// after the loop, through the terminal `finish_rounds`.
+///
+/// Within a round, members advance in two phases (`begin_round` for all,
+/// then `collect_round` — synchronous members first): a device-backed
+/// member's dispatch executes while the batch's CPU members compute, instead
+/// of every member serializing behind the previous one's blocking wait. The
+/// wire bytes cannot depend on this scheduling: each member's polynomial is
+/// its own, and the batched polynomial is an exact field sum assembled in
+/// declaration order.
 ///
 /// The caller finishes the proof afterwards — typed output-claim extraction is
 /// stage-side, so the stage computes its canonical opening values and calls
@@ -186,8 +234,12 @@ where
         // spans nest under it, never inside per-index inner loops.
         let _round_span = tracing::info_span!("sumcheck_round", round).entered();
         let mut batched_coefficients = vec![F::zero(); prelude.max_degree + 1];
-        let mut round_polys: Vec<Option<UnivariatePoly<F>>> = Vec::with_capacity(members.len());
+        let mut round_polys: Vec<Option<UnivariatePoly<F>>> =
+            (0..members.len()).map(|_| None).collect();
 
+        // Phase 1: every active member may launch asynchronous (device)
+        // work before any member's synchronous compute runs.
+        let mut active_members: Vec<(usize, Option<F>, bool)> = Vec::with_capacity(members.len());
         for (index, member) in members.iter_mut().enumerate() {
             let described = &prelude.members[index];
             let active = round >= described.offset && round < described.offset + described.rounds;
@@ -196,25 +248,48 @@ where
                 // `s(0) + s(1)` preserves the member's claim and evaluation at
                 // any challenge halves it.
                 batched_coefficients[0] += described.coefficient * member_claims[index] * two_inv;
-                round_polys.push(None);
                 continue;
             }
-            let poly = member.prove_round(
-                pending_binds[index].take(),
-                round - described.offset,
-                member_claims[index],
-            )?;
-            let poly_degree = poly.degree();
-            if poly_degree > prelude.max_degree {
-                return Err(SumcheckError::DegreeBoundExceeded {
-                    got: poly_degree,
-                    max: prelude.max_degree,
-                });
+            let bind = pending_binds[index].take();
+            let launched =
+                member.begin_round(bind, round - described.offset, member_claims[index])?;
+            active_members.push((index, bind, launched));
+        }
+
+        // Phases 2 and 3: synchronous members compute while launched work
+        // executes, then the launched members collect — declaration order
+        // within each phase. The batched polynomial is a field sum assembled
+        // afterwards in declaration order, so the wire bytes cannot depend
+        // on this scheduling.
+        for collect_launched in [false, true] {
+            for &(index, bind, launched) in &active_members {
+                if launched != collect_launched {
+                    continue;
+                }
+                let described = &prelude.members[index];
+                let poly = members[index].collect_round(
+                    bind,
+                    round - described.offset,
+                    member_claims[index],
+                )?;
+                let poly_degree = poly.degree();
+                if poly_degree > prelude.max_degree {
+                    return Err(SumcheckError::DegreeBoundExceeded {
+                        got: poly_degree,
+                        max: prelude.max_degree,
+                    });
+                }
+                round_polys[index] = Some(poly);
             }
-            for (slot, coefficient) in batched_coefficients.iter_mut().zip(poly.coefficients()) {
-                *slot += described.coefficient * *coefficient;
+        }
+        for (index, poly) in round_polys.iter().enumerate() {
+            if let Some(poly) = poly {
+                let described = &prelude.members[index];
+                for (slot, coefficient) in batched_coefficients.iter_mut().zip(poly.coefficients())
+                {
+                    *slot += described.coefficient * *coefficient;
+                }
             }
-            round_polys.push(Some(poly));
         }
 
         let batched_poly = trim_round_polynomial(batched_coefficients);
