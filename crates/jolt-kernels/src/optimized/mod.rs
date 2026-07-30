@@ -48,7 +48,7 @@ pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
-mod ram_trace;
+pub(crate) mod ram_trace;
 pub mod ram_val_check;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
@@ -58,7 +58,7 @@ pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
 pub(crate) mod support;
-mod trace_record;
+pub(crate) mod trace_record;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;

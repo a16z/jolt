@@ -33,6 +33,7 @@
 
 mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
+mod instruction_input;
 mod instruction_read_raf;
 mod joint_opening;
 mod ra_lazy;
@@ -41,6 +42,7 @@ mod ram_raf_evaluation;
 
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
+pub use instruction_input::MetalInstructionInput;
 pub use instruction_read_raf::MetalInstructionReadRaf;
 pub use joint_opening::MetalJointOpening;
 pub use ra_lazy::{

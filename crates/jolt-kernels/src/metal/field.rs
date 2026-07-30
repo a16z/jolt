@@ -90,6 +90,11 @@ pub(super) fn constants_preamble() -> String {
     );
     let _ = writeln!(
         out,
+        "constant uint FR_ONE[FR_LIMBS] = {};",
+        limb_array(Fr::one_u32())
+    );
+    let _ = writeln!(
+        out,
         "constant uint FQ_MOD[FR_LIMBS] = {};",
         limb_array(Fq::modulus_u32())
     );

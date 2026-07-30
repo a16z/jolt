@@ -721,3 +721,191 @@ kernel void jk_suffix_probe(
     out[2u * gid] = (uint)v;
     out[2u * gid + 1u] = (uint)(v >> 32);
 }
+
+// --- Stage-3 instruction input-virtualization (W9) ---------------------------
+//
+// Summand q = (is_rs2·rs2 + is_imm·imm) + γ·(is_rs1·rs1 + is_pc·upc) over
+// eight tables, table-major in one ping-pong pair (table i's length-`len`
+// region at element i·len). Two kernels: the first bind materializes the
+// dense tables straight from the trace record's native lanes (u64 values,
+// i128 immediates, packed flag words — promoted in-register, never a
+// T-sized dense table in memory) fused with that round's q sums; later
+// rounds are the standard fused fold+eval. Partial sums land in 4 slots
+// (q at t = 0..3); the host applies ℓ(t) and assembles the wire polynomial
+// through the optimized tier's own recipe.
+
+// v·R mod p for a u64 — the same canonical Montgomery residue the host's
+// `Field::from_u64` produces.
+inline Fr256 jk_fr_mont_from_u64(ulong v) {
+    return fr_mont_mul(jk_fr_from_u64(v), fr_load_const(FR_R2, 0));
+}
+
+// Flag bit `bit` of packed word `w` as 0 or 1 in Montgomery form
+// (`Field::from_bool`), mask-selected so warps stay uniform.
+inline Fr256 jk_fr_flag(uint w, uint bit) {
+    uint mask = 0u - ((w >> bit) & 1u);
+    Fr256 r;
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        r.v[i] = FR_ONE[i] & mask;
+    }
+    return r;
+}
+
+// Fold one table's quad (e0, e1) → lo, (e2, e3) → hi with r, store the pair
+// at nxt[2y], nxt[2y+1], and hand back (value at t=0, step) of the pair's
+// linear extension.
+inline void jk_ii_fold_store(Fr256 e0, Fr256 e1, Fr256 e2, Fr256 e3, Fr256 r,
+                             device uint* table, uint y,
+                             thread Fr256& v, thread Fr256& s)
+{
+    Fr256 lo = fr_add(e0, fr_mont_mul(r, fr_sub(e1, e0)));
+    Fr256 hi = fr_add(e2, fr_mont_mul(r, fr_sub(e3, e2)));
+    fr_store(table, 2u * y, lo);
+    fr_store(table, 2u * y + 1u, hi);
+    v = lo;
+    s = fr_sub(hi, lo);
+}
+
+// q(t)·eq at t = 0..3 into partials slots 0..3. `v` mutates in place
+// (v += s per point); every thread participates in the reductions.
+inline void jk_ii_eval(thread Fr256* v, thread const Fr256* s, Fr256 eq,
+                       Fr256 gamma, threadgroup uint* scratch, uint lid,
+                       uint tg, device uint* partials, uint num_tgs)
+{
+    for (uint t = 0; t < 4u; t++) {
+        if (t != 0u) {
+            for (uint i = 0; i < 8u; i++) {
+                v[i] = fr_add(v[i], s[i]);
+            }
+        }
+        Fr256 right = fr_add(fr_mont_mul(v[4], v[5]), fr_mont_mul(v[6], v[7]));
+        Fr256 left = fr_add(fr_mont_mul(v[0], v[1]), fr_mont_mul(v[2], v[3]));
+        Fr256 q = fr_add(right, fr_mont_mul(gamma, left));
+        jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, q), partials, t, num_tgs);
+    }
+}
+
+struct InstrInputBindNativeParams {
+    uint groups;        // post-bind pair count = T/4
+    uint num_tgs;
+    uint log_in;        // log2(e_in length)
+    uint out_len;       // dense per-table length = T/2
+    uint flag_bits[4];  // packed-lane bit of is_rs1, is_pc, is_rs2, is_imm
+    uint r[FR_LIMBS];
+    uint gamma[FR_LIMBS];
+};
+
+// First bind: native rows 4y..4y+3 → dense rows 2y, 2y+1 of all eight
+// tables, plus the round's q sums over the folded pair. Table order is the
+// output-claim declaration order [is_rs1, rs1, is_pc, upc, is_rs2, rs2,
+// is_imm, imm]. Lanes are promoted per table so at most one table's four
+// residues are live besides the running (v, s) pairs.
+kernel void jk_instr_input_bind_native(
+    device const uint* flags [[buffer(0)]],
+    device const ulong* rs1 [[buffer(1)]],
+    device const ulong* upc [[buffer(2)]],
+    device const ulong* rs2 [[buffer(3)]],
+    device const uint* imm [[buffer(4)]],  // 4 LE u32 words per cycle
+    device uint* dense [[buffer(5)]],      // 8·out_len, table-major
+    device const uint* e_in [[buffer(6)]],
+    device const uint* e_out [[buffer(7)]],
+    device uint* partials [[buffer(8)]],
+    constant InstrInputBindNativeParams& p [[buffer(9)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < p.groups;
+    Fr256 r = fr_load_const(p.r, 0);
+    Fr256 gamma = fr_load_const(p.gamma, 0);
+
+    Fr256 v[8];
+    Fr256 s[8];
+    Fr256 eq = fr_zero();
+    if (active) {
+        uint j = 4u * gid;
+        uint stride = p.out_len * FR_LIMBS;
+        uint w0 = flags[j], w1 = flags[j + 1u], w2 = flags[j + 2u], w3 = flags[j + 3u];
+        jk_ii_fold_store(jk_fr_flag(w0, p.flag_bits[0]), jk_fr_flag(w1, p.flag_bits[0]),
+                         jk_fr_flag(w2, p.flag_bits[0]), jk_fr_flag(w3, p.flag_bits[0]),
+                         r, dense, gid, v[0], s[0]);
+        jk_ii_fold_store(jk_fr_mont_from_u64(rs1[j]), jk_fr_mont_from_u64(rs1[j + 1u]),
+                         jk_fr_mont_from_u64(rs1[j + 2u]), jk_fr_mont_from_u64(rs1[j + 3u]),
+                         r, dense + stride, gid, v[1], s[1]);
+        jk_ii_fold_store(jk_fr_flag(w0, p.flag_bits[1]), jk_fr_flag(w1, p.flag_bits[1]),
+                         jk_fr_flag(w2, p.flag_bits[1]), jk_fr_flag(w3, p.flag_bits[1]),
+                         r, dense + 2u * stride, gid, v[2], s[2]);
+        jk_ii_fold_store(jk_fr_mont_from_u64(upc[j]), jk_fr_mont_from_u64(upc[j + 1u]),
+                         jk_fr_mont_from_u64(upc[j + 2u]), jk_fr_mont_from_u64(upc[j + 3u]),
+                         r, dense + 3u * stride, gid, v[3], s[3]);
+        jk_ii_fold_store(jk_fr_flag(w0, p.flag_bits[2]), jk_fr_flag(w1, p.flag_bits[2]),
+                         jk_fr_flag(w2, p.flag_bits[2]), jk_fr_flag(w3, p.flag_bits[2]),
+                         r, dense + 4u * stride, gid, v[4], s[4]);
+        jk_ii_fold_store(jk_fr_mont_from_u64(rs2[j]), jk_fr_mont_from_u64(rs2[j + 1u]),
+                         jk_fr_mont_from_u64(rs2[j + 2u]), jk_fr_mont_from_u64(rs2[j + 3u]),
+                         r, dense + 5u * stride, gid, v[5], s[5]);
+        jk_ii_fold_store(jk_fr_flag(w0, p.flag_bits[3]), jk_fr_flag(w1, p.flag_bits[3]),
+                         jk_fr_flag(w2, p.flag_bits[3]), jk_fr_flag(w3, p.flag_bits[3]),
+                         r, dense + 6u * stride, gid, v[6], s[6]);
+        uint k = 4u * j;
+        jk_ii_fold_store(fr_from_i128(imm[k], imm[k + 1u], imm[k + 2u], imm[k + 3u]),
+                         fr_from_i128(imm[k + 4u], imm[k + 5u], imm[k + 6u], imm[k + 7u]),
+                         fr_from_i128(imm[k + 8u], imm[k + 9u], imm[k + 10u], imm[k + 11u]),
+                         fr_from_i128(imm[k + 12u], imm[k + 13u], imm[k + 14u], imm[k + 15u]),
+                         r, dense + 7u * stride, gid, v[7], s[7]);
+        eq = fr_mont_mul(fr_load(e_out, gid >> p.log_in),
+                         fr_load(e_in, gid & ((1u << p.log_in) - 1u)));
+    } else {
+        for (uint i = 0; i < 8u; i++) {
+            v[i] = fr_zero();
+            s[i] = fr_zero();
+        }
+    }
+    jk_ii_eval(v, s, eq, gamma, scratch, lid, tg, partials, p.num_tgs);
+}
+
+struct InstrInputRoundParams {
+    uint groups;   // post-bind pair count = len/4
+    uint num_tgs;
+    uint log_in;   // log2(e_in length)
+    uint len;      // per-table PRE-bind length
+    uint r[FR_LIMBS];
+    uint gamma[FR_LIMBS];
+};
+
+// Dense rounds after the first bind: fold all eight tables (always binding —
+// round 0 is the native kernel's) and accumulate the four q sums.
+kernel void jk_instr_input_round(
+    device const uint* cur [[buffer(0)]],
+    device uint* nxt [[buffer(1)]],
+    device const uint* e_in [[buffer(2)]],
+    device const uint* e_out [[buffer(3)]],
+    device uint* partials [[buffer(4)]],
+    constant InstrInputRoundParams& p [[buffer(5)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < p.groups;
+    Fr256 r = fr_load_const(p.r, 0);
+    Fr256 gamma = fr_load_const(p.gamma, 0);
+    uint half_len = p.len >> 1;
+
+    Fr256 v[8];
+    Fr256 s[8];
+    for (uint i = 0; i < 8u; i++) {
+        Fr256 lo, hi;
+        jk_round_pair(cur + i * p.len * FR_LIMBS, nxt + i * half_len * FR_LIMBS,
+                      true, r, gid, active, lo, hi);
+        v[i] = lo;
+        s[i] = fr_sub(hi, lo);
+    }
+    Fr256 eq = fr_zero();
+    if (active) {
+        eq = fr_mont_mul(fr_load(e_out, gid >> p.log_in),
+                         fr_load(e_in, gid & ((1u << p.log_in) - 1u)));
+    }
+    jk_ii_eval(v, s, eq, gamma, scratch, lid, tg, partials, p.num_tgs);
+}

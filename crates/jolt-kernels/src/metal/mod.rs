@@ -57,8 +57,8 @@ pub use runtime::{
 };
 pub use slots::{
     MetalBooleanityCycle, MetalHammingWeightClaimReduction, MetalIncClaimReduction,
-    MetalInstructionRaVirtualization, MetalInstructionReadRaf, MetalJointOpening,
-    MetalRamHammingBooleanity, MetalRamRaVirtualization, MetalRamRafEvaluation,
+    MetalInstructionInput, MetalInstructionRaVirtualization, MetalInstructionReadRaf,
+    MetalJointOpening, MetalRamHammingBooleanity, MetalRamRaVirtualization, MetalRamRafEvaluation,
 };
 
 use jolt_field::Fr;
@@ -66,6 +66,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::optimized::hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 use crate::optimized::inc_claim_reduction::OptimizedIncClaimReduction;
+use crate::optimized::instruction_input::OptimizedInstructionInput;
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
 use crate::optimized::OptimizedBackend;
 use crate::JoltBackend;
@@ -144,6 +145,9 @@ where
         });
         backend.ram_hamming_booleanity = Box::new(MetalRamHammingBooleanity {
             fallback: OptimizedRamHammingBooleanity,
+        });
+        backend.instruction_input = Box::new(MetalInstructionInput {
+            fallback: OptimizedInstructionInput,
         });
         backend.ram_raf_evaluation = Box::new(MetalRamRafEvaluation {
             fallback: OptimizedBackend,

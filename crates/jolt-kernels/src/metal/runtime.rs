@@ -76,6 +76,8 @@ pub enum KernelId {
     BoolDenseRound,
     RavLazyRound,
     RavDenseRound,
+    InstrInputBindNative,
+    InstrInputRound,
     Fq6Mul,
     Fq6Sqr,
     Fq12Mul,
@@ -86,7 +88,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 35] = [
+    pub const ALL: [Self; 37] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -115,6 +117,8 @@ impl KernelId {
         Self::BoolDenseRound,
         Self::RavLazyRound,
         Self::RavDenseRound,
+        Self::InstrInputBindNative,
+        Self::InstrInputRound,
         Self::Fq6Mul,
         Self::Fq6Sqr,
         Self::Fq12Mul,
@@ -154,6 +158,8 @@ impl KernelId {
             Self::BoolDenseRound => "jk_bool_dense_round",
             Self::RavLazyRound => "jk_rav_lazy_round",
             Self::RavDenseRound => "jk_rav_dense_round",
+            Self::InstrInputBindNative => "jk_instr_input_bind_native",
+            Self::InstrInputRound => "jk_instr_input_round",
             Self::Fq6Mul => "jk_fq6_mul",
             Self::Fq6Sqr => "jk_fq6_sqr",
             Self::Fq12Mul => "jk_fq12_mul",
