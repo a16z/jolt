@@ -22,7 +22,9 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
+use jolt_witness::{
+    collect_range_into, stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -97,17 +99,103 @@ where
 {
     let cycles = 1usize << grid.log_t;
     let row_width = grid.num_columns();
-    let kinds = column_kinds(ids, grid)?;
     // Superchunk width: a power-of-two window count (both factors are powers
     // of two), so every delivery is whole windows.
     let windows = (superchunk_cycles / row_width).clamp(1, cycles / row_width);
+    let superchunk = row_width * windows;
+    // Slice-backed sources pipeline the extraction of the next superchunk
+    // against the commit grid of the current one; re-emulating sources
+    // alternate the two phases through the sequential walk.
+    #[cfg(feature = "parallel")]
+    if let Some(access) = source.random_access() {
+        if cycles <= access.cycles() {
+            return commit_pipelined(&access, ids, grid, setup, superchunk);
+        }
+    }
+    commit_streamed(source, ids, grid, setup, superchunk)
+}
+
+/// The chunk-walk commit pass: extraction and the commit grid alternate, a
+/// barrier between every phase.
+fn commit_streamed<F, PCS>(
+    source: &dyn RowSource,
+    ids: &[JoltCommittedPolynomial],
+    grid: CommitmentGrid,
+    setup: &PCS::ProverSetup,
+    superchunk: usize,
+) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+{
+    let cycles = 1usize << grid.log_t;
+    let row_width = grid.num_columns();
+    let kinds = column_kinds(ids, grid)?;
     let mut consumers = (BatchedColumns::<F, PCS>::begin(
         &kinds, row_width, grid, setup,
     ),);
-    stream_witnesses(source, 0..cycles, row_width * windows, &mut consumers)?;
-    Ok(consumers
-        .0
-        .finish(setup)
+    stream_witnesses(source, 0..cycles, superchunk, &mut consumers)?;
+    Ok(package::<F, PCS>(consumers.0.finish(setup), ids))
+}
+
+/// The pipelined commit pass over a slice-backed source: while the column
+/// grid advances over superchunk `k`, workers extract superchunk `k + 1`
+/// into the spare buffer (two reused buffers, swapped per delivery). Per
+/// column the fed windows, their order, and the finish calls are exactly
+/// the chunk walk's — the pipeline only overlaps extraction with group
+/// arithmetic, so commitments and hints are byte-identical.
+#[cfg(feature = "parallel")]
+fn commit_pipelined<F, PCS>(
+    access: &jolt_witness::RandomAccessRows<'_>,
+    ids: &[JoltCommittedPolynomial],
+    grid: CommitmentGrid,
+    setup: &PCS::ProverSetup,
+    superchunk: usize,
+) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+{
+    let cycles = 1usize << grid.log_t;
+    let row_width = grid.num_columns();
+    let kinds = column_kinds(ids, grid)?;
+    let mut state = BatchedColumns::<F, PCS>::begin(&kinds, row_width, grid, setup);
+
+    let mut front: Vec<CommittedColumnsWitness> = Vec::new();
+    let mut back: Vec<CommittedColumnsWitness> = Vec::new();
+    let mut end = superchunk.min(cycles);
+    collect_range_into(access, 0..end, &mut front)?;
+    loop {
+        let next_end = (end + superchunk).min(cycles);
+        let (fill, ()) = rayon::join(
+            || {
+                if end < next_end {
+                    collect_range_into(access, end..next_end, &mut back).map(|()| true)
+                } else {
+                    Ok(false)
+                }
+            },
+            || state.consume(&front),
+        );
+        if !fill? {
+            break;
+        }
+        core::mem::swap(&mut front, &mut back);
+        end = next_end;
+    }
+    Ok(package::<F, PCS>(state.finish(setup), ids))
+}
+
+/// Zips finished per-column outputs back to their polynomial ids.
+fn package<F, PCS>(
+    outputs: Vec<(PCS::Output, PCS::OpeningHint)>,
+    ids: &[JoltCommittedPolynomial],
+) -> Vec<WitnessCommitment<PCS>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+{
+    outputs
         .into_iter()
         .zip(ids)
         .map(|((commitment, hint), &id)| WitnessCommitment {
@@ -115,7 +203,7 @@ where
             commitment,
             hint,
         })
-        .collect())
+        .collect()
 }
 
 /// One column's in-progress commitment — the reference kernel's states,
@@ -245,7 +333,7 @@ mod tests {
     use jolt_field::Fr;
     use jolt_witness::RowSource;
 
-    use super::commit_streaming;
+    use super::{commit_streamed, commit_streaming};
     use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
     use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
     use crate::{OptimizedBackend, ProofSession, ReferenceBackend};
@@ -340,6 +428,27 @@ mod tests {
                 commit_streaming::<Fr, DoryScheme>(source, &ids, grid, &setup, grid.num_columns())
                     .unwrap();
             assert_same_commitments(&reference, &single_window_superchunks);
+
+            // Both delivery shapes pinned explicitly: the chunk-walk pass
+            // (re-emulating sources) and the pipelined pass (slice-backed
+            // sources), at whole-trace and single-window superchunks.
+            let streamed =
+                commit_streamed::<Fr, DoryScheme>(source, &ids, grid, &setup, grid.num_columns())
+                    .unwrap();
+            assert_same_commitments(&reference, &streamed);
+            #[cfg(feature = "parallel")]
+            {
+                let access = source.random_access().unwrap();
+                let pipelined = super::commit_pipelined::<Fr, DoryScheme>(
+                    &access,
+                    &ids,
+                    grid,
+                    &setup,
+                    grid.num_columns(),
+                )
+                .unwrap();
+                assert_same_commitments(&reference, &pipelined);
+            }
         });
     }
 }

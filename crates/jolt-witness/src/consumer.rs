@@ -268,6 +268,61 @@ pub fn collect_bundles_par<B: WitnessBundle + Send>(
     collect_par_map(access, cycles, |bundle: B| bundle)
 }
 
+/// Index-parallel collection of one cycle sub-range into a reusable buffer
+/// (cleared first, allocation kept): the pipelining collector's shape — a
+/// caller overlapping extraction with downstream work re-fills two buffers
+/// alternately instead of allocating per delivery. Elements must be plain
+/// data (every witness bundle is); on error the buffer is left cleared.
+pub fn collect_range_into<B: WitnessBundle + Send>(
+    access: &RandomAccessRows<'_>,
+    range: Range<usize>,
+    out: &mut Vec<B>,
+) -> Result<(), WitnessError> {
+    let start = range.start;
+    let count = range.end.saturating_sub(start);
+    out.clear();
+    #[cfg(feature = "parallel")]
+    {
+        out.reserve(count);
+        let spare = &mut out.spare_capacity_mut()[..count];
+        let error = std::sync::Mutex::new(None);
+        spare
+            .par_chunks_mut(COLLECT_PAR_CHUNK)
+            .enumerate()
+            .for_each(|(chunk_index, destination)| {
+                let base = start + chunk_index * COLLECT_PAR_CHUNK;
+                for (offset, slot) in destination.iter_mut().enumerate() {
+                    match access.window::<B>(base + offset) {
+                        Ok(bundle) => {
+                            let _ = slot.write(bundle);
+                        }
+                        Err(failure) => {
+                            if let Ok(mut guard) = error.try_lock() {
+                                let _ = guard.get_or_insert(failure);
+                            }
+                            return;
+                        }
+                    }
+                }
+            });
+        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
+        if let Some(failure) = error.into_inner().unwrap() {
+            return Err(failure);
+        }
+        // SAFETY: the error latch is empty, so every chunk ran to completion
+        // and initialized all `count` slots of the spare capacity above.
+        unsafe { out.set_len(count) };
+        Ok(())
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        for index in range {
+            out.push(access.window::<B>(index)?);
+        }
+        Ok(())
+    }
+}
+
 /// The fused pass: walk `range` once and deliver each chunk to every
 /// consumer in the set.
 #[tracing::instrument(
