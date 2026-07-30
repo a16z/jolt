@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Six independently committed
+This pass kept K256 and the proof protocol fixed. Seven independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -16,6 +16,7 @@ prover slowdown:
 | `ca6fb8e52` | Materialize fused-inc lane columns at Stage 6 | 18 B/cycle during commitment and Stages 1–5 |
 | `a1edad11d` | Materialize signed fused deltas at Stage 6 | 16 B/cycle during commitment and Stages 1–5 |
 | `937319abb` | Retain compact proof rows and stream trace conversion | 32 B/cycle throughout proving |
+| `0be326e83` | Read instruction RA from the row-major index source | 32 B/cycle during the first three Stage-6b rounds |
 
 At `2^26`, the final measured maximum RSS is 44.244 GB with zero process
 swaps, down from 50.49 GB after the R1CS-row policy change and 50.72 GB before
@@ -130,6 +131,23 @@ Stages 1, 3, and 6a, while witness commitment scans the compact rows instead of
 replaying the lazy emulator trace. This does not change proof messages or
 verifier inputs.
 
+### Row-major instruction RA
+
+At K256, the instruction RA virtualization prover previously transposed the
+retained RA index rows into 16 `Option<u8>` columns. It now reads those 16
+indices directly from the shared row-major source for the first three rounds,
+then materializes the same field polynomials as before.
+
+This removes exactly 32 B/cycle from the early Stage-6b working set: 2 GiB at
+`2^26` and 8 GiB at `2^28`. It also improves locality. At `2^26`, Stage 6b
+falls from 5.569 to 5.129 seconds (-7.9%), while instruction initialization
+falls from 74.4 to 0.19 ms. The proof measured 52.63 seconds.
+
+Maximum RSS was 44.325 GB versus the 44.244 GB compact-row control, so another
+phase still determines the global peak at this size. The result is accepted as
+a phase-local allocation and runtime improvement, not claimed as a new
+headline RSS low.
+
 ### Rejected: shared packed RA source
 
 The next experiment replaced the retained 54-byte `RaIndices` row with views
@@ -164,6 +182,7 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Packed RA source v3 screen/target | `mem-ra-source-v3-2e22.json`, `mem-ra-source-v3-2e26.json` |
 | Compact proof rows | `mem-trace-row-2e22.json`, `mem-trace-row-2e26.json` |
 | Full-vector row adapter | `mem-trace-row-adapter-2e22.json`, `mem-trace-row-adapter-2e26.json` |
+| Row-major instruction RA | `mem-ra-row-2e22.json`, `mem-ra-row-2e22-b.json`, `mem-ra-row-2e26.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -195,10 +214,9 @@ operand presence, and canonical padding against the former `Cycle` path.
 The next targets are ordered by retained bytes and likelihood of remaining
 performance-neutral:
 
-1. **Avoid Stage 6 RA transposes.** K256 currently gathers roughly 20 active
-   `Option<u8>` columns, about 40 B/cycle or 10 GiB at `2^28`. Prefer direct
-   row-major kernels or family-at-a-time ownership over another long-lived
-   duplicate.
+1. **Avoid the remaining Stage 6 RA transposes.** The dominant 16-column
+   instruction family is now row-major. Apply the same measured representation
+   to bytecode and RAM only if their focused kernels remain neutral or faster.
 2. **Use dense fused-inc lanes and compact signed deltas in Stage 6.** These
    lanes are always present, so `Option<u8>` spends two bytes for a one-byte
    value. A dense polynomial input or typed all-present source can save up to
