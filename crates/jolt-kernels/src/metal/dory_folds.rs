@@ -242,13 +242,16 @@ pub fn g2_fixed_base_mul_device(
         .collect())
 }
 
-/// Work-item scaling for the gates: one G1 point costs ~2^8 group ops
-/// (254 doublings + ~127 mixed adds), one G2 point ~2^9 (the same ladder
-/// over Fq2 at ~3 Fq muls per mul), where the gate's threshold calibration
-/// is one stream element. Under the 2^18 default the crossovers land at
-/// len ≥ 1024 (G1) and len ≥ 512 (G2).
+/// Gate scaling, calibrated to the MEASURED crossovers (@2^22 in-proof
+/// trace, M4), not to a per-point work model: the G2 ladder is latency-
+/// floored at ~21 ms below ~2k threads (254 iterations × ~90 Fq muls per
+/// lane), so its profitable region starts higher than its 3× throughput
+/// cost would suggest. Under the 2^18 default these shifts land the
+/// crossovers at len ≥ 1024 for G1 (3.2× at 8192, 1.7× at 1024, wash
+/// below) and len ≥ 2048 for G2 (2.6× at 8192, 2.3× at 2048, wash at
+/// 1024, loss at 512).
 const G1_WORK_PER_POINT_LOG2: usize = 8;
-const G2_WORK_PER_POINT_LOG2: usize = 9;
+const G2_WORK_PER_POINT_LOG2: usize = 7;
 
 /// The `RoutineHooks::g1_scalar_mul_add` candidate: `Some(out)` when the
 /// device served the call, `None` (undersized, dead device, or failed) for
