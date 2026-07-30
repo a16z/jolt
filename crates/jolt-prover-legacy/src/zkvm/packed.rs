@@ -103,6 +103,7 @@ struct JoltOneHotTraceRows {
     num_rows: usize,
     num_columns: usize,
     hot_lanes: Vec<u16>,
+    always_present_mask: u64,
     ra_indices: Arc<Vec<RaIndices>>,
 }
 
@@ -130,19 +131,33 @@ impl JoltOneHotTraceRows {
         let num_rows = trace.len();
         let mut hot_lanes = unsafe_allocate_zero_vec(num_rows * num_columns);
         let mut ra_indices = unsafe_allocate_zero_vec(num_rows);
-        ra_indices
+        // Chunk value zero is the implicit public lane and is committed as
+        // absent, so a column is always present only when no row selects that
+        // value for it: density is a property of the trace contents, not of the
+        // column's semantic kind. Columns past bit 63 cannot be named by the
+        // mask and stay sparse.
+        let always_present_mask = ra_indices
             .par_iter_mut()
             .zip(hot_lanes.par_chunks_exact_mut(num_columns))
             .enumerate()
-            .for_each(|(row, (ra_index, row_lanes))| {
+            .map(|(row, (ra_index, row_lanes))| {
                 *ra_index = RaIndices::from_cycle(&trace[row], bytecode, memory_layout, params);
                 Self::fill_row_from_indices(row_lanes, row, ra_index, fused_inc_one_hot, ranges);
-            });
+                row_lanes
+                    .iter()
+                    .take(u64::BITS as usize)
+                    .enumerate()
+                    .filter(|(_, &lane)| lane != jolt_akita::no_hot_lane())
+                    .fold(0u64, |mask, (column, _)| mask | (1u64 << column))
+            })
+            .reduce_with(|left, right| left & right)
+            .unwrap_or(0);
 
         Self {
             num_rows,
             num_columns,
             hot_lanes,
+            always_present_mask,
             ra_indices: Arc::new(ra_indices),
         }
     }
@@ -198,13 +213,7 @@ impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
     }
 
     fn always_present_mask(&self) -> u64 {
-        self.ranges
-            .instruction
-            .clone()
-            .chain(self.ranges.bytecode.clone())
-            .chain(self.ranges.unsigned_inc.clone())
-            .chain(core::iter::once(self.ranges.unsigned_inc_msb))
-            .fold(0, |mask, column| mask | (1 << column))
+        self.always_present_mask
     }
 
     fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
@@ -2070,6 +2079,7 @@ mod tests {
             let memory_layout = &prover.preprocessing.shared.memory_layout;
             let mut expected = vec![0u16; plan.columns.len()];
             let mut actual = vec![0u16; plan.columns.len()];
+            let mut expected_always_present = u64::MAX;
             for (row, cycle) in prover.trace.iter().enumerate() {
                 let reference_indices =
                     RaIndices::from_cycle(cycle, bytecode, memory_layout, &prover.one_hot_params);
@@ -2129,7 +2139,23 @@ mod tests {
                     actual, expected,
                     "cached one-hot lanes differ at row {row} for {config:?}"
                 );
+
+                expected_always_present &= expected
+                    .iter()
+                    .take(u64::BITS as usize)
+                    .enumerate()
+                    .filter(|(_, &lane)| lane != jolt_akita::no_hot_lane())
+                    .fold(0u64, |mask, (column, _)| mask | (1u64 << column));
             }
+
+            // The commit kernel rejects any column it was told is always
+            // present but which lacks a hot lane in some row, so the mask must
+            // never claim more than the trace actually delivers.
+            assert_eq!(
+                jolt_akita::TraceOneHotRows::always_present_mask(cached.as_ref()),
+                expected_always_present,
+                "always-present mask differs from the materialized rows for {config:?}"
+            );
         }
     }
 }
