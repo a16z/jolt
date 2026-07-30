@@ -21,7 +21,7 @@
 //! object the stage provers append to: one digest engine, no state
 //! conversions, no hand-mirrored transcript interaction.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
@@ -105,6 +105,7 @@ struct JoltOneHotTraceRows {
     num_rows: usize,
     num_columns: usize,
     lanes: Vec<u8>,
+    ram_valid: Mutex<Option<Vec<u8>>>,
 }
 
 impl JoltOneHotTraceRows {
@@ -116,35 +117,72 @@ impl JoltOneHotTraceRows {
         params: &crate::zkvm::config::OneHotParams,
         bytecode: &crate::zkvm::bytecode::BytecodePreprocessing,
         memory_layout: &common::jolt_device::MemoryLayout,
-    ) -> (Self, Arc<Vec<RaIndices>>) {
+    ) -> Self {
         use rayon::prelude::*;
 
         let num_rows = trace.len();
         let mut lanes = unsafe_allocate_zero_vec(num_rows * num_columns);
-        let mut ra_indices = unsafe_allocate_zero_vec(num_rows);
-        ra_indices
+        let mut ram_valid = unsafe_allocate_zero_vec(num_rows);
+        ram_valid
             .par_iter_mut()
             .zip(lanes.par_chunks_exact_mut(num_columns))
             .enumerate()
-            .for_each(|(row, (ra_index, lanes))| {
-                *ra_index = RaIndices::from_trace_row(&trace[row], bytecode, memory_layout, params);
+            .for_each(|(row, (ram_valid, lanes))| {
+                let ra_index =
+                    RaIndices::from_trace_row(&trace[row], bytecode, memory_layout, params);
+                *ram_valid = u8::from(ra_index.ram[..params.ram_d].iter().any(Option::is_some));
                 Self::fill_row_from_indices(
                     lanes,
-                    ra_index,
+                    &ra_index,
                     FusedIncValue::from_trace_row(&trace[row]),
                     ranges,
                     params.log_k_chunk,
                 );
             });
 
-        (
-            Self {
-                num_rows,
-                num_columns,
-                lanes,
-            },
-            Arc::new(ra_indices),
-        )
+        Self {
+            num_rows,
+            num_columns,
+            lanes,
+            ram_valid: Mutex::new(Some(ram_valid)),
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "jolt_one_hot_trace_materialize_ra")]
+    fn materialize_ra_indices(
+        &self,
+        ranges: &OneHotTraceColumnRanges,
+        params: &crate::zkvm::config::OneHotParams,
+    ) -> Arc<Vec<RaIndices>> {
+        use rayon::prelude::*;
+
+        let Some(ram_valid) = self
+            .ram_valid
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        else {
+            panic!("RA indices were already materialized");
+        };
+        let mut ra_indices: Vec<RaIndices> = unsafe_allocate_zero_vec(self.num_rows);
+        ra_indices
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(row, ra_index)| {
+                let start = row * self.num_columns;
+                let lanes = &self.lanes[start..start + self.num_columns];
+                ra_index.instruction[..params.instruction_d]
+                    .copy_from_slice(&lanes[ranges.instruction.clone()]);
+                ra_index.bytecode[..params.bytecode_d]
+                    .copy_from_slice(&lanes[ranges.bytecode.clone()]);
+                for (index, &lane) in ra_index.ram[..params.ram_d]
+                    .iter_mut()
+                    .zip(&lanes[ranges.ram.clone()])
+                {
+                    *index = (ram_valid[row] != 0).then_some(lane);
+                }
+            });
+        Arc::new(ra_indices)
     }
 
     fn fill_row_from_indices(
@@ -754,19 +792,15 @@ impl AkitaPackedProver<'_> {
         .expect("Jolt always commits at least one RA polynomial")
     }
 
-    fn one_hot_trace_rows(
-        &self,
-        plan: &OneHotTraceLayoutPlan,
-    ) -> (Arc<JoltOneHotTraceRows>, Arc<Vec<RaIndices>>) {
-        let (rows, ra_indices) = JoltOneHotTraceRows::new(
+    fn one_hot_trace_rows(&self, plan: &OneHotTraceLayoutPlan) -> Arc<JoltOneHotTraceRows> {
+        Arc::new(JoltOneHotTraceRows::new(
             &self.trace,
             plan.columns.len(),
             &plan.ranges,
             &self.one_hot_params,
             &self.preprocessing.materialized_program().bytecode,
             &self.preprocessing.shared.memory_layout,
-        );
-        (Arc::new(rows), ra_indices)
+        ))
     }
 
     #[tracing::instrument(skip_all, name = "fused_inc_deltas")]
@@ -1477,7 +1511,7 @@ impl AkitaPackedProver<'_> {
         let plan = ONE_HOT_TRACE_LAYOUT
             .plan(&self.one_hot_trace_shape())
             .expect("canonical OneHotTrace layout must exist");
-        let (one_hot_trace_rows, ra_indices) = self.one_hot_trace_rows(&plan);
+        let one_hot_trace_rows = self.one_hot_trace_rows(&plan);
         let one_hot_trace_source: Arc<dyn jolt_akita::TraceOneHotRows> = one_hot_trace_rows.clone();
         let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
             object_setup,
@@ -1517,6 +1551,8 @@ impl AkitaPackedProver<'_> {
         let (stage3_sumcheck_proof, _r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, _r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
+        let ra_indices =
+            one_hot_trace_rows.materialize_ra_indices(&plan.ranges, &self.one_hot_params);
         let fused = self.fused_inc_deltas();
         let one_hot = self.fused_inc_one_hot_columns(&fused);
         let mut fused_inc_columns = FusedIncColumns { one_hot, fused };
@@ -2032,7 +2068,9 @@ mod tests {
             let plan = ONE_HOT_TRACE_LAYOUT
                 .plan(&prover.one_hot_trace_shape())
                 .expect("canonical OneHotTrace layout must exist");
-            let (cached, cached_indices) = prover.one_hot_trace_rows(&plan);
+            let cached = prover.one_hot_trace_rows(&plan);
+            let cached_indices =
+                cached.materialize_ra_indices(&plan.ranges, &prover.one_hot_params);
             assert_eq!(cached_indices.len(), prover.trace.len());
 
             let bytecode = &prover.preprocessing.materialized_program().bytecode;
