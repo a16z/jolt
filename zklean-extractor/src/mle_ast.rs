@@ -1311,6 +1311,7 @@ impl JoltField for MleAst {
     type UnreducedMulU128Accum = Self;
     type UnreducedProduct = Self;
     type UnreducedProductAccum = Self;
+    type MultiProductAccum = Self;
 
     type Challenge = Self;
     type SmallValueLookupTables = ();
@@ -1440,6 +1441,10 @@ impl JoltField for MleAst {
         self * other
     }
 
+    fn mul_to_multi_product_accum(self, other: Self) -> Self::MultiProductAccum {
+        self * other
+    }
+
     fn unreduced_mul_u64(a: &Self::UnreducedElem, b: u64) -> Self::UnreducedMulU64 {
         *a * Self::from_u64(b)
     }
@@ -1478,6 +1483,9 @@ impl JoltField for MleAst {
         x
     }
     fn reduce_product_accum(x: Self::UnreducedProductAccum) -> Self {
+        x
+    }
+    fn reduce_multi_product_accum(x: Self::MultiProductAccum) -> Self {
         x
     }
 }
