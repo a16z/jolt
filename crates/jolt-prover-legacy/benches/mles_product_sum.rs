@@ -118,7 +118,7 @@ fn bench_sum_of_products_d4(c: &mut Criterion) {
 
     let random_mle: MultilinearPolynomial<Fr> =
         vec![<Fr as JoltField>::random(rng); 1 << mle_n_vars].into();
-    let mles = vec![RaPolynomial::RoundN(random_mle); total_mles];
+    let mles: Vec<RaPolynomial<u8, Fr>> = vec![RaPolynomial::RoundN(random_mle); total_mles];
     let r = vec![<Fr as JoltField>::Challenge::random(rng); mle_n_vars];
     let eq_poly = GruenSplitEqPolynomial::new(&r, BindingOrder::LowToHigh);
 

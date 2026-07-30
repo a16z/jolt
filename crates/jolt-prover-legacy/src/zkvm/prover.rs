@@ -1541,7 +1541,7 @@ impl<
         let mut ram_ra_virtual =
             RamRaVirtualSumcheckProver::initialize(ram_ra_virtual_params, &ra_indices);
         let mut lookups_ra_virtual =
-            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &ra_indices);
+            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, Arc::clone(&ra_indices));
         // Release the handle so the indices' lifetime stays owned by the
         // booleanity cycle prover (dropped at its RoundN materialization),
         // exactly as before this sharing.

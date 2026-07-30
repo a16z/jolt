@@ -30,6 +30,7 @@ use fixedbitset::FixedBitSet;
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::poly::ra_poly::RaPolynomialAccess;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::BytecodePreprocessing;
@@ -467,6 +468,20 @@ pub enum SharedRaPolynomials<F: JoltField> {
     RoundN(Vec<MultilinearPolynomial<F>>),
 }
 
+/// A single-polynomial view into a shared row-major RA collection.
+#[derive(Clone, Copy)]
+pub struct SharedRaPolynomialRef<'a, F: JoltField> {
+    polys: &'a SharedRaPolynomials<F>,
+    poly_idx: usize,
+}
+
+impl<F: JoltField> RaPolynomialAccess<F> for SharedRaPolynomialRef<'_, F> {
+    #[inline]
+    fn get_bound_coeff(&self, j: usize) -> F {
+        self.polys.get_bound_coeff(self.poly_idx, j)
+    }
+}
+
 /// Round 1 state: single shared eq table
 #[derive(Allocative, Default)]
 pub struct SharedRaRound1<F: JoltField> {
@@ -476,10 +491,12 @@ pub struct SharedRaRound1<F: JoltField> {
     /// constant (e.g. a batching coefficient).
     tables: Vec<Vec<F>>,
     /// RA indices for all cycles (non-transposed), shared with the stage-6b
-    /// RA initializers that gather their per-chunk columns from it.
+    /// RA provers.
     indices: Arc<Vec<RaIndices>>,
     /// Number of polynomials
     num_polys: usize,
+    /// First polynomial in the unified instruction/bytecode/RAM ordering.
+    index_offset: usize,
     /// OneHotParams for index extraction
     #[allocative(skip)]
     one_hot_params: OneHotParams,
@@ -495,6 +512,7 @@ pub struct SharedRaRound2<F: JoltField> {
     /// RA indices for all cycles
     indices: Arc<Vec<RaIndices>>,
     num_polys: usize,
+    index_offset: usize,
     #[allocative(skip)]
     one_hot_params: OneHotParams,
     binding_order: BindingOrder,
@@ -509,6 +527,7 @@ pub struct SharedRaRound3<F: JoltField> {
     tables_11: Vec<Vec<F>>,
     indices: Arc<Vec<RaIndices>>,
     num_polys: usize,
+    index_offset: usize,
     #[allocative(skip)]
     one_hot_params: OneHotParams,
     binding_order: BindingOrder,
@@ -523,16 +542,39 @@ impl<F: JoltField> SharedRaPolynomials<F> {
     ) -> Self {
         let num_polys =
             one_hot_params.instruction_d + one_hot_params.bytecode_d + one_hot_params.ram_d;
-        debug_assert!(
-            tables.len() == num_polys,
+        assert_eq!(
+            tables.len(),
+            num_polys,
             "SharedRaPolynomials::new: tables.len() = {}, expected num_polys = {}",
             tables.len(),
             num_polys
+        );
+        Self::new_subset(tables, indices, one_hot_params, 0)
+    }
+
+    /// Create a contiguous subset in the unified instruction/bytecode/RAM ordering.
+    pub fn new_subset(
+        tables: Vec<Vec<F>>,
+        indices: Arc<Vec<RaIndices>>,
+        one_hot_params: OneHotParams,
+        index_offset: usize,
+    ) -> Self {
+        let num_polys = tables.len();
+        let total_polys =
+            one_hot_params.instruction_d + one_hot_params.bytecode_d + one_hot_params.ram_d;
+        assert!(
+            num_polys > 0,
+            "SharedRaPolynomials::new_subset requires at least one polynomial"
+        );
+        assert!(
+            index_offset <= total_polys && num_polys <= total_polys - index_offset,
+            "SharedRaPolynomials::new_subset: offset {index_offset} with {num_polys} polynomials exceeds {total_polys}"
         );
         Self::Round1(SharedRaRound1 {
             tables,
             indices,
             num_polys,
+            index_offset,
             one_hot_params,
         })
     }
@@ -545,6 +587,16 @@ impl<F: JoltField> SharedRaPolynomials<F> {
             Self::Round3(r) => r.num_polys,
             Self::RoundN(polys) => polys.len(),
         }
+    }
+
+    /// Returns lightweight views for kernels that consume a polynomial slice.
+    pub fn polynomial_refs(&self) -> Vec<SharedRaPolynomialRef<'_, F>> {
+        (0..self.num_polys())
+            .map(|poly_idx| SharedRaPolynomialRef {
+                polys: self,
+                poly_idx,
+            })
+            .collect()
     }
 
     /// Get the current length (number of cycles / 2^rounds_so_far)
@@ -608,7 +660,7 @@ impl<F: JoltField> SharedRaRound1<F> {
     #[inline]
     fn get_bound_coeff(&self, poly_idx: usize, j: usize) -> F {
         self.indices[j]
-            .get_index(poly_idx, &self.one_hot_params)
+            .get_index(poly_idx + self.index_offset, &self.one_hot_params)
             .map_or(F::zero(), |k| self.tables[poly_idx][k as usize])
     }
 
@@ -636,6 +688,7 @@ impl<F: JoltField> SharedRaRound1<F> {
             tables_1,
             indices: self.indices,
             num_polys: self.num_polys,
+            index_offset: self.index_offset,
             one_hot_params: self.one_hot_params,
             binding_order: order,
         }
@@ -649,19 +702,19 @@ impl<F: JoltField> SharedRaRound2<F> {
             BindingOrder::HighToLow => {
                 let mid = self.indices.len() / 2;
                 let h_0 = self.indices[j]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_0[poly_idx][k as usize]);
                 let h_1 = self.indices[mid + j]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_1[poly_idx][k as usize]);
                 h_0 + h_1
             }
             BindingOrder::LowToHigh => {
                 let h_0 = self.indices[2 * j]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_0[poly_idx][k as usize]);
                 let h_1 = self.indices[2 * j + 1]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_1[poly_idx][k as usize]);
                 h_0 + h_1
             }
@@ -717,6 +770,7 @@ impl<F: JoltField> SharedRaRound2<F> {
             tables_11,
             indices: self.indices,
             num_polys: self.num_polys,
+            index_offset: self.index_offset,
             one_hot_params: self.one_hot_params,
             binding_order: order,
         }
@@ -730,32 +784,32 @@ impl<F: JoltField> SharedRaRound3<F> {
             BindingOrder::HighToLow => {
                 let quarter = self.indices.len() / 4;
                 let h_00 = self.indices[j]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_00[poly_idx][k as usize]);
                 let h_01 = self.indices[quarter + j]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_01[poly_idx][k as usize]);
                 let h_10 = self.indices[2 * quarter + j]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_10[poly_idx][k as usize]);
                 let h_11 = self.indices[3 * quarter + j]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_11[poly_idx][k as usize]);
                 h_00 + h_01 + h_10 + h_11
             }
             BindingOrder::LowToHigh => {
                 // Bit pattern for offset: (r1, r0), so offset 1 = r0=1,r1=0 → F_10
                 let h_00 = self.indices[4 * j]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_00[poly_idx][k as usize]);
                 let h_10 = self.indices[4 * j + 1]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_10[poly_idx][k as usize]);
                 let h_01 = self.indices[4 * j + 2]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_01[poly_idx][k as usize]);
                 let h_11 = self.indices[4 * j + 3]
-                    .get_index(poly_idx, &self.one_hot_params)
+                    .get_index(poly_idx + self.index_offset, &self.one_hot_params)
                     .map_or(F::zero(), |k| self.tables_11[poly_idx][k as usize]);
                 h_00 + h_10 + h_01 + h_11
             }
@@ -827,6 +881,7 @@ impl<F: JoltField> SharedRaRound3<F> {
         let num_polys = self.num_polys;
         let indices = &self.indices;
         let one_hot_params = &self.one_hot_params;
+        let index_offset = self.index_offset;
         let new_len = indices.len() / 8;
 
         (0..num_polys)
@@ -841,7 +896,7 @@ impl<F: JoltField> SharedRaRound3<F> {
                                 (0..8)
                                     .map(|offset| {
                                         indices[8 * j + offset]
-                                            .get_index(poly_idx, one_hot_params)
+                                            .get_index(poly_idx + index_offset, one_hot_params)
                                             .map_or(F::zero(), |k| {
                                                 table_groups[offset][poly_idx][k as usize]
                                             })
@@ -858,7 +913,7 @@ impl<F: JoltField> SharedRaRound3<F> {
                                 (0..8)
                                     .map(|seg| {
                                         indices[seg * eighth + j]
-                                            .get_index(poly_idx, one_hot_params)
+                                            .get_index(poly_idx + index_offset, one_hot_params)
                                             .map_or(F::zero(), |k| {
                                                 table_groups[seg][poly_idx][k as usize]
                                             })
@@ -944,4 +999,78 @@ where
     });
 
     cols.into_iter().map(Arc::new).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::Fr;
+    use ark_std::{test_rng, UniformRand};
+    use std::sync::Arc;
+
+    use super::{RaIndices, SharedRaPolynomials};
+    use crate::{
+        field::JoltField,
+        poly::{
+            multilinear_polynomial::{BindingOrder, PolynomialBinding},
+            ra_poly::RaPolynomial,
+        },
+        zkvm::config::OneHotParams,
+    };
+
+    #[test]
+    fn instruction_subset_matches_transposed_polynomials() {
+        let params = OneHotParams::new(26, 1 << 12, 1 << 16);
+        let T = 1 << 6;
+        let indices: Vec<RaIndices> = (0..T)
+            .map(|cycle| {
+                let mut row = RaIndices::default();
+                for i in 0..params.instruction_d {
+                    row.instruction[i] = ((cycle * 17 + i * 29) % params.k_chunk) as u8;
+                }
+                row
+            })
+            .collect();
+        let tables: Vec<Vec<Fr>> = (0..params.instruction_d)
+            .map(|i| {
+                (0..params.k_chunk)
+                    .map(|k| Fr::from((i * params.k_chunk + k + 1) as u64))
+                    .collect()
+            })
+            .collect();
+
+        let mut transposed: Vec<RaPolynomial<u8, Fr>> = (0..params.instruction_d)
+            .map(|i| {
+                let column = indices.iter().map(|row| Some(row.instruction[i])).collect();
+                RaPolynomial::new(Arc::new(column), tables[i].clone())
+            })
+            .collect();
+        let mut shared = SharedRaPolynomials::new_subset(tables, Arc::new(indices), params, 0);
+        let mut rng = test_rng();
+
+        while shared.len() > 1 {
+            assert_eq!(shared.num_polys(), transposed.len());
+            assert_eq!(shared.len(), transposed[0].len());
+            for (poly_idx, expected) in transposed.iter().enumerate() {
+                for j in 0..shared.len() {
+                    assert_eq!(
+                        shared.get_bound_coeff(poly_idx, j),
+                        expected.get_bound_coeff(j)
+                    );
+                }
+            }
+
+            let challenge = <Fr as JoltField>::Challenge::rand(&mut rng);
+            shared.bind_in_place(challenge, BindingOrder::LowToHigh);
+            transposed
+                .iter_mut()
+                .for_each(|poly| poly.bind_parallel(challenge, BindingOrder::LowToHigh));
+        }
+
+        for (poly_idx, expected) in transposed.iter().enumerate() {
+            assert_eq!(
+                shared.final_sumcheck_claim(poly_idx),
+                expected.final_sumcheck_claim()
+            );
+        }
+    }
 }

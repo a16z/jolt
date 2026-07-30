@@ -1,6 +1,6 @@
 use crate::{
     field::{BarrettReduce, FMAdd, JoltField},
-    poly::{ra_poly::RaPolynomial, split_eq_poly::GruenSplitEqPolynomial, unipoly::UniPoly},
+    poly::{ra_poly::RaPolynomialAccess, split_eq_poly::GruenSplitEqPolynomial, unipoly::UniPoly},
     utils::accumulation::SmallAccumS,
 };
 use core::{mem::MaybeUninit, ptr};
@@ -9,8 +9,8 @@ use num_traits::Zero;
 /// Computes the univariate polynomial `g(X) = sum_j eq((r', X, j), r) * prod_i mle_i(X, j)`.
 ///
 /// Note `claim` should equal `g(0) + g(1)`.
-pub fn compute_mles_product_sum<F: JoltField>(
-    mles: &[RaPolynomial<u8, F>],
+pub fn compute_mles_product_sum<F: JoltField, P: RaPolynomialAccess<F>>(
+    mles: &[P],
     claim: F,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> UniPoly<F> {
@@ -38,8 +38,8 @@ pub fn compute_mles_product_sum<F: JoltField>(
 /// of `g(X) / eq(X, r[round])` on the grid `[1, 2, ..., d - 1, ∞]` for
 /// arbitrary `d`.
 #[inline]
-fn compute_mles_product_sum_evals_generic<F: JoltField>(
-    mles: &[RaPolynomial<u8, F>],
+fn compute_mles_product_sum_evals_generic<F: JoltField, P: RaPolynomialAccess<F>>(
+    mles: &[P],
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> Vec<F> {
     let d = mles.len();
@@ -111,8 +111,8 @@ fn compute_mles_product_sum_evals_generic<F: JoltField>(
 macro_rules! impl_mles_product_sum_evals_d {
     ($fn_name:ident, $d:expr, $eval_prod:ident) => {
         #[inline]
-        pub fn $fn_name<F: JoltField>(
-            mles: &[RaPolynomial<u8, F>],
+        pub fn $fn_name<F: JoltField, P: RaPolynomialAccess<F>>(
+            mles: &[P],
             eq_poly: &GruenSplitEqPolynomial<F>,
         ) -> Vec<F> {
             debug_assert_eq!(mles.len(), $d);
@@ -171,8 +171,8 @@ impl_mles_product_sum_evals_d!(compute_mles_product_sum_evals_d32, 32, eval_prod
 /// terms: the final pointwise multiplies stay in the multi-lane accumulator and are
 /// reduced once after all `n_products` terms are summed.
 #[inline]
-pub fn compute_mles_product_sum_evals_sum_of_products_d4<F: JoltField>(
-    mles: &[RaPolynomial<u8, F>],
+pub fn compute_mles_product_sum_evals_sum_of_products_d4<F: JoltField, P: RaPolynomialAccess<F>>(
+    mles: &[P],
     n_products: usize,
     eq_poly: &GruenSplitEqPolynomial<F>,
 ) -> Vec<F> {
@@ -206,8 +206,8 @@ pub fn compute_mles_product_sum_evals_sum_of_products_d4<F: JoltField>(
 macro_rules! impl_mles_sum_of_products_evals_d {
     ($fn_name:ident, $d:expr, $eval_prod:ident) => {
         #[inline]
-        pub fn $fn_name<F: JoltField>(
-            mles: &[RaPolynomial<u8, F>],
+        pub fn $fn_name<F: JoltField, P: RaPolynomialAccess<F>>(
+            mles: &[P],
             n_products: usize,
             eq_poly: &GruenSplitEqPolynomial<F>,
         ) -> Vec<F> {
@@ -1352,7 +1352,7 @@ mod tests {
         let challenge: &[<Fr as JoltField>::Challenge; 1] = &challenge_whole;
         let mle_challenge_product = mles.iter().map(|p| p.evaluate(challenge)).product::<Fr>();
         let eval = EqPolynomial::mle(challenge, r) * mle_challenge_product;
-        let mles = mles.map(RaPolynomial::RoundN);
+        let mles: [RaPolynomial<u8, Fr>; N_MLE] = mles.map(RaPolynomial::RoundN);
 
         let eq_poly = GruenSplitEqPolynomial::new(r, BindingOrder::LowToHigh);
         let sum_poly = compute_mles_product_sum(&mles, claim, &eq_poly);

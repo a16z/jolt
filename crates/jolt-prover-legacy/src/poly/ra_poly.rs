@@ -26,6 +26,12 @@ pub enum RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'static, F
     RoundN(MultilinearPolynomial<F>),
 }
 
+/// Read access used by the RA product-sum kernels.
+pub trait RaPolynomialAccess<F: JoltField>: Sync {
+    /// Returns the coefficient at `j` in the polynomial's current binding state.
+    fn get_bound_coeff(&self, j: usize) -> F;
+}
+
 impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> RaPolynomial<I, F> {
     pub fn new(lookup_indices: Arc<Vec<Option<I>>>, eq_evals: Vec<F>) -> Self {
         Self::Round1(RaPolynomialRound1 {
@@ -53,6 +59,15 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> RaPo
             Self::Round3(mle) => mle.len(),
             Self::RoundN(mle) => mle.len(),
         }
+    }
+}
+
+impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> RaPolynomialAccess<F>
+    for RaPolynomial<I, F>
+{
+    #[inline]
+    fn get_bound_coeff(&self, j: usize) -> F {
+        RaPolynomial::get_bound_coeff(self, j)
     }
 }
 

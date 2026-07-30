@@ -8,13 +8,12 @@ use crate::{
     field::JoltField,
     poly::{
         eq_poly::EqPolynomial,
-        multilinear_polynomial::{BindingOrder, PolynomialBinding},
+        multilinear_polynomial::BindingOrder,
         opening_proof::{
             AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
         },
-        ra_poly::RaPolynomial,
-        shared_ra_polys::{gather_index_columns, RaIndices},
+        shared_ra_polys::{RaIndices, SharedRaPolynomials},
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -36,6 +35,7 @@ use crate::{
 };
 use allocative::Allocative;
 use rayon::prelude::*;
+use std::sync::Arc;
 
 #[derive(Allocative, Clone)]
 pub struct InstructionRaSumcheckParams<F: JoltField> {
@@ -198,31 +198,29 @@ impl<F: JoltField> SumcheckInstanceParams<F> for InstructionRaSumcheckParams<F> 
 
 #[derive(Allocative)]
 pub struct InstructionRaSumcheckProver<F: JoltField> {
-    ra_i_polys: Vec<RaPolynomial<u8, F>>,
+    ra_i_polys: SharedRaPolynomials<F>,
     eq_poly: GruenSplitEqPolynomial<F>,
     pub params: InstructionRaSumcheckParams<F>,
 }
 
 impl<F: JoltField> InstructionRaSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::initialize")]
-    pub fn initialize(params: InstructionRaSumcheckParams<F>, ra_indices: &[RaIndices]) -> Self {
+    pub fn initialize(
+        params: InstructionRaSumcheckParams<F>,
+        ra_indices: Arc<Vec<RaIndices>>,
+    ) -> Self {
         // Compute r_address_chunks with proper padding
         let r_address_chunks = params
             .one_hot_params
             .compute_r_address_chunks::<F>(&params.r_address.r);
 
-        let H_indices =
-            gather_index_columns(ra_indices, params.one_hot_params.instruction_d, |ra, i| {
-                Some(ra.instruction[i])
-            });
-
         let n_committed_per_virtual = params.n_committed_per_virtual;
         let gamma_powers = params.gamma_powers();
 
-        let ra_i_polys = H_indices
+        let tables = r_address_chunks
             .into_par_iter()
             .enumerate()
-            .map(|(i, lookup_indices)| {
+            .map(|(i, r_address)| {
                 // Pre-scale the first committed polynomial in each virtual batch by γ^batch.
                 //
                 // This pushes the γ weight *inside* the product term so we can form
@@ -239,11 +237,11 @@ impl<F: JoltField> InstructionRaSumcheckProver<F> {
                 } else {
                     None
                 };
-                let eq_evals =
-                    EqPolynomial::evals_with_scaling(&r_address_chunks[i], scaling_factor);
-                RaPolynomial::new(lookup_indices, eq_evals)
+                EqPolynomial::evals_with_scaling(&r_address, scaling_factor)
             })
             .collect();
+        let ra_i_polys =
+            SharedRaPolynomials::new_subset(tables, ra_indices, params.one_hot_params.clone(), 0);
 
         Self {
             ra_i_polys,
@@ -265,19 +263,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
         // Compute q(X) = Σ_i ∏_j ra_{i,j}(X,·) on the U_D grid using a *single*
         // split-eq fold. The per-batch γ^i weights have already been absorbed by
         // pre-scaling the first polynomial in each batch (see `initialize`).
+        let ra_i_polys = self.ra_i_polys.polynomial_refs();
         let evals = match self.params.n_committed_per_virtual {
             4 => compute_mles_product_sum_evals_sum_of_products_d4(
-                &self.ra_i_polys,
+                &ra_i_polys,
                 self.params.n_virtual_ra_polys,
                 eq_poly,
             ),
             8 => compute_mles_product_sum_evals_sum_of_products_d8(
-                &self.ra_i_polys,
+                &ra_i_polys,
                 self.params.n_virtual_ra_polys,
                 eq_poly,
             ),
             16 => compute_mles_product_sum_evals_sum_of_products_d16(
-                &self.ra_i_polys,
+                &ra_i_polys,
                 self.params.n_virtual_ra_polys,
                 eq_poly,
             ),
@@ -289,9 +288,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
 
     #[tracing::instrument(skip_all, name = "InstructionRaSumcheckProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        self.ra_i_polys
-            .iter_mut()
-            .for_each(|p| p.bind_parallel(r_j, BindingOrder::LowToHigh));
+        self.ra_i_polys.bind_in_place(r_j, BindingOrder::LowToHigh);
         self.eq_poly.bind(r_j);
     }
 
@@ -312,7 +309,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRa
         for (i, r_address) in r_address_chunks.into_iter().enumerate() {
             // Undo the per-batch γ scaling applied in `initialize` before caching openings,
             // so the claimed openings match the *actual* committed polynomials.
-            let mut claim = self.ra_i_polys[i].final_sumcheck_claim();
+            let mut claim = self.ra_i_polys.final_sumcheck_claim(i);
             if i % self.params.n_committed_per_virtual == 0 {
                 let batch = i / self.params.n_committed_per_virtual;
                 let gamma = gamma_powers[batch];
