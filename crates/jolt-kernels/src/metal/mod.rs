@@ -30,6 +30,7 @@
 
 mod buffers;
 mod commitment;
+mod dory_folds;
 mod error;
 mod field;
 mod g1;
@@ -39,6 +40,7 @@ mod slots;
 pub mod testing;
 
 pub use buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec, PAGE_SIZE};
+pub use dory_folds::g1_scalar_mul_add_device;
 pub use error::MetalError;
 pub use field::{
     fr_as_u32s, fr_as_u32s_mut, fr_from_u32_limbs, fr_to_u32_limbs, FR_U32_LIMBS,

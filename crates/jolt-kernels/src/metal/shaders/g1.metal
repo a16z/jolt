@@ -299,6 +299,59 @@ kernel void jk_g1_combine_rows(
     }
 }
 
+// --- Stage-8 reduce-round folds (W5a) ----------------------------------------
+//
+// out[i] = s·P[i] + Q[i] with ONE scalar shared by the whole vector — the
+// shape of both `fixed_scalar_mul_bases_then_add` (P = setup bases, Q = the
+// running v-vector) and `fixed_scalar_mul_vs_then_add` (P = vL, Q = vR) in
+// dory-pcs's reduce-and-fold rounds. Thread-per-element double-and-add: the
+// scalar's bit branches are warp-uniform (same challenge for every lane),
+// and the host batch-normalizes both inputs to affine so the whole kernel
+// is the parity-tested g1_dbl/g1_madd pair — no general Jacobian+Jacobian
+// add. A (0, 0) coordinate pair (not on y² = x³ + 3) is the host's identity
+// sentinel: a dead P skips the ladder, a dead Q skips the final add.
+struct G1MulAddParams {
+    uint n;
+    uint start_bit;               // highest set bit of the scalar (0 if s = 0)
+    uint scalar[FR_LIMBS];        // CANONICAL (integer) LE limbs
+};
+
+kernel void jk_g1_scalar_mul_add(
+    device const uint* ps [[buffer(0)]],   // affine, stride JK_G1_AFFINE_STRIDE
+    device const uint* qs [[buffer(1)]],   // affine, stride JK_G1_AFFINE_STRIDE
+    device uint* out [[buffer(2)]],        // n Jacobian results
+    constant G1MulAddParams& p [[buffer(3)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n) {
+        return;
+    }
+    G1AffinePt base = g1_load_base(ps, tid);
+    G1Jac acc = g1_identity();
+    if (!(fq_is_zero(base.x) && fq_is_zero(base.y))) {
+        for (int bit = (int)p.start_bit; bit >= 0; bit--) {
+            acc = g1_dbl(acc);
+            if ((p.scalar[(uint)bit >> 5] >> ((uint)bit & 31u)) & 1u) {
+                acc = g1_madd(acc, base);
+            }
+        }
+    }
+    G1AffinePt addend = g1_load_base(qs, tid);
+    if (!(fq_is_zero(addend.x) && fq_is_zero(addend.y))) {
+        acc = g1_madd(acc, addend);
+    }
+    device uint* dst = out + tid * (3u * FR_LIMBS);
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        dst[i] = acc.x.v[i];
+    }
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        dst[FR_LIMBS + i] = acc.y.v[i];
+    }
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        dst[2u * FR_LIMBS + i] = acc.z.v[i];
+    }
+}
+
 // One thread per segment: sum the selected bases into a Jacobian point.
 //   bases      — host G1Affine array (stride JK_G1_AFFINE_STRIDE u32s)
 //   indices    — base indices, all segments concatenated
