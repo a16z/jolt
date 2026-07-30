@@ -25,6 +25,11 @@ use super::runtime::{KernelId, MetalContext};
 /// u32 words per Jacobian result (X, Y, Z × 8 limbs).
 pub const JAC_U32S: usize = 3 * FR_U32_LIMBS;
 
+/// Gather-index flag: sum the NEGATED base `(x, -y)`. Set by the signed
+/// MSM entries of the increment-column commit path; base positions must
+/// stay below it.
+pub const SEG_INDEX_SIGN_BIT: u32 = 1 << 31;
+
 /// View affine bases as the device `uint` stream.
 ///
 /// Callers must ensure no base is the point at infinity (the flag byte is
@@ -142,9 +147,14 @@ mod tests {
     }
 
     fn host_sum(bases: &[G1Affine], indices: &[u32]) -> G1Projective {
-        indices
-            .iter()
-            .fold(G1Projective::zero(), |acc, &i| acc + bases[i as usize])
+        indices.iter().fold(G1Projective::zero(), |acc, &raw| {
+            let base = bases[(raw & !SEG_INDEX_SIGN_BIT) as usize];
+            if raw & SEG_INDEX_SIGN_BIT != 0 {
+                acc - base
+            } else {
+                acc + base
+            }
+        })
     }
 
     /// The zero-copy contract: an affine point's device words are exactly
@@ -191,6 +201,42 @@ mod tests {
             let expected = host_sum(&bases, &indices[window[0] as usize..window[1] as usize]);
             assert_eq!(device[seg], expected, "segment {seg} diverged");
         }
+    }
+
+    /// Sign-bit gathers subtract the base: random signed segments match the
+    /// arkworks signed sums, including all-negative (identity-from-negation
+    /// start) and cancelling ±same-base pairs.
+    #[test]
+    fn signed_seg_sums_match_arkworks() {
+        let _lock = gpu_lock();
+        let bases = random_bases(256, 17);
+        let mut rng = ChaCha20Rng::seed_from_u64(18);
+        let mut indices = Vec::new();
+        let mut seg_starts = vec![0u32];
+        for seg in 0..32 {
+            let len = (seg * 29) % 200;
+            for _ in 0..len {
+                let sign = if rng.next_u32() & 1 == 0 {
+                    SEG_INDEX_SIGN_BIT
+                } else {
+                    0
+                };
+                indices.push((rng.next_u32() % 256) | sign);
+            }
+            seg_starts.push(u32::try_from(indices.len()).unwrap());
+        }
+        // Deterministic edge segments: all-negative, and P - P.
+        indices.extend([SEG_INDEX_SIGN_BIT, 1 | SEG_INDEX_SIGN_BIT]);
+        seg_starts.push(u32::try_from(indices.len()).unwrap());
+        indices.extend([3, 3 | SEG_INDEX_SIGN_BIT]);
+        seg_starts.push(u32::try_from(indices.len()).unwrap());
+
+        let device = g1_seg_sums(ctx(), &bases, &indices, &seg_starts).expect("dispatch");
+        for (seg, window) in seg_starts.windows(2).enumerate() {
+            let expected = host_sum(&bases, &indices[window[0] as usize..window[1] as usize]);
+            assert_eq!(device[seg], expected, "signed segment {seg} diverged");
+        }
+        assert!(device[device.len() - 1].is_zero());
     }
 
     /// The three g1_madd special cases, unreachable through random data:

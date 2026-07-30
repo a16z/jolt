@@ -301,7 +301,9 @@ kernel void jk_g1_combine_rows(
 
 // One thread per segment: sum the selected bases into a Jacobian point.
 //   bases      — host G1Affine array (stride JK_G1_AFFINE_STRIDE u32s)
-//   indices    — base indices, all segments concatenated
+//   indices    — base indices, all segments concatenated; bit 31 selects
+//                the NEGATED base (x, -y) — the signed-digit MSM entries of
+//                the increment-column path (one-hot indices never set it)
 //   seg_starts — n_segs + 1 prefix offsets into `indices`
 //   out        — n_segs Jacobian points (3 * FR_LIMBS u32s each)
 //   params[0]  — n_segs
@@ -321,7 +323,15 @@ kernel void jk_g1_seg_sum(
     uint end = seg_starts[tid + 1];
     G1Jac acc = g1_identity();
     for (uint i = start; i < end; i++) {
-        acc = g1_madd(acc, g1_load_base(bases, indices[i]));
+        uint raw = indices[i];
+        G1AffinePt q = g1_load_base(bases, raw & 0x7fffffffu);
+        if (raw >> 31) {
+            // -(x, y) = (x, q - y); y is canonical nonzero (no base has
+            // y = 0 on y^2 = x^3 + 3), so fq_sub yields the canonical
+            // negation.
+            q.y = fq_sub(fq_zero(), q.y);
+        }
+        acc = g1_madd(acc, q);
     }
     device uint* dst = out + tid * (3u * FR_LIMBS);
     for (uint i = 0; i < FR_LIMBS; i++) {

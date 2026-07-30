@@ -8,25 +8,34 @@
 //! instead of following it:
 //!
 //! ```text
-//! driver   [extract sc0|bucket|—i128 MSMs—][extract sc1|bucket|…]
+//! driver   [extract sc0|bucket|digit-recode][extract sc1|bucket|digit-recode]…
 //! gpu      ......[G1 seg sums sc0]......[G1 seg sums sc1]......
 //! tier-2   ............[Miller absorb sc0]...[Miller absorb sc1]…[final exps]
 //! ```
 //!
 //! - The **driver** (calling thread) streams superchunks, derives each
 //!   one-hot column's hot addresses, bucket-sorts them into per
-//!   `(column, window, k)` gather segments, ships the segment job to the GPU
-//!   lane, and runs the increment columns' i128 row MSMs — the identical
+//!   `(column, window, k)` gather segments, recodes the increment columns'
+//!   i128 row scalars into signed base-256 digit buckets (per
+//!   `(column, window, slot, |digit|)`, scalar and digit signs folded into
+//!   the gather index's negation bit), and ships both segment families to
+//!   the GPU lane as one job. Below the `commit_inc` gate the increment
+//!   columns instead run the identical
 //!   [`StreamingCommitment::feed_i128_rows`] calls the optimized kernel
 //!   makes.
 //! - The **GPU lane** (dedicated thread; command buffers are not `Send`)
-//!   runs `jk_g1_seg_sum` over each superchunk: every segment thread sums
-//!   its selected SRS bases in Jacobian form — the work the CPU tier does
-//!   with batch-affine additions.
+//!   runs `jk_g1_seg_sum` over each superchunk — one command buffer, one
+//!   dispatch per segment family: every segment thread sums its selected
+//!   (possibly negated) SRS bases in Jacobian form. One-hot buckets are the
+//!   work the CPU tier does with batch-affine additions; increment buckets
+//!   are the Pippenger inner loop of the CPU tier's `msm_i128`.
 //! - The **tier-2 lane** decodes finished segments, reduces multi-segment
 //!   buckets, batch-normalizes, records the row commitments, and multiplies
-//!   the rows' Miller loops into per-column [`Tier2Accumulator`]s. One final
-//!   exponentiation per column at the end.
+//!   the rows' Miller loops into per-column [`Tier2Accumulator`]s (one final
+//!   exponentiation per column at the end). Increment buckets it reduces
+//!   arithmetically instead: per `(column, window)` a weighted running sum
+//!   over digit magnitudes and a base-256 Horner across digit slots yield
+//!   the row commitment — the same group value `msm_i128` produces.
 //!
 //! Row commitments equal the CPU path's at group level by construction
 //! (both are sums of the same base subsets), and after batch normalization
@@ -45,7 +54,7 @@ use std::sync::mpsc::{sync_channel, SyncSender};
 
 use ark_bn254::G1Projective;
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::Zero;
+use ark_ff::{AdditiveGroup, Zero};
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::Bn254G1;
 use jolt_dory::{
@@ -57,7 +66,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer, WitnessError};
 use rayon::prelude::*;
 
-use super::g1::{bases_as_u32s, JAC_U32S};
+use super::g1::{bases_as_u32s, jac_from_device_limbs, JAC_U32S, SEG_INDEX_SIGN_BIT};
 use super::runtime::{KernelId, MetalContext};
 use super::{metal_gate, MetalError, PageAlignedVec};
 use crate::commitment::{
@@ -81,6 +90,36 @@ const PIPELINE_DEPTH: usize = 2;
 /// spans 2–4 threads — enough threads per superchunk (~20k) to fill the
 /// device, enough serial adds per thread to amortize scheduling.
 const MAX_SEGMENT_LEN: usize = 256;
+
+/// Signed base-256 digit slots covering any `i128` magnitude (16 bytes plus
+/// a possible recoding carry into a 17th slot).
+const INC_SLOTS: usize = 17;
+
+/// Digit magnitudes after signed recoding span `1..=128`.
+const INC_MAGNITUDES: usize = 128;
+
+/// Signed base-256 recoding: `value = Σ ±magnitude · 256^slot` over the
+/// emitted `(slot, magnitude, negate)` digits, `magnitude ∈ 1..=128`,
+/// `slot < INC_SLOTS`. The scalar's sign folds into each digit's `negate`,
+/// so bucket sums need only base negation. Any correct decomposition yields
+/// the same MSM group value, which is all downstream parity needs.
+#[inline]
+fn for_each_signed_digit(value: i128, mut digit: impl FnMut(u32, u32, bool)) {
+    let negative = value < 0;
+    let mut magnitude_bytes = value.unsigned_abs();
+    let mut carry = 0u32;
+    let mut slot = 0u32;
+    while magnitude_bytes != 0 || carry != 0 {
+        let d = ((magnitude_bytes & 0xff) as u32) + carry;
+        magnitude_bytes >>= 8;
+        carry = u32::from(d > 128);
+        let (magnitude, digit_negative) = if d > 128 { (256 - d, true) } else { (d, false) };
+        if magnitude != 0 {
+            digit(slot, magnitude, digit_negative != negative);
+        }
+        slot += 1;
+    }
+}
 
 /// Install the Dory-specialized Metal commit slot when the backend is
 /// instantiated at `(Fr, DoryScheme)` — the only pairing the device tier
@@ -140,6 +179,9 @@ impl CommitWitness<Fr, DoryScheme> for MetalCommitWitness {
 
         #[expect(clippy::expect_used, reason = "checked by the device gate above")]
         let ctx = MetalContext::global().expect("gated on a live context");
+        // Separately gated so the increment path can be ablated (or raised)
+        // without touching the one-hot pipeline.
+        let inc_device = metal_gate("commit_inc", cycles);
         match commit_streaming_metal(
             ctx,
             source,
@@ -148,6 +190,7 @@ impl CommitWitness<Fr, DoryScheme> for MetalCommitWitness {
             setup,
             SUPERCHUNK_CYCLES,
             MAX_SEGMENT_LEN,
+            inc_device,
         ) {
             Ok(outputs) => Ok(outputs
                 .into_iter()
@@ -202,27 +245,57 @@ struct SegOut {
     row: u32,
 }
 
+/// One increment segment's destination: the increment column ordinal, the
+/// absolute window (= tier-2 row), and the signed-digit bucket it belongs
+/// to. Segments are emitted sorted by all four fields, so split buckets are
+/// consecutive and `(column, window)` groups are contiguous runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct IncSeg {
+    column: u32,
+    window: u32,
+    slot: u8,
+    magnitude: u8,
+}
+
+/// The increment columns' half of a superchunk job: signed gather indices
+/// (bit 31 = negated base) grouped by digit bucket.
+struct IncJob {
+    indices: PageAlignedVec<u32>,
+    seg_starts: PageAlignedVec<u32>,
+    segs: Vec<IncSeg>,
+}
+
 /// A superchunk's device job: gather indices grouped by segment, the
-/// segment prefix, and each segment's destination.
+/// segment prefix, and each segment's destination; plus the increment
+/// columns' bucket family when they ride the device.
 struct GpuJob {
     indices: PageAlignedVec<u32>,
     seg_starts: PageAlignedVec<u32>,
     segs: Vec<SegOut>,
+    inc: Option<IncJob>,
 }
 
-/// A finished job: decoded destinations plus the raw Jacobian limb results.
+/// A finished job: decoded destinations plus the raw Jacobian limb results,
+/// per segment family.
 struct GpuDone {
     segs: Vec<SegOut>,
     jac: Vec<u32>,
+    inc: Option<(Vec<IncSeg>, Vec<u32>)>,
 }
 
 /// The streaming metal commit at explicit superchunk width and segment cap
 /// (tests shrink both to force multi-delivery and multi-segment reduction).
-/// Returns per-column outputs in `kinds` order.
+/// Returns per-column outputs in `kinds` order. `inc_device` routes the
+/// increment columns' row MSMs through the device as signed digit buckets;
+/// off, they run the CPU `feed_i128_rows` path.
 #[expect(
     clippy::expect_used,
     reason = "worker joins fail only on a panicked worker (which must propagate); the \
               output expect is the one-hot/increment kind exhaustiveness"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal seam; the trailing three are the test/ablation knobs"
 )]
 fn commit_streaming_metal(
     ctx: &'static MetalContext,
@@ -232,6 +305,7 @@ fn commit_streaming_metal(
     setup: &DoryProverSetup,
     superchunk_cycles: usize,
     max_segment_len: usize,
+    inc_device: bool,
 ) -> Result<Vec<(DoryCommitment, DoryHint)>, MetalCommitError> {
     let cycles = 1usize << grid.log_t;
     let row_width = grid.num_columns();
@@ -247,6 +321,7 @@ fn commit_streaming_metal(
         .filter(|(_, kind)| kind.is_one_hot())
         .collect();
     let n_one_hot = one_hot.len();
+    let n_inc = kinds.len() - n_one_hot;
 
     // Shared pass state, built while nothing else is running: the prepared
     // G2 generators every tier-2 absorb pairs against, and the affine SRS
@@ -285,13 +360,48 @@ fn commit_streaming_metal(
                     &[&bases_buf, &indices_buf, &starts_buf, &out_buf],
                     n_segs,
                 );
+                // The increment family joins the same command buffer: a
+                // second dispatch over disjoint buffers, one wait for both.
+                let inc_bufs = match &job.inc {
+                    Some(inc) => {
+                        let n_inc_segs = inc.segs.len();
+                        let inc_indices_buf = inc.indices.device_buffer(ctx)?;
+                        let inc_starts_buf = inc.seg_starts.device_buffer(ctx)?;
+                        let inc_out_buf = ctx.alloc_u32s(n_inc_segs * JAC_U32S)?;
+                        pass.dispatch(
+                            KernelId::G1SegSum,
+                            &[u32::try_from(n_inc_segs).map_err(|_| {
+                                MetalError::Execution(
+                                    "increment segment count overflows u32".to_owned(),
+                                )
+                            })?],
+                            &[&bases_buf, &inc_indices_buf, &inc_starts_buf, &inc_out_buf],
+                            n_inc_segs,
+                        );
+                        Some((n_inc_segs, inc_indices_buf, inc_starts_buf, inc_out_buf))
+                    }
+                    None => None,
+                };
                 pass.run()?;
                 let mut jac = vec![0u32; n_segs * JAC_U32S];
                 out_buf.copy_to_u32s(&mut jac);
+                let inc_jac = inc_bufs.as_ref().map(|(n_inc_segs, _, _, inc_out_buf)| {
+                    let mut inc_jac = vec![0u32; n_inc_segs * JAC_U32S];
+                    inc_out_buf.copy_to_u32s(&mut inc_jac);
+                    inc_jac
+                });
+                // Release the borrows on job.inc's buffers before moving its
+                // segment table out.
+                drop(inc_bufs);
+                let inc_done = match (job.inc, inc_jac) {
+                    (Some(inc), Some(inc_jac)) => Some((inc.segs, inc_jac)),
+                    _ => None,
+                };
                 if tx_done
                     .send(GpuDone {
                         segs: job.segs,
                         jac,
+                        inc: inc_done,
                     })
                     .is_err()
                 {
@@ -304,16 +414,26 @@ fn commit_streaming_metal(
         });
 
         let prep_ref = &prep;
-        let tier2 = scope.spawn(move || -> (Vec<Tier2Accumulator>, Vec<Vec<Bn254G1>>) {
+        type Tier2Out = (Vec<Tier2Accumulator>, Vec<Vec<Bn254G1>>, Vec<Vec<Bn254G1>>);
+        let tier2 = scope.spawn(move || -> Tier2Out {
             let mut accumulators: Vec<Tier2Accumulator> =
                 (0..n_one_hot).map(|_| Tier2Accumulator::new()).collect();
             let mut rows: Vec<Vec<Bn254G1>> = (0..n_one_hot)
                 .map(|_| vec![Default::default(); one_hot_rows])
                 .collect();
+            // Increment row commitments by absolute window; windows whose
+            // scalars are all zero receive no segments and stay identity —
+            // exactly the CPU path's zero-MSM rows.
+            let mut inc_rows: Vec<Vec<Bn254G1>> = (0..n_inc)
+                .map(|_| vec![Default::default(); windows_total])
+                .collect();
             while let Ok(done) = rx_done.recv() {
                 absorb_superchunk(prep_ref, &done, &mut accumulators, &mut rows);
+                if let Some((inc_segs, inc_jac)) = &done.inc {
+                    reduce_inc_superchunk(inc_segs, inc_jac, &mut inc_rows);
+                }
             }
-            (accumulators, rows)
+            (accumulators, rows, inc_rows)
         });
 
         let mut consumers = (MetalColumns {
@@ -327,6 +447,7 @@ fn commit_streaming_metal(
                 .filter(|(_, kind)| !kind.is_one_hot())
                 .map(|(index, kind)| (index, kind, DoryScheme::begin(setup)))
                 .collect(),
+            inc_device,
             row_width,
             one_hot_k,
             windows_fed: 0,
@@ -345,7 +466,7 @@ fn commit_streaming_metal(
         // lane then drains the done queue and exits.
         consumer.tx = None;
         let gpu_result = gpu.join().expect("GPU lane panicked");
-        let (accumulators, rows) = tier2.join().expect("tier-2 lane panicked");
+        let (accumulators, rows, inc_rows) = tier2.join().expect("tier-2 lane panicked");
 
         stream_result.map_err(MetalCommitError::Witness)?;
         gpu_result?;
@@ -365,7 +486,11 @@ fn commit_streaming_metal(
         {
             outputs[*ids_index] = Some(one_hot_output_from_rows(setup, column_rows, acc));
         }
-        for (ids_index, _, partial) in consumer.increments {
+        for ((ids_index, _, mut partial), rows) in consumer.increments.into_iter().zip(inc_rows) {
+            if inc_device {
+                // The CPU partial never fed; adopt the device-reduced rows.
+                partial.row_commitments = rows;
+            }
             outputs[ids_index] = Some(DoryScheme::finish_with_hint_prepared(
                 partial, setup, prep_ref,
             ));
@@ -442,6 +567,7 @@ struct MetalColumns<'a> {
     send_failed: bool,
     one_hot: &'a [(usize, ColumnKind)],
     increments: Vec<(usize, ColumnKind, DoryPartialCommitment)>,
+    inc_device: bool,
     row_width: usize,
     one_hot_k: usize,
     windows_fed: usize,
@@ -462,11 +588,9 @@ impl StreamConsumer for MetalColumns<'_> {
         let window_base = self.windows_fed;
         self.windows_fed += n_windows;
 
-        // Ship the one-hot job first so the device starts while the CPU
-        // handles the increment MSMs.
         if let Some(tx) = &self.tx {
             if !self.send_failed {
-                let job = build_gpu_job(
+                let mut job = build_gpu_job(
                     chunk,
                     self.one_hot,
                     self.row_width,
@@ -475,6 +599,19 @@ impl StreamConsumer for MetalColumns<'_> {
                     self.windows_total,
                     self.max_segment_len,
                 );
+                if self.inc_device && !self.increments.is_empty() {
+                    let increments: Vec<Vec<i128>> = self
+                        .increments
+                        .iter()
+                        .map(|(_, kind, _)| chunk.iter().map(|row| kind.increment(row)).collect())
+                        .collect();
+                    job.inc = build_inc_job(
+                        &increments,
+                        self.row_width,
+                        window_base,
+                        self.max_segment_len,
+                    );
+                }
                 if tx.send(job).is_err() {
                     // Device lane died; its join surfaces the error after
                     // the stream completes.
@@ -483,9 +620,11 @@ impl StreamConsumer for MetalColumns<'_> {
             }
         }
 
-        for (_, kind, partial) in &mut self.increments {
-            let increments: Vec<i128> = chunk.iter().map(|row| kind.increment(row)).collect();
-            DoryScheme::feed_i128_rows(partial, &increments, self.row_width, self.setup);
+        if !self.inc_device {
+            for (_, kind, partial) in &mut self.increments {
+                let increments: Vec<i128> = chunk.iter().map(|row| kind.increment(row)).collect();
+                DoryScheme::feed_i128_rows(partial, &increments, self.row_width, self.setup);
+            }
         }
     }
 }
@@ -596,6 +735,194 @@ fn build_gpu_job(
         indices,
         seg_starts: PageAlignedVec::from_slice(&seg_starts_host),
         segs,
+        inc: None,
+    }
+}
+
+/// Bucket a superchunk's increment scalars into signed-digit gather
+/// segments: per `(column, window)` block, count-sort each scalar's signed
+/// base-256 digits into `(slot, magnitude)` buckets whose entries are
+/// window-local base positions (bit 31 = negated base), then split buckets
+/// at the segment cap. `None` when every scalar is zero (no device work;
+/// the rows stay identity).
+///
+/// `increments` holds one whole-superchunk scalar vector per increment
+/// column; `window_base` makes the emitted windows absolute.
+fn build_inc_job(
+    increments: &[Vec<i128>],
+    row_width: usize,
+    window_base: usize,
+    max_segment_len: usize,
+) -> Option<IncJob> {
+    assert!(
+        row_width < SEG_INDEX_SIGN_BIT as usize,
+        "row width must leave the gather sign bit free"
+    );
+    let n_windows = increments
+        .first()
+        .map_or(0, |column| column.len() / row_width);
+    let n_blocks = increments.len() * n_windows;
+    if n_blocks == 0 {
+        return None;
+    }
+    let buckets_per_block = INC_SLOTS * INC_MAGNITUDES;
+
+    // Bucket counts, (column, window) blocks of `buckets_per_block` each.
+    let mut counts = vec![0u32; n_blocks * buckets_per_block];
+    counts
+        .par_chunks_mut(buckets_per_block)
+        .enumerate()
+        .for_each(|(block, counts)| {
+            let (column, window) = (block / n_windows, block % n_windows);
+            for &value in &increments[column][window * row_width..(window + 1) * row_width] {
+                for_each_signed_digit(value, |slot, magnitude, _| {
+                    counts[slot as usize * INC_MAGNITUDES + (magnitude - 1) as usize] += 1;
+                });
+            }
+        });
+
+    // Exclusive prefix over all buckets → gather layout offsets.
+    let mut bucket_starts = vec![0u32; counts.len() + 1];
+    for (i, &count) in counts.iter().enumerate() {
+        bucket_starts[i + 1] = bucket_starts[i] + count;
+    }
+    let total_digits = bucket_starts[counts.len()] as usize;
+    if total_digits == 0 {
+        return None;
+    }
+
+    // Scatter window-local base positions (plus sign) into their buckets;
+    // blocks own disjoint bucket ranges, so they fill in parallel.
+    let mut indices = PageAlignedVec::from_elem(0u32, total_digits);
+    {
+        let indices = &mut indices[..];
+        let mut blocks: Vec<&mut [u32]> = Vec::with_capacity(n_blocks);
+        let mut rest = indices;
+        for block in 0..n_blocks {
+            let start = bucket_starts[block * buckets_per_block] as usize;
+            let end = bucket_starts[(block + 1) * buckets_per_block] as usize;
+            let (head, tail) = rest.split_at_mut(end - start);
+            blocks.push(head);
+            rest = tail;
+        }
+        blocks.par_iter_mut().enumerate().for_each(|(block, out)| {
+            let (column, window) = (block / n_windows, block % n_windows);
+            let base = bucket_starts[block * buckets_per_block];
+            let mut cursors: Vec<u32> = (0..buckets_per_block)
+                .map(|bucket| bucket_starts[block * buckets_per_block + bucket] - base)
+                .collect();
+            for (position, &value) in increments[column]
+                [window * row_width..(window + 1) * row_width]
+                .iter()
+                .enumerate()
+            {
+                for_each_signed_digit(value, |slot, magnitude, negate| {
+                    let bucket = slot as usize * INC_MAGNITUDES + (magnitude - 1) as usize;
+                    let sign = if negate { SEG_INDEX_SIGN_BIT } else { 0 };
+                    out[cursors[bucket] as usize] = position as u32 | sign;
+                    cursors[bucket] += 1;
+                });
+            }
+        });
+    }
+
+    // Segment table: split buckets at the cap; empty buckets emit nothing.
+    let mut seg_starts = vec![0u32];
+    let mut segs = Vec::new();
+    for block in 0..n_blocks {
+        let (column, window) = (block / n_windows, block % n_windows);
+        for slot in 0..INC_SLOTS {
+            for magnitude in 1..=INC_MAGNITUDES {
+                let bucket = block * buckets_per_block + slot * INC_MAGNITUDES + magnitude - 1;
+                let end = bucket_starts[bucket + 1] as usize;
+                let mut cursor = bucket_starts[bucket] as usize;
+                while cursor < end {
+                    let seg_end = (cursor + max_segment_len).min(end);
+                    seg_starts.push(seg_end as u32);
+                    segs.push(IncSeg {
+                        column: column as u32,
+                        window: (window_base + window) as u32,
+                        slot: slot as u8,
+                        magnitude: magnitude as u8,
+                    });
+                    cursor = seg_end;
+                }
+            }
+        }
+    }
+
+    Some(IncJob {
+        indices,
+        seg_starts: PageAlignedVec::from_slice(&seg_starts),
+        segs,
+    })
+}
+
+/// Decode one superchunk's increment segment sums into row commitments.
+/// Per `(column, window)` group (a contiguous run of segments sorted by
+/// ascending `(slot, magnitude)`): merge split buckets, form each slot's
+/// weighted total `T_slot = Σ_m m · S_m` by a descending running sum, and
+/// combine slots by base-256 Horner — `row = Σ_slot 256^slot · T_slot`,
+/// the exact MSM group value of the window's scalars.
+fn reduce_inc_superchunk(segs: &[IncSeg], jac: &[u32], inc_rows: &mut [Vec<Bn254G1>]) {
+    let mut groups: Vec<(usize, usize, std::ops::Range<usize>)> = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < segs.len() {
+        let (column, window) = (segs[cursor].column as usize, segs[cursor].window as usize);
+        let start = cursor;
+        while cursor < segs.len()
+            && segs[cursor].column as usize == column
+            && segs[cursor].window as usize == window
+        {
+            cursor += 1;
+        }
+        groups.push((column, window, start..cursor));
+    }
+
+    let rows: Vec<(usize, usize, Bn254G1)> = groups
+        .into_par_iter()
+        .map(|(column, window, range)| {
+            let mut row = G1Projective::zero();
+            let mut cursor = range.end;
+            for slot in (0..INC_SLOTS).rev() {
+                // Horner shift for the slots already combined above this one.
+                if !row.is_zero() {
+                    for _ in 0..8 {
+                        row = row.double();
+                    }
+                }
+                let slot_end = cursor;
+                while cursor > range.start && segs[cursor - 1].slot as usize == slot {
+                    cursor -= 1;
+                }
+                if cursor == slot_end {
+                    continue;
+                }
+                // Descending running sum: after bucket m folds into `acc`,
+                // every later `total += acc` re-adds it — m times in all.
+                // Identity-accumulator adds early-out, so the dense loop
+                // costs real adds only below the largest live magnitude.
+                let slot_segs = &segs[cursor..slot_end];
+                let mut acc = G1Projective::zero();
+                let mut total = G1Projective::zero();
+                let mut next = slot_segs.len();
+                for magnitude in (1..=INC_MAGNITUDES as u8).rev() {
+                    while next > 0 && slot_segs[next - 1].magnitude == magnitude {
+                        let seg = cursor + next - 1;
+                        acc += jac_from_device_limbs(&jac[seg * JAC_U32S..(seg + 1) * JAC_U32S]);
+                        next -= 1;
+                    }
+                    if !acc.is_zero() {
+                        total += acc;
+                    }
+                }
+                row += total;
+            }
+            (column, window, Bn254G1::from(row))
+        })
+        .collect();
+    for (column, window, point) in rows {
+        inc_rows[column][window] = point;
     }
 }
 
@@ -606,12 +933,134 @@ fn build_gpu_job(
     reason = "tests: fail loudly"
 )]
 mod tests {
+    use ark_bn254::G1Affine;
+    use ark_ff::{Field, UniformRand};
     use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
     use jolt_witness::RowSource;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{RngCore, SeedableRng};
 
+    use super::super::g1::g1_seg_sum_dispatch;
     use super::super::testing::gpu_lock;
     use super::*;
     use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
+
+    /// Interesting signed-recoding inputs: carry chains, magnitude-128
+    /// boundaries, and the extreme i128s (`unsigned_abs` of `i128::MIN`).
+    const EDGE_VALUES: [i128; 20] = [
+        0,
+        1,
+        -1,
+        127,
+        128,
+        129,
+        -127,
+        -128,
+        -129,
+        255,
+        256,
+        257,
+        -255,
+        -256,
+        65535,
+        -65536,
+        i64::MAX as i128,
+        i64::MIN as i128,
+        i128::MAX,
+        i128::MIN,
+    ];
+
+    /// The recoding is a correct signed-digit decomposition: digits stay in
+    /// range and reconstruct the value in the scalar field.
+    #[test]
+    fn signed_digits_reconstruct() {
+        let check = |value: i128| {
+            let mut sum = ark_bn254::Fr::from(0u64);
+            let mut digits = 0usize;
+            for_each_signed_digit(value, |slot, magnitude, negate| {
+                assert!((1..=INC_MAGNITUDES as u32).contains(&magnitude), "{value}");
+                assert!((slot as usize) < INC_SLOTS, "{value}");
+                let term = ark_bn254::Fr::from(u64::from(magnitude))
+                    * ark_bn254::Fr::from(256u64).pow([u64::from(slot)]);
+                if negate {
+                    sum -= term;
+                } else {
+                    sum += term;
+                }
+                digits += 1;
+            });
+            assert_eq!(sum, ark_bn254::Fr::from(value), "value {value}");
+            if value == 0 {
+                assert_eq!(digits, 0);
+            }
+        };
+        for value in EDGE_VALUES {
+            check(value);
+        }
+        let mut rng = ChaCha20Rng::seed_from_u64(23);
+        for _ in 0..500 {
+            let value = ((u128::from(rng.next_u64()) << 64) | u128::from(rng.next_u64())) as i128;
+            check(value >> (rng.next_u32() % 128));
+        }
+    }
+
+    /// Full increment path against arkworks: recode + bucket, device segment
+    /// sums (split at a tiny cap), weighted reduction — every window's row
+    /// equals the direct per-scalar MSM, at a nonzero window base.
+    #[test]
+    fn inc_rows_match_direct_msm() {
+        let _lock = gpu_lock();
+        let ctx = MetalContext::global().expect("metal context");
+        let mut rng = ChaCha20Rng::seed_from_u64(29);
+        let row_width = 8usize;
+        let n_windows = 3usize;
+        let window_base = 5usize;
+        let bases: Vec<G1Affine> = (0..row_width).map(|_| G1Affine::rand(&mut rng)).collect();
+
+        // Column 0: the edge values (padded with a repeat digit-collision
+        // value to force bucket splits). Column 1: random full-range i128s.
+        let mut columns = vec![Vec::new(), Vec::new()];
+        columns[0].extend_from_slice(&EDGE_VALUES[..row_width * n_windows - 4]);
+        columns[0].extend([42i128; 4]);
+        for _ in 0..row_width * n_windows {
+            columns[1]
+                .push(((u128::from(rng.next_u64()) << 64) | u128::from(rng.next_u64())) as i128);
+        }
+
+        let inc = build_inc_job(&columns, row_width, window_base, 2).expect("nonzero scalars");
+        let n_segs = inc.segs.len();
+        let bases_buf = ctx.wrap_slice(bases_as_u32s(&bases)).unwrap();
+        let indices_buf = inc.indices.device_buffer(ctx).unwrap();
+        let starts_buf = inc.seg_starts.device_buffer(ctx).unwrap();
+        let out_buf = ctx.alloc_u32s(n_segs * JAC_U32S).unwrap();
+        g1_seg_sum_dispatch(ctx, &bases_buf, &indices_buf, &starts_buf, &out_buf, n_segs)
+            .expect("dispatch");
+        let mut jac = vec![0u32; n_segs * JAC_U32S];
+        out_buf.copy_to_u32s(&mut jac);
+
+        let mut inc_rows: Vec<Vec<Bn254G1>> =
+            vec![vec![Default::default(); window_base + n_windows]; columns.len()];
+        reduce_inc_superchunk(&inc.segs, &jac, &mut inc_rows);
+
+        for (column, values) in columns.iter().enumerate() {
+            for window in 0..n_windows {
+                let expected = values[window * row_width..(window + 1) * row_width]
+                    .iter()
+                    .zip(&bases)
+                    .fold(G1Projective::zero(), |acc, (&value, base)| {
+                        acc + *base * ark_bn254::Fr::from(value)
+                    });
+                assert_eq!(
+                    inc_rows[column][window_base + window],
+                    Bn254G1::from(expected),
+                    "column {column} window {window}"
+                );
+            }
+            for row in &inc_rows[column][..window_base] {
+                assert_eq!(*row, Bn254G1::default(), "untouched row");
+            }
+        }
+    }
 
     fn assert_same(
         cpu: &[WitnessCommitment<DoryScheme>],
@@ -692,14 +1141,36 @@ mod tests {
                 &setup,
                 1 << shape.log_t,
                 MAX_SEGMENT_LEN,
+                true,
             )
             .expect("whole-trace metal commit");
             assert_same(&optimized, &whole_trace, "whole-trace superchunk");
 
-            let single_window =
-                commit_streaming_metal(ctx, source, &kinds, grid, &setup, grid.num_columns(), 1)
-                    .expect("single-window metal commit");
+            let single_window = commit_streaming_metal(
+                ctx,
+                source,
+                &kinds,
+                grid,
+                &setup,
+                grid.num_columns(),
+                1,
+                true,
+            )
+            .expect("single-window metal commit");
             assert_same(&optimized, &single_window, "single-window superchunk");
+
+            let inc_on_cpu = commit_streaming_metal(
+                ctx,
+                source,
+                &kinds,
+                grid,
+                &setup,
+                1 << shape.log_t,
+                MAX_SEGMENT_LEN,
+                false,
+            )
+            .expect("cpu-increment metal commit");
+            assert_same(&optimized, &inc_on_cpu, "cpu-increment fallback");
         });
     }
 
@@ -709,9 +1180,10 @@ mod tests {
     #[test]
     fn metal_slot_matches_optimized_through_gate() {
         let _lock = gpu_lock();
-        // nextest runs one process per test, so the env write cannot race
+        // nextest runs one process per test, so the env writes cannot race
         // another test.
         std::env::set_var("JOLT_METAL_MIN_TERMS_COMMIT", "1");
+        std::env::set_var("JOLT_METAL_MIN_TERMS_COMMIT_INC", "1");
         let shape = FixtureShape {
             log_t: 6,
             ram_k: 16,
