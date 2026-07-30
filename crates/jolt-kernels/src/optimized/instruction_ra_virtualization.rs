@@ -143,6 +143,9 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
     rounds_bound: usize,
+    /// A `begin_round` device launch is in flight (its `collect_round`
+    /// pending).
+    launched: bool,
 }
 
 impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
@@ -269,6 +272,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
             rounds_bound: 0,
+            launched: false,
         })
     }
 
@@ -450,6 +454,44 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel<F> 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
         self.bind(bind);
         Ok(())
+    }
+
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
+        // The single-factor recipe has no device tier (as in `message`).
+        if self.num_committed_per_virtual < 2 {
+            return Ok(false);
+        }
+        self.launched = self
+            .folded_ra
+            .launch_device_lanes(self.gruen.e_in_current(), self.gruen.e_out_current());
+        Ok(self.launched)
+    }
+
+    fn collect_round(
+        &mut self,
+        _bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if std::mem::take(&mut self.launched) {
+            if let Some(lanes) = self.folded_ra.collect_device_lanes() {
+                debug_assert_eq!(lanes.len(), self.num_committed_per_virtual);
+                return Ok(self.gruen.gruen_poly_from_evals(&lanes, previous_claim));
+            }
+            // Wait failure: the driver latched off and normalized state —
+            // fall through to the synchronous recompute of the SAME round.
+        }
+        // `begin_round` already bound, so recompute with no bind. The
+        // device tier inside declines (latched off or already reclaimed).
+        self.message(round, previous_claim)
     }
 }
 

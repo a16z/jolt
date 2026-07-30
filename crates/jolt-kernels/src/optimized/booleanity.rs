@@ -554,6 +554,7 @@ pub(crate) fn prepare_booleanity_cycle<F: Field>(
         gamma_powers_inv,
         layout,
         rounds_bound: 0,
+        launched: false,
     }))
 }
 
@@ -612,6 +613,9 @@ struct OptimizedBooleanityCycleKernel<F: Field> {
     gamma_powers_inv: Vec<F>,
     layout: JoltRaPolynomialLayout,
     rounds_bound: usize,
+    /// A `begin_round` device launch is in flight (its `collect_round`
+    /// pending).
+    launched: bool,
 }
 
 impl<F: Field> OptimizedBooleanityCycleKernel<F> {
@@ -700,6 +704,40 @@ impl<F: Field> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
         self.bind(bind);
         Ok(())
+    }
+
+    fn begin_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        _previous_claim: F,
+    ) -> Result<bool, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge);
+        }
+        self.launched = self
+            .tables
+            .launch_device_lanes(self.eq.e_in_current(), self.eq.e_out_current());
+        Ok(self.launched)
+    }
+
+    fn collect_round(
+        &mut self,
+        _bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if std::mem::take(&mut self.launched) {
+            if let Some(lanes) = self.tables.collect_device_lanes() {
+                debug_assert_eq!(lanes.len(), 2);
+                return Ok(self.eq.gruen_poly_deg_3(lanes[0], lanes[1], previous_claim));
+            }
+            // Wait failure: the driver latched off and normalized state —
+            // fall through to the synchronous recompute of the SAME round.
+        }
+        // `begin_round` already bound, so recompute with no bind. The
+        // device tier inside declines (latched off or already reclaimed).
+        self.prove_round(None, round, previous_claim)
     }
 }
 

@@ -36,7 +36,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::{num_threadgroups, own_uninit_frs, DeviceRound, Partials};
 use crate::metal::buffers::{DeviceBuffer, OwnedDeviceBuffer};
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
-use crate::metal::runtime::{KernelId, MetalContext};
+use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::booleanity::{prepare_booleanity_cycle, BooleanityDeviceInputs};
 use crate::optimized::instruction_ra_virtualization::OptimizedInstructionRaVirtualizationKernel;
@@ -273,7 +273,12 @@ fn build_rav_driver(
 /// Device state shared by the two drivers: the packed rows, the per-poly
 /// selector metas, the lane partials and the dense ping-pong. The
 /// summand-specific dispatch encodings live on the driver wrappers.
+///
+/// Field order matters: `in_flight` is declared first so its wait-on-drop
+/// runs before any dispatched buffer's backing (`meta`, `partials`, `dense`)
+/// frees, should the driver drop with a round still in flight.
 struct DeviceLazyRa {
+    in_flight: Option<InFlight>,
     device: DeviceRound,
     rows: Arc<Vec<InstructionCycleRow>>,
     meta: OwnedDeviceBuffer<u32>,
@@ -282,6 +287,22 @@ struct DeviceLazyRa {
     mask: u32,
     partials: Partials,
     dense: Option<DenseTables>,
+}
+
+/// One two-phase round in flight (committed, not yet waited). Owns every
+/// per-round upload its command buffer reads, so the flight references only
+/// memory it carries, the driver holds, or an `Arc` keeps alive — `pass` is
+/// declared first so the wait-on-drop runs before those backings free.
+struct InFlight {
+    pass: DetachedPass,
+    num_tgs: usize,
+    /// `Some(bound)` for a dense flight: advance the ping-pong on collect.
+    dense_bound: Option<bool>,
+    /// A lazy flight's flattened branch-table upload (no-copy wrapped).
+    _flat: Vec<Fr>,
+    /// The round's gruen levels, copied into flight-owned buffers (see
+    /// [`own_eq`]).
+    _eq: (OwnedDeviceBuffer<Fr>, OwnedDeviceBuffer<Fr>),
 }
 
 /// Flat poly-major dense tables, compact at stride `len` in `cur` and
@@ -318,6 +339,7 @@ impl DeviceLazyRa {
         let meta = context.own_vec(meta_words)?;
         testing::note_copied_buffers(u64::from(meta.was_copied()));
         Ok(Self {
+            in_flight: None,
             device: DeviceRound::new(context, kind),
             partials: Partials::new(context, lanes, rows.len() / 2)?,
             rows,
@@ -327,6 +349,28 @@ impl DeviceLazyRa {
             mask: ((1u64 << chunk_bits) - 1) as u32,
             dense: None,
         })
+    }
+
+    /// Wait on the in-flight round and read its lane partials. A wait
+    /// failure latches the device off (`None`), leaving state exactly as
+    /// the synchronous failure paths do — a dense flight's ping-pong only
+    /// advances here, on success.
+    fn collect(&mut self) -> Option<Vec<Fr>> {
+        let flight = self.in_flight.take()?;
+        match flight.pass.wait() {
+            Ok(()) => {
+                testing::note_device_round();
+                let lanes = self.partials.sums(flight.num_tgs);
+                if let Some(bound) = flight.dense_bound {
+                    self.dense_advance(bound);
+                }
+                Some(lanes)
+            }
+            Err(error) => {
+                self.device.failed(&error);
+                None
+            }
+        }
     }
 
     /// Gate + tiling for a lazy round at branch width `width`; the geometry
@@ -459,7 +503,8 @@ fn concat_tables(tables: &[Vec<Fr>], stride: usize) -> Vec<Fr> {
 }
 
 /// Wrap the current gruen levels (tiny copies below the no-copy floor are
-/// expected and counted).
+/// expected and counted) — the synchronous tier, which waits with the
+/// borrows in scope.
 fn wrap_eq<'a>(
     context: &'static MetalContext,
     e_in: &'a [Fr],
@@ -471,6 +516,23 @@ fn wrap_eq<'a>(
         u64::from(e_in_buffer.was_copied()) + u64::from(e_out_buffer.was_copied()),
     );
     Ok((e_in_buffer, e_out_buffer))
+}
+
+/// Copy the current gruen levels into flight-owned buffers: a parked flight
+/// must not reference the consumer's eq backings (they drop with the
+/// consumer on paths the flight doesn't control), so the launch tier pays a
+/// small per-round copy the synchronous tier avoids.
+fn own_eq(
+    context: &'static MetalContext,
+    e_in: &[Fr],
+    e_out: &[Fr],
+) -> Result<(OwnedDeviceBuffer<Fr>, OwnedDeviceBuffer<Fr>), MetalError> {
+    let own = |values: &[Fr]| -> Result<OwnedDeviceBuffer<Fr>, MetalError> {
+        let buffer = context.own_vec(values.to_vec())?;
+        testing::note_copied_buffers(u64::from(buffer.was_copied()));
+        Ok(buffer)
+    };
+    Ok((own(e_in)?, own(e_out)?))
 }
 
 /// Booleanity-cycle driver: lanes `[q_constant, q_leading]`.
@@ -492,14 +554,19 @@ unsafe impl Send for BoolDriver {}
 unsafe impl Sync for BoolDriver {}
 
 impl BoolDriver {
-    fn dispatch_lazy(
-        &mut self,
+    /// Encode + commit the lazy round without blocking. `None` = soft
+    /// decline (ineligible wrap), nothing ran. The caller supplies the eq
+    /// buffers — wait-in-scope borrows on the synchronous path, flight-owned
+    /// copies on the launch path — and decides whether to wait in place or
+    /// park the flight.
+    fn commit_lazy(
+        &self,
         geometry: &RoundGeometry,
         tables: &[Vec<Fr>],
         width: usize,
-        e_in: &[Fr],
-        e_out: &[Fr],
-    ) -> Result<Option<Vec<Fr>>, MetalError> {
+        e_in_log2: u32,
+        eq: (&DeviceBuffer<'_>, &DeviceBuffer<'_>),
+    ) -> Result<Option<(DetachedPass, Vec<Fr>)>, MetalError> {
         let context = geometry.context;
         let core = &self.core;
         // An ineligible wrap declines softly — nothing ran, the device
@@ -510,11 +577,10 @@ impl BoolDriver {
         let flat = concat_tables(tables, width * core.k_entries);
         let tables_buffer = context.wrap_slice(fr_as_u32s(&flat))?;
         testing::note_copied_buffers(u64::from(tables_buffer.was_copied()));
-        let (e_in_buffer, e_out_buffer) = wrap_eq(context, e_in, e_out)?;
         let params = [
             geometry.groups as u32,
             geometry.num_tgs as u32,
-            e_in.len().trailing_zeros(),
+            e_in_log2,
             width as u32,
             core.num_polys as u32,
             core.k_entries as u32,
@@ -532,36 +598,67 @@ impl BoolDriver {
                 &meta,
                 &tables_buffer,
                 &rho,
-                &e_in_buffer,
-                &e_out_buffer,
+                eq.0,
+                eq.1,
                 &partials,
             ],
             geometry.groups,
         );
-        pass.run()?;
-        testing::note_device_round();
-        Ok(Some(core.partials.sums(geometry.num_tgs)))
+        // SAFETY: every dispatched backing outlives the flight and stays
+        // host-untouched until its wait — `flat` rides along in the return
+        // (the sync caller holds it across the wait, the launch caller
+        // parks it in the in-flight state); the eq buffers are the caller's
+        // per the signature contract; `rows` is Arc'd and
+        // `meta`/`rho`/`partials` are driver-owned, all next touched after
+        // the wait; copied uploads are Metal-owned (retained by the command
+        // buffer).
+        Ok(Some((unsafe { pass.commit().detach() }, flat)))
     }
 
-    fn dispatch_dense(
+    fn dispatch_lazy(
         &mut self,
         geometry: &RoundGeometry,
-        bind: Option<Fr>,
+        tables: &[Vec<Fr>],
+        width: usize,
         e_in: &[Fr],
         e_out: &[Fr],
-    ) -> Result<Vec<Fr>, MetalError> {
+    ) -> Result<Option<Vec<Fr>>, MetalError> {
+        let (e_in_buffer, e_out_buffer) = wrap_eq(geometry.context, e_in, e_out)?;
+        let committed = self.commit_lazy(
+            geometry,
+            tables,
+            width,
+            e_in.len().trailing_zeros(),
+            (&e_in_buffer, &e_out_buffer),
+        )?;
+        let Some((pass, _flat)) = committed else {
+            return Ok(None);
+        };
+        pass.wait()?;
+        testing::note_device_round();
+        Ok(Some(self.core.partials.sums(geometry.num_tgs)))
+    }
+
+    /// Encode + commit the fused dense round without blocking; eq buffers
+    /// and waiting as in [`commit_lazy`](Self::commit_lazy).
+    fn commit_dense(
+        &self,
+        geometry: &RoundGeometry,
+        bind: Option<Fr>,
+        e_in_log2: u32,
+        eq: (&DeviceBuffer<'_>, &DeviceBuffer<'_>),
+    ) -> Result<DetachedPass, MetalError> {
         let context = geometry.context;
         let core = &self.core;
         let dense = core
             .dense
             .as_ref()
             .ok_or(MetalError::UnsupportedShape("dense round before adoption"))?;
-        let (e_in_buffer, e_out_buffer) = wrap_eq(context, e_in, e_out)?;
         let mut params = vec![
             geometry.groups as u32,
             u32::from(bind.is_some()),
             geometry.num_tgs as u32,
-            e_in.len().trailing_zeros(),
+            e_in_log2,
             core.num_polys as u32,
             geometry.len as u32,
         ];
@@ -574,12 +671,33 @@ impl BoolDriver {
         pass.dispatch(
             KernelId::BoolDenseRound,
             &params,
-            &[&cur, &nxt, &rho, &e_in_buffer, &e_out_buffer, &partials],
+            &[&cur, &nxt, &rho, eq.0, eq.1, &partials],
             geometry.groups,
         );
-        pass.run()?;
+        // SAFETY: as in `commit_lazy` — the dense ping-pong, `rho` and
+        // `partials` are driver-owned and next touched after the wait; the
+        // eq buffers are the caller's per the signature contract; copied
+        // uploads are Metal-owned.
+        Ok(unsafe { pass.commit().detach() })
+    }
+
+    fn dispatch_dense(
+        &mut self,
+        geometry: &RoundGeometry,
+        bind: Option<Fr>,
+        e_in: &[Fr],
+        e_out: &[Fr],
+    ) -> Result<Vec<Fr>, MetalError> {
+        let (e_in_buffer, e_out_buffer) = wrap_eq(geometry.context, e_in, e_out)?;
+        self.commit_dense(
+            geometry,
+            bind,
+            e_in.len().trailing_zeros(),
+            (&e_in_buffer, &e_out_buffer),
+        )?
+        .wait()?;
         testing::note_device_round();
-        Ok(core.partials.sums(geometry.num_tgs))
+        Ok(self.core.partials.sums(geometry.num_tgs))
     }
 }
 
@@ -625,6 +743,78 @@ impl LazyRaDevice<Fr> for BoolDriver {
     fn take_dense(&mut self) -> Vec<Vec<Fr>> {
         self.core.take_dense()
     }
+
+    fn launch_lazy(&mut self, tables: &[Vec<Fr>], width: usize, e_in: &[Fr], e_out: &[Fr]) -> bool {
+        let Some(geometry) = self.core.lazy_geometry(width, e_in, e_out) else {
+            return false;
+        };
+        let launch = |driver: &Self| -> Result<Option<InFlight>, MetalError> {
+            let eq = own_eq(geometry.context, e_in, e_out)?;
+            let committed = driver.commit_lazy(
+                &geometry,
+                tables,
+                width,
+                e_in.len().trailing_zeros(),
+                (&eq.0.device_buffer(), &eq.1.device_buffer()),
+            )?;
+            Ok(committed.map(|(pass, flat)| InFlight {
+                pass,
+                num_tgs: geometry.num_tgs,
+                dense_bound: None,
+                _flat: flat,
+                _eq: eq,
+            }))
+        };
+        match launch(self) {
+            Ok(Some(flight)) => {
+                self.core.in_flight = Some(flight);
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                // Lazy rounds only read — the CPU recomputes this round.
+                self.core.device.failed(&error);
+                false
+            }
+        }
+    }
+
+    fn launch_dense(&mut self, bind: Option<Fr>, e_in: &[Fr], e_out: &[Fr]) -> bool {
+        let Some(geometry) = self.core.dense_geometry(bind.is_some(), e_in, e_out) else {
+            return false;
+        };
+        let launch = |driver: &Self| -> Result<InFlight, MetalError> {
+            let eq = own_eq(geometry.context, e_in, e_out)?;
+            let pass = driver.commit_dense(
+                &geometry,
+                bind,
+                e_in.len().trailing_zeros(),
+                (&eq.0.device_buffer(), &eq.1.device_buffer()),
+            )?;
+            Ok(InFlight {
+                pass,
+                num_tgs: geometry.num_tgs,
+                dense_bound: Some(bind.is_some()),
+                _flat: Vec::new(),
+                _eq: eq,
+            })
+        };
+        match launch(self) {
+            Ok(flight) => {
+                self.core.in_flight = Some(flight);
+                true
+            }
+            Err(error) => {
+                // Nothing committed — `cur` intact for the host handoff.
+                self.core.device.failed(&error);
+                false
+            }
+        }
+    }
+
+    fn collect_lanes(&mut self) -> Option<Vec<Fr>> {
+        self.core.collect()
+    }
 }
 
 /// RA-virtualization driver: lanes `[q(1), …, q(batch−1), q(∞)]`.
@@ -639,14 +829,17 @@ unsafe impl Send for RavDriver {}
 unsafe impl Sync for RavDriver {}
 
 impl RavDriver {
-    fn dispatch_lazy(
-        &mut self,
+    /// Encode + commit the lazy round without blocking. `None` = soft
+    /// decline (ineligible wrap), nothing ran. Eq buffers and waiting as in
+    /// [`BoolDriver::commit_lazy`].
+    fn commit_lazy(
+        &self,
         geometry: &RoundGeometry,
         tables: &[Vec<Fr>],
         width: usize,
-        e_in: &[Fr],
-        e_out: &[Fr],
-    ) -> Result<Option<Vec<Fr>>, MetalError> {
+        e_in_log2: u32,
+        eq: (&DeviceBuffer<'_>, &DeviceBuffer<'_>),
+    ) -> Result<Option<(DetachedPass, Vec<Fr>)>, MetalError> {
         let context = geometry.context;
         let core = &self.core;
         // An ineligible wrap declines softly — nothing ran, the device
@@ -657,11 +850,10 @@ impl RavDriver {
         let flat = concat_tables(tables, width * core.k_entries);
         let tables_buffer = context.wrap_slice(fr_as_u32s(&flat))?;
         testing::note_copied_buffers(u64::from(tables_buffer.was_copied()));
-        let (e_in_buffer, e_out_buffer) = wrap_eq(context, e_in, e_out)?;
         let params = [
             geometry.groups as u32,
             geometry.num_tgs as u32,
-            e_in.len().trailing_zeros(),
+            e_in_log2,
             width as u32,
             core.num_polys as u32,
             self.batch as u32,
@@ -674,40 +866,59 @@ impl RavDriver {
         pass.dispatch(
             KernelId::RavLazyRound,
             &params,
-            &[
-                &rows_buffer,
-                &meta,
-                &tables_buffer,
-                &e_in_buffer,
-                &e_out_buffer,
-                &partials,
-            ],
+            &[&rows_buffer, &meta, &tables_buffer, eq.0, eq.1, &partials],
             geometry.groups,
         );
-        pass.run()?;
-        testing::note_device_round();
-        Ok(Some(core.partials.sums(geometry.num_tgs)))
+        // SAFETY: see [`BoolDriver::commit_lazy`] — identical argument
+        // (`flat` rides in the return; the eq buffers are the caller's per
+        // the signature contract; driver-owned backings are next touched
+        // after the wait).
+        Ok(Some((unsafe { pass.commit().detach() }, flat)))
     }
 
-    fn dispatch_dense(
+    fn dispatch_lazy(
         &mut self,
         geometry: &RoundGeometry,
-        bind: Option<Fr>,
+        tables: &[Vec<Fr>],
+        width: usize,
         e_in: &[Fr],
         e_out: &[Fr],
-    ) -> Result<Vec<Fr>, MetalError> {
+    ) -> Result<Option<Vec<Fr>>, MetalError> {
+        let (e_in_buffer, e_out_buffer) = wrap_eq(geometry.context, e_in, e_out)?;
+        let committed = self.commit_lazy(
+            geometry,
+            tables,
+            width,
+            e_in.len().trailing_zeros(),
+            (&e_in_buffer, &e_out_buffer),
+        )?;
+        let Some((pass, _flat)) = committed else {
+            return Ok(None);
+        };
+        pass.wait()?;
+        testing::note_device_round();
+        Ok(Some(self.core.partials.sums(geometry.num_tgs)))
+    }
+
+    /// Encode + commit the fused dense round without blocking.
+    fn commit_dense(
+        &self,
+        geometry: &RoundGeometry,
+        bind: Option<Fr>,
+        e_in_log2: u32,
+        eq: (&DeviceBuffer<'_>, &DeviceBuffer<'_>),
+    ) -> Result<DetachedPass, MetalError> {
         let context = geometry.context;
         let core = &self.core;
         let dense = core
             .dense
             .as_ref()
             .ok_or(MetalError::UnsupportedShape("dense round before adoption"))?;
-        let (e_in_buffer, e_out_buffer) = wrap_eq(context, e_in, e_out)?;
         let mut params = vec![
             geometry.groups as u32,
             u32::from(bind.is_some()),
             geometry.num_tgs as u32,
-            e_in.len().trailing_zeros(),
+            e_in_log2,
             core.num_polys as u32,
             self.batch as u32,
             geometry.len as u32,
@@ -720,12 +931,30 @@ impl RavDriver {
         pass.dispatch(
             KernelId::RavDenseRound,
             &params,
-            &[&cur, &nxt, &e_in_buffer, &e_out_buffer, &partials],
+            &[&cur, &nxt, eq.0, eq.1, &partials],
             geometry.groups,
         );
-        pass.run()?;
+        // SAFETY: see [`BoolDriver::commit_dense`] — identical argument.
+        Ok(unsafe { pass.commit().detach() })
+    }
+
+    fn dispatch_dense(
+        &mut self,
+        geometry: &RoundGeometry,
+        bind: Option<Fr>,
+        e_in: &[Fr],
+        e_out: &[Fr],
+    ) -> Result<Vec<Fr>, MetalError> {
+        let (e_in_buffer, e_out_buffer) = wrap_eq(geometry.context, e_in, e_out)?;
+        self.commit_dense(
+            geometry,
+            bind,
+            e_in.len().trailing_zeros(),
+            (&e_in_buffer, &e_out_buffer),
+        )?
+        .wait()?;
         testing::note_device_round();
-        Ok(core.partials.sums(geometry.num_tgs))
+        Ok(self.core.partials.sums(geometry.num_tgs))
     }
 }
 
@@ -768,6 +997,78 @@ impl LazyRaDevice<Fr> for RavDriver {
     fn take_dense(&mut self) -> Vec<Vec<Fr>> {
         self.core.take_dense()
     }
+
+    fn launch_lazy(&mut self, tables: &[Vec<Fr>], width: usize, e_in: &[Fr], e_out: &[Fr]) -> bool {
+        let Some(geometry) = self.core.lazy_geometry(width, e_in, e_out) else {
+            return false;
+        };
+        let launch = |driver: &Self| -> Result<Option<InFlight>, MetalError> {
+            let eq = own_eq(geometry.context, e_in, e_out)?;
+            let committed = driver.commit_lazy(
+                &geometry,
+                tables,
+                width,
+                e_in.len().trailing_zeros(),
+                (&eq.0.device_buffer(), &eq.1.device_buffer()),
+            )?;
+            Ok(committed.map(|(pass, flat)| InFlight {
+                pass,
+                num_tgs: geometry.num_tgs,
+                dense_bound: None,
+                _flat: flat,
+                _eq: eq,
+            }))
+        };
+        match launch(self) {
+            Ok(Some(flight)) => {
+                self.core.in_flight = Some(flight);
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                // Lazy rounds only read — the CPU recomputes this round.
+                self.core.device.failed(&error);
+                false
+            }
+        }
+    }
+
+    fn launch_dense(&mut self, bind: Option<Fr>, e_in: &[Fr], e_out: &[Fr]) -> bool {
+        let Some(geometry) = self.core.dense_geometry(bind.is_some(), e_in, e_out) else {
+            return false;
+        };
+        let launch = |driver: &Self| -> Result<InFlight, MetalError> {
+            let eq = own_eq(geometry.context, e_in, e_out)?;
+            let pass = driver.commit_dense(
+                &geometry,
+                bind,
+                e_in.len().trailing_zeros(),
+                (&eq.0.device_buffer(), &eq.1.device_buffer()),
+            )?;
+            Ok(InFlight {
+                pass,
+                num_tgs: geometry.num_tgs,
+                dense_bound: Some(bind.is_some()),
+                _flat: Vec::new(),
+                _eq: eq,
+            })
+        };
+        match launch(self) {
+            Ok(flight) => {
+                self.core.in_flight = Some(flight);
+                true
+            }
+            Err(error) => {
+                // Nothing committed — `cur` intact for the host handoff.
+                self.core.device.failed(&error);
+                false
+            }
+        }
+    }
+
+    fn collect_lanes(&mut self) -> Option<Vec<Fr>> {
+        self.core.collect()
+    }
 }
 
 /// Lockstep parity with the device drivers forced on (and a mid-sumcheck
@@ -808,6 +1109,15 @@ mod tests {
         z ^ (z >> 31)
     }
 
+    /// How [`drive_pair`] advances the device kernel's rounds.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Drive {
+        /// The single-call path (`prove_round`).
+        Sync,
+        /// The engine's two-phase path (`begin_round` then `collect_round`).
+        TwoPhase,
+    }
+
     /// Lockstep drive: both kernels see the same challenge and claim
     /// stream; byte-equal wire polynomials pin parity. `initial_claim` must
     /// be honest for kernels that round-check (the RAM RAV CPU recipe);
@@ -817,6 +1127,7 @@ mod tests {
         device: &mut dyn ProveRounds<Fr>,
         label: &str,
         initial_claim: Fr,
+        drive: Drive,
     ) -> Vec<Fr> {
         let rounds = cpu.num_rounds();
         assert_eq!(rounds, device.num_rounds());
@@ -825,7 +1136,13 @@ mod tests {
         for round in 0..rounds {
             let bind = round.checked_sub(1).map(challenge);
             let cpu_poly = cpu.prove_round(bind, round, claim).unwrap();
-            let device_poly = device.prove_round(bind, round, claim).unwrap();
+            let device_poly = match drive {
+                Drive::Sync => device.prove_round(bind, round, claim).unwrap(),
+                Drive::TwoPhase => {
+                    let _launched = device.begin_round(bind, round, claim).unwrap();
+                    device.collect_round(bind, round, claim).unwrap()
+                }
+            };
             assert_eq!(
                 cpu_poly.coefficients(),
                 device_poly.coefficients(),
@@ -841,7 +1158,7 @@ mod tests {
         drawn
     }
 
-    fn rav_parity(log_t: usize, min_terms: usize, device_rounds: u64) {
+    fn rav_parity(log_t: usize, min_terms: usize, device_rounds: u64, drive: Drive) {
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS", min_terms.to_string());
         let (num_virtual, per_virtual, chunk_bits) = (4usize, 4usize, 8usize);
@@ -889,6 +1206,7 @@ mod tests {
             &mut device,
             "instruction_ra_virtualization",
             fr(0xBEEF),
+            drive,
         );
         let claims =
             jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationInputClaims {
@@ -912,7 +1230,15 @@ mod tests {
     #[test]
     fn rav_parity_full_device() {
         let _lock = gpu_lock();
-        rav_parity(13, 0, 3 + 1 + 10);
+        rav_parity(13, 0, 3 + 1 + 10, Drive::Sync);
+    }
+
+    /// Full-device run through the engine's two-phase path: launches park a
+    /// flight, collects wait — byte-equal to the synchronous CPU twin.
+    #[test]
+    fn rav_parity_full_device_two_phase() {
+        let _lock = gpu_lock();
+        rav_parity(13, 0, 3 + 1 + 10, Drive::TwoPhase);
     }
 
     /// The gate declines mid-dense (cycles 8192: lazy 8192/4096/2048,
@@ -921,10 +1247,16 @@ mod tests {
     #[test]
     fn rav_parity_dense_handoff() {
         let _lock = gpu_lock();
-        rav_parity(13, 256, 3 + 1 + 4);
+        rav_parity(13, 256, 3 + 1 + 4, Drive::Sync);
     }
 
-    fn bool_parity(log_t: usize, log_k_chunk: u8, min_terms: usize, device_rounds: u64) {
+    fn bool_parity(
+        log_t: usize,
+        log_k_chunk: u8,
+        min_terms: usize,
+        device_rounds: u64,
+        drive: Drive,
+    ) {
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS", min_terms.to_string());
         with_booleanity_backend(log_t, log_k_chunk, |backend, dimensions| {
@@ -964,6 +1296,7 @@ mod tests {
                 device.as_mut(),
                 "booleanity_cycle",
                 fr(0xBEEF),
+                drive,
             );
             assert_eq!(
                 cpu.output_claims(&claims).unwrap(),
@@ -988,17 +1321,24 @@ mod tests {
     #[test]
     fn bool_parity_full_device() {
         let _lock = gpu_lock();
-        bool_parity(13, 4, 0, 3 + 1 + 10);
+        bool_parity(13, 4, 0, 3 + 1 + 10, Drive::Sync);
+    }
+
+    /// Full-device run through the engine's two-phase path.
+    #[test]
+    fn bool_parity_full_device_two_phase() {
+        let _lock = gpu_lock();
+        bool_parity(13, 4, 0, 3 + 1 + 10, Drive::TwoPhase);
     }
 
     /// Mid-dense handoff, as the RA-virtualization variant.
     #[test]
     fn bool_parity_dense_handoff() {
         let _lock = gpu_lock();
-        bool_parity(13, 4, 256, 3 + 1 + 4);
+        bool_parity(13, 4, 256, 3 + 1 + 4, Drive::Sync);
     }
 
-    fn ram_rav_parity(log_t: usize, min_terms: usize, device_rounds: u64) {
+    fn ram_rav_parity(log_t: usize, min_terms: usize, device_rounds: u64, drive: Drive) {
         use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
         use jolt_claims::protocols::jolt::geometry::ram::{
             committed_ram_ra, RamRaVirtualizationDimensions,
@@ -1090,6 +1430,7 @@ mod tests {
                 device.as_mut(),
                 "ram_ra_virtualization",
                 input_claim,
+                drive,
             );
             assert_eq!(
                 cpu.output_claims(&claims).unwrap().ram_ra,
@@ -1108,13 +1449,30 @@ mod tests {
     #[test]
     fn ram_rav_parity_full_device() {
         let _lock = gpu_lock();
-        ram_rav_parity(13, 0, 3 + 1 + 10);
+        ram_rav_parity(13, 0, 3 + 1 + 10, Drive::Sync);
+    }
+
+    /// Full-device run through the engine's two-phase path (the mid-dense
+    /// handoff variant exercises the launch-declined normalization).
+    #[test]
+    fn ram_rav_parity_full_device_two_phase() {
+        let _lock = gpu_lock();
+        ram_rav_parity(13, 0, 3 + 1 + 10, Drive::TwoPhase);
+    }
+
+    /// Two-phase drive across the mid-dense gate handoff: launches decline
+    /// below the gate, `collect_round` recomputes through the normalized
+    /// host state.
+    #[test]
+    fn ram_rav_parity_dense_handoff_two_phase() {
+        let _lock = gpu_lock();
+        ram_rav_parity(13, 256, 3 + 1 + 4, Drive::TwoPhase);
     }
 
     /// Mid-dense handoff, as the instruction variant.
     #[test]
     fn ram_rav_parity_dense_handoff() {
         let _lock = gpu_lock();
-        ram_rav_parity(13, 256, 3 + 1 + 4);
+        ram_rav_parity(13, 256, 3 + 1 + 4, Drive::Sync);
     }
 }

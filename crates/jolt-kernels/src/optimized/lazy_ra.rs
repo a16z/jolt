@@ -84,6 +84,40 @@ pub(crate) trait LazyRaDevice<F: Field>: Send + Sync {
     /// for an adopted driver: the buffers are host-visible whatever the
     /// device's health.
     fn take_dense(&mut self) -> Vec<Vec<F>>;
+
+    /// Launch this round's lazy-phase lanes without blocking, leaving the
+    /// dispatch in flight for [`collect_lanes`](Self::collect_lanes).
+    /// `false` = nothing launched (gate declined, unhealthy device,
+    /// ineligible buffers) — the caller uses the synchronous paths. A
+    /// flight owns copies of its per-round uploads (`e_in`/`e_out`, the
+    /// branch tables' flattening), so the caller's backings stay free.
+    fn launch_lazy(
+        &mut self,
+        _tables: &[Vec<F>],
+        _width: usize,
+        _e_in: &[F],
+        _e_out: &[F],
+    ) -> bool {
+        false
+    }
+
+    /// Launch the fused dense round without blocking; as
+    /// [`launch_lazy`](Self::launch_lazy). The pending `bind` folds inside
+    /// the launched kernel, but the driver's dense state advances only at a
+    /// successful collect — a failed flight leaves the pre-bind tables
+    /// intact for the host recovery.
+    fn launch_dense(&mut self, _bind: Option<F>, _e_in: &[F], _e_out: &[F]) -> bool {
+        false
+    }
+
+    /// Collect a launched round's lanes: `Some` on success (a dense flight
+    /// advances the ping-pong here); `None` when the wait surfaced a device
+    /// failure — the driver has latched off with its state exactly as the
+    /// synchronous failure paths leave it (lazy: untouched; dense: intact
+    /// pre-bind `cur`).
+    fn collect_lanes(&mut self) -> Option<Vec<F>> {
+        None
+    }
 }
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily for the
@@ -287,6 +321,64 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 ..
             } => {
                 if let Some(lanes) = driver.dense_round(*pending_bind, e_in, e_out) {
+                    *pending_bind = None;
+                    Some(lanes)
+                } else {
+                    self.ensure_host();
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Two-phase variant of [`device_lanes`](Self::device_lanes): launch the
+    /// device tier's round without blocking. `true` = in flight — the caller
+    /// must follow with [`collect_device_lanes`](Self::collect_device_lanes)
+    /// before any bind or table access. `false` = nothing launched, and (as
+    /// with a `device_lanes` decline) the state is already normalized for
+    /// the CPU paths.
+    pub(crate) fn launch_device_lanes(&mut self, e_in: &[F], e_out: &[F]) -> bool {
+        match self {
+            Self::Lazy {
+                tables,
+                width,
+                driver: Some(driver),
+                ..
+            } => driver.launch_lazy(tables, *width, e_in, e_out),
+            Self::DeviceDense {
+                driver,
+                pending_bind,
+                ..
+            } => {
+                if driver.launch_dense(*pending_bind, e_in, e_out) {
+                    true
+                } else {
+                    self.ensure_host();
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Collect the lanes of the round launched by
+    /// [`launch_device_lanes`](Self::launch_device_lanes). `None` = the wait
+    /// failed; the state is normalized for a CPU recompute of the SAME round
+    /// (lazy: untouched tables; dense: reclaimed host tables with the
+    /// pending fold applied).
+    pub(crate) fn collect_device_lanes(&mut self) -> Option<Vec<F>> {
+        match self {
+            Self::Lazy {
+                driver: Some(driver),
+                ..
+            } => driver.collect_lanes(),
+            Self::DeviceDense {
+                driver,
+                pending_bind,
+                ..
+            } => {
+                if let Some(lanes) = driver.collect_lanes() {
                     *pending_bind = None;
                     Some(lanes)
                 } else {
