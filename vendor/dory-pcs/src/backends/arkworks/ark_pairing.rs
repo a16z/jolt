@@ -142,30 +142,33 @@ mod pairing_helpers {
     #[cfg(feature = "parallel")]
     #[tracing::instrument(skip_all, name = "multi_pair_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
     pub(super) fn multi_pair_parallel(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
-        use ark_bn254::{G1Affine, G2Affine};
+        use ark_bn254::{G1Projective, G2Projective};
+        use ark_ec::CurveGroup;
         use rayon::prelude::*;
 
         let chunk_size = determine_chunk_size(ps.len());
 
-        let combined = ps
-            .par_chunks(chunk_size)
-            .zip(qs.par_chunks(chunk_size))
-            .map(|(ps_chunk, qs_chunk)| {
-                let ps_prep: Vec<<Bn254 as Pairing>::G1Prepared> = ps_chunk
-                    .iter()
-                    .map(|p| {
-                        let affine: G1Affine = p.0.into();
-                        affine.into()
-                    })
-                    .collect();
+        // One batch inversion per input vector instead of a field inversion
+        // per point: the per-point projective→affine conversion dominates
+        // the preparation cost for arbitrary-Z inputs. Affine coordinates
+        // are canonical, so the prepared points — and the pairing — are
+        // unchanged.
+        let ps_affine = G1Projective::normalize_batch(
+            &ps.iter().map(|p| p.0).collect::<Vec<_>>(),
+        );
+        let qs_affine = G2Projective::normalize_batch(
+            &qs.iter().map(|q| q.0).collect::<Vec<_>>(),
+        );
 
-                let qs_prep: Vec<<Bn254 as Pairing>::G2Prepared> = qs_chunk
-                    .iter()
-                    .map(|q| {
-                        let affine: G2Affine = q.0.into();
-                        affine.into()
-                    })
-                    .collect();
+        let combined = ps_affine
+            .par_chunks(chunk_size)
+            .zip(qs_affine.par_chunks(chunk_size))
+            .map(|(ps_chunk, qs_chunk)| {
+                let ps_prep: Vec<<Bn254 as Pairing>::G1Prepared> =
+                    ps_chunk.iter().map(|affine| (*affine).into()).collect();
+
+                let qs_prep: Vec<<Bn254 as Pairing>::G2Prepared> =
+                    qs_chunk.iter().map(|affine| (*affine).into()).collect();
 
                 Bn254::multi_miller_loop(ps_prep, qs_prep)
             })
@@ -183,53 +186,56 @@ mod pairing_helpers {
     #[cfg(feature = "parallel")]
     #[tracing::instrument(skip_all, name = "multi_pair_g2_setup_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
     pub(super) fn multi_pair_g2_setup_parallel(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
-        use ark_bn254::G1Affine;
+        use ark_bn254::{G1Projective, G2Affine, G2Projective};
+        use ark_ec::CurveGroup;
         use rayon::prelude::*;
 
         let chunk_size = determine_chunk_size(ps.len());
 
         #[cfg(feature = "cache")]
         let cache = crate::backends::arkworks::ark_cache::get_prepared_cache();
+        #[cfg(feature = "cache")]
+        let cache_hit = cache.is_some();
+        #[cfg(not(feature = "cache"))]
+        let cache_hit = false;
 
-        let combined = ps
+        // One batch inversion per vector instead of a field inversion per
+        // point (see multi_pair_parallel); the G2 side is only converted
+        // when the prepared cache cannot serve it.
+        let ps_affine = G1Projective::normalize_batch(
+            &ps.iter().map(|p| p.0).collect::<Vec<_>>(),
+        );
+        let qs_affine: Vec<G2Affine> = if cache_hit {
+            Vec::new()
+        } else {
+            G2Projective::normalize_batch(&qs.iter().map(|q| q.0).collect::<Vec<_>>())
+        };
+
+        let combined = ps_affine
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_idx, ps_chunk)| {
                 let start_idx = chunk_idx * chunk_size;
                 let end_idx = start_idx + ps_chunk.len();
 
-                let ps_prep: Vec<<Bn254 as Pairing>::G1Prepared> = ps_chunk
-                    .iter()
-                    .map(|p| {
-                        let affine: G1Affine = p.0.into();
-                        affine.into()
-                    })
-                    .collect();
+                let ps_prep: Vec<<Bn254 as Pairing>::G1Prepared> =
+                    ps_chunk.iter().map(|affine| (*affine).into()).collect();
 
                 #[cfg(feature = "cache")]
                 let qs_prep: Vec<<Bn254 as Pairing>::G2Prepared> = if let Some(ref c) = cache {
                     c.g2_prepared[start_idx..end_idx].to_vec()
                 } else {
-                    use ark_bn254::G2Affine;
-                    qs[start_idx..end_idx]
+                    qs_affine[start_idx..end_idx]
                         .iter()
-                        .map(|q| {
-                            let affine: G2Affine = q.0.into();
-                            affine.into()
-                        })
+                        .map(|affine| (*affine).into())
                         .collect()
                 };
                 #[cfg(not(feature = "cache"))]
-                let qs_prep: Vec<<Bn254 as Pairing>::G2Prepared> = {
-                    use ark_bn254::G2Affine;
-                    qs[start_idx..end_idx]
-                        .iter()
-                        .map(|q| {
-                            let affine: G2Affine = q.0.into();
-                            affine.into()
-                        })
-                        .collect()
-                };
+                let qs_prep: Vec<<Bn254 as Pairing>::G2Prepared> = qs_affine
+                    [start_idx..end_idx]
+                    .iter()
+                    .map(|affine| (*affine).into())
+                    .collect();
 
                 Bn254::multi_miller_loop(ps_prep, qs_prep)
             })
@@ -247,53 +253,56 @@ mod pairing_helpers {
     #[cfg(feature = "parallel")]
     #[tracing::instrument(skip_all, name = "multi_pair_g1_setup_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
     pub(super) fn multi_pair_g1_setup_parallel(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
-        use ark_bn254::G2Affine;
+        use ark_bn254::{G1Affine, G1Projective, G2Projective};
+        use ark_ec::CurveGroup;
         use rayon::prelude::*;
 
         let chunk_size = determine_chunk_size(ps.len());
 
         #[cfg(feature = "cache")]
         let cache = crate::backends::arkworks::ark_cache::get_prepared_cache();
+        #[cfg(feature = "cache")]
+        let cache_hit = cache.is_some();
+        #[cfg(not(feature = "cache"))]
+        let cache_hit = false;
 
-        let combined = qs
+        // One batch inversion per vector instead of a field inversion per
+        // point (see multi_pair_parallel); the G1 side is only converted
+        // when the prepared cache cannot serve it.
+        let qs_affine = G2Projective::normalize_batch(
+            &qs.iter().map(|q| q.0).collect::<Vec<_>>(),
+        );
+        let ps_affine: Vec<G1Affine> = if cache_hit {
+            Vec::new()
+        } else {
+            G1Projective::normalize_batch(&ps.iter().map(|p| p.0).collect::<Vec<_>>())
+        };
+
+        let combined = qs_affine
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_idx, qs_chunk)| {
                 let start_idx = chunk_idx * chunk_size;
                 let end_idx = start_idx + qs_chunk.len();
 
-                let qs_prep: Vec<<Bn254 as Pairing>::G2Prepared> = qs_chunk
-                    .iter()
-                    .map(|q| {
-                        let affine: G2Affine = q.0.into();
-                        affine.into()
-                    })
-                    .collect();
+                let qs_prep: Vec<<Bn254 as Pairing>::G2Prepared> =
+                    qs_chunk.iter().map(|affine| (*affine).into()).collect();
 
                 #[cfg(feature = "cache")]
                 let ps_prep: Vec<<Bn254 as Pairing>::G1Prepared> = if let Some(ref c) = cache {
                     c.g1_prepared[start_idx..end_idx].to_vec()
                 } else {
-                    use ark_bn254::G1Affine;
-                    ps[start_idx..end_idx]
+                    ps_affine[start_idx..end_idx]
                         .iter()
-                        .map(|p| {
-                            let affine: G1Affine = p.0.into();
-                            affine.into()
-                        })
+                        .map(|affine| (*affine).into())
                         .collect()
                 };
                 #[cfg(not(feature = "cache"))]
-                let ps_prep: Vec<<Bn254 as Pairing>::G1Prepared> = {
-                    use ark_bn254::G1Affine;
-                    ps[start_idx..end_idx]
-                        .iter()
-                        .map(|p| {
-                            let affine: G1Affine = p.0.into();
-                            affine.into()
-                        })
-                        .collect()
-                };
+                let ps_prep: Vec<<Bn254 as Pairing>::G1Prepared> = ps_affine
+                    [start_idx..end_idx]
+                    .iter()
+                    .map(|affine| (*affine).into())
+                    .collect();
 
                 Bn254::multi_miller_loop(ps_prep, qs_prep)
             })
