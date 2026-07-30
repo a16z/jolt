@@ -355,6 +355,14 @@ impl TraceRecord {
         InstructionFlagSet::from_bits((self.flags[t] >> INSTRUCTION_FLAGS_SHIFT) as u8).get(flag)
     }
 
+    /// `flag`'s bit position inside the packed [`Self::flags`] lane — for
+    /// consumers (the Metal instruction-input slot) that read the lane raw.
+    #[cfg(feature = "metal")]
+    #[inline]
+    pub(crate) fn instruction_flag_bit(flag: InstructionFlags) -> u32 {
+        INSTRUCTION_FLAGS_SHIFT + flag as u32
+    }
+
     #[inline]
     pub(crate) fn should_branch(&self, t: usize) -> bool {
         self.flags[t] & SHOULD_BRANCH_BIT != 0

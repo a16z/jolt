@@ -48,7 +48,7 @@ use crate::{
 
 /// The eight operand/flag tables, in output-claim declaration order:
 /// `[is_rs1, rs1, is_pc, upc, is_rs2, rs2, is_imm, imm]`.
-const NUM_TABLES: usize = 8;
+pub(crate) const NUM_TABLES: usize = 8;
 
 /// One cycle's eight operand/flag values as native scalars.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
@@ -72,7 +72,7 @@ impl InstructionInputRow {
     /// entries the dense tables hold (same `ToField` conversions as the
     /// oracle walk).
     #[inline]
-    fn field_values<F: Field>(&self) -> [F; NUM_TABLES] {
+    pub(crate) fn field_values<F: Field>(&self) -> [F; NUM_TABLES] {
         [
             self.is_rs1.to_field(),
             self.rs1_value.to_field(),
@@ -156,6 +156,103 @@ fn ext_flag(even: bool, odd: bool) -> (i64, i64) {
     (i64::from(even), i64::from(odd) - i64::from(even))
 }
 
+/// The first round's `q` evaluations over the native rows: per pair and
+/// sample point, `left`/`right` are exact integers folded into the field
+/// through the signed-product accumulator; `Σ e_in·right + γ·Σ e_in·left`
+/// equals the dense per-point evaluation by distributivity.
+///
+/// Free function so the Metal slot's round-0 host path is THIS code — one
+/// implementation, byte-identical by construction.
+pub(crate) fn native_q_evals<F: Field>(
+    gruen: &GruenSplitEqPolynomial<F>,
+    gamma: F,
+    rows: &RecordRows<InstructionInputRow>,
+) -> [F; 4] {
+    const POINTS: usize = 4;
+    type Accumulator<F> = <F as WithSignedProductAccumulator>::SignedProductAccumulator;
+    gruen.par_fold_out_in(
+        || {
+            (
+                [Accumulator::<F>::default(); POINTS],
+                [Accumulator::<F>::default(); POINTS],
+            )
+        },
+        |(right_acc, left_acc), y, _x_in, e_in| {
+            let even = rows.row(2 * y);
+            let odd = rows.row(2 * y + 1);
+            let (is_rs1, is_rs1_m) = ext_flag(even.is_rs1.0, odd.is_rs1.0);
+            let (is_pc, is_pc_m) = ext_flag(even.is_pc.0, odd.is_pc.0);
+            let (is_rs2, is_rs2_m) = ext_flag(even.is_rs2.0, odd.is_rs2.0);
+            let (is_imm, is_imm_m) = ext_flag(even.is_imm.0, odd.is_imm.0);
+            let (rs1, rs1_m) = ext_u64(even.rs1_value.0, odd.rs1_value.0);
+            let (upc, upc_m) = ext_u64(even.unexpanded_pc.0, odd.unexpanded_pc.0);
+            let (rs2, rs2_m) = ext_u64(even.rs2_value.0, odd.rs2_value.0);
+            let imm_even = S192::from_i128(even.imm.0);
+            let imm_odd = S192::from_i128(odd.imm.0);
+            for t in 0..POINTS as i64 {
+                // Flag lanes stay tiny (|f(t)| ≤ 3); u64 lanes fit i128
+                // (|v(t)| < 2^67); products < 2^70.
+                let f_rs1 = is_rs1 + t * is_rs1_m;
+                let f_pc = is_pc + t * is_pc_m;
+                let f_rs2 = is_rs2 + t * is_rs2_m;
+                let f_imm = is_imm + t * is_imm_m;
+                let left = i128::from(f_rs1) * (rs1 + i128::from(t) * rs1_m)
+                    + i128::from(f_pc) * (upc + i128::from(t) * upc_m);
+                // `f(t)·imm(t) = f(t)(1−t)·e₀ + f(t)t·e₁`: coefficients
+                // ≤ 12, so the products stay under 2^131 inside `S256`
+                // even for full-range `i128` immediates.
+                let mut right = S256::from_i128(i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m));
+                S64::from_i64(f_imm * (1 - t)).fmadd_trunc::<3, 4>(&imm_even, &mut right);
+                S64::from_i64(f_imm * t).fmadd_trunc::<3, 4>(&imm_odd, &mut right);
+                right_acc[t as usize].fmadd_s256(e_in, &right);
+                left_acc[t as usize].fmadd_s256(e_in, &S256::from_i128(left));
+            }
+        },
+        |_x_out, e_out, (right_acc, left_acc)| {
+            let mut out = [F::zero(); POINTS];
+            for (slot, (right, left)) in out.iter_mut().zip(right_acc.into_iter().zip(left_acc)) {
+                *slot = e_out * (right.reduce() + gamma * left.reduce());
+            }
+            out
+        },
+        |mut a, b| {
+            for (a, b) in a.iter_mut().zip(&b) {
+                *a += *b;
+            }
+            a
+        },
+    )
+}
+
+/// `s(t) = ℓ(t) · q(t)` at `t = 0..=3` assembled into the wire polynomial,
+/// with the round-sum consistency check — the shared tail of every tier's
+/// round (the Metal slot calls this on device-computed `q` sums).
+pub(crate) fn assemble_message<F: Field>(
+    gruen: &GruenSplitEqPolynomial<F>,
+    q_evals: [F; 4],
+    round: usize,
+    previous_claim: F,
+) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+    let (l_at_0, l_at_1) = gruen.current_linear_evals();
+    let l_step = l_at_1 - l_at_0;
+    let mut l_eval = l_at_0;
+    let mut evals = [F::zero(); 4];
+    for (eval, q) in evals.iter_mut().zip(&q_evals) {
+        *eval = l_eval * *q;
+        l_eval += l_step;
+    }
+
+    let round_sum = evals[0] + evals[1];
+    if round_sum != previous_claim {
+        return Err(SumcheckError::RoundCheckFailed {
+            round,
+            expected: previous_claim,
+            actual: round_sum,
+        });
+    }
+    Ok(UnivariatePoly::from_evals(&evals))
+}
+
 impl<F: Field> OptimizedInstructionInputKernel<F> {
     pub(crate) fn new(
         r_product: &[F],
@@ -178,69 +275,6 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
             bind_scratch: Vec::new(),
             rounds_bound: 0,
         })
-    }
-
-    /// The first round's `q` evaluations over the native rows: per pair and
-    /// sample point, `left`/`right` are exact integers folded into the field
-    /// through the signed-product accumulator; `Σ e_in·right + γ·Σ e_in·left`
-    /// equals the dense per-point evaluation by distributivity.
-    fn native_q_evals(&self, rows: &RecordRows<InstructionInputRow>) -> [F; 4] {
-        const POINTS: usize = 4;
-        type Accumulator<F> = <F as WithSignedProductAccumulator>::SignedProductAccumulator;
-        self.gruen.par_fold_out_in(
-            || {
-                (
-                    [Accumulator::<F>::default(); POINTS],
-                    [Accumulator::<F>::default(); POINTS],
-                )
-            },
-            |(right_acc, left_acc), y, _x_in, e_in| {
-                let even = rows.row(2 * y);
-                let odd = rows.row(2 * y + 1);
-                let (is_rs1, is_rs1_m) = ext_flag(even.is_rs1.0, odd.is_rs1.0);
-                let (is_pc, is_pc_m) = ext_flag(even.is_pc.0, odd.is_pc.0);
-                let (is_rs2, is_rs2_m) = ext_flag(even.is_rs2.0, odd.is_rs2.0);
-                let (is_imm, is_imm_m) = ext_flag(even.is_imm.0, odd.is_imm.0);
-                let (rs1, rs1_m) = ext_u64(even.rs1_value.0, odd.rs1_value.0);
-                let (upc, upc_m) = ext_u64(even.unexpanded_pc.0, odd.unexpanded_pc.0);
-                let (rs2, rs2_m) = ext_u64(even.rs2_value.0, odd.rs2_value.0);
-                let imm_even = S192::from_i128(even.imm.0);
-                let imm_odd = S192::from_i128(odd.imm.0);
-                for t in 0..POINTS as i64 {
-                    // Flag lanes stay tiny (|f(t)| ≤ 3); u64 lanes fit i128
-                    // (|v(t)| < 2^67); products < 2^70.
-                    let f_rs1 = is_rs1 + t * is_rs1_m;
-                    let f_pc = is_pc + t * is_pc_m;
-                    let f_rs2 = is_rs2 + t * is_rs2_m;
-                    let f_imm = is_imm + t * is_imm_m;
-                    let left = i128::from(f_rs1) * (rs1 + i128::from(t) * rs1_m)
-                        + i128::from(f_pc) * (upc + i128::from(t) * upc_m);
-                    // `f(t)·imm(t) = f(t)(1−t)·e₀ + f(t)t·e₁`: coefficients
-                    // ≤ 12, so the products stay under 2^131 inside `S256`
-                    // even for full-range `i128` immediates.
-                    let mut right =
-                        S256::from_i128(i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m));
-                    S64::from_i64(f_imm * (1 - t)).fmadd_trunc::<3, 4>(&imm_even, &mut right);
-                    S64::from_i64(f_imm * t).fmadd_trunc::<3, 4>(&imm_odd, &mut right);
-                    right_acc[t as usize].fmadd_s256(e_in, &right);
-                    left_acc[t as usize].fmadd_s256(e_in, &S256::from_i128(left));
-                }
-            },
-            |_x_out, e_out, (right_acc, left_acc)| {
-                let mut out = [F::zero(); POINTS];
-                for (slot, (right, left)) in out.iter_mut().zip(right_acc.into_iter().zip(left_acc))
-                {
-                    *slot = e_out * (right.reduce() + self.gamma * left.reduce());
-                }
-                out
-            },
-            |mut a, b| {
-                for (a, b) in a.iter_mut().zip(&b) {
-                    *a += *b;
-                }
-                a
-            },
-        )
     }
 
     /// The bound rounds' `q` evaluations over the eight dense tables.
@@ -295,28 +329,10 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let q_evals = match &self.state {
-            InputState::Native(rows) => self.native_q_evals(rows),
+            InputState::Native(rows) => native_q_evals(&self.gruen, self.gamma, rows),
             InputState::Dense(tables) => self.dense_q_evals(tables),
         };
-
-        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let mut l_eval = l_at_0;
-        let mut evals = [F::zero(); 4];
-        for (eval, q) in evals.iter_mut().zip(&q_evals) {
-            *eval = l_eval * *q;
-            l_eval += l_step;
-        }
-
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        assemble_message(&self.gruen, q_evals, round, previous_claim)
     }
 
     fn bind(&mut self, challenge: F) {
