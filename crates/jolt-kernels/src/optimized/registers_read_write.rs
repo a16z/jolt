@@ -896,55 +896,81 @@ fn bind_sparse_entries<F, C>(
     C: OneHotCoeff<F>,
 {
     let pair_predicate = |a: &SparseEntry<F, C>, b: &SparseEntry<F, C>| a.row / 2 == b.row / 2;
-    let count_group = |group: &[SparseEntry<F, C>]| -> (usize, usize) {
-        let (evens, odds) = split_pair_group(group);
-        (group.len(), merge_count(evens, odds))
-    };
-    // Dry-run pass: per row-pair group, the input length and the exact
-    // bound length — sizes the single output allocation.
-    #[cfg(feature = "parallel")]
-    let group_lengths: Vec<(usize, usize)> = entries
-        .par_chunk_by(pair_predicate)
-        .map(count_group)
-        .collect();
-    #[cfg(not(feature = "parallel"))]
-    let group_lengths: Vec<(usize, usize)> =
-        entries.chunk_by(pair_predicate).map(count_group).collect();
 
-    let bound_length = group_lengths.iter().map(|(_, bound)| bound).sum();
+    // Pair-aligned block decomposition: fixed-size blocks advanced to the
+    // next row-pair edge, so no merge group straddles a block. Per-group
+    // metadata (one length pair and two slice splits per group — tens of
+    // millions of groups in the early rounds, built on the walking thread)
+    // collapses to a handful of per-block counts.
+    const BLOCK_TARGET: usize = 1 << 14;
+    let len = entries.len();
+    let block_count = len.div_ceil(BLOCK_TARGET).max(1);
+    let mut bounds: Vec<usize> = Vec::with_capacity(block_count + 1);
+    bounds.push(0);
+    for block in 1..block_count {
+        let mut index = block * len / block_count;
+        while index < len && index > 0 && entries[index].row / 2 == entries[index - 1].row / 2 {
+            index += 1;
+        }
+        #[expect(clippy::unwrap_used, reason = "bounds starts non-empty")]
+        if index > *bounds.last().unwrap() && index < len {
+            bounds.push(index);
+        }
+    }
+    bounds.push(len);
+    let blocks = bounds.len() - 1;
+
+    let count_block = |block: usize| -> usize {
+        entries[bounds[block]..bounds[block + 1]]
+            .chunk_by(pair_predicate)
+            .map(|group| {
+                let (evens, odds) = split_pair_group(group);
+                merge_count(evens, odds)
+            })
+            .sum()
+    };
+    #[cfg(feature = "parallel")]
+    let counts: Vec<usize> = (0..blocks).into_par_iter().map(count_block).collect();
+    #[cfg(not(feature = "parallel"))]
+    let counts: Vec<usize> = (0..blocks).map(count_block).collect();
+
+    let bound_length: usize = counts.iter().sum();
     let mut bound: Vec<SparseEntry<F, C>> = Vec::with_capacity(bound_length);
-    let mut out_slices = Vec::with_capacity(group_lengths.len());
-    let mut in_slices = Vec::with_capacity(group_lengths.len());
+    let mut out_slices = Vec::with_capacity(blocks);
     let mut out_rest = bound.spare_capacity_mut();
-    let mut in_rest = entries.as_slice();
-    for &(unbound_len, bound_len) in &group_lengths {
-        let (out_slice, next_out) = out_rest.split_at_mut(bound_len);
+    for &count in &counts {
+        let (out_slice, next_out) = out_rest.split_at_mut(count);
         out_rest = next_out;
         out_slices.push(out_slice);
-        let (in_slice, next_in) = in_rest.split_at(unbound_len);
-        in_rest = next_in;
-        in_slices.push(in_slice);
     }
 
-    type FillSlot<'a, F, C> = (
-        &'a &'a [SparseEntry<F, C>],
-        &'a mut [core::mem::MaybeUninit<SparseEntry<F, C>>],
-    );
-    let fill = |(group, out): FillSlot<'_, F, C>| {
-        let (evens, odds) = split_pair_group(group);
-        merge_fill(evens, odds, r, ra_lut, wa_lut, out);
+    let entries_ref: &[SparseEntry<F, C>] = entries;
+    let fill_block = |(block, out): (usize, &mut [core::mem::MaybeUninit<SparseEntry<F, C>>])| {
+        let mut written = 0usize;
+        for group in entries_ref[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
+            let (evens, odds) = split_pair_group(group);
+            let take = merge_count(evens, odds);
+            merge_fill(
+                evens,
+                odds,
+                r,
+                ra_lut,
+                wa_lut,
+                &mut out[written..written + take],
+            );
+            written += take;
+        }
+        debug_assert_eq!(written, out.len());
     };
     #[cfg(feature = "parallel")]
-    in_slices
-        .par_iter()
-        .zip(out_slices.into_par_iter())
-        .for_each(fill);
+    out_slices.into_par_iter().enumerate().for_each(fill_block);
     #[cfg(not(feature = "parallel"))]
-    in_slices.iter().zip(out_slices).for_each(fill);
+    out_slices.into_iter().enumerate().for_each(fill_block);
 
-    // SAFETY: the dry-run pass sized every group's output slice exactly,
-    // the slices partition `bound`'s spare capacity up to `bound_length`,
-    // and `merge_fill` writes each slot of its slice exactly once.
+    // SAFETY: the count pass sized every block's output slice exactly (the
+    // fill pass re-derives the same per-group counts), the slices partition
+    // `bound`'s spare capacity up to `bound_length`, and `merge_fill`
+    // writes each slot of its slice exactly once.
     unsafe {
         bound.set_len(bound_length);
     }
