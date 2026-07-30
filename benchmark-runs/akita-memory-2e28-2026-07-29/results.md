@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Twelve independently committed
+This pass kept K256 and the proof protocol fixed. Thirteen independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -22,16 +22,18 @@ prover slowdown:
 | `1355fab03` | Pack signed fused-increment deltas | 7.875 B/cycle until the first Stage-6 cycle bind |
 | `2d08372ec` | Delay Fp128 expansion of instruction-input columns | 3 GiB of Stage-3 field state at `2^26` |
 | `7afb90166` | Release compact trace rows after Stage 7 | 64 B/cycle before reconstruction/opening |
+| `5d1ff81a1` | Materialize RA rows after Stage 5 | 53 B/cycle during commitment and Stages 1–5 |
 
-At `2^26`, the lowest measured maximum RSS is 39.923 GB with zero process
+At `2^26`, the lowest measured maximum RSS is 38.924 GB with zero process
 swaps, down from the 44.157 GB packed-delta control, 50.49 GB after the
 R1CS-row policy change, and 50.72 GB before it. The three-round
 instruction-input change removes 4.128 GB (-9.35%) from the process maximum.
 Releasing the trace then removes 4.01 GiB at the end of opening and moves the
 sampled global peak to Stage 6b, although the earlier `/usr/bin/time` maximum
-moves by only 0.106 GB. Earlier phase-local cuts are not always fully visible
-in headline RSS. The R1CS change, for example, drops Stage 1 by the exact
-13 GiB row allocation.
+moves by only 0.106 GB. Deferring RA rows removes another 3.3125 GiB of
+retained state before Stage 6 and lowers the process maximum by 0.999 GB.
+Earlier phase-local cuts are not always fully visible in headline RSS. The
+R1CS change, for example, drops Stage 1 by the exact 13 GiB row allocation.
 
 The previous 128 GiB `2^28` extrapolation predates the Stage-3 result.
 Scaling only its exact 3 GiB live-state reduction gives roughly 116 GiB;
@@ -250,6 +252,24 @@ The same trace is 16 GiB at `2^28`, making this a material capacity cut even
 though it cannot change phases that precede Stage 7. Full ownership analysis,
 measurements, and validation are in `opening-drop-trace-experiment.md`.
 
+### Deferred RA-row materialization
+
+The initial one-hot cache pass previously retained both the 29-byte packed
+lane row used by commitment/opening and the 54-byte `RaIndices` row first used
+in Stage 6. It now retains the lanes plus one RAM-validity byte and constructs
+the same RA rows immediately after Stage 5.
+
+This removes 53 B/cycle during commitment and Stages 1–5: 3.3125 GiB at
+`2^26` and 13.25 GiB at `2^28`. At `2^26`, the retained commitment plateau
+fell by approximately 3.50 GiB and maximum RSS fell from 39.923 to 38.924 GB.
+Proving measured 53.54 seconds versus the 53.66-second control; Stage 6b
+measured 5.19 versus 5.27 seconds. No speedup is claimed.
+
+The Stage-6 representation and kernels are unchanged, so this is an
+early-lifetime capacity cut rather than a solution to the current Stage-6b
+peak. Full measurements and validation are in
+`deferred-ra-materialization-experiment.md`.
+
 ### Rejected: drop lazy replay snapshot
 
 `JoltCpuProver` retains a `LazyTraceIterator` clone of the initial emulator,
@@ -340,6 +360,8 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Instruction-input three-round target | `mem-svo3-2e26.json` |
 | Late trace release screen | `mem-drop-trace-2e22.json` |
 | Late trace release target | `mem-drop-trace-2e26.json` |
+| Deferred RA rows screens | `mem-defer-ra-2e22.json`, `mem-defer-ra-2e22-b.json` |
+| Deferred RA rows target | `mem-defer-ra-2e26.json` |
 | Lazy replay snapshot rejection | `mem-drop-lazy-2e22.json` |
 | Fourth delayed RA round rejection | `mem-ra-round4-2e22.json` |
 
