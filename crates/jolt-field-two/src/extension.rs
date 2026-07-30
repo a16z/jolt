@@ -5,11 +5,10 @@
 //! quadratic extension `F[u]/(u^2 − NR)` through a zero-sized type, with the
 //! [`NegOneNr`] and [`TwoNr`] presets.
 //!
-//! `MulBaseUnreduced` (deferred ext×base multiply) is deferred to the
-//! `Unreduced` checkpoint: its contract is stated in terms of
-//! `Unreduced::Product`.
+//! [`MulBaseUnreduced`] is the deferred ext×base multiply, stated in terms
+//! of [`Unreduced::Product`].
 
-use crate::{Field, Ring};
+use crate::{Field, PseudoMersenne, Ring, Unreduced};
 use std::ops::{Add, Mul, Sub};
 
 /// An algebraic extension of the base field `F`.
@@ -45,10 +44,30 @@ pub trait ExtField<F: Field>: Field {
     /// `DEGREE` on `Self`, this is `frobenius_pow(DEGREE − power)`.
     #[inline]
     fn frobenius_inv_pow(self, power: usize) -> Self {
-        let d = Self::DEGREE;
-        self.frobenius_pow((d - (power % d)) % d)
+        self.frobenius_pow((Self::DEGREE - (power % Self::DEGREE)) % Self::DEGREE)
     }
 }
+
+/// Deferred-reduction extension-times-base multiply.
+///
+/// Scales `self` by a base scalar `x` into [`Unreduced::Product`] without
+/// reducing, so a batch of `E × F` products can be summed and reduced once.
+/// When [`Unreduced::SUM_IS_EXACT`] holds, the reduced sum equals the
+/// per-term [`ExtField::mul_base`] sum within the accumulator's headroom.
+///
+/// `E × F` has no cross terms, so the default body (lift `x` and reuse
+/// [`Unreduced::mul_unreduced`]) is correct everywhere; extensions whose
+/// product-accumulator layout admits cheaper coordinate scaling override it.
+pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
+    /// Accumulates `self · x` (extension times base scalar) unreduced.
+    #[inline]
+    fn mul_base_unreduced(self, x: F) -> Self::Product {
+        self.mul_unreduced(Self::lift_base(x))
+    }
+}
+
+/// A base field is its own degree-1 extension; the default body is exact.
+impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {}
 
 /// Parameters for a quadratic extension `F[u]/(u^2 − NR)` over `F`.
 ///

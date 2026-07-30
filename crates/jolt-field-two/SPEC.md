@@ -57,7 +57,7 @@ capability subset with defaulted members".
 | `PseudoMersenne` (defined unconditionally in `algebra.rs`, per the file table) | `PseudoMersenneField` + `ExtMulBackend` | `const OFFSET: u128` (bits live on `CanonicalEncoding`) + the degree-4/8 ext-mul/square kernel hooks (`ext4_mul`, `ext4_square`, `ext8_mul`, `ext8_square`) with generic coefficient-formula defaults (`schedules.rs`). No base field overrides them: the baseline's fused-accumulation `Fp32` override lost the checkpoint-6 bench gate (see dropped-specialization evidence) |
 | `ExtField<F>` | same | degree, `lift_base`, `mul_base`, coeff access, Frobenius |
 | `Ext2Config<F>` | `FpExt2Config` | quadratic non-residue config (ZST pattern), `IS_NEG_ONE` fast path |
-| `MulBaseUnreduced<F>` | same | tiny overridable ext×base deferred multiply — **deferred to checkpoint 7**: its contract is stated in terms of `Unreduced::Product`, which does not exist until the unreduced checkpoint |
+| `MulBaseUnreduced<F>` | same | tiny overridable ext×base deferred multiply, stated in terms of `Unreduced::Product` (deferred from checkpoint 6, landed with checkpoint 7; lives in `extension.rs` with a degree-1 blanket impl) |
 | `Unreduced` | `HasUnreducedOps` + `HasWide` + `ReduceTo` | **one deferred-reduction companion surface**: `type Product`, `type SmallProduct`, `type Wide` (i32-lane), `SUM_IS_EXACT`, widening muls + `reduce_*` for each, `scale_wide`. Rationale: these were three fragments of one concept — "the unreduced value algebra around a field"; routing reduction through the field type kills `ReduceTo`'s ambiguity workarounds |
 | `Fold` | `HasOptimizedFold` | `precompute(r) -> Ctx`, `fold_one(ctx, even, odd)` — documented honestly as the multilinear bind `even + r·(odd − even)`, a protocol-support hook that lives here because implementations exploit field representation |
 | `Packed` | `PackedField` | lanes: `Scalar`, `WIDTH`, `from_fn`/`extract`/`broadcast` + defaulted slice helpers + packed ext2 kernel hook |
@@ -140,12 +140,41 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
   baseline definition (`mul_base_to_product_accum`) returns
   `Unreduced::Product`, which does not exist until the unreduced surface
   lands; inventing a placeholder shape now would just be churn.
+  **Un-deferred with checkpoint 7:** landed in `extension.rs` as
+  `mul_base_unreduced` with a lift-then-`mul_unreduced` default body, a
+  degree-1 blanket impl, the coordinate-scaling `FpExt4<Fp32>` override,
+  and default-body impls for `FpExt2<Fp64>` and the identity-shape
+  extension variants.
 - **Added (not in baseline):** an `ext8_square` hook on `PseudoMersenne`
   defaulting to the deg-8 squaring schedule. The baseline computed
   `FpExt8::square` as a full multiply and used its square schedule only in
   the packed kernels; routing scalar squaring through the same schedule is
   value-identical (pure ring ops), saves base ops, and gives the schedule
   its scalar consumer.
+
+**Dropped-specialization evidence (checkpoint 7, unreduced):**
+
+- **Dropped:** the baseline's aarch64 NEON intrinsic `Add`/`Sub`/`Neg`
+  paths on the `i32`-lane wide accumulators (`Fp64x4i32`, `Fp128x8i32`;
+  ~120 source lines of `unsafe` intrinsics). Evidence: `rustc -O` compiles
+  the portable element-wise `[i32; N]` code to the identical instructions
+  the intrinsics hand-write — `ldr/ldp q` + `add.4s`/`sub.4s`/`neg.4s`
+  (and `mul.4s` for lane scaling, which the baseline never vectorized) —
+  verified by inspecting `--emit asm` output for 4- and 8-lane add, sub,
+  neg, and scale on this machine (aarch64, Apple M4). The portable path
+  additionally panics on lane overflow in debug builds, turning headroom
+  violations into test failures instead of silent wrapping.
+- **Corrected (baseline doc bugs, no code change):** the baseline's lane
+  headroom comment says `i32::MAX / u16::MAX ≈ 32,769` additions; the safe
+  count is 32768 (`32769 · 0xFFFF > 2^31 − 1`). Its `FpExt4<Fp32>` accum
+  comment claims per-term slot contributions of `7·P² ≈ 2^65` and `2^63`
+  accumulations; the correct figures are `7·P² < 2^67` and `2^61` terms.
+  Both re-derived and documented in `solinas/unreduced.rs`, with the
+  32768-boundary case tested exactly (one past asserted to panic in debug).
+- **Restricted (baseline latent footgun):** the fused `FpExt2<Fp64>`
+  product accumulation is only correct for non-residues −1 and 2, but the
+  baseline compiled its two-case body for arbitrary `FpExt2Config`s; the
+  port debug-asserts `NR ∈ {−1, 2}`.
 
 ## Design pillars
 
@@ -200,7 +229,7 @@ on them.
 | **Contract layer (root, unconditional)** | | |
 | `src/lib.rs` | 70 | crate docs, feature gates, re-exports, `FieldError` |
 | `src/algebra.rs` | 260 | spine: 7 traits + `NaiveAccumulator` + `PseudoMersenne` |
-| `src/extension.rs` | 60 | contracts: `ExtField`, `Ext2Config` + NR config ZSTs (`MulBaseUnreduced` lands with checkpoint 7) |
+| `src/extension.rs` | 60 | contracts: `ExtField`, `Ext2Config` + NR config ZSTs, `MulBaseUnreduced` |
 | `src/unreduced.rs` | 70 | contracts: `Unreduced`, `Fold` |
 | `src/packed.rs` | 90 | contracts: `Packed`, `WithPacking` + generic `NoPacking` |
 | `src/ops.rs` | 180 | `impl_ring_ops!`, `impl_serde_bytes!` (backend-neutral) |
