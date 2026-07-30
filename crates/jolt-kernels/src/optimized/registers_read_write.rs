@@ -55,6 +55,8 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
 use jolt_witness::witnesses::WitnessEnv;
+#[cfg(feature = "parallel")]
+use jolt_witness::RandomAccessRows;
 use jolt_witness::{
     stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
 };
@@ -135,6 +137,127 @@ impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
             self.rd_indices.push(cycle.rd.map(|(k, ..)| k));
         }
     }
+}
+
+/// Builds the sparse entries and the operand index columns in one trace
+/// pass. Slice-backed sources build index-parallel; re-emulating sources
+/// stream sequentially. Entry values and order are identical either way —
+/// [`cycle_entries`] is pure per cycle, and runs concatenate in cycle order.
+fn collect_register_entries<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
+    #[cfg(feature = "parallel")]
+    if let Some(access) = witness.random_access() {
+        if cycles <= access.cycles() {
+            return collect_register_entries_par(&access, cycles);
+        }
+    }
+    let mut consumers = (CollectRegisterEntries::<F> {
+        entries: Vec::with_capacity(cycles * 3),
+        rs1_indices: Vec::with_capacity(cycles),
+        rs2_indices: Vec::with_capacity(cycles),
+        rd_indices: Vec::with_capacity(cycles),
+    },);
+    stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+    Ok(consumers.0)
+}
+
+/// The index-parallel entry build: every chunk extracts its own cycle
+/// windows, writes the three operand index columns straight into their
+/// (disjoint) chunk spans, and builds a local entry run; runs then copy to
+/// their exclusive-scan offsets in parallel. The per-cycle entry count is
+/// data-dependent, so entries cannot scatter directly — the run copy is the
+/// price of dropping the serial consume.
+#[cfg(feature = "parallel")]
+fn collect_register_entries_par<F: Field>(
+    access: &RandomAccessRows<'_>,
+    cycles: usize,
+) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
+    use core::mem::MaybeUninit;
+    /// The scatter grain (matches the whole-range collectors' load-balance
+    /// tradeoff at ~3 entries per cycle).
+    const CHUNK: usize = 1 << 14;
+    let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+    let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+    let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+    let error = std::sync::Mutex::new(None);
+    let mut runs: Vec<Vec<SparseEntry<F, LutIndex>>> = Vec::new();
+    (
+        rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+        rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+        rd_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+    )
+        .into_par_iter()
+        .enumerate()
+        .map(|(chunk_index, (rs1, rs2, rd))| {
+            let base = chunk_index * CHUNK;
+            let mut run: Vec<SparseEntry<F, LutIndex>> = Vec::with_capacity(3 * rs1.len());
+            for offset in 0..rs1.len() {
+                let row = base + offset;
+                match access.window::<RegisterCycleRow>(row) {
+                    Ok(cycle) => {
+                        let (cells, len) = cycle_entries(row, &cycle);
+                        run.extend_from_slice(&cells[..len]);
+                        let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
+                        let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
+                        let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
+                    }
+                    Err(failure) => {
+                        if let Ok(mut guard) = error.try_lock() {
+                            let _ = guard.get_or_insert(failure);
+                        }
+                        return run;
+                    }
+                }
+            }
+            run
+        })
+        .collect_into_vec(&mut runs);
+    #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
+    if let Some(failure) = error.into_inner().unwrap() {
+        return Err(failure.into());
+    }
+    // SAFETY: the error latch is empty, so every chunk ran to completion and
+    // initialized its whole span of all three index columns.
+    unsafe {
+        rs1_indices.set_len(cycles);
+        rs2_indices.set_len(cycles);
+        rd_indices.set_len(cycles);
+    }
+
+    let total = runs.iter().map(Vec::len).sum();
+    let mut entries: Vec<SparseEntry<F, LutIndex>> = Vec::with_capacity(total);
+    {
+        // Sequentially split the spare capacity into per-run windows (cheap:
+        // one split per run), then copy every run in parallel.
+        let mut rest: &mut [MaybeUninit<SparseEntry<F, LutIndex>>] =
+            &mut entries.spare_capacity_mut()[..total];
+        let mut windows: Vec<&mut [MaybeUninit<SparseEntry<F, LutIndex>>]> =
+            Vec::with_capacity(runs.len());
+        for run in &runs {
+            let (head, tail) = rest.split_at_mut(run.len());
+            windows.push(head);
+            rest = tail;
+        }
+        windows
+            .into_par_iter()
+            .zip(runs.par_iter())
+            .for_each(|(window, run)| {
+                for (slot, entry) in window.iter_mut().zip(run) {
+                    let _ = slot.write(*entry);
+                }
+            });
+    }
+    // SAFETY: the windows partition exactly `total` slots and every window
+    // was fully written from its (equal-length) run above.
+    unsafe { entries.set_len(total) };
+    Ok(CollectRegisterEntries {
+        entries,
+        rs1_indices,
+        rs2_indices,
+        rd_indices,
+    })
 }
 
 /// Growing lookup table of the possible values of one one-hot coefficient
@@ -600,24 +723,15 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // Sparse entry construction: one streaming trace pass — the typed
-        // rows are never materialized whole (80 bytes per cycle saved at the
-        // stage's peak moment). `entries` reserves the ≤ 3-per-cycle upper
-        // bound; the overshoot lives only until the first merge bind
-        // rebuilds the vector exactly sized.
-        let mut consumers = (CollectRegisterEntries::<F> {
-            entries: Vec::with_capacity(cycles * 3),
-            rs1_indices: Vec::with_capacity(cycles),
-            rs2_indices: Vec::with_capacity(cycles),
-            rd_indices: Vec::with_capacity(cycles),
-        },);
-        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+        // Sparse entry construction: one trace pass — the typed rows are
+        // never materialized whole (80 bytes per cycle saved at the stage's
+        // peak moment).
         let CollectRegisterEntries {
             entries,
             rs1_indices,
             rs2_indices,
             rd_indices,
-        } = consumers.0;
+        } = collect_register_entries(witness, cycles)?;
         let entries = SparseEntries::Indexed {
             entries,
             ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
