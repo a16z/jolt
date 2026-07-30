@@ -30,6 +30,7 @@ use std::sync::Arc;
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
+use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use super::{num_threadgroups, own_uninit_frs, DeviceRound, Partials};
@@ -41,10 +42,18 @@ use crate::optimized::booleanity::{prepare_booleanity_cycle, BooleanityDeviceInp
 use crate::optimized::instruction_ra_virtualization::OptimizedInstructionRaVirtualizationKernel;
 use crate::optimized::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use crate::optimized::lazy_ra::LazyRaDevice;
+use crate::optimized::ram_ra_virtualization::{
+    prepare_ram_ra_virtualization, RamRaVirtualizationDeviceInputs,
+};
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
 const BOOL_KIND: &str = "booleanity_cycle";
 const RAV_KIND: &str = "instruction_ra_virtualization";
+const RAM_RAV_KIND: &str = "ram_ra_virtualization";
+
+/// The packed-row gather family of the +1-sentinel remapped RAM address
+/// (`jk_ra_hot_index` kind 2 in `ra_lazy.metal`).
+const RAM_ADDRESS_KIND: u32 = 2;
 
 /// Per-virtual batch capacity baked into the shaders (`JK_RAV_MAX_BATCH`).
 const MAX_BATCH: usize = 8;
@@ -143,6 +152,80 @@ impl PrepareKernel<Fr, InstructionRaVirtualization<Fr>> for MetalInstructionRaVi
                 driver,
             )?,
         ))
+    }
+}
+
+/// Slot front for RAM RA virtualization: the optimized kernel with a device
+/// driver injected through the prepare seam. The summand is a SINGLE
+/// product group over all committed chunks, so the instruction-RAV kernels
+/// serve it at `num_polys == batch == num_committed` — same lane grid, RAM
+/// address gathers via the packed rows' sentinel family.
+pub struct MetalRamRaVirtualization;
+
+impl PrepareKernel<Fr, RamRaVirtualization<Fr>> for MetalRamRaVirtualization {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<Fr>,
+        inputs: ProverInputs<'_, Fr, RamRaVirtualization<Fr>>,
+    ) -> Result<Box<dyn SumcheckKernel<Fr, Relation = RamRaVirtualization<Fr>>>, KernelError<Fr>>
+    {
+        prepare_ram_ra_virtualization(session, witness, inputs, |device| {
+            build_ram_rav_driver(device).map(|driver| Box::new(driver) as Box<dyn LazyRaDevice<Fr>>)
+        })
+    }
+}
+
+fn build_ram_rav_driver(inputs: RamRaVirtualizationDeviceInputs<'_, Fr>) -> Option<RavDriver> {
+    let batch = inputs.num_committed;
+    let cycles = 1usize << inputs.log_t;
+    if !metal_gate(RAM_RAV_KIND, cycles)
+        || !(2..=MAX_BATCH).contains(&batch)
+        || inputs.committed_chunk_bits == 0
+        || inputs.committed_chunk_bits > MAX_CHUNK_BITS
+    {
+        return None;
+    }
+    let context = match MetalContext::global() {
+        Ok(context) => context,
+        Err(error) => {
+            tracing::warn!(slot = RAM_RAV_KIND, %error, "no device context; staying on the CPU");
+            return None;
+        }
+    };
+    // The device gathers off the stage-6b packed rows (session-shared with
+    // the booleanity and instruction-RAV slots); the CPU kernel keeps its
+    // RamAccessColumns source — same per-cycle remapped addresses.
+    let rows = match shared_instruction_rows(inputs.session, inputs.witness, cycles) {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(slot = RAM_RAV_KIND, %error, "no packed rows; staying on the CPU");
+            return None;
+        }
+    };
+    // Committed chunk `i` selects address bits at RamAddressChunks::index's
+    // shift order.
+    let meta: Vec<(u32, u32)> = (0..batch)
+        .map(|i| {
+            (
+                RAM_ADDRESS_KIND,
+                ((batch - 1 - i) * inputs.committed_chunk_bits) as u32,
+            )
+        })
+        .collect();
+    match DeviceLazyRa::build(
+        context,
+        RAM_RAV_KIND,
+        rows,
+        &meta,
+        inputs.committed_chunk_bits,
+        batch,
+    ) {
+        Ok(core) => Some(RavDriver { core, batch }),
+        Err(error) => {
+            tracing::warn!(slot = RAM_RAV_KIND, %error, "driver build failed; staying on the CPU");
+            None
+        }
     }
 }
 
@@ -725,16 +808,19 @@ mod tests {
         z ^ (z >> 31)
     }
 
-    /// Claim-agnostic lockstep drive: both kernels see the same challenge
-    /// and claim stream; byte-equal wire polynomials pin parity.
+    /// Lockstep drive: both kernels see the same challenge and claim
+    /// stream; byte-equal wire polynomials pin parity. `initial_claim` must
+    /// be honest for kernels that round-check (the RAM RAV CPU recipe);
+    /// grid-recovery kernels accept anything.
     fn drive_pair(
         cpu: &mut dyn ProveRounds<Fr>,
         device: &mut dyn ProveRounds<Fr>,
         label: &str,
+        initial_claim: Fr,
     ) -> Vec<Fr> {
         let rounds = cpu.num_rounds();
         assert_eq!(rounds, device.num_rounds());
-        let mut claim = fr(0xBEEF);
+        let mut claim = initial_claim;
         let mut drawn = Vec::new();
         for round in 0..rounds {
             let bind = round.checked_sub(1).map(challenge);
@@ -798,7 +884,12 @@ mod tests {
         assert!(driver.is_some(), "driver install declined");
         let mut device = new_kernel(driver);
 
-        let _ = drive_pair(&mut cpu, &mut device, "instruction_ra_virtualization");
+        let _ = drive_pair(
+            &mut cpu,
+            &mut device,
+            "instruction_ra_virtualization",
+            fr(0xBEEF),
+        );
         let claims =
             jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationInputClaims {
                 instruction_ra: Vec::new(),
@@ -868,7 +959,12 @@ mod tests {
                 .prepare(&mut ProofSession::default(), backend, inputs())
                 .unwrap();
 
-            let drawn = drive_pair(cpu.as_mut(), device.as_mut(), "booleanity_cycle");
+            let drawn = drive_pair(
+                cpu.as_mut(),
+                device.as_mut(),
+                "booleanity_cycle",
+                fr(0xBEEF),
+            );
             assert_eq!(
                 cpu.output_claims(&claims).unwrap(),
                 device.output_claims(&claims).unwrap()
@@ -900,5 +996,125 @@ mod tests {
     fn bool_parity_dense_handoff() {
         let _lock = gpu_lock();
         bool_parity(13, 4, 256, 3 + 1 + 4);
+    }
+
+    fn ram_rav_parity(log_t: usize, min_terms: usize, device_rounds: u64) {
+        use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
+        use jolt_claims::protocols::jolt::geometry::ram::{
+            committed_ram_ra, RamRaVirtualizationDimensions,
+        };
+        use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationInputClaims;
+        use jolt_claims::NoChallenges;
+        use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
+
+        use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
+        use crate::optimized::OptimizedBackend;
+        use crate::reference::views::{address_fold, eq_table};
+
+        std::env::remove_var("JOLT_METAL_DISABLE");
+        std::env::set_var("JOLT_METAL_MIN_TERMS", min_terms.to_string());
+        // ram_k = 256 with the fixture's 4-bit chunks: two committed RA
+        // polynomials (the minimum product-grid geometry), hot words on
+        // both sides of the chunk boundary, cold padding cycles dominant.
+        let chunk_bits = 4usize;
+        let shape = FixtureShape { log_t, ram_k: 256 };
+        let ops = vec![
+            RamOp::Write { word: 3, post: 5 },
+            RamOp::Write { word: 200, post: 7 },
+            RamOp::Read { word: 200 },
+            RamOp::None,
+            RamOp::Read { word: 3 },
+            RamOp::Write { word: 63, post: 2 },
+            RamOp::Read { word: 129 },
+            RamOp::Write { word: 255, post: 1 },
+        ];
+        with_ram_fixture(shape, ops, |witness| {
+            let log_k = shape.log_k();
+            let num_committed = log_k.div_ceil(chunk_bits);
+            assert_eq!(num_committed, 2);
+            let ram_reduced_address = point(0xADD2, log_k);
+            let ram_reduced_cycle = point(0xC1C2, log_t);
+            let relation = RamRaVirtualization::<Fr>::new(
+                RamRaVirtualizationDimensions::new(log_t, num_committed),
+                ram_reduced_address.clone(),
+                ram_reduced_cycle.clone(),
+                chunk_bits,
+            );
+
+            // The honest reduced claim off the oracle grids (the CPU recipe
+            // round-checks, so the drive needs the true chain).
+            let chunks = committed_address_chunks(&ram_reduced_address, chunk_bits);
+            let folded: Vec<Vec<Fr>> = chunks
+                .iter()
+                .enumerate()
+                .map(|(index, chunk)| {
+                    address_fold(witness, committed_ram_ra(index), log_t, chunk).unwrap()
+                })
+                .collect();
+            let eq_cycle = eq_table(&ram_reduced_cycle);
+            let input_claim: Fr = (0..1usize << log_t)
+                .map(|j| {
+                    folded
+                        .iter()
+                        .fold(eq_cycle[j], |product, table| product * table[j])
+                })
+                .sum();
+            assert_ne!(input_claim, fr(0), "degenerate fixture");
+
+            let claims = RamRaVirtualizationInputClaims {
+                ram_ra_reduced: input_claim,
+            };
+            let points = RamRaVirtualizationInputClaims::<Vec<Fr>>::default();
+            let challenges = NoChallenges::default();
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+
+            let mut cpu = PrepareKernel::<Fr, _>::prepare(
+                &OptimizedBackend,
+                &mut ProofSession::default(),
+                witness,
+                inputs(),
+            )
+            .unwrap();
+            let probes_before = device_probe_count();
+            let mut device = MetalRamRaVirtualization
+                .prepare(&mut ProofSession::default(), witness, inputs())
+                .unwrap();
+
+            let _ = drive_pair(
+                cpu.as_mut(),
+                device.as_mut(),
+                "ram_ra_virtualization",
+                input_claim,
+            );
+            assert_eq!(
+                cpu.output_claims(&claims).unwrap().ram_ra,
+                device.output_claims(&claims).unwrap().ram_ra,
+            );
+            assert_eq!(
+                device_probe_count() - probes_before,
+                device_rounds,
+                "device dispatch count drifted (lazy + adoption + dense)"
+            );
+        });
+    }
+
+    /// Every phase on device (real trace-backed witness: mostly-cold RAM
+    /// address column exercises the sentinel gathers).
+    #[test]
+    fn ram_rav_parity_full_device() {
+        let _lock = gpu_lock();
+        ram_rav_parity(13, 0, 3 + 1 + 10);
+    }
+
+    /// Mid-dense handoff, as the instruction variant.
+    #[test]
+    fn ram_rav_parity_dense_handoff() {
+        let _lock = gpu_lock();
+        ram_rav_parity(13, 256, 3 + 1 + 4);
     }
 }

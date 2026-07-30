@@ -43,7 +43,9 @@ pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
 pub use instruction_read_raf::MetalInstructionReadRaf;
 pub use joint_opening::MetalJointOpening;
-pub use ra_lazy::{MetalBooleanityCycle, MetalInstructionRaVirtualization};
+pub use ra_lazy::{
+    MetalBooleanityCycle, MetalInstructionRaVirtualization, MetalRamRaVirtualization,
+};
 pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 pub use ram_raf_evaluation::MetalRamRafEvaluation;
 

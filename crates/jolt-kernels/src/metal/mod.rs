@@ -51,7 +51,7 @@ pub use runtime::{
 pub use slots::{
     MetalBooleanityCycle, MetalHammingWeightClaimReduction, MetalIncClaimReduction,
     MetalInstructionRaVirtualization, MetalInstructionReadRaf, MetalJointOpening,
-    MetalRamHammingBooleanity, MetalRamRafEvaluation,
+    MetalRamHammingBooleanity, MetalRamRaVirtualization, MetalRamRafEvaluation,
 };
 
 use jolt_field::Fr;
@@ -146,6 +146,7 @@ where
         backend.instruction_read_raf = Box::new(MetalInstructionReadRaf);
         backend.booleanity_cycle = Box::new(MetalBooleanityCycle);
         backend.instruction_ra_virtualization = Box::new(MetalInstructionRaVirtualization);
+        backend.ram_ra_virtualization = Box::new(MetalRamRaVirtualization);
         if let Some(slot) = commitment::dory_commit_slot::<Fr, PCS>() {
             backend.commit = slot;
             tracing::info!(device = %context.device_name(), "Metal backend ready (commit on device)");
