@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Thirteen independently committed
+This pass kept K256 and the proof protocol fixed. Fourteen independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -23,15 +23,19 @@ prover slowdown:
 | `2d08372ec` | Delay Fp128 expansion of instruction-input columns | 3 GiB of Stage-3 field state at `2^26` |
 | `7afb90166` | Release compact trace rows after Stage 7 | 64 B/cycle before reconstruction/opening |
 | `5d1ff81a1` | Materialize RA rows after Stage 5 | 53 B/cycle during commitment and Stages 1–5 |
+| `cffef8618` | Release packed lane rows after the accepted root fold | 29 B/cycle during the recursive opening tail |
 
-At `2^26`, the lowest measured maximum RSS is 38.924 GB with zero process
+At `2^26`, the lowest measured maximum RSS is 38.876 GB with zero process
 swaps, down from the 44.157 GB packed-delta control, 50.49 GB after the
 R1CS-row policy change, and 50.72 GB before it. The three-round
 instruction-input change removes 4.128 GB (-9.35%) from the process maximum.
 Releasing the trace then removes 4.01 GiB at the end of opening and moves the
 sampled global peak to Stage 6b, although the earlier `/usr/bin/time` maximum
 moves by only 0.106 GB. Deferring RA rows removes another 3.3125 GiB of
-retained state before Stage 6 and lowers the process maximum by 0.999 GB.
+retained state before Stage 6 and lowers the process maximum by 0.999 GB. The
+opening lifecycle hook then releases 1.8125 GiB of packed rows after the
+accepted root fold. It lowers the sampled opening tail but leaves the
+Stage-6b headline peak effectively unchanged.
 Earlier phase-local cuts are not always fully visible in headline RSS. The
 R1CS change, for example, drops Stage 1 by the exact 13 GiB row allocation.
 
@@ -41,7 +45,9 @@ scaling the observed maximum-RSS reduction gives roughly 113 GiB. These are
 not capacity forecasts: different phases become maximal at different sizes,
 and Stage 6b is now the measured late limiter. The 16 GiB `2^28` trace release
 also helps only after Stage 7. These estimates are sufficient to show that the
-current stack is still above the 95 GiB low-swap objective.
+current stack is still above the 95 GiB low-swap objective. The opening
+lifecycle change does not alter that peak extrapolation, but it removes
+7.25 GiB from the `2^28` recursive opening tail.
 
 ## Measurements
 
@@ -270,6 +276,25 @@ early-lifetime capacity cut rather than a solution to the current Stage-6b
 peak. Full measurements and validation are in
 `deferred-ra-materialization-experiment.md`.
 
+### Release packed opening rows after the root fold
+
+The trace-backed packed lane cache is read by Akita's root evaluation and root
+decomposition, but not by the recursive fold tail. Akita now calls a generic
+release hook after `prepare_root` has finished all nonce retries and produced
+the accepted root-fold witness. Jolt drops its cache at that boundary.
+
+This releases exactly 29 B/cycle: 1.8125 GiB at `2^26` and 7.25 GiB at
+`2^28`. Two target runs measured 54.21 and 53.70 seconds versus the
+53.54-second control; the affected packed-opening span measured 11.25 and
+11.12 seconds versus 11.14 seconds. The repeat and small-scale pairs support
+performance neutrality.
+
+Opening-end RSS fell from 20.42 GiB to 18.62 and 18.09 GiB. The lowest process
+maximum was 38.876 GB versus 38.924 GB, an effectively unchanged headline
+because Stage 6b precedes the release. The proof and transcript are unchanged.
+Full ownership analysis, measurements, and validation are in
+`opening-hint-lifetime-experiment.md`.
+
 ### Rejected: drop lazy replay snapshot
 
 `JoltCpuProver` retains a `LazyTraceIterator` clone of the initial emulator,
@@ -376,6 +401,8 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Late trace release target | `mem-drop-trace-2e26.json` |
 | Deferred RA rows screens | `mem-defer-ra-2e22.json`, `mem-defer-ra-2e22-b.json` |
 | Deferred RA rows target | `mem-defer-ra-2e26.json` |
+| Opening-row release screens | `mem-opening-release-2e22.json`, `mem-opening-release-2e22-b.json` |
+| Opening-row release targets | `mem-opening-release-2e26.json`, `mem-opening-release-2e26-b.json` |
 | Lazy replay snapshot rejection | `mem-drop-lazy-2e22.json` |
 | Fourth delayed RA round rejection | `mem-ra-round4-2e22.json` |
 | RAM-validity 47-byte rejection | `mem-ram-valid-2e22.json`, `mem-ram-valid-2e22-b.json`, `mem-ram-valid-2e26.json`, `mem-ram-valid-2e26-b.json` |
@@ -412,8 +439,9 @@ Stage 6b now sets the sampled `2^26` peak at 34.16 GiB, with the earlier
 Stage-3/4 transient setting `/usr/bin/time`'s maximum. The next target is the
 Stage-6b field-vector overlap through allocation ownership or scheduling;
 another generic indexed RA round and a RAM-tag-only row compaction are now
-rejected. After that, audit the opening hint. Releasing the setup matrix
-remains rejected under the current implementation because its late
-reconstruction regresses both opening and verifier performance.
+rejected. The opening-hint audit is complete: its remaining packed row cache
+now ends after the accepted root fold. Releasing the setup matrix remains
+rejected under the current implementation because its late reconstruction
+regresses both opening and verifier performance.
 
 K16 is not part of this campaign. K256 remains the fixed performance choice.
