@@ -10,18 +10,20 @@ use crate::{FieldCore, FromPrimitiveInt};
 
 macro_rules! impl_prime_native_capability {
     ($ty:ident<$p:ident: $p_ty:ty>, $bytes:expr) => {
-        impl<const $p: $p_ty> $crate::CanonicalRepr for $ty<$p> {
+        impl<const $p: $p_ty> $crate::CanonicalBytes for $ty<$p> {
             const NUM_BYTES: usize = $bytes;
 
             #[inline(always)]
             fn to_bytes_le(&self, out: &mut [u8]) {
-                assert_eq!(out.len(), <Self as $crate::CanonicalRepr>::NUM_BYTES);
+                assert_eq!(out.len(), <Self as $crate::CanonicalBytes>::NUM_BYTES);
                 out.copy_from_slice(
                     &self.to_canonical_u128().to_le_bytes()
-                        [..<Self as $crate::CanonicalRepr>::NUM_BYTES],
+                        [..<Self as $crate::CanonicalBytes>::NUM_BYTES],
                 );
             }
+        }
 
+        impl<const $p: $p_ty> $crate::CanonicalRepr for $ty<$p> {
             #[inline(always)]
             fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
                 if bytes.len() <= ::std::mem::size_of::<u128>() {
@@ -75,7 +77,8 @@ mod tests {
     //! `--no-default-features --features solinas` as well as combined builds.
     use super::*;
     use crate::{
-        Accumulator, CanonicalField, CanonicalRepr, Fp32, Fp64, Prime128Offset275, WithAccumulator,
+        Accumulator, CanonicalBytes, CanonicalField, CanonicalRepr, Fp32, Fp64, Prime128Offset275,
+        WithAccumulator,
     };
 
     /// Asserts the full canonical byte round-trip on the native traits.
@@ -83,7 +86,7 @@ mod tests {
     where
         F: CanonicalField + CanonicalRepr + std::fmt::Debug + Eq,
     {
-        assert_eq!(<F as CanonicalRepr>::NUM_BYTES, N);
+        assert_eq!(<F as CanonicalBytes>::NUM_BYTES, N);
 
         // to_bytes_le (the audited method) into a correctly sized buffer, plus
         // the vec convenience wrapper — both must agree.

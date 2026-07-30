@@ -5,8 +5,8 @@
 #![expect(clippy::unwrap_used)]
 
 use jolt_field::{
-    CanonicalRepr, Ext2, FieldCore, FpExt4, FpExt8, Prime128Offset275, Prime32Offset99,
-    Prime64Offset59,
+    CanonicalBytes, CanonicalRepr, Ext2, FieldCore, FpExt4, FpExt8, Prime128Offset275,
+    Prime32Offset99, Prime64Offset59,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -37,9 +37,9 @@ where
 fn prime_field_elements_encode_to_num_bytes() {
     let mut rng = StdRng::seed_from_u64(7);
     for _ in 0..32 {
-        assert_roundtrip_with_size(&F32::random(&mut rng), <F32 as CanonicalRepr>::NUM_BYTES);
-        assert_roundtrip_with_size(&F64::random(&mut rng), <F64 as CanonicalRepr>::NUM_BYTES);
-        assert_roundtrip_with_size(&F128::random(&mut rng), <F128 as CanonicalRepr>::NUM_BYTES);
+        assert_roundtrip_with_size(&F32::random(&mut rng), <F32 as CanonicalBytes>::NUM_BYTES);
+        assert_roundtrip_with_size(&F64::random(&mut rng), <F64 as CanonicalBytes>::NUM_BYTES);
+        assert_roundtrip_with_size(&F128::random(&mut rng), <F128 as CanonicalBytes>::NUM_BYTES);
     }
 }
 
@@ -62,7 +62,7 @@ fn vectors_add_only_a_single_length_prefix() {
         // bincode's standard config uses a varint length prefix: 1 byte for
         // lengths below 251.
         let prefix = if n < 251 { 1 } else { 3 };
-        assert_eq!(bytes.len(), prefix + n * <F64 as CanonicalRepr>::NUM_BYTES);
+        assert_eq!(bytes.len(), prefix + n * <F64 as CanonicalBytes>::NUM_BYTES);
         let (decoded, _): (Vec<F64>, usize) =
             bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
         assert_eq!(decoded, v);

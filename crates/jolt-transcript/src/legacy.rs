@@ -7,7 +7,7 @@
 
 use std::marker::PhantomData;
 
-use jolt_field::{CanonicalRepr, Field, FromPrimitiveInt};
+use jolt_field::{CanonicalBytes, CanonicalRepr, Field, FromPrimitiveInt};
 use spongefish::{DuplexSpongeInterface, Encoding};
 
 use crate::codec::BytesMsg;
@@ -120,7 +120,7 @@ pub trait AppendToTranscript {
 
 /// Big-endian field element absorption (matches jolt-prover-legacy's EVM-compatible
 /// byte order).
-impl<F: CanonicalRepr> AppendToTranscript for F {
+impl<F: CanonicalBytes> AppendToTranscript for F {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         let mut buf = vec![0u8; F::NUM_BYTES];
         self.to_bytes_le(&mut buf);

@@ -2,8 +2,8 @@ use akita_config::proof_optimized::fp128::Field as AkitaField;
 use rand_core::RngCore;
 
 use crate::{
-    AdditiveGroup, CanonicalRepr, Field, FieldCore, FromPrimitiveInt, NaiveAccumulator, RingCore,
-    WithAccumulator,
+    AdditiveGroup, CanonicalBytes, CanonicalRepr, Field, FieldCore, FromPrimitiveInt,
+    NaiveAccumulator, RingCore, WithAccumulator,
 };
 
 impl AdditiveGroup for AkitaField {}
@@ -44,14 +44,16 @@ impl FromPrimitiveInt for AkitaField {
     }
 }
 
-impl CanonicalRepr for AkitaField {
+impl CanonicalBytes for AkitaField {
     const NUM_BYTES: usize = <Self as akita_field::FixedByteSize>::NUM_BYTES;
 
     #[inline(always)]
     fn to_bytes_le(&self, out: &mut [u8]) {
         <Self as akita_field::CanonicalBytes>::to_bytes_le(self, out);
     }
+}
 
+impl CanonicalRepr for AkitaField {
     #[inline(always)]
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         <Self as akita_field::ReducingBytes>::from_le_bytes_mod_order(bytes)

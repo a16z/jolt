@@ -12,7 +12,7 @@ use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
-use jolt_field::{CanonicalRepr, FieldCore, Fr, FromPrimitiveInt};
+use jolt_field::{CanonicalBytes, FieldCore, Fr, FromPrimitiveInt};
 use jolt_poly::{CompressedPoly, EqPolynomial};
 use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{

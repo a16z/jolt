@@ -2299,7 +2299,7 @@ mod committed_tests {
 }
 
 use jolt_crypto::{Commitment, HomomorphicCommitment, VectorCommitment};
-use jolt_field::{CanonicalBytes, Field, FixedByteSize};
+use jolt_field::{CanonicalBytes, Field};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug};
 
@@ -2336,12 +2336,11 @@ pub struct NoCommitment;
 
 // `AppendToTranscript` comes from jolt-transcript's blanket impl over
 // `CanonicalBytes`: an empty canonical encoding, so absorbing a
-// `NoCommitment` is a no-op.
-impl FixedByteSize for NoCommitment {
-    const NUM_BYTES: usize = 0;
-}
-
+// `NoCommitment` is a no-op. Deliberately NOT `CanonicalRepr`: a commitment
+// placeholder is not a decodable field element.
 impl CanonicalBytes for NoCommitment {
+    const NUM_BYTES: usize = 0;
+
     fn to_bytes_le(&self, _out: &mut [u8]) {}
 }
 

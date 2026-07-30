@@ -3,7 +3,7 @@
     reason = "Tracer concrete instruction names mirror generated Jolt instruction constants"
 )]
 
-use jolt_field::{CanonicalRepr, FieldCore, Fr};
+use jolt_field::{CanonicalBytes, CanonicalRepr, FieldCore, Fr};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
     FieldRegisterWrite,

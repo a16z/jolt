@@ -15,8 +15,8 @@ use std::{
 };
 
 use jolt_field::{
-    AdditiveGroup, CanonicalRepr, FieldCore, FromPrimitiveInt, NaiveAccumulator, RingCore,
-    WithAccumulator,
+    AdditiveGroup, CanonicalBytes, CanonicalRepr, FieldCore, FromPrimitiveInt, NaiveAccumulator,
+    RingCore, WithAccumulator,
 };
 use jolt_sumcheck::{
     BooleanHypercube, ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier,
@@ -239,14 +239,16 @@ impl FromPrimitiveInt for Mersenne61 {
     }
 }
 
-impl CanonicalRepr for Mersenne61 {
+impl CanonicalBytes for Mersenne61 {
     const NUM_BYTES: usize = 8;
 
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), 8);
         out.copy_from_slice(&self.0.to_le_bytes());
     }
+}
 
+impl CanonicalRepr for Mersenne61 {
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         let mut buf = [0u8; 16];
         let len = bytes.len().min(16);

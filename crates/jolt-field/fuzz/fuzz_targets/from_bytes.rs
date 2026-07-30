@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_field::{CanonicalRepr, Fr};
+use jolt_field::{CanonicalBytes, CanonicalRepr, Fr};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

@@ -53,7 +53,7 @@ This is a refactor of trait boundaries, not of arithmetic. The `jolt-eval` invar
 
 ### Acceptance Criteria
 
-- [x] `grep -rc '^pub trait' crates/jolt-field/src` totals at most 22. (22 as of phase 5; 21 once `MontgomeryConstants` is resolved.)
+- [x] `grep -rc '^pub trait' crates/jolt-field/src` totals at most 22. (22 as of phase 5; amended to 23 when `CanonicalBytes` was split back out of `CanonicalRepr` so transcript absorption does not require the field-decode contract — see the `NoCommitment` case from #1675; 22 once `MontgomeryConstants` is resolved.)
 - [x] The crate root has at most 4 trait-defining modules (`algebra.rs`, `canonical.rs`, `accumulator.rs`, `field.rs`) plus the feature-gated backend modules; the 15 micro-files are gone.
 - [x] Zero references remain to: `SignedScalarAccumulator`, `WithSmallScalarAccumulator`, `SignedProductAccumulator`, `WithSignedProductAccumulator`, `ExtensionCoeff`, `BalancedDigitLookup` (trait), `ScaleI32`, `PackedValue`, `LiftBase`, `MulBase`, `FrobeniusExtField`, `FpExt4MulBackend`, `FpExt8MulBackend`, `AdditiveAccumulator`, `Invertible`, `RandomSampling`, `MulPow2`, `MulPrimitiveInt`, `CanonicalBytes`, `ReducingBytes`, `FixedByteSize`, `FixedBytes`, `CanonicalU64`, `CanonicalBitLength`, `TranscriptChallenge`, `SmoothFftField`.
 - [x] `fft.rs` is removed from `jolt-field` (it has zero consumers in this workspace).
@@ -106,7 +106,7 @@ Trait disposition, all 46 accounted for:
 |---|---|---|
 | `FieldCore` | `Invertible`, `RandomSampling` | every `FieldCore` type implements both; rings stay unaffected at `RingCore` |
 | `FromPrimitiveInt` (gains `RingCore` supertrait) | `MulPow2`, `MulPrimitiveInt` | the absorbed traits are pure default-method helpers over exactly this bound |
-| `CanonicalRepr` (new, one file) | `CanonicalBytes`, `ReducingBytes`, `FixedByteSize`, `FixedBytes<N>`, `CanonicalU64`, `CanonicalBitLength`, `TranscriptChallenge` | one trait: `NUM_BYTES`, `to_bytes_le`, `from_le_bytes_mod_order`, `to_canonical_u64_checked`, `num_bits`, `from_challenge_bytes` (defaulted to reducing decode) |
+| `CanonicalRepr` (new, one file; `CanonicalBytes` later re-split out as its supertrait, carrying `NUM_BYTES` + `to_bytes_le`, so non-field transcript-absorbable types keep a narrow claim) | `ReducingBytes`, `FixedByteSize`, `FixedBytes<N>`, `CanonicalU64`, `CanonicalBitLength`, `TranscriptChallenge` | one trait: `NUM_BYTES`, `to_bytes_le`, `from_le_bytes_mod_order`, `to_canonical_u64_checked`, `num_bits`, `from_challenge_bytes` (defaulted to reducing decode) |
 | `Accumulator` | `AdditiveAccumulator` + `RingAccumulator` | the two are only ever implemented and consumed together (`WideAccumulator`, `NaiveAccumulator<R>`) |
 | `ExtField<F>` | `LiftBase<F>`, `MulBase<F>`, `FrobeniusExtField<F>` | identical implementor sets (blanket `F` + `FpExt2/4/8`); Frobenius requires a pseudo-Mersenne base, which all current bases are |
 | `ExtMulBackend` | `FpExt4MulBackend` + `FpExt8MulBackend` | same three implementors, same role (per-width fused schedules) |

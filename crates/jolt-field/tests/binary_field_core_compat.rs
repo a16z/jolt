@@ -12,7 +12,7 @@ use std::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use jolt_field::{AdditiveGroup, CanonicalRepr, FieldCore, RingCore};
+use jolt_field::{AdditiveGroup, CanonicalBytes, CanonicalRepr, FieldCore, RingCore};
 use num_traits::{One, Zero};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -168,14 +168,16 @@ impl FieldCore for Gf2 {
     }
 }
 
-impl CanonicalRepr for Gf2 {
+impl CanonicalBytes for Gf2 {
     const NUM_BYTES: usize = 1;
 
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), 1);
         out[0] = self.0 as u8;
     }
+}
 
+impl CanonicalRepr for Gf2 {
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         Self(bytes.iter().fold(0u8, |acc, b| acc ^ (b & 1)) == 1)
     }

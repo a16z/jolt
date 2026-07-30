@@ -38,7 +38,7 @@ use jolt_claims::protocols::jolt::{
     UntrustedAdviceReconstructionPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::{CanonicalRepr, Field};
+use jolt_field::{CanonicalBytes, Field};
 use jolt_poly::math::Math;
 use jolt_poly::{eq_index_msb, try_eq_mle};
 use jolt_sumcheck::SumcheckProof;
@@ -676,7 +676,7 @@ where
             let (r_lane, r_row) = shared_point.split_at(lane_vars);
             let dimensions = BytecodeReconstructionDimensions {
                 chunks: chunk_values.len(),
-                imm_byte_width: <F as CanonicalRepr>::NUM_BYTES,
+                imm_byte_width: <F as CanonicalBytes>::NUM_BYTES,
             };
             let instance = BytecodeChunkReconstructionInstance {
                 symbolic: BytecodeSymbolic::new(dimensions),

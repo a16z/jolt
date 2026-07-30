@@ -4,7 +4,7 @@
 //! verifier challenges.
 
 use arbitrary::{Arbitrary, Unstructured};
-use jolt_field::{CanonicalRepr, Fr as JFr};
+use jolt_field::{CanonicalBytes, Fr as JFr};
 use spongefish::instantiations::{Blake2b512, Keccak};
 
 use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PoseidonSponge};

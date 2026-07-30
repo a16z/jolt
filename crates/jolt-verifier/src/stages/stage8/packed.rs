@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
 use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltPolynomialId,
 };
-use jolt_field::{CanonicalRepr, Field};
+use jolt_field::{CanonicalBytes, Field};
 use jolt_openings::{
     verify_packed_openings, CommitmentScheme, EvaluationClaim, PackedObjectGroup,
     PackedVerifierObject, PrefixPackedStatement, PrefixPacking,
@@ -292,7 +292,7 @@ where
                 precommitted_packing(&PrecommittedPackingShape {
                     bytecode_chunks: committed.bytecode_chunk_count(),
                     log_bytecode_rows,
-                    imm_byte_width: <PCS::Field as CanonicalRepr>::NUM_BYTES,
+                    imm_byte_width: <PCS::Field as CanonicalBytes>::NUM_BYTES,
                     program_image_log_words,
                 })
                 .map_err(batch_failed)?,
@@ -730,7 +730,7 @@ mod tests {
             imm_bytes: vec![
                 point(
                     jolt_claims::protocols::jolt::lattice::geometry::byte_num_vars(
-                        <Fr as CanonicalRepr>::NUM_BYTES,
+                        <Fr as CanonicalBytes>::NUM_BYTES,
                         LOG_BYTECODE_ROWS,
                     )
                     .unwrap()
@@ -776,7 +776,7 @@ mod tests {
             precommitted_packing(&PrecommittedPackingShape {
                 bytecode_chunks: BYTECODE_CHUNKS,
                 log_bytecode_rows: LOG_BYTECODE_ROWS,
-                imm_byte_width: <Fr as CanonicalRepr>::NUM_BYTES,
+                imm_byte_width: <Fr as CanonicalBytes>::NUM_BYTES,
                 program_image_log_words: Some(LOG_IMAGE_WORDS),
             })
             .unwrap(),

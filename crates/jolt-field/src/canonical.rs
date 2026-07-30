@@ -3,23 +3,27 @@
 use std::fmt::Debug;
 use std::hash::Hash;
 
-/// Canonical little-endian representation of a field element.
+/// Fixed-size canonical little-endian byte encoding: the transcript
+/// absorption surface.
 ///
-/// This trait is the transcript surface: Fiat-Shamir absorption and challenge
-/// derivation use these explicit canonical encodings so the hashed byte
-/// stream is specified independently of any serialization library. Proof and
-/// wire serialization go through serde + bincode instead; the two must not be
-/// conflated.
+/// Fiat-Shamir absorption uses this explicit canonical encoding so the
+/// hashed byte stream is specified independently of any serialization
+/// library. Proof and wire serialization go through serde + bincode
+/// instead; the two must not be conflated.
+///
+/// This is deliberately the *narrow* claim, "this value has one canonical
+/// byte encoding", implementable by non-field types (e.g. zero-sized
+/// commitment placeholders) that must be transcript-absorbable without
+/// pretending to be decodable field elements. Field types get the full
+/// decode surface via [`CanonicalRepr`].
 ///
 /// # Invariants
 ///
-/// - The encoding is injective on canonical representatives: equal elements
-///   produce equal bytes, distinct elements produce distinct bytes.
+/// - The encoding is injective on canonical representatives: equal values
+///   produce equal bytes, distinct values produce distinct bytes.
 /// - [`to_bytes_le`](Self::to_bytes_le) always writes exactly
 ///   [`NUM_BYTES`](Self::NUM_BYTES) bytes of the unique representative.
-pub trait CanonicalRepr:
-    Sized + Copy + Default + PartialEq + Eq + Debug + Hash + Sync + Send + 'static
-{
+pub trait CanonicalBytes {
     /// Byte length of the fixed-size canonical encoding.
     const NUM_BYTES: usize;
 
@@ -33,7 +37,14 @@ pub trait CanonicalRepr:
         self.to_bytes_le(&mut out);
         out
     }
+}
 
+/// Canonical decode-and-introspect surface of a field element: reducing
+/// byte/challenge constructors and canonical-integer views, on top of the
+/// [`CanonicalBytes`] encoding.
+pub trait CanonicalRepr:
+    CanonicalBytes + Sized + Copy + Default + PartialEq + Eq + Debug + Hash + Sync + Send + 'static
+{
     /// Deserializes little-endian bytes by reducing into this type.
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self;
 

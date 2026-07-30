@@ -53,7 +53,7 @@ mod native_algebra;
 
 pub use accumulator::{Accumulator, NaiveAccumulator, WithAccumulator};
 pub use algebra::{AdditiveGroup, FieldCore, FromPrimitiveInt, RingCore};
-pub use canonical::CanonicalRepr;
+pub use canonical::{CanonicalBytes, CanonicalRepr};
 pub use field::Field;
 pub use field_error::FieldError;
 pub use montgomery_constants::MontgomeryConstants;

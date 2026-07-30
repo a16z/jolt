@@ -3,8 +3,8 @@
 //! [`Fr`] is `#[repr(transparent)]` over the inner arkworks scalar field element,
 //! so it has identical layout and can be transmuted where needed.
 use crate::{
-    AdditiveGroup, CanonicalRepr, Field, FieldCore, FromPrimitiveInt, Limbs, RingCore,
-    WithAccumulator,
+    AdditiveGroup, CanonicalBytes, CanonicalRepr, Field, FieldCore, FromPrimitiveInt, Limbs,
+    RingCore, WithAccumulator,
 };
 use ark_ff::{prelude::*, PrimeField, UniformRand};
 use rand_core::RngCore;
@@ -334,19 +334,21 @@ impl FieldCore for Fr {
     }
 }
 
-impl CanonicalRepr for Fr {
+impl CanonicalBytes for Fr {
     const NUM_BYTES: usize = 32;
 
     #[expect(clippy::expect_used)]
     #[inline]
     fn to_bytes_le(&self, out: &mut [u8]) {
-        assert_eq!(out.len(), <Self as CanonicalRepr>::NUM_BYTES);
+        assert_eq!(out.len(), <Self as CanonicalBytes>::NUM_BYTES);
         use ark_serialize::CanonicalSerialize;
         self.0
             .serialize_compressed(out)
             .expect("BN254 Fr always serializes to 32 bytes");
     }
+}
 
+impl CanonicalRepr for Fr {
     #[inline]
     fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         Fr::from_le_bytes_mod_order(bytes)

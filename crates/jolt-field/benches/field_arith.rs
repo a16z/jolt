@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use jolt_field::{CanonicalRepr, FieldCore, Fr, FromPrimitiveInt};
+use jolt_field::{CanonicalBytes, CanonicalRepr, FieldCore, Fr, FromPrimitiveInt};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 

@@ -8,7 +8,8 @@
 use ark_std::test_rng;
 use jolt_field::signed::*;
 use jolt_field::{
-    Accumulator, CanonicalRepr, FieldCore, Fr, FromPrimitiveInt, Limbs, NaiveAccumulator,
+    Accumulator, CanonicalBytes, CanonicalRepr, FieldCore, Fr, FromPrimitiveInt, Limbs,
+    NaiveAccumulator,
 };
 use num_traits::{One, Zero};
 
