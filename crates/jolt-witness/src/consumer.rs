@@ -147,6 +147,54 @@ pub trait RowSource {
     fn random_access(&self) -> Option<RandomAccessRows<'_>> {
         None
     }
+
+    /// An owning counterpart of [`RowSource::random_access`], for consumers
+    /// that outlive their borrow of the source (sumcheck kernels holding
+    /// state across rounds): re-deriving per-cycle windows from the handle
+    /// replaces retaining materialized row vectors at gigabyte scale. `None`
+    /// whenever `random_access` is.
+    fn owned_rows(&self) -> Option<OwnedRows> {
+        None
+    }
+}
+
+/// A shared owning handle to a slice-backed source's rows and extraction
+/// context: [`OwnedRows::view`] re-creates the borrowed random-access view
+/// on demand.
+pub struct OwnedRows {
+    rows: std::sync::Arc<Vec<TraceRow>>,
+    cycles: usize,
+    preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
+}
+
+impl OwnedRows {
+    pub(crate) fn new(
+        rows: std::sync::Arc<Vec<TraceRow>>,
+        cycles: usize,
+        preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
+    ) -> Self {
+        Self {
+            rows,
+            cycles,
+            preprocessing,
+        }
+    }
+
+    /// The padded cycle-domain size the handle serves.
+    pub fn cycles(&self) -> usize {
+        self.cycles
+    }
+
+    /// The borrowed random-access view over the held rows.
+    pub fn view(&self) -> RandomAccessRows<'_> {
+        RandomAccessRows::new(
+            &self.rows,
+            self.cycles,
+            WitnessEnv {
+                preprocessing: &self.preprocessing,
+            },
+        )
+    }
 }
 
 /// A slice-backed source's rows and extraction context, for index-parallel

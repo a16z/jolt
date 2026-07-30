@@ -129,6 +129,17 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
         })
     }
 
+    fn owned_rows(&self) -> Option<crate::OwnedRows> {
+        let cycles = checked_pow2(self.config.log_t).ok()?;
+        self.trace.trace.shared_rows().map(|rows| {
+            crate::OwnedRows::new(
+                rows,
+                cycles,
+                std::sync::Arc::new(self.preprocessing.clone()),
+            )
+        })
+    }
+
     fn visit_chunks(
         &self,
         range: Range<usize>,
