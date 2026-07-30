@@ -51,11 +51,13 @@ pub use ra_lazy::{
 pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 pub use ram_raf_evaluation::MetalRamRafEvaluation;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Weak};
 
 use jolt_field::{Fr, FromPrimitiveInt};
 
-use super::buffers::{OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE};
+use super::buffers::{
+    ArenaSlab, OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE,
+};
 use super::error::MetalError;
 use super::field::fr_to_u32_limbs;
 use super::runtime::{MetalContext, THREADGROUP_SIZE};
@@ -74,11 +76,18 @@ impl RoundTable {
     /// Wrap `table` (no-copy when eligible; copies are counted in
     /// [`testing::copied_buffer_count`]) and allocate its half-size bind
     /// target.
-    pub(super) fn new(ctx: &MetalContext, table: Vec<Fr>) -> Result<Self, MetalError> {
+    pub(super) fn new(ctx: &'static MetalContext, table: Vec<Fr>) -> Result<Self, MetalError> {
         let nxt_len = table.len() / 2;
         let cur = ctx.own_vec(table)?;
         testing::note_copied_buffers(u64::from(cur.was_copied()));
-        let nxt = ctx.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), nxt_len))?;
+        // The bind target is written out of place before any read (the
+        // ping-pong contract), so it takes the uninit path: a retired-pool
+        // carve when one fits, a fresh never-zeroed allocation otherwise.
+        // Zero-fill remains only for sizes the no-copy wrap can't serve.
+        let nxt = match own_uninit_frs(ctx, nxt_len)? {
+            Some(buffer) => buffer,
+            None => ctx.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), nxt_len))?,
+        };
         Ok(Self { cur, nxt })
     }
 
@@ -174,21 +183,23 @@ pub(super) fn num_threadgroups(threads: usize) -> usize {
 /// stage-6b dense adoptions fit inside it). Stale contents satisfy the
 /// uninit contract: every consumer device-writes before any read.
 ///
+/// Retired buffers serve as placement arenas ([`ArenaSlab`]): takers carve
+/// page-aligned sub-ranges, so ONE retired pair covers every stage-6b
+/// adoption concurrently (whole-buffer handoff served only the first
+/// family — the other four allocated ~3.5 GiB fresh @2^23). A parked slab
+/// is held strongly until its first carve, then only weakly: the leases
+/// keep it alive, and the pages free the moment the last lease drops.
+///
 /// Process-global because the consumers (mid-sumcheck adoptions) have no
 /// session access; proof-scoped because the producing slot's `prepare`
 /// parks a [`RetiredPoolGuard`] whose drop drains the pool — buffers never
 /// outlive the proof that retired them.
-struct RetiredPool(Mutex<Vec<OwnedDeviceBuffer<Fr>>>);
+enum PoolEntry {
+    Parked(Arc<ArenaSlab>),
+    Carved(Weak<ArenaSlab>),
+}
 
-// SAFETY: `OwnedDeviceBuffer` is a Metal buffer handle plus its host
-// backing memory. `MTLBuffer` is an `MTLResource`, which Metal documents as
-// thread-safe (only command encoders are not); the backing memory is plain
-// bytes with no thread affinity; the mutex serializes every pool access.
-unsafe impl Send for RetiredPool {}
-// SAFETY: as for `Send` — all access goes through the mutex.
-unsafe impl Sync for RetiredPool {}
-
-static RETIRED: RetiredPool = RetiredPool(Mutex::new(Vec::new()));
+static RETIRED: Mutex<Vec<PoolEntry>> = Mutex::new(Vec::new());
 
 /// Park device buffers for reuse by a later stage's [`own_uninit_frs`].
 /// Callers (or an earlier slot in the same proof) must have parked a
@@ -198,27 +209,51 @@ static RETIRED: RetiredPool = RetiredPool(Mutex::new(Vec::new()));
     reason = "pool mutex cannot be poisoned: no panics inside"
 )]
 pub(super) fn retire_frs(buffers: impl IntoIterator<Item = OwnedDeviceBuffer<Fr>>) {
-    RETIRED
-        .0
-        .lock()
-        .expect("retired-buffer pool poisoned")
-        .extend(buffers);
+    let mut pool = RETIRED.lock().expect("retired-buffer pool poisoned");
+    // Ineligible buffers (never the pool's in practice) drop here — the
+    // same release they would have had without a pool.
+    pool.extend(
+        buffers
+            .into_iter()
+            .filter_map(ArenaSlab::adopt)
+            .map(PoolEntry::Parked),
+    );
 }
 
-/// The smallest retired buffer holding at least `len` elements, if any.
+/// Carve `len` elements out of the retired slab with the least free space
+/// that still fits (whole-pool best fit, one carve per call), if any.
 #[expect(
     clippy::expect_used,
     reason = "pool mutex cannot be poisoned: no panics inside"
 )]
-fn take_retired(len: usize) -> Option<OwnedDeviceBuffer<Fr>> {
-    let mut pool = RETIRED.0.lock().expect("retired-buffer pool poisoned");
-    let best = pool
+fn take_retired(context: &'static MetalContext, len: usize) -> Option<OwnedDeviceBuffer<Fr>> {
+    let mut pool = RETIRED.lock().expect("retired-buffer pool poisoned");
+    // Drop exhausted slabs (fully returned after use) and dead weak refs.
+    pool.retain(|entry| match entry {
+        PoolEntry::Parked(_) => true,
+        PoolEntry::Carved(weak) => weak.upgrade().is_some_and(|slab| !slab.exhausted()),
+    });
+    let mut candidates: Vec<(usize, usize, Arc<ArenaSlab>)> = pool
         .iter()
         .enumerate()
-        .filter(|(_, buffer)| buffer.as_slice().len() >= len)
-        .min_by_key(|(_, buffer)| buffer.as_slice().len())
-        .map(|(index, _)| index)?;
-    Some(pool.swap_remove(best))
+        .filter_map(|(index, entry)| {
+            let slab = match entry {
+                PoolEntry::Parked(slab) => Arc::clone(slab),
+                PoolEntry::Carved(weak) => weak.upgrade()?,
+            };
+            Some((slab.free_bytes(), index, slab))
+        })
+        .collect();
+    candidates.sort_by_key(|(free, _, _)| *free);
+    for (_, index, slab) in candidates {
+        if let Some(buffer) = slab.carve(context, len) {
+            // First carve releases the pool's strong hold: from here the
+            // leases own the slab's lifetime.
+            pool[index] = PoolEntry::Carved(Arc::downgrade(&slab));
+            return Some(buffer);
+        }
+    }
+    None
 }
 
 /// Session-parked drain guard: dropping it (with the proof's session)
@@ -228,7 +263,7 @@ pub(super) struct RetiredPoolGuard;
 
 impl Drop for RetiredPoolGuard {
     fn drop(&mut self) {
-        if let Ok(mut pool) = RETIRED.0.lock() {
+        if let Ok(mut pool) = RETIRED.lock() {
             pool.clear();
         }
     }
@@ -242,7 +277,7 @@ pub(super) fn own_uninit_frs(
     context: &'static MetalContext,
     len: usize,
 ) -> Result<Option<OwnedDeviceBuffer<Fr>>, MetalError> {
-    if let Some(buffer) = take_retired(len) {
+    if let Some(buffer) = take_retired(context, len) {
         testing::note_pool_reuse();
         return Ok(Some(buffer));
     }
@@ -333,31 +368,46 @@ impl DeviceRound {
 mod tests {
     use super::*;
 
-    /// Retire → smallest-fit reuse → guard drain. Pointer identity proves
-    /// the pages came back; the drained pool allocates fresh again.
+    /// Retire → carve reuse → lease return → guard drain. Pointer identity
+    /// proves the pages came back; two takers carve DISJOINT sub-ranges of
+    /// the one retired slab, and the slab frees with its last lease.
     #[test]
     fn retired_pool_roundtrip() {
         let _lock = testing::gpu_lock();
         let context = MetalContext::global().unwrap();
 
-        let small = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
-        let large = own_uninit_frs(context, 1 << 15).unwrap().unwrap();
-        let small_ptr = small.as_slice().as_ptr();
-        let large_ptr = large.as_slice().as_ptr();
-        retire_frs([large, small]);
+        let big = own_uninit_frs(context, 1 << 15).unwrap().unwrap();
+        let big_ptr = big.as_slice().as_ptr();
+        retire_frs([big]);
 
-        // Smallest fitting buffer wins; an oversized backing is fine.
-        let reused = own_uninit_frs(context, 1 << 12).unwrap().unwrap();
-        assert_eq!(reused.as_slice().as_ptr(), small_ptr);
-        assert!(reused.as_slice().len() >= 1 << 13);
         let reuses_before = testing::pool_reuse_count();
-        let reused_large = own_uninit_frs(context, 1 << 14).unwrap().unwrap();
-        assert_eq!(reused_large.as_slice().as_ptr(), large_ptr);
-        assert_eq!(testing::pool_reuse_count(), reuses_before + 1);
+        let first = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
+        let second = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
+        assert_eq!(testing::pool_reuse_count(), reuses_before + 2);
+        assert_eq!(first.as_slice().as_ptr(), big_ptr);
+        assert_eq!(first.as_slice().len(), 1 << 13);
+        let first_range = first.as_slice().as_ptr_range();
+        let second_range = second.as_slice().as_ptr_range();
+        assert!(
+            second_range.start >= first_range.end || first_range.start >= second_range.end,
+            "carved leases must not overlap"
+        );
 
-        // Guard drop drains whatever is still parked.
-        retire_frs([reused, reused_large]);
+        // A returned lease's range is takeable again.
+        drop(first);
+        let again = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
+        assert_eq!(again.as_slice().as_ptr(), big_ptr);
+
+        // Once every lease is back the slab is exhausted and GC'd — the
+        // next take finds nothing (the pages freed with the last lease).
+        drop(again);
+        drop(second);
+        assert!(take_retired(context, 1).is_none());
+
+        // Guard drop drains parked (never-carved) slabs too.
+        let parked = own_uninit_frs(context, 1 << 15).unwrap().unwrap();
+        retire_frs([parked]);
         drop(RetiredPoolGuard);
-        assert!(take_retired(1).is_none());
+        assert!(take_retired(context, 1).is_none());
     }
 }
