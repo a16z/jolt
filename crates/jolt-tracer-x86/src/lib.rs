@@ -25,6 +25,10 @@ mod native;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 pub use native::X86TracerBackend;
 
+#[doc(hidden)]
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+pub use native::harness;
+
 /// The fastest execution backend available on this target: the AOT x86-64
 /// transpiler on `x86_64`-Linux, the reference interpreter everywhere else.
 ///

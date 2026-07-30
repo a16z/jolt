@@ -7,6 +7,16 @@ description = "AOT x86-64 transpiling execution backend for Jolt trace generatio
 [lints]
 workspace = true
 
+[features]
+# Per-instruction callgrind microbenchmarks (linux-x86_64 + valgrind only).
+iai = ["dep:iai-callgrind"]
+# Passthrough only: the transpiler fails fast on FIELD_* rows (spec Non-Goals).
+field-inline = [
+  "jolt-program/field-inline",
+  "jolt-riscv/field-inline",
+  "tracer/field-inline",
+]
+
 [dependencies]
 common = { workspace = true, features = ["std"] }
 jolt-program = { workspace = true, features = ["image"] }
@@ -16,9 +26,15 @@ tracer = { workspace = true, features = ["std"] }
 [target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
 dynasm = "3.2"
 dynasmrt = "3.2"
+iai-callgrind = { workspace = true, optional = true }
 jolt-platform = { workspace = true, features = ["std"] }
 libc = "0.2"
 
 [dev-dependencies]
 postcard = { workspace = true, features = ["use-std"] }
 rand = { workspace = true }
+
+[[bench]]
+name = "iai"
+harness = false
+required-features = ["iai"]

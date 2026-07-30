@@ -3806,6 +3806,7 @@ dependencies = [
  "common",
  "dynasm",
  "dynasmrt",
+ "iai-callgrind",
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",
