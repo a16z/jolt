@@ -84,3 +84,9 @@ required-features = ["metal"]
 [[example]]
 name = "miller_microbench"
 required-features = ["metal"]
+
+# W7 probe microbench: M4 mul rates, small-limb Montgomery, [0,2p) lazy
+# reduction. Measurement-only; nothing in it ships.
+[[example]]
+name = "mulrate_microbench"
+required-features = ["metal"]
