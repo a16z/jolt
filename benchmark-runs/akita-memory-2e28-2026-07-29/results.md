@@ -183,6 +183,17 @@ This removes 9 B/cycle while the columns are live: 576 MiB at `2^26` and
 proof measured 53.84 seconds versus 53.48 seconds; an unchanged commitment
 span accounts for 0.260 seconds of the 0.36-second movement.
 
+### Rejected: dense bytecode RA
+
+The bytecode transpose was changed from `Option<u8>` to `u8` while preserving
+its blocked column-major layout. For this workload's two bytecode chunks, that
+would remove 128 MiB at `2^26` and 512 MiB at `2^28`.
+
+The gather improved from 29.2 to 17.3–17.5 ms at `2^26`, but bytecode message
+generation regressed from 581.8 to 597.8 and 612.6 ms. Total Stage 6b moved
+from 5.102 seconds to 5.197 and 5.246 seconds (+1.87%, +2.82%). The candidate
+was reverted; the saving does not pass the no-regression gate.
+
 ### Rejected: row-major bytecode RA
 
 The analogous bytecode port removed its transpose but made the sparse
@@ -230,6 +241,7 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Row-major bytecode RA rejection | `mem-ra-bytecode-2e22.json`, `mem-ra-bytecode-2e22-b.json` |
 | Row-major RAM RA | `mem-ra-ram-2e22.json`, `mem-ra-ram-2e22-b.json`, `mem-ra-ram-2e26.json` |
 | Dense fused-increment lanes | `mem-dense-inc-2e22.json`, `mem-dense-inc-2e22-b.json`, `mem-dense-inc-2e26.json` |
+| Dense bytecode RA rejection | `mem-dense-bytecode-2e22.json`, `mem-dense-bytecode-2e22-b.json`, `mem-dense-bytecode-2e26.json`, `mem-dense-bytecode-2e26-b.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -261,15 +273,12 @@ operand presence, and canonical padding against the former `Cycle` path.
 The next targets are ordered by retained bytes and likelihood of remaining
 performance-neutral:
 
-1. **Use a dense bytecode RA column.** Direct row-major reads regress the sparse
-   bytecode kernel. Its indices are always present, so a `Vec<u8>`-backed RA
-   input can preserve contiguous reads while halving `Option<u8>` storage.
-2. **Compact signed deltas in Stage 6.** A magnitude vector plus sign bitset
+1. **Compact signed deltas in Stage 6.** A magnitude vector plus sign bitset
    can reduce the 16-byte `i128` stream to about 8.125 B/cycle, saving roughly
    2 GiB at `2^28`. The representation must preserve the bytecode read-RAF
    conversion and the first bind of the fused-increment MLE without adding a
    hot-loop regression.
-3. **Audit field-vector and setup lifetimes at the Stage 3/4 and opening
+2. **Audit field-vector and setup lifetimes at the Stage 3/4 and opening
    peaks.** The remaining structural cuts do not by themselves reach
    the 95 GiB objective under the current slope, so phase-local `Fp128`
    vectors and setup matrices must be counted and streamed/reused.
