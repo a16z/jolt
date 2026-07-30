@@ -126,7 +126,10 @@ impl ColumnSelector {
 
 /// What a booleanity-cycle device driver captures at prepare (borrowed —
 /// the factory clones what it keeps).
-#[expect(dead_code, reason = "read only by the Metal driver factory")]
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal driver factory")
+)]
 pub(crate) struct BooleanityDeviceInputs<'a, F> {
     pub(crate) rows: &'a Arc<Vec<InstructionCycleRow>>,
     /// Per polynomial (layout order): [`ColumnSelector::device_meta`].

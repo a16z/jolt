@@ -41,8 +41,8 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
-use super::{num_threadgroups, DeviceRound, Partials};
-use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE};
+use super::{num_threadgroups, own_uninit_frs, uninit_frs, DeviceRound, Partials};
+use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
@@ -713,42 +713,6 @@ fn cycle_init_params(
     params.extend_from_slice(&fr_to_u32_limbs(request.raf_interleaved));
     params.extend_from_slice(&fr_to_u32_limbs(request.raf_identity));
     params
-}
-
-/// An uninitialized device-owned field-element buffer, or `None` when the
-/// allocation would not wrap no-copy (see the SAFETY-adjacent contract on
-/// [`uninit_frs`] — a copy would read the uninitialized memory).
-fn own_uninit_frs(
-    context: &'static MetalContext,
-    len: usize,
-) -> Result<Option<OwnedDeviceBuffer<Fr>>, MetalError> {
-    let vec = uninit_frs(len);
-    let len_bytes = std::mem::size_of_val(vec.as_slice());
-    let aligned = (vec.as_ptr() as usize).is_multiple_of(PAGE_SIZE);
-    let page_granular = len_bytes.is_multiple_of(PAGE_SIZE) || len_bytes >= MALLOC_LARGE_THRESHOLD;
-    if len_bytes == 0 || !aligned || !page_granular {
-        return Ok(None);
-    }
-    let buffer = context.own_vec(vec)?;
-    debug_assert!(!buffer.was_copied());
-    Ok(Some(buffer))
-}
-
-/// An uninitialized field-element buffer for device fills.
-///
-/// SAFETY-adjacent contract: callers must guarantee every element is
-/// device-written before any host read (the cycle-init kernel is a dense
-/// map over `0..len`). `Fr` is plain limb data — no drop glue, no invalid
-/// representations.
-#[expect(clippy::uninit_vec, reason = "device-filled before any read")]
-fn uninit_frs(len: usize) -> Vec<Fr> {
-    let mut buffer = Vec::with_capacity(len);
-    // SAFETY: capacity == len, and per the contract above the contents are
-    // fully overwritten by the device before being read.
-    unsafe {
-        buffer.set_len(len);
-    }
-    buffer
 }
 
 /// Device-vs-CPU parity: the suffix MLE library case by case, then the full
