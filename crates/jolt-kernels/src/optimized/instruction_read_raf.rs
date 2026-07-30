@@ -395,13 +395,37 @@ fn extension_pair<F: Field>(evals: &[F], b: usize, half: usize) -> (F, F) {
     (lo, hi + hi - lo)
 }
 
-/// Cycle-round state: the Gruen-split eq factor plus the dense cycle tables.
+/// Cycle-round state: the Gruen-split eq factor plus the cycle tables.
 struct CycleState<F: Field> {
     gruen: GruenSplitEqPolynomial<F>,
-    combined_val: Polynomial<F>,
-    ra: Vec<Polynomial<F>>,
+    tables: CycleTables<F>,
     /// Reused low-to-high binding buffer (swapped through every bind).
     bind_scratch: Vec<F>,
+}
+
+/// The cycle tables' lifecycle. The address/cycle handoff leaves them
+/// *pending*: the first cycle round's message evaluates the bases on the
+/// fly (a packed-byte lookup for the combined value, `v_table` products
+/// for the ra decomposition), and the first cycle bind materializes the
+/// half-domain tables directly under that challenge — the full-T dense
+/// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
+/// exist. Values are identical to materialize-then-bind: the bases are the
+/// same, and `lo + r·(hi − lo)` is the binding formula either way.
+enum CycleTables<F: Field> {
+    Pending(PendingCycleTables<F>),
+    Dense {
+        combined_val: Polynomial<F>,
+        ra: Vec<Polynomial<F>>,
+    },
+}
+
+/// Everything the pending-base evaluations need beyond the kernel's own
+/// rows / claim columns / phase eq tables.
+struct PendingCycleTables<F: Field> {
+    /// Per-table combined value at the bound address point.
+    table_values: Vec<F>,
+    raf_interleaved: F,
+    raf_identity: F,
 }
 
 /// Per-thread RAF scan accumulators over one phase's chunk domain, in
@@ -929,7 +953,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             .cycle
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
-        let factors = 1 + cycle.ra.len();
+        let factors = 1 + self.dimensions.num_virtual_ra_polys();
 
         struct Scratch<F: Field> {
             /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
@@ -946,24 +970,44 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 steps: vec![F::zero(); factors],
             },
             |scratch, row, _x_in, e_in| {
-                {
-                    let val = cycle.combined_val.evals();
-                    let lo = e_in * val[2 * row];
-                    let hi = e_in * val[2 * row + 1];
-                    scratch.evals[0] = hi;
-                    scratch.steps[0] = hi - lo;
-                }
-                for ((ra, eval), step) in cycle
-                    .ra
-                    .iter()
-                    .zip(scratch.evals[1..].iter_mut())
-                    .zip(scratch.steps[1..].iter_mut())
-                {
-                    let table = ra.evals();
-                    let lo = table[2 * row];
-                    let hi = table[2 * row + 1];
-                    *eval = hi;
-                    *step = hi - lo;
+                match &cycle.tables {
+                    CycleTables::Dense { combined_val, ra } => {
+                        {
+                            let val = combined_val.evals();
+                            let lo = e_in * val[2 * row];
+                            let hi = e_in * val[2 * row + 1];
+                            scratch.evals[0] = hi;
+                            scratch.steps[0] = hi - lo;
+                        }
+                        for ((ra, eval), step) in ra
+                            .iter()
+                            .zip(scratch.evals[1..].iter_mut())
+                            .zip(scratch.steps[1..].iter_mut())
+                        {
+                            let table = ra.evals();
+                            let lo = table[2 * row];
+                            let hi = table[2 * row + 1];
+                            *eval = hi;
+                            *step = hi - lo;
+                        }
+                    }
+                    CycleTables::Pending(pending) => {
+                        // First cycle round: same pair math over the bases —
+                        // the values a dense materialization would hold.
+                        {
+                            let lo = e_in * self.pending_combined_base(pending, 2 * row);
+                            let hi = e_in * self.pending_combined_base(pending, 2 * row + 1);
+                            scratch.evals[0] = hi;
+                            scratch.steps[0] = hi - lo;
+                        }
+                        let ra_count = scratch.evals.len() - 1;
+                        for i in 0..ra_count {
+                            let lo = self.pending_ra_base(i, 2 * row);
+                            let hi = self.pending_ra_base(i, 2 * row + 1);
+                            scratch.evals[1 + i] = hi;
+                            scratch.steps[1 + i] = hi - lo;
+                        }
+                    }
                 }
                 accumulate_product(&scratch.evals, &mut scratch.lanes[0]);
                 for lane in 1..factors - 1 {
@@ -988,7 +1032,6 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 a
             },
         );
-
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
         Ok(cycle.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
     }
@@ -1034,61 +1077,61 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             table | (u8::from(row.raf_flag) << 7)
         });
 
-        let ra_count = self.dimensions.num_virtual_ra_polys();
-        let phases_per_ra = self.phases() / ra_count;
-        let address_bits = self.address_bits();
-        let v_tables = self.v_tables.as_slice();
-        let ra: Vec<Polynomial<F>> = (0..ra_count)
-            .map(|i| {
-                Polynomial::new(map_indices(rows.len(), |j| {
-                    let index = rows[j].lookup_index;
-                    let mut phase = i * phases_per_ra;
-                    let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
-                    let mut product =
-                        v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-                    for _ in 1..phases_per_ra {
-                        phase += 1;
-                        shift -= CHUNK_LEN;
-                        product *= v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-                    }
-                    product
-                }))
-            })
-            .collect();
-
-        // The rows' last read is behind us: free the 48 B × T vector before
-        // materializing `combined_val` — that ordering takes the row vector
-        // out of the prover's peak co-residency (the peak sits exactly at
-        // this handoff).
-        self.rows = Arc::new(Vec::new());
-        let claim_columns = self.claim_columns.as_slice();
-        let combined_val: Vec<F> = map_indices(claim_columns.len(), |j| {
-            let packed = claim_columns[j];
-            let table_value = match packed & 0x7f {
-                0 => F::zero(),
-                table => table_values[usize::from(table) - 1],
-            };
-            let raf_value = if packed & 0x80 == 0 {
-                raf_interleaved
-            } else {
-                raf_identity
-            };
-            table_value + raf_value
-        });
-
+        // The tables stay pending: the first cycle message evaluates these
+        // bases per row, and the first cycle bind materializes half-domain
+        // tables directly (rows and the phase eq tables stay alive until
+        // then).
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
-            combined_val: Polynomial::new(combined_val),
-            ra,
+            tables: CycleTables::Pending(PendingCycleTables {
+                table_values,
+                raf_interleaved,
+                raf_identity,
+            }),
             bind_scratch: Vec::new(),
         });
 
-        // The address-phase state is dead past this point.
+        // The address-phase state is dead past this point — except the
+        // bound-challenge eq tables, which the pending ra bases read until
+        // the first cycle bind materializes the dense tables.
         self.u_evals = Vec::new();
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
-        self.v_tables = Vec::new();
         self.buckets = Vec::new();
+    }
+
+    /// The pending combined-value base at cycle `j` (packed-byte lookup).
+    #[inline]
+    fn pending_combined_base(&self, pending: &PendingCycleTables<F>, j: usize) -> F {
+        let packed = self.claim_columns[j];
+        let table_value = match packed & 0x7f {
+            0 => F::zero(),
+            table => pending.table_values[usize::from(table) - 1],
+        };
+        let raf_value = if packed & 0x80 == 0 {
+            pending.raf_interleaved
+        } else {
+            pending.raf_identity
+        };
+        table_value + raf_value
+    }
+
+    /// The pending `ra_i` base at cycle `j` (the phase eq-table product).
+    #[inline]
+    fn pending_ra_base(&self, i: usize, j: usize) -> F {
+        let ra_count = self.dimensions.num_virtual_ra_polys();
+        let phases_per_ra = self.phases() / ra_count;
+        let address_bits = self.address_bits();
+        let index = self.rows[j].lookup_index;
+        let mut phase = i * phases_per_ra;
+        let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
+        let mut product = self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+        for _ in 1..phases_per_ra {
+            phase += 1;
+            shift -= CHUNK_LEN;
+            product *= self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+        }
+        product
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
@@ -1142,16 +1185,61 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 }
             }
         } else {
-            let cycle = self
-                .cycle
-                .as_mut()
-                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
-            cycle.gruen.bind(challenge);
-            cycle
-                .combined_val
-                .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
-            for ra in &mut cycle.ra {
-                ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+            let pending = {
+                let cycle = self
+                    .cycle
+                    .as_mut()
+                    .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+                cycle.gruen.bind(challenge);
+                match &mut cycle.tables {
+                    CycleTables::Pending(pending) => Some(core::mem::replace(
+                        pending,
+                        PendingCycleTables {
+                            table_values: Vec::new(),
+                            raf_interleaved: F::zero(),
+                            raf_identity: F::zero(),
+                        },
+                    )),
+                    CycleTables::Dense { combined_val, ra } => {
+                        combined_val
+                            .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+                        for ra in ra {
+                            ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+                        }
+                        None
+                    }
+                }
+            };
+            if let Some(pending) = pending {
+                // First cycle bind: materialize the half-domain tables
+                // straight from the bases under this challenge — the same
+                // values a full-T materialization would bind to, without
+                // the full-T tables ever existing.
+                let half = self.claim_columns.len() / 2;
+                let combined_val: Vec<F> = map_indices(half, |position| {
+                    let lo = self.pending_combined_base(&pending, 2 * position);
+                    let hi = self.pending_combined_base(&pending, 2 * position + 1);
+                    lo + challenge * (hi - lo)
+                });
+                let ra_count = self.dimensions.num_virtual_ra_polys();
+                let ra: Vec<Polynomial<F>> = (0..ra_count)
+                    .map(|i| {
+                        Polynomial::new(map_indices(half, |position| {
+                            let lo = self.pending_ra_base(i, 2 * position);
+                            let hi = self.pending_ra_base(i, 2 * position + 1);
+                            lo + challenge * (hi - lo)
+                        }))
+                    })
+                    .collect();
+                // The rows' and phase eq tables' last read is behind us.
+                self.rows = Arc::new(Vec::new());
+                self.v_tables = Vec::new();
+                if let Some(cycle) = self.cycle.as_mut() {
+                    cycle.tables = CycleTables::Dense {
+                        combined_val: Polynomial::new(combined_val),
+                        ra,
+                    };
+                }
             }
             self.cycle_challenges.push(challenge);
         }
@@ -1240,9 +1328,14 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
             },
         );
 
+        let CycleTables::Dense { ra, .. } = &cycle.tables else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "cycle tables still pending after full binding",
+            });
+        };
         Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
-            instruction_ra: cycle.ra.iter().map(|ra| ra.evals()[0]).collect(),
+            instruction_ra: ra.iter().map(|ra| ra.evals()[0]).collect(),
             instruction_raf_flag,
         })
     }
