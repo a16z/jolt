@@ -28,6 +28,7 @@ metal = [
   "dep:ark-ff",
   "dep:jolt-crypto",
   "dep:jolt-dory",
+  "dep:jolt-optimizations",
 ]
 
 [dependencies]
@@ -52,6 +53,7 @@ ark-ec = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
+jolt-optimizations = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
@@ -60,6 +62,7 @@ objc2-metal = { workspace = true, optional = true }
 [dev-dependencies]
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
+dory.workspace = true
 jolt-dory.workspace = true
 jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }

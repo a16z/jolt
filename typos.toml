@@ -1,5 +1,6 @@
 [files]
-extend-exclude = ["patches/*.patch"]
+# vendor/ is byte-exact third-party source; never spell-check it.
+extend-exclude = ["patches/*.patch", "vendor/"]
 
 [default.extend-words]
 "groth" = "groth"

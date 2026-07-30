@@ -116,16 +116,20 @@ impl JointOpeningPolynomials<Fr> for MetalJointOpening {
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<Fr>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<Fr>>>, KernelError<Fr>> {
-        // Stage 8's hint combination follows this prepare inside the PCS
-        // batch opening, where no backend value flows — install the device
-        // combiner for the rest of the proof whenever the device is live
-        // (the guard parks in the session, uninstalling when the proof's
-        // session drops). The hook declines undersized or failed calls, so
-        // installation is tier-selection only; it needs none of the fold
-        // engine's geometry, hence its place ahead of the placement gate.
+        // Stage 8's hint combination and dory-pcs's reduce-round vector ops
+        // follow this prepare inside the PCS batch opening, where no backend
+        // value flows — install the device combiner and fold routines for
+        // the rest of the proof whenever the device is live (the guards park
+        // in the session, uninstalling when the proof's session drops). The
+        // hooks decline undersized or failed calls, so installation is
+        // tier-selection only; it needs none of the fold engine's geometry,
+        // hence its place ahead of the placement gate.
         if MetalContext::global().is_ok() {
             session.park(jolt_dory::install_combine_hints_hook(
                 crate::metal::hint_combine::combine_hints_device,
+            ));
+            session.park(jolt_dory::install_routine_hooks(
+                crate::metal::dory_folds::routine_hooks(),
             ));
         }
 

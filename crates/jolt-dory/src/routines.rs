@@ -77,6 +77,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         ArkG1(G1Projective::msm_unchecked(&affines, ark_fr_slice(scalars)))
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG1Routines::fixed_base_vector_scalar_mul", fields(len = scalars.len()))]
     fn fixed_base_vector_scalar_mul(base: &ArkG1, scalars: &[ArkFr]) -> Vec<ArkG1> {
         if scalars.is_empty() {
             return vec![];
@@ -85,9 +86,16 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         results.into_iter().map(ArkG1).collect()
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG1Routines::fixed_scalar_mul_bases_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_bases_then_add(bases: &[ArkG1], vs: &mut [ArkG1], scalar: &ArkFr) {
         assert_eq!(bases.len(), vs.len(), "lengths must match");
         // v[i] = v[i] + scalar * bases[i]
+        if let Some(hooks) = crate::routines_hook::routine_hooks() {
+            if let Some(out) = (hooks.g1_scalar_mul_add)(g1_slice(bases), g1_slice(vs), &scalar.0) {
+                g1_slice_mut(vs).copy_from_slice(&out);
+                return;
+            }
+        }
         jolt_optimizations::vector_add_scalar_mul_g1_online(
             g1_slice_mut(vs),
             g1_slice(bases),
@@ -95,9 +103,17 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         );
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG1Routines::fixed_scalar_mul_vs_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG1], addends: &[ArkG1], scalar: &ArkFr) {
         assert_eq!(vs.len(), addends.len(), "lengths must match");
         // v[i] = scalar * v[i] + addends[i]
+        if let Some(hooks) = crate::routines_hook::routine_hooks() {
+            if let Some(out) = (hooks.g1_scalar_mul_add)(g1_slice(vs), g1_slice(addends), &scalar.0)
+            {
+                g1_slice_mut(vs).copy_from_slice(&out);
+                return;
+            }
+        }
         jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
             g1_slice_mut(vs),
             scalar.0,
@@ -123,11 +139,17 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         ArkG2(G2Projective::msm_unchecked(&affines, ark_fr_slice(scalars)))
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG2Routines::fixed_base_vector_scalar_mul", fields(len = scalars.len()))]
     fn fixed_base_vector_scalar_mul(base: &ArkG2, scalars: &[ArkFr]) -> Vec<ArkG2> {
         if scalars.is_empty() {
             return vec![];
         }
         let base_proj = base.0;
+        if let Some(hooks) = crate::routines_hook::routine_hooks() {
+            if let Some(out) = (hooks.g2_fixed_base_mul)(&base_proj, ark_fr_slice(scalars)) {
+                return out.into_iter().map(ArkG2).collect();
+            }
+        }
         scalars
             .par_iter()
             .map(|scalar| {
@@ -136,9 +158,16 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG2Routines::fixed_scalar_mul_bases_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_bases_then_add(bases: &[ArkG2], vs: &mut [ArkG2], scalar: &ArkFr) {
         assert_eq!(bases.len(), vs.len(), "lengths must match");
         // v[i] = v[i] + scalar * bases[i]
+        if let Some(hooks) = crate::routines_hook::routine_hooks() {
+            if let Some(out) = (hooks.g2_scalar_mul_add)(g2_slice(bases), g2_slice(vs), &scalar.0) {
+                g2_slice_mut(vs).copy_from_slice(&out);
+                return;
+            }
+        }
         jolt_optimizations::vector_add_scalar_mul_g2_online(
             g2_slice_mut(vs),
             g2_slice(bases),
@@ -146,9 +175,17 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         );
     }
 
+    #[tracing::instrument(skip_all, name = "JoltG2Routines::fixed_scalar_mul_vs_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG2], addends: &[ArkG2], scalar: &ArkFr) {
         assert_eq!(vs.len(), addends.len(), "lengths must match");
         // v[i] = scalar * v[i] + addends[i]
+        if let Some(hooks) = crate::routines_hook::routine_hooks() {
+            if let Some(out) = (hooks.g2_scalar_mul_add)(g2_slice(vs), g2_slice(addends), &scalar.0)
+            {
+                g2_slice_mut(vs).copy_from_slice(&out);
+                return;
+            }
+        }
         jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
             g2_slice_mut(vs),
             scalar.0,
@@ -258,5 +295,125 @@ mod tests {
         JoltG2Routines::fixed_scalar_mul_vs_then_add(&mut vs_jolt, &bases, &scalar);
         G2Routines::fixed_scalar_mul_vs_then_add(&mut vs_stock, &bases, &scalar);
         assert_eq!(vs_jolt, vs_stock);
+    }
+
+    /// The routine-hooks seam: a served hook's results are used verbatim, a
+    /// declining hook falls through to the CPU arithmetic, and a dropped
+    /// guard uninstalls the seam. Hook fns compute the same group values as
+    /// the CPU path (the seam's semantics contract) and bump a counter to
+    /// prove which path ran. nextest's process-per-test isolates the global.
+    #[test]
+    fn routine_hooks_scope_and_fall_through() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use ark_bn254::Fr as ArkworksFr;
+
+        use crate::routines_hook::{install_routine_hooks, RoutineHooks};
+
+        static HOOK_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+        fn g1_serve(
+            ps: &[G1Projective],
+            qs: &[G1Projective],
+            s: &ArkworksFr,
+        ) -> Option<Vec<G1Projective>> {
+            let _ = HOOK_CALLS.fetch_add(1, Ordering::SeqCst);
+            Some(ps.iter().zip(qs).map(|(p, q)| *p * s + q).collect())
+        }
+        fn g2_serve(
+            ps: &[G2Projective],
+            qs: &[G2Projective],
+            s: &ArkworksFr,
+        ) -> Option<Vec<G2Projective>> {
+            let _ = HOOK_CALLS.fetch_add(1, Ordering::SeqCst);
+            Some(ps.iter().zip(qs).map(|(p, q)| *p * s + q).collect())
+        }
+        fn g2_fixed_serve(
+            base: &G2Projective,
+            scalars: &[ArkworksFr],
+        ) -> Option<Vec<G2Projective>> {
+            let _ = HOOK_CALLS.fetch_add(1, Ordering::SeqCst);
+            Some(scalars.iter().map(|s| *base * s).collect())
+        }
+        fn g1_decline(
+            _: &[G1Projective],
+            _: &[G1Projective],
+            _: &ArkworksFr,
+        ) -> Option<Vec<G1Projective>> {
+            let _ = HOOK_CALLS.fetch_add(1, Ordering::SeqCst);
+            None
+        }
+        fn g2_decline(
+            _: &[G2Projective],
+            _: &[G2Projective],
+            _: &ArkworksFr,
+        ) -> Option<Vec<G2Projective>> {
+            let _ = HOOK_CALLS.fetch_add(1, Ordering::SeqCst);
+            None
+        }
+        fn g2_fixed_decline(_: &G2Projective, _: &[ArkworksFr]) -> Option<Vec<G2Projective>> {
+            let _ = HOOK_CALLS.fetch_add(1, Ordering::SeqCst);
+            None
+        }
+
+        let bases_g1: Vec<ArkG1> = (0..9).map(|_| random_g1()).collect();
+        let bases_g2: Vec<ArkG2> = (0..9).map(|_| random_g2()).collect();
+        let scalars: Vec<ArkFr> = (0..9).map(|_| random_fr()).collect();
+        let scalar = random_fr();
+        let vs_reference_g1: Vec<ArkG1> = (0..9).map(|_| random_g1()).collect();
+        let vs_reference_g2: Vec<ArkG2> = (0..9).map(|_| random_g2()).collect();
+
+        // Unhooked reference results.
+        let mut expected_g1 = vs_reference_g1.clone();
+        JoltG1Routines::fixed_scalar_mul_bases_then_add(&bases_g1, &mut expected_g1, &scalar);
+        let mut expected_g2 = vs_reference_g2.clone();
+        JoltG2Routines::fixed_scalar_mul_bases_then_add(&bases_g2, &mut expected_g2, &scalar);
+        let expected_fixed = JoltG2Routines::fixed_base_vector_scalar_mul(&bases_g2[0], &scalars);
+        assert_eq!(HOOK_CALLS.load(Ordering::SeqCst), 0, "no hook installed");
+
+        // Serving hooks: consulted once per call, results used.
+        let guard = install_routine_hooks(RoutineHooks {
+            g1_scalar_mul_add: g1_serve,
+            g2_scalar_mul_add: g2_serve,
+            g2_fixed_base_mul: g2_fixed_serve,
+        });
+        let mut hooked_g1 = vs_reference_g1.clone();
+        JoltG1Routines::fixed_scalar_mul_bases_then_add(&bases_g1, &mut hooked_g1, &scalar);
+        let mut hooked_g2 = vs_reference_g2.clone();
+        JoltG2Routines::fixed_scalar_mul_bases_then_add(&bases_g2, &mut hooked_g2, &scalar);
+        let hooked_fixed = JoltG2Routines::fixed_base_vector_scalar_mul(&bases_g2[0], &scalars);
+        assert_eq!(
+            HOOK_CALLS.load(Ordering::SeqCst),
+            3,
+            "each op consults once"
+        );
+        assert_eq!(hooked_g1, expected_g1);
+        assert_eq!(hooked_g2, expected_g2);
+        assert_eq!(hooked_fixed, expected_fixed);
+        drop(guard);
+
+        // Declining hooks: consulted, then the CPU path answers.
+        let guard = install_routine_hooks(RoutineHooks {
+            g1_scalar_mul_add: g1_decline,
+            g2_scalar_mul_add: g2_decline,
+            g2_fixed_base_mul: g2_fixed_decline,
+        });
+        let mut declined_g1 = vs_reference_g1.clone();
+        JoltG1Routines::fixed_scalar_mul_vs_then_add(&mut declined_g1, &bases_g1, &scalar);
+        let mut stock_g1 = vs_reference_g1.clone();
+        G1Routines::fixed_scalar_mul_vs_then_add(&mut stock_g1, &bases_g1, &scalar);
+        assert_eq!(HOOK_CALLS.load(Ordering::SeqCst), 4);
+        assert_eq!(declined_g1, stock_g1);
+        drop(guard);
+
+        // Dropped guard: no consultation.
+        let mut unhooked_g1 = vs_reference_g1.clone();
+        JoltG1Routines::fixed_scalar_mul_bases_then_add(&bases_g1, &mut unhooked_g1, &scalar);
+        assert_eq!(
+            HOOK_CALLS.load(Ordering::SeqCst),
+            4,
+            "guard drop uninstalls"
+        );
+        assert_eq!(unhooked_g1, expected_g1);
     }
 }
