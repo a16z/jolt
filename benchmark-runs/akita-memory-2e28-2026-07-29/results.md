@@ -4,7 +4,7 @@ Date: 2026-07-29 EDT
 
 ## Outcome
 
-This pass kept K256 and the proof protocol fixed. Eight independently committed
+This pass kept K256 and the proof protocol fixed. Nine independently committed
 changes reduced retained or phase-local prover memory without a reproducible
 prover slowdown:
 
@@ -18,11 +18,14 @@ prover slowdown:
 | `937319abb` | Retain compact proof rows and stream trace conversion | 32 B/cycle throughout proving |
 | `0be326e83` | Read instruction RA from the row-major index source | 32 B/cycle during the first three Stage-6b rounds |
 | `39bc6ce38` | Read RAM RA from the row-major index source | `2 * ram_d` B/cycle during the first three Stage-6b rounds |
+| `1f3652bc4` | Store fused-increment one-hot lanes as dense bytes | 9 B/cycle during Stages 6–7 |
 
-At `2^26`, the final measured maximum RSS is 44.244 GB with zero process
+At `2^26`, the lowest measured maximum RSS is 44.244 GB with zero process
 swaps, down from 50.49 GB after the R1CS-row policy change and 50.72 GB before
-it. The R1CS change has a much larger phase-local effect than the headline
-maximum: Stage 1 drops by the exact 13 GiB row allocation.
+it. The latest dense-lane run measured 44.310 GB; another phase determines
+that peak, so the 576 MiB Stage 6/7 reduction is not visible in headline RSS.
+The R1CS change has a much larger phase-local effect than the headline maximum:
+Stage 1 drops by the exact 13 GiB row allocation.
 
 The effective maximum-RSS slope between the measured `2^22` and `2^26`
 points falls from approximately 566 to 469 B/cycle. A linear extrapolation of
@@ -166,6 +169,20 @@ commitment and packed-opening spans account for 0.81 seconds of the 0.85-second
 difference. The change is accepted as a performance-neutral phase-local
 allocation cut, not a claimed speedup.
 
+### Dense fused-increment lanes
+
+The eight K256 increment chunks and carry column are present on every cycle,
+but were stored as `Option<u8>`. They now retain the same contiguous
+column-major access pattern in nine dense byte vectors, with an all-present
+source added to the existing lazy `RaPolynomial` state machine.
+
+This removes 9 B/cycle while the columns are live: 576 MiB at `2^26` and
+2.25 GiB at `2^28`. At `2^26`, the Stage 6a+6b+7 aggregate improves from
+6.6795 to 6.6424 seconds (-0.56%). Maximum RSS is effectively unchanged
+(44.304 versus 44.310 GB) because another phase sets the process peak. The
+proof measured 53.84 seconds versus 53.48 seconds; an unchanged commitment
+span accounts for 0.260 seconds of the 0.36-second movement.
+
 ### Rejected: row-major bytecode RA
 
 The analogous bytecode port removed its transpose but made the sparse
@@ -212,6 +229,7 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Row-major instruction RA | `mem-ra-row-2e22.json`, `mem-ra-row-2e22-b.json`, `mem-ra-row-2e26.json` |
 | Row-major bytecode RA rejection | `mem-ra-bytecode-2e22.json`, `mem-ra-bytecode-2e22-b.json` |
 | Row-major RAM RA | `mem-ra-ram-2e22.json`, `mem-ra-ram-2e22-b.json`, `mem-ra-ram-2e26.json` |
+| Dense fused-increment lanes | `mem-dense-inc-2e22.json`, `mem-dense-inc-2e22-b.json`, `mem-dense-inc-2e26.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -246,13 +264,13 @@ performance-neutral:
 1. **Use a dense bytecode RA column.** Direct row-major reads regress the sparse
    bytecode kernel. Its indices are always present, so a `Vec<u8>`-backed RA
    input can preserve contiguous reads while halving `Option<u8>` storage.
-2. **Use dense fused-inc lanes and compact signed deltas in Stage 6.** These
-   lanes are always present, so `Option<u8>` spends two bytes for a one-byte
-   value. A dense polynomial input or typed all-present source can save up to
-   2.25 GiB at `2^28`; a magnitude/sign-bit delta encoding can save roughly
-   another 2 GiB. These require focused kernel benchmarks.
+2. **Compact signed deltas in Stage 6.** A magnitude vector plus sign bitset
+   can reduce the 16-byte `i128` stream to about 8.125 B/cycle, saving roughly
+   2 GiB at `2^28`. The representation must preserve the bytecode read-RAF
+   conversion and the first bind of the fused-increment MLE without adding a
+   hot-loop regression.
 3. **Audit field-vector and setup lifetimes at the Stage 3/4 and opening
-   peaks.** Even the three structural cuts above do not by themselves reach
+   peaks.** The remaining structural cuts do not by themselves reach
    the 95 GiB objective under the current slope, so phase-local `Fp128`
    vectors and setup matrices must be counted and streamed/reused.
 
