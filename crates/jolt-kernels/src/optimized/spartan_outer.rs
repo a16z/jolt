@@ -274,7 +274,7 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
 /// Consecutive-integer domains make these integers (legacy's `COEFFS_PER_J`);
 /// their field images equal `centered_lagrange_evals` at the node, which is
 /// what ties the integer pipeline to the reference's field pipeline.
-fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
+pub(crate) fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
     let mut out = [(0usize, [0i64; DOMAIN]); EXTENDED_NODE_COUNT];
     let mut slot = 0;
     for position in 0..EXTENDED_SIZE {
@@ -470,6 +470,16 @@ impl OptimizedOuterUniskip {
             t1_values,
         });
         Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn prepare_from_record<F: Field>(
+        session: &mut ProofSession,
+        log_t: usize,
+        tau: &[F],
+        record: std::sync::Arc<TraceRecord>,
+    ) -> Result<(), KernelError<F>> {
+        Self::prepare_from_source(session, log_t, tau, OuterRows::Record(record))
     }
 }
 
@@ -740,41 +750,53 @@ impl<F: Field> OuterRemainderKernel<F> {
     /// eq-weighted walk over the typed rows (`compute_claimed_inputs`),
     /// mixed-width accumulators per input.
     fn claimed_inputs(&self) -> Vec<F> {
-        let reversed: Vec<F> = self.challenges[1..].iter().rev().copied().collect();
-        let weights = EqPolynomial::<F>::evals(&reversed, None);
-        debug_assert_eq!(weights.len(), self.rows.len());
+        claimed_inputs(&self.rows, &self.challenges)
+    }
+}
 
-        let block_size = 1usize << 12;
-        let blocks = self.rows.len().div_ceil(block_size);
-        let block = |index: usize| -> Vec<F> {
-            let start = index * block_size;
-            let end = (start + block_size).min(self.rows.len());
-            let mut accumulator = ClaimAccumulator::<F>::default();
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
-                accumulator.add_row(weight, &self.rows.row(t));
-            }
-            accumulator.finish()
-        };
-        let merge = |mut left: Vec<F>, right: Vec<F>| {
-            for (left, right) in left.iter_mut().zip(right) {
-                *left += right;
-            }
-            left
-        };
+#[cfg(feature = "metal")]
+pub(crate) fn claimed_inputs_from_record<F: Field>(
+    record: std::sync::Arc<TraceRecord>,
+    challenges: &[F],
+) -> Vec<F> {
+    claimed_inputs(&OuterRows::Record(record), challenges)
+}
 
-        #[cfg(feature = "parallel")]
-        {
-            (0..blocks)
-                .into_par_iter()
-                .map(block)
-                .reduce(|| vec![F::zero(); VARIABLE_COUNT], merge)
+fn claimed_inputs<F: Field>(rows: &OuterRows, challenges: &[F]) -> Vec<F> {
+    let reversed: Vec<F> = challenges[1..].iter().rev().copied().collect();
+    let weights = EqPolynomial::<F>::evals(&reversed, None);
+    debug_assert_eq!(weights.len(), rows.len());
+
+    let block_size = 1usize << 12;
+    let blocks = rows.len().div_ceil(block_size);
+    let block = |index: usize| -> Vec<F> {
+        let start = index * block_size;
+        let end = (start + block_size).min(rows.len());
+        let mut accumulator = ClaimAccumulator::<F>::default();
+        for (t, &weight) in (start..end).zip(&weights[start..end]) {
+            accumulator.add_row(weight, &rows.row(t));
         }
-        #[cfg(not(feature = "parallel"))]
-        {
-            (0..blocks)
-                .map(block)
-                .fold(vec![F::zero(); VARIABLE_COUNT], merge)
+        accumulator.finish()
+    };
+    let merge = |mut left: Vec<F>, right: Vec<F>| {
+        for (left, right) in left.iter_mut().zip(right) {
+            *left += right;
         }
+        left
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        (0..blocks)
+            .into_par_iter()
+            .map(block)
+            .reduce(|| vec![F::zero(); VARIABLE_COUNT], merge)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        (0..blocks)
+            .map(block)
+            .fold(vec![F::zero(); VARIABLE_COUNT], merge)
     }
 }
 

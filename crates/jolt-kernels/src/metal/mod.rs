@@ -58,7 +58,8 @@ pub use runtime::{
 pub use slots::{
     MetalBooleanityCycle, MetalHammingWeightClaimReduction, MetalIncClaimReduction,
     MetalInstructionInput, MetalInstructionRaVirtualization, MetalInstructionReadRaf,
-    MetalJointOpening, MetalRamHammingBooleanity, MetalRamRaVirtualization, MetalRamRafEvaluation,
+    MetalJointOpening, MetalOuterRemainder, MetalOuterUniskip, MetalRamHammingBooleanity,
+    MetalRamRaVirtualization, MetalRamRafEvaluation,
 };
 
 use jolt_field::Fr;
@@ -137,6 +138,8 @@ where
     {
         let context = MetalContext::global()?;
         let mut backend = Self::optimized();
+        backend.spartan_outer_uniskip = Box::new(MetalOuterUniskip::new());
+        backend.spartan_outer_remainder = Box::new(MetalOuterRemainder::new());
         backend.inc_claim_reduction = Box::new(MetalIncClaimReduction {
             fallback: OptimizedIncClaimReduction,
         });
