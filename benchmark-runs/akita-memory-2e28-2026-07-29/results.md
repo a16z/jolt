@@ -111,6 +111,20 @@ promotion threshold. The retained early-phase saving is 1 GiB at `2^26` and
 4 GiB at `2^28`; avoiding the old temporary allocation also lowers observed
 resident pressure during cache construction.
 
+### Rejected: shared packed RA source
+
+The next experiment replaced the retained 54-byte `RaIndices` row with views
+over the packed byte lanes. The final variant used one RAM-validity byte per
+cycle and removed the predicted 53 B/cycle: its `2^26` maximum RSS was
+42.911 GB, 3.546 GB below the 46.457 GB control versus 3.557 GB predicted.
+
+It did not pass the performance gate. The `2^22` focused Stage 6/7 aggregate
+improved by 3.04%, but at `2^26` the same aggregate regressed from 8.543 s to
+9.206 s (+7.77%). The full proof remained within ordinary phase noise, but that
+does not erase a repeatable hot-path regression. All candidate code was
+reverted; the experiment log and named traces are retained as negative
+evidence.
+
 ## Trace inventory
 
 Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
@@ -126,6 +140,9 @@ Primary Perfetto traces are in `benchmark-runs/perfetto_traces/`.
 | Deferred deltas, phase sampled | `mem-defer-delta-2e26.json` |
 | Deferred deltas, warm | `mem-defer-delta-2e26-b.json` |
 | Same-binary eager/deferred pair | `mem-delta-pair-eager-2e26.json`, `mem-delta-pair-deferred-2e26.json` |
+| Packed RA source v1 screens | `mem-ra-source-2e22-b.json`, `mem-ra-source-2e22-c.json` |
+| Packed RA source v2 screen/target | `mem-ra-source-v2-2e22-b.json`, `mem-ra-source-2e26.json` |
+| Packed RA source v3 screen/target | `mem-ra-source-v3-2e22.json`, `mem-ra-source-v3-2e26.json` |
 
 The matching `.log` and `.rss` files for phase-sampled runs are under
 `benchmark-runs/akita-memory-2e28-2026-07-29/logs/`.
@@ -174,23 +191,18 @@ The safe cutover order is:
 The next targets are ordered by retained bytes and likelihood of remaining
 performance-neutral:
 
-1. **Unify packed lanes and `RaIndices`.** The packed cache already stores all
-   active instruction, bytecode, and RAM lanes. Add one RAM-presence bit per
-   cycle and let RA consumers read this source directly instead of retaining a
-   separate 54-byte fixed-width row. Potential saving: 13.5 GiB at `2^28`.
-   Avoid a compact-then-widen adapter in hot loops.
-2. **Land the `JoltTraceRow` ownership cutover.** Potential saving: 8 GiB at
+1. **Land the `JoltTraceRow` ownership cutover.** Potential saving: 8 GiB at
    `2^28`, with lower trace bandwidth.
-3. **Avoid Stage 6 RA transposes.** K256 currently gathers roughly 20 active
+2. **Avoid Stage 6 RA transposes.** K256 currently gathers roughly 20 active
    `Option<u8>` columns, about 40 B/cycle or 10 GiB at `2^28`. Prefer direct
    row-major kernels or family-at-a-time ownership over another long-lived
    duplicate.
-4. **Use dense fused-inc lanes and compact signed deltas in Stage 6.** These
+3. **Use dense fused-inc lanes and compact signed deltas in Stage 6.** These
    lanes are always present, so `Option<u8>` spends two bytes for a one-byte
    value. A dense polynomial input or typed all-present source can save up to
    2.25 GiB at `2^28`; a magnitude/sign-bit delta encoding can save roughly
    another 2 GiB. These require focused kernel benchmarks.
-5. **Audit field-vector and setup lifetimes at the Stage 3/4 and opening
+4. **Audit field-vector and setup lifetimes at the Stage 3/4 and opening
    peaks.** Even the three structural cuts above do not by themselves reach
    the 95 GiB objective under the current slope, so phase-local `Fp128`
    vectors and setup matrices must be counted and streamed/reused.
