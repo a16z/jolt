@@ -597,3 +597,101 @@ kernel void jk_product_lr(
     jk_tg_sum(scratch, lid, tg, q0, partials, 0u, p.num_tgs);
     jk_tg_sum(scratch, lid, tg, qinf, partials, 1u, p.num_tgs);
 }
+
+kernel void jk_icr_init(
+    device const ulong* lookup_output [[buffer(0)]],
+    device const ulong* left_lookup [[buffer(1)]],
+    device const uint* right_lookup [[buffer(2)]],
+    device const ulong* left_input [[buffer(3)]],
+    device const uint* right_input [[buffer(4)]],
+    device const uint* gamma [[buffer(5)]],
+    device const uint* e_in [[buffer(6)]],
+    device const uint* e_out [[buffer(7)]],
+    device uint* combined [[buffer(8)]],
+    device uint* partials [[buffer(9)]],
+    constant JkOuterPrepareParams& p [[buffer(10)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < (p.len >> 1);
+    Fr256 cells[2];
+    Fr256 q0 = fr_zero();
+    Fr256 q1 = fr_zero();
+    Fr256 q2 = fr_zero();
+    if (active) {
+        for (uint side = 0u; side < 2u; side++) {
+            uint j = 2u * gid + side;
+            Fr256 value = fr_mont_mul(
+                fr_load(gamma, 0), jk_fr_from_i192(jk_i192_u64(lookup_output[j])));
+            value = fr_add(value, fr_mont_mul(
+                fr_load(gamma, 1), jk_fr_from_i192(jk_i192_u64(left_lookup[j]))));
+            value = fr_add(value, fr_mont_mul(
+                fr_load(gamma, 2), jk_fr_from_i192(jk_i192_u128(right_lookup + 4u * j))));
+            value = fr_add(value, fr_mont_mul(
+                fr_load(gamma, 3), jk_fr_from_i192(jk_i192_u64(left_input[j]))));
+            value = fr_add(value, fr_mont_mul(
+                fr_load(gamma, 4), jk_fr_from_i192(jk_i192_i128(right_input + 4u * j))));
+            cells[side] = value;
+            fr_store(combined, j, value);
+        }
+        uint mask = (1u << p.log_in) - 1u;
+        Fr256 eq = fr_mont_mul(
+            fr_load(e_out, gid >> p.log_in), fr_load(e_in, gid & mask));
+        q0 = fr_mont_mul(eq, cells[0]);
+        q1 = fr_mont_mul(eq, cells[1]);
+        q2 = fr_mont_mul(eq, fr_sub(fr_add(cells[1], cells[1]), cells[0]));
+    }
+    jk_tg_sum(scratch, lid, tg, q0, partials, 0u, p.num_tgs);
+    jk_tg_sum(scratch, lid, tg, q1, partials, 1u, p.num_tgs);
+    jk_tg_sum(scratch, lid, tg, q2, partials, 2u, p.num_tgs);
+}
+
+struct JkIcrRoundParams {
+    uint groups;
+    uint num_tgs;
+    uint log_in;
+    uint r[FR_LIMBS];
+};
+
+kernel void jk_icr_round(
+    device const uint* cur [[buffer(0)]],
+    device uint* nxt [[buffer(1)]],
+    device const uint* e_in [[buffer(2)]],
+    device const uint* e_out [[buffer(3)]],
+    device uint* partials [[buffer(4)]],
+    constant JkIcrRoundParams& p [[buffer(5)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < p.groups;
+    Fr256 lo = fr_zero();
+    Fr256 hi = fr_zero();
+    Fr256 q0 = fr_zero();
+    Fr256 q1 = fr_zero();
+    Fr256 q2 = fr_zero();
+    if (active) {
+        Fr256 r = fr_load_const(p.r, 0);
+        uint index = 4u * gid;
+        Fr256 v0 = fr_load(cur, index);
+        Fr256 v1 = fr_load(cur, index + 1u);
+        Fr256 v2 = fr_load(cur, index + 2u);
+        Fr256 v3 = fr_load(cur, index + 3u);
+        lo = fr_add(v0, fr_mont_mul(r, fr_sub(v1, v0)));
+        hi = fr_add(v2, fr_mont_mul(r, fr_sub(v3, v2)));
+        fr_store(nxt, 2u * gid, lo);
+        fr_store(nxt, 2u * gid + 1u, hi);
+        uint mask = (1u << p.log_in) - 1u;
+        Fr256 eq = fr_mont_mul(
+            fr_load(e_out, gid >> p.log_in), fr_load(e_in, gid & mask));
+        q0 = fr_mont_mul(eq, lo);
+        q1 = fr_mont_mul(eq, hi);
+        q2 = fr_mont_mul(eq, fr_sub(fr_add(hi, hi), lo));
+    }
+    jk_tg_sum(scratch, lid, tg, q0, partials, 0u, p.num_tgs);
+    jk_tg_sum(scratch, lid, tg, q1, partials, 1u, p.num_tgs);
+    jk_tg_sum(scratch, lid, tg, q2, partials, 2u, p.num_tgs);
+}

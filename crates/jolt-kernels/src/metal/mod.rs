@@ -57,10 +57,11 @@ pub use runtime::{
 };
 pub use slots::{
     MetalBooleanityCycle, MetalHammingWeightClaimReduction, MetalIncClaimReduction,
-    MetalInstructionInput, MetalInstructionRaVirtualization, MetalInstructionReadRaf,
-    MetalJointOpening, MetalOuterRemainder, MetalOuterUniskip, MetalProductRemainder,
-    MetalProductUniskip, MetalRamHammingBooleanity, MetalRamRaVirtualization,
-    MetalRamRafEvaluation, MetalRamReadWriteChecking, MetalRegistersReadWriteChecking,
+    MetalInstructionClaimReduction, MetalInstructionInput, MetalInstructionRaVirtualization,
+    MetalInstructionReadRaf, MetalJointOpening, MetalOuterRemainder, MetalOuterUniskip,
+    MetalProductRemainder, MetalProductUniskip, MetalRamHammingBooleanity,
+    MetalRamRaVirtualization, MetalRamRafEvaluation, MetalRamReadWriteChecking,
+    MetalRegistersReadWriteChecking,
 };
 
 use jolt_field::Fr;
@@ -68,6 +69,7 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::optimized::hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 use crate::optimized::inc_claim_reduction::OptimizedIncClaimReduction;
+use crate::optimized::instruction_claim_reduction::OptimizedInstructionClaimReduction;
 use crate::optimized::instruction_input::OptimizedInstructionInput;
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
 use crate::optimized::OptimizedBackend;
@@ -148,6 +150,9 @@ where
         });
         backend.hamming_weight_claim_reduction = Box::new(MetalHammingWeightClaimReduction {
             fallback: OptimizedHammingWeightClaimReduction,
+        });
+        backend.instruction_claim_reduction = Box::new(MetalInstructionClaimReduction {
+            fallback: OptimizedInstructionClaimReduction,
         });
         backend.ram_hamming_booleanity = Box::new(MetalRamHammingBooleanity {
             fallback: OptimizedRamHammingBooleanity,
