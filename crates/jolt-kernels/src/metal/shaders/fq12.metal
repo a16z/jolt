@@ -334,40 +334,64 @@ kernel void jk_fq12_mul034(
 
 // --- Miller loop, prepared-coefficient form (stage-0 tier-2) ------------------
 //
-// Thread t runs the full ate ladder over its own pair sub-batch
-// [t·pairs_per_thread, …) and writes its partial Miller value; the batch
-// value is the (exact, order-free) Fq12 product of the partials, which the
-// host folds into the Tier2Accumulator. Identical values to arkworks
-// multi_miller_loop by the ladder-distributivity argument in
-// jolt_dory::tier2 — (f_A·f_B)²·l_A·l_B = (f_A²·l_A)·(f_B²·l_B).
+// Thread t runs the full ate ladder over its own pair segment
+// [seg_starts[t], seg_starts[t+1]) and writes its partial Miller value; the
+// batch value is the (exact, order-free) Fq12 product of the partials,
+// which the host folds into the Tier2Accumulator. Identical values to
+// arkworks multi_miller_loop by the ladder-distributivity argument in
+// jolt_dory::tier2 — (f_A·f_B)²·l_A·l_B = (f_A²·l_A)·(f_B²·l_B). The host
+// keeps each segment inside one commit column, so per-thread partials fold
+// into per-column accumulators.
 //
-// The G2 side arrives fully prepared (the same ell coefficients arkworks
-// computed host-side, shared across every column of the commit pass),
-// step-major: coefficient `step` of pair `pair` at
-// (step·n_pairs + pair)·6·FR_LIMBS — SIMD-adjacent threads read adjacent
-// pairs' coefficients, so each step's loads stripe contiguously.
+// The G2 side arrives fully prepared ONCE per commit pass (the same ell
+// coefficients arkworks computed host-side, shared across every column):
+// pair i reads row row_idx[i] of the step-major table, coefficient `step`
+// of row `row` at (step·n_rows + row)·6·FR_LIMBS. Adjacent pairs map to
+// adjacent (or equal) rows, so each step's loads stripe contiguously.
 //
 // A (0, 0) G1 coordinate pair is the identity sentinel: its line
 // applications are skipped, matching arkworks' pair filtering (the pair
-// contributes 1). Coefficient slots for such pairs still exist and are
-// never read.
+// contributes 1).
 struct MillerTableParams {
-    uint n_pairs;
-    uint pairs_per_thread;
+    uint n_threads;
+    uint n_rows;                  // coefficient-table width
 };
 
-kernel void jk_miller_table(
-    device const uint* ps [[buffer(0)]],      // G1Affine memory, JK_G1_AFFINE_STRIDE
-    device const uint* coeffs [[buffer(1)]],  // JK_ELL_COEFFS × n_pairs × 6·FR_LIMBS
-    device uint* out [[buffer(2)]],           // one Fq12 per thread
-    constant MillerTableParams& p [[buffer(3)]],
-    uint tid [[thread_position_in_grid]])
+inline void jk_table_ell(
+    thread Fq12El &f,
+    device const uint* ps,
+    device const uint* row_idx,
+    device const uint* coeffs,
+    uint n_rows,
+    uint step,
+    uint pair)
 {
-    uint base = tid * p.pairs_per_thread;
-    if (base >= p.n_pairs) {
+    G1AffinePt pt = g1_load_base(ps, pair);
+    if (fq_is_zero(pt.x) && fq_is_zero(pt.y)) {
         return;
     }
-    uint count = min(p.pairs_per_thread, p.n_pairs - base);
+    device const uint* c = coeffs + (step * n_rows + row_idx[pair]) * (6u * FR_LIMBS);
+    f = fq12_mul_by_034(
+        f,
+        fq2_mul_by_fq(fq2_load_at(c), pt.y),
+        fq2_mul_by_fq(fq2_load_at(c + 2u * FR_LIMBS), pt.x),
+        fq2_load_at(c + 4u * FR_LIMBS));
+}
+
+kernel void jk_miller_table(
+    device const uint* ps [[buffer(0)]],         // G1Affine memory, JK_G1_AFFINE_STRIDE
+    device const uint* row_idx [[buffer(1)]],    // one table row per pair
+    device const uint* seg_starts [[buffer(2)]], // n_threads + 1 prefix offsets
+    device const uint* coeffs [[buffer(3)]],     // JK_ELL_COEFFS × n_rows × 6·FR_LIMBS
+    device uint* out [[buffer(4)]],              // one Fq12 per thread
+    constant MillerTableParams& p [[buffer(5)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n_threads) {
+        return;
+    }
+    uint start = seg_starts[tid];
+    uint end = seg_starts[tid + 1];
 
     Fq12El f = fq12_one();
     uint step = 0;
@@ -375,52 +399,22 @@ kernel void jk_miller_table(
         if (it != 0) {
             f = fq12_sqr(f);
         }
-        for (uint j = 0; j < count; j++) {
-            uint pair = base + j;
-            G1AffinePt pt = g1_load_base(ps, pair);
-            if (fq_is_zero(pt.x) && fq_is_zero(pt.y)) {
-                continue;
-            }
-            device const uint* c = coeffs + (step * p.n_pairs + pair) * (6u * FR_LIMBS);
-            f = fq12_mul_by_034(
-                f,
-                fq2_mul_by_fq(fq2_load_at(c), pt.y),
-                fq2_mul_by_fq(fq2_load_at(c + 2u * FR_LIMBS), pt.x),
-                fq2_load_at(c + 4u * FR_LIMBS));
+        for (uint pair = start; pair < end; pair++) {
+            jk_table_ell(f, ps, row_idx, coeffs, p.n_rows, step, pair);
         }
         step++;
         int digit = JK_ATE[JK_ATE_LEN - 1u - it];
         if (digit != 0) {
-            for (uint j = 0; j < count; j++) {
-                uint pair = base + j;
-                G1AffinePt pt = g1_load_base(ps, pair);
-                if (fq_is_zero(pt.x) && fq_is_zero(pt.y)) {
-                    continue;
-                }
-                device const uint* c = coeffs + (step * p.n_pairs + pair) * (6u * FR_LIMBS);
-                f = fq12_mul_by_034(
-                    f,
-                    fq2_mul_by_fq(fq2_load_at(c), pt.y),
-                    fq2_mul_by_fq(fq2_load_at(c + 2u * FR_LIMBS), pt.x),
-                    fq2_load_at(c + 4u * FR_LIMBS));
+            for (uint pair = start; pair < end; pair++) {
+                jk_table_ell(f, ps, row_idx, coeffs, p.n_rows, step, pair);
             }
             step++;
         }
     }
     // The two Frobenius-twisted addition steps (q1, then q2).
     for (uint k = 0; k < 2u; k++) {
-        for (uint j = 0; j < count; j++) {
-            uint pair = base + j;
-            G1AffinePt pt = g1_load_base(ps, pair);
-            if (fq_is_zero(pt.x) && fq_is_zero(pt.y)) {
-                continue;
-            }
-            device const uint* c = coeffs + (step * p.n_pairs + pair) * (6u * FR_LIMBS);
-            f = fq12_mul_by_034(
-                f,
-                fq2_mul_by_fq(fq2_load_at(c), pt.y),
-                fq2_mul_by_fq(fq2_load_at(c + 2u * FR_LIMBS), pt.x),
-                fq2_load_at(c + 4u * FR_LIMBS));
+        for (uint pair = start; pair < end; pair++) {
+            jk_table_ell(f, ps, row_idx, coeffs, p.n_rows, step, pair);
         }
         step++;
     }

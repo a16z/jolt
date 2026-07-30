@@ -52,7 +52,8 @@ mod bench {
     use ark_ff::{One, UniformRand};
     use jolt_kernels::metal::miller::{
         ell_coeffs_per_pair, flatten_prepared_coeffs, fq12_to_device_limbs, miller_fly_partials,
-        miller_table_partials, product_of_partials, ArkG2Prepared, ELL_COEFF_U32S, FQ12_U32S,
+        miller_table_partials, product_of_partials, uniform_seg_starts, ArkG2Prepared,
+        ELL_COEFF_U32S, FQ12_U32S,
     };
     use jolt_kernels::metal::testing::gpu_lock;
     use jolt_kernels::metal::{KernelId, MetalContext};
@@ -226,15 +227,19 @@ mod bench {
 
     fn t2_miller_table(ctx: &MetalContext, ps: &[G1Affine], coeffs: &[u32]) -> f64 {
         println!("== T2: jk_miller_table ({N_PAIRS} pairs) ==");
+        let indices: Vec<u32> = (0..N_PAIRS as u32).collect();
         let mut best = f64::INFINITY;
         for ppt in [2usize, 4, 8, 16, 32] {
+            let segs = uniform_seg_starts(N_PAIRS, ppt);
             let secs = min_secs(3, || {
-                let partials = miller_table_partials(ctx, ps, coeffs, ppt).unwrap();
+                let partials =
+                    miller_table_partials(ctx, ps, &indices, &segs, coeffs, N_PAIRS).unwrap();
                 let _ = std::hint::black_box(&partials);
             });
             // Host fold of the partials, timed apart (it stays on the CPU
             // in production, overlapped with the next dispatch).
-            let partials = miller_table_partials(ctx, ps, coeffs, ppt).unwrap();
+            let partials =
+                miller_table_partials(ctx, ps, &indices, &segs, coeffs, N_PAIRS).unwrap();
             let t = Instant::now();
             let product = product_of_partials(&partials);
             let fold = t.elapsed().as_secs_f64();
@@ -252,9 +257,11 @@ mod bench {
         // Thread-scaling probe (occupancy proxy): fixed ppt=8, shrink the
         // pair count; flat µs/pair until the device starves.
         for n in [512usize, 1024, 2048, 4096, 8192] {
+            let segs = uniform_seg_starts(n, 8);
             let secs = min_secs(3, || {
                 let partials =
-                    miller_table_partials(ctx, &ps[..n], &coeffs_head(coeffs, n), 8).unwrap();
+                    miller_table_partials(ctx, &ps[..n], &indices[..n], &segs, coeffs, N_PAIRS)
+                        .unwrap();
                 let _ = std::hint::black_box(&partials);
             });
             println!(
@@ -266,20 +273,6 @@ mod bench {
         }
         println!();
         best
-    }
-
-    /// A step-major coefficient table for the first `n` pairs of the
-    /// original `N_PAIRS`-wide table.
-    fn coeffs_head(coeffs: &[u32], n: usize) -> Vec<u32> {
-        let steps = ell_coeffs_per_pair();
-        let mut out = vec![0u32; steps * n * ELL_COEFF_U32S];
-        for step in 0..steps {
-            let src = (step * N_PAIRS) * ELL_COEFF_U32S;
-            let dst = (step * n) * ELL_COEFF_U32S;
-            out[dst..dst + n * ELL_COEFF_U32S]
-                .copy_from_slice(&coeffs[src..src + n * ELL_COEFF_U32S]);
-        }
-        out
     }
 
     fn t3_miller_fly(ctx: &MetalContext, ps: &[G1Affine], qs: &[G2Affine]) -> f64 {
@@ -384,8 +377,11 @@ mod bench {
 
     fn x1_contention(ctx: &'static MetalContext, ps: &[G1Affine], coeffs: &[u32]) {
         println!("== X1: device miller ∥ all-core CPU field-mul soak ==");
+        let indices: Vec<u32> = (0..N_PAIRS as u32).collect();
+        let segs = uniform_seg_starts(N_PAIRS, 8);
         let solo = min_secs(3, || {
-            let partials = miller_table_partials(ctx, ps, coeffs, 8).unwrap();
+            let partials =
+                miller_table_partials(ctx, ps, &indices, &segs, coeffs, N_PAIRS).unwrap();
             let _ = std::hint::black_box(&partials);
         });
 
@@ -407,7 +403,8 @@ mod bench {
                 let mut passes = 0usize;
                 while !stop.load(Ordering::Relaxed) {
                     let t = Instant::now();
-                    let partials = miller_table_partials(ctx, ps, coeffs, 8).unwrap();
+                    let partials =
+                        miller_table_partials(ctx, ps, &indices, &segs, coeffs, N_PAIRS).unwrap();
                     let _ = std::hint::black_box(&partials);
                     best = best.min(t.elapsed().as_secs_f64());
                     passes += 1;

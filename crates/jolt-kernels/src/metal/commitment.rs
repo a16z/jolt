@@ -52,7 +52,7 @@
 use std::any::TypeId;
 use std::sync::mpsc::{sync_channel, SyncSender};
 
-use ark_bn254::G1Projective;
+use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, Zero};
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
@@ -67,8 +67,11 @@ use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsume
 use rayon::prelude::*;
 
 use super::g1::{bases_as_u32s, jac_from_device_limbs, JAC_U32S, SEG_INDEX_SIGN_BIT};
+use super::miller::{
+    flatten_prepared_coeffs, g1_points_as_u32s, miller_table_params, product_of_partials, FQ12_U32S,
+};
 use super::runtime::{KernelId, MetalContext};
-use super::{metal_gate, MetalError, PageAlignedVec};
+use super::{metal_gate, DeviceBuffer, MetalError, PageAlignedVec};
 use crate::commitment::{
     CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
 };
@@ -90,6 +93,32 @@ const PIPELINE_DEPTH: usize = 2;
 /// spans 2–4 threads — enough threads per superchunk (~20k) to fill the
 /// device, enough serial adds per thread to amortize scheduling.
 const MAX_SEGMENT_LEN: usize = 256;
+
+/// Pairs per device Miller thread. The W6 microbench is occupancy-bound at
+/// production pair counts — per-pair rate keeps improving down to 2 pairs
+/// per thread (6.6 µs/pair vs 12.2 at 8) despite the extra per-thread
+/// squaring ladders.
+const MILLER_SEG_PAIRS: usize = 2;
+
+/// Default CPU share of each superchunk's Miller pairs (see
+/// [`miller_cpu_fraction`]). The driver lane finishes its extraction work
+/// early and idles while the device carries tier-1 + Miller; giving the
+/// idle cores a pair fraction balances the lanes. Tier2Accumulator is
+/// partition-invariant, so ANY split is byte-identical. Tuned in-pipeline
+/// (sha2-chain @2^22): 0.4 and 0.2 both lose ~2-3% of stage-0 wall to 0.3.
+const MILLER_CPU_FRACTION_DEFAULT: f64 = 0.3;
+
+/// `JOLT_METAL_MILLER_CPU_FRACTION` — CPU share of Miller pairs in
+/// `[0, 1]`; `0` = all-device, `1` = all-CPU (the ablation arm). Read once
+/// per commit pass.
+fn miller_cpu_fraction() -> f64 {
+    std::env::var("JOLT_METAL_MILLER_CPU_FRACTION")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .map_or(MILLER_CPU_FRACTION_DEFAULT, |fraction| {
+            fraction.clamp(0.0, 1.0)
+        })
+}
 
 /// Signed base-256 digit slots covering any `i128` magnitude (16 bytes plus
 /// a possible recoding carry into a 17th slot).
@@ -337,6 +366,19 @@ fn commit_streaming_metal(
          reads the infinity flag)"
     );
 
+    // The device Miller lane's shared coefficient table: the SAME line
+    // coefficients `prep` holds, flattened once per pass into the
+    // step-major layout `jk_miller_table` streams (~16.7 KB per row; all
+    // one-hot columns share it). Gated on the pass's total pair-eval count.
+    let miller_cpu_share = miller_cpu_fraction();
+    let miller_table: Option<Vec<u32>> =
+        (metal_gate("miller", n_one_hot * one_hot_rows) && miller_cpu_share < 1.0).then(|| {
+            let refs: Vec<&_> = prep.prepared().iter().collect();
+            let mut table = Vec::new();
+            flatten_prepared_coeffs(&refs, &mut table);
+            table
+        });
+
     std::thread::scope(|scope| {
         let (tx_jobs, rx_jobs) = sync_channel::<GpuJob>(PIPELINE_DEPTH);
         let (tx_done, rx_done) = sync_channel::<GpuDone>(PIPELINE_DEPTH);
@@ -414,6 +456,7 @@ fn commit_streaming_metal(
         });
 
         let prep_ref = &prep;
+        let miller_table_ref = miller_table.as_deref();
         type Tier2Out = (Vec<Tier2Accumulator>, Vec<Vec<Bn254G1>>, Vec<Vec<Bn254G1>>);
         let tier2 = scope.spawn(move || -> Tier2Out {
             let mut accumulators: Vec<Tier2Accumulator> =
@@ -421,6 +464,22 @@ fn commit_streaming_metal(
             let mut rows: Vec<Vec<Bn254G1>> = (0..n_one_hot)
                 .map(|_| vec![Default::default(); one_hot_rows])
                 .collect();
+            // The Miller lane's device objects live and die on this thread
+            // (MTLBuffers are not Send); a declined wrap only costs the
+            // device share — the pass continues all-CPU.
+            let mut miller_lane =
+                miller_table_ref.and_then(|coeffs| match ctx.wrap_slice(coeffs) {
+                    Ok(buffer) => Some(MillerLane {
+                        coeffs: buffer,
+                        n_rows: prep_ref.prepared().len(),
+                        cpu_share: miller_cpu_share,
+                        failed: false,
+                    }),
+                    Err(error) => {
+                        tracing::warn!(%error, "miller table wrap failed; tier-2 stays on CPU");
+                        None
+                    }
+                });
             // Increment row commitments by absolute window; windows whose
             // scalars are all zero receive no segments and stay identity —
             // exactly the CPU path's zero-MSM rows.
@@ -428,7 +487,14 @@ fn commit_streaming_metal(
                 .map(|_| vec![Default::default(); windows_total])
                 .collect();
             while let Ok(done) = rx_done.recv() {
-                absorb_superchunk(prep_ref, &done, &mut accumulators, &mut rows);
+                absorb_superchunk(
+                    ctx,
+                    prep_ref,
+                    &done,
+                    &mut accumulators,
+                    &mut rows,
+                    miller_lane.as_mut(),
+                );
                 if let Some((inc_segs, inc_jac)) = &done.inc {
                     reduce_inc_superchunk(inc_segs, inc_jac, &mut inc_rows);
                 }
@@ -502,14 +568,40 @@ fn commit_streaming_metal(
     })
 }
 
+/// The tier-2 Miller device lane's pass-scoped state: the wrapped shared
+/// coefficient table and the CPU pair share. `failed` latches on the first
+/// device error — the rest of the pass absorbs on the CPU (the recovered
+/// superchunk included), byte-identically.
+struct MillerLane<'b> {
+    coeffs: DeviceBuffer<'b>,
+    n_rows: usize,
+    cpu_share: f64,
+    failed: bool,
+}
+
+/// One column's decoded pair set, split for the hybrid absorb:
+/// `[..cpu_len]` goes to the CPU `absorb`, the tail to the device kernel.
+/// Any split point yields the same accumulator value (partition
+/// invariance), so the share is purely a load-balance knob.
+struct PendingPairs {
+    points: Vec<G1Affine>,
+    row_indices: Vec<u32>,
+    cpu_len: usize,
+}
+
 /// Decode one finished superchunk: reduce multi-segment buckets, batch
-/// normalize, record rows, absorb Miller loops — parallel across columns
-/// (each column's accumulator and row vector are disjoint).
+/// normalize, record rows — parallel across columns — then absorb the
+/// Miller mass: the CPU share through [`Tier2Accumulator::absorb`], the
+/// device share as ONE `jk_miller_table` dispatch whose per-thread
+/// segments never straddle columns, its execution overlapped with the CPU
+/// share, per-column partial products folded in afterward.
 fn absorb_superchunk(
+    ctx: &MetalContext,
     prep: &DoryTier2Prep,
     done: &GpuDone,
     accumulators: &mut [Tier2Accumulator],
     rows: &mut [Vec<Bn254G1>],
+    lane: Option<&mut MillerLane<'_>>,
 ) {
     // Segments arrive column-major (the driver emits buckets column by
     // column), so each column owns one contiguous segment range.
@@ -524,40 +616,212 @@ fn absorb_superchunk(
         column_ranges[column] = start..cursor;
     }
 
-    accumulators
-        .par_iter_mut()
-        .zip(rows.par_iter_mut())
-        .zip(column_ranges)
-        .for_each(|((accumulator, column_rows), range)| {
-            if range.is_empty() {
-                return;
+    let (lane, cpu_share) = match lane {
+        Some(lane) if !lane.failed => {
+            let share = lane.cpu_share;
+            (Some(lane), share)
+        }
+        _ => (None, 1.0),
+    };
+
+    // Decode phase, parallel across columns (each column's row vector is
+    // disjoint): reduce consecutive same-row segments (split buckets) into
+    // one point per row, drop identities (empty buckets never emit
+    // segments, but a partial sum can still cancel to zero), batch
+    // normalize, record rows.
+    let pending: Vec<Option<PendingPairs>> =
+        rows.par_iter_mut()
+            .zip(column_ranges)
+            .map(|(column_rows, range)| {
+                if range.is_empty() {
+                    return None;
+                }
+                let mut reduced: Vec<(u32, G1Projective)> = Vec::with_capacity(range.len());
+                for (seg, jac) in done.segs[range.clone()].iter().zip(
+                    done.jac[range.start * JAC_U32S..range.end * JAC_U32S].chunks_exact(JAC_U32S),
+                ) {
+                    let point = super::g1::jac_from_device_limbs(jac);
+                    match reduced.last_mut() {
+                        Some((row, sum)) if *row == seg.row => *sum += point,
+                        _ => reduced.push((seg.row, point)),
+                    }
+                }
+                reduced.retain(|(_, point)| !point.is_zero());
+                if reduced.is_empty() {
+                    return None;
+                }
+                let points: Vec<G1Projective> = reduced.iter().map(|(_, point)| *point).collect();
+                let affine = G1Projective::normalize_batch(&points);
+                let row_indices: Vec<u32> = reduced.iter().map(|(row, _)| *row).collect();
+                for (&row, point) in row_indices.iter().zip(&affine) {
+                    column_rows[row as usize] = Bn254G1::from(G1Projective::from(*point));
+                }
+                #[expect(
+                    clippy::cast_precision_loss,
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "pair counts are tiny; the split point is a load-balance knob"
+                )]
+                let cpu_len = ((affine.len() as f64) * cpu_share).round() as usize;
+                Some(PendingPairs {
+                    points: affine,
+                    row_indices,
+                    cpu_len: cpu_len.min(reduced.len()),
+                })
+            })
+            .collect();
+
+    // The device share: every column's tail slice concatenated into one
+    // dispatch, per-thread segments kept inside their column so each
+    // partial folds into exactly one accumulator.
+    let mut gpu_points: Vec<G1Affine> = Vec::new();
+    let mut gpu_rows: Vec<u32> = Vec::new();
+    let mut seg_starts: Vec<u32> = vec![0];
+    // (column, first thread, one past last thread)
+    let mut folds: Vec<(usize, usize, usize)> = Vec::new();
+    if lane.is_some() {
+        for (column, pending_column) in pending.iter().enumerate() {
+            let Some(p) = pending_column else { continue };
+            if p.cpu_len == p.points.len() {
+                continue;
             }
-            // Reduce consecutive same-row segments (split buckets) into one
-            // point per row; drop identities (empty buckets never emit
-            // segments, but a partial sum can still cancel to zero).
-            let mut reduced: Vec<(u32, G1Projective)> = Vec::with_capacity(range.len());
-            for (seg, jac) in done.segs[range.clone()]
-                .iter()
-                .zip(done.jac[range.start * JAC_U32S..range.end * JAC_U32S].chunks_exact(JAC_U32S))
-            {
-                let point = super::g1::jac_from_device_limbs(jac);
-                match reduced.last_mut() {
-                    Some((row, sum)) if *row == seg.row => *sum += point,
-                    _ => reduced.push((seg.row, point)),
+            let thread_start = seg_starts.len() - 1;
+            gpu_points.extend_from_slice(&p.points[p.cpu_len..]);
+            gpu_rows.extend_from_slice(&p.row_indices[p.cpu_len..]);
+            let mut at = seg_starts[thread_start] as usize;
+            while at < gpu_points.len() {
+                at = (at + MILLER_SEG_PAIRS).min(gpu_points.len());
+                seg_starts.push(at as u32);
+            }
+            folds.push((column, thread_start, seg_starts.len() - 1));
+        }
+    }
+
+    let cpu_absorb = |accumulators: &mut [Tier2Accumulator]| {
+        accumulators
+            .par_iter_mut()
+            .zip(pending.par_iter())
+            .for_each(|(accumulator, pending_column)| {
+                if let Some(p) = pending_column {
+                    if p.cpu_len > 0 {
+                        accumulator.absorb(
+                            prep,
+                            &p.points[..p.cpu_len],
+                            &p.row_indices[..p.cpu_len],
+                        );
+                    }
+                }
+            });
+    };
+
+    match lane {
+        Some(lane) if !gpu_points.is_empty() => {
+            let dispatched = run_miller_dispatch(
+                ctx,
+                &lane.coeffs,
+                lane.n_rows,
+                &gpu_points,
+                &gpu_rows,
+                &seg_starts,
+                || cpu_absorb(accumulators),
+            );
+            match dispatched {
+                Ok(partials) => {
+                    let products: Vec<_> = folds
+                        .par_iter()
+                        .map(|&(column, start, end)| {
+                            (
+                                column,
+                                product_of_partials(&partials[start * FQ12_U32S..end * FQ12_U32S]),
+                            )
+                        })
+                        .collect();
+                    for (column, product) in products {
+                        accumulators[column].merge_miller(product);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        "device miller dispatch failed; absorbing this and later \
+                         superchunks on the CPU"
+                    );
+                    lane.failed = true;
+                    // The CPU shares already ran (the dispatch helper calls
+                    // the overlap exactly once on every path); recover the
+                    // device shares.
+                    accumulators
+                        .par_iter_mut()
+                        .zip(pending.par_iter())
+                        .for_each(|(accumulator, pending_column)| {
+                            if let Some(p) = pending_column {
+                                if p.cpu_len < p.points.len() {
+                                    accumulator.absorb(
+                                        prep,
+                                        &p.points[p.cpu_len..],
+                                        &p.row_indices[p.cpu_len..],
+                                    );
+                                }
+                            }
+                        });
                 }
             }
-            reduced.retain(|(_, point)| !point.is_zero());
-            if reduced.is_empty() {
-                return;
-            }
-            let points: Vec<G1Projective> = reduced.iter().map(|(_, point)| *point).collect();
-            let affine = G1Projective::normalize_batch(&points);
-            let row_indices: Vec<u32> = reduced.iter().map(|(row, _)| *row).collect();
-            for (&row, point) in row_indices.iter().zip(&affine) {
-                column_rows[row as usize] = Bn254G1::from(G1Projective::from(*point));
-            }
-            accumulator.absorb(prep, &affine, &row_indices);
-        });
+        }
+        _ => cpu_absorb(accumulators),
+    }
+}
+
+/// Encode, commit, and collect one `jk_miller_table` dispatch, running
+/// `overlap` (the CPU pair share) exactly once on every path — after the
+/// commit when the device accepted the work (so both proceed
+/// concurrently), before returning when setup failed (so no work is lost).
+fn run_miller_dispatch(
+    ctx: &MetalContext,
+    coeffs: &DeviceBuffer<'_>,
+    n_rows: usize,
+    points: &[G1Affine],
+    row_indices: &[u32],
+    seg_starts: &[u32],
+    overlap: impl FnOnce(),
+) -> Result<Vec<u32>, MetalError> {
+    let n_threads = seg_starts.len() - 1;
+    let setup = (|| {
+        Ok((
+            ctx.wrap_slice(g1_points_as_u32s(points))?,
+            ctx.wrap_slice(row_indices)?,
+            ctx.wrap_slice(seg_starts)?,
+            ctx.alloc_u32s(n_threads * FQ12_U32S)?,
+            miller_table_params(n_threads, n_rows)?,
+        ))
+    })();
+    let (ps_buf, idx_buf, seg_buf, out_buf, params) = match setup {
+        Ok(buffers) => buffers,
+        Err(error) => {
+            overlap();
+            return Err(error);
+        }
+    };
+    let pending = match ctx.begin_pass() {
+        Ok(mut pass) => {
+            pass.dispatch(
+                KernelId::MillerTable,
+                &params,
+                &[&ps_buf, &idx_buf, &seg_buf, coeffs, &out_buf],
+                n_threads,
+            );
+            pass.commit()
+        }
+        Err(error) => {
+            overlap();
+            return Err(error);
+        }
+    };
+    super::testing::note_miller_dispatch();
+    overlap();
+    pending.wait()?;
+    let mut partials = vec![0u32; n_threads * FQ12_U32S];
+    out_buf.copy_to_u32s(&mut partials);
+    Ok(partials)
 }
 
 /// The driver-side stream consumer: buckets one-hot hot addresses into
@@ -1082,10 +1346,16 @@ mod tests {
     /// and hints exactly: whole-trace superchunks with production segment
     /// caps, and single-window superchunks with a 1-entry segment cap (every
     /// addition its own device thread — the deepest multi-segment reduction
-    /// and multi-delivery sequencing).
+    /// and multi-delivery sequencing). The Miller gate is forced open, so
+    /// every arm also exercises the hybrid tier-2 absorb at the default CPU
+    /// share; dedicated arms pin the all-device and all-CPU extremes
+    /// (partition invariance makes every split byte-identical).
     #[test]
     fn metal_commit_matches_optimized() {
         let _lock = gpu_lock();
+        // nextest runs one process per test, so the env writes cannot race
+        // another test.
+        std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER", "1");
         let shape = FixtureShape {
             log_t: 6,
             ram_k: 16,
@@ -1133,6 +1403,7 @@ mod tests {
             )
             .unwrap();
 
+            let miller_dispatches = super::super::testing::miller_dispatch_count();
             let whole_trace = commit_streaming_metal(
                 ctx,
                 source,
@@ -1145,6 +1416,10 @@ mod tests {
             )
             .expect("whole-trace metal commit");
             assert_same(&optimized, &whole_trace, "whole-trace superchunk");
+            assert!(
+                super::super::testing::miller_dispatch_count() > miller_dispatches,
+                "the hybrid absorb never dispatched a device Miller batch"
+            );
 
             let single_window = commit_streaming_metal(
                 ctx,
@@ -1171,6 +1446,37 @@ mod tests {
             )
             .expect("cpu-increment metal commit");
             assert_same(&optimized, &inc_on_cpu, "cpu-increment fallback");
+
+            // The split extremes: all pairs on device, then all on CPU
+            // (which also skips the table build entirely).
+            std::env::set_var("JOLT_METAL_MILLER_CPU_FRACTION", "0");
+            let all_device = commit_streaming_metal(
+                ctx,
+                source,
+                &kinds,
+                grid,
+                &setup,
+                1 << shape.log_t,
+                MAX_SEGMENT_LEN,
+                true,
+            )
+            .expect("all-device miller commit");
+            assert_same(&optimized, &all_device, "all-device miller split");
+
+            std::env::set_var("JOLT_METAL_MILLER_CPU_FRACTION", "1");
+            let all_cpu = commit_streaming_metal(
+                ctx,
+                source,
+                &kinds,
+                grid,
+                &setup,
+                1 << shape.log_t,
+                MAX_SEGMENT_LEN,
+                true,
+            )
+            .expect("all-cpu miller commit");
+            assert_same(&optimized, &all_cpu, "all-cpu miller split");
+            std::env::remove_var("JOLT_METAL_MILLER_CPU_FRACTION");
         });
     }
 

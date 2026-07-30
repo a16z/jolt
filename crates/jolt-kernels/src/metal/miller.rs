@@ -205,20 +205,20 @@ pub(super) fn pairing_preamble() -> String {
 }
 
 /// Lay prepared line coefficients out step-major — coefficient `step` of
-/// pair `pair` at `(step·n_pairs + pair)·ELL_COEFF_U32S` — so SIMD-adjacent
-/// threads stream adjacent pairs' coefficients. Every prepared point must
-/// be non-infinity (infinity G2s carry no coefficients; exclude them and
-/// their G1 partners before flattening).
+/// table row `row` at `(step·n_rows + row)·ELL_COEFF_U32S` — so
+/// SIMD-adjacent threads (adjacent rows) stream contiguously. Every
+/// prepared point must be non-infinity (infinity G2s carry no
+/// coefficients; exclude them and their G1 partners before flattening).
 pub fn flatten_prepared_coeffs(preps: &[&ArkG2Prepared], out: &mut Vec<u32>) {
-    let n_pairs = preps.len();
+    let n_rows = preps.len();
     let steps = ell_coeffs_per_pair();
     out.clear();
-    out.resize(steps * n_pairs * ELL_COEFF_U32S, 0);
+    out.resize(steps * n_rows * ELL_COEFF_U32S, 0);
     for (pair, prep) in preps.iter().enumerate() {
         assert!(!prep.infinity, "flatten: infinity G2 has no coefficients");
         assert_eq!(prep.ell_coeffs.len(), steps);
         for (step, coeff) in prep.ell_coeffs.iter().enumerate() {
-            let at = (step * n_pairs + pair) * ELL_COEFF_U32S;
+            let at = (step * n_rows + pair) * ELL_COEFF_U32S;
             write_fq2(&mut out[at..at + 2 * FR_U32_LIMBS], &coeff.0);
             write_fq2(
                 &mut out[at + 2 * FR_U32_LIMBS..at + 4 * FR_U32_LIMBS],
@@ -235,7 +235,7 @@ pub fn flatten_prepared_coeffs(preps: &[&ArkG2Prepared], out: &mut Vec<u32>) {
 /// View affine G1 points as the device `uint` stream (same contract as
 /// [`super::g1::bases_as_u32s`]; identity's (0, 0) coordinates ARE the
 /// device sentinel, so identities may be included).
-fn g1_points_as_u32s(points: &[G1Affine]) -> &[u32] {
+pub(super) fn g1_points_as_u32s(points: &[G1Affine]) -> &[u32] {
     // SAFETY: layout pinned by the const asserts in `super::field`; every
     // bit pattern is a valid u32; same lifetime as `points`.
     unsafe {
@@ -255,34 +255,53 @@ pub fn product_of_partials(partials: &[u32]) -> <Bn254 as Pairing>::TargetField 
         })
 }
 
-/// Dispatch the prepared-coefficient Miller kernel: `points[i]` against the
-/// pair-`i` coefficient column of `coeffs` (from
-/// [`flatten_prepared_coeffs`]), `pairs_per_thread` pairs per partial.
-/// Returns the raw partial-f limb buffer (one Fq12 per thread).
+/// Uniform `pairs_per_thread` segmentation — the test/bench convenience
+/// for [`miller_table_partials`]' ragged segment interface.
+pub fn uniform_seg_starts(n_pairs: usize, pairs_per_thread: usize) -> Vec<u32> {
+    let n_threads = n_pairs.div_ceil(pairs_per_thread);
+    (0..=n_threads)
+        .map(|t| (t * pairs_per_thread).min(n_pairs) as u32)
+        .collect()
+}
+
+/// The kernel's `[[buffer]]`/params contract, shared with the commit slot's
+/// in-pipeline dispatch: pair `i` = `points[i]` against table row
+/// `row_indices[i]`; thread `t` owns pairs
+/// `seg_starts[t]..seg_starts[t + 1]` and writes one partial Miller value.
+pub fn miller_table_params(n_threads: usize, n_rows: usize) -> Result<[u32; 2], MetalError> {
+    Ok([
+        u32::try_from(n_threads).map_err(|_| MetalError::Execution("thread count".into()))?,
+        u32::try_from(n_rows).map_err(|_| MetalError::Execution("table rows".into()))?,
+    ])
+}
+
+/// Dispatch the prepared-coefficient Miller kernel synchronously (the
+/// test/bench path; the commit slot encodes the same dispatch inline to
+/// overlap its CPU share). Returns the raw partial-f limb buffer (one Fq12
+/// per thread).
 pub fn miller_table_partials(
     ctx: &MetalContext,
     points: &[G1Affine],
+    row_indices: &[u32],
+    seg_starts: &[u32],
     coeffs: &[u32],
-    pairs_per_thread: usize,
+    n_rows: usize,
 ) -> Result<Vec<u32>, MetalError> {
-    let n_pairs = points.len();
+    assert_eq!(points.len(), row_indices.len());
     assert_eq!(
         coeffs.len(),
-        ell_coeffs_per_pair() * n_pairs * ELL_COEFF_U32S
+        ell_coeffs_per_pair() * n_rows * ELL_COEFF_U32S
     );
-    let n_threads = n_pairs.div_ceil(pairs_per_thread);
+    let n_threads = seg_starts.len() - 1;
     let ps_buf = ctx.wrap_slice(g1_points_as_u32s(points))?;
+    let idx_buf = ctx.wrap_slice(row_indices)?;
+    let seg_buf = ctx.wrap_slice(seg_starts)?;
     let coeffs_buf = ctx.wrap_slice(coeffs)?;
     let out_buf = ctx.alloc_u32s(n_threads * FQ12_U32S)?;
-    let params = [
-        u32::try_from(n_pairs).map_err(|_| MetalError::Execution("pair count".into()))?,
-        u32::try_from(pairs_per_thread)
-            .map_err(|_| MetalError::Execution("pairs per thread".into()))?,
-    ];
     ctx.run_once(
         KernelId::MillerTable,
-        &params,
-        &[&ps_buf, &coeffs_buf, &out_buf],
+        &miller_table_params(n_threads, n_rows)?,
+        &[&ps_buf, &idx_buf, &seg_buf, &coeffs_buf, &out_buf],
         n_threads,
     )?;
     let mut partials = vec![0u32; n_threads * FQ12_U32S];
@@ -525,7 +544,9 @@ mod tests {
         let refs: Vec<&ArkG2Prepared> = preps.iter().collect();
         let mut coeffs = Vec::new();
         flatten_prepared_coeffs(&refs, &mut coeffs);
-        let partials = miller_table_partials(ctx, ps, &coeffs, ppt).unwrap();
+        let indices: Vec<u32> = (0..ps.len() as u32).collect();
+        let segs = uniform_seg_starts(ps.len(), ppt);
+        let partials = miller_table_partials(ctx, ps, &indices, &segs, &coeffs, qs.len()).unwrap();
         product_of_partials(&partials)
     }
 
@@ -589,7 +610,9 @@ mod tests {
         let refs: Vec<&ArkG2Prepared> = preps.iter().collect();
         let mut coeffs = Vec::new();
         flatten_prepared_coeffs(&refs, &mut coeffs);
-        let partials = miller_table_partials(ctx, &ps, &coeffs, 8).unwrap();
+        let indices: Vec<u32> = (0..n as u32).collect();
+        let segs = uniform_seg_starts(n, 8);
+        let partials = miller_table_partials(ctx, &ps, &indices, &segs, &coeffs, n).unwrap();
         let device = product_of_partials(&partials);
 
         let live: Vec<usize> = (0..n).filter(|i| !ps[*i].is_zero()).collect();
@@ -598,6 +621,55 @@ mod tests {
             live.iter().map(|&i| preps[i].clone()),
         );
         assert_eq!(device, expected);
+    }
+
+    /// The commit-slot shape: a SHARED coefficient table addressed through
+    /// repeating row indices, ragged per-thread segments, and per-segment
+    /// partial folds — each segment's product must equal arkworks over
+    /// exactly its pair subset.
+    #[test]
+    fn miller_table_shared_rows_ragged_segments() {
+        let _lock = gpu_lock();
+        let ctx = MetalContext::global().expect("metal context");
+        let mut rng = rng();
+
+        let n_rows = 24usize;
+        let qs: Vec<G2Affine> = (0..n_rows)
+            .map(|_| ark_bn254::G2Projective::rand(&mut rng).into_affine())
+            .collect();
+        let preps: Vec<ArkG2Prepared> = qs.iter().map(|q| (*q).into()).collect();
+        let refs: Vec<&ArkG2Prepared> = preps.iter().collect();
+        let mut coeffs = Vec::new();
+        flatten_prepared_coeffs(&refs, &mut coeffs);
+
+        let n = 173usize;
+        let ps: Vec<G1Affine> = (0..n)
+            .map(|_| ark_bn254::G1Projective::rand(&mut rng).into_affine())
+            .collect();
+        let indices: Vec<u32> = (0..n).map(|i| ((i * 13 + 5) % n_rows) as u32).collect();
+
+        // Ragged segments: lengths cycle 1..=5.
+        let mut segs = vec![0u32];
+        let mut at = 0usize;
+        let mut len = 1usize;
+        while at < n {
+            at = (at + len).min(n);
+            segs.push(at as u32);
+            len = len % 5 + 1;
+        }
+
+        let partials = miller_table_partials(ctx, &ps, &indices, &segs, &coeffs, n_rows).unwrap();
+        for (t, window) in segs.windows(2).enumerate() {
+            let (start, end) = (window[0] as usize, window[1] as usize);
+            let MillerLoopOutput(expected) = Bn254::multi_miller_loop(
+                ps[start..end].iter().copied(),
+                indices[start..end]
+                    .iter()
+                    .map(|&r| preps[r as usize].clone()),
+            );
+            let got = product_of_partials(&partials[t * FQ12_U32S..(t + 1) * FQ12_U32S]);
+            assert_eq!(got, expected, "segment {t} ({start}..{end})");
+        }
     }
 
     /// Fly-kernel Miller product vs arkworks: random pairs, single pair,

@@ -54,6 +54,12 @@ impl DoryTier2Prep {
             .collect();
         Self { prepared }
     }
+
+    /// The prepared generator prefix — the raw line-coefficient vectors a
+    /// device Miller lane stages into its own layout.
+    pub fn prepared(&self) -> &[<Bn254 as Pairing>::G2Prepared] {
+        &self.prepared
+    }
 }
 
 /// The `multi_pair_g2_setup` Fp12 product of `ps` against the prepared
@@ -147,6 +153,14 @@ impl Tier2Accumulator {
     /// Fold another accumulator in (parallel absorb lanes).
     pub fn merge(&mut self, other: Self) {
         self.miller *= other.miller;
+    }
+
+    /// Fold an externally computed partial Miller product in — the device
+    /// Miller lane's absorb. Exact for the same reason `absorb` shards are:
+    /// the multi-Miller value of a pair set is the Fp12 product of the
+    /// values over any partition of it.
+    pub fn merge_miller(&mut self, partial: <Bn254 as Pairing>::TargetField) {
+        self.miller *= partial;
     }
 
     /// Final exponentiation — the transparent-mode tier-2 commitment.

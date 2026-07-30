@@ -23,8 +23,22 @@ static COPIED_BUFFERS: AtomicU64 = AtomicU64::new(0);
 /// allocation.
 static POOL_REUSES: AtomicU64 = AtomicU64::new(0);
 
+/// Committed tier-2 Miller dispatches (the commit slot's hybrid absorb).
+static MILLER_DISPATCHES: AtomicU64 = AtomicU64::new(0);
+
 pub(crate) fn note_device_round() {
     let _ = DEVICE_ROUNDS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn note_miller_dispatch() {
+    let _ = MILLER_DISPATCHES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// How many tier-2 Miller dispatches the commit slot has committed in this
+/// process — the parity tests' probe that the device arm really ran (the
+/// gate falls back SILENTLY by design).
+pub fn miller_dispatch_count() -> u64 {
+    MILLER_DISPATCHES.load(Ordering::Relaxed)
 }
 
 pub(crate) fn note_copied_buffers(count: u64) {
