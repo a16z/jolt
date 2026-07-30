@@ -1,0 +1,24 @@
+[package]
+name = "jolt-tracer-x86"
+version = "0.1.0"
+edition = "2021"
+description = "AOT x86-64 transpiling execution backend for Jolt trace generation"
+
+[lints]
+workspace = true
+
+[dependencies]
+common = { workspace = true, features = ["std"] }
+jolt-program = { workspace = true, features = ["image"] }
+jolt-riscv = { workspace = true }
+tracer = { workspace = true, features = ["std"] }
+
+[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
+dynasm = "3.2"
+dynasmrt = "3.2"
+jolt-platform = { workspace = true, features = ["std"] }
+libc = "0.2"
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["use-std"] }
+rand = { workspace = true }
