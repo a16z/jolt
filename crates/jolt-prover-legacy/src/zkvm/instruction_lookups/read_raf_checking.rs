@@ -454,26 +454,67 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 .par_extend(cycle_data.par_iter().map(|data| data.is_interleaved));
         }
 
-        // Build lookup_indices_by_table fully in parallel
-        // Create a vector for each table in parallel
-        let lookup_indices_by_table: Vec<Vec<u32>> = (0..num_tables)
-            .into_par_iter()
-            .map(|t_idx| {
-                // Each table gets its own parallel collection
-                cycle_data
-                    .par_iter()
-                    .filter_map(|data| {
-                        data.table.and_then(|t| {
-                            if LookupTables::<XLEN>::enum_index(&t) == t_idx {
-                                Some(data.idx)
-                            } else {
-                                None
-                            }
-                        })
+        let chunk_size = cycle_data
+            .len()
+            .div_ceil(rayon::current_num_threads())
+            .max(1);
+        let chunk_counts: Vec<Vec<usize>> = cycle_data
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut counts = vec![0; num_tables];
+                for data in chunk {
+                    if let Some(table) = data.table {
+                        counts[LookupTables::<XLEN>::enum_index(&table)] += 1;
+                    }
+                }
+                counts
+            })
+            .collect();
+        let mut totals = vec![0; num_tables];
+        let chunk_offsets: Vec<Vec<usize>> = chunk_counts
+            .iter()
+            .map(|counts| {
+                counts
+                    .iter()
+                    .enumerate()
+                    .map(|(table, count)| {
+                        let offset = totals[table];
+                        totals[table] += count;
+                        offset
                     })
                     .collect()
             })
             .collect();
+        let mut lookup_indices_by_table: Vec<Vec<u32>> = totals
+            .iter()
+            .map(|count| Vec::with_capacity(*count))
+            .collect();
+        let bucket_ptrs: Vec<usize> = lookup_indices_by_table
+            .iter_mut()
+            .map(|bucket| bucket.as_mut_ptr() as usize)
+            .collect();
+        cycle_data
+            .par_chunks(chunk_size)
+            .zip(chunk_offsets.into_par_iter())
+            .for_each(|(chunk, mut offsets)| {
+                for data in chunk {
+                    if let Some(table) = data.table {
+                        let table = LookupTables::<XLEN>::enum_index(&table);
+                        let output = bucket_ptrs[table] as *mut u32;
+                        // SAFETY: each chunk owns a disjoint, pre-counted range in every
+                        // bucket, and the exact-capacity vectors stay fixed during the fill.
+                        unsafe { output.add(offsets[table]).write(data.idx) };
+                        offsets[table] += 1;
+                    }
+                }
+            });
+        lookup_indices_by_table
+            .iter_mut()
+            .zip(totals)
+            .for_each(|(bucket, count)| {
+                // SAFETY: the parallel fill writes every slot in each exact-capacity bucket.
+                unsafe { bucket.set_len(count) };
+            });
         drop_in_background_thread(cycle_data);
         drop(_guard);
         drop(span);
