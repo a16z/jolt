@@ -179,3 +179,10 @@ entry or a segmented/in-place first bind could remove materially more than
 another metadata tweak, but it must preserve the parallel merge's time
 advantage. That is the next experiment; shrinking the already necessary
 8 B/cycle prefix table is secondary.
+
+The immediate follow-up instead found a simpler first step: specialize the
+existing entry widths to the register schedule. Jolt `98090a25e` shrinks the
+lookup entry from 48 to 40 bytes and the later entry layouts by 8 bytes each,
+lowering the representative first-bind estimate from 83.05 to 77.14 GiB.
+Results are in
+[`../akita-register-entry-layout-2026-07-31/results.md`](../akita-register-entry-layout-2026-07-31/results.md).
