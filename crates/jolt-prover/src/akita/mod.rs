@@ -170,9 +170,6 @@ where
     pub fn optimized() -> Self {
         let mut backend = Self::reference();
         backend.base = backend.base.with_optimized_compute();
-        // The address relation adds fused-inc stages in the packed protocol;
-        // its optimized kernel currently serves the base shape.
-        backend.base.bytecode_read_raf_address = Box::new(ReferenceBackend);
         backend
     }
 
