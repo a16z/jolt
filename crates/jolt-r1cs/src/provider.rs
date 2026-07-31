@@ -186,9 +186,7 @@ mod tests {
         assert_eq!(az[key.num_constraints_padded], Fr::from_u64(5));
     }
 
-    #[test]
-    #[should_panic(expected = "witness length must match the padded layout")]
-    fn new_rejects_short_witness() {
+    fn two_cycle_key() -> R1csKey<Fr> {
         let one = Fr::one();
         let m = ConstraintMatrices::new(
             1,
@@ -197,7 +195,13 @@ mod tests {
             vec![vec![(1, one)]],
             vec![vec![(2, one)]],
         );
-        let key = R1csKey::new(m, 2);
+        R1csKey::new(m, 2)
+    }
+
+    #[test]
+    #[should_panic(expected = "witness length must match the padded layout")]
+    fn new_rejects_short_witness() {
+        let key = two_cycle_key();
         let witness = vec![Fr::zero(); key.total_cols() - 1];
         let _ = R1csSource::new(&key, &witness);
     }
@@ -205,15 +209,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "witness length must match the padded layout")]
     fn new_rejects_oversized_witness() {
-        let one = Fr::one();
-        let m = ConstraintMatrices::new(
-            1,
-            3,
-            vec![vec![(1, one)]],
-            vec![vec![(1, one)]],
-            vec![vec![(2, one)]],
-        );
-        let key = R1csKey::new(m, 2);
+        let key = two_cycle_key();
         let witness = vec![Fr::zero(); key.total_cols() + 1];
         let _ = R1csSource::new(&key, &witness);
     }

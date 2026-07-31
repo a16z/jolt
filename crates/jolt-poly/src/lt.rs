@@ -143,10 +143,7 @@ impl<F: Field> LtPolynomial<F> {
 /// Time: O(n·2^n). Space: O(2^n).
 fn lt_evals<F: Field>(r: &[F]) -> Vec<F> {
     let n = r.len();
-    assert!(
-        n < usize::BITS as usize,
-        "point dimension {n} exceeds usize shift width"
-    );
+    crate::math::assert_shiftable_dim(n);
     let mut evals = crate::thread::unsafe_allocate_zero_vec(1usize << n);
     for (i, &ri) in r.iter().rev().enumerate() {
         let (left, right) = evals.split_at_mut(1 << i);

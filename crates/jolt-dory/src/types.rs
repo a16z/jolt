@@ -317,25 +317,26 @@ mod tests {
         );
     }
 
+    /// Wraps `bytes` in the outer serde byte layer and asserts `T`'s
+    /// deserializer rejects them with `needle` in the error message.
+    fn assert_rejected_with<T: for<'de> Deserialize<'de>>(bytes: &[u8], needle: &str) {
+        let encoded = serde_json::to_vec(&bytes).expect("encode crafted bytes");
+        let err = serde_json::from_slice::<T>(&encoded)
+            .err()
+            .expect("malformed input must be rejected");
+        assert!(err.to_string().contains(needle), "{err}");
+    }
+
     #[test]
     fn dory_verifier_setup_rejects_huge_vector_length_prefix() {
         // A crafted length prefix must be rejected before the upstream parser
         // calls Vec::with_capacity(len) on it.
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&u64::MAX.to_le_bytes());
-        let encoded = serde_json::to_vec(&bytes).expect("encode crafted setup");
-        let result = serde_json::from_slice::<DoryVerifierSetup>(&encoded);
-        let err = result.err().expect("huge length prefix must be rejected");
-        assert!(err.to_string().contains("exceeds maximum"), "{err}");
+        assert_rejected_with::<DoryVerifierSetup>(&u64::MAX.to_le_bytes(), "exceeds maximum");
     }
 
     #[test]
     fn dory_verifier_setup_rejects_truncated_buffer() {
-        let bytes = vec![0u8; 4];
-        let encoded = serde_json::to_vec(&bytes).expect("encode truncated setup");
-        let result = serde_json::from_slice::<DoryVerifierSetup>(&encoded);
-        let err = result.err().expect("truncated setup must be rejected");
-        assert!(err.to_string().contains("truncated"), "{err}");
+        assert_rejected_with::<DoryVerifierSetup>(&[0u8; 4], "truncated");
     }
 
     #[test]
@@ -347,10 +348,7 @@ mod tests {
             .serialize_compressed(&mut bytes)
             .expect("serialize verifier setup");
         bytes.push(0);
-        let encoded = serde_json::to_vec(&bytes).expect("encode setup bytes");
-        let result = serde_json::from_slice::<DoryVerifierSetup>(&encoded);
-        let err = result.err().expect("trailing bytes must be rejected");
-        assert!(err.to_string().contains("length mismatch"), "{err}");
+        assert_rejected_with::<DoryVerifierSetup>(&bytes, "length mismatch");
     }
 
     #[test]
@@ -393,10 +391,7 @@ mod tests {
     #[test]
     fn dory_proof_rejects_oversized_buffer() {
         let bytes = vec![0u8; MAX_SERIALIZED_PROOF_BYTES + 1];
-        let encoded = serde_json::to_vec(&bytes).expect("encode oversized buffer");
-        let result = serde_json::from_slice::<DoryProof>(&encoded);
-        let err = result.expect_err("oversized proof buffer must be rejected");
-        assert!(err.to_string().contains("exceeds maximum"), "{err}");
+        assert_rejected_with::<DoryProof>(&bytes, "exceeds maximum");
     }
 
     #[test]
@@ -422,11 +417,7 @@ mod tests {
             .serialize_compressed(&mut bytes)
             .expect("serialize proof");
         bytes.push(0);
-
-        let encoded = serde_json::to_vec(&bytes).expect("encode proof bytes");
-        let result = serde_json::from_slice::<DoryProof>(&encoded);
-        let err = result.expect_err("trailing bytes must be rejected");
-        assert!(err.to_string().contains("trailing bytes"), "{err}");
+        assert_rejected_with::<DoryProof>(&bytes, "trailing bytes");
     }
 
     #[test]

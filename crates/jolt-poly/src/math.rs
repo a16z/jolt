@@ -24,6 +24,16 @@ impl Math for usize {
     }
 }
 
+/// Asserts that a point dimension is below the `usize` shift width, so
+/// `1usize << dim` (the eval-table size) cannot overflow the shift.
+#[inline]
+pub(crate) fn assert_shiftable_dim(dim: usize) {
+    assert!(
+        dim < usize::BITS as usize,
+        "point dimension {dim} exceeds usize shift width"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

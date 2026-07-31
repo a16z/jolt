@@ -148,26 +148,6 @@ impl<F: Field> R1csKey<F> {
     }
 
     #[inline]
-    pub fn matrices(&self) -> &ConstraintMatrices<F> {
-        &self.matrices
-    }
-
-    #[inline]
-    pub fn num_cycles(&self) -> usize {
-        self.num_cycles
-    }
-
-    #[inline]
-    pub fn num_constraints_padded(&self) -> usize {
-        self.num_constraints_padded
-    }
-
-    #[inline]
-    pub fn num_vars_padded(&self) -> usize {
-        self.num_vars_padded
-    }
-
-    #[inline]
     pub fn num_cycle_vars(&self) -> usize {
         self.num_cycles.trailing_zeros() as usize
     }
@@ -461,9 +441,9 @@ mod tests {
     #[expect(clippy::expect_used, reason = "test should fail loudly")]
     fn try_from_accepts_consistent_dimensions() {
         let key = R1csKey::try_from(raw_key(4, 2, 4)).expect("consistent raw key");
-        assert_eq!(key.num_cycles(), 4);
-        assert_eq!(key.num_constraints_padded(), 2);
-        assert_eq!(key.num_vars_padded(), 4);
+        assert_eq!(key.num_cycles, 4);
+        assert_eq!(key.num_constraints_padded, 2);
+        assert_eq!(key.num_vars_padded, 4);
     }
 
     #[test]

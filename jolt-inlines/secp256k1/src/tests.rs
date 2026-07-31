@@ -8,9 +8,7 @@ mod sequence_tests {
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::{Fq, Fr};
     use tracer::emulator::mmu::DRAM_BASE;
-    use tracer::utils::inline_test_harness::{
-        InlineMemoryLayout, InlineTestHarness, RegisterMapping,
-    };
+    use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value
@@ -209,15 +207,8 @@ mod sequence_tests {
     fn assert_div_trace_equiv_aliased(funct3: u32, a: &[u64; 4], b: &[u64; 4], expected: [u64; 4]) {
         // rs1 == rs3: dividend and result share one 32-byte region
         let layout = InlineMemoryLayout {
-            input_base: DRAM_BASE,
-            input_size: 32,
-            input2_base: Some(DRAM_BASE + 32),
-            input2_size: Some(32),
             output_base: DRAM_BASE,
-            output_size: 32,
-            rs1_mapping: RegisterMapping::Input,
-            rs2_mapping: RegisterMapping::Input2,
-            rs3_mapping: Some(RegisterMapping::Output),
+            ..InlineMemoryLayout::two_inputs(32, 32, 32)
         };
 
         let mut harness = InlineTestHarness::new(layout);
