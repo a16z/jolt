@@ -1,6 +1,6 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-mod support;
+pub mod support;
 
 use jolt_akita::{AkitaNativeBatching, AkitaProverHint, AkitaScheme};
 use jolt_openings::{

@@ -7,7 +7,7 @@
     reason = "benchmarks and tests unwrap successful PCS operations"
 )]
 
-mod support;
+pub mod support;
 
 use jolt_akita::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaNativeBatchStatement,

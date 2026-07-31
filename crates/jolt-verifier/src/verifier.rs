@@ -670,9 +670,19 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
             append_length_prefixed(transcript, b"trusted_advice", commitment);
         }
         if let Some(committed) = preprocessing.program.committed() {
-            let commitment = &committed.program_one_hot_commitment;
-            append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
+            absorb_packed_program_commitments(&committed.program_one_hot_commitments, transcript);
         }
+    }
+}
+
+#[cfg(feature = "akita")]
+pub fn absorb_packed_program_commitments<C, T>(commitments: &[C], transcript: &mut T)
+where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    for commitment in commitments {
+        append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
     }
 }
 
@@ -1314,10 +1324,7 @@ mod tests {
             #[cfg(not(feature = "akita"))]
             joint_opening_proof: (),
             #[cfg(feature = "akita")]
-            joint_opening_proof: crate::proof::AkitaJointOpeningProof {
-                one_hot_trace: (),
-                auxiliary: None,
-            },
+            joint_opening_proof: crate::proof::AkitaJointOpeningProof::new((), Vec::new()),
             untrusted_advice_commitment: None,
             claims,
             trace_length: 1,

@@ -396,9 +396,8 @@ impl BytecodeRegisterLane {
     pub const ALL: [Self; 3] = [Self::Rs1, Self::Rs2, Self::Rd];
 }
 
-/// WARNING: `Ord` is protocol data — the lattice `PrefixPacking` assigns
-/// slots by `(num_vars, Ord)` order, so reordering variants silently changes
-/// the packed witness layout.
+/// Lattice layouts supply an explicit canonical identifier order; `Ord` is
+/// used only for keyed lookup and does not assign physical slots.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltCommittedPolynomial {
     RdInc,

@@ -28,19 +28,27 @@ pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 /// opening proof at the unified point.
 #[cfg(not(feature = "akita"))]
 pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
-/// One Akita proof opens the prefix-packed OneHotTrace polynomial after the
-/// random-selector reduction. Only auxiliary packed objects retain the generic
-/// reduction proof.
+/// Akita proofs for the prefix-packed OneHotTrace polynomial and each
+/// independently pointed auxiliary object, in canonical object order.
 #[cfg(feature = "akita")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AkitaJointOpeningProof<F, P> {
+pub struct AkitaJointOpeningProof<P> {
     pub one_hot_trace: P,
-    pub auxiliary: Option<jolt_openings::PackedOpeningProof<F, P>>,
+    pub auxiliary: Vec<P>,
 }
 
 #[cfg(feature = "akita")]
-pub type JointOpeningProof<PCS> =
-    AkitaJointOpeningProof<<PCS as CommitmentScheme>::Field, <PCS as CommitmentScheme>::Proof>;
+impl<P> AkitaJointOpeningProof<P> {
+    pub fn new(one_hot_trace: P, auxiliary: Vec<P>) -> Self {
+        Self {
+            one_hot_trace,
+            auxiliary,
+        }
+    }
+}
+
+#[cfg(feature = "akita")]
+pub type JointOpeningProof<PCS> = AkitaJointOpeningProof<<PCS as CommitmentScheme>::Proof>;
 
 #[expect(
     non_snake_case,

@@ -3,7 +3,7 @@
 //! non-homomorphic PCS. Design: `specs/lattice-claims.md`.
 //!
 //! This module names facts only — the canonical OneHotTrace selector layout,
-//! auxiliary `jolt-openings::PrefixPacking` registrations, extra relations,
+//! auxiliary fixed-prefix layouts, extra relations,
 //! and final-opening map. Witness generation, transcripts, and stage
 //! orchestration live in the verifier and prover crates.
 //!
@@ -38,8 +38,8 @@ pub use geometry::{
 };
 pub mod strategy;
 pub use packing::{
-    advice_bytes_packing, one_hot_trace_columns, precommitted_packing, OneHotTraceShape,
-    PrecommittedPackingShape,
+    advice_bytes_packing_plan, one_hot_trace_columns, precommitted_packing_plan, OneHotTraceShape,
+    PrecommittedPackingPlan, PrecommittedPackingShape, PrefixPackedObjectPlan,
 };
 pub use strategy::{
     OneHotTraceColumnRanges, OneHotTraceLayout, OneHotTraceLayoutPlan, OneHotTraceSetupShape,
