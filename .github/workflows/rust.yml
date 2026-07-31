@@ -168,6 +168,11 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
+      # The MODULAR prover's clear-mode acceptance suites: the byte-diff
+      # ratchets asserting wire-for-wire equality with the legacy prover,
+      # plus the engine/driver twins.
+      - name: Run jolt-prover tests with fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
 
   test-prover-zk:
     runs-on: ubuntu-latest
@@ -201,6 +206,15 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features zk
+      # The MODULAR prover's ZK acceptance suite: muldiv accept, tamper
+      # reject, advice, and committed-program e2es against the unmodified
+      # jolt-verifier ZK path — the PR's headline feature, otherwise
+      # uncovered (the crate-matrix job runs default features only).
+      - name: Run jolt-prover tests with zk feature
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zk
+      # The jolt-kernels mode seam in its zk flavor (hiding-finish pins).
+      - name: Run jolt-kernels tests with zk feature
+        run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
 
   test-prover-akita:
     runs-on: ubuntu-latest
