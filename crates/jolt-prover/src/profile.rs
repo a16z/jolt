@@ -21,6 +21,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::panic,
     clippy::print_stdout,
     clippy::print_stderr,
     reason = "profile harness: fail loudly and report to stdout"
