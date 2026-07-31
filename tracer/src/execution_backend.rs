@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
@@ -8,9 +9,12 @@ use jolt_program::execution::{
 };
 use jolt_riscv::JoltInstructionRow;
 
+use common::jolt_device::JoltDevice;
+
 use crate::emulator::cpu::AdviceTape;
+use crate::emulator::decode_cache::DecodeCache;
 use crate::instruction::{Cycle, RAMAccess};
-use crate::{Checkpoint, CheckpointingTracer, GeneralizedLazyTraceIter, LazyTracer};
+use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 
 #[derive(Default, Debug, Clone)]
 pub struct TracerBackend {
@@ -66,16 +70,39 @@ impl ExecutionBackend for TracerBackend {
     }
 }
 
-/// A [`Checkpoint`] wrapped for the chunked-execution contract.
-///
-/// Replay only reads the inner checkpoint (via `Clone`); mutation happens on
-/// the per-replay clone.
-pub struct TracerChunkCheckpoint(Checkpoint);
+/// A resume point for the chunked-execution contract, built on the two-pass
+/// parallel machinery (PR #1717): a shared tick-boundary checkpoint (CPU
+/// state + full-size memory image) plus this chunk's row window relative to
+/// that boundary.
+pub struct TracerChunkCheckpoint {
+    inner: Arc<InnerCheckpoint>,
+    seed: Arc<WorkerSeed>,
+    /// Rows to discard after resuming at the inner boundary.
+    skip_rows: usize,
+    /// Rows this chunk emits.
+    take_rows: usize,
+}
 
-// SAFETY: `Checkpoint` is already `Send` (owned data only); shared references
-// are only used to clone it, and it has no interior mutability, so concurrent
-// reads are safe.
-unsafe impl Sync for TracerChunkCheckpoint {}
+struct InnerCheckpoint {
+    checkpoint: ChunkCheckpoint,
+    /// Full-size flat-memory image at the boundary (SnapshotPool layout).
+    image: Vec<u64>,
+    /// Trace rows produced before this boundary.
+    rows: usize,
+}
+
+/// Static per-program worker seed, shared by every checkpoint.
+struct WorkerSeed {
+    device: Option<JoltDevice>,
+    decode: DecodeCache,
+}
+
+/// Inner checkpoints are captured at chunk-mark crossings, but at most one
+/// per this many rows: each carries a full-size memory image, so denser
+/// capture (e.g. the chunk-size-1 sweep test) would blow up memory.
+/// `skip_rows` absorbs the gap; per-chunk replay cost stays bounded by
+/// spacing + chunk_size + one tick's rows.
+const MIN_INNER_SPACING_ROWS: usize = 1 << 16;
 
 impl ChunkedExecutionBackend for TracerBackend {
     type Checkpoint = TracerChunkCheckpoint;
@@ -93,51 +120,85 @@ impl ChunkedExecutionBackend for TracerBackend {
             return Err(TraceError::Backend("chunk_size must be nonzero"));
         }
 
-        let mut iter = GeneralizedLazyTraceIter::new(CheckpointingTracer::new(
-            crate::create_emulator(
-                program.elf_bytes(),
-                self.elf_path.as_ref(),
-                &inputs.inputs,
-                &inputs.untrusted_advice,
-                &inputs.trusted_advice,
-                &inputs.memory_config,
-                inputs.advice_tape.map(AdviceTape::from_bytes),
-            ),
-        ));
-        iter.lazy_tracer.start_saving_checkpoints();
+        let emulator = crate::create_emulator(
+            program.elf_bytes(),
+            self.elf_path.as_ref(),
+            &inputs.inputs,
+            &inputs.untrusted_advice,
+            &inputs.trusted_advice,
+            &inputs.memory_config,
+            inputs.advice_tape.map(AdviceTape::from_bytes),
+        );
+        let seed = Arc::new(WorkerSeed {
+            device: emulator.get_cpu().mmu.jolt_device.clone(),
+            decode: emulator
+                .get_cpu()
+                .mmu
+                .decode_cache
+                .snapshot_with_empty_entries(),
+        });
 
-        let mut checkpoints = Vec::new();
-        let mut trace_len = 0usize;
-        loop {
-            let mut rows_in_chunk = 0usize;
-            while rows_in_chunk < chunk_size {
-                // The fast pass drops the produced cycles instead of
-                // materializing rows; the wrapped interpreter still constructs
-                // them per tick (invariant: reference machinery untouched).
-                match iter.next() {
-                    Some(_) => rows_in_chunk += 1,
-                    None => break,
+        let mut pool = SnapshotPool::new();
+        let mut pass = PassOne::new(emulator);
+        let capture = |pass: &PassOne, pool: &mut SnapshotPool| {
+            Arc::new(InnerCheckpoint {
+                checkpoint: pass.checkpoint(),
+                image: pool.capture(&pass.emulator().get_cpu().mmu.memory.memory),
+                rows: pass.rows(),
+            })
+        };
+
+        // The fast pass: execute mode, no rows; capture a boundary checkpoint
+        // whenever a chunk mark is crossed (subject to the spacing floor).
+        let mut inners = vec![capture(&pass, &mut pool)];
+        let mut next_mark = chunk_size;
+        while pass.step() {
+            if pass.rows() >= next_mark {
+                #[expect(clippy::expect_used)]
+                let last_rows = inners.last().expect("initial checkpoint present").rows;
+                if pass.rows() - last_rows >= MIN_INNER_SPACING_ROWS.min(chunk_size) {
+                    inners.push(capture(&pass, &mut pool));
                 }
-            }
-            trace_len += rows_in_chunk;
-            let checkpoint = iter.lazy_tracer.save_checkpoint();
-            if rows_in_chunk > 0 {
-                checkpoints.push(TracerChunkCheckpoint(checkpoint));
-            }
-            if iter.lazy_tracer.has_terminated() {
-                break;
+                next_mark = (pass.rows() / chunk_size + 1) * chunk_size;
             }
         }
+        let trace_len = pass.rows();
 
-        let advice_tape = iter.lazy_tracer.take_advice_tape().into_bytes();
-        let final_memory = iter
-            .lazy_tracer
-            .final_memory_state
-            .take()
-            .map(|memory| MemoryImage {
-                bytes: memory.materialized_nonzero_bytes(),
+        // One contract checkpoint per exact chunk mark, resuming from the
+        // latest inner boundary at or before the mark.
+        let mut checkpoints = Vec::with_capacity(trace_len.div_ceil(chunk_size));
+        let mut inner_index = 0;
+        for chunk in 0..trace_len.div_ceil(chunk_size) {
+            let mark = chunk * chunk_size;
+            while inner_index + 1 < inners.len() && inners[inner_index + 1].rows <= mark {
+                inner_index += 1;
+            }
+            let inner = &inners[inner_index];
+            checkpoints.push(TracerChunkCheckpoint {
+                inner: Arc::clone(inner),
+                seed: Arc::clone(&seed),
+                skip_rows: mark - inner.rows,
+                take_rows: chunk_size.min(trace_len - mark),
             });
-        let device = iter.lazy_tracer.get_jolt_device();
+        }
+
+        // Summary extraction mirrors the serial trace() tail.
+        let mut emulator = pass.into_emulator();
+        let advice_tape = emulator.take_advice_tape().into_bytes();
+        let cpu = emulator.get_mut_cpu();
+        let final_memory = Some(MemoryImage {
+            bytes: cpu
+                .mmu
+                .memory
+                .memory
+                .take_memory()
+                .materialized_nonzero_bytes(),
+        });
+        let device = cpu
+            .get_mut_mmu()
+            .jolt_device
+            .take()
+            .ok_or(TraceError::Backend("JoltDevice was not initialized"))?;
 
         Ok(ExecutionSummary {
             checkpoints,
@@ -149,14 +210,32 @@ impl ChunkedExecutionBackend for TracerBackend {
     }
 
     fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError> {
-        let mut replay = checkpoint.0.clone();
-        let mut rows = Vec::new();
-        while !replay.has_terminated() {
-            let Some(cycle) = replay.lazy_step_cycle() else {
-                break;
-            };
-            rows.push(trace_row_from_cycle(cycle)?);
+        let mut worker = ChunkWorker::from_seed(
+            checkpoint.seed.device.clone(),
+            checkpoint.seed.decode.clone(),
+        );
+        let _previous =
+            worker.install_chunk(&checkpoint.inner.checkpoint, checkpoint.inner.image.clone());
+
+        let needed = checkpoint.skip_rows + checkpoint.take_rows;
+        let mut cycles: Vec<Cycle> = Vec::with_capacity(needed + 64);
+        while cycles.len() < needed {
+            let before = cycles.len();
+            worker.run_ticks(1, &mut cycles);
+            if cycles.len() == before {
+                // A zero-row tick before the window is complete means the
+                // replay diverged from the fast pass; fail instead of
+                // spinning (mirrors the row-count tripwire in run_two_pass).
+                return Err(TraceError::Backend(
+                    "chunk replay stalled before completing its row window",
+                ));
+            }
         }
+
+        let rows = cycles[checkpoint.skip_rows..needed]
+            .iter()
+            .map(|cycle| trace_row_from_cycle(*cycle))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(OwnedTrace::new(rows))
     }
 }
