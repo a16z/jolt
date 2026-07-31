@@ -147,6 +147,18 @@ impl<F: Field, Com> BlindFoldProtocol<F, Com> {
                 actual: stage_witness.round_coefficients.len(),
             });
         }
+        // Blinds never enter the R1CS, so no satisfiability check can catch a
+        // miscount; `slice_rows` pairs them with rows positionally and a
+        // mismatch would silently shift every later blind (reusing retained
+        // blinds across rows, or zero-blinding a secret-bearing row).
+        if stage_witness.round_blindings.len() != rounds.len() {
+            return Err(ProverError::StageWitnessShape {
+                stage_index,
+                name: "round blinding count",
+                expected: rounds.len(),
+                actual: stage_witness.round_blindings.len(),
+            });
+        }
         let Some(first_round) = stage_witness.round_coefficients.first() else {
             return Err(ProverError::DegenerateSumcheck {
                 name: "committed stage witness",
@@ -202,6 +214,14 @@ impl<F: Field, Com> BlindFoldProtocol<F, Com> {
                 name: "output claim row count",
                 expected: stage_layout.output_claim_rows.len(),
                 actual: stage_witness.output_claim_rows.len(),
+            });
+        }
+        if stage_witness.output_claim_blindings.len() != stage_layout.output_claim_rows.len() {
+            return Err(ProverError::StageWitnessShape {
+                stage_index,
+                name: "output claim blinding count",
+                expected: stage_layout.output_claim_rows.len(),
+                actual: stage_witness.output_claim_blindings.len(),
             });
         }
         for (row_layout, values) in stage_layout

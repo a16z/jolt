@@ -338,3 +338,59 @@ fn assign_witness_rejects_round_shape_mismatch() {
         })
     ));
 }
+
+#[test]
+fn assign_witness_rejects_round_blinding_count_mismatch() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AE);
+    let fixture = assignment_fixture(&mut rng);
+    let mut truncated = fixture.stage_witnesses.clone();
+    let _ = truncated[0].round_blindings.pop();
+    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = truncated.iter().collect();
+
+    let result = fixture.protocol.assign_witness(
+        &STAGE_DOMAINS,
+        &stage_refs,
+        &fixture.eval_outputs,
+        &fixture.eval_blindings,
+        &mut rng,
+    );
+    assert!(matches!(
+        result,
+        Err(ProverError::StageWitnessShape {
+            stage_index: 0,
+            name: "round blinding count",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn assign_witness_rejects_output_claim_blinding_count_mismatch() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AF);
+    let fixture = assignment_fixture(&mut rng);
+    let mut extended = fixture.stage_witnesses.clone();
+    // A surplus blind is the silent-truncation direction of the old bug.
+    let surplus = extended[0]
+        .output_claim_blindings
+        .first()
+        .copied()
+        .expect("fixture stages carry output-claim blinds");
+    extended[0].output_claim_blindings.push(surplus);
+    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = extended.iter().collect();
+
+    let result = fixture.protocol.assign_witness(
+        &STAGE_DOMAINS,
+        &stage_refs,
+        &fixture.eval_outputs,
+        &fixture.eval_blindings,
+        &mut rng,
+    );
+    assert!(matches!(
+        result,
+        Err(ProverError::StageWitnessShape {
+            stage_index: 0,
+            name: "output claim blinding count",
+            ..
+        })
+    ));
+}
