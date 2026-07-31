@@ -11,7 +11,9 @@
 use crate::error::DoryError;
 use crate::messages::*;
 use crate::mode::{Mode, Transparent};
-use crate::primitives::arithmetic::{DoryRoutines, Field, Group, PairingCurve};
+use crate::primitives::arithmetic::{
+    DoryRoutines, Field, Group, PairingCurve, ResidentRoundHooks, ResidentRoundState,
+};
 use crate::setup::{ProverSetup, VerifierSetup};
 use std::marker::PhantomData;
 
@@ -57,6 +59,12 @@ where
     (a(), b())
 }
 
+struct ResidentRoundLoop<E: PairingCurve> {
+    hooks: ResidentRoundHooks<E>,
+    state: ResidentRoundState,
+    rounds_left: usize,
+}
+
 /// Prover state for the Dory opening protocol
 ///
 /// Maintains the current state of the prover during the interactive protocol.
@@ -82,6 +90,8 @@ pub struct DoryProverState<'a, E: PairingCurve, M: Mode = Transparent> {
 
     /// Reference to prover setup
     setup: &'a ProverSetup<E>,
+
+    resident: Option<ResidentRoundLoop<E>>,
 
     // ZK accumulated blinds (zero in Transparent mode)
     r_c: Scalar<E>,
@@ -202,6 +212,33 @@ where
 
         let num_rounds = v1.len().trailing_zeros() as usize;
         let z = Scalar::<E>::zero();
+        let resident = if M::BLINDING {
+            None
+        } else {
+            E::resident_round_hooks().and_then(|hooks| {
+                let planned_rounds = (hooks.plan)(v1.len());
+                if planned_rounds == 0 {
+                    return None;
+                }
+                (hooks.start)(
+                    &v1,
+                    &v2,
+                    &setup.g1_vec[..v1.len()],
+                    &setup.g2_vec[..v1.len()],
+                )
+                .map(|start| {
+                    assert!(
+                        start.rounds > 0 && start.rounds <= num_rounds,
+                        "resident round budget must fit the protocol"
+                    );
+                    ResidentRoundLoop {
+                        hooks,
+                        state: start.state,
+                        rounds_left: start.rounds,
+                    }
+                })
+            })
+        };
 
         Self {
             v1,
@@ -211,6 +248,7 @@ where
             s2,
             num_rounds,
             setup,
+            resident,
             r_c: z,
             r_d1: z,
             r_d2: z,
@@ -250,6 +288,10 @@ where
             self.num_rounds > 0,
             "Not enough rounds left in prover state"
         );
+
+        if let Some(resident) = self.resident.as_mut() {
+            return (resident.hooks.first_message)(&mut resident.state, &self.s1, &self.s2);
+        }
 
         let n2 = 1 << (self.num_rounds - 1); // n/2
 
@@ -344,20 +386,24 @@ where
         M2: DoryRoutines<E::G2>,
     {
         let beta_inv = beta.inv().expect("beta must be invertible");
-        let n = 1 << self.num_rounds;
-
-        // v₁ ← v₁ + β·Γ₁, v₂ ← v₂ + β⁻¹·Γ₂ — independent vectors, so the
-        // concurrent arm folds both at once (device calls share the GPU).
-        let (g1_vec, g2_vec) = (&self.setup.g1_vec[..n], &self.setup.g2_vec[..n]);
-        let (v1, v2) = (&mut self.v1, &mut self.v2);
-        if reduce_rounds_concurrent() {
-            let ((), ()) = par_join(
-                || M1::fixed_scalar_mul_bases_then_add(g1_vec, v1, beta),
-                || M2::fixed_scalar_mul_bases_then_add(g2_vec, v2, &beta_inv),
-            );
+        if let Some(resident) = self.resident.as_mut() {
+            (resident.hooks.apply_first)(&mut resident.state, beta, &beta_inv);
         } else {
-            M1::fixed_scalar_mul_bases_then_add(g1_vec, v1, beta);
-            M2::fixed_scalar_mul_bases_then_add(g2_vec, v2, &beta_inv);
+            let n = 1 << self.num_rounds;
+
+            // v₁ ← v₁ + β·Γ₁, v₂ ← v₂ + β⁻¹·Γ₂ — independent vectors, so the
+            // concurrent arm folds both at once (device calls share the GPU).
+            let (g1_vec, g2_vec) = (&self.setup.g1_vec[..n], &self.setup.g2_vec[..n]);
+            let (v1, v2) = (&mut self.v1, &mut self.v2);
+            if reduce_rounds_concurrent() {
+                let ((), ()) = par_join(
+                    || M1::fixed_scalar_mul_bases_then_add(g1_vec, v1, beta),
+                    || M2::fixed_scalar_mul_bases_then_add(g2_vec, v2, &beta_inv),
+                );
+            } else {
+                M1::fixed_scalar_mul_bases_then_add(g1_vec, v1, beta);
+                M2::fixed_scalar_mul_bases_then_add(g2_vec, v2, &beta_inv);
+            }
         }
         self.v2_scalars = None;
 
@@ -373,6 +419,10 @@ where
         M1: DoryRoutines<E::G1>,
         M2: DoryRoutines<E::G2>,
     {
+        if let Some(resident) = self.resident.as_mut() {
+            return (resident.hooks.second_message)(&mut resident.state, &self.s1, &self.s2);
+        }
+
         let n2 = 1 << (self.num_rounds - 1); // n/2
 
         // Split all vectors into left and right halves
@@ -442,37 +492,44 @@ where
         let alpha_inv = alpha.inv().expect("alpha must be invertible");
         let n2 = 1 << (self.num_rounds - 1); // n/2
 
-        // Fold v₁ ← α·v₁L + v₁R, v₂ ← α⁻¹·v₂L + v₂R, s₁ ← α·s₁L + s₁R,
-        // s₂ ← α⁻¹·s₂L + s₂R — four disjoint vectors; the concurrent arm
-        // runs the two device-shaped point folds together and the field
-        // folds beside them.
-        let (v1_l, v1_r) = self.v1.split_at_mut(n2);
-        let (v2_l, v2_r) = self.v2.split_at_mut(n2);
         let (s1_l, s1_r) = self.s1.split_at_mut(n2);
         let (s2_l, s2_r) = self.s2.split_at_mut(n2);
-        if reduce_rounds_concurrent() {
-            let (((), ()), ((), ())) = par_join(
-                || {
-                    par_join(
-                        || M1::fixed_scalar_mul_vs_then_add(v1_l, v1_r, alpha),
-                        || M2::fixed_scalar_mul_vs_then_add(v2_l, v2_r, &alpha_inv),
-                    )
-                },
-                || {
-                    par_join(
-                        || M1::fold_field_vectors(s1_l, s1_r, alpha),
-                        || M1::fold_field_vectors(s2_l, s2_r, &alpha_inv),
-                    )
-                },
-            );
-        } else {
-            M1::fixed_scalar_mul_vs_then_add(v1_l, v1_r, alpha);
-            M2::fixed_scalar_mul_vs_then_add(v2_l, v2_r, &alpha_inv);
+        if let Some(resident) = self.resident.as_mut() {
+            (resident.hooks.apply_second)(&mut resident.state, alpha, &alpha_inv);
+            resident.rounds_left -= 1;
             M1::fold_field_vectors(s1_l, s1_r, alpha);
             M1::fold_field_vectors(s2_l, s2_r, &alpha_inv);
+        } else {
+            // Fold v₁ ← α·v₁L + v₁R, v₂ ← α⁻¹·v₂L + v₂R, s₁ ← α·s₁L + s₁R,
+            // s₂ ← α⁻¹·s₂L + s₂R — four disjoint vectors; the concurrent arm
+            // runs the two device-shaped point folds together and the field
+            // folds beside them.
+            let (v1_l, v1_r) = self.v1.split_at_mut(n2);
+            let (v2_l, v2_r) = self.v2.split_at_mut(n2);
+            if reduce_rounds_concurrent() {
+                let (((), ()), ((), ())) = par_join(
+                    || {
+                        par_join(
+                            || M1::fixed_scalar_mul_vs_then_add(v1_l, v1_r, alpha),
+                            || M2::fixed_scalar_mul_vs_then_add(v2_l, v2_r, &alpha_inv),
+                        )
+                    },
+                    || {
+                        par_join(
+                            || M1::fold_field_vectors(s1_l, s1_r, alpha),
+                            || M1::fold_field_vectors(s2_l, s2_r, &alpha_inv),
+                        )
+                    },
+                );
+            } else {
+                M1::fixed_scalar_mul_vs_then_add(v1_l, v1_r, alpha);
+                M2::fixed_scalar_mul_vs_then_add(v2_l, v2_r, &alpha_inv);
+                M1::fold_field_vectors(s1_l, s1_r, alpha);
+                M1::fold_field_vectors(s2_l, s2_r, &alpha_inv);
+            }
+            self.v1.truncate(n2);
+            self.v2.truncate(n2);
         }
-        self.v1.truncate(n2);
-        self.v2.truncate(n2);
         self.s1.truncate(n2);
         self.s2.truncate(n2);
 
@@ -483,6 +540,17 @@ where
         self.r_e2 = self.r_e2 + self.round_e2[0] * alpha + self.round_e2[1] * alpha_inv;
 
         self.num_rounds -= 1;
+
+        if self
+            .resident
+            .as_ref()
+            .is_some_and(|resident| resident.rounds_left == 0)
+        {
+            let resident = self.resident.take().expect("resident round loop exists");
+            (self.v1, self.v2) = (resident.hooks.finish)(resident.state);
+            debug_assert_eq!(self.v1.len(), n2);
+            debug_assert_eq!(self.v2.len(), n2);
+        }
     }
 
     /// Apply the Fold-Scalars reduction (Dory paper, Section 4.1) to the witness.

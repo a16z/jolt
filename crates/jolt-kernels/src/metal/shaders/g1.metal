@@ -143,6 +143,14 @@ inline Fq256 fq_sqr(Fq256 a) {
     return fq_mul(a, a);
 }
 
+inline Fq256 fq_load_constant(constant uint* src) {
+    Fq256 r;
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        r.v[i] = src[i];
+    }
+    return r;
+}
+
 // Jacobian point; identity is Z = 0 (X, Y then irrelevant).
 struct G1Jac {
     Fq256 x;
@@ -173,6 +181,25 @@ inline G1AffinePt g1_load_base(device const uint* bases, uint idx) {
         p.y.v[i] = src[FR_LIMBS + i];
     }
     return p;
+}
+
+inline G1Jac g1_load_jac(device const uint* points, uint idx) {
+    device const uint* src = points + idx * (3u * FR_LIMBS);
+    G1Jac p;
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        p.x.v[i] = src[i];
+        p.y.v[i] = src[FR_LIMBS + i];
+        p.z.v[i] = src[2u * FR_LIMBS + i];
+    }
+    return p;
+}
+
+inline void g1_store_jac(device uint* dst, G1Jac p) {
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        dst[i] = p.x.v[i];
+        dst[FR_LIMBS + i] = p.y.v[i];
+        dst[2u * FR_LIMBS + i] = p.z.v[i];
+    }
 }
 
 // Doubling, a = 0 (dbl-2009-l): 2M + 5S.
@@ -235,6 +262,41 @@ inline G1Jac g1_madd(G1Jac acc, G1AffinePt q) {
     out.y = fq_sub(fq_mul(r2, fq_sub(v, out.x)), fq_dbl(y1j)); // Y3 = r(V-X3) - 2Y1·J
     // Z3 = (Z1 + H)^2 - Z1Z1 - HH
     out.z = fq_sub(fq_sub(fq_sqr(fq_add(acc.z, h)), z1z1), hh);
+    return out;
+}
+
+// General Jacobian addition (add-2007-bl), including identity, doubling,
+// and inverse-point cases. Resident Dory rounds cannot afford host
+// normalization between challenge folds.
+inline G1Jac g1_add_jac(G1Jac p, G1Jac q) {
+    if (fq_is_zero(p.z)) {
+        return q;
+    }
+    if (fq_is_zero(q.z)) {
+        return p;
+    }
+    Fq256 z1z1 = fq_sqr(p.z);
+    Fq256 z2z2 = fq_sqr(q.z);
+    Fq256 u1 = fq_mul(p.x, z2z2);
+    Fq256 u2 = fq_mul(q.x, z1z1);
+    Fq256 s1 = fq_mul(p.y, fq_mul(q.z, z2z2));
+    Fq256 s2 = fq_mul(q.y, fq_mul(p.z, z1z1));
+    Fq256 h = fq_sub(u2, u1);
+    Fq256 rr = fq_sub(s2, s1);
+    if (fq_is_zero(h)) {
+        return fq_is_zero(rr) ? g1_dbl(p) : g1_identity();
+    }
+    Fq256 i = fq_sqr(fq_dbl(h));
+    Fq256 j = fq_mul(h, i);
+    Fq256 r2 = fq_dbl(rr);
+    Fq256 v = fq_mul(u1, i);
+    G1Jac out;
+    out.x = fq_sub(fq_sub(fq_sqr(r2), j), fq_dbl(v));
+    out.y = fq_sub(fq_mul(r2, fq_sub(v, out.x)), fq_dbl(fq_mul(s1, j)));
+    out.z = fq_mul(
+        fq_sub(fq_sub(fq_sqr(fq_add(p.z, q.z)), z1z1), z2z2),
+        h
+    );
     return out;
 }
 
@@ -350,6 +412,63 @@ kernel void jk_g1_scalar_mul_add(
     for (uint i = 0; i < FR_LIMBS; i++) {
         dst[2u * FR_LIMBS + i] = acc.z.v[i];
     }
+}
+
+struct G1ProjectiveMulAddParams {
+    uint n;
+    uint p_offset;
+    uint q_offset;
+    int digits[66];
+    uint endo[FR_LIMBS];
+};
+
+kernel void jk_g1_projective_mul_add(
+    device const uint* ps [[buffer(0)]],
+    device const uint* qs [[buffer(1)]],
+    device uint* out [[buffer(2)]],
+    constant G1ProjectiveMulAddParams& p [[buffer(3)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n) {
+        return;
+    }
+    G1Jac point = g1_load_jac(ps, p.p_offset + tid);
+    G1Jac table[8];
+    table[0] = point;
+    table[1] = g1_dbl(point);
+    for (uint k = 2u; k < 8u; k++) {
+        table[k] = g1_add_jac(table[k - 1u], point);
+    }
+    Fq256 endo = fq_load_constant(p.endo);
+    G1Jac acc = g1_identity();
+    for (int w = 32; w >= 0; w--) {
+        if (w != 32) {
+            for (uint k = 0u; k < 4u; k++) {
+                acc = g1_dbl(acc);
+            }
+        }
+        int d1 = p.digits[w];
+        if (d1 != 0) {
+            uint magnitude = (uint)(d1 < 0 ? -d1 : d1);
+            G1Jac entry = table[magnitude - 1u];
+            if (d1 < 0) {
+                entry.y = fq_sub(fq_zero(), entry.y);
+            }
+            acc = g1_add_jac(acc, entry);
+        }
+        int d2 = p.digits[33 + w];
+        if (d2 != 0) {
+            uint magnitude = (uint)(d2 < 0 ? -d2 : d2);
+            G1Jac entry = table[magnitude - 1u];
+            entry.x = fq_mul(entry.x, endo);
+            if (d2 < 0) {
+                entry.y = fq_sub(fq_zero(), entry.y);
+            }
+            acc = g1_add_jac(acc, entry);
+        }
+    }
+    acc = g1_add_jac(acc, g1_load_jac(qs, p.q_offset + tid));
+    g1_store_jac(out + tid * (3u * FR_LIMBS), acc);
 }
 
 // One thread per segment: sum the selected bases into a Jacobian point.

@@ -358,6 +358,11 @@ impl PairingCurve for BN254 {
     type G2 = ArkG2;
     type GT = ArkGT;
 
+    fn resident_round_hooks(
+    ) -> Option<crate::primitives::arithmetic::ResidentRoundHooks<Self>> {
+        super::reduce_hook::resident_round_hooks()
+    }
+
     fn pair(p: &Self::G1, q: &Self::G2) -> Self::GT {
         ArkGT(Bn254::pairing(p.0, q.0))
     }

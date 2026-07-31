@@ -61,7 +61,9 @@ pub enum KernelId {
     G1SegSum,
     G1CombineRows,
     G1ScalarMulAdd,
+    G1ProjectiveMulAdd,
     G2ScalarMulAdd,
+    G2ProjectiveMulAdd,
     G2FixedBaseMul,
     OpeningFoldDense,
     OpeningFoldOneHot,
@@ -102,7 +104,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 51] = [
+    pub const ALL: [Self; 53] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -116,7 +118,9 @@ impl KernelId {
         Self::G1SegSum,
         Self::G1CombineRows,
         Self::G1ScalarMulAdd,
+        Self::G1ProjectiveMulAdd,
         Self::G2ScalarMulAdd,
+        Self::G2ProjectiveMulAdd,
         Self::G2FixedBaseMul,
         Self::OpeningFoldDense,
         Self::OpeningFoldOneHot,
@@ -171,7 +175,9 @@ impl KernelId {
             Self::G1SegSum => "jk_g1_seg_sum",
             Self::G1CombineRows => "jk_g1_combine_rows",
             Self::G1ScalarMulAdd => "jk_g1_scalar_mul_add",
+            Self::G1ProjectiveMulAdd => "jk_g1_projective_mul_add",
             Self::G2ScalarMulAdd => "jk_g2_scalar_mul_add",
+            Self::G2ProjectiveMulAdd => "jk_g2_projective_mul_add",
             Self::G2FixedBaseMul => "jk_g2_fixed_base_mul",
             Self::OpeningFoldDense => "jk_opening_fold_dense",
             Self::OpeningFoldOneHot => "jk_opening_fold_onehot",

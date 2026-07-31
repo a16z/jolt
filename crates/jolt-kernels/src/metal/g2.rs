@@ -17,6 +17,8 @@ use super::field::{FR_U32_LIMBS, G2_AFFINE_U32_STRIDE};
 /// u32 words per Jacobian G2 result (X, Y, Z × 2 Fq × 8 limbs).
 pub const G2_JAC_U32S: usize = 6 * FR_U32_LIMBS;
 
+const _: () = assert!(std::mem::size_of::<G2Projective>() == G2_JAC_U32S * 4);
+
 /// View affine G2 bases as the device `uint` stream. Identities must
 /// already be lowered to the `(0, 0)` sentinel (the flag byte is dead to
 /// the shader).

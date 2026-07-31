@@ -10,6 +10,8 @@ mod ark_setup;
 mod blake2b_transcript;
 // Jolt vendored addition: device-tier multi-pairing injection seam.
 pub mod pairing_hook;
+// Jolt vendored addition: device-resident transparent reduce-loop seam.
+pub mod reduce_hook;
 
 #[cfg(feature = "cache")]
 pub mod ark_cache;

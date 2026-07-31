@@ -109,6 +109,24 @@ inline G2AffinePt g2_load_base(device const uint* bases, uint idx) {
     return p;
 }
 
+inline G2Jac g2_load_jac(device const uint* points, uint idx) {
+    device const uint* src = points + idx * (6u * FR_LIMBS);
+    G2Jac p;
+    p.x = fq2_load(src);
+    p.y = fq2_load(src + 2u * FR_LIMBS);
+    p.z = fq2_load(src + 4u * FR_LIMBS);
+    return p;
+}
+
+inline Fq2El fq2_load_constant(constant uint* src) {
+    Fq2El r;
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        r.c0.v[i] = src[i];
+        r.c1.v[i] = src[FR_LIMBS + i];
+    }
+    return r;
+}
+
 inline Fq2El fq2_one() {
     Fq2El r;
     for (uint i = 0; i < FR_LIMBS; i++) {
@@ -178,6 +196,38 @@ inline G2Jac g2_madd(G2Jac acc, G2AffinePt q) {
     return out;
 }
 
+inline G2Jac g2_add_jac(G2Jac p, G2Jac q) {
+    if (fq2_is_zero(p.z)) {
+        return q;
+    }
+    if (fq2_is_zero(q.z)) {
+        return p;
+    }
+    Fq2El z1z1 = fq2_sqr(p.z);
+    Fq2El z2z2 = fq2_sqr(q.z);
+    Fq2El u1 = fq2_mul(p.x, z2z2);
+    Fq2El u2 = fq2_mul(q.x, z1z1);
+    Fq2El s1 = fq2_mul(p.y, fq2_mul(q.z, z2z2));
+    Fq2El s2 = fq2_mul(q.y, fq2_mul(p.z, z1z1));
+    Fq2El h = fq2_sub(u2, u1);
+    Fq2El rr = fq2_sub(s2, s1);
+    if (fq2_is_zero(h)) {
+        return fq2_is_zero(rr) ? g2_dbl(p) : g2_identity();
+    }
+    Fq2El i = fq2_sqr(fq2_dbl(h));
+    Fq2El j = fq2_mul(h, i);
+    Fq2El r2 = fq2_dbl(rr);
+    Fq2El v = fq2_mul(u1, i);
+    G2Jac out;
+    out.x = fq2_sub(fq2_sub(fq2_sqr(r2), j), fq2_dbl(v));
+    out.y = fq2_sub(fq2_mul(r2, fq2_sub(v, out.x)), fq2_dbl(fq2_mul(s1, j)));
+    out.z = fq2_mul(
+        fq2_sub(fq2_sub(fq2_sqr(fq2_add(p.z, q.z)), z1z1), z2z2),
+        h
+    );
+    return out;
+}
+
 inline void g2_store_jac(device uint* dst, G2Jac p) {
     Fq256 coords[6] = { p.x.c0, p.x.c1, p.y.c0, p.y.c1, p.z.c0, p.z.c1 };
     for (uint c = 0; c < 6; c++) {
@@ -228,6 +278,63 @@ kernel void jk_g2_scalar_mul_add(
     if (!(fq2_is_zero(addend.x) && fq2_is_zero(addend.y))) {
         acc = g2_madd(acc, addend);
     }
+    g2_store_jac(out + tid * (6u * FR_LIMBS), acc);
+}
+
+struct G2ProjectiveMulAddParams {
+    uint n;
+    uint p_offset;
+    uint q_offset;
+    int digits[66];
+    uint endo[2u * FR_LIMBS];
+};
+
+kernel void jk_g2_projective_mul_add(
+    device const uint* ps [[buffer(0)]],
+    device const uint* qs [[buffer(1)]],
+    device uint* out [[buffer(2)]],
+    constant G2ProjectiveMulAddParams& p [[buffer(3)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n) {
+        return;
+    }
+    G2Jac point = g2_load_jac(ps, p.p_offset + tid);
+    G2Jac table[8];
+    table[0] = point;
+    table[1] = g2_dbl(point);
+    for (uint k = 2u; k < 8u; k++) {
+        table[k] = g2_add_jac(table[k - 1u], point);
+    }
+    Fq2El endo = fq2_load_constant(p.endo);
+    G2Jac acc = g2_identity();
+    for (int w = 32; w >= 0; w--) {
+        if (w != 32) {
+            for (uint k = 0u; k < 4u; k++) {
+                acc = g2_dbl(acc);
+            }
+        }
+        int d1 = p.digits[w];
+        if (d1 != 0) {
+            uint magnitude = (uint)(d1 < 0 ? -d1 : d1);
+            G2Jac entry = table[magnitude - 1u];
+            if (d1 < 0) {
+                entry.y = fq2_sub(fq2_zero(), entry.y);
+            }
+            acc = g2_add_jac(acc, entry);
+        }
+        int d2 = p.digits[33 + w];
+        if (d2 != 0) {
+            uint magnitude = (uint)(d2 < 0 ? -d2 : d2);
+            G2Jac entry = table[magnitude - 1u];
+            entry.x = fq2_mul(entry.x, endo);
+            if (d2 < 0) {
+                entry.y = fq2_sub(fq2_zero(), entry.y);
+            }
+            acc = g2_add_jac(acc, entry);
+        }
+    }
+    acc = g2_add_jac(acc, g2_load_jac(qs, p.q_offset + tid));
     g2_store_jac(out + tid * (6u * FR_LIMBS), acc);
 }
 

@@ -31,6 +31,7 @@
 mod buffers;
 mod commitment;
 mod dory_folds;
+mod dory_reduce;
 mod error;
 mod field;
 mod g1;
