@@ -22,9 +22,7 @@ use common::jolt_device::JoltDevice;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, Field};
 use jolt_kernels::{JoltBackend, ProofSession, ReferenceBackend};
-use jolt_openings::{
-    CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup,
-};
+use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltProof;
 use jolt_witness::JoltWitnessPlane;
@@ -192,7 +190,7 @@ pub fn prove<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&PCS::Output>,
-    program_one_hot: Option<&PCS::Output>,
+    program_one_hot: Option<&[PCS::Output]>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>

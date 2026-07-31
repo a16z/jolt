@@ -382,6 +382,7 @@ mod tests {
                 (0..layout.total())
                     .map(|index| synthetic_point(log_k_chunk, 7 + index as u64))
                     .collect(),
+                None,
             );
             let challenges = HammingWeightClaimReductionChallenges {
                 gamma: Fr::from_u64(23),

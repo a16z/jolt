@@ -47,7 +47,7 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&PCS::Output>,
-    program_one_hot: Option<&PCS::Output>,
+    program_one_hot: Option<&[PCS::Output]>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
@@ -79,7 +79,7 @@ where
     if let (Some(argument), Some(committed)) =
         (program_one_hot, preprocessing.verifier.program.committed())
     {
-        if *argument != committed.program_one_hot_commitment {
+        if argument != committed.program_one_hot_commitments.as_slice() {
             return Err(ProverError::Unsupported {
                 reason: "the ProgramOneHot commitment argument disagrees with the preprocessing",
             });
@@ -146,8 +146,8 @@ where
     // (the verifier enforces the same equalities on its setup before the
     // native opening) — a shape-exact setup with the right digest but the
     // wrong arity would otherwise fail minutes later inside the backend.
-    if preprocessing.pcs_setup.max_num_vars() != plan.column_arity
-        || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != plan.columns.len()
+    if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
+        || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
         || preprocessing.pcs_setup.one_hot_k() != 1usize << log_k_chunk
     {
         return Err(ProverError::Unsupported {
@@ -155,17 +155,14 @@ where
         });
     }
 
-    let columns = assemble_one_hot_trace(
+    let packed_trace = assemble_one_hot_trace(
         witness,
         &plan,
         formula_dimensions.ra_layout,
         log_k_chunk,
         log_t,
     )?;
-    let column_refs: Vec<&dyn MultilinearPoly<F>> = columns
-        .iter()
-        .map(|column| column as &dyn MultilinearPoly<F>)
-        .collect();
+    let column_refs: [&dyn MultilinearPoly<F>; 1] = [&packed_trace];
     let (commitment, hint) = PCS::commit_batch(
         &column_refs,
         preprocessing.pcs_setup.default_layout_digest(),
@@ -179,6 +176,7 @@ where
     // precommitted (its commitment arrives as an argument).
     let untrusted_advice = if untrusted_advice_present {
         Some(commit_advice_one_hot::<PCS>(
+            jolt_claims::protocols::jolt::JoltAdviceKind::Untrusted,
             &public_io.untrusted_advice,
             public_io.memory_layout.max_untrusted_advice_size as usize,
         )?)
@@ -190,7 +188,7 @@ where
         &commitment,
         untrusted_advice.as_ref().map(|object| &object.commitment),
         trusted_advice,
-        program_one_hot,
+        program_one_hot.unwrap_or(&[]),
         &mut transcript,
     );
 

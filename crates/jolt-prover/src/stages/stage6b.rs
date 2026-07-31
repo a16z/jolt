@@ -104,13 +104,7 @@ where
     let bytecode_table_rows = if committed_program {
         None
     } else {
-        Some(
-            witness
-                .program_preprocessing()
-                .bytecode
-                .bytecode
-                .as_slice(),
-        )
+        Some(witness.program_preprocessing().bytecode.bytecode.as_slice())
     };
     let entry_bytecode_index = preprocessing
         .verifier

@@ -752,6 +752,7 @@ mod tests {
                 stage_cycle_points: stage_cycle_points.clone(),
                 register_read_write_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 31),
                 register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 37),
+                fused_inc_cycle_points: Vec::new(),
             };
 
             // ---- Stage 6a: address phase.

@@ -666,12 +666,9 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
             &proof.commitments,
             proof.untrusted_advice_commitment.as_ref(),
             trusted_advice_commitment,
-            preprocessing
-                .program
-                .committed()
-                .map_or(&[], |committed| {
-                    committed.program_one_hot_commitments.as_slice()
-                }),
+            preprocessing.program.committed().map_or(&[], |committed| {
+                committed.program_one_hot_commitments.as_slice()
+            }),
             transcript,
         );
     }

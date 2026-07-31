@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = ["parallel"]
+akita = ["jolt-claims/akita", "jolt-verifier/akita"]
 parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
 
 [dependencies]
