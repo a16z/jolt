@@ -57,7 +57,8 @@ pub trait JoltGroup:
     ///
     /// # Panics
     ///
-    /// Debug-asserts that `bases.len() == scalars.len()`.
+    /// Panics if `bases.len() != scalars.len()` (in all build profiles —
+    /// backend MSMs silently truncate to the shorter slice otherwise).
     #[must_use]
     fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self;
 }

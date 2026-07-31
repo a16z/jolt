@@ -165,7 +165,13 @@ macro_rules! impl_jolt_group_wrapper {
             fn msm<F: ::jolt_field::Field>(bases: &[Self], scalars: &[F]) -> Self {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
-                debug_assert_eq!(bases.len(), scalars.len());
+                // Arkworks' msm_bigint silently truncates to the shorter slice,
+                // producing a wrong group element instead of failing.
+                assert_eq!(
+                    bases.len(),
+                    scalars.len(),
+                    "msm: bases/scalars length mismatch"
+                );
                 let affines: Vec<$affine> = bases.iter().map(|b| b.0.into_affine()).collect();
                 let fr_scalars: Vec<::ark_bn254::Fr> =
                     scalars.iter().map(super::field_to_fr).collect();

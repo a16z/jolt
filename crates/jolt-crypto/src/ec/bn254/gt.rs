@@ -178,7 +178,12 @@ impl JoltGroup for Bn254GT {
 
     #[inline]
     fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self {
-        debug_assert_eq!(bases.len(), scalars.len());
+        // zip would silently truncate to the shorter slice.
+        assert_eq!(
+            bases.len(),
+            scalars.len(),
+            "msm: bases/scalars length mismatch"
+        );
         // GT "MSM" is Π bases[i]^scalars[i] (written additively as Σ scalars[i] * bases[i]).
         let mut acc = Fq12::ONE;
         for (base, scalar) in bases.iter().zip(scalars.iter()) {
