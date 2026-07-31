@@ -70,7 +70,7 @@ cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome
 RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome
 ```
 
-The span taxonomy (versioned, normative) lives in `crates/jolt-profiling/src/taxonomy.rs` — renaming a span is a schema change (summary keys and `telemetry:*` objectives break; the profiling smoke test enforces label presence).
+The span taxonomy (versioned, normative) lives in `crates/jolt-profiling/src/taxonomy.rs` — renaming a span is a schema change (summary keys and `telemetry:*` objectives break; the profiling smoke test enforces label presence, but it is not yet CI-wired — run it explicitly after taxonomy changes, see the NOTE in `.github/workflows/rust.yml`).
 
 ## Architecture
 
