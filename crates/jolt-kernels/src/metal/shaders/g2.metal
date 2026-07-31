@@ -338,6 +338,80 @@ kernel void jk_g2_projective_mul_add(
     g2_store_jac(out + tid * (6u * FR_LIMBS), acc);
 }
 
+kernel void jk_g2_dory_msm_owner(
+    device const uint* bases [[buffer(0)]],
+    device const uint* order [[buffer(1)]],
+    device const uint* offsets [[buffer(2)]],
+    device uint* bucket_sums [[buffer(3)]],
+    constant uint* params [[buffer(4)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup G2Jac sums[128];
+    const uint parts = params[0];
+    const uint base_offset = params[1];
+    const uint buckets_per_group = 128u / parts;
+    const uint local_bucket = tid / parts;
+    const uint part = tid % parts;
+    const uint bucket = tg * buckets_per_group + local_bucket;
+    G2Jac acc = g2_identity();
+    if (bucket < JK_DORY_MSM_BINS) {
+        const uint start = offsets[bucket];
+        const uint end = offsets[bucket + 1u];
+        for (uint i = start + part; i < end; i += parts) {
+            const uint entry = order[i];
+            G2Jac point = g2_load_jac(bases, base_offset + (entry >> 1u));
+            if ((entry & 1u) != 0u) {
+                point.y = fq2_sub(fq2_zero(), point.y);
+            }
+            acc = g2_add_jac(acc, point);
+        }
+    }
+    sums[tid] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = parts >> 1u; stride > 0u; stride >>= 1u) {
+        if (part < stride) {
+            sums[tid] = g2_add_jac(sums[tid], sums[tid + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (part == 0u && bucket < JK_DORY_MSM_BINS) {
+        g2_store_jac(bucket_sums + bucket * (6u * FR_LIMBS), sums[tid]);
+    }
+}
+
+kernel void jk_g2_dory_msm_window_fold(
+    device const uint* bucket_sums [[buffer(0)]],
+    device uint* partials [[buffer(1)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint window [[threadgroup_position_in_grid]])
+{
+    threadgroup G2Jac buckets[128];
+    buckets[tid] = g2_load_jac(bucket_sums, window * JK_DORY_MSM_BUCKETS + tid);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 1u; stride < JK_DORY_MSM_BUCKETS; stride <<= 1u) {
+        G2Jac addend;
+        const bool active = tid + stride < JK_DORY_MSM_BUCKETS;
+        if (active) {
+            addend = buckets[tid + stride];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (active) {
+            buckets[tid] = g2_add_jac(buckets[tid], addend);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint stride = 64u; stride > 0u; stride >>= 1u) {
+        if (tid < stride) {
+            buckets[tid] = g2_add_jac(buckets[tid], buckets[tid + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0u) {
+        g2_store_jac(partials + window * (6u * FR_LIMBS), buckets[0]);
+    }
+}
+
 // out[i] = base · scalars[i]: ONE shared affine base (never the sentinel;
 // the host handles an identity base without dispatching), one scalar per
 // thread — dory-pcs's v₂ = v_vec · Γ2,fin construction. The ladder sweeps

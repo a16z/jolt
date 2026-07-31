@@ -471,6 +471,182 @@ kernel void jk_g1_projective_mul_add(
     g1_store_jac(out + tid * (3u * FR_LIMBS), acc);
 }
 
+constant uint JK_DORY_MSM_WINDOWS = 32u;
+constant uint JK_DORY_MSM_BUCKETS = 128u;
+constant uint JK_DORY_MSM_BINS = JK_DORY_MSM_WINDOWS * JK_DORY_MSM_BUCKETS;
+
+kernel void jk_dory_msm_hist(
+    device const char* digits [[buffer(0)]],
+    device atomic_uint* hist [[buffer(1)]],
+    constant uint* params [[buffer(2)]],
+    uint tid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]],
+    uint tg_count [[threadgroups_per_grid]])
+{
+    threadgroup atomic_uint bins[4096];
+    for (uint bin = tid; bin < JK_DORY_MSM_BINS; bin += 256u) {
+        atomic_store_explicit(&bins[bin], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const uint len = params[0];
+    const uint total = JK_DORY_MSM_WINDOWS * len;
+    for (uint item = tg * 256u + tid; item < total; item += tg_count * 256u) {
+        const int digit = digits[item];
+        if (digit != 0) {
+            const uint window = item / len;
+            const uint magnitude = (uint)(digit < 0 ? -digit : digit);
+            atomic_fetch_add_explicit(
+                &bins[window * JK_DORY_MSM_BUCKETS + magnitude - 1u],
+                1u,
+                memory_order_relaxed);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint bin = tid; bin < JK_DORY_MSM_BINS; bin += 256u) {
+        const uint count = atomic_load_explicit(&bins[bin], memory_order_relaxed);
+        if (count != 0u) {
+            atomic_fetch_add_explicit(&hist[bin], count, memory_order_relaxed);
+        }
+    }
+}
+
+kernel void jk_dory_msm_offsets(
+    device const uint* hist [[buffer(0)]],
+    device uint* offsets [[buffer(1)]],
+    device uint* cursors [[buffer(2)]],
+    uint tid [[thread_index_in_threadgroup]])
+{
+    threadgroup uint scan[256];
+    threadgroup uint carry;
+    if (tid == 0u) {
+        carry = 0u;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint base = 0u; base < JK_DORY_MSM_BINS; base += 256u) {
+        const uint bin = base + tid;
+        scan[tid] = hist[bin];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint stride = 1u; stride < 256u; stride <<= 1u) {
+            const uint addend = tid >= stride ? scan[tid - stride] : 0u;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            scan[tid] += addend;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+        const uint exclusive = carry + (tid == 0u ? 0u : scan[tid - 1u]);
+        offsets[bin] = exclusive;
+        cursors[bin] = exclusive;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (tid == 255u) {
+            carry += scan[255];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0u) {
+        offsets[JK_DORY_MSM_BINS] = carry;
+    }
+}
+
+kernel void jk_dory_msm_scatter(
+    device const char* digits [[buffer(0)]],
+    device atomic_uint* cursors [[buffer(1)]],
+    device uint* order [[buffer(2)]],
+    constant uint* params [[buffer(3)]],
+    uint item [[thread_position_in_grid]])
+{
+    const uint len = params[0];
+    const uint total = JK_DORY_MSM_WINDOWS * len;
+    if (item >= total) {
+        return;
+    }
+    const int digit = digits[item];
+    if (digit == 0) {
+        return;
+    }
+    const uint window = item / len;
+    const uint index = item - window * len;
+    const uint magnitude = (uint)(digit < 0 ? -digit : digit);
+    const uint key = window * JK_DORY_MSM_BUCKETS + magnitude - 1u;
+    const uint slot = atomic_fetch_add_explicit(&cursors[key], 1u, memory_order_relaxed);
+    order[slot] = (index << 1u) | (digit < 0 ? 1u : 0u);
+}
+
+kernel void jk_g1_dory_msm_owner(
+    device const uint* bases [[buffer(0)]],
+    device const uint* order [[buffer(1)]],
+    device const uint* offsets [[buffer(2)]],
+    device uint* bucket_sums [[buffer(3)]],
+    constant uint* params [[buffer(4)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup G1Jac sums[128];
+    const uint parts = params[0];
+    const uint base_offset = params[1];
+    const uint buckets_per_group = 128u / parts;
+    const uint local_bucket = tid / parts;
+    const uint part = tid % parts;
+    const uint bucket = tg * buckets_per_group + local_bucket;
+    G1Jac acc = g1_identity();
+    if (bucket < JK_DORY_MSM_BINS) {
+        const uint start = offsets[bucket];
+        const uint end = offsets[bucket + 1u];
+        for (uint i = start + part; i < end; i += parts) {
+            const uint entry = order[i];
+            G1Jac point = g1_load_jac(bases, base_offset + (entry >> 1u));
+            if ((entry & 1u) != 0u) {
+                point.y = fq_sub(fq_zero(), point.y);
+            }
+            acc = g1_add_jac(acc, point);
+        }
+    }
+    sums[tid] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = parts >> 1u; stride > 0u; stride >>= 1u) {
+        if (part < stride) {
+            sums[tid] = g1_add_jac(sums[tid], sums[tid + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (part == 0u && bucket < JK_DORY_MSM_BINS) {
+        g1_store_jac(bucket_sums + bucket * (3u * FR_LIMBS), sums[tid]);
+    }
+}
+
+kernel void jk_g1_dory_msm_window_fold(
+    device const uint* bucket_sums [[buffer(0)]],
+    device uint* partials [[buffer(1)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint window [[threadgroup_position_in_grid]])
+{
+    threadgroup G1Jac buckets[128];
+    buckets[tid] = g1_load_jac(bucket_sums, window * JK_DORY_MSM_BUCKETS + tid);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 1u; stride < JK_DORY_MSM_BUCKETS; stride <<= 1u) {
+        G1Jac addend;
+        const bool active = tid + stride < JK_DORY_MSM_BUCKETS;
+        if (active) {
+            addend = buckets[tid + stride];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (active) {
+            buckets[tid] = g1_add_jac(buckets[tid], addend);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint stride = 64u; stride > 0u; stride >>= 1u) {
+        if (tid < stride) {
+            buckets[tid] = g1_add_jac(buckets[tid], buckets[tid + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0u) {
+        g1_store_jac(partials + window * (3u * FR_LIMBS), buckets[0]);
+    }
+}
+
 // One thread per segment: sum the selected bases into a Jacobian point.
 //   bases      — host G1Affine array (stride JK_G1_AFFINE_STRIDE u32s)
 //   indices    — base indices, all segments concatenated; bit 31 selects

@@ -62,8 +62,15 @@ pub enum KernelId {
     G1CombineRows,
     G1ScalarMulAdd,
     G1ProjectiveMulAdd,
+    DoryMsmHist,
+    DoryMsmOffsets,
+    DoryMsmScatter,
+    G1DoryMsmOwner,
+    G1DoryMsmWindowFold,
     G2ScalarMulAdd,
     G2ProjectiveMulAdd,
+    G2DoryMsmOwner,
+    G2DoryMsmWindowFold,
     G2FixedBaseMul,
     OpeningFoldDense,
     OpeningFoldOneHot,
@@ -104,7 +111,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 60] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -119,8 +126,15 @@ impl KernelId {
         Self::G1CombineRows,
         Self::G1ScalarMulAdd,
         Self::G1ProjectiveMulAdd,
+        Self::DoryMsmHist,
+        Self::DoryMsmOffsets,
+        Self::DoryMsmScatter,
+        Self::G1DoryMsmOwner,
+        Self::G1DoryMsmWindowFold,
         Self::G2ScalarMulAdd,
         Self::G2ProjectiveMulAdd,
+        Self::G2DoryMsmOwner,
+        Self::G2DoryMsmWindowFold,
         Self::G2FixedBaseMul,
         Self::OpeningFoldDense,
         Self::OpeningFoldOneHot,
@@ -176,8 +190,15 @@ impl KernelId {
             Self::G1CombineRows => "jk_g1_combine_rows",
             Self::G1ScalarMulAdd => "jk_g1_scalar_mul_add",
             Self::G1ProjectiveMulAdd => "jk_g1_projective_mul_add",
+            Self::DoryMsmHist => "jk_dory_msm_hist",
+            Self::DoryMsmOffsets => "jk_dory_msm_offsets",
+            Self::DoryMsmScatter => "jk_dory_msm_scatter",
+            Self::G1DoryMsmOwner => "jk_g1_dory_msm_owner",
+            Self::G1DoryMsmWindowFold => "jk_g1_dory_msm_window_fold",
             Self::G2ScalarMulAdd => "jk_g2_scalar_mul_add",
             Self::G2ProjectiveMulAdd => "jk_g2_projective_mul_add",
+            Self::G2DoryMsmOwner => "jk_g2_dory_msm_owner",
+            Self::G2DoryMsmWindowFold => "jk_g2_dory_msm_window_fold",
             Self::G2FixedBaseMul => "jk_g2_fixed_base_mul",
             Self::OpeningFoldDense => "jk_opening_fold_dense",
             Self::OpeningFoldOneHot => "jk_opening_fold_onehot",
@@ -414,6 +435,20 @@ impl<'b> ComputePass<'_, 'b> {
         buffers: &[&DeviceBuffer<'b>],
         threads: usize,
     ) {
+        self.dispatch_width(kernel, params, buffers, threads, THREADGROUP_SIZE);
+    }
+
+    /// Encode one dispatch with a kernel-specific threadgroup width.
+    pub fn dispatch_width(
+        &mut self,
+        kernel: KernelId,
+        params: &[u32],
+        buffers: &[&DeviceBuffer<'b>],
+        threads: usize,
+        width: usize,
+    ) {
+        assert!(width.is_power_of_two());
+        assert!(width <= self.ctx.pipelines[kernel.index()].maxTotalThreadsPerThreadgroup());
         if let Some(trace) = &mut self.trace {
             trace.dispatches.push((kernel, threads));
         }
@@ -437,12 +472,12 @@ impl<'b> ComputePass<'_, 'b> {
             }
         }
         let groups = MTLSize {
-            width: threads.div_ceil(THREADGROUP_SIZE).max(1),
+            width: threads.div_ceil(width).max(1),
             height: 1,
             depth: 1,
         };
         let per_group = MTLSize {
-            width: THREADGROUP_SIZE,
+            width,
             height: 1,
             depth: 1,
         };

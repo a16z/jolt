@@ -175,11 +175,19 @@ impl MetalContext {
 
     /// Device-owned shared buffer initialized from `words`.
     pub(super) fn copy_u32s(&self, words: &[u32]) -> Result<DeviceBuffer<'static>, MetalError> {
-        let len_bytes = size_of_val(words);
-        if words.is_empty() {
+        // SAFETY: a u32 slice is a contiguous initialized byte range.
+        let bytes =
+            unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), size_of_val(words)) };
+        self.copy_bytes(bytes)
+    }
+
+    /// Device-owned shared buffer initialized from raw bytes.
+    pub(super) fn copy_bytes(&self, bytes: &[u8]) -> Result<DeviceBuffer<'static>, MetalError> {
+        let len_bytes = bytes.len();
+        if bytes.is_empty() {
             return self.alloc_u32s(0);
         }
-        let src: NonNull<c_void> = NonNull::from(&words[0]).cast();
+        let src: NonNull<c_void> = NonNull::from(&bytes[0]).cast();
         // SAFETY: `src` spans `len_bytes` readable bytes; Metal copies them.
         let raw = unsafe {
             self.device().newBufferWithBytes_length_options(
