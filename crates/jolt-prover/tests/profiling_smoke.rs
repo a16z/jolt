@@ -1,11 +1,16 @@
-//! E2e smoke test for the profile harness: one in-process fibonacci run at
-//! scale 2^16 must emit both telemetry artifacts, the summary must parse
-//! through the strict schema structs, and every taxonomy-v1 label that fires
-//! on all proves must be present in the trace — so a silent span rename
-//! fails CI rather than drifting.
+//! E2e smoke test for the profile harness: one in-process fibonacci run
+//! must emit both telemetry artifacts, the summary must parse through the
+//! strict schema structs, and every taxonomy-v1 label that fires on all
+//! proves must be present in the trace — so a silent span rename fails CI
+//! rather than drifting.
+//!
+//! Scale 2^13 — fibonacci's minimum guest scale, and the largest that fits
+//! CI memory: the reference backend's stage-2 naive RAM kernels retain
+//! ~18 GiB regardless of trace length (the CI job adds swap for exactly
+//! that), and 2^16 peaks near 80 GiB. Label coverage is scale-independent.
 //!
 //! Run explicitly (needs the guest toolchain, like the byte-diff harness):
-//! `cargo nextest run -p jolt-prover --features profiling profiling_smoke`
+//! `cargo nextest run -p jolt-prover --features profiling -E 'binary(profiling_smoke)'`
 
 #![cfg(feature = "profiling")]
 #![expect(clippy::unwrap_used, clippy::expect_used)]
@@ -19,16 +24,16 @@ use serde_json::Value;
 fn profile_run_emits_conformant_artifacts() {
     let artifacts = jolt_prover::profile::run(&ProfileArgs {
         name: Workload::Fibonacci,
-        scale: Some(16),
+        scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");
-    assert!(trace_path.ends_with("benchmark-runs/perfetto_traces/modular_fibonacci_16.json"));
+    assert!(trace_path.ends_with("benchmark-runs/perfetto_traces/modular_fibonacci_13.json"));
     assert!(
-        summary_path.ends_with("benchmark-runs/perfetto_traces/modular_fibonacci_16.summary.json")
+        summary_path.ends_with("benchmark-runs/perfetto_traces/modular_fibonacci_13.summary.json")
     );
 
     // Both artifacts exist and parse; the summary parses through the strict
@@ -66,7 +71,7 @@ fn profile_run_emits_conformant_artifacts() {
     assert_eq!(summary.stages.len(), taxonomy::STAGE_SPANS.len());
     assert!(summary.stages.iter().all(|s| s.rss_open_gib.is_some()));
     assert_eq!(summary.run.workload, "fibonacci");
-    assert_eq!(summary.run.scale_log2, 16);
+    assert_eq!(summary.run.scale_log2, 13);
     assert!(summary.peak_rss_gib.is_some());
 
     // The counter rewrite ran: no raw `counters.*` events survive in the
