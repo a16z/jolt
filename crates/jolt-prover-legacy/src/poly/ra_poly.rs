@@ -17,6 +17,10 @@ use crate::{
 #[derive(Allocative, Clone, Debug, PartialEq)]
 enum RaLookupIndices<I: Copy + Send + Sync + 'static> {
     Sparse(Arc<Vec<Option<I>>>),
+    SparseSentinel {
+        values: Arc<Vec<I>>,
+        sentinel: usize,
+    },
     Dense(Arc<Vec<I>>),
     DenseStrided {
         values: Arc<Vec<I>>,
@@ -37,15 +41,23 @@ impl<I: Copy + Send + Sync + 'static> RaLookupIndices<I> {
     fn len(&self) -> usize {
         match self {
             Self::Sparse(indices) => indices.len(),
+            Self::SparseSentinel { values, .. } => values.len(),
             Self::Dense(indices) => indices.len(),
             Self::DenseStrided { len, .. } => *len,
         }
     }
 
     #[inline]
-    fn lookup(&self, index: usize) -> Option<I> {
+    fn lookup(&self, index: usize) -> Option<I>
+    where
+        I: Into<usize>,
+    {
         match self {
             Self::Sparse(indices) => indices[index],
+            Self::SparseSentinel { values, sentinel } => {
+                let value = values[index];
+                (value.into() != *sentinel).then_some(value)
+            }
             Self::Dense(indices) => Some(indices[index]),
             Self::DenseStrided {
                 values,
@@ -88,6 +100,20 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> RaPo
         Self::Round1(RaPolynomialRound1 {
             F: eq_evals,
             lookup_indices: RaLookupIndices::Sparse(lookup_indices),
+        })
+    }
+
+    pub fn new_sparse_sentinel(
+        lookup_indices: Arc<Vec<I>>,
+        sentinel: usize,
+        eq_evals: Vec<F>,
+    ) -> Self {
+        Self::Round1(RaPolynomialRound1 {
+            F: eq_evals,
+            lookup_indices: RaLookupIndices::SparseSentinel {
+                values: lookup_indices,
+                sentinel,
+            },
         })
     }
 
@@ -565,6 +591,53 @@ mod tests {
         assert_eq!(strided.final_sumcheck_claim(), dense.final_sumcheck_claim());
     }
 
+    fn assert_sentinel_ra_matches_sparse(binding_order: BindingOrder) {
+        const SENTINEL: usize = usize::MAX;
+        let lookup_indices = vec![
+            Some(0_usize),
+            None,
+            Some(1),
+            Some(254),
+            None,
+            Some(253),
+            Some(3),
+            None,
+            Some(4),
+            Some(251),
+            Some(5),
+            None,
+            Some(6),
+            Some(249),
+            None,
+            Some(248),
+        ];
+        let sentinel_indices = lookup_indices
+            .iter()
+            .map(|index| index.unwrap_or(SENTINEL))
+            .collect();
+        let eq_evals: Vec<Fr> = (0..=u8::MAX).map(|value| Fr::from(value as u64)).collect();
+        let mut sparse = RaPolynomial::new(Arc::new(lookup_indices), eq_evals.clone());
+        let mut sentinel: RaPolynomial<usize, Fr> =
+            RaPolynomial::new_sparse_sentinel(Arc::new(sentinel_indices), SENTINEL, eq_evals);
+        let mut rng = test_rng();
+
+        while sparse.len() > 1 {
+            assert_eq!(sentinel.len(), sparse.len());
+            for j in 0..sparse.len() {
+                assert_eq!(sentinel.get_bound_coeff(j), sparse.get_bound_coeff(j));
+            }
+
+            let challenge = <Fr as JoltField>::Challenge::rand(&mut rng);
+            sparse.bind_parallel(challenge, binding_order);
+            sentinel.bind_parallel(challenge, binding_order);
+        }
+
+        assert_eq!(
+            sentinel.final_sumcheck_claim(),
+            sparse.final_sumcheck_claim()
+        );
+    }
+
     #[test]
     fn dense_ra_polynomial_matches_sparse() {
         assert_dense_ra_matches_sparse(BindingOrder::LowToHigh);
@@ -575,5 +648,11 @@ mod tests {
     fn strided_ra_polynomial_matches_dense() {
         assert_strided_ra_matches_dense(BindingOrder::LowToHigh);
         assert_strided_ra_matches_dense(BindingOrder::HighToLow);
+    }
+
+    #[test]
+    fn sentinel_ra_polynomial_matches_sparse() {
+        assert_sentinel_ra_matches_sparse(BindingOrder::LowToHigh);
+        assert_sentinel_ra_matches_sparse(BindingOrder::HighToLow);
     }
 }

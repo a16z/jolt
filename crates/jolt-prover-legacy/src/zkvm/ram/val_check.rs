@@ -382,15 +382,18 @@ impl<F: JoltField> RamValCheckSumcheckProver<F> {
         memory_layout: &MemoryLayout,
     ) -> Self {
         // Shared witness indices for the write address at each cycle.
-        let wa_indices: Vec<Option<usize>> = trace
+        let no_address = params.K;
+        let wa_indices: Vec<usize> = trace
             .par_iter()
-            .map(|cycle| remap_address(cycle.ram_address(), memory_layout).map(|k| k as usize))
+            .map(|cycle| {
+                remap_address(cycle.ram_address(), memory_layout).map_or(no_address, |k| k as usize)
+            })
             .collect();
         let wa_indices = Arc::new(wa_indices);
 
         // After Stage 2 alignment, both identities use the same address point.
         let eq = EqPolynomial::evals(&params.r_address.r);
-        let wa = RaPolynomial::new(Arc::clone(&wa_indices), eq);
+        let wa = RaPolynomial::new_sparse_sentinel(Arc::clone(&wa_indices), no_address, eq);
 
         let inc = CommittedPolynomial::RamInc.generate_witness(
             bytecode_preprocessing,

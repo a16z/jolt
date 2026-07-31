@@ -193,7 +193,7 @@ struct Phase1State<F: JoltField> {
     Q_val: MultilinearPolynomial<F>,
 
     /// Needed for Phase 2 transition
-    addresses: Arc<Vec<Option<usize>>>,
+    addresses: Arc<Vec<usize>>,
     F_values: Vec<F>,
     r_cycle_raf_hi: Vec<F::Challenge>,
     r_cycle_rw_hi: Vec<F::Challenge>,
@@ -212,11 +212,13 @@ impl<F: JoltField> Phase1State<F> {
         one_hot_params: &OneHotParams,
     ) -> Self {
         // Extract addresses from the trace.
-        let addresses: Arc<Vec<Option<usize>>> = Arc::new(
+        let no_address = one_hot_params.ram_k;
+        let addresses: Arc<Vec<usize>> = Arc::new(
             trace
                 .par_iter()
                 .map(|cycle| {
-                    remap_address(cycle.ram_address(), memory_layout).map(|addr| addr as usize)
+                    remap_address(cycle.ram_address(), memory_layout)
+                        .map_or(no_address, |addr| addr as usize)
                 })
                 .collect(),
         );
@@ -280,7 +282,7 @@ impl<F: JoltField> Phase1State<F> {
     /// Compute Q arrays by iterating over trace.
     #[tracing::instrument(skip_all, name = "Phase1State::compute_Q_arrays")]
     fn compute_Q_arrays(
-        addresses: &[Option<usize>],
+        addresses: &[usize],
         F_values: &[F],
         eq_raf_hi: &[F],
         eq_rw_hi: &[F],
@@ -303,12 +305,12 @@ impl<F: JoltField> Phase1State<F> {
                 },
                 |(mut q_raf, mut q_rw, mut q_val), (chunk_idx, chunk)| {
                     let base_c = chunk_idx * chunk_size;
-                    for (i, addr) in chunk.iter().enumerate() {
-                        if let Some(k) = addr {
+                    for (i, &addr) in chunk.iter().enumerate() {
+                        if addr != F_values.len() {
                             let c = base_c + i;
                             let c_lo = c & (prefix_size - 1);
                             let c_hi = c >> prefix_size.trailing_zeros();
-                            let h_c = F_values[*k];
+                            let h_c = F_values[addr];
 
                             q_raf[c_lo] += h_c * eq_raf_hi[c_hi];
                             q_rw[c_lo] += h_c * eq_rw_hi[c_hi];
@@ -486,7 +488,7 @@ impl<F: JoltField> Phase2State<F> {
     /// Compute H'[c_hi] = Σ_{c_lo} H[c_lo, c_hi] · eq_prefix[c_lo]
     #[tracing::instrument(skip_all, name = "Phase2State::compute_H_prime")]
     fn compute_H_prime(
-        addresses: &[Option<usize>],
+        addresses: &[usize],
         F_values: &[F],
         eq_prefix: &[F],
         prefix_n_vars: usize,
@@ -503,12 +505,12 @@ impl<F: JoltField> Phase2State<F> {
                 || unsafe_allocate_zero_vec(suffix_size),
                 |mut h_prime, (chunk_idx, chunk)| {
                     let base_c = chunk_idx * chunk_size;
-                    for (i, addr) in chunk.iter().enumerate() {
-                        if let Some(k) = addr {
+                    for (i, &addr) in chunk.iter().enumerate() {
+                        if addr != F_values.len() {
                             let c = base_c + i;
                             let c_lo = c & (prefix_size - 1);
                             let c_hi = c >> prefix_n_vars;
-                            let h_c = F_values[*k];
+                            let h_c = F_values[addr];
                             h_prime[c_hi] += h_c * eq_prefix[c_lo];
                         }
                     }
