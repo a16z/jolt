@@ -52,7 +52,11 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::instruction_read_raf::{
+    shared_instruction_rows, InstructionCycleRow, SharedInstructionRows,
+};
+use super::ram_trace::RamAccessColumns;
+use super::trace_record::RegisterLanes;
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
 use crate::opening::JointOpeningPolynomials;
 use crate::reference::commitment::{column_kinds, ColumnKind};
@@ -72,6 +76,12 @@ const COLLECT_CHUNK: usize = 1 << 12;
 const MIN_RANGE: usize = 1 << 12;
 
 impl<F: Field> JointOpeningPolynomials<F> for OptimizedBackend {
+    fn prefetch_session(&self, session: &mut ProofSession) -> ProofSession {
+        let mut fork = session.fork_with::<SharedInstructionRows>();
+        session.move_to::<SharedOpeningIncrements>(&mut fork);
+        fork
+    }
+
     #[tracing::instrument(
         skip_all,
         name = "OptimizedJointOpening::prepare",
@@ -213,6 +223,43 @@ pub(crate) struct OpeningColumns {
     pub(crate) ram_address: Vec<u64>,
 }
 
+/// Raw committed increment columns retained after stage 4 releases the
+/// larger trace record, then moved into stage 8's prefetch session.
+pub(crate) struct SharedOpeningIncrements {
+    rd_inc: Vec<i128>,
+    ram_inc: Vec<i128>,
+}
+
+pub(crate) fn park_opening_increments(
+    session: &mut ProofSession,
+    registers: &RegisterLanes,
+    ram: &RamAccessColumns,
+) {
+    if session.state::<SharedOpeningIncrements>().is_some() {
+        return;
+    }
+    let rd = || {
+        registers
+            .rd_post_value
+            .iter()
+            .zip(&registers.rd_pre_value)
+            .map(|(&post, &pre)| i128::from(post) - i128::from(pre))
+            .collect()
+    };
+    let ram_inc = || {
+        ram.post_values
+            .iter()
+            .zip(&ram.pre_values)
+            .map(|(&post, &pre)| i128::from(post) - i128::from(pre))
+            .collect()
+    };
+    #[cfg(feature = "parallel")]
+    let (rd_inc, ram_inc) = rayon::join(rd, ram_inc);
+    #[cfg(not(feature = "parallel"))]
+    let (rd_inc, ram_inc) = (rd(), ram_inc());
+    session.park(SharedOpeningIncrements { rd_inc, ram_inc });
+}
+
 impl OpeningColumns {
     fn collect<F: Field>(
         session: &mut ProofSession,
@@ -249,14 +296,22 @@ impl OpeningColumns {
         let bytecode_pc = map_rows(|row| row.mapped_pc().map_or(COLD, |pc| pc as u64));
         let ram_address = map_rows(|row| row.remapped_ram_address().unwrap_or(COLD));
 
-        let mut consumers = (CollectIncColumns {
-            rd_inc: Vec::with_capacity(cycles),
-            ram_inc: Vec::with_capacity(cycles),
-        },);
-        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+        let increments = session
+            .take::<SharedOpeningIncrements>()
+            .filter(|columns| columns.rd_inc.len() == cycles && columns.ram_inc.len() == cycles);
+        let (rd_inc, ram_inc) = if let Some(columns) = increments {
+            (columns.rd_inc, columns.ram_inc)
+        } else {
+            let mut consumers = (CollectIncColumns {
+                rd_inc: Vec::with_capacity(cycles),
+                ram_inc: Vec::with_capacity(cycles),
+            },);
+            stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+            (consumers.0.rd_inc, consumers.0.ram_inc)
+        };
         let columns = Self {
-            rd_inc: consumers.0.rd_inc,
-            ram_inc: consumers.0.ram_inc,
+            rd_inc,
+            ram_inc,
             lookup_index,
             bytecode_pc,
             ram_address,

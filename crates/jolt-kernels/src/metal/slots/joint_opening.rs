@@ -103,6 +103,10 @@ pub struct MetalJointOpening {
 }
 
 impl JointOpeningPolynomials<Fr> for MetalJointOpening {
+    fn prefetch_session(&self, session: &mut ProofSession) -> ProofSession {
+        <OptimizedBackend as JointOpeningPolynomials<Fr>>::prefetch_session(&self.fallback, session)
+    }
+
     #[tracing::instrument(
         skip_all,
         name = "MetalJointOpening::prepare",

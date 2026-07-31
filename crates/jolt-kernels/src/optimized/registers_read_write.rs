@@ -595,8 +595,10 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         // reservation below — the record + entries coexistence window is
         // otherwise the proof's RSS high-water mark.
         let registers = Arc::clone(&record.registers);
+        let ram = Arc::clone(&record.ram);
         drop(record);
         TraceRecord::release(session);
+        super::opening::park_opening_increments(session, &registers, &ram);
 
         // RdInc from the rd lanes: `post − pre` per cycle (absent operands
         // store 0/0), exactly the extractor's value.
