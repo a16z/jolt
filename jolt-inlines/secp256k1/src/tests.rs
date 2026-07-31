@@ -349,6 +349,21 @@ mod sequence_tests {
         assert_squarer_trace_equiv(&a);
     }
 
+    /// `double_and_add` divides by `x_self - x_{self+other}`, which is zero when
+    /// `other == -2*self`. That case must return infinity instead of dividing by
+    /// zero (which panics host advice generation and is unprovable in-guest).
+    #[test]
+    fn test_secp256k1_double_and_add_infinity() {
+        let g = Secp256k1Point::generator();
+        let neg_two_g = g.double().neg();
+
+        let result = g.double_and_add(&neg_two_g);
+        assert!(result.is_infinity(), "2G + (-2G) should be infinity");
+
+        let naive = g.double().add(&neg_two_g);
+        assert!(naive.is_infinity(), "naive 2G + (-2G) should be infinity");
+    }
+
     fn u128_point_mul(scalar: u128, point: &Secp256k1Point) -> Secp256k1Point {
         let mut res = Secp256k1Point::infinity();
         for i in (0..128).rev() {

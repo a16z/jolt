@@ -484,7 +484,6 @@ pub struct GrumpkinCurve;
 
 impl CurveParams<GrumpkinFq> for GrumpkinCurve {
     type Error = GrumpkinError;
-    const DOUBLE_AND_ADD_DIVISOR_CHECK: bool = true;
     fn curve_b() -> GrumpkinFq {
         GrumpkinFq::negative_seventeen()
     }

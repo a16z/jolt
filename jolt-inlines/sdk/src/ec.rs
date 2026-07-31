@@ -33,10 +33,6 @@ pub trait CurveParams<F: ECField>: Clone {
 
     fn curve_b() -> F;
 
-    /// When true, `double_and_add` checks for divisor == 0 (needed for grumpkin).
-    /// Secp256k1 can skip this check.
-    const DOUBLE_AND_ADD_DIVISOR_CHECK: bool = false;
-
     fn not_on_curve_error() -> Self::Error;
 }
 
@@ -203,8 +199,12 @@ impl<F: ECField, C: CurveParams<F>> AffinePoint<F, C> {
                 .sub(&other.y)
                 .div_assume_nonzero(&other.x.sub(&self.x));
             let nx2 = other.x.sub(&ns.square());
+            // `divisor == x_self - x_{self+other}`, which vanishes exactly when
+            // `other == -2*self`, i.e. when `2*self + other` is the point at
+            // infinity. Every short Weierstrass curve needs this branch: without
+            // it the division below is by zero.
             let divisor = self.x.dbl().add(&nx2);
-            if C::DOUBLE_AND_ADD_DIVISOR_CHECK && divisor.is_zero() {
+            if divisor.is_zero() {
                 return Self::infinity();
             }
             let t = self.y.dbl().div_assume_nonzero(&divisor).add(&ns);
