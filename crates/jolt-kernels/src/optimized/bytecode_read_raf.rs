@@ -165,6 +165,13 @@ fn stage_pushforwards<F: Field>(
         let mut partial: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
         let mut inner: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
         let mut touched: Vec<usize> = Vec::with_capacity(in_len);
+        // Exact membership marker for `touched`: a field-value test
+        // (`inner[0][pc].is_zero()`) is not one — zero eq weights or
+        // cancellation would re-push a PC and double-count it in the fold
+        // below. Epochs make the reset per `j_hi` block free; the counter is
+        // bounded by the block range length (≤ 2^hi_bits), far below u32.
+        let mut seen: Vec<u32> = vec![0; addresses];
+        let mut epoch = 0u32;
         for j_hi in range {
             for &k in &touched {
                 for stage_inner in &mut inner {
@@ -172,10 +179,12 @@ fn stage_pushforwards<F: Field>(
                 }
             }
             touched.clear();
+            epoch += 1;
             let base = j_hi << lo_bits;
             for j_lo in 0..in_len {
                 let pc = rows[base + j_lo].push_pc as usize;
-                if inner[0][pc].is_zero() {
+                if seen[pc] != epoch {
+                    seen[pc] = epoch;
                     touched.push(pc);
                 }
                 for (stage_inner, stage_lo) in inner.iter_mut().zip(&e_lo) {
@@ -485,7 +494,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
 
         // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
         // one-hot grid, served lazily off the sparse per-cycle indices for
-        // the first three binds instead of `d × T` dense.
+        // the first four binds instead of `d × T` dense.
         let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
         let selectors = (0..num_ra)
             .map(|index| {
@@ -725,6 +734,46 @@ mod tests {
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
+    }
+
+    /// `stage_pushforwards` membership must not depend on field values: with
+    /// a Boolean low-point coordinate, stage 0's eq weight is exactly zero on
+    /// half the low domain, so a repeated PC whose first visit carried weight
+    /// zero used to be pushed into `touched` twice and double-counted in
+    /// every stage's fold.
+    #[test]
+    fn stage_pushforwards_membership_is_value_independent() {
+        let log_t = 4usize;
+        let addresses = 4usize;
+        // Stage 0's low half becomes [1, r]: eq weights are literally zero
+        // for j_lo ∈ {0, 1}. Stages 1–4 keep generic points.
+        let mut stage_cycle_points: [Vec<Fr>; 5] =
+            std::array::from_fn(|s| synthetic_point(log_t, 101 + s as u64));
+        stage_cycle_points[0][2] = fr(1);
+
+        // Block j_hi = 0 visits PC 2 first at zero stage-0 weight (j_lo = 0),
+        // then again at j_lo = 2; later blocks repeat PCs generically.
+        let pcs: [usize; 16] = [2, 0, 2, 1, 3, 3, 0, 2, 1, 1, 1, 1, 0, 3, 2, 0];
+        let rows: Vec<PcRow> = pcs
+            .iter()
+            .map(|&pc| PcRow {
+                push_pc: pc as u32,
+                mapped_pc: 0,
+            })
+            .collect();
+
+        // The naive pushforward over the full eq tables — the same monomials
+        // the split accumulates, so equality is exact.
+        let expected: [Vec<Fr>; 5] = std::array::from_fn(|s| {
+            let eq: Vec<Fr> = eq_table(&stage_cycle_points[s]);
+            let mut out = vec![fr(0); addresses];
+            for (j, &pc) in pcs.iter().enumerate() {
+                out[pc] += eq[j];
+            }
+            out
+        });
+        let got = stage_pushforwards(&stage_cycle_points, &rows, addresses);
+        assert_eq!(got, expected);
     }
 
     fn run_pair(committed_program: bool) {

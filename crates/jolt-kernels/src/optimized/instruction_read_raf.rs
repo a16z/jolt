@@ -252,7 +252,17 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
             witness,
             1 << dimensions.log_t(),
         )?);
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        // Slice-backed witnesses park the weak handle (like
+        // `shared_instruction_rows`): the kernel drops its strong copy at the
+        // first cycle bind, and a strong session carry would keep the
+        // 48 B × T rows resident through the stage-5 staging peak — later
+        // stages re-derive index-parallel instead. Re-emulating sources keep
+        // the strong carry (re-deriving means a full re-emulation walk).
+        if witness.random_access().is_some() {
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+        } else {
+            session.park(SharedInstructionRows(Arc::clone(&rows)));
+        }
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,

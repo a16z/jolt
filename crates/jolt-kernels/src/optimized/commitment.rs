@@ -34,13 +34,38 @@ use crate::commitment::{
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 
-/// Cycles per superchunk. The dominant stage-0 wall cost on a many-core
-/// host is the per-superchunk join (its critical path is one window's
-/// serial MSM), so fewer, larger superchunks win: 2^17 → 2^21 measured
-/// 59.3s → 41.1s whole-prove at 2^25 on 64 threads. The extracted bundle
-/// buffer (64 B/cycle, two reused buffers) is the only staging that scales
-/// with the superchunk — columns feed the commit windows by closure.
-const SUPERCHUNK_CYCLES: usize = 1 << 21;
+/// Superchunk ceiling — the measured 64-thread optimum. The dominant
+/// stage-0 wall cost on a many-core host is the per-superchunk join (its
+/// critical path is one window's serial MSM), so fewer, larger superchunks
+/// win: 2^17 → 2^21 measured 59.3s → 41.1s whole-prove at 2^25 on 64
+/// threads.
+const SUPERCHUNK_CYCLES_MAX: usize = 1 << 21;
+
+/// Cycles per superchunk, scaled to the pool: the measured optimum allots
+/// 2^15 cycles per thread at the 64-thread point, and a smaller pool has
+/// proportionally fewer concurrent Dory windows to keep busy. The only
+/// staging that scales with the superchunk is the extracted bundle buffer
+/// (80 B/cycle — [`CommittedColumnsWitness`] is three 16-byte scalars plus
+/// two niche-free 16-byte `Option`s — × two reused buffers ≈ 320 MiB at the
+/// 2^21 ceiling), a needless reservation on a 10-core host; columns feed
+/// the commit windows by closure. The floor keeps the pre-many-core default
+/// (2^17). Superchunk size never reaches the wire: per column the fed
+/// windows, their order, and the finish calls are identical at any size
+/// (pinned by the whole-trace and single-window arms of the module test).
+fn superchunk_cycles() -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        (rayon::current_num_threads() << 15)
+            .next_power_of_two()
+            .clamp(1 << 17, SUPERCHUNK_CYCLES_MAX)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        // Serial builds have no join to amortize; the floor minimizes
+        // staging.
+        1 << 17
+    }
+}
 
 impl<F, PCS> CommitWitness<F, PCS> for OptimizedBackend
 where
@@ -69,7 +94,7 @@ where
             return ReferenceBackend.commit_witness(session, source, ids, grid, setup);
         }
 
-        commit_streaming(source, ids, grid, setup, SUPERCHUNK_CYCLES)
+        commit_streaming(source, ids, grid, setup, superchunk_cycles())
     }
 
     fn commit_advice(
@@ -88,7 +113,7 @@ where
 
 /// The streaming commit pass at an explicit superchunk width (tests shrink
 /// it to force multi-delivery sequencing; production uses
-/// [`SUPERCHUNK_CYCLES`]).
+/// [`superchunk_cycles`]).
 fn commit_streaming<F, PCS>(
     source: &dyn RowSource,
     ids: &[JoltCommittedPolynomial],

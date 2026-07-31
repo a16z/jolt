@@ -42,6 +42,7 @@
 //! Like the reference kernel, only the default read-write config (phase 1 =
 //! all cycle rounds, phase 2 = 0) is supported.
 
+use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_read_write;
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltPolynomialId, RegistersReadWritePublic};
 use jolt_field::{AdditiveAccumulator, Field, OptimizedMul, RingAccumulator};
@@ -90,14 +91,36 @@ impl WitnessBundle for RegisterCycleRow {
         _next: Option<&jolt_witness::__private::TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self {
+        let cycle = Self {
             rs1: row.registers.rs1.map(|read| (read.register, read.value)),
             rs2: row.registers.rs2.map(|read| (read.register, read.value)),
             rd: row
                 .registers
                 .rd
                 .map(|write| (write.register, write.pre_value, write.post_value)),
-        })
+        };
+        // Reject out-of-domain operand indices exactly like the trace
+        // oracle's grid materializers (the reference tier's path): a raw
+        // index at or beyond `2^REGISTER_ADDRESS_BITS` would otherwise
+        // scatter out of bounds deep inside the kernel.
+        for register in [
+            cycle.rs1.map(|(register, _)| register),
+            cycle.rs2.map(|(register, _)| register),
+            cycle.rd.map(|(register, ..)| register),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if usize::from(register) >= 1usize << REGISTER_ADDRESS_BITS {
+                return Err(WitnessError::InvalidWitnessData {
+                    label: "jolt_vm",
+                    reason: format!(
+                        "register index {register} exceeds {REGISTER_ADDRESS_BITS}-bit register read-write domain"
+                    ),
+                });
+            }
+        }
+        Ok(cycle)
     }
 
     fn annotated_ids() -> Vec<JoltPolynomialId> {
@@ -182,7 +205,7 @@ fn collect_register_entries_par<F: Field>(
     let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
     let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
     let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-    let error = std::sync::Mutex::new(None);
+    let error = jolt_witness::FirstErrorLatch::new();
     let chunk_count = cycles.div_ceil(CHUNK);
     // Pass 1: count entries per chunk and fill the index columns.
     let mut counts: Vec<usize> = Vec::new();
@@ -205,9 +228,7 @@ fn collect_register_entries_par<F: Field>(
                         let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
                     }
                     Err(failure) => {
-                        if let Ok(mut guard) = error.try_lock() {
-                            let _ = guard.get_or_insert(failure);
-                        }
+                        error.record(base + offset, failure);
                         return count;
                     }
                 }
@@ -215,8 +236,7 @@ fn collect_register_entries_par<F: Field>(
             count
         })
         .collect_into_vec(&mut counts);
-    #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
-    if let Some(failure) = error.lock().unwrap().take() {
+    if let Some(failure) = error.take() {
         return Err(failure.into());
     }
     // SAFETY: the error latch is empty, so every chunk ran to completion and
@@ -246,6 +266,7 @@ fn collect_register_entries_par<F: Field>(
             windows.push(head);
             rest = tail;
         }
+        let error = jolt_witness::FirstErrorLatch::new();
         windows
             .into_par_iter()
             .enumerate()
@@ -266,19 +287,16 @@ fn collect_register_entries_par<F: Field>(
                             }
                         }
                         Err(failure) => {
-                            if let Ok(mut guard) = error.try_lock() {
-                                let _ = guard.get_or_insert(failure);
-                            }
+                            error.record(row, failure);
                             return;
                         }
                     }
                 }
                 debug_assert_eq!(written, window.len());
             });
-    }
-    #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
-    if let Some(failure) = error.into_inner().unwrap() {
-        return Err(failure.into());
+        if let Some(failure) = error.take() {
+            return Err(failure.into());
+        }
     }
     // SAFETY: the windows partition exactly `total` slots (the exclusive
     // scan of the same counts pass 2 reproduces), and every window was
@@ -294,25 +312,21 @@ fn collect_register_entries_par<F: Field>(
 
 /// The entry count [`cycle_entries`] will produce for one cycle — the
 /// counting pass's cheap twin (kept adjacent so the merge rules stay in
-/// sync: rs2 folds into rs1's entry, rd into either read's).
+/// sync: rs2 folds into rs1's entry, rd into either read's). Option-typed
+/// comparisons mirror the write twin's scan of emitted columns exactly, so
+/// no sentinel value can collide with a raw index (`rd == rs2` with a folded
+/// rs2 implies `rs2 == rs1`, which the `rd == rs1` test already catches).
 #[cfg(feature = "parallel")]
 fn cycle_entry_count(cycle: &RegisterCycleRow) -> usize {
-    let mut count = 0usize;
-    let mut cols = [u8::MAX; 2];
-    if let Some((rs1, _)) = cycle.rs1 {
-        cols[0] = rs1;
+    let rs1 = cycle.rs1.map(|(register, _)| register);
+    let rs2 = cycle.rs2.map(|(register, _)| register);
+    let rd = cycle.rd.map(|(register, ..)| register);
+    let mut count = usize::from(rs1.is_some());
+    if rs2.is_some() && rs2 != rs1 {
         count += 1;
     }
-    if let Some((rs2, _)) = cycle.rs2 {
-        if cols[0] != rs2 {
-            cols[1] = rs2;
-            count += 1;
-        }
-    }
-    if let Some((rd, ..)) = cycle.rd {
-        if cols[0] != rd && cols[1] != rd {
-            count += 1;
-        }
+    if rd.is_some() && rd != rs1 && rd != rs2 {
+        count += 1;
     }
     count
 }
@@ -1426,7 +1440,7 @@ impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
 /// plane, deterministic challenge sequences, and the engine-mirroring parity
 /// driver (bind-then-compute, running claim via `poly.evaluate(challenge)`).
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test support module")]
+#[expect(clippy::unwrap_used, clippy::panic, reason = "test support module")]
 pub(crate) mod test_support {
     use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
@@ -1459,6 +1473,78 @@ pub(crate) mod test_support {
                 Fr::from_u64(state | 1)
             })
             .collect()
+    }
+
+    /// The counting pass and the write pass must agree on every operand
+    /// pattern — including raw index 255, which the old `u8::MAX` sentinel
+    /// collided with (count 0, write 1 → pass-2 window overrun).
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn cycle_entry_count_matches_cycle_entries() {
+        use super::{cycle_entries, cycle_entry_count, RegisterCycleRow};
+        let candidates: [Option<u8>; 5] = [None, Some(0), Some(5), Some(127), Some(255)];
+        for rs1 in candidates {
+            for rs2 in candidates {
+                for rd in candidates {
+                    let cycle = RegisterCycleRow {
+                        rs1: rs1.map(|register| (register, 11)),
+                        rs2: rs2.map(|register| (register, 22)),
+                        rd: rd.map(|register| (register, 33, 44)),
+                    };
+                    let (_, len) = cycle_entries::<Fr>(0, &cycle);
+                    assert_eq!(
+                        cycle_entry_count(&cycle),
+                        len,
+                        "count/write divergence for {cycle:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Extraction rejects out-of-domain operand indices with the trace
+    /// oracle's error (the reference tier's fail-loud contract) instead of
+    /// scattering out of bounds; with several invalid cycles the collector
+    /// reports the FIRST one, independent of thread timing.
+    #[test]
+    fn collect_rejects_out_of_domain_register_indices() {
+        use super::collect_register_entries;
+        let mut fixture = TraceFixture::new();
+        fixture.noop();
+        fixture.op(Some(3), Some(2), None);
+        fixture.rows.push(TraceRow {
+            registers: RegisterState {
+                rs1: None,
+                rs2: Some(RegisterRead {
+                    register: 200,
+                    value: 7,
+                }),
+                rd: None,
+            },
+            ..TraceRow::default()
+        });
+        fixture.rows.push(TraceRow {
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 255,
+                    value: 1,
+                }),
+                rs2: None,
+                rd: None,
+            },
+            ..TraceRow::default()
+        });
+        fixture.with_plane(2, |witness| {
+            let error = match collect_register_entries::<Fr>(witness, 1 << 2) {
+                Err(error) => error,
+                Ok(_) => panic!("collect accepted an out-of-domain register index"),
+            };
+            let message = format!("{error}");
+            assert!(
+                message.contains("register index 200"),
+                "expected the first invalid cycle's index, got {message:?}"
+            );
+        });
     }
 
     /// A register-consistent trace builder: reads return the current register
