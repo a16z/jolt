@@ -14,7 +14,7 @@ use dory::primitives::arithmetic::{
     DoryRoutines, PairingCurve, ResidentRoundHooks, ResidentRoundStart, ResidentRoundState,
 };
 
-use jolt_dory::{JoltG1Routines, JoltG2Routines};
+use jolt_dory::{FastTail, JoltG1Routines, JoltG2Routines};
 
 use super::buffers::DeviceBuffer;
 use super::field::FR_U32_LIMBS;
@@ -43,7 +43,7 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn plan(n: usize) -> usize {
+fn plan_device_rounds(n: usize) -> usize {
     if std::env::var("JOLT_METAL_DISABLE").is_ok_and(|v| !v.is_empty() && v != "0")
         || !n.is_power_of_two()
         || n < env_usize(ENV_MIN_LOOP_TERMS, DEFAULT_MIN_LOOP_TERMS)
@@ -58,6 +58,14 @@ fn plan(n: usize) -> usize {
         rounds += 1;
     }
     rounds
+}
+
+fn plan(n: usize) -> usize {
+    if plan_device_rounds(n) > 0 {
+        n.trailing_zeros() as usize
+    } else {
+        0
+    }
 }
 
 fn wrapper_words<T>(values: &[T], words_per_value: usize) -> &[u32] {
@@ -400,6 +408,8 @@ struct ResidentLoop {
     g2: DeviceBuffer<'static>,
     active: usize,
     n: usize,
+    handoff: usize,
+    tail: Option<FastTail>,
 }
 
 impl ResidentLoop {
@@ -429,14 +439,22 @@ impl ResidentLoop {
             g2: context.copy_u32s(wrapper_words(g2, G2_JAC_U32S))?,
             active: 0,
             n,
+            handoff: env_usize(ENV_HANDOFF_TERMS, DEFAULT_HANDOFF_TERMS).max(1),
+            tail: None,
         })
     }
 
     fn v1(&self) -> &[ArkG1] {
+        if let Some(tail) = &self.tail {
+            return tail.vectors().0;
+        }
         self.v1[self.active].typed_slice(self.n)
     }
 
     fn v2(&self) -> &[ArkG2] {
+        if let Some(tail) = &self.tail {
+            return tail.vectors().1;
+        }
         self.v2[self.active].typed_slice(self.n)
     }
 
@@ -449,6 +467,17 @@ impl ResidentLoop {
     }
 
     fn apply(&mut self, g1_scalar: &Fr, g2_scalar: &Fr, fold_halves: bool) {
+        if let Some(tail) = &mut self.tail {
+            let g1_scalar = ArkFr(*g1_scalar);
+            let g2_scalar = ArkFr(*g2_scalar);
+            if fold_halves {
+                tail.apply_second_challenge(&g1_scalar, &g2_scalar);
+                self.n /= 2;
+            } else {
+                tail.apply_first_challenge(&g1_scalar, &g2_scalar);
+            }
+            return;
+        }
         let out = 1 - self.active;
         let live = if fold_halves { self.n / 2 } else { self.n };
         let q_offset = if fold_halves { live } else { 0 };
@@ -480,6 +509,14 @@ impl ResidentLoop {
         self.active = out;
         if fold_halves {
             self.n = live;
+            if self.n > 1 && self.n <= self.handoff {
+                self.tail = Some(FastTail::new(
+                    self.v1[self.active].typed_slice(self.n).to_vec(),
+                    self.v2[self.active].typed_slice(self.n).to_vec(),
+                    self.g1.typed_slice(self.n).to_vec(),
+                    self.g2.typed_slice(self.n).to_vec(),
+                ));
+            }
         }
     }
 
@@ -564,6 +601,9 @@ fn first_message(
     s2: &[ArkFr],
 ) -> FirstReduceMessage<ArkG1, ArkG2, dory::backends::arkworks::ArkGT> {
     let state = downcast(state);
+    if let Some(tail) = &state.tail {
+        return tail.compute_first_message(s1, s2);
+    }
     let n = state.n;
     let n2 = n / 2;
     let (v1_l, v1_r) = state.v1().split_at(n2);
@@ -621,6 +661,9 @@ fn second_message(
     s2: &[ArkFr],
 ) -> SecondReduceMessage<ArkG1, ArkG2, dory::backends::arkworks::ArkGT> {
     let state = downcast(state);
+    if let Some(tail) = &state.tail {
+        return tail.compute_second_message(s1, s2);
+    }
     let n2 = state.n / 2;
     let (v1_l, v1_r) = state.v1().split_at(n2);
     let (v2_l, v2_r) = state.v2().split_at(n2);
@@ -672,6 +715,9 @@ fn finish(mut state: ResidentRoundState) -> (Vec<ArkG1>, Vec<ArkG2>) {
     let state = state
         .downcast_mut::<ResidentLoop>()
         .expect("resident Dory state type");
+    if let Some(tail) = state.tail.take() {
+        return tail.into_vectors();
+    }
     (state.v1().to_vec(), state.v2().to_vec())
 }
 
