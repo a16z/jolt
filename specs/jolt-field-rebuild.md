@@ -2,7 +2,7 @@
 
 | Field   | Value                                              |
 |---------|----------------------------------------------------|
-| Status  | built — all nine checkpoints complete; final audit: 5,103 counted LOC (budget 6,240), feature matrix + full test suite green |
+| Status  | replaced-in — all nine checkpoints complete (5,103 counted LOC, budget 6,240); the crate now lives at `crates/jolt-field` and the baseline implementation is deleted |
 | Baseline| `jolt-field` @ PR #1684 head (`fe1d5d41f`)         |
 | Goal    | functional parity at ≤ 6,300 counted LOC (baseline: 11,410) |
 
@@ -12,8 +12,9 @@ Rebuild `crates/jolt-field` from first principles minimizing source LOC while
 preserving functionality: both backends (BN254 arkworks + full Solinas stack),
 wire/transcript **byte** compatibility, and static dispatch. Trait names and
 boundaries are redesigned from scratch — old-name compatibility is explicitly
-NOT a goal (approved); consumers rebind at replacement time. The crate lives
-at `crates/jolt-field-two` until ready to replace `jolt-field`.
+NOT a goal (approved); consumers rebind at replacement time. The crate lived
+at `crates/jolt-field-two` during the rebuild; at replacement it took over
+`crates/jolt-field` and the package name `jolt-field`.
 
 ## Counting rules
 

@@ -49,7 +49,6 @@ members = [
   "crates/jolt-kernels",
   "crates/jolt-kernels-derive",
   "crates/jolt-prover",
-  "crates/jolt-field-two",
   "crates/jolt-prover-legacy",
   "tracer",
   "common",
