@@ -327,7 +327,7 @@ pub struct InstructionReadRafSumcheckProver<F: JoltField> {
     /// Precomputed lookup keys k (bit-packed) per cycle j.
     lookup_indices: Vec<LookupBits>,
     /// Indices of cycles grouped by selected lookup table; used to form per-table flags.
-    lookup_indices_by_table: Vec<Vec<usize>>,
+    lookup_indices_by_table: Vec<Vec<u32>>,
     /// Per-cycle flag: instruction uses interleaved operands.
     is_interleaved_operands: Vec<bool>,
 
@@ -411,11 +411,15 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
         let span = tracing::span!(tracing::Level::INFO, "Build cycle_data");
         let _guard = span.enter();
         struct CycleData<const XLEN: usize> {
-            idx: usize,
+            idx: u32,
             lookup_index: LookupBits,
             is_interleaved: bool,
             table: Option<LookupTables<XLEN>>,
         }
+        assert!(
+            trace.len().saturating_sub(1) <= u32::MAX as usize,
+            "instruction lookup cycle index exceeds u32"
+        );
 
         let cycle_data: Vec<CycleData<XLEN>> = trace
             .par_iter()
@@ -426,7 +430,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 let table = InstructionLookup::<XLEN>::lookup_table(cycle);
 
                 CycleData {
-                    idx,
+                    idx: idx as u32,
                     lookup_index: bits,
                     is_interleaved,
                     table,
@@ -452,7 +456,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
 
         // Build lookup_indices_by_table fully in parallel
         // Create a vector for each table in parallel
-        let lookup_indices_by_table: Vec<Vec<usize>> = (0..num_tables)
+        let lookup_indices_by_table: Vec<Vec<u32>> = (0..num_tables)
             .into_par_iter()
             .map(|t_idx| {
                 // Each table gets its own parallel collection
@@ -646,11 +650,12 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                                 unsafe_allocate_zero_vec(total_len);
 
                             for j in chunk {
-                                let k = self.lookup_indices[*j];
+                                let j = *j as usize;
+                                let k = self.lookup_indices[j];
                                 let (prefix_bits, suffix_bits) =
                                     k.split((self.params.phases - 1 - phase) * log_m);
                                 let idx = prefix_bits & m_mask;
-                                let u = self.u_evals[*j];
+                                let u = self.u_evals[j];
 
                                 // Suffixes::One always evaluates to 1, so just add u directly.
                                 if let Some(one_idx) = suffix_one_idx {
@@ -736,7 +741,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
         let grouped_index_bytes = self
             .lookup_indices_by_table
             .iter()
-            .map(|indices| indices.capacity() * std::mem::size_of::<usize>())
+            .map(|indices| indices.capacity() * std::mem::size_of::<u32>())
             .sum::<usize>();
         drop(std::mem::take(&mut self.lookup_indices_by_table));
         let mut combined_val_poly = std::mem::take(&mut self.u_evals);
