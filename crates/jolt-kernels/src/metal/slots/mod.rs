@@ -407,6 +407,11 @@ mod tests {
         let big = own_uninit_frs(context, 1 << 15).unwrap().unwrap();
         let big_ptr = big.as_slice().as_ptr();
         retire_frs([big]);
+        let reclaimable =
+            RETIRED.lock().unwrap().last().is_some_and(
+                |entry| matches!(entry, PoolEntry::Parked(slab) if slab.reclaimable()),
+            );
+        assert!(reclaimable, "retired pages were not marked reusable");
 
         let reuses_before = testing::pool_reuse_count();
         let first = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
