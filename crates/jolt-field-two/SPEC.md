@@ -2,7 +2,7 @@
 
 | Field   | Value                                              |
 |---------|----------------------------------------------------|
-| Status  | approved — building (checkpoint 1)                 |
+| Status  | built — all nine checkpoints complete; final audit: 5,103 counted LOC (budget 6,240), feature matrix + full test suite green |
 | Baseline| `jolt-field` @ PR #1684 head (`fe1d5d41f`)         |
 | Goal    | functional parity at ≤ 6,300 counted LOC (baseline: 11,410) |
 
@@ -222,6 +222,71 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
   and the scalar field types; nothing awaits the checkpoint-7 `Unreduced`
   surface.
 
+**Dropped-specialization evidence (checkpoint 9, parallel):**
+
+- **Audit finding:** none of the baseline's seven `cfg_*!` macros
+  (`cfg_iter`, `cfg_iter_mut`, `cfg_into_iter`, `cfg_chunks`,
+  `cfg_chunks_mut`, `cfg_join`, `cfg_fold_reduce`) has a single consumer —
+  not in this workspace branch, not in the main checkout, and not in the
+  rebuild's own code. No workspace crate even enables `jolt-field`'s
+  `parallel` feature; its only in-tree activation is the baseline's own
+  `solinas_field_arith` bench, which uses rayon directly rather than
+  through the macros (workspace crates that parallelize — `jolt-poly`,
+  `jolt-kernels` — carry their own rayon deps).
+- **Kept whole anyway:** the parity scope explicitly names the rayon
+  helpers, and with all seven macros equally unconsumed there is no
+  evidence basis for a partial subset. Ported unchanged (78 counted LOC vs
+  80 budget) as `solinas/parallel.rs`, wired exactly as the baseline:
+  optional `rayon` dep behind `parallel = ["dep:rayon"]`, module gated on
+  `solinas`, macros `#[macro_export]`ed with expansion-site `cfg` so they
+  dispatch on the consuming crate's own `parallel` feature. **Flag for the
+  replacement PR:** if no consumer materializes when consumers rebind, the
+  whole component (and possibly the feature) is a deletion candidate.
+- **Coverage:** `tests/parallel_macros.rs` exercises every macro against an
+  explicitly serial computation; the suite runs in both configurations
+  (without `parallel` → sequential expansions, `--all-features` → rayon),
+  so a green run in both is the serial-vs-parallel equivalence proof.
+
+## Final LOC audit (checkpoint 9)
+
+Final per-file actuals are recorded in the file-structure table below
+(counted with the awk counter above): **5,103 total vs the 6,240 budget
+(−1,137, 18% under; 55% below the 11,410 baseline).**
+
+**Budget trades for review** (every over-budget file, consolidated):
+
+- `src/solinas/mod.rs` 113/90 (+26%): the registry grew four `Fp128`
+  aliases plus the `reduce_le_bytes_mod_order` shared helper; worst
+  percentage overrun, but it is the crate's declarative registry — golfing
+  it means deleting doc-typed aliases.
+- `src/packed.rs` 105/90 (+17%): the four `ext4/ext8` kernel hooks with
+  schedule defaults must live on the `Packed` trait (overridable defaults
+  need the trait); recorded at checkpoint 8.
+- `src/solinas/packed/mod.rs` 36/30 (+20%): per-ISA backend selection for
+  three ISAs plus `NoPacking` fallback; component (packed selection
+  120 = 90 + 30) is at 141 (+17.5%).
+- `src/limbs.rs` 237/220 (+8%): within the ≤10% discussion band.
+- `src/bn254/mont.rs` 310/300 (+3%): within the band; offset by
+  `bn254/mod.rs` at −126 (component 700 budget → 584 actual).
+- `src/solinas/packed/simd.rs` 352/350 (+1%): weight moved here from
+  `engine.rs` (284/550) by the generic-types-over-vocabulary design;
+  recorded at checkpoint 8.
+
+## Remaining before replacement
+
+1. **x86-64 runtime validation:** AVX2/AVX-512 packed backends and the
+   fp128 portable mul path are `cargo check`-validated with
+   `-C target-feature` only (checkpoint 8/9 acceptance); run the packed
+   differential suite and the fp128 differentials on real x86-64 hardware.
+2. **Bench re-evaluation entries:** rerun the fused deg-4 kernel bench
+   (`benches/ext4_kernels.rs`) on x86-64 before deciding the
+   `PseudoMersenne` hook overrides stay generic (checkpoint 6 caveat);
+   thin comparison bench vs baseline for the scalar/packed hot paths.
+3. **The replacement PR itself:** rebind consumers to the new trait names,
+   delete `jolt-field`, re-point the `jolt-field` workspace alias; decide
+   the fate of the unconsumed parallel helpers (checkpoint 9 audit above);
+   CI wiring with a target-feature lane so SIMD is not CI-dark.
+
 ## Design pillars
 
 1. **Const-generic scalar core**: `Fp64<const P: u64>` etc., fold constants
@@ -270,34 +335,36 @@ on them.
 
 ## File structure and budgets
 
-| File | Budget | Contents |
-|---|---|---|
-| **Contract layer (root, unconditional)** | | |
-| `src/lib.rs` | 70 | crate docs, feature gates, re-exports, `FieldError` |
-| `src/algebra.rs` | 260 | spine: 7 traits + `NaiveAccumulator` + `PseudoMersenne` |
-| `src/extension.rs` | 60 | contracts: `ExtField`, `Ext2Config` + NR config ZSTs, `MulBaseUnreduced` |
-| `src/unreduced.rs` | 70 | contracts: `Unreduced`, `Fold` |
-| `src/packed.rs` | 90 | contracts: `Packed`, `WithPacking` + generic `NoPacking` |
-| `src/ops.rs` | 180 | `impl_ring_ops!`, `impl_serde_bytes!` (backend-neutral) |
-| `src/schedules.rs` | 140 | lane-generic deg-4/8 ext coefficient schedules — unconditional because the `PseudoMersenne` hook defaults (algebra.rs) and the packed lanes (checkpoint 8) share them; carved out of the old `ext.rs` budget (890 → 750, component total unchanged) |
-| `src/limbs.rs` | 220 | `Limbs<N>` |
-| `src/signed.rs` | 420 | signed bigint families (consumer-audited surface) |
-| **bn254 backend** | | |
-| `src/bn254/mod.rs` | 400 | `Fr`, `Fq` via one wrapping macro; serde; transcript bytes |
-| `src/bn254/mont.rs` | 300 | Barrett/Montgomery kernel + `WideAccumulator` |
-| **solinas backend** | | |
-| `src/solinas/mod.rs` | 90 | offset registry, aliases, shared helpers |
-| `src/solinas/word.rs` | 380 | `define_solinas_prime!` → `Fp32`, `Fp64` |
-| `src/solinas/fp128.rs` | 700 | two-limb add/sub/mul/reduce/wide |
-| `src/solinas/ext.rs` | 750 | FpExt2/4/8 impls, ExtField impls, Frobenius + Moore |
-| `src/solinas/unreduced.rs` | 530 | lane accumulators, fold matrices, contract impls |
-| `src/solinas/parallel.rs` | 80 | rayon helpers |
-| `src/solinas/packed/mod.rs` | 30 | backend selection |
-| `src/solinas/packed/simd.rs` | 350 | per-ISA primitive vocabulary (neon/avx2/avx512) |
-| `src/solinas/packed/engine.rs` | 550 | shared packed algebra, stamped per width × ISA |
-| `src/solinas/packed/fp128.rs` | 350 | 128-bit-lane engine |
-| `src/solinas/packed/ext.rs` | 230 | packed FpExt2/4/8 |
-| **Total** | **6,240** | vs 11,410 baseline (−45%) |
+Actuals are the checkpoint-9 final audit (awk counter above).
+
+| File | Budget | Actual | Contents |
+|---|---|---|---|
+| **Contract layer (root, unconditional)** | | | |
+| `src/lib.rs` | 70 | 43 | crate docs, feature gates, re-exports, `FieldError` |
+| `src/algebra.rs` | 260 | 252 | spine: 7 traits + `NaiveAccumulator` + `PseudoMersenne` |
+| `src/extension.rs` | 60 | 60 | contracts: `ExtField`, `Ext2Config` + NR config ZSTs, `MulBaseUnreduced` |
+| `src/unreduced.rs` | 70 | 18 | contracts: `Unreduced`, `Fold` |
+| `src/packed.rs` | 90 | **105** | contracts: `Packed`, `WithPacking` + generic `NoPacking` |
+| `src/ops.rs` | 180 | 160 | `impl_ring_ops!`, `impl_serde_bytes!` (backend-neutral) |
+| `src/schedules.rs` | 140 | 133 | lane-generic deg-4/8 ext coefficient schedules — unconditional because the `PseudoMersenne` hook defaults (algebra.rs) and the packed lanes (checkpoint 8) share them; carved out of the old `ext.rs` budget (890 → 750, component total unchanged) |
+| `src/limbs.rs` | 220 | **237** | `Limbs<N>` |
+| `src/signed.rs` | 420 | 357 | signed bigint families (consumer-audited surface) |
+| **bn254 backend** | | | |
+| `src/bn254/mod.rs` | 400 | 274 | `Fr`, `Fq` via one wrapping macro; serde; transcript bytes |
+| `src/bn254/mont.rs` | 300 | **310** | Barrett/Montgomery kernel + `WideAccumulator` |
+| **solinas backend** | | | |
+| `src/solinas/mod.rs` | 90 | **113** | offset registry, aliases, shared helpers |
+| `src/solinas/word.rs` | 380 | 355 | `define_solinas_prime!` → `Fp32`, `Fp64` |
+| `src/solinas/fp128.rs` | 700 | 528 | two-limb add/sub/mul/reduce/wide |
+| `src/solinas/ext.rs` | 750 | 617 | FpExt2/4/8 impls, ExtField impls, Frobenius + Moore |
+| `src/solinas/unreduced.rs` | 530 | 501 | lane accumulators, fold matrices, contract impls |
+| `src/solinas/parallel.rs` | 80 | 78 | rayon helpers |
+| `src/solinas/packed/mod.rs` | 30 | **36** | backend selection |
+| `src/solinas/packed/simd.rs` | 350 | **352** | per-ISA primitive vocabulary (neon/avx2/avx512) |
+| `src/solinas/packed/engine.rs` | 550 | 284 | shared packed algebra, stamped per width × ISA |
+| `src/solinas/packed/fp128.rs` | 350 | 99 | 128-bit-lane engine |
+| `src/solinas/packed/ext.rs` | 230 | 191 | packed FpExt2/4/8 |
+| **Total** | **6,240** | **5,103** | vs 11,410 baseline (budget −45%, actual −55%) |
 
 Component budgets are unchanged — the contract/impl split carves each
 component's contracts out of its old single-file budget (extensions 950 =

@@ -7,6 +7,7 @@
 mod ext;
 mod fp128;
 mod packed;
+pub mod parallel;
 mod unreduced;
 mod word;
 
