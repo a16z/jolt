@@ -1,0 +1,144 @@
+//! The versioned span taxonomy for the modular prover — **the normative
+//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 1).
+//!
+//! One instrumentation layer, two renderings: the same `tracing` span stream
+//! becomes both the Perfetto-viewable chrome trace and the machine-queryable
+//! `summary.json`. That makes span labels a de-facto public schema — queries
+//! (`jq` over the summary, `trace_processor` SQL over the trace) and
+//! `jolt-eval` telemetry objectives key on the exact strings below. Renaming
+//! a span is a schema change: bump [`TAXONOMY_VERSION`], update the constants
+//! here, and expect downstream `telemetry:<workload>:total:<label>` objective
+//! keys to break loudly (an absent label is a measurement error, never 0.0).
+//!
+//! # Naming convention
+//!
+//! Identity in the name — a span is greppable to its emission site:
+//!
+//! - `Type::method` for leaf and kernel-seam spans
+//!   (`EqPolynomial::evals`, `SpartanOuterUniskip::prepare`),
+//! - `prove_stage{N}` for the stage recipes,
+//! - `<StageLabel>::prove` / `<Relation>::prepare` / `<Relation>::prove_round`
+//!   for the generated stage drivers, where `<StageLabel>` is the batch
+//!   struct's name minus the `Sumchecks` suffix and `<Relation>` is the
+//!   member's relation type name,
+//! - bare snake-case names (`prove_batch`, `stream_witnesses`) for
+//!   free-function seams whose crate context is unambiguous.
+//!
+//! # Level policy
+//!
+//! Spans are emitted at `INFO` (the `#[tracing::instrument]` default).
+//! Counter samples ride `DEBUG` events carrying `counters.*` fields (see
+//! `MetricsMonitor`, `monitor` feature); the flush-time pipeline rewrites them
+//! into chrome counter tracks. `RUST_LOG` filters only the console layer —
+//! the chrome and summary layers always see everything.
+//!
+//! # Hot-loop rule
+//!
+//! Round granularity is the floor: per-round spans
+//! (`sumcheck_round`, `<Relation>::prove_round` — ~log T instances per batch)
+//! are fine, spans inside per-index inner loops are not. This is what keeps
+//! the full subscriber stack inside the ≤5% overhead budget.
+//!
+//! # Required fields
+//!
+//! - [`ROOT_SPAN`] carries `trace_length`,
+//! - `prove_batch` carries `num_rounds` and `members`,
+//! - `sumcheck_round` carries `round`.
+//!
+//! Everything else is label-only; fields are additive (adding one is not a
+//! schema change, removing or renaming one is).
+//!
+//! # Evolving the taxonomy
+//!
+//! 1. Change the instrumentation and the constants here in the same commit.
+//! 2. Bump [`TAXONOMY_VERSION`] on any rename/removal of a label or field.
+//! 3. The `jolt-prover` profiling smoke test asserts every
+//!    [`always_present_spans`] label appears in a freshly emitted trace, so a
+//!    silent rename fails CI rather than drifting.
+
+/// Version of the span label set documented in this module.
+pub const TAXONOMY_VERSION: u32 = 1;
+
+/// The whole-run root span (`crates/jolt-prover/src/prover.rs`). Named
+/// `jolt_prover::prove` rather than bare `prove`, which jolt-dory uses for an
+/// inner opening-proof span. Carries `trace_length`; the dark-time and
+/// peak-memory summary metrics are computed over its interval.
+pub const ROOT_SPAN: &str = "jolt_prover::prove";
+
+/// The per-stage recipe spans, in pipeline order — depth-1 children of
+/// [`ROOT_SPAN`], sequential on the root thread. The per-stage summary
+/// rollup (wallclock, boundary RSS, windowed peak memory) keys on these.
+pub const STAGE_SPANS: [&str; 10] = [
+    "prove_stage0",
+    "prove_stage1",
+    "prove_stage2",
+    "prove_stage3",
+    "prove_stage4",
+    "prove_stage5",
+    "prove_stage6a",
+    "prove_stage6b",
+    "prove_stage7",
+    "prove_stage8",
+];
+
+/// The generated stage drivers' per-batch spans (`<StageLabel>::prove`,
+/// emitted by `impl_stage_prover!`). Stages 0 and 8 have no sumcheck batch —
+/// their work shows under the kernel-seam spans instead.
+pub const DRIVER_BATCH_SPANS: [&str; 8] = [
+    "Stage1Batch::prove",
+    "Stage2Batch::prove",
+    "Stage3::prove",
+    "Stage4::prove",
+    "Stage5::prove",
+    "Stage6a::prove",
+    "Stage6b::prove",
+    "Stage7::prove",
+];
+
+/// Sumcheck engine spans (`jolt-sumcheck`): the batched round loop, its
+/// per-round child, and the clear uni-skip round.
+pub const SUMCHECK_ENGINE_SPANS: [&str; 3] =
+    ["prove_batch", "sumcheck_round", "prove_uniskip_clear"];
+
+/// Kernel-seam spans (`jolt-kernels` trait boundaries) that fire on every
+/// prove regardless of workload. Any optimized backend inherits these by
+/// implementing the same traits.
+pub const KERNEL_SEAM_SPANS: [&str; 6] = [
+    "commit_witness",
+    "SpartanOuterUniskip::prepare",
+    "SpartanOuterUniskip::first_round_poly",
+    "SpartanProductUniskip::prepare",
+    "SpartanProductUniskip::first_round_poly",
+    "JointOpeningPolynomials::prepare",
+];
+
+/// Kernel-seam spans that fire only on proves whose guest consumes advice.
+/// Exempt from the smoke test's presence assertion (fibonacci has no advice).
+pub const ADVICE_SEAM_SPANS: [&str; 2] = ["commit_advice", "AdviceOpeningEvaluation::evaluate"];
+
+/// Kernel-seam spans that fire only with committed-program preprocessing.
+pub const COMMITTED_PROGRAM_SEAM_SPANS: [&str; 1] = ["build_committed_bytecode_chunk_coeffs"];
+
+/// Witness-plane and opening-proof seams (`jolt-witness`, `jolt-openings`).
+pub const WITNESS_AND_OPENING_SPANS: [&str; 4] = [
+    "stream_witnesses",
+    "collect_bundles",
+    "TraceBackend::oracle_table",
+    "HomomorphicBatch::prove_batch",
+];
+
+/// Every v1 label that fires on all proves: the presence set the `jolt-prover`
+/// profiling smoke test asserts against a freshly emitted trace.
+///
+/// Deliberately excludes the per-member driver spans (`<Relation>::prepare`,
+/// `<Relation>::prove_round`) whose names vary with the batch composition,
+/// plus the advice- and committed-program-only seams.
+pub fn always_present_spans() -> Vec<&'static str> {
+    let mut labels = vec![ROOT_SPAN];
+    labels.extend(STAGE_SPANS);
+    labels.extend(DRIVER_BATCH_SPANS);
+    labels.extend(SUMCHECK_ENGINE_SPANS);
+    labels.extend(KERNEL_SEAM_SPANS);
+    labels.extend(WITNESS_AND_OPENING_SPANS);
+    labels
+}

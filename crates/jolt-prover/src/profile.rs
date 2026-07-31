@@ -1,43 +1,46 @@
-//! End-to-end benchmark harness for the MODULAR prover, mirroring the legacy
-//! `jolt_prover_legacy benchmark` CLI so the two produce comparable numbers
-//! and Perfetto traces.
+//! The profile harness behind the `profiling` feature: one documented
+//! command proves a named workload on the modular stack and emits both
+//! telemetry artifacts from the same span stream —
+//! `benchmark-runs/perfetto_traces/{trace_name}.json` (Perfetto UI /
+//! `trace_processor` SQL) and `{trace_name}.summary.json` (machine-queryable
+//! aggregates for `jolt-eval` and `jq`).
 //!
 //! ```text
-//! cargo run --release -p jolt-prover --example modular_benchmark \
-//!     --features prover-fixtures -- \
-//!     --name sha2-chain --scale 16 --format chrome
+//! cargo run --release -p jolt-prover --features profiling -- \
+//!     profile --name fibonacci --format chrome
 //! ```
 //!
-//! Pipeline: legacy-side guest compile/decode (the modular stack has no host
+//! Pipeline (promoted from the retired `examples/modular_benchmark.rs`):
+//! legacy-side guest compile/decode (the modular stack has no host
 //! toolchain), legacy preprocessing → verifier preprocessing, modular trace
 //! (`TracerBackend`), derived `ProverConfig`, `TraceBackend` witness,
-//! `jolt_prover::prove` over `JoltBackend::reference()`, and a full
-//! `jolt_verifier::verify` as the correctness gate. Only `prove` is timed —
-//! the same window the legacy harness times. Reports wall-clock + kHz,
-//! process-lifetime peak RSS (`getrusage`), and the per-stage RSS table
-//! collected from the `prove_stage*` spans.
+//! [`jolt_prover::prove`](crate::prove) over the selected backend, and a full
+//! `jolt_verifier::verify` as the correctness gate. Only `prove` is measured
+//! — guest compilation, tracer execution, and preprocessing are excluded
+//! from every reported metric.
 
 #![expect(
     clippy::expect_used,
     clippy::print_stdout,
     clippy::print_stderr,
-    reason = "benchmark harness: fail loudly and report to stdout"
+    reason = "profile harness: fail loudly and report to stdout"
 )]
 
 use std::fs;
 use std::io::Write as _;
+use std::path::PathBuf;
 use std::time::Instant;
 
-use clap::{Parser, ValueEnum};
+use clap::ValueEnum;
 use common::jolt_device::MemoryConfig;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the
-// tracer (both the legacy and modular trace runs), exactly as the legacy
-// harness does.
+// tracer, exactly as the legacy harness does.
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
+use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
     format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing, TracingFormat,
     BYTES_PER_GIB,
@@ -45,8 +48,6 @@ use jolt_profiling::{
 use jolt_program::execution::{
     ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
 };
-use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
-use jolt_prover_legacy::curve::Bn254Curve;
 use jolt_prover_legacy::host;
 use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -56,6 +57,8 @@ use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPre
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use tracer::execution_backend::TracerBackend;
+
+use crate::{JoltBackend, JoltProverPreprocessing, ProverConfig};
 
 // Empirically measured cycles per operation for RV64IMAC — copied from the
 // legacy harness (`benches/e2e_profiling.rs`) so both harnesses construct
@@ -70,8 +73,11 @@ fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
 }
 
+/// The scalable workloads the harness supports, with the default scales
+/// pinned in `specs/prover-telemetry.md` (`jolt-eval` owns the normative
+/// measurement-scale table and always passes `--scale` explicitly).
 #[derive(Debug, Copy, Clone, ValueEnum)]
-enum BenchName {
+pub enum Workload {
     Fibonacci,
     Sha2Chain,
     Sha3Chain,
@@ -79,14 +85,24 @@ enum BenchName {
     BTreeMap,
 }
 
-impl BenchName {
-    /// The canonical bench name, also the guest crate prefix (`{name}-guest`).
-    const fn as_str(self) -> &'static str {
+impl Workload {
+    /// The canonical name, also the guest crate prefix (`{name}-guest`).
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Fibonacci => "fibonacci",
             Self::Sha2Chain => "sha2-chain",
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
+        }
+    }
+
+    /// Default log2 trace length when `--scale` is omitted.
+    pub const fn default_scale(self) -> u32 {
+        match self {
+            Self::Fibonacci => 16,
+            Self::Sha2Chain => 22,
+            Self::Sha3Chain => 22,
+            Self::BTreeMap => 20,
         }
     }
 
@@ -118,74 +134,131 @@ impl BenchName {
     }
 }
 
+/// Subscriber stack selector.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
-enum Format {
+pub enum OutputFormat {
+    /// Console span-close timings only; no artifacts.
     Default,
+    /// Full stack: chrome trace + summary.json + monitor counters — the
+    /// format `jolt-eval` invokes.
     Chrome,
+    /// No subscriber at all; times `prove()` with `std::time::Instant` — the
+    /// overhead-budget baseline.
+    None,
 }
 
-/// Benchmark the modular prover end to end, mirroring
-/// `jolt_prover_legacy benchmark` semantics.
-#[derive(Parser, Debug)]
-struct Cli {
-    /// Benchmark to run.
+/// Prover backend selector. `reference` is the only backend today and is a
+/// test oracle: absolute numbers are provisional, attribution is meaningful
+/// relatively, and optimized backends slot into the same instrumented seams.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
+pub enum BackendKind {
+    Reference,
+}
+
+/// `profile` subcommand arguments.
+#[derive(Debug, clap::Args)]
+pub struct ProfileArgs {
+    /// Workload to prove.
     #[clap(long, value_enum)]
-    name: BenchName,
+    pub name: Workload,
 
-    /// Max trace length as 2^scale (optional if target-trace-size is provided).
-    #[clap(short, long)]
-    scale: Option<usize>,
+    /// log2 of the max (padded) trace length; per-workload default when
+    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20).
+    #[clap(long)]
+    pub scale: Option<u32>,
 
-    /// Target specific cycle count (optional, defaults to 90% of 2^scale).
-    #[clap(short, long)]
-    target_trace_size: Option<usize>,
+    #[clap(long, value_enum, default_value = "chrome")]
+    pub format: OutputFormat,
 
-    /// Output formats.
-    #[clap(short, long, value_enum)]
-    format: Option<Vec<Format>>,
+    #[clap(long, value_enum, default_value = "reference")]
+    pub backend: BackendKind,
 }
 
-fn main() {
-    let cli = Cli::parse();
-    let scale = match (cli.scale, cli.target_trace_size) {
-        (Some(scale), _) => scale,
-        (None, Some(target)) => target.next_power_of_two().trailing_zeros() as usize,
-        (None, None) => {
-            eprintln!("Error: Must provide either --scale or --target-trace-size");
-            std::process::exit(1);
-        }
+/// Artifact paths of one profile run (`None` unless `--format chrome`).
+#[derive(Debug, Default)]
+pub struct ProfileArtifacts {
+    pub trace_path: Option<PathBuf>,
+    pub summary_path: Option<PathBuf>,
+    pub summary: Option<ProfileSummary>,
+}
+
+/// Runs one profile invocation end to end. The bin's `main` is a thin
+/// wrapper over this so the smoke test can call it in-process.
+///
+/// # Panics
+///
+/// Panics on any pipeline failure (harness semantics), and if called twice
+/// in one process with a subscriber-installing format (the global tracing
+/// subscriber can only be set once).
+pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
+    let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
+    let trace_name = format!("modular_{}_{scale}", args.name.as_str().replace('-', "_"));
+
+    // Per-stage heap flamegraphs (allocative feature): opt in before the
+    // prove so the cfg-gated hooks inside `prove()` see the prefix.
+    #[cfg(feature = "allocative")]
+    {
+        std::fs::create_dir_all("benchmark-runs/flamegraphs")
+            .expect("create flamegraphs directory");
+        jolt_profiling::set_flamegraph_prefix(format!("benchmark-runs/flamegraphs/{trace_name}_"));
+    }
+
+    let guards = match args.format {
+        OutputFormat::None => None,
+        OutputFormat::Default => Some(setup_tracing(&[TracingFormat::Default], &trace_name)),
+        OutputFormat::Chrome => Some(setup_tracing(&[TracingFormat::Chrome], &trace_name)),
     };
-    let bench_name = cli.name.as_str();
 
-    let formats: Vec<TracingFormat> = cli
-        .format
-        .unwrap_or_default()
-        .iter()
-        .map(|format| match format {
-            Format::Default => TracingFormat::Default,
-            Format::Chrome => TracingFormat::Chrome,
-        })
-        .collect();
-    let trace_name = format!("modular_{}_{scale}", bench_name.replace('-', "_"));
-    let _guards = setup_tracing(&formats, &trace_name);
+    run_workload(args.name, scale, args.backend);
 
-    run_benchmark(cli.name, scale, cli.target_trace_size);
+    // Dropping the guards flushes the chrome trace; only then can the
+    // flush-time pipeline parse it.
+    drop(guards);
+
+    if args.format != OutputFormat::Chrome {
+        report_stage_memory();
+        return ProfileArtifacts::default();
+    }
+
+    let trace_path = PathBuf::from(format!("benchmark-runs/perfetto_traces/{trace_name}.json"));
+    let ctx = SummaryContext {
+        workload: args.name.as_str().to_string(),
+        scale_log2: scale,
+        backend: "reference".to_string(),
+    };
+    let (summary_file, summary) = finalize_trace(&trace_path, &ctx).expect("finalize chrome trace");
+
+    if let Some(root) = &summary.root {
+        println!(
+            "modular {} (2^{scale}): root span {:.2}s, dark time {:.1}%",
+            args.name.as_str(),
+            root.wall_time_ns as f64 / 1e9,
+            root.dark_time_fraction * 100.0,
+        );
+    }
+    println!("Trace:   {}", trace_path.display());
+    println!("Summary: {}", summary_file.display());
+
+    ProfileArtifacts {
+        trace_path: Some(trace_path),
+        summary_path: Some(summary_file),
+        summary: Some(summary),
+    }
 }
 
-fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize>) {
-    let bench_name = bench.as_str();
+fn run_workload(workload: Workload, scale: u32, backend: BackendKind) {
+    let bench_name = workload.as_str();
     let max_trace_length = 1usize << scale;
-    let bench_target =
-        target_trace_size.unwrap_or((max_trace_length as f64 * SAFETY_MARGIN) as usize);
-    tracing::info!("Running modular {bench_name} benchmark at scale 2^{scale}");
+    let bench_target = (max_trace_length as f64 * SAFETY_MARGIN) as usize;
+    tracing::info!("Running modular {bench_name} profile at scale 2^{scale}");
     fs::create_dir_all("benchmark-runs/results").expect("create results directory");
 
-    let input = bench.input(bench_target);
+    let input = workload.input(bench_target);
 
-    // --- Guest + preprocessing (untimed, mirrors the legacy harness): the
-    // guest is compiled/decoded through the legacy host toolchain, and the
-    // verifier preprocessing (program view + digest) comes from the legacy
-    // preprocessing exactly as in the byte-diff tests.
+    // --- Guest + preprocessing (unmeasured): the guest is compiled/decoded
+    // through the legacy host toolchain, and the verifier preprocessing
+    // (program view + digest) comes from the legacy preprocessing exactly as
+    // in the byte-diff tests.
     let mut program = host::Program::new(&format!("{bench_name}-guest"));
     let (bytecode, init_memory_state, _, entry_address) = program.decode();
     let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
@@ -204,7 +277,7 @@ fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize
         JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
     let legacy_preprocessing = LegacyProverPreprocessing::<
         jolt_prover_legacy::ark_bn254::Fr,
-        Bn254Curve,
+        jolt_prover_legacy::curve::Bn254Curve,
         DoryCommitmentScheme,
     >::new(shared_preprocessing);
     let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
@@ -215,9 +288,7 @@ fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize
         .clone();
     let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
 
-    let span = tracing::info_span!("E2E").entered();
-
-    // --- Modular trace (untimed, like legacy's `gen_from_elf` emulation).
+    // --- Modular trace (unmeasured, like legacy's `gen_from_elf` emulation).
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
     let trace_length = trace_output.trace.rows().len();
 
@@ -253,13 +324,16 @@ fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize
         pcs_setup: DoryScheme::setup_prover(total_vars),
         committed_program: None,
     };
-    let backend = JoltBackend::<Fr, DoryScheme>::reference();
+    let backend = match backend {
+        BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+    };
 
-    // --- The timed window: the full modular prove (witness materialization,
-    // commitment, all sumcheck stages, joint opening) — the same window the
-    // legacy harness times around `prover.prove()`.
+    // --- The measured window: the full modular prove (witness
+    // materialization, commitment, all sumcheck stages, joint opening). The
+    // `jolt_prover::prove` root span covers exactly this interval; the
+    // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
-    let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+    let proof = crate::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
         &backend,
         &prover_preprocessing,
         &config,
@@ -269,13 +343,12 @@ fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize
     )
     .expect("modular prove");
     let duration = now.elapsed();
-    drop(span);
 
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
         .expect("serialize proof")
         .len();
 
-    // --- Correctness gate (untimed): the proof must verify.
+    // --- Correctness gate (unmeasured): the proof must verify.
     jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
         &prover_preprocessing.verifier,
         &public_io,
@@ -302,7 +375,6 @@ fn run_benchmark(bench: BenchName, scale: usize, target_trace_size: Option<usize
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
     }
-    report_stage_memory();
 
     // The same 7-field CSV line the legacy harness writes, under a
     // modular-prefixed file name.

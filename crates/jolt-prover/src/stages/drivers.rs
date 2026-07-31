@@ -212,6 +212,10 @@ mod twin_tests {
                 serde::Serialize,
                 serde::Deserialize,
             )]
+            // The SumcheckBatch derive's aggregates require Allocative of
+            // every member's outputs under the expanding crate's
+            // `allocative` feature (the profile harness's flamegraphs).
+            #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
             #[relation($rel)]
             struct $outputs<C> {
                 #[opening($output)]

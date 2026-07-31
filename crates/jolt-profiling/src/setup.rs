@@ -104,7 +104,8 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuar
     #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
     guards.push(Box::new({
         tracing::info!(
-            "Starting MetricsMonitor — run python3 scripts/postprocess_trace.py on the output"
+            "Starting MetricsMonitor — counter events are rewritten into Perfetto \
+             counter tracks at flush by summary::finalize_trace"
         );
         crate::monitor::MetricsMonitor::start(
             std::env::var("MONITOR_INTERVAL")

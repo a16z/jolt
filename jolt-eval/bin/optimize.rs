@@ -147,6 +147,39 @@ impl OptimizeEnv for RealEnv {
             }
         }
 
+        // String-keyed telemetry/callgrind objectives measure via subprocess
+        // in the worktree (stale-binary trap — see check_invariants below);
+        // a failed measurement stays absent from the map, scoring INFINITY.
+        // One profile run per workload serves every telemetry objective
+        // sharing it (e.g. all ten per-stage totals read one summary).
+        let mut profiled_workloads: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
+        for obj in objectives {
+            match obj {
+                OptimizationObjective::Telemetry(t) => {
+                    if profiled_workloads.insert(t.workload) {
+                        if let Err(e) = t.run_profile_in(&self.work_dir) {
+                            eprintln!("profile run failed for {}: {e}", t.workload);
+                            continue;
+                        }
+                    }
+                    match t.extract_from_dir(&self.work_dir) {
+                        Ok(v) => {
+                            results.insert(*obj, v);
+                        }
+                        Err(e) => eprintln!("measurement failed for {}: {e}", obj.name()),
+                    }
+                }
+                OptimizationObjective::Callgrind(c) => match c.measure_in(&self.work_dir) {
+                    Ok(v) => {
+                        results.insert(*obj, v);
+                    }
+                    Err(e) => eprintln!("measurement failed for {}: {e}", obj.name()),
+                },
+                _ => {}
+            }
+        }
+
         results
     }
 

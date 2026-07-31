@@ -43,16 +43,30 @@ cargo install --path . --locked
 ### Profiling
 
 ```bash
-# Execution trace (viewable in Perfetto)
+# Modular prover (primary): emits benchmark-runs/perfetto_traces/modular_{name}_{scale}.json
+# (Perfetto UI / trace_processor SQL) AND modular_{name}_{scale}.summary.json
+# (machine-queryable aggregates) from one run. Monitor counters included.
+cargo run --release -p jolt-prover --features profiling -- profile --name fibonacci --format chrome
+# --name options (default scale): fibonacci (16), sha2-chain (22), sha3-chain (22), btreemap (20)
+# --scale <log2 trace length> overrides; --format none = no-subscriber Instant baseline
+
+# Canonical summary queries (no Perfetto UI needed) — see book/src/usage/profiling/zkvm_profiling.md
+jq '.stages | map({label, s: (.wall_time_ns/1e9)})' benchmark-runs/perfetto_traces/modular_fibonacci_16.summary.json
+jq '.spans | to_entries | sort_by(-.value.total_ns) | .[:10]' benchmark-runs/perfetto_traces/modular_fibonacci_16.summary.json
+
+# Per-stage heap flamegraph SVGs (benchmark-runs/flamegraphs/)
+cargo run --release -p jolt-prover --features profiling,allocative -- profile --name fibonacci --format chrome
+
+# jolt-eval telemetry objectives over the same summary (grammar: telemetry:<workload>:<metric>)
+cargo run -p jolt-eval --bin measure-objectives -- --objective telemetry:fibonacci:prover_time_s
+
+# Legacy prover
 cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome
 # --name options: sha2, sha3, sha2-chain, sha3-chain, fibonacci, btreemap
-
-# With CPU/memory monitoring (adds counter tracks to Perfetto trace)
-cargo run --release --features monitor -p jolt-prover-legacy profile --name sha3 --format chrome
-
-# Memory profiling (outputs SVG flamegraphs)
 RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome
 ```
+
+The span taxonomy (versioned, normative) lives in `crates/jolt-profiling/src/taxonomy.rs` — renaming a span is a schema change (summary keys and `telemetry:*` objectives break; the profiling smoke test enforces label presence).
 
 ## Architecture
 

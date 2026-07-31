@@ -7,7 +7,10 @@
 //! - **Memory profiling** — tracks memory deltas across proving stages via `memory-stats`.
 //! - **System metrics monitoring** (`monitor` feature) — background thread sampling
 //!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
-//!   compatible with the Perfetto postprocessing script.
+//!   rewritten into native Perfetto counter tracks at flush (`summary::finalize_trace`).
+//! - **Flush-time summary** — `summary::finalize_trace` renders the chrome trace's
+//!   span stream into a machine-queryable `{trace_name}.summary.json` (see the
+//!   `taxonomy` module for the normative span schema).
 //! - **CPU profiling** (`pprof` feature) — scoped `pprof` guards that write `.pb`
 //!   flamegraph files on drop.
 //! - **Heap flamegraphs** (`allocative` feature) — generates SVG flamegraphs from
@@ -43,12 +46,16 @@
 //! Library crates depend only on `tracing` for instrumentation.
 
 pub mod setup;
+pub mod taxonomy;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod memory;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod stage_memory;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod summary;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
 pub mod monitor;
@@ -58,7 +65,9 @@ mod pprof_guard;
 #[cfg(feature = "allocative")]
 pub mod flamegraph;
 #[cfg(feature = "allocative")]
-pub use flamegraph::{print_data_structure_heap_usage, write_flamegraph_svg};
+pub use flamegraph::{
+    flamegraph_prefix, print_data_structure_heap_usage, set_flamegraph_prefix, write_flamegraph_svg,
+};
 
 mod units;
 

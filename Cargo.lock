@@ -3172,6 +3172,7 @@ dependencies = [
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-claims-derive",
@@ -3251,12 +3252,14 @@ dependencies = [
  "enumset",
  "eyre",
  "hex",
+ "iai-callgrind",
  "jolt-crypto",
  "jolt-dory",
  "jolt-eval-macros",
  "jolt-field",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
+ "jolt-poly",
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-riscv",
@@ -3457,6 +3460,7 @@ dependencies = [
 name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "jolt-claims",
  "jolt-field",
  "jolt-kernels-derive",
@@ -3578,7 +3582,11 @@ dependencies = [
  "memory-stats",
  "pprof",
  "prost 0.14.4",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
  "sysinfo",
+ "thiserror 2.0.18",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
@@ -3603,6 +3611,7 @@ dependencies = [
 name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "bincode 2.0.1",
  "clap",
  "common",
@@ -3627,6 +3636,7 @@ dependencies = [
  "postcard",
  "rand_core 0.6.4",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracer",
  "tracing",
@@ -3798,6 +3808,7 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "bincode 2.0.1",
  "common",

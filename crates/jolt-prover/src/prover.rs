@@ -5,7 +5,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
-use jolt_kernels::JoltBackend;
+use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
@@ -26,6 +26,44 @@ use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::stages::stage8::prove_stage8;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+
+/// Per-stage heap flamegraphs for the profile harness: inert unless the
+/// harness opted in via `jolt_profiling::set_flamegraph_prefix`. The stage's
+/// clear-output carrier is recovered by downcast to the concrete BN254
+/// field (the only production field), so `prove` needs no `Allocative`
+/// bound on `F`; the proof session is visited shallowly (its carries are
+/// `Box<dyn Any>` — see the `ProofSession` impl in `jolt-kernels`).
+#[cfg(feature = "allocative")]
+fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn core::any::Any) {
+    use jolt_field::Fr;
+
+    let Some(prefix) = jolt_profiling::flamegraph_prefix() else {
+        return;
+    };
+    let mut flamegraph = allocative::FlameGraphBuilder::default();
+    macro_rules! visit_downcast {
+        ($($ty:ty),+ $(,)?) => {$(
+            if let Some(concrete) = output.downcast_ref::<$ty>() {
+                flamegraph.visit_root(concrete);
+            }
+        )+};
+    }
+    visit_downcast!(
+        jolt_verifier::stages::stage1::outputs::Stage1ClearOutput<Fr>,
+        jolt_verifier::stages::stage2::outputs::Stage2ClearOutput<Fr>,
+        jolt_verifier::stages::stage3::outputs::Stage3ClearOutput<Fr>,
+        jolt_verifier::stages::stage4::outputs::Stage4ClearOutput<Fr>,
+        jolt_verifier::stages::stage5::outputs::Stage5ClearOutput<Fr>,
+        jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput<Fr>,
+        jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput<Fr>,
+        jolt_verifier::stages::stage7::outputs::Stage7ClearOutput<Fr>,
+    );
+    flamegraph.visit_root(session);
+    jolt_profiling::write_flamegraph_svg(flamegraph, format!("{prefix}{stage}.svg"));
+}
+
+#[cfg(not(feature = "allocative"))]
+fn stage_flamegraph(_stage: &str, _session: &ProofSession, _output: &dyn core::any::Any) {}
 
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and
 /// backend session, and assemble the [`JoltProof`] in the compiled proof
@@ -48,7 +86,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// `preprocessing.committed_program` — the prover-retained full program and
 /// chunk/image hints). Dominant advice returns
 /// [`ProverError::Unsupported`] at stage 0.
-#[tracing::instrument(skip_all, name = "prove", fields(trace_length = config.trace_length))]
+#[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -80,6 +118,7 @@ where
         witness,
         public_io,
     )?;
+    stage_flamegraph("stage0", &session, &());
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
     let log_t = config.trace_length.ilog2() as usize;
@@ -92,6 +131,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage1", &session, &stage1.clear_output);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -102,6 +142,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage2", &session, &stage2.clear_output);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -112,6 +153,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage3", &session, &stage3.clear_output);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -124,6 +166,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage4", &session, &stage4.clear_output);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -136,6 +179,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage5", &session, &stage5.clear_output);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -151,6 +195,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage6a", &session, &stage6a.clear_output);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -167,6 +212,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage6b", &session, &stage6b.clear_output);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -179,6 +225,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage7", &session, &stage7.clear_output);
     let stage8 = prove_stage8::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -194,6 +241,7 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage8", &session, &());
 
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

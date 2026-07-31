@@ -48,9 +48,8 @@ impl MetricsMonitor {
                 while !stop.load(Ordering::Acquire) {
                     system.refresh_cpu_all();
 
-                    let memory_gib = memory_stats()
-                        .map(|s| s.physical_mem as f64 / BYTES_PER_GIB)
-                        .unwrap_or(0.0);
+                    let memory_gib =
+                        memory_stats().map_or(0.0, |s| s.physical_mem as f64 / BYTES_PER_GIB);
                     let cpu_percent = system.global_cpu_usage();
                     let cores_active_avg = cpu_percent / 100.0 * (system.cpus().len() as f32);
                     let active_cores = system

@@ -14,6 +14,8 @@ mod config;
 pub mod driver;
 mod error;
 mod preprocessing;
+#[cfg(feature = "profiling")]
+pub mod profile;
 mod prover;
 mod recorder;
 pub mod stages;

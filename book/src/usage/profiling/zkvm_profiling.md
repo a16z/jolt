@@ -1,73 +1,231 @@
 # Profiling Jolt
 
+The modular prover (`crates/jolt-prover`) is the primary profiling target.
+One command proves a named workload and emits two artifacts from the same
+span stream: a Perfetto-viewable chrome trace for humans, and a
+machine-queryable `summary.json` for scripts, agents, and `jolt-eval`
+telemetry objectives.
+
+```bash
+cargo run --release -p jolt-prover --features profiling -- \
+    profile --name sha2-chain --format chrome
+```
+
+Workloads and default scales (`--scale <log2 trace length>` overrides):
+
+| `--name` | default scale |
+|---|---|
+| `fibonacci` | 2^16 |
+| `sha2-chain` | 2^22 |
+| `sha3-chain` | 2^22 |
+| `btreemap` | 2^20 |
+
+Artifacts land in `benchmark-runs/perfetto_traces/` under the current
+working directory, overwriting in place:
+
+- `modular_{workload}_{scale}.json` — chrome trace (hyphens in the workload
+  map to underscores, e.g. `modular_sha2_chain_22.json`). Open in
+  [Perfetto](https://ui.perfetto.dev/) or query with `trace_processor` SQL.
+- `modular_{workload}_{scale}.summary.json` — schema-versioned aggregates
+  (see below).
+
+The run also compiles and traces the guest, proves it, and **verifies the
+proof** as a correctness gate; only `prove()` is measured. The `profiling`
+feature enables the system monitor, so CPU/memory counters render as native
+Perfetto counter tracks directly from the emitted trace — no offline
+post-processing step.
+
+The span labels are a versioned public schema — taxonomy v1 lives in the
+`jolt-profiling` crate docs (`crates/jolt-profiling/src/taxonomy.rs`), the
+normative source for label names, level policy, and the hot-loop rule.
+
+## Querying without the Perfetto UI
+
+`summary.json` answers the canonical questions with `jq` alone:
+
+```bash
+S=benchmark-runs/perfetto_traces/modular_sha2_chain_22.summary.json
+
+# Total prover wallclock (seconds) and dark time (root time not covered by
+# any stage span)
+jq '.root | {s: (.wall_time_ns/1e9), dark: .dark_time_fraction}' $S
+
+# Total time across all instances of one span label
+jq '.spans."EqPolynomial::evals".total_ns / 1e9' $S
+
+# Top 10 spans by inclusive time
+jq '.spans | to_entries | sort_by(-.value.total_ns) | .[:10]
+    | map({label: .key, s: (.value.total_ns/1e9)})' $S
+
+# Top 10 spans by self time (inclusive minus same-thread children)
+jq '.spans | to_entries | sort_by(-.value.self_ns) | .[:10]
+    | map({label: .key, s: (.value.self_ns/1e9)})' $S
+
+# Per-stage wallclock breakdown
+jq '.stages | map({label, s: (.wall_time_ns/1e9)})' $S
+
+# Per-stage memory: boundary-RSS delta (retained growth) and windowed
+# sample-max (null when the stage closed between monitor samples)
+jq '.stages | map({label, rss_delta_gib, peak_memory_gib})' $S
+```
+
+Arbitrary ad-hoc queries go through Perfetto's `trace_processor` SQL against
+the trace (the same SQL the Perfetto UI runs, now scriptable). Provision the
+pinned pip package once:
+
+```bash
+uv pip install perfetto==0.57.2
+```
+
+```python
+from perfetto.trace_processor import TraceProcessor
+
+tp = TraceProcessor(trace="benchmark-runs/perfetto_traces/modular_sha2_chain_22.json")
+q = tp.query("""
+    SELECT name, COUNT(*) AS n, SUM(dur)/1e9 AS total_s
+    FROM slice GROUP BY name ORDER BY total_s DESC LIMIT 15
+""")
+for row in q:
+    print(row.name, row.n, row.total_s)
+```
+
+## Measurement semantics
+
+- **Time metrics** cover the `jolt_prover::prove` root span only — guest
+  compilation, tracer execution, and preprocessing are excluded.
+- **Per-label totals** sum inclusive durations across all threads and may
+  exceed wallclock under rayon parallelism.
+- **Self time** subtracts same-thread children only; work on rayon workers
+  attributes to its own labels.
+- **Two peak-memory numbers, complementary**: `peak_rss_gib` is the
+  process-lifetime `getrusage` high-water mark (cannot miss short spikes,
+  but includes guest compile/trace); `root.peak_memory_gib` is the max over
+  monitor samples inside the root span (prove-only, but sampled at ≥ 50 ms).
+
+## Overhead and dark-time budgets
+
+The full subscriber stack must stay within 5% of an uninstrumented run, and
+dark time (root wallclock not covered by any stage span) within 5%.
+Verified by a manual procedure, not CI (wallclock thresholds on shared
+runners are flaky gates) — on sha2-chain at scale 2^22, median of 3 runs on
+the same machine:
+
+```bash
+# Baseline: no subscriber at all; prove() timed with std::time::Instant
+cargo run --release -p jolt-prover --features profiling -- \
+    profile --name sha2-chain --format none
+
+# Instrumented: full stack (chrome + summary + monitor)
+cargo run --release -p jolt-prover --features profiling -- \
+    profile --name sha2-chain --format chrome
+jq '.root | {s: (.wall_time_ns/1e9), dark: .dark_time_fraction}' \
+    benchmark-runs/perfetto_traces/modular_sha2_chain_22.summary.json
+```
+
+Budgets: `root.wall_time_ns` (chrome) ≤ 105% of the `--format none` Instant
+measurement, and `dark_time_fraction` ≤ 0.05.
+
+## Memory profiling (allocative)
+
+With the `allocative` feature, the same profile command additionally emits
+per-stage heap flamegraph SVGs to
+`benchmark-runs/flamegraphs/{trace_name}_stage{N}.svg`, visiting each
+stage's clear-output carrier and the proof session:
+
+```bash
+cargo run --release -p jolt-prover --features profiling,allocative -- \
+    profile --name fibonacci --format chrome
+```
+
+Caveat: the proof session's cross-stage carries are `Box<dyn Any>` and are
+attributed shallowly (entry count only); the flamegraphs' deep content is
+the stage claim/point carriers.
+
+## jolt-eval telemetry objectives
+
+Every summary metric is reachable as a string-keyed `jolt-eval` objective
+(`telemetry:<workload>:<metric>`), so optimization agents can target any
+span without editing `jolt-eval`; deterministic instruction counts are
+available through the opt-in iai-callgrind lane
+(`callgrind:<bench-name>:instructions`). See `jolt-eval/README.md`.
+
+```bash
+cargo run -p jolt-eval --bin measure-objectives -- \
+    --objective telemetry:fibonacci:prover_time_s
+```
+
+---
+
+# Legacy prover (jolt-prover-legacy)
+
+The instructions below apply to the legacy monolith until it is deleted.
+
 ## Execution profiling
 
-Jolt is instrumented using [`tokio-rs/tracing`](https://github.com/tokio-rs/tracing) for execution profiling.
-We use the [`tracing_chrome`](https://github.com/thoren-d/tracing-chrome) crate to output traces in the format expected by [Perfetto](https://ui.perfetto.dev/).
+```bash
+cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome
+```
 
-To generate a trace, run e.g.
-
-```cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome```
-
-Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the `examples` directory. The benchmark inputs are provided in `bench.rs`.
-
-The above command will output a JSON file in the workspace rootwith a name `trace-<timestamp>.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/):
+Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `sha3-chain`,
+`fibonacci`, or `btreemap`. Traces are written to
+`benchmark-runs/perfetto_traces/{name}_{timestamp}.json` and viewable in
+[Perfetto](https://ui.perfetto.dev/):
 
 ![perfetto](../../imgs/perfetto.png)
 
 ### System resource monitoring
 
-To visualize CPU and memory usage alongside the execution trace, enable the `monitor` feature:
-
 ```bash
 cargo run --release --features monitor -p jolt-prover-legacy profile --name sha3 --format chrome
-python3 scripts/postprocess_trace.py trace-*.json
+python3 scripts/postprocess_trace.py benchmark-runs/perfetto_traces/*.json
 ```
 
-The postprocessing step converts the metrics into counter tracks for Perfetto.
+The postprocessing step converts the metrics into counter tracks for
+Perfetto (the legacy pipeline only; the modular pipeline does this at
+flush time).
 
 ![metrics-monitor](../../imgs/metrics-monitor.png)
 
 ### Fine-grained CPU profiling with pprof
 
-When tracing is insufficiently detailed, you can enable [pprof](https://github.com/google/pprof) for fine-grained CPU profiling. While execution tracing shows you the high-level stages and their durations (based on manually instrumented code), pprof automatically samples your entire program at the function level to capture each function call including in dependencies. This can help reveal performance bottlenecks that tracing might miss, such as unexpected hotspots in serialization, memory allocation, or cryptographic operations.
+When tracing is insufficiently detailed, you can enable
+[pprof](https://github.com/google/pprof) for fine-grained CPU profiling.
+While execution tracing shows you the high-level stages and their durations
+(based on manually instrumented code), pprof automatically samples your
+entire program at the function level to capture each function call including
+in dependencies.
 
-To enable pprof profiling, add the `--features pprof` flag:
+```bash
+cargo run --release --features pprof -p jolt-prover-legacy profile --name sha3 --format chrome
+```
 
-```cargo run --release --features pprof -p jolt-prover-legacy profile --name sha3 --format chrome```
+This will generate multiple `.pb` profile files in `benchmark-runs/pprof/`,
+one for each major stage. To view in your browser:
 
-This will generate multiple `.pb` profile files in `benchmark-runs/pprof/`, one for each major stage.
-
-To view the proving profile in your browser using [pprof](https://github.com/google/pprof), run:
-
-```go tool pprof -http=:8080 target/release/jolt-prover-legacy benchmark-runs/pprof/sha3_prove.pb```
-
-This will start a web server at `http://localhost:8080` where you can explore:
-
-- **Flame graphs** - Visual representation of call stacks and time spent
-- **Top functions** - List of functions consuming the most CPU time
-- **Source view** - Line-by-line breakdown of CPU usage
-- **Call graph** - Function call relationships
+```bash
+go tool pprof -http=:8080 target/release/jolt-prover-legacy benchmark-runs/pprof/sha3_prove.pb
+```
 
 ![pprof-top](../../imgs/pprof-top.png)
 ![pprof-flamegraph](../../imgs/pprof-flamegraph.png)
 
-You may need to increase the sampling frequency to get a more detailed profile for shorter traces or decrease it for longer tracesto reduce overhead.You may customize the sampling frequency using the `PPROF_FREQ` environment variable (default: 100 Hz):
+Customize the sampling frequency with `PPROF_FREQ` (default: 100 Hz):
 
-```PPROF_FREQ=1000 cargo run --release --features pprof -p jolt-prover-legacy profile --name sha3 --format chrome```
+```bash
+PPROF_FREQ=1000 cargo run --release --features pprof -p jolt-prover-legacy profile --name sha3 --format chrome
+```
 
 ## Memory profiling
 
-Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
-Allocative allows you to (recursively) measure the total heap space occupied by any data structure implementing the `Allocative` trait, and optionally generate a flamegraph.
-In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-7 (see `crates/jolt-prover-legacy/src/zkvm/prover.rs`).
+The legacy prover generates [allocative](https://github.com/facebookexperimental/allocative)
+flamegraphs at the start and end of stages 2–7 (see
+`crates/jolt-prover-legacy/src/zkvm/prover.rs`):
 
-To generate allocative output, run:
+```bash
+RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome
+```
 
-```RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome```
-
-Where, as above, `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`.
-
-The above command will log memory usage info to the command line and output multiple SVG files, e.g. `stage3_start_flamechart.svg`, which can be viewed in a web browser of your choosing:
+This logs memory usage to the command line and outputs SVG files, e.g.
+`stage3_start_flamechart.svg`:
 
 ![allocative](../../imgs/allocative.png)

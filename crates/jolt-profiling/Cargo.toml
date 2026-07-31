@@ -28,6 +28,10 @@ allocative = { workspace = true, optional = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true
 libc.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
 sysinfo = { workspace = true, optional = true }
 pprof = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
