@@ -39,7 +39,10 @@ pub fn prove<F, PCS, VC, T, W>(
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
     F: Field + CanonicalBytes + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::PostCommitmentCleanup,
+    PCS: CommitmentScheme<Field = F>
+        + TransparentObjectSetup
+        + jolt_akita::PostCommitmentCleanup
+        + jolt_akita::TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript,
     VC: VectorCommitment<Field = F>,

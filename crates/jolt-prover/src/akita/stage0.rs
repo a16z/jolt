@@ -12,7 +12,6 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
-use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::{
     absorb_packed_commitments, absorb_transcript_preamble, validate_inputs_from_parts,
@@ -20,7 +19,7 @@ use jolt_verifier::{
 };
 use jolt_witness::JoltWitnessPlane;
 
-use super::witness::{assemble_one_hot_trace, commit_advice_one_hot, AdviceOneHot};
+use super::witness::{assemble_one_hot_trace_rows, commit_advice_one_hot, AdviceOneHot};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 0's outputs: the validated inputs, the seeded transcript (positioned
@@ -53,7 +52,10 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::PostCommitmentCleanup,
+    PCS: CommitmentScheme<Field = F>
+        + TransparentObjectSetup
+        + jolt_akita::PostCommitmentCleanup
+        + jolt_akita::TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
@@ -155,18 +157,18 @@ where
         });
     }
 
-    let packed_trace = assemble_one_hot_trace(
+    let packed_trace_rows = assemble_one_hot_trace_rows(
         witness,
         &plan,
         formula_dimensions.ra_layout,
         log_k_chunk,
         log_t,
     )?;
-    let column_refs: [&dyn MultilinearPoly<F>; 1] = [&packed_trace];
-    let (commitment, hint) = PCS::commit_batch(
-        &column_refs,
-        preprocessing.pcs_setup.default_layout_digest(),
+    let (commitment, hint) = PCS::commit_trace_one_hot(
         &preprocessing.pcs_setup,
+        preprocessing.pcs_setup.default_layout_digest(),
+        plan.packing().slot_capacity(),
+        packed_trace_rows,
     )
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
