@@ -42,7 +42,7 @@ use jolt_witness::witnesses::{
 };
 #[cfg(feature = "parallel")]
 use jolt_witness::RandomAccessRows;
-use jolt_witness::{stream_witnesses, RowSource, StreamConsumer, TraceRecordRow};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, TraceRecordRow};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -105,11 +105,6 @@ pub(crate) struct TraceRecord {
     pub product_magnitude_hi: Vec<u64>,
     pub lookup_output: Vec<u64>,
     pub flags: Vec<u32>,
-    /// Packed lookup/bytecode/RAM address rows produced by the same walk.
-    /// Stage 0's Metal commit extractor reads this in place; later stages
-    /// reclaim the identical allocation through [`SharedInstructionRows`].
-    #[cfg(feature = "metal")]
-    pub instruction_rows: Arc<Vec<InstructionCycleRow>>,
     /// The shared RAM access columns (remapped address + pre/post values),
     /// built by the same walk and also parked in the session for the RAM
     /// kernels' [`RamAccessColumns::shared`].
@@ -538,9 +533,8 @@ impl StreamConsumer for CollectRecord {
 }
 
 impl TraceRecord {
-    /// The session-shared record: collected on first request (stage 0's
-    /// Metal commitment extractor or stage 1's Spartan outer kernel), cloned
-    /// out as an [`Arc`] afterwards.
+    /// The session-shared record: collected on first request (stage 1's
+    /// Spartan outer kernel today), cloned out as an [`Arc`] afterwards.
     /// Also parks the [`RamAccessColumns`] the walk co-produces, so the RAM
     /// kernels' `shared` finds them without a second pass.
     #[expect(
@@ -550,7 +544,7 @@ impl TraceRecord {
     #[tracing::instrument(skip_all, name = "TraceRecord::collect", fields(cycles = 1usize << log_t))]
     pub(crate) fn shared<F: Field>(
         session: &mut ProofSession,
-        source: &dyn RowSource,
+        witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
     ) -> Result<Arc<Self>, KernelError<F>> {
         if session.state::<Arc<Self>>().is_none() {
@@ -559,14 +553,14 @@ impl TraceRecord {
                 let mut consumers = (CollectRecord {
                     record: LaneBuffers::with_capacity(cycles),
                 },);
-                stream_witnesses(source, 0..cycles, RECORD_CHUNK, &mut consumers)?;
+                stream_witnesses(witness, 0..cycles, RECORD_CHUNK, &mut consumers)?;
                 Ok::<_, jolt_witness::WitnessError>(consumers.0.record)
             };
             #[cfg(feature = "parallel")]
             // The record is the shared SoA substrate for stages 1-6. Fill
             // its final lanes directly; staging chunk-local AoS rows made
             // the serial lane scatter the collection wall.
-            let lanes = match source
+            let lanes = match witness
                 .random_access()
                 .filter(|access| cycles <= access.cycles)
             {
@@ -583,8 +577,7 @@ impl TraceRecord {
             if session.state::<Arc<RamAccessColumns>>().is_none() {
                 session.park(Arc::clone(&ram));
             }
-            let instruction_rows = Arc::new(lanes.instruction_rows);
-            session.park(SharedInstructionRows(Arc::clone(&instruction_rows)));
+            session.park(SharedInstructionRows(Arc::new(lanes.instruction_rows)));
             // The bytecode PC scan, packed from the pc/noop lanes (fallible
             // u32-range guards, so it runs after the walk).
             let pack_pc =
@@ -626,8 +619,6 @@ impl TraceRecord {
                 product_magnitude_hi: lanes.product_magnitude_hi,
                 lookup_output: lanes.lookup_output,
                 flags: lanes.flags,
-                #[cfg(feature = "metal")]
-                instruction_rows,
                 ram,
             });
             session.park(record);
@@ -846,8 +837,7 @@ mod tests {
         ];
         with_ram_fixture(shape, ops, |witness| {
             let mut session = ProofSession::default();
-            let record =
-                TraceRecord::shared::<jolt_field::Fr>(&mut session, witness, shape.log_t).unwrap();
+            let record = TraceRecord::shared(&mut session, witness, shape.log_t).unwrap();
             let rows: Vec<SpartanOuterRow> = collect_rows(witness, 1 << shape.log_t).unwrap();
             assert_eq!(record.len(), rows.len());
             for (t, row) in rows.iter().enumerate() {

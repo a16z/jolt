@@ -603,7 +603,6 @@ mod tests {
             product_magnitude_hi: vec![0; t],
             lookup_output: vec![0; t],
             flags,
-            instruction_rows: Arc::default(),
             ram: Arc::new(RamAccessColumns {
                 addresses: Vec::new(),
                 pre_values: Vec::new(),

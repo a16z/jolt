@@ -58,7 +58,6 @@ pub enum KernelId {
     IncRound,
     TablePairsRound,
     HammingRound,
-    CommitExtract,
     G1SegSum,
     G1CombineRows,
     G1ScalarMulAdd,
@@ -104,7 +103,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 52] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -115,7 +114,6 @@ impl KernelId {
         Self::IncRound,
         Self::TablePairsRound,
         Self::HammingRound,
-        Self::CommitExtract,
         Self::G1SegSum,
         Self::G1CombineRows,
         Self::G1ScalarMulAdd,
@@ -172,7 +170,6 @@ impl KernelId {
             Self::IncRound => "jk_inc_round",
             Self::TablePairsRound => "jk_table_pairs_round",
             Self::HammingRound => "jk_hamming_round",
-            Self::CommitExtract => "jk_commit_extract",
             Self::G1SegSum => "jk_g1_seg_sum",
             Self::G1CombineRows => "jk_g1_combine_rows",
             Self::G1ScalarMulAdd => "jk_g1_scalar_mul_add",
