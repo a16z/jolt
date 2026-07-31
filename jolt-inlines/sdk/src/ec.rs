@@ -21,7 +21,10 @@ pub trait ECField: Clone + PartialEq + core::fmt::Debug + Sized {
     /// `arr` must be canonical, i.e. in `[0, modulus)`. Reserved for compile-time
     /// constants and values already reduced by an inline; every other caller must
     /// use [`ECField::from_u64_arr`]. Non-canonical limbs violate the operand
-    /// contract of the field inlines and produce an unsatisfiable proof.
+    /// contract of the field inlines: depending on the operation this aborts
+    /// host trace generation (`mulq_quotient_advice`'s quotient of two unreduced
+    /// 256-bit operands can exceed four limbs and trip its assert) or produces
+    /// an unprovable/incorrect trace. Never feed untrusted limbs here.
     fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self;
 }
 
