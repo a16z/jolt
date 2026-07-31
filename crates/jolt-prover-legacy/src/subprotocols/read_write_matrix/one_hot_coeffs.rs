@@ -27,10 +27,22 @@ const MAX_LOOKUP_TABLE_SIZE: usize = 1 << 16;
 #[derive(Clone, Copy, Default, Allocative)]
 pub struct LookupTableIndex(pub u16);
 
+/// Index for tables that are dereferenced before they grow beyond 256 entries.
+#[derive(Clone, Copy, Default, Allocative)]
+pub struct SmallLookupTableIndex(pub u8);
+
 impl<F: JoltField> std::ops::Index<LookupTableIndex> for OneHotCoeffLookupTable<F> {
     type Output = F;
 
     fn index(&self, index: LookupTableIndex) -> &Self::Output {
+        &self.lookup_table[index.0 as usize]
+    }
+}
+
+impl<F: JoltField> std::ops::Index<SmallLookupTableIndex> for OneHotCoeffLookupTable<F> {
+    type Output = F;
+
+    fn index(&self, index: SmallLookupTableIndex) -> &Self::Output {
         &self.lookup_table[index.0 as usize]
     }
 }
@@ -160,5 +172,90 @@ impl<F: JoltField> OneHotCoeff<F> for LookupTableIndex {
     fn to_field(&self, lookup_table: Option<&OneHotCoeffLookupTable<F>>) -> F {
         let lookup_table = lookup_table.unwrap();
         lookup_table[*self]
+    }
+}
+
+impl<F: JoltField> OneHotCoeff<F> for SmallLookupTableIndex {
+    fn bind(
+        even: Option<&Self>,
+        odd: Option<&Self>,
+        _r: F::Challenge,
+        lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> Self {
+        let lookup_index_bitwidth = lookup_table.unwrap().lookup_table.len().log_2();
+        debug_assert!(lookup_index_bitwidth <= 4);
+
+        match (even, odd) {
+            (Some(&even), Some(&odd)) => {
+                SmallLookupTableIndex(odd.0 << lookup_index_bitwidth | even.0)
+            }
+            (Some(&even), None) => even,
+            (None, Some(&odd)) => SmallLookupTableIndex(odd.0 << lookup_index_bitwidth),
+            (None, None) => panic!("Both entries are None"),
+        }
+    }
+
+    fn evals(
+        even: Option<&Self>,
+        odd: Option<&Self>,
+        lookup_table: Option<&OneHotCoeffLookupTable<F>>,
+    ) -> [F; 2] {
+        let lookup_table = lookup_table.unwrap();
+        match (even, odd) {
+            (Some(&even), Some(&odd)) => {
+                [lookup_table[even], lookup_table[odd] - lookup_table[even]]
+            }
+            (Some(&even), None) => [lookup_table[even], -lookup_table[even]],
+            (None, Some(&odd)) => [F::zero(), lookup_table[odd]],
+            (None, None) => panic!("Both entries are None"),
+        }
+    }
+
+    fn to_field(&self, lookup_table: Option<&OneHotCoeffLookupTable<F>>) -> F {
+        let lookup_table = lookup_table.unwrap();
+        lookup_table[*self]
+    }
+}
+
+#[cfg(all(test, feature = "akita"))]
+mod tests {
+    use super::*;
+    use crate::field::akita::AkitaFp128;
+    use ark_std::Zero;
+
+    #[test]
+    fn small_indices_match_wide_indices_until_register_dereference() {
+        let mut small = vec![SmallLookupTableIndex(0), SmallLookupTableIndex(1)];
+        let mut wide = vec![LookupTableIndex(0), LookupTableIndex(1)];
+
+        for _ in 0..3 {
+            let table = OneHotCoeffLookupTable::new(vec![AkitaFp128::zero(); small.len()]);
+            let mut next_small = Vec::with_capacity(small.len() * small.len());
+            let mut next_wide = Vec::with_capacity(wide.len() * wide.len());
+
+            for (small_odd, wide_odd) in small.iter().zip(&wide) {
+                for (small_even, wide_even) in small.iter().zip(&wide) {
+                    next_small.push(<SmallLookupTableIndex as OneHotCoeff<AkitaFp128>>::bind(
+                        Some(small_even),
+                        Some(small_odd),
+                        AkitaFp128::zero(),
+                        Some(&table),
+                    ));
+                    next_wide.push(<LookupTableIndex as OneHotCoeff<AkitaFp128>>::bind(
+                        Some(wide_even),
+                        Some(wide_odd),
+                        AkitaFp128::zero(),
+                        Some(&table),
+                    ));
+                }
+            }
+
+            assert!(next_small
+                .iter()
+                .zip(&next_wide)
+                .all(|(small, wide)| small.0 as u16 == wide.0));
+            small = next_small;
+            wide = next_wide;
+        }
     }
 }

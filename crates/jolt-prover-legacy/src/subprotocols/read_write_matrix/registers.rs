@@ -16,6 +16,7 @@ use crate::subprotocols::read_write_matrix::cycle_major::CycleMajorMatrixEntry;
 use crate::subprotocols::read_write_matrix::one_hot_coeffs::LookupTableIndex;
 use crate::subprotocols::read_write_matrix::one_hot_coeffs::OneHotCoeff;
 use crate::subprotocols::read_write_matrix::one_hot_coeffs::OneHotCoeffLookupTable;
+use crate::subprotocols::read_write_matrix::one_hot_coeffs::SmallLookupTableIndex;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixAddressMajor;
 use crate::subprotocols::read_write_matrix::ReadWriteMatrixCycleMajor;
 use crate::utils::math::Math;
@@ -39,13 +40,16 @@ use rayon::prelude::*;
 ///
 /// - `F`: The field type for coefficients.
 ///
-/// Fields are ordered largest-first to minimize padding when `C` is small
-/// (e.g. `LookupTableIndex(u16)`): `col: u8` packs into the tail padding
-/// alongside `ra_coeff` and `wa_coeff`, keeping the struct at 64 bytes.
+/// Read and write coefficients have separate types because the write lookup
+/// table still fits in a byte when the read table forces dereferencing.
 #[derive(Allocative, Debug, PartialEq, Clone, Copy, Default)]
-pub struct RegistersCycleMajorEntry<F: JoltField, C: OneHotCoeff<F>> {
+pub struct RegistersCycleMajorEntry<F: JoltField, R: OneHotCoeff<F>, W: OneHotCoeff<F>> {
     /// The Val coefficient for this matrix entry.
     pub val_coeff: F,
+    /// Coefficient for the combined ra polynomial, equal to
+    /// gamma * rs1_ra + gamma^2 * rs2_ra
+    pub ra_coeff: R,
+    pub wa_coeff: W,
     /// In round i, each ReadWriteEntry represents a coefficient
     ///   Val(k, j', r)
     /// which is some combination of Val(k, j', 00...0), ...
@@ -59,16 +63,17 @@ pub struct RegistersCycleMajorEntry<F: JoltField, C: OneHotCoeff<F>> {
     /// Val(k, j'+1, 00...0)
     pub(crate) next_val: u64,
     /// Row index (cycle count, row \in [0, T)).
-    row: usize,
-    /// Coefficient for the combined ra polynomial, equal to
-    /// gamma * rs1_ra + gamma^2 * rs2_ra
-    pub ra_coeff: C,
-    pub wa_coeff: C,
+    row: u32,
     /// Column index (register index, col \in [0, K), K=128).
     col: u8,
 }
 
-impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, LookupTableIndex>> {
+impl<F: JoltField>
+    ReadWriteMatrixCycleMajor<
+        F,
+        RegistersCycleMajorEntry<F, LookupTableIndex, SmallLookupTableIndex>,
+    >
+{
     /// Count how many distinct registers this cycle touches (0–3).
     #[inline]
     fn entry_count_for_trace_row(trace_row: &JoltTraceRow) -> u8 {
@@ -99,9 +104,9 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
     /// Fill the per-cycle entries into `out` (length 0–3), sorted by `col`.
     #[inline]
     fn fill_entries_for_cycle(
-        row: usize,
+        row: u32,
         trace_row: &JoltTraceRow,
-        out: &mut [RegistersCycleMajorEntry<F, LookupTableIndex>],
+        out: &mut [RegistersCycleMajorEntry<F, LookupTableIndex, SmallLookupTableIndex>],
     ) {
         debug_assert!(out.len() <= 3);
         let mut len = 0usize;
@@ -115,7 +120,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
                 next_val: rs1_val,
                 val_coeff: F::from_u64(rs1_val),
                 ra_coeff: LookupTableIndex(1),
-                wa_coeff: LookupTableIndex(0),
+                wa_coeff: SmallLookupTableIndex(0),
             };
             len += 1;
         }
@@ -132,7 +137,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
                     next_val: rs2_val,
                     val_coeff: F::from_u64(rs2_val),
                     ra_coeff: LookupTableIndex(2),
-                    wa_coeff: LookupTableIndex(0),
+                    wa_coeff: SmallLookupTableIndex(0),
                 };
                 len += 1;
             }
@@ -143,7 +148,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
             let rd_post_val = trace_row.rd_write_value();
             if let Some(e) = out[..len].iter_mut().find(|e| e.column() as u8 == rd) {
                 // Same register is read and then written this cycle.
-                e.wa_coeff = LookupTableIndex(1);
+                e.wa_coeff = SmallLookupTableIndex(1);
                 e.next_val = rd_post_val;
             } else {
                 out[len] = RegistersCycleMajorEntry {
@@ -154,7 +159,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
                     // val_coeff stores the value *before* any access at this cycle.
                     val_coeff: F::from_u64(rd_pre_val),
                     ra_coeff: LookupTableIndex(0),
-                    wa_coeff: LookupTableIndex(1),
+                    wa_coeff: SmallLookupTableIndex(1),
                 };
                 len += 1;
             }
@@ -189,6 +194,10 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
     /// for the registers read/write checking sumcheck.
     #[tracing::instrument(skip_all, name = "ReadWriteMatrixCycleMajor::new")]
     pub fn new(trace: &[JoltTraceRow], gamma: F) -> Self {
+        assert!(
+            u32::try_from(trace.len()).is_ok(),
+            "register matrix requires fewer than 2^32 rows"
+        );
         // ---- Pass 1: per-cycle entry counts (parallel) ----
         let counts: Vec<u8> = trace
             .par_iter()
@@ -206,7 +215,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
         let total_entries = total;
 
         // ---- Allocate entries and set_len unsafely; we'll fill everything in pass 2 ----
-        let mut entries: Vec<RegistersCycleMajorEntry<F, LookupTableIndex>> =
+        let mut entries: Vec<RegistersCycleMajorEntry<F, LookupTableIndex, SmallLookupTableIndex>> =
             Vec::with_capacity(total_entries);
         unsafe {
             entries.set_len(total_entries);
@@ -222,11 +231,12 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
             }
 
             let start = offsets[j] as isize;
-            let entries_ptr = entries_ptr as *mut RegistersCycleMajorEntry<F, LookupTableIndex>;
+            let entries_ptr = entries_ptr
+                as *mut RegistersCycleMajorEntry<F, LookupTableIndex, SmallLookupTableIndex>;
             unsafe {
                 let dst = entries_ptr.offset(start);
                 let slice = std::slice::from_raw_parts_mut(dst, count);
-                Self::fill_entries_for_cycle(j, cycle, slice);
+                Self::fill_entries_for_cycle(j as u32, cycle, slice);
             }
         });
 
@@ -243,7 +253,7 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
         }
     }
 
-    pub fn deref_coeffs(self) -> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>> {
+    pub fn deref_coeffs(self) -> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F, F>> {
         let val_init = self.val_init;
         let ra_lookup_table = self.ra_lookup_table.unwrap();
         let wa_lookup_table = self.wa_lookup_table.unwrap();
@@ -270,11 +280,13 @@ impl<F: JoltField> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, Look
     }
 }
 
-impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycleMajorEntry<F, C> {
+impl<F: JoltField, R: OneHotCoeff<F>, W: OneHotCoeff<F>> CycleMajorMatrixEntry<F>
+    for RegistersCycleMajorEntry<F, R, W>
+{
     type AddressMajor = RegistersAddressMajorEntry<F>;
 
     fn row(&self) -> usize {
-        self.row
+        self.row as usize
     }
 
     fn column(&self) -> usize {
@@ -420,7 +432,9 @@ impl<F: JoltField, C: OneHotCoeff<F>> CycleMajorMatrixEntry<F> for RegistersCycl
     }
 }
 
-impl<F: JoltField, C: OneHotCoeff<F>> ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, C>> {
+impl<F: JoltField, R: OneHotCoeff<F>, W: OneHotCoeff<F>>
+    ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, R, W>>
+{
     /// Materializes the ra, wa and Val polynomials represented by this `ReadWriteMatrixCycleMajor`.
     ///
     /// After partial binding of cycle and address variables, there are `K_prime` columns
@@ -567,14 +581,14 @@ pub struct RegistersAddressMajorEntry<F: JoltField> {
     pub ra_coeff: F,
     pub wa_coeff: F,
     /// Row index (cycle count, row \in [0, T)).
-    row: usize,
+    row: u32,
     /// Column index (register index, col \in [0, K), K=128).
     col: u8,
 }
 
 impl<F: JoltField> AddressMajorMatrixEntry<F> for RegistersAddressMajorEntry<F> {
     fn row(&self) -> usize {
-        self.row
+        self.row as usize
     }
 
     fn column(&self) -> usize {
@@ -767,5 +781,29 @@ impl<F: JoltField> ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>
             .collect();
         // Convert Vec<F> to MultilinearPolynomial<F>
         [ra.into(), wa.into(), val.into()]
+    }
+}
+
+#[cfg(all(test, feature = "akita", target_pointer_width = "64"))]
+mod tests {
+    use super::*;
+    use crate::field::akita::AkitaFp128;
+
+    #[test]
+    fn akita_register_entries_keep_compact_layouts() {
+        assert_eq!(
+            std::mem::size_of::<
+                RegistersCycleMajorEntry<AkitaFp128, LookupTableIndex, SmallLookupTableIndex>,
+            >(),
+            40
+        );
+        assert_eq!(
+            std::mem::size_of::<RegistersCycleMajorEntry<AkitaFp128, AkitaFp128, AkitaFp128>>(),
+            72
+        );
+        assert_eq!(
+            std::mem::size_of::<RegistersAddressMajorEntry<AkitaFp128>>(),
+            88
+        );
     }
 }

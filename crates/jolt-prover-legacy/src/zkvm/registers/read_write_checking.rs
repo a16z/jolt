@@ -10,6 +10,7 @@ use crate::subprotocols::blindfold::{
 use crate::subprotocols::read_write_matrix::{
     AddressMajorMatrixEntry, LookupTableIndex, ReadWriteMatrixAddressMajor,
     ReadWriteMatrixCycleMajor, RegistersAddressMajorEntry, RegistersCycleMajorEntry,
+    SmallLookupTableIndex,
 };
 use crate::subprotocols::sumcheck_claim::{
     CachedPointRef, ChallengePart, Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend,
@@ -295,9 +296,12 @@ enum SparseMatrix<F: JoltField> {
     #[default]
     None,
     CycleMajorWithLookups(
-        ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, LookupTableIndex>>,
+        ReadWriteMatrixCycleMajor<
+            F,
+            RegistersCycleMajorEntry<F, LookupTableIndex, SmallLookupTableIndex>,
+        >,
     ),
-    CycleMajor(ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F>>),
+    CycleMajor(ReadWriteMatrixCycleMajor<F, RegistersCycleMajorEntry<F, F, F>>),
     AddressMajor(ReadWriteMatrixAddressMajor<F, RegistersAddressMajorEntry<F>>),
 }
 
@@ -372,13 +376,13 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         let sparse_matrix = if phase1_rounds > 0 {
             let matrix = ReadWriteMatrixCycleMajor::<
                 _,
-                RegistersCycleMajorEntry<F, LookupTableIndex>,
+                RegistersCycleMajorEntry<F, LookupTableIndex, SmallLookupTableIndex>,
             >::new(&trace, params.gamma);
             SparseMatrix::CycleMajorWithLookups(matrix)
         } else if phase2_rounds > 0 {
             let matrix = ReadWriteMatrixCycleMajor::<
                 _,
-                RegistersCycleMajorEntry<F, LookupTableIndex>,
+                RegistersCycleMajorEntry<F, LookupTableIndex, SmallLookupTableIndex>,
             >::new(&trace, params.gamma);
             SparseMatrix::AddressMajor(matrix.into())
         } else {
