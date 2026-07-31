@@ -24,7 +24,7 @@
 //! The baseline's NEON intrinsic Add/Sub/Neg lane paths are dropped: LLVM
 //! auto-vectorizes the element-wise `[i32; N]` code to the identical
 //! `add.4s`/`sub.4s`/`neg.4s` (and `mul.4s` for scaling) instructions at
-//! opt-level 3 (see SPEC.md dropped-specialization evidence).
+//! opt-level 3 (see specs/jolt-field-rebuild.md dropped-specialization evidence).
 
 use super::{Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8};
 use crate::{

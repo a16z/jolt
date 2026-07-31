@@ -5,7 +5,7 @@
 //! muls and squares over `Prime32Offset99`. The baseline `FpExt4<Fp32>`
 //! (which ships the fused override) is included for context.
 //!
-//! Outcome recorded in SPEC.md: the fused port LOST on aarch64/Apple M4
+//! Outcome recorded in specs/jolt-field-rebuild.md: the fused port LOST on aarch64/Apple M4
 //! (generic ≈ 2.5x faster on mul, ≈ 1.85x on square; the port reproduces
 //! the baseline override's timing exactly), so the override was dropped
 //! and the crate keeps the generic defaults. This harness stays as the

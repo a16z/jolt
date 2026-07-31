@@ -8,7 +8,7 @@
 //! dispatches through the [`PseudoMersenne`] kernel hooks; every base field
 //! keeps the generic-schedule defaults (`crate::schedules`) — the baseline's
 //! fused u128-accumulation `Fp32` override lost the checkpoint-6 bench gate
-//! (see SPEC.md and `benches/ext4_kernels.rs`).
+//! (see specs/jolt-field-rebuild.md and `benches/ext4_kernels.rs`).
 //!
 //! Frobenius powers are intentionally algebraic (raise to powers of the base
 //! modulus) rather than basis-specific: one auditable contract first;

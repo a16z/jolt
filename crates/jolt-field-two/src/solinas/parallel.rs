@@ -11,7 +11,7 @@
 //!
 //! Consumer audit (checkpoint 9): no crate in the workspace, and nothing in
 //! this rebuild, currently expands any of these macros — see the
-//! dropped-specialization notes in `SPEC.md`. The component is ported whole
+//! dropped-specialization notes in `specs/jolt-field-rebuild.md`. The component is ported whole
 //! because the approved parity scope names the rayon helpers and all seven
 //! macros are equally (un)consumed, leaving no evidence basis for a partial
 //! subset.

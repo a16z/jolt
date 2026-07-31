@@ -347,7 +347,7 @@ macro_rules! define_solinas_prime {
 
         // The ext-mul kernel hooks keep their generic-schedule defaults:
         // the baseline's fused u128-accumulation Fp32 override lost the
-        // checkpoint-6 bench gate (see SPEC.md dropped-specialization
+        // checkpoint-6 bench gate (see specs/jolt-field-rebuild.md dropped-specialization
         // evidence and benches/ext4_kernels.rs).
         impl<const P: $word> PseudoMersenne for $name<P> {
             const OFFSET: u128 = Self::C as u128;
