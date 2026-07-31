@@ -7,8 +7,8 @@
 #![expect(clippy::unwrap_used, reason = "test code")]
 
 use jolt_field_two::{
-    impl_ring_ops, impl_serde_bytes, Accumulator, CanonicalEncoding, Field, JoltField,
-    NaiveAccumulator, One, Ring, WithAccumulator, Zero,
+    impl_ring_ops, impl_serde_bytes, Accumulator, CanonicalBytes, CanonicalEncoding, Field,
+    JoltField, NaiveAccumulator, One, Ring, WithAccumulator, Zero,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -80,12 +80,15 @@ impl Field for M61 {
     }
 }
 
-impl CanonicalEncoding for M61 {
+impl CanonicalBytes for M61 {
     const NUM_BYTES: usize = 8;
-    const MODULUS_BITS: u32 = 61;
     fn to_bytes_le(&self, out: &mut [u8]) {
         out.copy_from_slice(&self.0.to_le_bytes());
     }
+}
+
+impl CanonicalEncoding for M61 {
+    const MODULUS_BITS: u32 = 61;
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let base = M61::from_u64(256);
         bytes

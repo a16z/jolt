@@ -24,7 +24,7 @@ use base::{
 use num_traits::{One, Zero};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{CanonicalEncoding, ExtField, Field, Ring};
+use two::{CanonicalBytes, CanonicalEncoding, ExtField, Field, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xE87_D1FF)
@@ -331,7 +331,7 @@ macro_rules! check_ext {
 
         // Canonical rejection: a wire encoding whose first coefficient is
         // `p` itself must be rejected by both crates; so must short input.
-        let nb = <$F2 as CanonicalEncoding>::NUM_BYTES;
+        let nb = <$F2 as CanonicalBytes>::NUM_BYTES;
         let mut bad = vec![0u8; nb * d];
         bad[..nb].copy_from_slice(&p.to_le_bytes()[..nb]);
         assert!(

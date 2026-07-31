@@ -17,7 +17,7 @@
 
 use super::word::mul64_wide;
 use crate::PseudoMersenne;
-use crate::{CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 use rand_core::RngCore;
 #[cfg(target_arch = "aarch64")]
 use std::arch::asm;
@@ -714,16 +714,19 @@ impl<const P: u128> Field for Fp128<P> {
     }
 }
 
-impl<const P: u128> CanonicalEncoding for Fp128<P> {
+impl<const P: u128> CanonicalBytes for Fp128<P> {
     const NUM_BYTES: usize = 16;
-    // C < 2^32 implies p > 2^127, so the modulus is exactly 128 bits.
-    const MODULUS_BITS: u32 = 128;
 
     #[inline(always)]
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), Self::NUM_BYTES);
         out.copy_from_slice(&join(self.0).to_le_bytes());
     }
+}
+
+impl<const P: u128> CanonicalEncoding for Fp128<P> {
+    // C < 2^32 implies p > 2^127, so the modulus is exactly 128 bits.
+    const MODULUS_BITS: u32 = 128;
 
     #[inline(always)]
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {

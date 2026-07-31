@@ -231,29 +231,24 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
     }
 }
 
-/// Canonical little-endian representation: the Fiat-Shamir transcript surface
-/// and the single source of canonicity for wire serialization.
+/// Fixed-size canonical little-endian byte encoding: the transcript
+/// absorption surface.
 ///
-/// Transcript absorption and challenge derivation use these explicit
-/// encodings so the hashed byte stream is specified independently of any
-/// serialization library. Proof/wire serialization goes through serde +
-/// bincode, reusing [`from_bytes_le_checked`](Self::from_bytes_le_checked)
-/// so non-canonical encodings are rejected uniformly.
+/// This is deliberately the *narrow* claim, "this value has one canonical
+/// byte encoding", implementable by non-field types (e.g. zero-sized
+/// commitment placeholders) that must be transcript-absorbable without
+/// pretending to be decodable field elements. Field types get the full
+/// decode surface via [`CanonicalEncoding`].
 ///
 /// # Invariants
 ///
-/// - The encoding is injective on canonical representatives: equal elements
-///   produce equal bytes, distinct elements produce distinct bytes.
+/// - The encoding is injective on canonical representatives: equal values
+///   produce equal bytes, distinct values produce distinct bytes.
 /// - [`to_bytes_le`](Self::to_bytes_le) always writes exactly
 ///   [`NUM_BYTES`](Self::NUM_BYTES) bytes of the unique representative.
-pub trait CanonicalEncoding:
-    Sized + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
-{
+pub trait CanonicalBytes {
     /// Byte length of the fixed-size canonical encoding.
     const NUM_BYTES: usize;
-
-    /// Bit length of the field order `|F|` (for prime fields, the modulus).
-    const MODULUS_BITS: u32;
 
     /// Writes the canonical little-endian encoding into `out`.
     fn to_bytes_le(&self, out: &mut [u8]);
@@ -265,6 +260,23 @@ pub trait CanonicalEncoding:
         self.to_bytes_le(&mut out);
         out
     }
+}
+
+/// Canonical decode-and-introspect surface of a field element, on top of the
+/// [`CanonicalBytes`] encoding: the single source of canonicity for wire
+/// serialization.
+///
+/// Transcript absorption and challenge derivation use the explicit
+/// [`CanonicalBytes`] encoding so the hashed byte stream is specified
+/// independently of any serialization library. Proof/wire serialization goes
+/// through serde + bincode, reusing
+/// [`from_bytes_le_checked`](Self::from_bytes_le_checked) so non-canonical
+/// encodings are rejected uniformly.
+pub trait CanonicalEncoding:
+    CanonicalBytes + Sized + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
+{
+    /// Bit length of the field order `|F|` (for prime fields, the modulus).
+    const MODULUS_BITS: u32;
 
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;

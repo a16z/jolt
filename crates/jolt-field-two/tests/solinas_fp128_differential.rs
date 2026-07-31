@@ -10,12 +10,12 @@ use jolt_field as base;
 use jolt_field_two as two;
 
 use base::{
-    CanonicalBytes, CanonicalField, CanonicalRepr, FieldCore, FromPrimitiveInt, HalvingField,
+    CanonicalBytes as BaseCanonicalBytes, CanonicalField, CanonicalRepr, FieldCore, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RingCore,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{Accumulator as _, CanonicalEncoding, Field as _, JoltField, PseudoMersenne, Ring};
+use two::{Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xf128_a5a5)
@@ -101,10 +101,10 @@ macro_rules! check_prime128 {
             <$base as PseudoMersenneField>::MODULUS_OFFSET
         );
         assert_eq!(
-            <$two as CanonicalEncoding>::NUM_BYTES,
-            <$base as CanonicalBytes>::NUM_BYTES
+            <$two as CanonicalBytes>::NUM_BYTES,
+            <$base as BaseCanonicalBytes>::NUM_BYTES
         );
-        assert_eq!(<$two as CanonicalEncoding>::NUM_BYTES, 16);
+        assert_eq!(<$two as CanonicalBytes>::NUM_BYTES, 16);
 
         let cfg = bincode::config::standard();
         for _ in 0..200 {

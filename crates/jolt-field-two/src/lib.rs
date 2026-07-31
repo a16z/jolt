@@ -1,8 +1,9 @@
 //! Field and ring abstractions for the Jolt zkVM.
 //!
 //! A slim algebraic ladder — [`AdditiveGroup`] → [`Ring`] → [`Field`] — with
-//! orthogonal capabilities: [`CanonicalEncoding`] (the Fiat-Shamir transcript
-//! surface) and [`WithAccumulator`] (deferred-reduction fused multiply-add).
+//! orthogonal capabilities: [`CanonicalBytes`]/[`CanonicalEncoding`] (the
+//! Fiat-Shamir transcript surface and the field decode surface on top of it)
+//! and [`WithAccumulator`] (deferred-reduction fused multiply-add).
 //! [`JoltField`] is the blanket-implemented bundle of everything Jolt's
 //! protocol stack requires of a scalar field: `Field + CanonicalEncoding +
 //! WithAccumulator + Serialize + DeserializeOwned`. Because the impl is a
@@ -61,13 +62,15 @@
 //!   little-endian bytes (see [`impl_serde_bytes!`]); deserialization
 //!   rejects non-canonical encodings uniformly via
 //!   [`CanonicalEncoding::from_bytes_le_checked`].
-//! - Fiat-Shamir transcript bytes use [`CanonicalEncoding`]'s explicit
-//!   little-endian encoding ([`CanonicalEncoding::to_bytes_le`]) and never
-//!   go through a serialization library.
+//! - Fiat-Shamir transcript bytes use the explicit little-endian encoding
+//!   ([`CanonicalBytes::to_bytes_le`]) and never go through a serialization
+//!   library.
 //!
 //! Both invariants are enforced by differential tests against `jolt-field`
 //! as the oracle (`tests/*_differential.rs`).
 
+#[cfg(feature = "akita")]
+mod akita;
 mod algebra;
 #[cfg(feature = "bn254")]
 mod bn254;
@@ -82,8 +85,8 @@ pub mod solinas;
 mod unreduced;
 
 pub use algebra::{
-    Accumulator, AdditiveGroup, CanonicalEncoding, Field, JoltField, NaiveAccumulator,
-    PseudoMersenne, Ring, WithAccumulator,
+    Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
+    NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, WideAccumulator};

@@ -10,7 +10,7 @@ mod mont;
 
 pub use mont::WideAccumulator;
 
-use crate::{CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 use ark_ff::{BigInteger, PrimeField, UniformRand};
 use rand_core::RngCore;
 
@@ -94,18 +94,21 @@ macro_rules! wrap_bn254 {
             }
         }
 
-        impl CanonicalEncoding for $ty {
+        impl CanonicalBytes for $ty {
             const NUM_BYTES: usize = 32;
-            const MODULUS_BITS: u32 = 254;
 
             #[inline]
             fn to_bytes_le(&self, out: &mut [u8]) {
-                assert_eq!(out.len(), <Self as CanonicalEncoding>::NUM_BYTES);
+                assert_eq!(out.len(), <Self as CanonicalBytes>::NUM_BYTES);
                 use ark_serialize::CanonicalSerialize;
                 self.0
                     .serialize_compressed(out)
                     .expect("BN254 element serializes to 32 bytes");
             }
+        }
+
+        impl CanonicalEncoding for $ty {
+            const MODULUS_BITS: u32 = 254;
 
             #[inline]
             fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
@@ -115,7 +118,7 @@ macro_rules! wrap_bn254 {
             #[inline]
             fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
                 use ark_serialize::CanonicalDeserialize;
-                if bytes.len() != <Self as CanonicalEncoding>::NUM_BYTES {
+                if bytes.len() != <Self as CanonicalBytes>::NUM_BYTES {
                     return None;
                 }
                 <$inner>::deserialize_compressed(bytes).ok().map($ty)

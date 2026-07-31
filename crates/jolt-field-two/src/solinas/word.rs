@@ -9,7 +9,7 @@
 //! path for sub-word primes, with a BMI2 variant on x86-64).
 
 use crate::PseudoMersenne;
-use crate::{CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 use rand_core::RngCore;
 
 /// Trial-division primality check, cheap enough for CTFE at u32 scale.
@@ -292,15 +292,18 @@ macro_rules! define_solinas_prime {
             }
         }
 
-        impl<const P: $word> CanonicalEncoding for $name<P> {
+        impl<const P: $word> CanonicalBytes for $name<P> {
             const NUM_BYTES: usize = (<$word>::BITS / 8) as usize;
-            const MODULUS_BITS: u32 = Self::BITS;
 
             #[inline(always)]
             fn to_bytes_le(&self, out: &mut [u8]) {
                 assert_eq!(out.len(), Self::NUM_BYTES);
                 out.copy_from_slice(&self.0.to_le_bytes());
             }
+        }
+
+        impl<const P: $word> CanonicalEncoding for $name<P> {
+            const MODULUS_BITS: u32 = Self::BITS;
 
             #[inline(always)]
             fn from_bytes_le_reduced(bytes: &[u8]) -> Self {

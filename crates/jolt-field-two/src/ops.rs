@@ -170,9 +170,9 @@ macro_rules! impl_serde_bytes {
     (impl[$($g:tt)*] $ty:ty, $n:expr) => {
         impl<$($g)*> ::serde::Serialize for $ty {
             fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                debug_assert_eq!($n, <$ty as $crate::CanonicalEncoding>::NUM_BYTES);
+                debug_assert_eq!($n, <$ty as $crate::CanonicalBytes>::NUM_BYTES);
                 let mut buf = [0u8; $n];
-                $crate::CanonicalEncoding::to_bytes_le(self, &mut buf);
+                $crate::CanonicalBytes::to_bytes_le(self, &mut buf);
                 <[u8; $n]>::serialize(&buf, serializer)
             }
         }

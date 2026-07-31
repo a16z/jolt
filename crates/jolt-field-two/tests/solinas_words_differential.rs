@@ -9,12 +9,12 @@ use jolt_field as base;
 use jolt_field_two as two;
 
 use base::{
-    CanonicalBytes, CanonicalField, CanonicalRepr, FromPrimitiveInt, HalvingField,
+    CanonicalBytes as BaseCanonicalBytes, CanonicalField, CanonicalRepr, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RingCore,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{Accumulator as _, CanonicalEncoding, Field as _, JoltField, PseudoMersenne, Ring};
+use two::{Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0x5011_a5a5)
@@ -48,8 +48,8 @@ macro_rules! check_prime {
             <$base as PseudoMersenneField>::MODULUS_OFFSET
         );
         assert_eq!(
-            <$two as CanonicalEncoding>::NUM_BYTES,
-            <$base as CanonicalBytes>::NUM_BYTES
+            <$two as CanonicalBytes>::NUM_BYTES,
+            <$base as BaseCanonicalBytes>::NUM_BYTES
         );
 
         let cfg = bincode::config::standard();
@@ -176,7 +176,7 @@ macro_rules! check_prime {
         );
 
         // Non-canonical wire encodings rejected (encode p itself).
-        let n = <$two as CanonicalEncoding>::NUM_BYTES;
+        let n = <$two as CanonicalBytes>::NUM_BYTES;
         let p_bytes = &p.to_le_bytes()[..n];
         assert_eq!(
             <$two as CanonicalEncoding>::from_bytes_le_checked(p_bytes),

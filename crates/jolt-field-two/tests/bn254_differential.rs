@@ -14,7 +14,7 @@ use base::{
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{Accumulator as _, CanonicalEncoding, Field as _, Ring};
+use two::{Accumulator as _, CanonicalBytes as _, CanonicalEncoding, Field as _, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xb254_b254)
