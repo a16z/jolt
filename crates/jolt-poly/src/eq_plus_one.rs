@@ -70,6 +70,10 @@ impl<F: Field> EqPlusOnePolynomial<F> {
     /// partial `eq` table and a product of the remaining `r` coordinates.
     pub fn evals(r: &[F], scaling_factor: Option<F>) -> (Vec<F>, Vec<F>) {
         let ell = r.len();
+        assert!(
+            ell < usize::BITS as usize,
+            "point dimension {ell} exceeds usize shift width"
+        );
         let size = 1usize << ell;
         let mut eq_evals: Vec<F> = unsafe_allocate_zero_vec(size);
         eq_evals[0] = scaling_factor.unwrap_or(F::one());
@@ -146,6 +150,11 @@ impl<F: Field> EqPlusOnePrefixSuffix<F> {
     ///
     /// Splits at `r.len() / 2`: the first half is `r_hi`, the second is `r_lo`.
     pub fn new(r: &[F]) -> Self {
+        assert!(
+            r.len() < usize::BITS as usize,
+            "point dimension {} exceeds usize shift width",
+            r.len()
+        );
         let mid = r.len() / 2;
         let (r_hi, r_lo) = r.split_at(mid);
 
@@ -306,6 +315,13 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds usize shift width")]
+    fn evals_rejects_shift_overflowing_dimension() {
+        let r = vec![Fr::one(); usize::BITS as usize];
+        let _ = EqPlusOnePolynomial::evals(&r, None);
     }
 
     #[test]
