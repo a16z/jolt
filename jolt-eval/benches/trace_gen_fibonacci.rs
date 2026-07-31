@@ -10,6 +10,9 @@ use jolt_eval::Objective as _;
 // shared `JoltProgram`. Backend variants (`x86`, `x86_fast`) join as
 // additional bench ids in this group.
 fn bench(c: &mut Criterion) {
+    // The tracer env-dispatches to parallel mode; pin serial so
+    // measurements are environment-independent.
+    std::env::remove_var("TRACER_PARALLEL");
     let objective = TraceGenObjective::new(Fibonacci(400000));
     let setup = objective.setup();
     let mut group = c.benchmark_group(objective.name());

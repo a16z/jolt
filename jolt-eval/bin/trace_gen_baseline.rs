@@ -36,6 +36,9 @@ struct Args {
 }
 
 fn main() {
+    // The tracer env-dispatches to parallel mode; pin serial so
+    // baselines are environment-independent.
+    std::env::remove_var("TRACER_PARALLEL");
     let args = Args::parse();
     match args.guest {
         Some(name) => {
