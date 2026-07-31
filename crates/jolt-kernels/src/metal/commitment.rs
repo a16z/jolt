@@ -13,8 +13,10 @@
 //! tier-2   ............[Miller absorb sc0]...[Miller absorb sc1]…[final exps]
 //! ```
 //!
-//! - The **driver** (calling thread) streams superchunks, derives each
-//!   one-hot column's hot addresses, bucket-sorts them into per
+//! - The **driver** (calling thread) reads the session's parked trace record
+//!   through unified-memory views. One device extraction pass per
+//!   superchunk derives hot addresses and signed increments; the driver
+//!   bucket-sorts those compact values into per
 //!   `(column, window, k)` gather segments, recodes the increment columns'
 //!   i128 row scalars into signed base-256 digit buckets (per
 //!   `(column, window, slot, |digit|)`, scalar and digit signs folded into
@@ -75,6 +77,7 @@ use super::{metal_gate, DeviceBuffer, MetalError, PageAlignedVec};
 use crate::commitment::{
     CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
 };
+use crate::optimized::trace_record::TraceRecord;
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, OptimizedBackend, ProofSession};
 
@@ -218,16 +221,31 @@ impl CommitWitness<Fr, DoryScheme> for MetalCommitWitness {
         // Separately gated so the increment path can be ablated (or raised)
         // without touching the one-hot pipeline.
         let inc_device = metal_gate("commit_inc", cycles);
-        match commit_streaming_metal(
-            ctx,
-            source,
-            &kinds,
-            grid,
-            setup,
-            SUPERCHUNK_CYCLES,
-            MAX_SEGMENT_LEN,
-            inc_device,
-        ) {
+        let committed = if metal_gate("commit_extract", cycles) {
+            let record = TraceRecord::shared::<Fr>(session, source, grid.log_t)?;
+            commit_record_metal(
+                ctx,
+                &record,
+                &kinds,
+                grid,
+                setup,
+                SUPERCHUNK_CYCLES,
+                MAX_SEGMENT_LEN,
+                inc_device,
+            )
+        } else {
+            commit_streaming_metal(
+                ctx,
+                source,
+                &kinds,
+                grid,
+                setup,
+                SUPERCHUNK_CYCLES,
+                MAX_SEGMENT_LEN,
+                inc_device,
+            )
+        };
+        match committed {
             Ok(outputs) => Ok(outputs
                 .into_iter()
                 .zip(ids)
@@ -319,6 +337,136 @@ struct GpuDone {
     inc: Option<(Vec<IncSeg>, Vec<u32>)>,
 }
 
+/// Which source drives the shared Metal commit pipeline. Production takes
+/// the record arm above `commit_extract`; the stream arm is the threshold
+/// fallback and the direct-test seam.
+enum CommitInput<'a> {
+    Stream(&'a dyn RowSource),
+    Record(&'a TraceRecord),
+}
+
+/// One superchunk of compact staging written by `jk_commit_extract` into
+/// page-backed shared memory. Both vectors are column-major.
+struct ExtractedCommitChunk {
+    hot: PageAlignedVec<u32>,
+    increments: PageAlignedVec<i128>,
+}
+
+/// Pass-lifetime zero-copy views of the record lanes. Small fixtures may
+/// use the copying wrapper; production-sized vectors satisfy the no-copy
+/// alignment contract, and the copy census makes a regression visible.
+struct RecordExtractionBuffers<'a> {
+    rows: DeviceBuffer<'a>,
+    rd_pre: DeviceBuffer<'a>,
+    rd_post: DeviceBuffer<'a>,
+    ram_pre: DeviceBuffer<'a>,
+    ram_post: DeviceBuffer<'a>,
+}
+
+impl<'a> RecordExtractionBuffers<'a> {
+    fn new(ctx: &MetalContext, record: &'a TraceRecord) -> Result<Self, MetalError> {
+        let rows = ctx.wrap_slice(record.instruction_rows.as_slice())?;
+        let rd_pre = ctx.wrap_slice(record.registers.rd_pre_value.as_slice())?;
+        let rd_post = ctx.wrap_slice(record.registers.rd_post_value.as_slice())?;
+        let ram_pre = ctx.wrap_slice(record.ram.pre_values.as_slice())?;
+        let ram_post = ctx.wrap_slice(record.ram.post_values.as_slice())?;
+        super::testing::note_copied_buffers(
+            [
+                rows.was_copied(),
+                rd_pre.was_copied(),
+                rd_post.was_copied(),
+                ram_pre.was_copied(),
+                ram_post.was_copied(),
+            ]
+            .into_iter()
+            .map(u64::from)
+            .sum(),
+        );
+        Ok(Self {
+            rows,
+            rd_pre,
+            rd_post,
+            ram_pre,
+            ram_post,
+        })
+    }
+}
+
+fn one_hot_device_meta(one_hot: &[(usize, ColumnKind)]) -> Vec<u32> {
+    one_hot
+        .iter()
+        .flat_map(|(_, kind)| match kind {
+            ColumnKind::InstructionRa(selector) => [0, selector.shift() as u32],
+            ColumnKind::BytecodeRa(selector) => [1, selector.shift() as u32],
+            ColumnKind::RamRa(selector) => [2, selector.shift() as u32],
+            ColumnKind::RdInc | ColumnKind::RamInc => {
+                unreachable!("one-hot metadata contains an increment column")
+            }
+        })
+        .collect()
+}
+
+fn increment_device_meta(increments: &[(usize, ColumnKind, DoryPartialCommitment)]) -> Vec<u32> {
+    increments
+        .iter()
+        .map(|(_, kind, _)| match kind {
+            ColumnKind::RdInc => 0,
+            ColumnKind::RamInc => 1,
+            ColumnKind::InstructionRa(_) | ColumnKind::BytecodeRa(_) | ColumnKind::RamRa(_) => {
+                unreachable!("increment metadata contains a one-hot column")
+            }
+        })
+        .collect()
+}
+
+fn extract_record_chunk(
+    ctx: &MetalContext,
+    record: &RecordExtractionBuffers<'_>,
+    one_hot_meta: &[u32],
+    increment_meta: &[u32],
+    one_hot_k: usize,
+    cycle_base: usize,
+    count: usize,
+) -> Result<ExtractedCommitChunk, MetalError> {
+    let n_one_hot = one_hot_meta.len() / 2;
+    let n_inc = increment_meta.len();
+    let mut hot = PageAlignedVec::from_elem(0u32, n_one_hot * count);
+    let mut increments = PageAlignedVec::from_elem(0i128, n_inc * count);
+    let hot_buffer = hot.device_buffer_mut(ctx)?;
+    let increment_buffer = increments.device_buffer_mut(ctx)?;
+    let one_hot_meta_buffer = ctx.wrap_slice(one_hot_meta)?;
+    let increment_meta_buffer = ctx.wrap_slice(increment_meta)?;
+    let u32_param = |value: usize, label: &'static str| {
+        u32::try_from(value).map_err(|_| MetalError::Execution(format!("{label} overflows u32")))
+    };
+    let params = [
+        u32_param(count, "commit extract count")?,
+        u32_param(cycle_base, "commit extract base")?,
+        u32_param(n_one_hot, "commit extract one-hot columns")?,
+        u32_param(n_inc, "commit extract increment columns")?,
+        u32_param(one_hot_k - 1, "commit extract one-hot mask")?,
+    ];
+    ctx.run_once(
+        KernelId::CommitExtract,
+        &params,
+        &[
+            &record.rows,
+            &record.rd_pre,
+            &record.rd_post,
+            &record.ram_pre,
+            &record.ram_post,
+            &one_hot_meta_buffer,
+            &increment_meta_buffer,
+            &hot_buffer,
+            &increment_buffer,
+        ],
+        (n_one_hot * count).max(n_inc * count),
+    )?;
+    drop(increment_buffer);
+    drop(hot_buffer);
+    Ok(ExtractedCommitChunk { hot, increments })
+}
+
 /// The streaming metal commit at explicit superchunk width and segment cap
 /// (tests shrink both to force multi-delivery and multi-segment reduction).
 /// Returns per-column outputs in `kinds` order. `inc_device` routes the
@@ -336,6 +484,63 @@ struct GpuDone {
 fn commit_streaming_metal(
     ctx: &'static MetalContext,
     source: &dyn RowSource,
+    kinds: &[ColumnKind],
+    grid: CommitmentGrid,
+    setup: &DoryProverSetup,
+    superchunk_cycles: usize,
+    max_segment_len: usize,
+    inc_device: bool,
+) -> Result<Vec<(DoryCommitment, DoryHint)>, MetalCommitError> {
+    commit_metal(
+        ctx,
+        CommitInput::Stream(source),
+        kinds,
+        grid,
+        setup,
+        superchunk_cycles,
+        max_segment_len,
+        inc_device,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal seam; the trailing three are the test/ablation knobs"
+)]
+fn commit_record_metal(
+    ctx: &'static MetalContext,
+    record: &TraceRecord,
+    kinds: &[ColumnKind],
+    grid: CommitmentGrid,
+    setup: &DoryProverSetup,
+    superchunk_cycles: usize,
+    max_segment_len: usize,
+    inc_device: bool,
+) -> Result<Vec<(DoryCommitment, DoryHint)>, MetalCommitError> {
+    commit_metal(
+        ctx,
+        CommitInput::Record(record),
+        kinds,
+        grid,
+        setup,
+        superchunk_cycles,
+        max_segment_len,
+        inc_device,
+    )
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "worker joins fail only on a panicked worker (which must propagate); the \
+              output expect is the one-hot/increment kind exhaustiveness"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal seam; the trailing three are the test/ablation knobs"
+)]
+fn commit_metal(
+    ctx: &'static MetalContext,
+    input: CommitInput<'_>,
     kinds: &[ColumnKind],
     grid: CommitmentGrid,
     setup: &DoryProverSetup,
@@ -513,7 +718,7 @@ fn commit_streaming_metal(
             (accumulators, rows, inc_rows)
         });
 
-        let mut consumers = (MetalColumns {
+        let new_consumer = || MetalColumns {
             tx: Some(tx_jobs),
             send_failed: false,
             one_hot: &one_hot,
@@ -531,21 +736,38 @@ fn commit_streaming_metal(
             windows_total,
             max_segment_len,
             setup,
-        },);
-        let stream_result = stream_witnesses(
-            source,
-            0..cycles,
-            row_width * windows_per_sc,
-            &mut consumers,
-        );
-        let mut consumer = consumers.0;
+        };
+        let (drive_result, mut consumer) = match input {
+            CommitInput::Stream(source) => {
+                let mut consumers = (new_consumer(),);
+                let result = stream_witnesses(
+                    source,
+                    0..cycles,
+                    row_width * windows_per_sc,
+                    &mut consumers,
+                )
+                .map_err(MetalCommitError::Witness);
+                (result, consumers.0)
+            }
+            CommitInput::Record(record) => {
+                let mut consumer = new_consumer();
+                let result = drive_record_commit(
+                    ctx,
+                    record,
+                    &mut consumer,
+                    cycles,
+                    row_width * windows_per_sc,
+                );
+                (result, consumer)
+            }
+        };
         // Close the job queue so the GPU lane drains and exits; the tier-2
         // lane then drains the done queue and exits.
         consumer.tx = None;
         let gpu_result = gpu.join().expect("GPU lane panicked");
         let (accumulators, rows, inc_rows) = tier2.join().expect("tier-2 lane panicked");
 
-        stream_result.map_err(MetalCommitError::Witness)?;
+        drive_result?;
         gpu_result?;
         if consumer.send_failed {
             // Unreachable when gpu_result was Ok, but keep the pass honest.
@@ -994,6 +1216,81 @@ impl StreamConsumer for MetalColumns<'_> {
     }
 }
 
+impl MetalColumns<'_> {
+    fn consume_extracted(&mut self, chunk: ExtractedCommitChunk, count: usize) {
+        debug_assert!(count.is_multiple_of(self.row_width));
+        let n_windows = count / self.row_width;
+        let window_base = self.windows_fed;
+        self.windows_fed += n_windows;
+
+        if let Some(tx) = &self.tx {
+            if !self.send_failed {
+                let mut job = build_gpu_job_from_hot(
+                    &chunk.hot,
+                    self.one_hot.len(),
+                    count,
+                    self.row_width,
+                    self.one_hot_k,
+                    window_base,
+                    self.windows_total,
+                    self.max_segment_len,
+                );
+                if self.inc_device && !self.increments.is_empty() {
+                    job.inc = build_inc_job_flat(
+                        &chunk.increments,
+                        self.increments.len(),
+                        count,
+                        self.row_width,
+                        window_base,
+                        self.max_segment_len,
+                    );
+                }
+                if tx.send(job).is_err() {
+                    self.send_failed = true;
+                }
+            }
+        }
+
+        if !self.inc_device {
+            for (column, (_, _, partial)) in self.increments.iter_mut().enumerate() {
+                let start = column * count;
+                DoryScheme::feed_i128_rows(
+                    partial,
+                    &chunk.increments[start..start + count],
+                    self.row_width,
+                    self.setup,
+                );
+            }
+        }
+    }
+}
+
+fn drive_record_commit(
+    ctx: &MetalContext,
+    record: &TraceRecord,
+    consumer: &mut MetalColumns<'_>,
+    cycles: usize,
+    chunk_cycles: usize,
+) -> Result<(), MetalCommitError> {
+    let buffers = RecordExtractionBuffers::new(ctx, record)?;
+    let one_hot_meta = one_hot_device_meta(consumer.one_hot);
+    let increment_meta = increment_device_meta(&consumer.increments);
+    for cycle_base in (0..cycles).step_by(chunk_cycles) {
+        let count = chunk_cycles.min(cycles - cycle_base);
+        let chunk = extract_record_chunk(
+            ctx,
+            &buffers,
+            &one_hot_meta,
+            &increment_meta,
+            consumer.one_hot_k,
+            cycle_base,
+            count,
+        )?;
+        consumer.consume_extracted(chunk, count);
+    }
+    Ok(())
+}
+
 /// Bucket a superchunk's one-hot hot addresses into gather segments:
 /// count-sort per `(column, window)` into a flat index array (bucket-major,
 /// columns outermost), then split buckets at the segment cap.
@@ -1006,16 +1303,46 @@ fn build_gpu_job(
     windows_total: usize,
     max_segment_len: usize,
 ) -> GpuJob {
-    let n_windows = chunk.len() / row_width;
-    let n_cw = one_hot.len() * n_windows;
-    let buckets_per_cw = one_hot_k;
-
-    // Hot addresses per column — the same per-column derivation the CPU
-    // kernel feeds `process_one_hot_chunks`.
-    let hot: Vec<Vec<Option<usize>>> = one_hot
+    const COLD: u32 = u32::MAX;
+    let hot: Vec<u32> = one_hot
         .par_iter()
-        .map(|(_, kind)| chunk.iter().map(|row| kind.hot_address(row)).collect())
+        .flat_map_iter(|(_, kind)| {
+            chunk
+                .iter()
+                .map(|row| kind.hot_address(row).map_or(COLD, |hot| hot as u32))
+        })
         .collect();
+    build_gpu_job_from_hot(
+        &hot,
+        one_hot.len(),
+        chunk.len(),
+        row_width,
+        one_hot_k,
+        window_base,
+        windows_total,
+        max_segment_len,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "hot staging geometry is explicit"
+)]
+fn build_gpu_job_from_hot(
+    hot: &[u32],
+    n_columns: usize,
+    count: usize,
+    row_width: usize,
+    one_hot_k: usize,
+    window_base: usize,
+    windows_total: usize,
+    max_segment_len: usize,
+) -> GpuJob {
+    const COLD: u32 = u32::MAX;
+    debug_assert_eq!(hot.len(), n_columns * count);
+    let n_windows = count / row_width;
+    let n_cw = n_columns * n_windows;
+    let buckets_per_cw = one_hot_k;
 
     // Bucket counts, (column, window) blocks of `one_hot_k` each.
     let mut counts = vec![0u32; n_cw * buckets_per_cw];
@@ -1024,11 +1351,11 @@ fn build_gpu_job(
         .enumerate()
         .for_each(|(cw, counts)| {
             let (column, window) = (cw / n_windows, cw % n_windows);
-            for hot_row in hot[column][window * row_width..(window + 1) * row_width]
-                .iter()
-                .flatten()
-            {
-                counts[*hot_row] += 1;
+            let start = column * count + window * row_width;
+            for &hot_row in &hot[start..start + row_width] {
+                if hot_row != COLD {
+                    counts[hot_row as usize] += 1;
+                }
             }
         });
 
@@ -1062,13 +1389,11 @@ fn build_gpu_job(
             let mut cursors: Vec<u32> = (0..buckets_per_cw)
                 .map(|k| bucket_starts[cw * buckets_per_cw + k] - base)
                 .collect();
-            for (position, hot_row) in hot[column][window * row_width..(window + 1) * row_width]
-                .iter()
-                .enumerate()
-            {
-                if let Some(hot_row) = hot_row {
-                    block[cursors[*hot_row] as usize] = position as u32;
-                    cursors[*hot_row] += 1;
+            let start = column * count + window * row_width;
+            for (position, &hot_row) in hot[start..start + row_width].iter().enumerate() {
+                if hot_row != COLD {
+                    block[cursors[hot_row as usize] as usize] = position as u32;
+                    cursors[hot_row as usize] += 1;
                 }
             }
         });
@@ -1119,14 +1444,34 @@ fn build_inc_job(
     window_base: usize,
     max_segment_len: usize,
 ) -> Option<IncJob> {
+    let count = increments.first().map_or(0, Vec::len);
+    debug_assert!(increments.iter().all(|column| column.len() == count));
+    let flat: Vec<i128> = increments.iter().flatten().copied().collect();
+    build_inc_job_flat(
+        &flat,
+        increments.len(),
+        count,
+        row_width,
+        window_base,
+        max_segment_len,
+    )
+}
+
+fn build_inc_job_flat(
+    increments: &[i128],
+    n_columns: usize,
+    count: usize,
+    row_width: usize,
+    window_base: usize,
+    max_segment_len: usize,
+) -> Option<IncJob> {
     assert!(
         row_width < SEG_INDEX_SIGN_BIT as usize,
         "row width must leave the gather sign bit free"
     );
-    let n_windows = increments
-        .first()
-        .map_or(0, |column| column.len() / row_width);
-    let n_blocks = increments.len() * n_windows;
+    debug_assert_eq!(increments.len(), n_columns * count);
+    let n_windows = count / row_width;
+    let n_blocks = n_columns * n_windows;
     if n_blocks == 0 {
         return None;
     }
@@ -1139,7 +1484,8 @@ fn build_inc_job(
         .enumerate()
         .for_each(|(block, counts)| {
             let (column, window) = (block / n_windows, block % n_windows);
-            for &value in &increments[column][window * row_width..(window + 1) * row_width] {
+            let start = column * count + window * row_width;
+            for &value in &increments[start..start + row_width] {
                 for_each_signed_digit(value, |slot, magnitude, _| {
                     counts[slot as usize * INC_MAGNITUDES + (magnitude - 1) as usize] += 1;
                 });
@@ -1176,11 +1522,8 @@ fn build_inc_job(
             let mut cursors: Vec<u32> = (0..buckets_per_block)
                 .map(|bucket| bucket_starts[block * buckets_per_block + bucket] - base)
                 .collect();
-            for (position, &value) in increments[column]
-                [window * row_width..(window + 1) * row_width]
-                .iter()
-                .enumerate()
-            {
+            let start = column * count + window * row_width;
+            for (position, &value) in increments[start..start + row_width].iter().enumerate() {
                 for_each_signed_digit(value, |slot, magnitude, negate| {
                     let bucket = slot as usize * INC_MAGNITUDES + (magnitude - 1) as usize;
                     let sign = if negate { SEG_INDEX_SIGN_BIT } else { 0 };
@@ -1310,6 +1653,18 @@ mod tests {
     use super::*;
     use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
 
+    struct CollectedCommitRows {
+        rows: Vec<CommittedColumnsWitness>,
+    }
+
+    impl StreamConsumer for CollectedCommitRows {
+        type Witness = CommittedColumnsWitness;
+
+        fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
+            self.rows.extend_from_slice(chunk);
+        }
+    }
+
     /// Interesting signed-recoding inputs: carry chains, magnitude-128
     /// boundaries, and the extreme i128s (`unsigned_abs` of `i128::MIN`).
     const EDGE_VALUES: [i128; 20] = [
@@ -1425,6 +1780,98 @@ mod tests {
                 assert_eq!(*row, Bn254G1::default(), "untouched row");
             }
         }
+    }
+
+    #[test]
+    fn commit_record_extraction_matches_host_rows() {
+        const COLD: u32 = u32::MAX;
+
+        let _lock = gpu_lock();
+        let shape = FixtureShape {
+            log_t: 6,
+            ram_k: 16,
+        };
+        let ops = vec![
+            RamOp::Write { word: 2, post: 17 },
+            RamOp::Read { word: 2 },
+            RamOp::Write { word: 2, post: 3 },
+            RamOp::None,
+            RamOp::Write { word: 7, post: 29 },
+            RamOp::Read { word: 7 },
+        ];
+        with_ram_fixture(shape, ops, |witness| {
+            let ids: Vec<JoltCommittedPolynomial> = witness
+                .committed_order()
+                .unwrap()
+                .into_iter()
+                .filter(|id| {
+                    !matches!(
+                        id,
+                        JoltCommittedPolynomial::TrustedAdvice
+                            | JoltCommittedPolynomial::UntrustedAdvice
+                    )
+                })
+                .collect();
+            let grid = CommitmentGrid {
+                total_vars: 4 + shape.log_t,
+                log_t: shape.log_t,
+                log_k_chunk: 4,
+                order: TracePolynomialOrder::CycleMajor,
+            };
+            let source: &dyn RowSource = witness;
+            let cycles = 1usize << shape.log_t;
+            let kinds = column_kinds::<Fr>(&ids, grid).unwrap();
+            let one_hot: Vec<_> = kinds
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(_, kind)| kind.is_one_hot())
+                .collect();
+            let setup = DoryScheme::setup_prover(grid.total_vars);
+            let increments: Vec<_> = kinds
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(_, kind)| !kind.is_one_hot())
+                .map(|(position, kind)| (position, kind, DoryScheme::begin(&setup)))
+                .collect();
+
+            let mut host = (CollectedCommitRows {
+                rows: Vec::with_capacity(cycles),
+            },);
+            stream_witnesses(source, 0..cycles, cycles, &mut host).unwrap();
+
+            let mut session = ProofSession::default();
+            let record = TraceRecord::shared::<Fr>(&mut session, source, shape.log_t).unwrap();
+            let ctx = MetalContext::global().expect("metal context");
+            let buffers = RecordExtractionBuffers::new(ctx, &record).unwrap();
+            let chunk = extract_record_chunk(
+                ctx,
+                &buffers,
+                &one_hot_device_meta(&one_hot),
+                &increment_device_meta(&increments),
+                1 << grid.log_k_chunk,
+                0,
+                cycles,
+            )
+            .unwrap();
+
+            let expected_hot: Vec<u32> = one_hot
+                .iter()
+                .flat_map(|(_, kind)| {
+                    host.0
+                        .rows
+                        .iter()
+                        .map(|row| kind.hot_address(row).map_or(COLD, |hot| hot as u32))
+                })
+                .collect();
+            let expected_increments: Vec<i128> = increments
+                .iter()
+                .flat_map(|(_, kind, _)| host.0.rows.iter().map(|row| kind.increment(row)))
+                .collect();
+            assert_eq!(&*chunk.hot, expected_hot);
+            assert_eq!(&*chunk.increments, expected_increments);
+        });
     }
 
     fn assert_same(
@@ -1592,6 +2039,7 @@ mod tests {
         // nextest runs one process per test, so the env writes cannot race
         // another test.
         std::env::set_var("JOLT_METAL_MIN_TERMS_COMMIT", "1");
+        std::env::set_var("JOLT_METAL_MIN_TERMS_COMMIT_EXTRACT", "1");
         std::env::set_var("JOLT_METAL_MIN_TERMS_COMMIT_INC", "1");
         let shape = FixtureShape {
             log_t: 6,
@@ -1600,6 +2048,7 @@ mod tests {
         let ops = vec![
             RamOp::Write { word: 1, post: 5 },
             RamOp::Read { word: 1 },
+            RamOp::Write { word: 1, post: 2 },
             RamOp::Write { word: 7, post: 2 },
         ];
         with_ram_fixture(shape, ops, |witness| {
