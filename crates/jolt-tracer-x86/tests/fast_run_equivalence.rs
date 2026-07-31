@@ -55,6 +55,9 @@ fn setup(package: &str, func: &str, input: Vec<u8>) -> (JoltProgram, TraceInputs
 
 #[test]
 fn fibonacci_fast_run_matches_reference() {
+    // Pin the reference to serial mode (the tracer env-dispatches to the
+    // parallel pipeline).
+    std::env::remove_var("TRACER_PARALLEL");
     let (program, inputs) = setup(
         "fibonacci-guest",
         "fib",
