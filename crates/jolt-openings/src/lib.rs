@@ -41,6 +41,7 @@
 mod claims;
 mod error;
 mod packing;
+mod prefix;
 mod schemes;
 
 pub use claims::{EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim};
@@ -50,6 +51,7 @@ pub use packing::{
     PackedPolynomial, PackedProverGroup, PackedProverObject, PackedVerifierObject,
     PrefixPackedStatement, PrefixPacking, PrefixSlot,
 };
+pub use prefix::{PrefixPackedClaims, PrefixPackedLayout};
 
 pub use schemes::{
     AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, GroupCommitmentMetadata,
