@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-07-31T01:31:56Z",
+  "goal": "Reduce Akita Stage 6 Booleanity work by fusing repeated base-RA and increment lane patterns",
+  "hypothesis": "The first three delayed-binding rounds repeatedly evaluate identical all-zero or lane-zero source tuples, especially in the nine fused-increment columns, so grouping exact tuples can remove field products without changing the sumcheck polynomial",
+  "parent": {
+    "jolt_revision": "2982504980883c14a68c31df93234053c8af4976",
+    "jolt_tree": "c64e30bda60f920b19f9acbcf39f4cca6589d352"
+  },
+  "metric": {
+    "name": "lattice_booleanity_message_plus_ingest_seconds",
+    "direction": "min",
+    "baseline_2e28": 10.54,
+    "minimum_target_gain_fraction": 0.05
+  },
+  "guards": {
+    "proof_must_verify": true,
+    "trace_scaled_allocation_must_not_increase": true,
+    "maximum_rss_bytes": 96636764160,
+    "process_swaps": 0
+  },
+  "evaluator": {
+    "screen_log_t": 22,
+    "target_log_t": 28,
+    "command": "PERF_LOG_T={log_t} PERF_LOG_K_CHUNK=8 PERF_LOOKUPS_RA_VIRTUAL_LOG_K_CHUNK=32 PERF_TRACE=1 cargo nextest run --release -p jolt-prover-legacy --features akita -E 'test(sha2_chain_akita_perf)' --run-ignored all --no-capture --cargo-quiet",
+    "trace_parser": "scripts/perf/analyze_trace.py"
+  },
+  "scope": {
+    "editable": [
+      "crates/jolt-prover-legacy/src/subprotocols/booleanity.rs",
+      "crates/jolt-prover-legacy/src/poly/shared_ra_polys.rs",
+      "crates/jolt-prover-legacy/src/poly/ra_poly.rs"
+    ],
+    "frozen": [
+      "crates/jolt-prover-legacy/src/zkvm/packed.rs",
+      "scripts/perf/analyze_trace.py",
+      "benchmark-runs/perfetto_traces/akita_28_d128_reduced_final.json"
+    ]
+  },
+  "search": {
+    "policy": "analysis then bounded greedy implementation",
+    "max_full_candidates": 3,
+    "candidate_order": [
+      "exact tuple multiplicity probe",
+      "source-aware first-three-round grouping",
+      "fused base-plus-increment pushforward construction"
+    ]
+  }
+}
