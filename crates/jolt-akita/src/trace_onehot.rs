@@ -668,6 +668,18 @@ fn flush_wide_rank<const D: usize>(
     }
 }
 
+fn flush_reduced_rank<const D: usize>(
+    rank_reduced: &mut [CyclotomicRing<AkitaField, D>],
+    reduced: &mut [CyclotomicRing<AkitaField, D>],
+    n_a: usize,
+    a: usize,
+) {
+    for (column, value) in rank_reduced.iter_mut().enumerate() {
+        let index = column * n_a + a;
+        reduced[index] += std::mem::replace(value, CyclotomicRing::zero());
+    }
+}
+
 #[inline(always)]
 fn full_row_coefficients<const N: usize>(
     lanes: &[u8],
@@ -966,7 +978,7 @@ fn commit_packed<const D: usize>(
                         },
                     )?;
                 } else if rank_tiled_k256 {
-                    // Stream one A rank at a time so the active wide accumulators stay in cache.
+                    // Stream one A rank at a time so its destination accumulators fit in cache.
                     let rings_per_row = source.one_hot_k / D;
                     debug_assert!(matches!(rings_per_row, 2 | 4));
                     debug_assert_eq!(ring_start % rings_per_row, 0);
@@ -976,7 +988,16 @@ fn commit_packed<const D: usize>(
                     let mut lanes = vec![NO_HOT_LANE; num_columns];
                     let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
                     let mut ring_masks = vec![[0u32; 4]; K256_ROW_BATCH];
-                    let mut rank_wide = vec![WideCyclotomicRing::zero(); num_columns];
+                    let mut rank_wide = if D == 128 {
+                        Vec::new()
+                    } else {
+                        vec![WideCyclotomicRing::zero(); num_columns]
+                    };
+                    let mut rank_reduced = if D == 128 {
+                        vec![CyclotomicRing::zero(); num_columns]
+                    } else {
+                        Vec::new()
+                    };
                     for tile_start in (row_start..row_end).step_by(K256_ROW_BATCH) {
                         let tile_len = (row_end - tile_start).min(K256_ROW_BATCH);
                         for row_offset in 0..tile_len {
@@ -1009,19 +1030,38 @@ fn commit_packed<const D: usize>(
                                     let ring = trace_row * rings_per_row + ring_offset;
                                     let position = ring - block_ring_start;
                                     let a_col = position * plan.num_digits_inner;
-                                    let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
                                     let mut remaining = mask;
-                                    while remaining != 0 {
-                                        let column = remaining.trailing_zeros() as usize;
-                                        remaining &= remaining - 1;
-                                        let hot =
-                                            hot_values[row_offset * num_columns + column] as usize;
-                                        a_wide
-                                            .shift_accumulate_into(&mut rank_wide[column], hot % D);
+                                    if D == 128 {
+                                        while remaining != 0 {
+                                            let column = remaining.trailing_zeros() as usize;
+                                            remaining &= remaining - 1;
+                                            let hot = hot_values[row_offset * num_columns + column]
+                                                as usize;
+                                            a_row[a_col].shift_accumulate_into(
+                                                &mut rank_reduced[column],
+                                                hot % D,
+                                            );
+                                        }
+                                    } else {
+                                        let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
+                                        while remaining != 0 {
+                                            let column = remaining.trailing_zeros() as usize;
+                                            remaining &= remaining - 1;
+                                            let hot = hot_values[row_offset * num_columns + column]
+                                                as usize;
+                                            a_wide.shift_accumulate_into(
+                                                &mut rank_wide[column],
+                                                hot % D,
+                                            );
+                                        }
                                     }
                                 }
                             }
-                            flush_wide_rank(&mut rank_wide, &mut reduced, plan.n_a, a);
+                            if D == 128 {
+                                flush_reduced_rank(&mut rank_reduced, &mut reduced, plan.n_a, a);
+                            } else {
+                                flush_wide_rank(&mut rank_wide, &mut reduced, plan.n_a, a);
+                            }
                         }
                     }
                 } else {
