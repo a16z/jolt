@@ -18,7 +18,7 @@
 
 use akita_pcs::AkitaTranscript;
 use akita_prover::ProverOpeningData;
-use akita_types::{BasisMode, OpeningClaims, PointVariableSelection, PolynomialGroupClaims};
+use akita_types::{BasisMode, OpeningClaims, PolynomialGroupClaims};
 use jolt_openings::{BatchOpeningScheme, OpeningsError, VerifierOpeningClaim};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
@@ -196,13 +196,10 @@ fn single_group_batch<'a, P>(
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
 ) -> Result<ProverOpeningData<'a, AkitaField, P, AkitaField>, OpeningsError> {
-    let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).map_err(akita_error)?,
-        evaluations.to_vec(),
-        backend_commitment,
-    )
-    .map_err(akita_error)?;
-    let claims = OpeningClaims::from_groups(point.to_vec(), vec![group]).map_err(akita_error)?;
+    let group =
+        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), backend_commitment)
+            .map_err(akita_error)?;
+    let claims = OpeningClaims::from_groups(vec![group]).map_err(akita_error)?;
     ProverOpeningData::new(claims, vec![backend_hint], vec![polynomials]).map_err(akita_error)
 }
 
@@ -417,14 +414,9 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             .iter()
             .map(|claim| claim.evaluation.value)
             .collect();
-        let group = PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(backend_point.len(), backend_point.len())
-                .map_err(akita_error)?,
-            openings,
-            &backend_commitment,
-        )
-        .map_err(akita_error)?;
-        let claims = OpeningClaims::from_groups(backend_point, vec![group]).map_err(akita_error)?;
+        let group = PolynomialGroupClaims::new(backend_point, openings, &backend_commitment)
+            .map_err(akita_error)?;
+        let claims = OpeningClaims::from_groups(vec![group]).map_err(akita_error)?;
         with_backend_pool(|| match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => AkitaBackendScheme::batched_verify(
                 &backend_proof,
