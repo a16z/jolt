@@ -24,6 +24,19 @@ use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
 
+/// Prover-only cleanup after a commitment has produced its opening hint.
+pub trait PostCommitmentCleanup: CommitmentScheme {
+    /// Releases backend state that can be reconstructed from the setup or
+    /// opening hint before the opening proof needs it again.
+    fn release_post_commit_residency(setup: &Self::ProverSetup, hint: &Self::OpeningHint);
+}
+
+impl PostCommitmentCleanup for AkitaScheme {
+    fn release_post_commit_residency(setup: &Self::ProverSetup, _hint: &Self::OpeningHint) {
+        setup.release_post_commit_ntt_residency();
+    }
+}
+
 impl AkitaScheme {
     /// Returns true when the Akita backend sparse-ring path can represent a
     /// unit-valued sparse polynomial with this multilinear dimension.

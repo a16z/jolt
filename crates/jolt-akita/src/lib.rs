@@ -19,7 +19,7 @@ pub use adapters::{
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
-pub use scheme::AkitaScheme;
+pub use scheme::{AkitaScheme, PostCommitmentCleanup};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.

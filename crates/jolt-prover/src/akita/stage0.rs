@@ -53,7 +53,7 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + jolt_akita::PostCommitmentCleanup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
@@ -171,6 +171,7 @@ where
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
+    PCS::release_post_commit_residency(&preprocessing.pcs_setup, &hint);
 
     // The per-proof untrusted-advice byte object; the trusted object is
     // precommitted (its commitment arrives as an argument).
