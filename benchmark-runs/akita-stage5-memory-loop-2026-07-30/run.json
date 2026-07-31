@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-07-31T03:14:00Z",
+  "recorded_at": "2026-07-31T03:41:29Z",
   "goal": "Remove high-T PIOP memory traffic without changing the proof or increasing analytical memory",
   "parent": {
     "jolt_revision": "dc035d36abba86149133b02f27f822176dc2c1ca",
     "jolt_tree": "1ca83a5f0ebfe4bbc4fb48b3e2be0e827a0504e3"
   },
   "accepted": {
-    "jolt_revision": "f25ca8e656502316adee7b2a7f387521d1272561",
-    "jolt_tree": "1094f346859d19a15336bf392a5abaa09b48dea2"
+    "jolt_revision": "55213e9fa412effa687972b34ba49143c58eabc2",
+    "jolt_tree": "6a3dd21797edeed4beb47f37d29d3e7787aac0cd"
   },
   "evaluator": {
     "screen_log_t": 22,

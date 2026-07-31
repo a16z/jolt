@@ -18,6 +18,8 @@ peak-RSS and swap counters.
    Booleanity rounds.
 2. Fuse read-RAF `u_evals` condensation into the existing RAF-Q scan.
 3. Store per-table read-RAF cycle buckets as `u32` instead of `usize`.
+4. Replace one full `CycleData` scan per lookup table with a bounded
+   count-and-fill construction.
 
 Each candidate changes prover evaluation or storage only. Sumcheck messages,
 claims, transcript order, verifier behavior, K256, D128, and the Akita

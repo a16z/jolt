@@ -4,9 +4,12 @@ Date: 2026-07-30 EDT
 
 ## Outcome
 
-One structural optimization landed as `f25ca8e65`: the instruction read-RAF
-prover now stores its per-table cycle buckets as `u32` indices instead of
-64-bit `usize` values.
+Two stacking optimizations landed:
+
+- `f25ca8e65` stores per-table read-RAF cycle buckets as `u32` indices
+  instead of 64-bit `usize` values;
+- `55213e9fa` builds those buckets with one count pass and one exact-offset
+  fill instead of rescanning all cycle data once per lookup table.
 
 At `T = 2^28`, the exact retained bucket capacity falls from
 1,689,155,368 to 844,577,684 bytes, a reduction of 805.45 MiB. The buckets
@@ -39,6 +42,29 @@ controls to 0.587 seconds. Stage 5 remained inside the control range, the
 proof verified, maximum RSS was 36,258,349,056 bytes, and the process
 reported zero swaps.
 
+## Exact-offset bucket construction
+
+The original builder ran one parallel filter over all `CycleData` for every
+lookup table. The accepted replacement first counts table membership per
+worker chunk, computes disjoint output offsets, allocates every final bucket
+once at exact capacity, and fills those ranges in parallel. Its temporary
+metadata is proportional to `workers × tables`; retained bucket storage and
+ordering are unchanged.
+
+| `2^28` metric | Compact-bucket parent | Exact-offset builder | Change |
+|---|---:|---:|---:|
+| Bucket construction (`Extract vectors`) | 1.009 s | 0.220 s | -78.2% |
+| Read-RAF initialization | 2.156 s | 1.297 s | -39.8% |
+| All read-RAF phase initialization | 8.382 s | 8.204 s | -2.1% |
+| Stage 5 | 15.479 s | 14.487 s | -6.4% |
+| Prover | 194.002 s | 188.611 s | not wholly attributed |
+| Maximum RSS | 81.513 GiB | 81.614 GiB | effectively unchanged |
+| Process swaps | 0 | 0 | unchanged |
+
+At `2^26`, bucket construction fell from 0.243 to 0.064 seconds, read-RAF
+initialization from 0.587 to 0.413 seconds, and Stage 5 from 5.030 to 4.658
+seconds. The proof verified with zero swaps.
+
 ## Rejected candidates
 
 ### Source-aware increment zero lanes
@@ -53,6 +79,14 @@ cost outweighed the removed products, so the source was restored.
 Seven post-phase `u_evals` updates were moved into the existing RAF-Q scan.
 The old Q-plus-update total was 78.737 ms; the fused Q scan was 78.744 ms.
 This moved rather than removed the cost and did not justify a larger run.
+
+### Allocating one-pass bucket reduction
+
+A first attempt accumulated one bucket set per worker, merged those vectors,
+and called `shrink_to_fit`. It looked good at `2^22` (4.6 ms construction)
+but took 6.60 seconds at `2^26`, versus 0.20 seconds for the parent. Repeated
+growth and merging made the design super-linear. The exact-offset builder
+above keeps the scan-count benefit while removing that allocator behavior.
 
 ## Validation
 
@@ -72,3 +106,8 @@ This moved rather than removed the cost and did not justify a larger run.
 - `benchmark-runs/perfetto_traces/akita_readraf_u32_buckets_22b.json`
 - `benchmark-runs/perfetto_traces/akita_readraf_u32_buckets_26.json`
 - `benchmark-runs/perfetto_traces/akita_28_u32_buckets.json`
+- `benchmark-runs/perfetto_traces/akita_readraf_onepass_buckets_22a.json`
+- `benchmark-runs/perfetto_traces/akita_readraf_onepass_buckets_26.json`
+- `benchmark-runs/perfetto_traces/akita_readraf_exact_buckets_22.json`
+- `benchmark-runs/perfetto_traces/akita_readraf_exact_buckets_26.json`
+- `benchmark-runs/perfetto_traces/akita_28_exact_buckets.json`
