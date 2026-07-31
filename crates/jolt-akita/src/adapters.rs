@@ -174,6 +174,20 @@ impl AkitaProverSetup {
         self.verifier.one_hot_k
     }
 
+    /// Releases transformed setup slots after the trace commitment. Later
+    /// opening work rebuilds the slots on first use.
+    pub fn release_post_commit_ntt_residency(&self) {
+        for prepared in [
+            self.prepared_backend_setup.as_deref(),
+            self.prepared_one_hot_backend_setup.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _freed = prepared.drop_built_ntt_slots();
+        }
+    }
+
     pub(crate) fn dense_backend(
         &self,
     ) -> Result<(&AkitaBackendProverSetup, &AkitaBackendPreparedSetup), OpeningsError> {
