@@ -3252,6 +3252,7 @@ name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "bincode 2.0.1",
  "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-claims-derive",
