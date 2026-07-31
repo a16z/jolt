@@ -4,6 +4,14 @@
 //! instruction semantics. The bridge constraints here use a native single-field
 //! representation for ordinary values; multi-limb bridge packing should be
 //! layered on once those bridge payloads are explicit in the trace.
+//!
+//! WARNING: the load/store/imm bridge rows are placeholder identity
+//! equalities with no range or canonical-encoding binding (spec
+//! `field-inline-protocol.md` step 5: `decode_x_register` /
+//! `encode_field_register` / `decode_immediate`). Until that lands, a bridge
+//! row can equate a full field element with a shared 64-bit RV64 column
+//! (e.g. `RdWriteValue`), so the composed matrices are unsound as a verifier
+//! statement and must not back a proof path.
 
 use crate::constraint::SparseRow;
 use jolt_field::Field;
