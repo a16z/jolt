@@ -267,12 +267,14 @@ jobs:
       # regardless of trace length — past the 16 GB hosted-runner RAM, which
       # otherwise kills the runner mid-prove ("runner received a shutdown
       # signal").
+      # /mnt: the runner's ephemeral data disk (~65 GB free); the root
+      # /swapfile already exists and is active on hosted runners.
       - name: Add swap for the reference backend
         run: |
-          sudo fallocate -l 10G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo fallocate -l 10G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rust-src
