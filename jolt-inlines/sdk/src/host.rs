@@ -157,6 +157,12 @@ pub fn mulq_quotient_advice(
 /// The returned `result` is `a / b`; `quotient` is `w` such that
 /// `b * result = w * q + a`. Runtime advice rows consume these values as
 /// `result[0], quotient[0], result[1], quotient[1], ...`.
+///
+/// WARNING: `field_inv_mul` is expected to panic when `b == 0`. No advice
+/// satisfies `b * result == a mod q` for a zero divisor, so the inline's
+/// `VirtualAssertEQ` rows would fail and abort tracing anyway — panicking here
+/// keeps the diagnostic. Callers must reject zero divisors before the inline
+/// (see `AffinePoint::double_and_add` and the `ecdsa_verify` input checks).
 pub fn mulq_division_advice(
     operands: &FormatInline,
     cpu: &mut Cpu,
