@@ -94,7 +94,7 @@ impl ChunkedExecutionBackend for TracerBackend {
         }
 
         let mut iter = GeneralizedLazyTraceIter::new(CheckpointingTracer::new(
-            crate::setup_emulator_with_backtraces(
+            crate::create_emulator(
                 program.elf_bytes(),
                 self.elf_path.as_ref(),
                 &inputs.inputs,

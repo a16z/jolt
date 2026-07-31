@@ -1471,10 +1471,7 @@ impl Cpu {
         self.executed_instrs = state.executed_instrs;
         self.active_markers.clear();
         self.call_stack.clear();
-        self.advice_tape = AdviceTape {
-            data: state.advice_suffix.clone(),
-            read_position: 0,
-        };
+        self.advice_tape = AdviceTape::from_bytes(state.advice_suffix.clone());
         #[cfg(feature = "field-inline")]
         {
             self.field_registers = state.field_registers.clone();
