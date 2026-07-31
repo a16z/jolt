@@ -16,6 +16,8 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
+use crate::trace_onehot::TracePackedOneHot;
+
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = crate::configs::JoltD64Dense;
 pub(crate) type AkitaOneHotK16Config = crate::configs::JoltD64OneHotK16;
@@ -547,11 +549,25 @@ pub struct AkitaProverHint {
 /// time and reused when opening. The variant doubles as the source-kind
 /// discriminator, so a hint can never pair one kind's metadata with another
 /// kind's polynomials.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
     OneHot(Arc<[AkitaBackendOneHotPoly]>),
+    TraceOneHot(Arc<[TracePackedOneHot]>),
     SparseUnit(Arc<[AkitaBackendSparsePoly]>),
+}
+
+impl Clone for AkitaHintPolynomials {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Dense(polys) => Self::Dense(Arc::clone(polys)),
+            Self::OneHot(polys) => Self::OneHot(Arc::clone(polys)),
+            Self::TraceOneHot(polys) => {
+                Self::TraceOneHot(polys.iter().cloned().collect::<Vec<_>>().into())
+            }
+            Self::SparseUnit(polys) => Self::SparseUnit(Arc::clone(polys)),
+        }
+    }
 }
 
 impl Default for AkitaHintPolynomials {
@@ -564,7 +580,7 @@ impl AkitaHintPolynomials {
     pub(crate) const fn backend_flavor(&self) -> AkitaBackendFlavor {
         match self {
             Self::Dense(_) | Self::SparseUnit(_) => AkitaBackendFlavor::Dense,
-            Self::OneHot(_) => AkitaBackendFlavor::OneHot,
+            Self::OneHot(_) | Self::TraceOneHot(_) => AkitaBackendFlavor::OneHot,
         }
     }
 
@@ -572,6 +588,7 @@ impl AkitaHintPolynomials {
         match self {
             Self::Dense(_) => "dense",
             Self::OneHot(_) => "one_hot",
+            Self::TraceOneHot(_) => "trace_one_hot",
             Self::SparseUnit(_) => "sparse_unit",
         }
     }
@@ -580,6 +597,7 @@ impl AkitaHintPolynomials {
         match self {
             Self::Dense(polys) => polys.len(),
             Self::OneHot(polys) => polys.len(),
+            Self::TraceOneHot(polys) => polys.len(),
             Self::SparseUnit(polys) => polys.len(),
         }
     }
@@ -587,6 +605,9 @@ impl AkitaHintPolynomials {
     pub(crate) fn one_hot_k(&self) -> Option<usize> {
         match self {
             Self::OneHot(polys) => polys
+                .first()
+                .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
+            Self::TraceOneHot(polys) => polys
                 .first()
                 .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
             Self::Dense(_) | Self::SparseUnit(_) => None,

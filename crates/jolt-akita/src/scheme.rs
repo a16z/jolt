@@ -8,6 +8,7 @@ use jolt_openings::{
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
@@ -20,6 +21,7 @@ use crate::adapters::{
     AKITA_ONE_HOT_K256,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
+use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
@@ -29,6 +31,16 @@ pub trait PostCommitmentCleanup: CommitmentScheme {
     /// Releases backend state that can be reconstructed from the setup or
     /// opening hint before the opening proof needs it again.
     fn release_post_commit_residency(setup: &Self::ProverSetup, hint: &Self::OpeningHint);
+}
+
+/// Prover seam for committing the packed trace directly from row-major hot lanes.
+pub trait TraceOneHotCommitment: CommitmentScheme {
+    fn commit_trace_one_hot(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        column_capacity: usize,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 }
 
 impl PostCommitmentCleanup for AkitaScheme {
@@ -173,6 +185,43 @@ impl AkitaScheme {
         )
     }
 
+    /// Commits the prefix-packed trace without constructing padded per-column
+    /// index vectors or Akita's generic one-hot block representation.
+    pub fn commit_trace_one_hot(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        column_capacity: usize,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let source = TracePackedOneHot::new(setup.one_hot_k(), AKITA_D, column_capacity, rows)
+            .map_err(commit_failed)?;
+        let num_vars = akita_prover::RootPolyMeta::num_vars(&source);
+        Self::validate_commit_shape(setup, num_vars, 1)?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+            ),
+            _ => unreachable!("one-hot K is validated during setup"),
+        })
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::TraceOneHot(vec![source].into()),
+        )
+    }
+
     /// Opens committed one-hot columns directly from their hint. The hint
     /// owns the witnesses after [`Self::commit_one_hot_group_owned`], so no
     /// second Jolt-side allocation is required.
@@ -284,6 +333,17 @@ impl AkitaScheme {
             backend_hint,
             AkitaHintPolynomials::Dense(dense.into()),
         )
+    }
+}
+
+impl TraceOneHotCommitment for AkitaScheme {
+    fn commit_trace_one_hot(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        column_capacity: usize,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Self::commit_trace_one_hot(setup, layout_digest, column_capacity, rows)
     }
 }
 

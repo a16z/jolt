@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 default = ["parallel"]
-parallel = ["jolt-kernels/parallel"]
+parallel = ["jolt-kernels/parallel", "dep:rayon"]
 prover-fixtures = ["jolt-prover-legacy/host"]
 # The packed (lattice/Akita) protocol. Like jolt-verifier, one compiled
 # prover proves exactly one protocol: this feature swaps the proof shape to
@@ -51,6 +51,7 @@ jolt-verifier.workspace = true
 jolt-witness.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 bincode.workspace = true

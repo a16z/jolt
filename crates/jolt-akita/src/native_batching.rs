@@ -17,7 +17,7 @@
 //! embeds the backend proof bytes wholesale.
 
 use akita_pcs::AkitaTranscript;
-use akita_prover::ProverOpeningData;
+use akita_prover::{CpuBackend, ProverOpeningData};
 use akita_types::{BasisMode, OpeningClaims, PolynomialGroupClaims};
 use jolt_openings::{BatchOpeningScheme, OpeningsError, VerifierOpeningClaim};
 use jolt_poly::MultilinearPoly;
@@ -27,11 +27,11 @@ use tracing::info_span;
 use crate::adapters::{
     akita_error, append_batch_statement, append_verifier_setup, backend_stack,
     bridge_jolt_statement_challenge, invalid_batch, prove_failed, reverse_point, serialize_akita,
-    with_backend_pool, AkitaBackendCommitment, AkitaBackendFlavor, AkitaBackendHint,
-    AkitaBackendOneHotPoly, AkitaBackendProof, AkitaBackendScheme, AkitaBatchProof,
-    AkitaCommitment, AkitaField, AkitaHintPolynomials, AkitaOneHotK16BackendScheme,
-    AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    with_backend_pool, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
+    AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBackendProof, AkitaBackendScheme,
+    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHintPolynomials,
+    AkitaOneHotK16BackendScheme, AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup,
+    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
@@ -149,7 +149,9 @@ fn validate_witness(
     }
     if matches!(
         hint.polynomials,
-        AkitaHintPolynomials::OneHot(_) | AkitaHintPolynomials::SparseUnit(_)
+        AkitaHintPolynomials::OneHot(_)
+            | AkitaHintPolynomials::TraceOneHot(_)
+            | AkitaHintPolynomials::SparseUnit(_)
     ) && !polynomials.iter().all(|polynomial| polynomial.is_one_hot())
     {
         return Err(invalid_batch(format!(
@@ -228,15 +230,19 @@ macro_rules! prove_dense_backend {
 
 /// The one-hot backend consumes the point in reversed variable order and uses
 /// the dedicated one-hot setup pair.
-fn prove_one_hot(
+fn prove_one_hot<P>(
     setup: &AkitaProverSetup,
     point: &[AkitaField],
     evaluations: &[AkitaField],
-    polynomials: &[&AkitaBackendOneHotPoly],
+    polynomials: &[&P],
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
     akita_transcript: &mut AkitaTranscript<AkitaField>,
-) -> Result<AkitaBackendProof, OpeningsError> {
+) -> Result<AkitaBackendProof, OpeningsError>
+where
+    P: akita_prover::RuntimeRootProvePoly<AkitaField>,
+    CpuBackend: akita_prover::RecursiveProveBackend<AkitaField, P, AkitaBackendExtField>,
+{
     let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
     let backend_point = reverse_point(point);
     let claims = single_group_batch(
@@ -332,7 +338,19 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             }
             AkitaHintPolynomials::OneHot(one_hot) => {
                 let refs = one_hot.iter().collect::<Vec<_>>();
-                prove_one_hot(
+                prove_one_hot::<AkitaBackendOneHotPoly>(
+                    setup,
+                    point,
+                    &evaluations,
+                    &refs,
+                    backend_commitment,
+                    backend_hint,
+                    &mut akita_transcript,
+                )?
+            }
+            AkitaHintPolynomials::TraceOneHot(one_hot) => {
+                let refs = one_hot.iter().collect::<Vec<_>>();
+                prove_one_hot::<crate::trace_onehot::TracePackedOneHot>(
                     setup,
                     point,
                     &evaluations,
