@@ -49,15 +49,22 @@ fn profile_run_emits_conformant_artifacts() {
     let summary: ProfileSummary =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
 
-    // Every always-present taxonomy-v1 label fired. (`commit_advice` and
-    // `AdviceOpeningEvaluation::evaluate` are exempt: fibonacci exercises no
-    // advice.)
+    // Every always-present taxonomy-v1 label fired, for the mode this
+    // prover was compiled in — the `zk` feature swaps the uni-skip and
+    // stage-8 opening seams for their committed siblings. (`commit_advice`
+    // and `AdviceOpeningEvaluation::evaluate` are exempt: fibonacci
+    // exercises no advice.)
+    let mode = if cfg!(feature = "zk") {
+        taxonomy::ProverMode::Zk
+    } else {
+        taxonomy::ProverMode::Clear
+    };
     let emitted: std::collections::HashSet<&str> = trace
         .iter()
         .filter(|e| e.get("ph").and_then(Value::as_str) == Some("B"))
         .filter_map(|e| e.get("name").and_then(Value::as_str))
         .collect();
-    let missing: Vec<&str> = taxonomy::always_present_spans()
+    let missing: Vec<&str> = taxonomy::always_present_spans(mode)
         .into_iter()
         .filter(|label| !emitted.contains(label))
         .collect();

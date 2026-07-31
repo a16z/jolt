@@ -18,11 +18,23 @@
 //!   (`EqPolynomial::evals`, `SpartanOuterUniskip::prepare`),
 //! - `prove_stage{N}` for the stage recipes,
 //! - `<StageLabel>::prove` / `<Relation>::prepare` / `<Relation>::prove_round`
-//!   for the generated stage drivers, where `<StageLabel>` is the batch
-//!   struct's name minus the `Sumchecks` suffix and `<Relation>` is the
-//!   member's relation type name,
+//!   / `<Relation>::finish_rounds` for the generated stage drivers, where
+//!   `<StageLabel>` is the batch struct's name minus the `Sumchecks` suffix
+//!   and `<Relation>` is the member's relation type name (`finish_rounds` is
+//!   the terminal bind delivery, a direct child of `prove_batch` rather than
+//!   of a `sumcheck_round`),
 //! - bare snake-case names (`prove_batch`, `stream_witnesses`) for
 //!   free-function seams whose crate context is unambiguous.
+//!
+//! # Prover modes
+//!
+//! The `zk` compile-time feature swaps two protocol seams for committed
+//! siblings: `prove_uniskip_clear` → `prove_uniskip_committed` and
+//! `HomomorphicBatch::prove_batch` → `HomomorphicBatch::prove_batch_zk`.
+//! Exactly one of each pair fires per prove — [`always_present_spans`] takes
+//! the [`ProverMode`] and returns the matching presence set. Every other
+//! label is mode-neutral (the sumcheck engine's `prove_batch` differs only
+//! in its recorder, not its function).
 //!
 //! # Level policy
 //!
@@ -53,8 +65,12 @@
 //! 1. Change the instrumentation and the constants here in the same commit.
 //! 2. Bump [`TAXONOMY_VERSION`] on any rename/removal of a label or field.
 //! 3. The `jolt-prover` profiling smoke test asserts every
-//!    [`always_present_spans`] label appears in a freshly emitted trace, so a
-//!    silent rename fails CI rather than drifting.
+//!    [`always_present_spans`] label appears in a freshly emitted trace, so
+//!    a silent rename fails the smoke test rather than drifting. The smoke
+//!    test is deliberately not wired into CI yet (the reference backend
+//!    exceeds hosted-runner memory — see the NOTE in
+//!    `.github/workflows/rust.yml`); until that job lands it must be run
+//!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
 pub const TAXONOMY_VERSION: u32 = 1;
@@ -95,10 +111,10 @@ pub const DRIVER_BATCH_SPANS: [&str; 8] = [
     "Stage7::prove",
 ];
 
-/// Sumcheck engine spans (`jolt-sumcheck`): the batched round loop, its
-/// per-round child, and the clear uni-skip round.
-pub const SUMCHECK_ENGINE_SPANS: [&str; 3] =
-    ["prove_batch", "sumcheck_round", "prove_uniskip_clear"];
+/// Sumcheck engine spans (`jolt-sumcheck`): the batched round loop and its
+/// per-round child. Mode-neutral — clear and ZK proves run the same
+/// functions with different recorders.
+pub const SUMCHECK_ENGINE_SPANS: [&str; 2] = ["prove_batch", "sumcheck_round"];
 
 /// Kernel-seam spans (`jolt-kernels` trait boundaries) that fire on every
 /// prove regardless of workload. Any optimized backend inherits these by
@@ -119,26 +135,50 @@ pub const ADVICE_SEAM_SPANS: [&str; 2] = ["commit_advice", "AdviceOpeningEvaluat
 /// Kernel-seam spans that fire only with committed-program preprocessing.
 pub const COMMITTED_PROGRAM_SEAM_SPANS: [&str; 1] = ["build_committed_bytecode_chunk_coeffs"];
 
-/// Witness-plane and opening-proof seams (`jolt-witness`, `jolt-openings`).
-pub const WITNESS_AND_OPENING_SPANS: [&str; 4] = [
+/// Witness-plane seams (`jolt-witness`).
+pub const WITNESS_AND_OPENING_SPANS: [&str; 3] = [
     "stream_witnesses",
     "collect_bundles",
     "TraceBackend::oracle_table",
-    "HomomorphicBatch::prove_batch",
 ];
 
-/// Every v1 label that fires on all proves: the presence set the `jolt-prover`
-/// profiling smoke test asserts against a freshly emitted trace.
+/// Clear-mode protocol seams: the uni-skip first round and the transparent
+/// stage-8 joint opening.
+pub const CLEAR_MODE_SPANS: [&str; 2] = ["prove_uniskip_clear", "HomomorphicBatch::prove_batch"];
+
+/// ZK-mode siblings of [`CLEAR_MODE_SPANS`]: the Pedersen-committed uni-skip
+/// first round and the hiding stage-8 joint opening.
+pub const ZK_MODE_SPANS: [&str; 2] = [
+    "prove_uniskip_committed",
+    "HomomorphicBatch::prove_batch_zk",
+];
+
+/// Which compiled prover emitted a trace: the `zk` feature swaps the
+/// [`CLEAR_MODE_SPANS`] seams for their [`ZK_MODE_SPANS`] siblings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProverMode {
+    Clear,
+    Zk,
+}
+
+/// Every v1 label that fires on all proves of the given mode: the presence
+/// set the `jolt-prover` profiling smoke test asserts against a freshly
+/// emitted trace.
 ///
 /// Deliberately excludes the per-member driver spans (`<Relation>::prepare`,
-/// `<Relation>::prove_round`) whose names vary with the batch composition,
-/// plus the advice- and committed-program-only seams.
-pub fn always_present_spans() -> Vec<&'static str> {
+/// `<Relation>::prove_round`, `<Relation>::finish_rounds`) whose names vary
+/// with the batch composition, plus the advice- and committed-program-only
+/// seams.
+pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
     let mut labels = vec![ROOT_SPAN];
     labels.extend(STAGE_SPANS);
     labels.extend(DRIVER_BATCH_SPANS);
     labels.extend(SUMCHECK_ENGINE_SPANS);
     labels.extend(KERNEL_SEAM_SPANS);
     labels.extend(WITNESS_AND_OPENING_SPANS);
+    labels.extend(match mode {
+        ProverMode::Clear => CLEAR_MODE_SPANS,
+        ProverMode::Zk => ZK_MODE_SPANS,
+    });
     labels
 }

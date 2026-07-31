@@ -551,6 +551,11 @@ where
     type HidingCommitment = PCS::HidingCommitment;
     type Blind = PCS::Blind;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "HomomorphicBatch::prove_batch_zk",
+        fields(claims = commitments.len())
+    )]
     fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,

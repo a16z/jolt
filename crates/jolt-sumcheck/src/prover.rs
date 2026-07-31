@@ -340,6 +340,7 @@ where
 /// commitment), squeeze the reduction challenge, then commit and absorb the
 /// output claim. The claim scalar never reaches the transcript. Blindings
 /// come from the caller-supplied `rng`.
+#[tracing::instrument(skip_all, name = "prove_uniskip_committed")]
 pub fn prove_uniskip_committed<F, VC, T, R>(
     round_poly: UnivariatePoly<F>,
     input_claim: F,

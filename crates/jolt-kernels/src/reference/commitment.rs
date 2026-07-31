@@ -39,11 +39,10 @@ where
     F: Field,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
-    #[tracing::instrument(
-        skip_all,
-        name = "commit_witness",
-        fields(columns = ids.len(), total_vars = grid.total_vars)
-    )]
+    // The backend-neutral `commit_witness` span lives at the stage-0 call
+    // boundary (`crates/jolt-prover/src/stages/stage0.rs`), so every
+    // `CommitWitness` implementation inherits it — see the taxonomy's
+    // kernel-seam contract.
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
@@ -97,7 +96,7 @@ where
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "commit_advice", fields(id = ?id))]
+    // Instrumented at the stage-0 call boundary, like `commit_witness`.
     fn commit_advice(
         &self,
         _session: &mut ProofSession,

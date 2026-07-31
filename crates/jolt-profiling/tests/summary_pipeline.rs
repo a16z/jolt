@@ -181,12 +181,105 @@ fn fixture_labels_conform_to_taxonomy() {
             );
         }
     }
-    let always = taxonomy::always_present_spans();
-    assert!(always.contains(&taxonomy::ROOT_SPAN));
-    assert!(always.contains(&"prove_batch"));
-    assert!(!always
+    for mode in [taxonomy::ProverMode::Clear, taxonomy::ProverMode::Zk] {
+        let always = taxonomy::always_present_spans(mode);
+        assert!(always.contains(&taxonomy::ROOT_SPAN));
+        assert!(always.contains(&"prove_batch"));
+        assert!(!always
+            .iter()
+            .any(|l| taxonomy::ADVICE_SEAM_SPANS.contains(l)));
+    }
+    // The mode seams are disjoint siblings: exactly one pair per mode.
+    let clear = taxonomy::always_present_spans(taxonomy::ProverMode::Clear);
+    let zk = taxonomy::always_present_spans(taxonomy::ProverMode::Zk);
+    assert!(taxonomy::CLEAR_MODE_SPANS
         .iter()
-        .any(|l| taxonomy::ADVICE_SEAM_SPANS.contains(l)));
+        .all(|l| clear.contains(l) && !zk.contains(l)));
+    assert!(taxonomy::ZK_MODE_SPANS
+        .iter()
+        .all(|l| zk.contains(l) && !clear.contains(l)));
+}
+
+/// Repeated stage labels pair with their rows by occurrence index (both are
+/// recorded in span-close order), never all with the first matching row.
+#[test]
+fn repeated_stage_labels_pair_rows_by_occurrence() {
+    let events: Vec<Value> = serde_json::from_str(
+        r#"[
+        {"ph":"B","name":"prove_stage0","ts":100.0,"pid":1,"tid":1},
+        {"ph":"E","name":"prove_stage0","ts":200.0,"pid":1,"tid":1},
+        {"ph":"B","name":"prove_stage0","ts":300.0,"pid":1,"tid":1},
+        {"ph":"E","name":"prove_stage0","ts":700.0,"pid":1,"tid":1}
+    ]"#,
+    )
+    .unwrap();
+    let rows = vec![
+        StageMemoryRow {
+            stage: "prove_stage0",
+            rss_open_bytes: GIB as u64,
+            rss_close_bytes: 2 * GIB as u64,
+        },
+        StageMemoryRow {
+            stage: "prove_stage0",
+            rss_open_bytes: 3 * GIB as u64,
+            rss_close_bytes: 5 * GIB as u64,
+        },
+    ];
+    let summary = build_summary(&events, &fixture_context(), &rows, None, 0, None);
+
+    assert_eq!(summary.stages.len(), 2);
+    // First close (100→200µs) gets row 0, second (300→700µs) row 1.
+    assert_eq!(summary.stages[0].wall_time_ns, 100_000);
+    assert_eq!(summary.stages[0].rss_open_gib, Some(1.0));
+    assert_eq!(summary.stages[0].rss_close_gib, Some(2.0));
+    assert_eq!(summary.stages[1].wall_time_ns, 400_000);
+    assert_eq!(summary.stages[1].rss_open_gib, Some(3.0));
+    assert_eq!(summary.stages[1].rss_delta_gib, Some(2.0));
+}
+
+/// The flush-time I/O wrapper: counter events rewritten in the trace (via
+/// temp file + rename — no `.tmp` residue), the caller-sampled peak RSS
+/// carried into the summary, both artifacts parseable afterwards.
+#[test]
+fn finalize_trace_rewrites_and_summarizes_atomically() {
+    let dir = std::env::temp_dir().join(format!(
+        "jolt_profiling_finalize_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let trace_path = dir.join("modular_fibonacci_16.json");
+    std::fs::write(&trace_path, FIXTURE).unwrap();
+
+    let (out_path, summary) = jolt_profiling::summary::finalize_trace(
+        &trace_path,
+        &fixture_context(),
+        Some(4 * GIB as u64),
+    )
+    .unwrap();
+
+    assert_eq!(out_path, summary_path(&trace_path));
+    assert_eq!(summary.peak_rss_gib, Some(4.0));
+    // The rewrite converted every counter instant into a "C" event.
+    let rewritten: Vec<Value> =
+        serde_json::from_str(&std::fs::read_to_string(&trace_path).unwrap()).unwrap();
+    assert!(rewritten
+        .iter()
+        .all(|e| e.get("ph").and_then(Value::as_str) != Some("i")));
+    // Atomic replacement leaves no temp files behind.
+    assert!(std::fs::read_dir(&dir).unwrap().all(|entry| !entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .ends_with(".tmp")));
+    // The written summary parses through the strict schema structs.
+    let reparsed: ProfileSummary =
+        serde_json::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
+    assert_eq!(reparsed.peak_rss_gib, Some(4.0));
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Deserializing the summary through the strict serde structs is the
