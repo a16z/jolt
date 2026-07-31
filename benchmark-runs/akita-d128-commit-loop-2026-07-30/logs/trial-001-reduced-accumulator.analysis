@@ -1,0 +1,43 @@
+wall span: 246.1s   threads seen: 21
+
+ INCLUSIVE s     EXCL s    count  name
+      190.82      82.34        1  prove_packed
+       82.21       0.01        1  AkitaCommitmentScheme::commit
+       81.94       0.00        1  TracePackedOneHot::commit_inner
+       81.91      81.91        1  trace_onehot_commit_accumulate
+       52.41      52.41        2  trace_with_cycle_sink
+       31.73       0.00        1  AkitaNativeBatching::prove_batch
+       31.73      31.73        1  AkitaNativeBatching::backend_batched_prove
+       31.73       0.05        1  AkitaCommitmentScheme::batched_prove
+       29.22       0.00        1  jolt_trace_row_stream
+       23.19       0.00        1  Program::trace
+       23.19       0.00        1  trace
+       21.11       0.08        1  prove_stage6b_lattice
+       15.91      12.40     3199  MultilinearPolynomial::bind_parallel
+       15.70       0.00        1  prove_stage5
+       15.32       0.00       14  stage1_sumcheck
+       15.04       0.00        7  digit_range_prove
+       14.86       0.01       21  prove_eq_factored_sumcheck
+       12.19       0.00        1  prove_stage4
+       12.00       0.00        1  prove_stage1
+       11.45       0.15       14  digit_range_product_substage
+        9.38       0.03      156  InstructionReadRafSumcheckProver::ingest_challenge
+        8.35       0.00        8  InstructionReadRafProver::init_phase
+        7.87       0.00        7  RingRelationProver::new
+        7.75       0.00        7  ring_relation_fold_grind
+        7.75       0.96        7  fold_grind_sample
+        7.66       7.66       28  LatticeBooleanityCycleSumcheckProver::compute_message
+        7.23       0.56       35  RegistersReadWriteCheckingProver::ingest_challenge
+        7.19       7.19        1  OuterUniSkipInstanceProver::initialize
+        6.70       6.70       56  ReadWriteMatrixCycleMajor::bind
+        6.61       0.00        1  TracePackedOneHot::decompose_fold
+        6.48       6.48        1  trace_onehot_decompose_accumulate
+        6.02       6.02      264  digit_range_fold_lanes
+        5.00       5.00       28  InstructionRaSumcheckProver::compute_message
+        4.31       4.31        8  InstructionReadRafProver::init_suffix_polys
+        4.30       4.30        2  shared_ra_polys::compute_all_G_from_ra_indices
+        4.04       0.00        1  prove_stage3
+        3.97       1.62        7  ring_switch_build_w
+        3.59       0.03        7  digit_range_polynomial_leaf
+        3.57       0.00        1  prove_stage2
+        3.39       3.39        8  PrefixSuffix::init_Q_raf

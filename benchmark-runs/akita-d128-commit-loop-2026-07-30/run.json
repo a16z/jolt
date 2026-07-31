@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-07-31T00:10:27Z",
+  "goal": "Reduce the D128 K256 2^28 Akita root commitment without increasing analytical live memory or measured peak RSS",
+  "hypothesis": "The D128 rank accumulator is large enough that reducing its representation or reusing streamed A rows can save more memory traffic than the added arithmetic costs",
+  "parent": {
+    "jolt_revision": "b8dec4136fa54092561056429eff3ff95337ffc6",
+    "jolt_tree": "7e7e246dd5e8c5c2eb16d3260bb18219c6aa4c0f",
+    "akita_revision": "67c3c88deeb1b3dbd0439397b1c9ebafb5b3fb36",
+    "akita_tree": "d055fc8ab029f948217e4acda7852c1e07c67733"
+  },
+  "metric": {
+    "name": "trace_onehot_commit_accumulate_seconds",
+    "direction": "min",
+    "baseline": 87.61,
+    "minimum_target_gain_fraction": 0.03
+  },
+  "guards": {
+    "proof_must_verify": true,
+    "analytical_live_bytes_must_not_increase": true,
+    "maximum_rss_bytes": 96636764160,
+    "process_swaps": 0,
+    "unaffected_span_regression_fraction": 0.03
+  },
+  "evaluator": {
+    "workload": "forced-K256 sha2_chain_akita_perf",
+    "log_t": 28,
+    "trace": "Perfetto chrome JSON",
+    "command": "PERF_LOG_T=28 PERF_TRACE=1 /usr/bin/time -l cargo nextest run --release -p jolt-prover-legacy --features akita -E 'test(sha2_chain_akita_perf)' --run-ignored all --no-capture --cargo-quiet",
+    "timeout_seconds": 900
+  },
+  "scope": {
+    "editable": [
+      "crates/jolt-akita/src/trace_onehot.rs",
+      "Cargo.toml",
+      "Cargo.lock",
+      "Akita algebra/prover hot kernels at revision 67c3c88d"
+    ],
+    "frozen": [
+      "crates/jolt-prover-legacy/src/zkvm/packed.rs",
+      "scripts/perf/analyze_trace.py",
+      "benchmark-runs/perfetto_traces/akita_28_final.json"
+    ]
+  },
+  "search": {
+    "policy": "greedy one-parent hypothesis test",
+    "candidate_order": [
+      "D128 reduced rank accumulator",
+      "D128 bounded narrow accumulator",
+      "aligned trace-block batching for A-row reuse",
+      "D128 shift kernel layout"
+    ],
+    "max_trials": 6,
+    "max_seconds": 7200,
+    "validation_trials_reserved": 2,
+    "stop_after_consecutive_low_signal_regions": 2
+  }
+}
