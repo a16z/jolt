@@ -17,11 +17,10 @@ use crate::opening::JointOpeningPolynomials;
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
 impl<F: Field> JointOpeningPolynomials<F> for ReferenceBackend {
-    #[tracing::instrument(
-        skip_all,
-        name = "JointOpeningPolynomials::prepare",
-        fields(polynomials = polynomials.len(), total_vars = grid.total_vars)
-    )]
+    // The backend-neutral `JointOpeningPolynomials::prepare` span lives at
+    // the stage-8 call boundary (`crates/jolt-prover/src/stages/stage8.rs`),
+    // so every implementation inherits it — see the taxonomy's kernel-seam
+    // contract.
     fn prepare(
         &self,
         _session: &mut ProofSession,

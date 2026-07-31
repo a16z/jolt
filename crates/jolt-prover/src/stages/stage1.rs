@@ -61,13 +61,17 @@ where
     T: Transcript<Challenge = F>,
 {
     let tau = draw_spartan_outer_tau(transcript, log_t);
-    backend
-        .spartan_outer_uniskip
-        .prepare(session, log_t, &tau, witness)?;
+    // Backend-neutral kernel-seam spans at the call boundary, so every
+    // `UniskipKernel` implementation inherits them — see the taxonomy's
+    // kernel-seam contract.
+    tracing::info_span!("SpartanOuterUniskip::prepare").in_scope(|| {
+        backend
+            .spartan_outer_uniskip
+            .prepare(session, log_t, &tau, witness)
+    })?;
 
-    let uniskip_poly = backend
-        .spartan_outer_uniskip
-        .first_round_poly(session, &[])?;
+    let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
+        .in_scope(|| backend.spartan_outer_uniskip.first_round_poly(session, &[]))?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),

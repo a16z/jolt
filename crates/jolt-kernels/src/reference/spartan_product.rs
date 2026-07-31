@@ -44,7 +44,10 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
     /// the slot as the single `late_tau` entry of
     /// [`first_round_poly`](UniskipKernel::first_round_poly).
-    #[tracing::instrument(skip_all, name = "SpartanProductUniskip::prepare")]
+    // The backend-neutral `SpartanProductUniskip::*` spans live at the
+    // stage-2 call boundary (`crates/jolt-prover/src/stages/stage2.rs`), so
+    // every `UniskipKernel` implementation inherits them — see the
+    // taxonomy's kernel-seam contract.
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -56,7 +59,6 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "SpartanProductUniskip::first_round_poly")]
     fn first_round_poly(
         &self,
         session: &mut ProofSession,

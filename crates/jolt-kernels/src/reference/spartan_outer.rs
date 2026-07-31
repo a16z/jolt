@@ -40,7 +40,10 @@ use crate::{
 use jolt_witness::JoltWitnessPlane;
 
 impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
-    #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::prepare")]
+    // The backend-neutral `SpartanOuterUniskip::*` spans live at the stage-1
+    // call boundary (`crates/jolt-prover/src/stages/stage1.rs`), so every
+    // `UniskipKernel` implementation inherits them — see the taxonomy's
+    // kernel-seam contract.
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -52,7 +55,6 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::first_round_poly")]
     fn first_round_poly(
         &self,
         session: &mut ProofSession,
