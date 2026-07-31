@@ -3807,6 +3807,7 @@ dependencies = [
  "dynasm",
  "dynasmrt",
  "iai-callgrind",
+ "jolt-inlines-sha2",
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",
