@@ -34,6 +34,8 @@ mod accumulator;
 mod additive_group;
 #[cfg(feature = "akita")]
 mod akita;
+#[cfg(feature = "akita")]
+mod akita_accumulators;
 mod canonical_bit_length;
 mod canonical_bytes;
 mod canonical_u64;
@@ -79,6 +81,11 @@ pub use small_scalar_accumulator::{
 };
 pub use transcript_challenge::TranscriptChallenge;
 pub use with_accumulator::WithAccumulator;
+
+#[cfg(feature = "akita")]
+pub use akita_accumulators::{
+    AkitaAccumulator, AkitaSignedProductAccumulator, AkitaSmallScalarAccumulator,
+};
 
 pub mod limbs;
 pub use limbs::Limbs;
