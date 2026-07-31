@@ -691,7 +691,7 @@ impl<F: Field> SumcheckKernel<F> for CycleKernel<F> {
 /// cycle kernel's multi-factor `Π_i ra_i` loop runs with one factor; the
 /// degree-`d+1` sampling, cold-cycle zeroing, entry/RAF fusion, and both
 /// pushforward paths are exercised for real.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;

@@ -48,6 +48,8 @@ use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable,
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
+#[cfg(feature = "akita")]
+use jolt_witness::witnesses::{FusedInc, UnsignedIncLane};
 use jolt_witness::witnesses::{
     InstructionRafFlag, LookupIndex, MappedPc, RemappedRamAddress, TableIndex,
 };
@@ -75,18 +77,21 @@ const _: () = assert!(
     "InstructionCycleRow packs lookup table indices as u8"
 );
 
-/// One packed per-cycle row: the stage-5 facts (lookup index, lookup table,
-/// RAF flag) plus the bytecode/RAM one-hot chunk sources the stage-6a/6b
-/// consumers gather from. Sentinel packing (`0` = cold) keeps the row at 48
-/// bytes — the same as a stage-5-only bundle row — so sharing the extra
-/// columns across stages costs no memory.
+/// One packed per-cycle row: the stage-5 facts plus the bytecode/RAM and
+/// packed fused-inc sources used by later one-hot kernels. Sentinel and
+/// sign-magnitude packing keep the row at 48 bytes, so those extra sources
+/// occupy existing padding rather than increasing retained memory.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct InstructionCycleRow {
     pub(crate) lookup_index: u128,
     pc_plus_one: u64,
     ram_address_plus_one: u64,
+    #[cfg(feature = "akita")]
+    fused_inc_magnitude: u64,
     table_index: Option<u8>,
     pub(crate) raf_flag: bool,
+    #[cfg(feature = "akita")]
+    fused_inc_negative: bool,
 }
 
 impl InstructionCycleRow {
@@ -96,14 +101,21 @@ impl InstructionCycleRow {
         raf_flag: bool,
         mapped_pc: Option<usize>,
         remapped_ram_address: Option<u64>,
+        #[cfg(feature = "akita")] fused_inc: FusedInc,
     ) -> Self {
         debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
+        #[cfg(feature = "akita")]
+        debug_assert!(fused_inc.0.unsigned_abs() <= u64::MAX as u128);
         Self {
             lookup_index,
             pc_plus_one: mapped_pc.map_or(0, |pc| pc as u64 + 1),
             ram_address_plus_one: remapped_ram_address.map_or(0, |address| address + 1),
+            #[cfg(feature = "akita")]
+            fused_inc_magnitude: fused_inc.0.unsigned_abs() as u64,
             table_index: table_index.map(|index| index as u8),
             raf_flag,
+            #[cfg(feature = "akita")]
+            fused_inc_negative: fused_inc.0 < 0,
         }
     }
 
@@ -121,7 +133,21 @@ impl InstructionCycleRow {
     pub(crate) fn remapped_ram_address(&self) -> Option<u64> {
         self.ram_address_plus_one.checked_sub(1)
     }
+
+    #[cfg(feature = "akita")]
+    #[inline]
+    pub(crate) fn fused_inc_hot_lane(&self, lane: UnsignedIncLane) -> usize {
+        let magnitude = i128::from(self.fused_inc_magnitude);
+        let value = if self.fused_inc_negative {
+            -magnitude
+        } else {
+            magnitude
+        };
+        FusedInc(value).hot_lane(lane)
+    }
 }
+
+const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 48);
 
 /// The bundle row the packing pass extracts; never materialized beyond one
 /// streaming chunk.
@@ -132,6 +158,8 @@ struct WideInstructionRow {
     raf_flag: InstructionRafFlag,
     mapped_pc: MappedPc,
     remapped_ram_address: RemappedRamAddress,
+    #[cfg(feature = "akita")]
+    fused_inc: FusedInc,
 }
 
 struct PackRows {
@@ -149,6 +177,8 @@ impl StreamConsumer for PackRows {
                 row.raf_flag.0,
                 row.mapped_pc.0,
                 row.remapped_ram_address.0,
+                #[cfg(feature = "akita")]
+                row.fused_inc,
             )
         }));
     }
@@ -194,6 +224,8 @@ impl InstructionCycleRow {
                     row.raf_flag.0,
                     row.mapped_pc.0,
                     row.remapped_ram_address.0,
+                    #[cfg(feature = "akita")]
+                    row.fused_inc,
                 )
             })?;
             return Ok(rows);
@@ -1363,6 +1395,8 @@ mod tests {
                     row.raf_flag.0,
                     None,
                     None,
+                    #[cfg(feature = "akita")]
+                    jolt_witness::witnesses::FusedInc::default(),
                 )
             })
             .collect()

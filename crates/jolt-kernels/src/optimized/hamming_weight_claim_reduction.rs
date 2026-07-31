@@ -320,7 +320,7 @@ impl<F: Field> SumcheckKernel<F> for HammingWeightKernel<F> {
 /// contributes 128/log_k_chunk polynomials), so the multi-family pushforward
 /// walk, cold RAM/bytecode cycles, and per-polynomial weight fusion are all
 /// exercised.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
