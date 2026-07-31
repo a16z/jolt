@@ -10,7 +10,7 @@
 
 use common::constants::RAM_START_ADDRESS;
 
-use super::state::{ExitReason, GuestState, HostContext};
+use super::state::{AdviceJob, ExitReason, GuestState, HostContext, ADVICE_SLOTS};
 
 // jolt-platform host-IO ABI (mirrors tracer/src/emulator/cpu.rs handlers).
 use jolt_platform::{
@@ -158,6 +158,128 @@ pub extern "sysv64" fn assert_failed(state: *mut GuestState, code: u64, value: u
         _ => format!("assert {code} failed with value {value:x}"),
     };
     fail(state, host, message)
+}
+
+/// Guest-state view handed to registered inline advice builders.
+///
+/// The same `build_advice` functions the interpreter uses run unchanged here
+/// (the seam's purpose): reads go to this backend's register array and memory
+/// plane instead of the interpreter's `Cpu`.
+struct GuestAdviceContext<'a> {
+    state: &'a mut GuestState,
+    host: &'a HostContext,
+}
+
+impl tracer::InlineAdviceContext for GuestAdviceContext<'_> {
+    fn register(&self, index: usize) -> u64 {
+        self.state.x[index]
+    }
+
+    fn load_doubleword(&mut self, address: u64) -> Option<u64> {
+        if !address.is_multiple_of(8) {
+            return None;
+        }
+        if address >= RAM_START_ADDRESS {
+            let offset = address - RAM_START_ADDRESS;
+            if offset + 8 > self.state.mem_size {
+                return None;
+            }
+            // SAFETY: offset + 8 is within the mapped plane.
+            let mut bytes = [0u8; 8];
+            // SAFETY: offset + 8 <= mem_size, so the read stays inside the
+            // mapped guest-memory plane.
+            unsafe {
+                (self.state.mem_base as *const u8)
+                    .add(offset as usize)
+                    .copy_to(bytes.as_mut_ptr(), 8);
+            }
+            return Some(u64::from_le_bytes(bytes));
+        }
+        let mut value = 0u64;
+        for i in 0..8 {
+            value |= (self.host.device.load(address + i) as u64) << (i * 8);
+        }
+        Some(value)
+    }
+}
+
+/// Compute one source-instruction group's runtime advice into
+/// `GuestState::advice_slots`, before any of the group's rows execute (the
+/// interpreter computes these from the same pre-group register state).
+pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) -> u64 {
+    let (state, host) = host_context(state);
+    // SAFETY: `advice_jobs` points at the compiled program's job table, which
+    // outlives the run; generated code only passes indices it emitted.
+    let job = unsafe { &*state.advice_jobs.add(job_index as usize) };
+    match job {
+        AdviceJob::Div { code, rs1, rs2 } => {
+            let x = state.x[*rs1 as usize] as i64;
+            let y = state.x[*rs2 as usize] as i64;
+            let (a, b) = match code {
+                // DIV / REM: [quotient, |remainder|]
+                0 => {
+                    if y == 0 {
+                        (u64::MAX, x.unsigned_abs())
+                    } else if x == i64::MIN && y == -1 {
+                        (x as u64, 0)
+                    } else {
+                        ((x / y) as u64, (x % y).unsigned_abs())
+                    }
+                }
+                // DIVW / REMW: 32-bit, quotient sign-extended
+                1 => {
+                    let x = x as i32;
+                    let y = y as i32;
+                    let (q, r) = if y == 0 {
+                        (-1i32, x.unsigned_abs())
+                    } else if y == -1 && x == i32::MIN {
+                        (i32::MIN, 0)
+                    } else {
+                        (x / y, (x % y).unsigned_abs())
+                    };
+                    (q as u64, r as u64)
+                }
+                // DIVU / REMU: [quotient]
+                2 => ((x as u64).checked_div(y as u64).unwrap_or(u64::MAX), 0),
+                // DIVUW / REMUW: 32-bit, zero-extended
+                _ => {
+                    let x = x as u32;
+                    let y = y as u32;
+                    (x.checked_div(y).map_or(u64::from(u32::MAX), u64::from), 0)
+                }
+            };
+            state.advice_slots[0] = a;
+            state.advice_slots[1] = b;
+            0
+        }
+        AdviceJob::Inline {
+            registration,
+            operands,
+        } => {
+            let operands = *operands;
+            let build = registration.build_advice;
+            let values = {
+                let mut context = GuestAdviceContext { state, host };
+                build(operands, &mut context)
+            };
+            let Some(values) = values else { return 0 };
+            if values.len() > ADVICE_SLOTS {
+                return fail(
+                    state,
+                    host,
+                    format!(
+                        "inline {} produced {} advice values (max {ADVICE_SLOTS})",
+                        registration.name,
+                        values.len()
+                    ),
+                );
+            }
+            for (slot, value) in values.into_iter().enumerate() {
+                state.advice_slots[slot] = value;
+            }
+            0
+        }
+    }
 }
 
 /// `VirtualAdviceLen`: bytes left on the advice tape.

@@ -99,6 +99,8 @@ impl X86TracerBackend {
             mem_base: plane.base() as u64,
             mem_size: plane.size() as u64,
             host: &raw mut host,
+            advice_slots: [0; crate::native::state::ADVICE_SLOTS],
+            advice_jobs: compiled.advice_jobs_ptr(),
         });
 
         compiled.run(&mut guest)?;

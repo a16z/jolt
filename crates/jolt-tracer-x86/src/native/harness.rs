@@ -130,6 +130,8 @@ impl Prepared {
             mem_base: self.plane.base() as u64,
             mem_size: self.plane.size() as u64,
             host: &raw mut host,
+            advice_slots: [0; crate::native::state::ADVICE_SLOTS],
+            advice_jobs: self.compiled.advice_jobs_ptr(),
         });
         guest.x[0] = 0;
         self.compiled.run(&mut guest)?;
@@ -191,6 +193,8 @@ pub fn run_program(
         mem_base: plane.base() as u64,
         mem_size: plane.size() as u64,
         host: &raw mut host,
+        advice_slots: [0; crate::native::state::ADVICE_SLOTS],
+        advice_jobs: compiled.advice_jobs_ptr(),
     });
     guest.x[0] = 0;
 

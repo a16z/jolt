@@ -139,6 +139,20 @@ pub fn list_registered_inlines() -> Vec<((u32, u32, u32), String)> {
         .collect()
 }
 
+/// Look up a linked inline registration by its encoded key.
+///
+/// Execution backends need the registration itself (not just its existence)
+/// to run `build_advice` over their own state.
+pub fn find_inline_registration(
+    opcode: u32,
+    funct3: u32,
+    funct7: u32,
+) -> Option<&'static InlineRegistration> {
+    inventory::iter::<InlineRegistration>
+        .into_iter()
+        .find(|r| r.opcode == opcode && r.funct3 == funct3 && r.funct7 == funct7)
+}
+
 /// Check whether a linked inline registration exists for the encoded key.
 pub fn is_inline_registered(opcode: u32, funct3: u32, funct7: u32) -> bool {
     inventory::iter::<InlineRegistration>

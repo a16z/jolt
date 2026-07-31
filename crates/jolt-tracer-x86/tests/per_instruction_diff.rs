@@ -106,6 +106,10 @@ const SUPPORTED: &[&str] = &[
     "VirtualChangeDivisorW",
     "VirtualAdviceLen",
     "VirtualAdviceLoad",
+    // Slice 3b: value comes from the group's advice slots, so the
+    // single-row harness cannot drive it; whole-guest gates cover it
+    // (muldiv's DIV/REM groups).
+    "VirtualAdvice",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -693,5 +697,5 @@ difftests! {
 /// test fails.
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 66);
+    assert_eq!(SUPPORTED.len(), 67);
 }
