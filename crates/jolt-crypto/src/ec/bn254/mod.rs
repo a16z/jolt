@@ -38,6 +38,12 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
+        // WARNING: wrapping performs no on-curve or subgroup validation — the
+        // caller must supply a valid prime-order-subgroup point (relevant for
+        // G2, whose cofactor is non-trivial). This is a plumbing conversion
+        // for internally-constructed arkworks values; untrusted bytes must
+        // enter through serde `Deserialize` below, which validates via
+        // arkworks (`Validate::Yes`: on-curve + subgroup check).
         impl From<$projective> for $wrapper {
             #[inline(always)]
             fn from(inner: $projective) -> Self {
