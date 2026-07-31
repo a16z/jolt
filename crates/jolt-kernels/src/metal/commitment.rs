@@ -33,7 +33,8 @@
 //!   are the Pippenger inner loop of the CPU tier's `msm_i128`.
 //! - The **tier-2 lane** decodes finished segments, reduces multi-segment
 //!   buckets, batch-normalizes, records the row commitments, and multiplies
-//!   the rows' Miller loops into per-column [`Tier2Accumulator`]s (one final
+//!   the rows' Miller loops into per-column [`Tier2Accumulator`]s using
+//!   indexed on-the-fly G2 preparation above the fly gate (one final
 //!   exponentiation per column at the end). Increment buckets it reduces
 //!   arithmetically instead: per `(column, window)` a weighted running sum
 //!   over digit magnitudes and a base-256 Horner across digit slots yield
@@ -54,7 +55,7 @@
 use std::any::TypeId;
 use std::sync::mpsc::{sync_channel, SyncSender};
 
-use ark_bn254::{G1Affine, G1Projective};
+use ark_bn254::{G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, Zero};
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
@@ -70,7 +71,8 @@ use rayon::prelude::*;
 
 use super::g1::{bases_as_u32s, jac_from_device_limbs, JAC_U32S, SEG_INDEX_SIGN_BIT};
 use super::miller::{
-    flatten_prepared_coeffs, g1_points_as_u32s, miller_table_params, product_of_partials, FQ12_U32S,
+    flatten_prepared_coeffs, g1_points_as_u32s, g2_points_as_u32s, miller_table_params,
+    product_of_partials, FQ12_U32S, MILLER_FLY_WORK_PER_PAIR_LOG2,
 };
 use super::runtime::{KernelId, MetalContext};
 use super::{metal_gate, DeviceBuffer, MetalError, PageAlignedVec};
@@ -101,7 +103,7 @@ const MAX_SEGMENT_LEN: usize = 256;
 /// production pair counts — per-pair rate keeps improving down to 2 pairs
 /// per thread (6.6 µs/pair vs 12.2 at 8) despite the extra per-thread
 /// squaring ladders.
-const MILLER_SEG_PAIRS: usize = 2;
+const MILLER_TABLE_SEG_PAIRS: usize = 2;
 
 /// Pairs per CPU absorb sub-shard. Small enough that rayon can steal a big
 /// column off a straggler core mid-superchunk, large enough that the
@@ -114,9 +116,10 @@ const MILLER_CPU_SHARD: usize = 64;
 /// while the device carries tier-1 + Miller; giving them a pair share
 /// balances the lanes. Tier2Accumulator is partition-invariant, so ANY
 /// split is byte-identical — the knob is pure load balance. In-pipeline
-/// M5 Max sweep (sha2-chain @2^22, stage-0 wall) selected 0.15; override
-/// this per device when its CPU/device balance differs.
-const MILLER_CPU_FRACTION_DEFAULT: f64 = 0.15;
+/// M5 Max re-sweep after indexed fly-Miller (sha2-chain @2^22, stage-0
+/// wall) selected 0.05: 1.202 s versus 1.220/1.271/1.339 at
+/// 0.10/0.15/0.20. Override this per device when its balance differs.
+const MILLER_CPU_FRACTION_DEFAULT: f64 = 0.05;
 
 /// `JOLT_METAL_MILLER_CPU_FRACTION` — CPU share of Miller pairs in
 /// `[0, 1]`; `0` = all-device, `1` = all-CPU (the ablation arm). Read once
@@ -578,18 +581,28 @@ fn commit_metal(
          reads the infinity flag)"
     );
 
-    // The device Miller lane's shared coefficient table: the SAME line
-    // coefficients `prep` holds, flattened once per pass into the
-    // step-major layout `jk_miller_table` streams (~16.7 KB per row; all
-    // one-hot columns share it). Gated on the pass's total pair-eval count.
     let miller_cpu_share = miller_cpu_fraction();
-    let miller_table: Option<Vec<u32>> =
-        (metal_gate("miller", n_one_hot * one_hot_rows) && miller_cpu_share < 1.0).then(|| {
+    let miller_pairs = n_one_hot * one_hot_rows;
+    let miller_device = metal_gate("miller", miller_pairs) && miller_cpu_share < 1.0;
+    let miller_fly = miller_device
+        && metal_gate(
+            "miller_fly_commit",
+            miller_pairs.saturating_mul(1 << MILLER_FLY_WORK_PER_PAIR_LOG2),
+        );
+    let miller_input = miller_device.then(|| {
+        if miller_fly {
+            let projective: Vec<G2Projective> = setup.0.g2_vec[..prep.prepared().len()]
+                .iter()
+                .map(|q| q.0)
+                .collect();
+            MillerInput::Fly(G2Projective::normalize_batch(&projective))
+        } else {
             let refs: Vec<&_> = prep.prepared().iter().collect();
             let mut table = Vec::new();
             flatten_prepared_coeffs(&refs, &mut table);
-            table
-        });
+            MillerInput::Table(table)
+        }
+    });
 
     std::thread::scope(|scope| {
         let (tx_jobs, rx_jobs) = sync_channel::<GpuJob>(PIPELINE_DEPTH);
@@ -668,7 +681,7 @@ fn commit_metal(
         });
 
         let prep_ref = &prep;
-        let miller_table_ref = miller_table.as_deref();
+        let miller_input_ref = miller_input.as_ref();
         type Tier2Out = (Vec<Tier2Accumulator>, Vec<Vec<Bn254G1>>, Vec<Vec<Bn254G1>>);
         let tier2 = scope.spawn(move || -> Tier2Out {
             let mut accumulators: Vec<Tier2Accumulator> =
@@ -679,20 +692,31 @@ fn commit_metal(
             // The Miller lane's device objects live and die on this thread
             // (MTLBuffers are not Send); a declined wrap only costs the
             // device share — the pass continues all-CPU.
-            let mut miller_lane =
-                miller_table_ref.and_then(|coeffs| match ctx.wrap_slice(coeffs) {
-                    Ok(buffer) => Some(MillerLane {
-                        coeffs: buffer,
-                        n_rows: prep_ref.prepared().len(),
+            let mut miller_lane = miller_input_ref.and_then(|input| {
+                let source = match input {
+                    MillerInput::Table(coeffs) => {
+                        ctx.wrap_slice(coeffs).map(|buffer| MillerSource::Table {
+                            coeffs: buffer,
+                            n_rows: prep_ref.prepared().len(),
+                        })
+                    }
+                    MillerInput::Fly(qs) => ctx
+                        .wrap_slice(g2_points_as_u32s(qs))
+                        .map(|buffer| MillerSource::Fly { qs: buffer }),
+                };
+                match source {
+                    Ok(source) => Some(MillerLane {
+                        source,
                         cpu_share: miller_cpu_share,
                         failed: false,
                         queue: MillerBatch::new(),
                     }),
                     Err(error) => {
-                        tracing::warn!(%error, "miller table wrap failed; tier-2 stays on CPU");
+                        tracing::warn!(%error, "miller input wrap failed; tier-2 stays on CPU");
                         None
                     }
-                });
+                }
+            });
             // Increment row commitments by absolute window; windows whose
             // scalars are all zero receive no segments and stay identity —
             // exactly the CPU path's zero-MSM rows.
@@ -817,14 +841,23 @@ fn miller_flush_pairs() -> usize {
         .unwrap_or(MILLER_FLUSH_PAIRS_DEFAULT)
 }
 
-/// The tier-2 Miller device lane's pass-scoped state: the wrapped shared
-/// coefficient table, the CPU pair share, and the cross-superchunk device
-/// queue. `failed` latches on the first device error — the rest of the
-/// pass absorbs on the CPU (the recovered batch included),
-/// byte-identically.
+enum MillerInput {
+    Table(Vec<u32>),
+    Fly(Vec<G2Affine>),
+}
+
+enum MillerSource<'b> {
+    Table {
+        coeffs: DeviceBuffer<'b>,
+        n_rows: usize,
+    },
+    Fly {
+        qs: DeviceBuffer<'b>,
+    },
+}
+
 struct MillerLane<'b> {
-    coeffs: DeviceBuffer<'b>,
-    n_rows: usize,
+    source: MillerSource<'b>,
     cpu_share: f64,
     failed: bool,
     queue: MillerBatch,
@@ -854,6 +887,13 @@ impl MillerBatch {
 impl MillerLane<'_> {
     fn take_queue(&mut self) -> MillerBatch {
         std::mem::replace(&mut self.queue, MillerBatch::new())
+    }
+
+    const fn pairs_per_thread(&self) -> usize {
+        match &self.source {
+            MillerSource::Table { .. } => MILLER_TABLE_SEG_PAIRS,
+            MillerSource::Fly { .. } => 1,
+        }
     }
 }
 
@@ -916,7 +956,7 @@ struct PendingPairs {
 /// Decode one finished superchunk: reduce multi-segment buckets, batch
 /// normalize, record rows — parallel across columns — then absorb the
 /// Miller mass: the CPU share through [`Tier2Accumulator::absorb`], the
-/// device share as ONE `jk_miller_table` dispatch whose per-thread
+/// device share as one table or indexed-fly dispatch whose per-thread
 /// segments never straddle columns, its execution overlapped with the CPU
 /// share, per-column partial products folded in afterward.
 fn absorb_superchunk(
@@ -1030,6 +1070,7 @@ fn absorb_superchunk(
     // superchunk's CPU share.
     match lane {
         Some(lane) => {
+            let pairs_per_thread = lane.pairs_per_thread();
             for (column, pending_column) in pending.iter().enumerate() {
                 let Some(p) = pending_column else { continue };
                 if p.cpu_len == p.points.len() {
@@ -1043,7 +1084,7 @@ fn absorb_superchunk(
                     .extend_from_slice(&p.row_indices[p.cpu_len..]);
                 let mut at = queue.seg_starts[thread_start] as usize;
                 while at < queue.points.len() {
-                    at = (at + MILLER_SEG_PAIRS).min(queue.points.len());
+                    at = (at + pairs_per_thread).min(queue.points.len());
                     queue.seg_starts.push(at as u32);
                 }
                 queue
@@ -1054,8 +1095,7 @@ fn absorb_superchunk(
                 let batch = lane.take_queue();
                 let dispatched = run_miller_dispatch(
                     ctx,
-                    &lane.coeffs,
-                    lane.n_rows,
+                    &lane.source,
                     &batch.points,
                     &batch.row_indices,
                     &batch.seg_starts,
@@ -1084,8 +1124,7 @@ fn drain_miller_lane(
     let batch = lane.take_queue();
     let dispatched = run_miller_dispatch(
         ctx,
-        &lane.coeffs,
-        lane.n_rows,
+        &lane.source,
         &batch.points,
         &batch.row_indices,
         &batch.seg_starts,
@@ -1094,14 +1133,11 @@ fn drain_miller_lane(
     settle_miller_batch(prep, lane, accumulators, &batch, dispatched);
 }
 
-/// Encode, commit, and collect one `jk_miller_table` dispatch, running
-/// `overlap` (the CPU pair share) exactly once on every path — after the
-/// commit when the device accepted the work (so both proceed
-/// concurrently), before returning when setup failed (so no work is lost).
+/// Encode, commit, and collect one device Miller dispatch, running `overlap`
+/// exactly once after a successful commit or before any early error return.
 fn run_miller_dispatch(
     ctx: &MetalContext,
-    coeffs: &DeviceBuffer<'_>,
-    n_rows: usize,
+    source: &MillerSource<'_>,
     points: &[G1Affine],
     row_indices: &[u32],
     seg_starts: &[u32],
@@ -1109,12 +1145,19 @@ fn run_miller_dispatch(
 ) -> Result<Vec<u32>, MetalError> {
     let n_threads = seg_starts.len() - 1;
     let setup = (|| {
+        let params = match source {
+            MillerSource::Table { n_rows, .. } => miller_table_params(n_threads, *n_rows)?.to_vec(),
+            MillerSource::Fly { .. } => vec![u32::try_from(n_threads)
+                .map_err(|_| MetalError::Execution("pair count overflows u32".into()))?],
+        };
         Ok((
             ctx.wrap_slice(g1_points_as_u32s(points))?,
             ctx.wrap_slice(row_indices)?,
-            ctx.wrap_slice(seg_starts)?,
+            matches!(source, MillerSource::Table { .. })
+                .then(|| ctx.wrap_slice(seg_starts))
+                .transpose()?,
             ctx.alloc_u32s(n_threads * FQ12_U32S)?,
-            miller_table_params(n_threads, n_rows)?,
+            params,
         ))
     })();
     let (ps_buf, idx_buf, seg_buf, out_buf, params) = match setup {
@@ -1126,12 +1169,28 @@ fn run_miller_dispatch(
     };
     let pending = match ctx.begin_pass() {
         Ok(mut pass) => {
-            pass.dispatch(
-                KernelId::MillerTable,
-                &params,
-                &[&ps_buf, &idx_buf, &seg_buf, coeffs, &out_buf],
-                n_threads,
-            );
+            match source {
+                MillerSource::Table { coeffs, .. } => {
+                    let Some(seg_buf) = seg_buf.as_ref() else {
+                        unreachable!("table source always wraps segment starts")
+                    };
+                    pass.dispatch(
+                        KernelId::MillerTable,
+                        &params,
+                        &[&ps_buf, &idx_buf, seg_buf, coeffs, &out_buf],
+                        n_threads,
+                    );
+                }
+                MillerSource::Fly { qs } => {
+                    assert_eq!(n_threads, points.len());
+                    pass.dispatch(
+                        KernelId::MillerFlyIndexed,
+                        &params,
+                        &[&ps_buf, &idx_buf, qs, &out_buf],
+                        n_threads,
+                    );
+                }
+            }
             pass.commit()
         }
         Err(error) => {
@@ -2000,6 +2059,7 @@ mod tests {
             // The split extremes: all pairs on device, then all on CPU
             // (which also skips the table build entirely).
             std::env::set_var("JOLT_METAL_MILLER_CPU_FRACTION", "0");
+            std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER_FLY_COMMIT", "1");
             let all_device = commit_streaming_metal(
                 ctx,
                 source,
@@ -2027,6 +2087,7 @@ mod tests {
             .expect("all-cpu miller commit");
             assert_same(&optimized, &all_cpu, "all-cpu miller split");
             std::env::remove_var("JOLT_METAL_MILLER_CPU_FRACTION");
+            std::env::remove_var("JOLT_METAL_MIN_TERMS_MILLER_FLY_COMMIT");
         });
     }
 

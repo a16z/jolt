@@ -582,6 +582,50 @@ inline void jk_fly_ell(
     f = fq12_mul_by_034(f, fq2_mul_by_fq(l0, py), fq2_mul_by_fq(l1, px), l2);
 }
 
+inline Fq12El jk_miller_fly_one(G1AffinePt pt, G2AffinePt q) {
+    Fq12El f = fq12_one();
+    bool live = !(fq_is_zero(pt.x) && fq_is_zero(pt.y)) && !(fq2_is_zero(q.x) && fq2_is_zero(q.y));
+    if (!live) {
+        return f;
+    }
+
+    G2Hom r;
+    r.x = q.x;
+    r.y = q.y;
+    r.z = fq2_one();
+    Fq2El nqy = fq2_neg(q.y);
+    Fq2El l0;
+    Fq2El l1;
+    Fq2El l2;
+    for (uint it = 0; it < JK_ATE_LEN; it++) {
+        if (it != 0) {
+            f = fq12_sqr(f);
+        }
+        jk_fly_dbl(r, l0, l1, l2);
+        jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
+        int digit = JK_ATE[JK_ATE_LEN - 1u - it];
+        if (digit == 1) {
+            jk_fly_add(r, q.x, q.y, l0, l1, l2);
+            jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
+        } else if (digit == -1) {
+            jk_fly_add(r, q.x, nqy, l0, l1, l2);
+            jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
+        }
+    }
+    Fq2El q1x = q.x;
+    Fq2El q1y = q.y;
+    jk_mul_by_char(q1x, q1y);
+    Fq2El q2x = q1x;
+    Fq2El q2y = q1y;
+    jk_mul_by_char(q2x, q2y);
+    q2y = fq2_neg(q2y);
+    jk_fly_add(r, q1x, q1y, l0, l1, l2);
+    jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
+    jk_fly_add(r, q2x, q2y, l0, l1, l2);
+    jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
+    return f;
+}
+
 // One (G1, G2) pair per thread, both affine; either side's (0, 0) sentinel
 // yields the empty product (f = 1), matching arkworks' pair filter. G2
 // points stride JK_G2_AFFINE_STRIDE (host G2Affine memory).
@@ -599,47 +643,23 @@ kernel void jk_miller_fly(
     if (tid >= p.n_pairs) {
         return;
     }
-    Fq12El f = fq12_one();
     G1AffinePt pt = g1_load_base(ps, tid);
     G2AffinePt q = g2_load_base(qs, tid);
-    bool live = !(fq_is_zero(pt.x) && fq_is_zero(pt.y)) && !(fq2_is_zero(q.x) && fq2_is_zero(q.y));
-    if (live) {
-        G2Hom r;
-        r.x = q.x;
-        r.y = q.y;
-        r.z = fq2_one();
-        Fq2El nqy = fq2_neg(q.y);
-        Fq2El l0;
-        Fq2El l1;
-        Fq2El l2;
-        for (uint it = 0; it < JK_ATE_LEN; it++) {
-            if (it != 0) {
-                f = fq12_sqr(f);
-            }
-            jk_fly_dbl(r, l0, l1, l2);
-            jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
-            int digit = JK_ATE[JK_ATE_LEN - 1u - it];
-            if (digit == 1) {
-                jk_fly_add(r, q.x, q.y, l0, l1, l2);
-                jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
-            } else if (digit == -1) {
-                jk_fly_add(r, q.x, nqy, l0, l1, l2);
-                jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
-            }
-        }
-        // q1 = ψ(q), q2 = ψ²(q) with y negated (X_IS_NEGATIVE = false skips
-        // the r.y flip).
-        Fq2El q1x = q.x;
-        Fq2El q1y = q.y;
-        jk_mul_by_char(q1x, q1y);
-        Fq2El q2x = q1x;
-        Fq2El q2y = q1y;
-        jk_mul_by_char(q2x, q2y);
-        q2y = fq2_neg(q2y);
-        jk_fly_add(r, q1x, q1y, l0, l1, l2);
-        jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
-        jk_fly_add(r, q2x, q2y, l0, l1, l2);
-        jk_fly_ell(f, l0, l1, l2, pt.x, pt.y);
+    fq12_store_at(out + tid * (12u * FR_LIMBS), jk_miller_fly_one(pt, q));
+}
+
+kernel void jk_miller_fly_indexed(
+    device const uint* ps [[buffer(0)]],
+    device const uint* row_indices [[buffer(1)]],
+    device const uint* qs [[buffer(2)]],
+    device uint* out [[buffer(3)]],
+    constant MillerFlyParams& p [[buffer(4)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n_pairs) {
+        return;
     }
-    fq12_store_at(out + tid * (12u * FR_LIMBS), f);
+    G1AffinePt pt = g1_load_base(ps, tid);
+    G2AffinePt q = g2_load_base(qs, row_indices[tid]);
+    fq12_store_at(out + tid * (12u * FR_LIMBS), jk_miller_fly_one(pt, q));
 }
