@@ -5,7 +5,7 @@ Machine: Apple M4 Max
 
 ## Result
 
-Four follow-up candidates were screened. None passed the promotion gate, so
+Five follow-up candidates were screened. None passed the promotion gate, so
 there is no retained production-code change in this batch:
 
 1. D256 reduces setup capacity but increases the dominant commitment
@@ -17,6 +17,9 @@ there is no retained production-code change in this batch:
 4. Virtualizing the nine fused-increment lane columns is sound and removes a
    named 2.2 GiB owner at `T = 2^28`, but both tested encodings slow Stage 6b
    enough to fail the CPU-neutral memory guard.
+5. Grouping duplicate D128 source rotations removes 11.6% of source-ring
+   reloads, but destroys the destination-local access order and slows the root
+   kernel by 28.9%.
 
 All candidate code was reverted. The traces are retained as negative
 controls.
@@ -116,6 +119,26 @@ binding work; changing the scalar encoding alone is insufficient. Per the
 contract, the candidate did not advance to `T = 2^26` and all code was
 reverted.
 
+## D128 duplicate-rotation grouping
+
+An audit of the packed SHA trace found 56,148,929 active column entries. Only
+49,655,264 distinct `(row, source rotation)` pairs were needed, leaving
+6,493,665 theoretically avoidable source loads, or 11.565%.
+
+The candidate grouped columns sharing a rotation so that each source ring was
+loaded once. D128 was forced at `T = 2^22` to exercise the same root kernel
+used by large traces.
+
+| Variant | Prover | Commitment | Root accumulation |
+|---|---:|---:|---:|
+| Destination-local control | 4.167542 s | 0.823117 s | **0.729048 s** |
+| Source-grouped candidate | 4.367683 s | 1.032289 s | **0.939675 s** |
+
+Root accumulation regressed 28.9%. Saving source reloads was outweighed by
+interleaved writes across destination rings; the control's contiguous
+destination sweep is the more important locality property. The candidate was
+reverted.
+
 ## Retained traces
 
 | Trace | Purpose | SHA-256 |
@@ -125,5 +148,7 @@ reverted.
 | `akita_22_booleanity_solinas_repeat.json` | multi-lane accumulator B | `aaed71535ebdc625e9aca1a9e9a0bdc978f2d74ff5a6d18af27a394015981a5c` |
 | `akita_22_fused_inc_virtual_raw.json` | direct sign-magnitude virtualization | `b7101bd1d1c9cf59af2f93f8e3f9cc19c03f300ba930d9b441935586218faff6` |
 | `akita_22_fused_inc_virtual_packed.json` | packed-balanced virtualization | `aee2ff997a45c457cb0bbbef7277c2aabffcfa4dadb3401fc690ed11ce48527e` |
+| `akita_22_d128_duplicate_control.json` | destination-local D128 control | `56ab0d9e7f54bae594a18b8b2b89d7d9ba6a15c65e5e112df3ea1044504f66bc` |
+| `akita_22_d128_duplicate_grouped.json` | rejected source-grouped D128 kernel | `f22950098603332dc608708062cdfb33029286f505e5ca5d69c23c4d5899b25d` |
 
 The traces live in `benchmark-runs/perfetto_traces/`.
