@@ -266,6 +266,15 @@ impl PairingGroup for Bn254 {
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
 ///
+/// WARNING: in release builds, values `>= Fr::MODULUS` are silently reduced
+/// mod r (`from_le_bytes_mod_order`). Callers must pass scalars from a field
+/// with modulus <= BN254 Fr — in practice jolt-field's `Fr` itself. Notably
+/// `jolt_field::Fq` (BN254 base field, larger modulus) implements `Field` and
+/// must NOT be used as a scalar here. A release-mode range check is
+/// deliberately omitted: this function sits in per-element MSM/GLV hot loops,
+/// and the scalar type is fixed at compile time by internal callers, not by
+/// untrusted input.
+///
 /// In debug builds, asserts that the source value fits in the BN254 Fr modulus —
 /// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
 #[inline]
