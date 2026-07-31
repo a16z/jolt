@@ -41,6 +41,7 @@ profiling = [
   "jolt-inlines-sha2/host",
   "dep:jolt-profiling",
   "jolt-profiling/monitor",
+  "jolt-profiling/summary",
   "dep:jolt-prover-legacy",
   "jolt-prover-legacy/host",
   "dep:postcard",
@@ -85,7 +86,9 @@ clap = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
-jolt-profiling = { workspace = true, optional = true }
+# default-features = false: the `profiling` feature adds `summary`
+# explicitly; `allocative` needs only the flamegraph hooks.
+jolt-profiling = { workspace = true, optional = true, default-features = false }
 jolt-prover-legacy = { workspace = true, optional = true, default-features = false, features = [
   "minimal",
 ] }
@@ -98,7 +101,9 @@ clap.workspace = true
 jolt-dory.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
-jolt-profiling.workspace = true
+# Subscriber stack for tests; the profiling smoke test's summary usage
+# arrives via the `profiling` feature's `jolt-profiling/summary`.
+jolt-profiling = { workspace = true, default-features = false }
 jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 postcard = { workspace = true, features = ["use-std"] }
 rand_core = { workspace = true, features = ["getrandom"] }

@@ -36,9 +36,14 @@
 //!
 //! | Flag | Description |
 //! |------|-------------|
+//! | `summary` (default) | Flush-time `summary.json` pipeline (schemars/serde stack) |
 //! | `monitor` | Background system metrics sampling (CPU, memory, cores) |
 //! | `pprof` | Scoped CPU profiling via `pprof` with `.pb` output |
 //! | `allocative` | Heap flamegraph generation from `allocative`-instrumented types |
+//!
+//! Subscriber-only consumers (the legacy harness bin) depend with
+//! `default-features = false`, keeping the summary stack out of standard
+//! `--features host` builds.
 //!
 //! # Dependency Position
 //!
@@ -54,7 +59,7 @@ pub mod memory;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod stage_memory;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 pub mod summary;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
