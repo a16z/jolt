@@ -181,7 +181,12 @@ impl OptimizeEnv for RealEnv {
                     }
                     Err(e) => eprintln!("measurement failed for {}: {e}", obj.name()),
                 },
-                _ => {}
+                // Measured by their own channels above (Criterion / static
+                // analysis). Spelled out rather than `_` so a future keyed
+                // objective family fails to compile here instead of being
+                // silently skipped.
+                OptimizationObjective::StaticAnalysis(_)
+                | OptimizationObjective::Performance(_) => {}
             }
         }
 
