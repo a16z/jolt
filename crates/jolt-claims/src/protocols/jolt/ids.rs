@@ -138,8 +138,12 @@ pub enum HammingWeightClaimReductionChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
+    EqBooleanityAtDefault,
     EqVirtualization(usize),
-    IdentityAtAddress,
+    EqVirtualizationAtDefault(usize),
+    EqDefault,
+    RamHammingWeight,
+    BalancedIncValueAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

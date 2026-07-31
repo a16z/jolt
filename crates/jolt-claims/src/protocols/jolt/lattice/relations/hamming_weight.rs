@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
     booleanity_claim, hamming_weight_claim, reduced_claim,
 };
-use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 use crate::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltExpr,
@@ -155,39 +155,60 @@ impl SymbolicSumcheck for LatticeHammingWeightClaimReduction {
         input = input
             + gamma.clone().pow(msb_offset)
             + gamma.clone().pow(msb_offset + 1) * opening(booleanity_unsigned_inc_msb_opening());
-        input
-            + gamma.pow(self.decode_power())
-                * (opening(fused_inc_read_raf_opening()) + constant(F::pow2(UNSIGNED_INC_BITS)))
+        input + gamma.pow(self.decode_power()) * opening(fused_inc_read_raf_opening())
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let eq_booleanity = derived(HammingWeightClaimReductionPublic::EqBooleanity);
-        let identity = derived(HammingWeightClaimReductionPublic::IdentityAtAddress);
+        let eq_booleanity_default =
+            derived(HammingWeightClaimReductionPublic::EqBooleanityAtDefault);
+        let eq_default = derived(HammingWeightClaimReductionPublic::EqDefault);
+        let ram_hamming_weight = derived(HammingWeightClaimReductionPublic::RamHammingWeight);
+        let inc_value = derived(HammingWeightClaimReductionPublic::BalancedIncValueAtAddress);
         let decode_scale = gamma.clone().pow(self.decode_power());
         let mut output = JoltExpr::zero();
 
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
-            let coefficient = gamma.clone().pow(3 * i)
-                + gamma.clone().pow(3 * i + 1) * eq_booleanity.clone()
-                + gamma.clone().pow(3 * i + 2)
-                    * derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
-            output = output + coefficient * opening(reduced_claim(polynomial));
+            let eq_virtualization = derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
+            let eq_virtualization_default =
+                derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(i));
+            let baseline_coefficient = gamma.clone().pow(3 * i)
+                + gamma.clone().pow(3 * i + 1) * eq_booleanity_default.clone()
+                + gamma.clone().pow(3 * i + 2) * eq_virtualization_default.clone();
+            let sparse_coefficient = gamma.clone().pow(3 * i + 1)
+                * (eq_booleanity.clone() - eq_booleanity_default.clone())
+                + gamma.clone().pow(3 * i + 2) * (eq_virtualization - eq_virtualization_default);
+            let hamming_weight = match polynomial {
+                JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => JoltExpr::one(),
+                JoltRaPolynomial::Ram(_) => ram_hamming_weight.clone(),
+            };
+            output = output
+                + eq_default.clone() * hamming_weight * baseline_coefficient
+                + sparse_coefficient * opening(reduced_claim(polynomial));
         }
         for index in 0..self.shape.chunking.chunk_count() {
             let offset = self.ra_terms() + 2 * index;
-            let coefficient = gamma.clone().pow(offset)
-                + gamma.clone().pow(offset + 1) * eq_booleanity.clone()
+            let baseline_coefficient = gamma.clone().pow(offset)
+                + gamma.clone().pow(offset + 1) * eq_booleanity_default.clone();
+            let sparse_coefficient = gamma.clone().pow(offset + 1)
+                * (eq_booleanity.clone() - eq_booleanity_default.clone())
                 + decode_scale.clone()
                     * constant(self.shape.chunking.place_value::<F>(index))
-                    * identity.clone();
-            output = output + coefficient * opening(reduced_unsigned_inc_chunk_opening(index));
+                    * inc_value.clone();
+            output = output
+                + eq_default.clone() * baseline_coefficient
+                + sparse_coefficient * opening(reduced_unsigned_inc_chunk_opening(index));
         }
         let msb_offset = self.ra_terms() + 2 * self.shape.chunking.chunk_count();
-        let msb_coefficient = gamma.clone().pow(msb_offset)
-            + gamma.pow(msb_offset + 1) * eq_booleanity
-            + decode_scale * constant(F::pow2(UNSIGNED_INC_BITS)) * identity;
-        output + msb_coefficient * opening(reduced_unsigned_inc_msb_opening())
+        let baseline_coefficient = gamma.clone().pow(msb_offset)
+            + gamma.clone().pow(msb_offset + 1) * eq_booleanity_default.clone();
+        let sparse_coefficient = gamma.pow(msb_offset + 1)
+            * (eq_booleanity - eq_booleanity_default)
+            + decode_scale * constant(F::pow2(UNSIGNED_INC_BITS)) * inc_value;
+        output
+            + eq_default * baseline_coefficient
+            + sparse_coefficient * opening(reduced_unsigned_inc_msb_opening())
     }
 }
 
@@ -231,8 +252,11 @@ mod tests {
             unreachable!()
         };
         let eq_bool = Fr::from_u64(13);
-        let eq_virt = Fr::from_u64(17);
-        let identity = Fr::from_u64(19);
+        let eq_bool_default = Fr::from_u64(17);
+        let eq_virt = Fr::from_u64(19);
+        let eq_virt_default = Fr::from_u64(23);
+        let eq_default = Fr::from_u64(29);
+        let inc_value = Fr::from_u64(31);
         let power = |exponent: usize| {
             (0..exponent).fold(Fr::from_u64(1), |accumulator, _| accumulator * gamma)
         };
@@ -268,11 +292,23 @@ mod tests {
                 HammingWeightClaimReductionPublic::EqBooleanity,
             ) => eq_bool,
             JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::EqBooleanityAtDefault,
+            ) => eq_bool_default,
+            JoltDerivedId::HammingWeightClaimReduction(
                 HammingWeightClaimReductionPublic::EqVirtualization(0),
             ) => eq_virt,
             JoltDerivedId::HammingWeightClaimReduction(
-                HammingWeightClaimReductionPublic::IdentityAtAddress,
-            ) => identity,
+                HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(0),
+            ) => eq_virt_default,
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::EqDefault,
+            ) => eq_default,
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::RamHammingWeight,
+            ) => *hamming,
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::BalancedIncValueAtAddress,
+            ) => inc_value,
             _ => zero,
         };
 
@@ -290,7 +326,7 @@ mod tests {
             + power(6) * *bool_1
             + power(7)
             + power(8) * *bool_msb
-            + power(9) * (*fused + Fr::pow2(64));
+            + power(9) * *fused;
         assert_eq!(input, expected_input);
 
         let output = relation.output_expression::<Fr>().evaluate(
@@ -298,10 +334,19 @@ mod tests {
             challenge_value,
             derived_value,
         );
-        let expected_output = *out_ra * (power(0) + power(1) * eq_bool + power(2) * eq_virt)
-            + *out_0 * (power(3) + power(4) * eq_bool + power(9) * identity)
-            + *out_1 * (power(5) + power(6) * eq_bool + power(9) * Fr::pow2(32) * identity)
-            + *out_msb * (power(7) + power(8) * eq_bool + power(9) * Fr::pow2(64) * identity);
+        let expected_output = eq_default
+            * *hamming
+            * (power(0) + power(1) * eq_bool_default + power(2) * eq_virt_default)
+            + *out_ra
+                * (power(1) * (eq_bool - eq_bool_default) + power(2) * (eq_virt - eq_virt_default))
+            + eq_default * (power(3) + power(4) * eq_bool_default)
+            + *out_0 * (power(4) * (eq_bool - eq_bool_default) + power(9) * inc_value)
+            + eq_default * (power(5) + power(6) * eq_bool_default)
+            + *out_1
+                * (power(6) * (eq_bool - eq_bool_default) + power(9) * Fr::pow2(32) * inc_value)
+            + eq_default * (power(7) + power(8) * eq_bool_default)
+            + *out_msb
+                * (power(8) * (eq_bool - eq_bool_default) + power(9) * Fr::pow2(64) * inc_value);
         assert_eq!(output, expected_output);
 
         assert_eq!(
