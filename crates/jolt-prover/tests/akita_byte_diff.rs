@@ -342,7 +342,7 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,

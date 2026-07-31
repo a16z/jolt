@@ -237,7 +237,7 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -371,7 +371,7 @@ mod muldiv {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -492,7 +492,7 @@ mod advice {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -625,7 +625,7 @@ mod advice {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -741,7 +741,7 @@ mod committed {
             committed_program: None,
         };
 
-        let backend = akita::JoltAkitaBackend::reference();
+        let backend = akita::JoltAkitaBackend::optimized();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
