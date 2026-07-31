@@ -229,6 +229,23 @@ impl ProofSession {
     }
 }
 
+/// Shallow visitation only: the parked carries are `Box<dyn Any>`, whose
+/// heap contents Allocative cannot see through, so the per-stage flamegraphs
+/// attribute just the map scaffolding and entry count. Deep session
+/// attribution would need `park` to demand `Allocative` of every carry —
+/// a redesign deliberately out of scope for taxonomy v1.
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for ProofSession {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("carries"),
+            self.state.len() * size_of::<(TypeId, Box<dyn Any>)>(),
+        );
+        visitor.exit();
+    }
+}
+
 #[cfg(test)]
 mod kernel_slots_derive_tests {
     use jolt_field::Fr;

@@ -22,13 +22,17 @@
 //! slice-backed and behind a re-emulating source (the forced chunk walk).
 //! `wide_one_hot` is the geometry arm: the `{8, 32}` one-hot config the
 //! provers derive at log_T ≥ 25, injected at small T under a 2^25-cap SRS.
+//!
+//! Clear-mode only: under the `zk` feature both provers emit randomized
+//! committed proofs (fresh Pedersen blinds), so byte equality is undefined —
+//! the ZK correctness gate is `zk_e2e.rs` instead.
 
 /// Shared scaffolding for the byte-diff modules: every test runs the same
 /// legacy-side guest pipeline (decode + trace + preprocess + prove + replay)
 /// and the same modular-side pipeline (trace + config + witness + prove +
 /// verify); the per-mode differences — advice, committed program, trace
 /// order — stay in the test bodies.
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -457,7 +461,7 @@ mod support {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -573,6 +577,10 @@ mod muldiv {
         // for ANY backend (spec invariant 8) — run once per backend under
         // test, against the legacy oracle computed above.
         let assert_backend_matches_legacy = |backend: &JoltBackend<Fr, DoryScheme>| {
+            let mode = jolt_prover::ProofMode::<Pedersen<Bn254G1>>::new(
+                prover_preprocessing.verifier.vc_setup.as_ref(),
+            )
+            .expect("clear mode needs no vector-commitment setup");
             let mut session = backend.begin_proof();
             let stage0 = prove_stage0::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                 backend,
@@ -603,9 +611,10 @@ mod muldiv {
             // The stage-1 ratchet: prove, then replay legacy's proof through
             // the verifier's stage 1 for the boundary state.
             let mut new_transcript = stage0.transcript;
-            let stage1 = prove_stage1::<Fr, DoryScheme, Bn254G1, Blake2bTranscript>(
+            let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 backend,
                 &mut session,
+                &mode,
                 config.trace_length.ilog2() as usize,
                 &witness,
                 &mut new_transcript,
@@ -637,9 +646,10 @@ mod muldiv {
 
             // The stage-2 ratchet: prove, then replay legacy's proof through
             // the verifier's stage 2 for the boundary state.
-            let stage2 = prove_stage2::<Fr, DoryScheme, Bn254G1, Blake2bTranscript>(
+            let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 backend,
                 &mut session,
+                &mode,
                 &config,
                 &public_io,
                 &stage1.clear_output,
@@ -673,9 +683,10 @@ mod muldiv {
 
             // The stage-3 ratchet: prove, then replay legacy's proof through
             // the verifier's stage 3 for the boundary state.
-            let stage3 = prove_stage3::<Fr, DoryScheme, Bn254G1, Blake2bTranscript>(
+            let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 backend,
                 &mut session,
+                &mode,
                 &config,
                 &stage1.clear_output,
                 &stage2.clear_output,
@@ -706,19 +717,19 @@ mod muldiv {
 
             // The stage-4 ratchet: prove, then replay legacy's proof through
             // the verifier's stage 4 for the boundary state.
-            let stage4 =
-                prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
-                    backend,
-                    &mut session,
-                    &legacy_pre_stage1.checked,
-                    &config,
-                    &prover_preprocessing,
-                    &stage2.clear_output,
-                    &stage3.clear_output,
-                    &witness,
-                    &mut new_transcript,
-                )
-                .expect("stage 4 proves");
+            let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                backend,
+                &mut session,
+                &mode,
+                &legacy_pre_stage1.checked,
+                &config,
+                &prover_preprocessing,
+                &stage2.clear_output,
+                &stage3.clear_output,
+                &witness,
+                &mut new_transcript,
+            )
+            .expect("stage 4 proves");
 
             assert_eq!(
                 stage4.sumcheck_proof, legacy_proof.stages.stage4_sumcheck_proof,
@@ -743,19 +754,19 @@ mod muldiv {
 
             // The stage-5 ratchet: prove, then replay legacy's proof through
             // the verifier's stage 5 for the boundary state.
-            let stage5 =
-                prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
-                    backend,
-                    &mut session,
-                    &legacy_pre_stage1.checked,
-                    &config,
-                    &prover_preprocessing,
-                    &stage2.clear_output,
-                    &stage4.clear_output,
-                    &witness,
-                    &mut new_transcript,
-                )
-                .expect("stage 5 proves");
+            let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                backend,
+                &mut session,
+                &mode,
+                &legacy_pre_stage1.checked,
+                &config,
+                &prover_preprocessing,
+                &stage2.clear_output,
+                &stage4.clear_output,
+                &witness,
+                &mut new_transcript,
+            )
+            .expect("stage 5 proves");
 
             assert_eq!(
                 stage5.sumcheck_proof, legacy_proof.stages.stage5_sumcheck_proof,
@@ -788,22 +799,22 @@ mod muldiv {
 
             // The stage-6a ratchet: prove, then replay legacy's proof through
             // the verifier's stage 6a for the boundary state.
-            let stage6a =
-                prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
-                    backend,
-                    &mut session,
-                    &legacy_pre_stage1.checked,
-                    &config,
-                    &prover_preprocessing,
-                    &stage1.clear_output,
-                    &stage2.clear_output,
-                    &stage3.clear_output,
-                    &stage4.clear_output,
-                    &stage5.clear_output,
-                    &witness,
-                    &mut new_transcript,
-                )
-                .expect("stage 6a proves");
+            let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                backend,
+                &mut session,
+                &mode,
+                &legacy_pre_stage1.checked,
+                &config,
+                &prover_preprocessing,
+                &stage1.clear_output,
+                &stage2.clear_output,
+                &stage3.clear_output,
+                &stage4.clear_output,
+                &stage5.clear_output,
+                &witness,
+                &mut new_transcript,
+            )
+            .expect("stage 6a proves");
 
             assert_eq!(
                 stage6a.sumcheck_proof, legacy_proof.stages.stage6a_sumcheck_proof,
@@ -832,23 +843,23 @@ mod muldiv {
 
             // The stage-6b ratchet: prove, then replay legacy's proof through
             // the verifier's stage 6b for the boundary state.
-            let stage6b =
-                prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
-                    backend,
-                    &mut session,
-                    &legacy_pre_stage1.checked,
-                    &config,
-                    &prover_preprocessing,
-                    &stage1.clear_output,
-                    &stage2.clear_output,
-                    &stage3.clear_output,
-                    &stage4.clear_output,
-                    &stage5.clear_output,
-                    &stage6a.clear_output,
-                    &witness,
-                    &mut new_transcript,
-                )
-                .expect("stage 6b proves");
+            let stage6b = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                backend,
+                &mut session,
+                &mode,
+                &legacy_pre_stage1.checked,
+                &config,
+                &prover_preprocessing,
+                &stage1.clear_output,
+                &stage2.clear_output,
+                &stage3.clear_output,
+                &stage4.clear_output,
+                &stage5.clear_output,
+                &stage6a.clear_output,
+                &witness,
+                &mut new_transcript,
+            )
+            .expect("stage 6b proves");
 
             assert_eq!(
                 stage6b.sumcheck_proof, legacy_proof.stages.stage6b_sumcheck_proof,
@@ -878,19 +889,19 @@ mod muldiv {
 
             // The stage-7 ratchet: prove, then replay legacy's proof through
             // the verifier's stage 7 for the boundary state.
-            let stage7 =
-                prove_stage7::<Fr, DoryScheme, Pedersen<Bn254G1>, Bn254G1, Blake2bTranscript>(
-                    backend,
-                    &mut session,
-                    &legacy_pre_stage1.checked,
-                    &config,
-                    &prover_preprocessing,
-                    &stage4.clear_output,
-                    &stage6b.clear_output,
-                    &witness,
-                    &mut new_transcript,
-                )
-                .expect("stage 7 proves");
+            let stage7 = prove_stage7::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                backend,
+                &mut session,
+                &mode,
+                &legacy_pre_stage1.checked,
+                &config,
+                &prover_preprocessing,
+                &stage4.clear_output,
+                &stage6b.clear_output,
+                &witness,
+                &mut new_transcript,
+            )
+            .expect("stage 7 proves");
 
             assert_eq!(
                 stage7.sumcheck_proof, legacy_proof.stages.stage7_sumcheck_proof,
@@ -980,7 +991,7 @@ mod muldiv {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1173,7 +1184,7 @@ mod advice_consumer {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod committed_muldiv {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1356,7 +1367,7 @@ mod committed_muldiv {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod address_major {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1494,7 +1505,7 @@ mod address_major {
     }
 }
 
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod advice_committed {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -2064,7 +2075,7 @@ mod wide_one_hot {
     }
 }
 
-#[cfg(not(feature = "prover-fixtures"))]
+#[cfg(not(all(feature = "prover-fixtures", not(feature = "zk"))))]
 #[test]
-#[ignore = "enable --features prover-fixtures to run the legacy byte-diff harness"]
+#[ignore = "enable --features prover-fixtures (without zk — the harness byte-compares clear proofs) to run the legacy byte-diff harness"]
 fn prover_matches_legacy_on_muldiv() {}

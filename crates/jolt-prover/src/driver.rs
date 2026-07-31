@@ -120,22 +120,28 @@ pub struct Proved<F: Field, S: StageProver<F>, C> {
     pub final_claim: F,
 }
 
-/// Instrumentation-only [`ProveRounds`] shim: the generated driver wraps each
-/// member's kernel so every `prove_round`/`finish_rounds` call runs inside a
-/// fresh tracing span named `<Relation>::prove_round`, attributing the
-/// engine's batched round-loop time per member in a Perfetto timeline. The
-/// delegation is transparent — zero behavior change; the driver reaches the
-/// kernel itself through [`inner`](Self::inner) for extraction and parking.
-pub struct SpannedRounds<K, S> {
+/// Instrumentation-only [`ProveRounds`] shim: the generated driver wraps
+/// each member's kernel so every `prove_round` call runs inside a fresh
+/// tracing span named `<Relation>::prove_round` and the terminal
+/// `finish_rounds` call inside `<Relation>::finish_rounds`, attributing the
+/// engine's batched round-loop time per member in a Perfetto timeline
+/// (`finish_rounds` nests directly under `prove_batch` rather than a
+/// `sumcheck_round`, so the distinct label keeps the per-label buckets
+/// self-describing). The delegation is transparent — zero behavior change;
+/// the driver reaches the kernel itself through [`inner`](Self::inner) for
+/// extraction and parking.
+pub struct SpannedRounds<K, SR, SF> {
     pub inner: K,
-    pub span: S,
+    pub round_span: SR,
+    pub finish_span: SF,
 }
 
-impl<F, K, S> ProveRounds<F> for SpannedRounds<Box<K>, S>
+impl<F, K, SR, SF> ProveRounds<F> for SpannedRounds<Box<K>, SR, SF>
 where
     F: Field,
     K: ProveRounds<F> + ?Sized,
-    S: Fn() -> tracing::Span,
+    SR: Fn() -> tracing::Span,
+    SF: Fn() -> tracing::Span,
 {
     fn num_rounds(&self) -> usize {
         self.inner.num_rounds()
@@ -147,12 +153,12 @@ where
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let _guard = (self.span)().entered();
+        let _guard = (self.round_span)().entered();
         self.inner.prove_round(bind, round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        let _guard = (self.span)().entered();
+        let _guard = (self.finish_span)().entered();
         self.inner.finish_rounds(bind)
     }
 }
@@ -335,13 +341,19 @@ macro_rules! __stage_member {
     (spanned required $member:ident, $relation:ident) => {
         let mut $member = $crate::driver::SpannedRounds {
             inner: $member,
-            span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
+            round_span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
+            finish_span: || {
+                ::tracing::info_span!(concat!(stringify!($relation), "::finish_rounds"))
+            },
         };
     };
     (spanned optional $member:ident, $relation:ident) => {
         let mut $member = $member.map(|__kernel| $crate::driver::SpannedRounds {
             inner: __kernel,
-            span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
+            round_span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
+            finish_span: || {
+                ::tracing::info_span!(concat!(stringify!($relation), "::finish_rounds"))
+            },
         });
     };
     (round_slot required $member:ident) => {

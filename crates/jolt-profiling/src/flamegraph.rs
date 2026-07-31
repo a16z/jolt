@@ -1,11 +1,28 @@
 //! Heap flamegraph generation from `allocative`-instrumented data structures.
 
+use std::sync::OnceLock;
 use std::{fs::File, io::Cursor, path::Path};
 
 use allocative::{Allocative, FlameGraphBuilder};
 use inferno::flamegraph::Options;
 
 use crate::units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
+
+/// Output-path prefix for the prover's per-stage flamegraph SVGs
+/// (`{prefix}stage{N}.svg`). Unset means the harness did not opt in and the
+/// prover's cfg-gated emission hooks stay inert — the same
+/// [`PPROF_PREFIX`](crate::setup) pattern.
+static FLAMEGRAPH_PREFIX: OnceLock<String> = OnceLock::new();
+
+/// Opt in to per-stage flamegraph emission (first call wins).
+pub fn set_flamegraph_prefix(prefix: impl Into<String>) {
+    let _ = FLAMEGRAPH_PREFIX.set(prefix.into());
+}
+
+/// The configured prefix, if the harness opted in.
+pub fn flamegraph_prefix() -> Option<&'static str> {
+    FLAMEGRAPH_PREFIX.get().map(String::as_str)
+}
 
 /// Logs the heap allocation size of an `Allocative`-instrumented value.
 pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {

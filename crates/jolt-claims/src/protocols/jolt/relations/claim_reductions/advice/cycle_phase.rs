@@ -23,6 +23,7 @@ use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// The produced trusted-advice opening (the intermediate when an address phase
 /// follows, else the final advice opening).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -43,6 +44,7 @@ pub struct TrustedAdviceCyclePhaseInputClaims<C> {
 
 /// The produced untrusted-advice opening (the intermediate when an address phase
 /// follows, else the final advice opening).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
