@@ -157,5 +157,5 @@ fn phase3_baseline() {
     let mut chain_input = postcard::to_stdvec(&[5u8; 32]).unwrap();
     chain_input.append(&mut postcard::to_stdvec(&4_446u32).unwrap());
     let (program, inputs) = setup("sha2-chain-guest", "sha2_chain", chain_input);
-    report("sha2_chain_4446", &program, &inputs, false);
+    report("sha2_chain_4446", &program, &inputs, true);
 }

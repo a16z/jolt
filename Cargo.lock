@@ -3917,6 +3917,7 @@ dependencies = [
  "dynasm",
  "dynasmrt",
  "iai-callgrind",
+ "jolt-inlines-keccak256",
  "jolt-inlines-sha2",
  "jolt-platform",
  "jolt-program",
