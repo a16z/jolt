@@ -40,9 +40,10 @@ accumulator.
 
 ### Correctness argument
 
-Let `p = 2^128 - C`, where production uses `C = 275`. For an accumulator
-coefficient, keep a wrapped 128-bit value `r` and a signed wrap count `w`.
-The represented integer is
+Let `p = 2^128 - C`. The current `Prime128OffsetA7F7` preset uses
+`C = 2^32 - 22537 = 0xFFFFA7F7`. For an accumulator coefficient, keep a
+wrapped 128-bit value `r` and a signed wrap count `w`. The represented integer
+is
 
 ```text
 S = r + w * 2^128.
@@ -81,6 +82,25 @@ For 29 committed columns in one rank task:
 
 This state is task-local rather than trace-scaled. The change cannot explain
 a large RSS movement, but it does not spend memory to obtain the CPU gain.
+
+### Follow-on rank-batch screen
+
+The compact state reopened one earlier question: batching two A ranks now
+needs 66,816 bytes of destination state, versus 118,784 bytes with the old
+D64 accumulator. A candidate scanned each decoded row and active-column mask
+once for two ranks while leaving D128 at rank batch one.
+
+It remained decisively slower:
+
+| `T = 2^22` span | Deferred rank-one mean | Rank batch two | Change |
+|---|---:|---:|---:|
+| Root accumulation | 0.895740 s | 1.232115 s | **+37.6%** |
+| Commitment | 1.162690 s | 1.502068 s | +29.2% |
+| Whole prover | 4.741647 s | 5.202443 s | +9.7% |
+
+Even with the smaller working set, interleaving writes to two destination
+ranks costs more than sharing the row-mask traversal saves. The candidate
+was reverted without a large run.
 
 ## Adjacent `T = 2^22` causal screen
 
@@ -155,5 +175,6 @@ No verifier, transcript, opening claim, or protocol code changed.
 | `akita_26_d64_deferred_repeat.json` | large candidate B | `a8c5a8e38dccb9435668b7fedefd1e21c75ce1299a236cf9c88aedbe04637aee` |
 | `dory_26_refresh.json` | fresh Dory control A | `fc5ad6c7454193e35d6dd2757f464a3e5cff64a672e44409150b3046e2f0700d` |
 | `dory_26_refresh_repeat.json` | fresh Dory control B | `0eaa89d1614e3bcb0a97aac0b67c952cd5875af9ed2d15595a069f898972531b` |
+| `akita_22_d64_rank_batch2.json` | rejected two-rank follow-on | `d8be83b7fafce925422274a45d8c1afa9b72323c88dc1b0a8139c51647b60ab5` |
 
 All files are in `benchmark-runs/perfetto_traces/`.

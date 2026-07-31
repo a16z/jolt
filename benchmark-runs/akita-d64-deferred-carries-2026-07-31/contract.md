@@ -11,7 +11,8 @@ peak memory or changing the protocol?
 The D64 control accumulated each coefficient in `Fp128x8i32`, an eight-limb
 wide representation. The candidate instead stores the low and high `u64`
 limbs plus a signed `i16` count of `2^128` wraps, then applies
-`2^128 = 275 (mod p)` once when the row tile is flushed.
+`2^128 = C (mod p)` once when the row tile is flushed. The current
+`Prime128OffsetA7F7` preset has `C = 0xFFFFA7F7`.
 
 ## Fixed configuration
 
