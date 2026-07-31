@@ -81,67 +81,76 @@ where
     where
         PCS: StreamingCommitment,
     {
-        let mut backend = Self::reference();
+        let mut backend = Self::reference().with_optimized_compute();
 
         backend.commit = Box::new(OptimizedBackend);
-
-        backend.spartan_outer_uniskip = Box::new(spartan_outer::OptimizedOuterUniskip);
-        backend.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);
-        backend.spartan_product_uniskip = Box::new(spartan_product::OptimizedProductUniskip);
-        backend.spartan_product_remainder = Box::new(spartan_product::OptimizedProductRemainder);
-        backend.spartan_shift = Box::new(spartan_shift::OptimizedSpartanShift);
-
-        backend.ram_read_write = Box::new(OptimizedBackend);
-        backend.ram_val_check = Box::new(OptimizedBackend);
-        backend.ram_ra_claim_reduction = Box::new(OptimizedBackend);
-        backend.ram_raf_evaluation = Box::new(OptimizedBackend);
-        backend.ram_output_check = Box::new(OptimizedBackend);
-        backend.ram_ra_virtualization = Box::new(OptimizedBackend);
-
-        backend.instruction_read_raf = Box::new(instruction_read_raf::OptimizedInstructionReadRaf);
-        backend.instruction_ra_virtualization =
-            Box::new(instruction_ra_virtualization::OptimizedInstructionRaVirtualization);
-        backend.instruction_claim_reduction =
-            Box::new(instruction_claim_reduction::OptimizedInstructionClaimReduction);
-        backend.instruction_input = Box::new(instruction_input::OptimizedInstructionInput);
-
-        backend.registers_read_write = Box::new(registers_read_write::OptimizedRegistersReadWrite);
-        backend.registers_val_evaluation =
-            Box::new(registers_val_evaluation::OptimizedRegistersValEvaluation);
-        backend.registers_claim_reduction =
-            Box::new(registers_claim_reduction::OptimizedRegistersClaimReduction);
-
-        backend.booleanity_address = Box::new(booleanity::OptimizedBooleanityAddress);
-        backend.booleanity_cycle = Box::new(booleanity::OptimizedBooleanityCycle);
-        backend.ram_hamming_booleanity =
-            Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
-
-        backend.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
-        backend.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
-        backend.hamming_weight_claim_reduction = Box::new(OptimizedHammingWeightClaimReduction);
-        backend.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
-
         backend.joint_opening = Box::new(OptimizedBackend);
 
-        backend.trusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
-        backend.untrusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
-        backend.bytecode_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
-        backend.program_image_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
-        backend.advice_opening = Box::new(OptimizedPrecommittedCycle);
-        backend.trusted_advice_address = Box::new(OptimizedPrecommittedAddress::new(
+        backend
+    }
+
+    /// Replace every protocol-arithmetic slot with its optimized kernel while
+    /// preserving the commitment and opening slots owned by the caller.
+    ///
+    /// Packed commitment schemes use native group commitment/opening paths, so
+    /// they cannot satisfy [`StreamingCommitment`] and must retain their own
+    /// boundary slots while sharing the optimized stage 1–7 kernels.
+    pub fn with_optimized_compute(mut self) -> Self {
+        self.spartan_outer_uniskip = Box::new(spartan_outer::OptimizedOuterUniskip);
+        self.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);
+        self.spartan_product_uniskip = Box::new(spartan_product::OptimizedProductUniskip);
+        self.spartan_product_remainder = Box::new(spartan_product::OptimizedProductRemainder);
+        self.spartan_shift = Box::new(spartan_shift::OptimizedSpartanShift);
+
+        self.ram_read_write = Box::new(OptimizedBackend);
+        self.ram_val_check = Box::new(OptimizedBackend);
+        self.ram_ra_claim_reduction = Box::new(OptimizedBackend);
+        self.ram_raf_evaluation = Box::new(OptimizedBackend);
+        self.ram_output_check = Box::new(OptimizedBackend);
+        self.ram_ra_virtualization = Box::new(OptimizedBackend);
+
+        self.instruction_read_raf = Box::new(instruction_read_raf::OptimizedInstructionReadRaf);
+        self.instruction_ra_virtualization =
+            Box::new(instruction_ra_virtualization::OptimizedInstructionRaVirtualization);
+        self.instruction_claim_reduction =
+            Box::new(instruction_claim_reduction::OptimizedInstructionClaimReduction);
+        self.instruction_input = Box::new(instruction_input::OptimizedInstructionInput);
+
+        self.registers_read_write = Box::new(registers_read_write::OptimizedRegistersReadWrite);
+        self.registers_val_evaluation =
+            Box::new(registers_val_evaluation::OptimizedRegistersValEvaluation);
+        self.registers_claim_reduction =
+            Box::new(registers_claim_reduction::OptimizedRegistersClaimReduction);
+
+        self.booleanity_address = Box::new(booleanity::OptimizedBooleanityAddress);
+        self.booleanity_cycle = Box::new(booleanity::OptimizedBooleanityCycle);
+        self.ram_hamming_booleanity =
+            Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
+
+        self.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
+        self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
+        self.hamming_weight_claim_reduction = Box::new(OptimizedHammingWeightClaimReduction);
+        self.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
+
+        self.trusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
+        self.untrusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
+        self.bytecode_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
+        self.program_image_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
+        self.advice_opening = Box::new(OptimizedPrecommittedCycle);
+        self.trusted_advice_address = Box::new(OptimizedPrecommittedAddress::new(
             "stage 6b parked no trusted-advice reduction state for the scheduled address phase",
         ));
-        backend.untrusted_advice_address = Box::new(OptimizedPrecommittedAddress::new(
+        self.untrusted_advice_address = Box::new(OptimizedPrecommittedAddress::new(
             "stage 6b parked no untrusted-advice reduction state for the scheduled address phase",
         ));
-        backend.bytecode_reduction_address = Box::new(OptimizedPrecommittedAddress::new(
+        self.bytecode_reduction_address = Box::new(OptimizedPrecommittedAddress::new(
             "stage 6b parked no bytecode reduction state for the scheduled address phase",
         ));
-        backend.program_image_reduction_address = Box::new(OptimizedPrecommittedAddress::new(
+        self.program_image_reduction_address = Box::new(OptimizedPrecommittedAddress::new(
             "stage 6b parked no program-image reduction state for the scheduled address phase",
         ));
 
-        backend
+        self
     }
 }
 

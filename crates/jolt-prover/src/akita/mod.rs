@@ -165,6 +165,21 @@ where
         }
     }
 
+    /// The packed backend with optimized stage 1–7 arithmetic and native
+    /// Akita commitment/opening boundaries.
+    pub fn optimized() -> Self {
+        let mut backend = Self::reference();
+        backend.base = backend.base.with_optimized_compute();
+        // These relations add fused-inc columns or openings in the packed
+        // protocol; their optimized kernels currently serve the base shape.
+        backend.base.bytecode_read_raf_address = Box::new(ReferenceBackend);
+        backend.base.booleanity_address = Box::new(ReferenceBackend);
+        backend.base.bytecode_read_raf_cycle = Box::new(ReferenceBackend);
+        backend.base.booleanity_cycle = Box::new(ReferenceBackend);
+        backend.base.hamming_weight_claim_reduction = Box::new(ReferenceBackend);
+        backend
+    }
+
     /// Open the proof-scoped session that slot state lives in — the same
     /// contract as [`JoltBackend::begin_proof`].
     pub fn begin_proof(&self) -> ProofSession {
