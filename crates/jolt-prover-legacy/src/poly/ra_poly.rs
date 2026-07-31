@@ -18,6 +18,12 @@ use crate::{
 enum RaLookupIndices<I: Copy + Send + Sync + 'static> {
     Sparse(Arc<Vec<Option<I>>>),
     Dense(Arc<Vec<I>>),
+    DenseStrided {
+        values: Arc<Vec<I>>,
+        len: usize,
+        stride: usize,
+        offset: usize,
+    },
 }
 
 impl<I: Copy + Send + Sync + 'static> Default for RaLookupIndices<I> {
@@ -32,6 +38,7 @@ impl<I: Copy + Send + Sync + 'static> RaLookupIndices<I> {
         match self {
             Self::Sparse(indices) => indices.len(),
             Self::Dense(indices) => indices.len(),
+            Self::DenseStrided { len, .. } => *len,
         }
     }
 
@@ -40,6 +47,12 @@ impl<I: Copy + Send + Sync + 'static> RaLookupIndices<I> {
         match self {
             Self::Sparse(indices) => indices[index],
             Self::Dense(indices) => Some(indices[index]),
+            Self::DenseStrided {
+                values,
+                stride,
+                offset,
+                ..
+            } => Some(values[index * stride + offset]),
         }
     }
 
@@ -83,6 +96,30 @@ impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> RaPo
         Self::Round1(RaPolynomialRound1 {
             F: eq_evals,
             lookup_indices: RaLookupIndices::Dense(lookup_indices),
+        })
+    }
+
+    pub fn new_dense_strided(
+        lookup_indices: Arc<Vec<I>>,
+        len: usize,
+        stride: usize,
+        offset: usize,
+        eq_evals: Vec<F>,
+    ) -> Self {
+        assert!(stride > 0);
+        assert!(offset < stride);
+        assert!(
+            len == 0 || (len - 1) * stride + offset < lookup_indices.len(),
+            "strided RA column exceeds its backing storage"
+        );
+        Self::Round1(RaPolynomialRound1 {
+            F: eq_evals,
+            lookup_indices: RaLookupIndices::DenseStrided {
+                values: lookup_indices,
+                len,
+                stride,
+                offset,
+            },
         })
     }
 
@@ -492,9 +529,51 @@ mod tests {
         assert_eq!(dense.final_sumcheck_claim(), sparse.final_sumcheck_claim());
     }
 
+    fn assert_strided_ra_matches_dense(binding_order: BindingOrder) {
+        const STRIDE: usize = 5;
+        const OFFSET: usize = 2;
+        let lookup_indices = vec![
+            0_u8, 255, 1, 254, 2, 253, 3, 252, 4, 251, 5, 250, 6, 249, 7, 248,
+        ];
+        let mut rows = vec![123_u8; lookup_indices.len() * STRIDE];
+        for (row, index) in lookup_indices.iter().copied().enumerate() {
+            rows[row * STRIDE + OFFSET] = index;
+        }
+        let eq_evals: Vec<Fr> = (0..=u8::MAX).map(|value| Fr::from(value as u64)).collect();
+        let mut dense: RaPolynomial<u8, Fr> =
+            RaPolynomial::new_dense(Arc::new(lookup_indices.clone()), eq_evals.clone());
+        let mut strided: RaPolynomial<u8, Fr> = RaPolynomial::new_dense_strided(
+            Arc::new(rows),
+            lookup_indices.len(),
+            STRIDE,
+            OFFSET,
+            eq_evals,
+        );
+        let mut rng = test_rng();
+
+        while dense.len() > 1 {
+            assert_eq!(strided.len(), dense.len());
+            for j in 0..dense.len() {
+                assert_eq!(strided.get_bound_coeff(j), dense.get_bound_coeff(j));
+            }
+
+            let challenge = <Fr as JoltField>::Challenge::rand(&mut rng);
+            dense.bind_parallel(challenge, binding_order);
+            strided.bind_parallel(challenge, binding_order);
+        }
+
+        assert_eq!(strided.final_sumcheck_claim(), dense.final_sumcheck_claim());
+    }
+
     #[test]
     fn dense_ra_polynomial_matches_sparse() {
         assert_dense_ra_matches_sparse(BindingOrder::LowToHigh);
         assert_dense_ra_matches_sparse(BindingOrder::HighToLow);
+    }
+
+    #[test]
+    fn strided_ra_polynomial_matches_dense() {
+        assert_strided_ra_matches_dense(BindingOrder::LowToHigh);
+        assert_strided_ra_matches_dense(BindingOrder::HighToLow);
     }
 }

@@ -53,7 +53,7 @@ use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
 use crate::poly::shared_ra_polys::RaIndices;
 use crate::subprotocols::booleanity::{
     lattice_booleanity_params, FusedIncColumns, LatticeBooleanityAddressSumcheckProver,
-    LatticeBooleanityCycleSumcheckProver,
+    LatticeBooleanityCycleSumcheckProver, OneHotColumns,
 };
 use crate::transcripts::Transcript as LegacyTranscript;
 use crate::utils::math::Math;
@@ -74,9 +74,7 @@ use crate::zkvm::fiat_shamir_preamble;
 use crate::zkvm::instruction_lookups::ra_virtual::{
     InstructionRaSumcheckParams, InstructionRaSumcheckProver as LookupsRaSumcheckProver,
 };
-use crate::zkvm::packed_witness::{
-    FusedIncDeltas, FusedIncValue, SparseUnitPolynomial, UNSIGNED_INC_BITS,
-};
+use crate::zkvm::packed_witness::{FusedIncDeltas, FusedIncValue, SparseUnitPolynomial};
 use crate::zkvm::prover::JoltCpuProver;
 use crate::zkvm::ram::hamming_booleanity::{
     HammingBooleanitySumcheckParams, HammingBooleanitySumcheckProver,
@@ -104,7 +102,7 @@ pub type AkitaPackedStatement = PrefixPackedStatement<
 struct JoltOneHotTraceRows {
     num_rows: usize,
     num_columns: usize,
-    lanes: Vec<u8>,
+    lanes: Arc<Vec<u8>>,
     ram_valid: Mutex<Option<Vec<u8>>>,
 }
 
@@ -143,9 +141,20 @@ impl JoltOneHotTraceRows {
         Self {
             num_rows,
             num_columns,
-            lanes,
+            lanes: Arc::new(lanes),
             ram_valid: Mutex::new(Some(ram_valid)),
         }
+    }
+
+    fn fused_inc_columns(&self, ranges: &OneHotTraceColumnRanges) -> OneHotColumns {
+        debug_assert_eq!(ranges.unsigned_inc.end, ranges.unsigned_inc_msb);
+        OneHotColumns::row_major(
+            Arc::clone(&self.lanes),
+            self.num_rows,
+            self.num_columns,
+            ranges.unsigned_inc.start,
+            ranges.unsigned_inc.len() + 1,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "jolt_one_hot_trace_materialize_ra")]
@@ -806,25 +815,6 @@ impl AkitaPackedProver<'_> {
     #[tracing::instrument(skip_all, name = "fused_inc_deltas")]
     fn fused_inc_deltas(&self) -> FusedIncDeltas {
         FusedIncDeltas::from_trace(&self.trace)
-    }
-
-    #[tracing::instrument(skip_all, name = "fused_inc_one_hot_columns")]
-    fn fused_inc_one_hot_columns(&self, fused: &FusedIncDeltas) -> Vec<Arc<Vec<u8>>> {
-        use std::sync::Arc;
-
-        let chunk_count = UNSIGNED_INC_BITS / self.one_hot_params.log_k_chunk;
-        let width = self.one_hot_params.log_k_chunk;
-        let one_hot: Vec<Arc<Vec<u8>>> = (0..chunk_count)
-            .map(|index| {
-                Arc::new(fused.par_map_values(|delta| {
-                    FusedIncValue { delta }.balanced_chunk_hot_lane_bits(width, index) as u8
-                }))
-            })
-            .chain(core::iter::once(Arc::new(fused.par_map_values(|delta| {
-                FusedIncValue { delta }.balanced_carry_hot_lane_bits(width) as u8
-            }))))
-            .collect();
-        one_hot
     }
 
     /// Builds and commits the untrusted-advice byte one-hot column (`UntrustedAdviceOneHot`).
@@ -1562,9 +1552,9 @@ impl AkitaPackedProver<'_> {
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
         let ra_indices =
             one_hot_trace_rows.materialize_ra_indices(&plan.ranges, &self.one_hot_params);
+        let one_hot = one_hot_trace_rows.fused_inc_columns(&plan.ranges);
         drop(one_hot_trace_rows);
         let fused = self.fused_inc_deltas();
-        let one_hot = self.fused_inc_one_hot_columns(&fused);
         let mut fused_inc_columns = FusedIncColumns { one_hot, fused };
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
             self.prove_stage6a_lattice(&fused_inc_columns, Arc::clone(&ra_indices));

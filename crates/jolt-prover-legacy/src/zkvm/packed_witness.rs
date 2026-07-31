@@ -284,6 +284,7 @@ impl FusedIncDeltas {
         &self.negative_words
     }
 
+    #[cfg(test)]
     pub(crate) fn par_map_values<T, M>(&self, map: M) -> Vec<T>
     where
         T: Send,

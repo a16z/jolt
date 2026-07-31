@@ -686,11 +686,94 @@ pub fn lattice_booleanity_params<F: JoltField>(
 /// Per-cycle lattice increment one-hot columns consumed by Booleanity and the
 /// Stage 7 hamming-weight reduction.
 #[cfg(all(feature = "prover", feature = "akita"))]
+#[derive(Allocative, Clone)]
+pub enum OneHotColumns {
+    ColumnMajor(Vec<Arc<Vec<u8>>>),
+    RowMajor {
+        values: Arc<Vec<u8>>,
+        num_rows: usize,
+        stride: usize,
+        offset: usize,
+        num_columns: usize,
+    },
+}
+
+#[cfg(all(feature = "prover", feature = "akita"))]
+impl OneHotColumns {
+    pub fn row_major(
+        values: Arc<Vec<u8>>,
+        num_rows: usize,
+        stride: usize,
+        offset: usize,
+        num_columns: usize,
+    ) -> Self {
+        assert!(num_columns > 0);
+        assert!(offset + num_columns <= stride);
+        assert_eq!(values.len(), num_rows * stride);
+        Self::RowMajor {
+            values,
+            num_rows,
+            stride,
+            offset,
+            num_columns,
+        }
+    }
+
+    fn num_rows(&self) -> usize {
+        match self {
+            Self::ColumnMajor(columns) => columns.first().map_or(0, |column| column.len()),
+            Self::RowMajor { num_rows, .. } => *num_rows,
+        }
+    }
+
+    fn num_columns(&self) -> usize {
+        match self {
+            Self::ColumnMajor(columns) => columns.len(),
+            Self::RowMajor { num_columns, .. } => *num_columns,
+        }
+    }
+
+    #[inline]
+    fn get(&self, column: usize, row: usize) -> u8 {
+        match self {
+            Self::ColumnMajor(columns) => columns[column][row],
+            Self::RowMajor {
+                values,
+                stride,
+                offset,
+                ..
+            } => values[row * stride + offset + column],
+        }
+    }
+
+    fn polynomial<F: JoltField>(&self, column: usize, table: Vec<F>) -> RaPolynomial<u8, F> {
+        match self {
+            Self::ColumnMajor(columns) => {
+                RaPolynomial::new_dense(Arc::clone(&columns[column]), table)
+            }
+            Self::RowMajor {
+                values,
+                num_rows,
+                stride,
+                offset,
+                ..
+            } => RaPolynomial::new_dense_strided(
+                Arc::clone(values),
+                *num_rows,
+                *stride,
+                offset + column,
+                table,
+            ),
+        }
+    }
+}
+
+#[cfg(all(feature = "prover", feature = "akita"))]
 pub struct FusedIncColumns {
     /// One-hot hot-address lanes: the unsigned-inc chunk columns in index
     /// order, then the MSB column (hot address zero or one) last — the
     /// batching order of [`lattice_booleanity_params`].
-    pub one_hot: Vec<Arc<Vec<u8>>>,
+    pub one_hot: OneHotColumns,
     /// The signed fused delta per cycle.
     pub fused: FusedIncDeltas,
 }
@@ -703,15 +786,15 @@ pub struct FusedIncColumns {
 /// columns are nearly free compared to per-column passes.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub fn one_hot_pushforwards<F: JoltField>(
-    columns: &[Arc<Vec<u8>>],
+    columns: &OneHotColumns,
     e_hi: &[F],
     e_lo: &[F],
     k_chunk: usize,
 ) -> Vec<Vec<F>> {
     let lo_bits = e_lo.len().trailing_zeros() as usize;
     let mask = e_lo.len() - 1;
-    let num_cycles = columns.first().map_or(0, |column| column.len());
-    let zero = || vec![vec![F::zero(); k_chunk]; columns.len()];
+    let num_cycles = columns.num_rows();
+    let zero = || vec![vec![F::zero(); k_chunk]; columns.num_columns()];
     const CHUNK_SIZE: usize = 1 << 14;
     (0..num_cycles.div_ceil(CHUNK_SIZE))
         .into_par_iter()
@@ -720,8 +803,8 @@ pub fn one_hot_pushforwards<F: JoltField>(
             let end = (start + CHUNK_SIZE).min(num_cycles);
             for j in start..end {
                 let eq_eval = e_hi[j >> lo_bits] * e_lo[j & mask];
-                for (column, g) in columns.iter().zip(acc.iter_mut()) {
-                    g[column[j] as usize] += eq_eval;
+                for (column, g) in acc.iter_mut().enumerate() {
+                    g[columns.get(column, j) as usize] += eq_eval;
                 }
             }
             acc
@@ -741,7 +824,7 @@ pub fn one_hot_pushforwards<F: JoltField>(
 pub struct LatticeBooleanityCycleInput<F: JoltField> {
     base: BooleanityCycleInput<F>,
     #[allocative(skip)]
-    one_hot_columns: Vec<Arc<Vec<u8>>>,
+    one_hot_columns: OneHotColumns,
 }
 
 #[cfg(all(feature = "prover", feature = "akita"))]
@@ -761,14 +844,14 @@ impl<F: JoltField> LatticeBooleanityCycleInput<F> {
 pub struct LatticeBooleanityAddressSumcheckProver<F: JoltField> {
     inner: BooleanityAddressSumcheckProver<F>,
     #[allocative(skip)]
-    one_hot_columns: Vec<Arc<Vec<u8>>>,
+    one_hot_columns: OneHotColumns,
 }
 
 #[cfg(all(feature = "prover", feature = "akita"))]
 impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
     fn from_inner(
         mut inner: BooleanityAddressSumcheckProver<F>,
-        one_hot_columns: Vec<Arc<Vec<u8>>>,
+        one_hot_columns: OneHotColumns,
     ) -> Self {
         // Chunk pushforwards `G_i(k) = Σ_{j: hot_lane_i(j) = k} eq(r_cycle, j)`,
         // with the same two-table split-eq as `compute_all_G`.
@@ -800,7 +883,7 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
         trace: &[JoltTraceRow],
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
-        one_hot_columns: Vec<Arc<Vec<u8>>>,
+        one_hot_columns: OneHotColumns,
     ) -> Self {
         let inner =
             BooleanityAddressSumcheckProver::initialize(params, trace, bytecode, memory_layout);
@@ -814,7 +897,7 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
     pub fn initialize_with_ra_indices(
         params: BooleanitySumcheckParams<F>,
         ra_indices: Arc<Vec<RaIndices>>,
-        one_hot_columns: Vec<Arc<Vec<u8>>>,
+        one_hot_columns: OneHotColumns,
     ) -> Self {
         let inner = BooleanityAddressSumcheckProver::initialize_with_ra_indices(params, ra_indices);
         Self::from_inner(inner, one_hot_columns)
@@ -911,14 +994,11 @@ impl<F: JoltField> LatticeBooleanityCycleSumcheckProver<F> {
                 base_eq.iter().map(|v| rho * *v).collect()
             })
             .collect();
-        let chunk_h: Vec<RaPolynomial<u8, F>> = input
-            .one_hot_columns
-            .iter()
-            .enumerate()
-            .map(|(index, column)| {
+        let chunk_h: Vec<RaPolynomial<u8, F>> = (0..input.one_hot_columns.num_columns())
+            .map(|index| {
                 let rho = gamma_powers[num_base + index];
                 let table: Vec<F> = base_eq.iter().map(|v| rho * *v).collect();
-                RaPolynomial::new_dense(Arc::clone(column), table)
+                input.one_hot_columns.polynomial(index, table)
             })
             .collect();
         Self {
@@ -1347,11 +1427,13 @@ mod tests {
             input_claim,
         );
 
-        let one_hot_columns: Vec<Arc<Vec<u8>>> = hot_lanes
-            .iter()
-            .chain(core::iter::once(&msb))
-            .map(|column| Arc::new(column.clone()))
-            .collect();
+        let one_hot_columns = OneHotColumns::ColumnMajor(
+            hot_lanes
+                .iter()
+                .chain(core::iter::once(&msb))
+                .map(|column| Arc::new(column.clone()))
+                .collect(),
+        );
         let input = LatticeBooleanityCycleInput {
             base: BooleanityCycleInput {
                 params: params.clone(),
