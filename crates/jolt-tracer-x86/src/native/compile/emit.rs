@@ -311,6 +311,38 @@ fn assert_alignment(e: &mut Emitter, row: &JoltInstructionRow, mask: i8, code: u
     dynasm!(e.ops ; .arch x64 ; ok:);
 }
 
+/// Load the low 32 bits of a guest register, zero-extended (32-bit mov).
+fn load_reg32(e: &mut Emitter, gpr: u8, reg: Option<u8>) {
+    match reg {
+        None | Some(0) => dynasm!(e.ops ; .arch x64 ; xor Rd(gpr), Rd(gpr)),
+        Some(r) => dynasm!(e.ops ; .arch x64 ; mov Rd(gpr), DWORD [r12 + reg_offset(r)]),
+    }
+}
+
+/// Load the low 32 bits of a guest register, sign-extended to 64.
+fn load_reg32_sext(e: &mut Emitter, gpr: u8, reg: Option<u8>) {
+    match reg {
+        None | Some(0) => dynasm!(e.ops ; .arch x64 ; xor Rq(gpr), Rq(gpr)),
+        Some(r) => dynasm!(e.ops ; .arch x64 ; movsxd Rq(gpr), DWORD [r12 + reg_offset(r)]),
+    }
+}
+
+/// `(x[rs1] ^ x[rs2]).rotate_right(n)`, 64-bit.
+fn xor_rot(e: &mut Emitter, row: &JoltInstructionRow, n: i8) {
+    load_reg(e, RAX, row.operands.rs1);
+    load_reg(e, RCX, row.operands.rs2);
+    dynasm!(e.ops ; .arch x64 ; xor rax, rcx ; ror rax, n);
+    store_rd(e, RAX, row.operands.rd);
+}
+
+/// `((x[rs1] as u32) ^ (x[rs2] as u32)).rotate_right(n)`, zero-extended.
+fn xor_rotw(e: &mut Emitter, row: &JoltInstructionRow, n: i8) {
+    load_reg32(e, RAX, row.operands.rs1);
+    load_reg32(e, RCX, row.operands.rs2);
+    dynasm!(e.ops ; .arch x64 ; xor eax, ecx ; ror eax, n);
+    store_rd(e, RAX, row.operands.rd);
+}
+
 pub fn row(e: &mut Emitter, row: &JoltInstructionRow) -> Result<(), TraceError> {
     use JoltInstructionKind as K;
 
@@ -466,6 +498,200 @@ pub fn row(e: &mut Emitter, row: &JoltInstructionRow) -> Result<(), TraceError> 
             dynasm!(e.ops ; .arch x64 ; ok:);
         }
 
+        K::Slt(_) => {
+            load_reg(e, RAX, row.operands.rs1);
+            load_reg(e, RCX, row.operands.rs2);
+            dynasm!(e.ops ; .arch x64 ; cmp rax, rcx);
+            set_cc_less(e, true, row.operands.rd);
+        }
+        K::Andn(_) => {
+            // rd = x[rs1] & !x[rs2]
+            load_reg(e, RAX, row.operands.rs1);
+            load_reg(e, RCX, row.operands.rs2);
+            dynasm!(e.ops ; .arch x64 ; not rcx ; and rax, rcx);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::Pow2I(_) => {
+            // Static: rd = 1 << (imm % 64).
+            let value = 1i64 << ((row.operands.imm as u64) % 64);
+            load_imm(e, RAX, value);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::Pow2IW(_) => {
+            let value = 1i64 << ((row.operands.imm as u64) % 32);
+            load_imm(e, RAX, value);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::Pow2W(_) => {
+            // rd = 1 << ((x[rs1] as u64) % 32)
+            load_reg(e, RCX, row.operands.rs1);
+            dynasm!(e.ops ; .arch x64 ; and ecx, 31 ; mov eax, 1 ; shl rax, cl);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::MovSign(_) => {
+            // rd = -1 if the sign bit is set else 0.
+            load_reg(e, RAX, row.operands.rs1);
+            dynasm!(e.ops ; .arch x64 ; sar rax, 63);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualRev8W(_) => {
+            // Byte-reverse each 32-bit half independently: bswap swaps all 8
+            // bytes (including the halves); ror 32 swaps the halves back.
+            load_reg(e, RAX, row.operands.rs1);
+            dynasm!(e.ops ; .arch x64 ; bswap rax ; ror rax, 32);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualRotri(_) => {
+            // Shift amount = imm.trailing_zeros() (bitmask encoding), mod 64.
+            let shift = (((row.operands.imm as u64).trailing_zeros()) % 64) as i8;
+            load_reg(e, RAX, row.operands.rs1);
+            if shift != 0 {
+                dynasm!(e.ops ; .arch x64 ; ror rax, shift);
+            }
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualRotriw(_) => {
+            // 32-bit rotate, result zero-extended (NOT sign-extended);
+            // shift = tz(imm).min(32), and a u32 rotate by 32 is the identity.
+            let shift = ((row.operands.imm as u64).trailing_zeros().min(32) & 31) as i8;
+            load_reg32(e, RAX, row.operands.rs1);
+            if shift != 0 {
+                dynasm!(e.ops ; .arch x64 ; ror eax, shift);
+            }
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualShiftRightBitmaski(_) => {
+            // Static: bits [63:shift] set (all-ones when shift == 0).
+            let shift = (row.operands.imm as u64) % 64;
+            let value = (((1u128 << (64 - shift)) - 1) << shift) as u64 as i64;
+            load_imm(e, RAX, value);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualSra(_) => {
+            // Arithmetic sibling of VirtualSrl: shift = tz(x[rs2]), tzcnt(0)=64
+            // -> sar masks to 0, matching wrapping_shr(64).
+            load_reg(e, RCX, row.operands.rs2);
+            load_reg(e, RAX, row.operands.rs1);
+            dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; sar rax, cl);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualXorRot32(_) => xor_rot(e, row, 32),
+        K::VirtualXorRot24(_) => xor_rot(e, row, 24),
+        K::VirtualXorRot16(_) => xor_rot(e, row, 16),
+        K::VirtualXorRot63(_) => xor_rot(e, row, 63),
+        K::VirtualXorRotW16(_) => xor_rotw(e, row, 16),
+        K::VirtualXorRotW12(_) => xor_rotw(e, row, 12),
+        K::VirtualXorRotW8(_) => xor_rotw(e, row, 8),
+        K::VirtualXorRotW7(_) => xor_rotw(e, row, 7),
+        K::AssertEq(_) => {
+            // imm == 0: hard assert. imm != 0: "spoil" mode, warn-and-continue
+            // in the interpreter; a no-op here (registers unaffected).
+            if row.operands.imm == 0 {
+                load_reg(e, RAX, row.operands.rs1);
+                load_reg(e, RCX, row.operands.rs2);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; cmp rax, rcx
+                    ; je >ok
+                    ; mov rsi, 3
+                    ; mov rdx, rax
+                );
+                call_helper(e, helpers::assert_failed as *const () as usize);
+                dynasm!(e.ops ; .arch x64 ; ok:);
+            }
+        }
+        K::AssertValidDiv0(_) => {
+            // divisor == 0 implies quotient == u64::MAX.
+            load_reg(e, RAX, row.operands.rs1);
+            load_reg(e, RCX, row.operands.rs2);
+            dynasm!(e.ops
+                ; .arch x64
+                ; test rax, rax
+                ; jnz >ok
+                ; cmp rcx, -1
+                ; je >ok
+                ; mov rsi, 4
+                ; mov rdx, rcx
+            );
+            call_helper(e, helpers::assert_failed as *const () as usize);
+            dynasm!(e.ops ; .arch x64 ; ok:);
+        }
+        K::AssertValidUnsignedRemainder(_) => {
+            // divisor == 0 || remainder < divisor (unsigned).
+            load_reg(e, RAX, row.operands.rs1);
+            load_reg(e, RCX, row.operands.rs2);
+            dynasm!(e.ops
+                ; .arch x64
+                ; test rcx, rcx
+                ; jz >ok
+                ; cmp rax, rcx
+                ; jb >ok
+                ; mov rsi, 5
+                ; mov rdx, rax
+            );
+            call_helper(e, helpers::assert_failed as *const () as usize);
+            dynasm!(e.ops ; .arch x64 ; ok:);
+        }
+        K::AssertMulUNoOverflow(_) => {
+            // (x[rs1] as u64) * (x[rs2] as u64) must not overflow: unsigned
+            // mul leaves the high half in rdx.
+            load_reg(e, RAX, row.operands.rs1);
+            load_reg(e, RCX, row.operands.rs2);
+            dynasm!(e.ops
+                ; .arch x64
+                ; mul rcx
+                ; test rdx, rdx
+                ; jz >ok
+                ; mov rsi, 6
+                ; mov rdx, rax
+            );
+            call_helper(e, helpers::assert_failed as *const () as usize);
+            dynasm!(e.ops ; .arch x64 ; ok:);
+        }
+        K::VirtualChangeDivisor(_) => {
+            // rd = 1 if (dividend, divisor) == (i64::MIN, -1) else divisor.
+            load_reg(e, RCX, row.operands.rs1);
+            load_reg(e, RAX, row.operands.rs2);
+            dynasm!(e.ops
+                ; .arch x64
+                ; mov rdx, QWORD i64::MIN
+                ; cmp rcx, rdx
+                ; jne >done
+                ; cmp rax, -1
+                ; jne >done
+                ; mov eax, 1
+                ; done:
+            );
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualChangeDivisorW(_) => {
+            // 32-bit variant; the else branch sign-extends the low 32 bits of
+            // x[rs2] (upper bits discarded).
+            load_reg32_sext(e, RCX, row.operands.rs1);
+            load_reg32_sext(e, RAX, row.operands.rs2);
+            dynasm!(e.ops
+                ; .arch x64
+                ; cmp ecx, 0x8000_0000u32 as i32
+                ; jne >done
+                ; cmp eax, -1
+                ; jne >done
+                ; mov eax, 1
+                ; done:
+            );
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualAdviceLen(_) => {
+            call_helper(e, helpers::advice_remaining as *const () as usize);
+            store_rd(e, RAX, row.operands.rd);
+        }
+        K::VirtualAdviceLoad(_) => {
+            // num_bytes is a static row immediate (1, 2, 4 or 8); the helper
+            // errors on tape exhaustion (interpreter panics there).
+            let num_bytes = (row.operands.imm as u64) as i32;
+            dynasm!(e.ops ; .arch x64 ; mov rsi, num_bytes);
+            call_helper(e, helpers::advice_read as *const () as usize);
+            store_rd(e, RAX, row.operands.rd);
+        }
         K::Fence(_) => {}
 
         K::VirtualHostIO(_) => {

@@ -75,9 +75,10 @@ pub const fn reg_offset(register: u8) -> i32 {
 /// code directly (only through `extern "C"` helpers), so layout is free.
 pub struct HostContext {
     pub device: JoltDevice,
-    /// Populated runtime advice tape (bytes; a read cursor joins with the
-    /// advice-load kinds).
+    /// Runtime advice tape bytes (append-only; reads go through the cursor).
     pub advice_tape: Vec<u8>,
+    /// Read cursor into `advice_tape` (advice-load kinds).
+    pub advice_cursor: usize,
     /// Set when a helper encounters an unrecoverable condition; carries the
     /// message surfaced in the resulting `TraceError`.
     pub helper_error: Option<String>,

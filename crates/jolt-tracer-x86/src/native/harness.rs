@@ -118,6 +118,7 @@ impl Prepared {
         let mut host = HostContext {
             device: JoltDevice::new(&memory_config()),
             advice_tape: Vec::new(),
+            advice_cursor: 0,
             helper_error: None,
         };
         let mut guest = Box::new(GuestState {
@@ -153,11 +154,13 @@ pub struct Outcome {
 /// Compile and run a synthetic program natively.
 ///
 /// `pre_regs` seeds the guest registers; `scratch` seeds
-/// `[SCRATCH_START, SCRATCH_START + 8 * SCRATCH_DWORDS)`.
+/// `[SCRATCH_START, SCRATCH_START + 8 * SCRATCH_DWORDS)`; `advice` seeds the
+/// runtime advice tape (cursor at 0).
 pub fn run_program(
     program: &JoltProgram,
     pre_regs: &[u64; REGISTER_COUNT as usize],
     scratch: &[u64],
+    advice: &[u8],
 ) -> Result<Outcome, TraceError> {
     let compiled = compile::compile(program)?;
 
@@ -175,7 +178,8 @@ pub fn run_program(
 
     let mut host = HostContext {
         device: JoltDevice::new(&memory_config()),
-        advice_tape: Vec::new(),
+        advice_tape: advice.to_vec(),
+        advice_cursor: 0,
         helper_error: None,
     };
     let mut guest = Box::new(GuestState {

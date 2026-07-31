@@ -10,6 +10,10 @@
 
 use std::collections::BTreeMap;
 
+// Link inline registrations for inline-bearing guests.
+use jolt_inlines_keccak256 as _;
+use jolt_inlines_sha2 as _;
+
 fn build_guest_elf(package: &str, func: &str) -> Vec<u8> {
     let target_dir = format!("/tmp/jolt-guest-targets/{package}-{func}");
     let output = std::process::Command::new("jolt")
@@ -42,8 +46,13 @@ fn build_guest_elf(package: &str, func: &str) -> Vec<u8> {
 
 fn kind_histogram(package: &str, func: &str) -> BTreeMap<String, usize> {
     let elf = build_guest_elf(package, func);
-    let program =
-        jolt_program::execution::build_jolt_program(&elf).expect("failed to build Jolt program");
+    let mut provider = tracer::TracerInlineExpansionProvider::new();
+    let program = jolt_program::build_jolt_program_with_inline_provider(
+        &elf,
+        &mut provider,
+        jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
+    )
+    .expect("failed to build Jolt program");
     let mut histogram = BTreeMap::new();
     for row in &program.expanded_bytecode {
         *histogram
@@ -59,6 +68,48 @@ fn fibonacci_kind_inventory() {
     let histogram = kind_histogram("fibonacci-guest", "fib");
     println!(
         "fibonacci-guest expanded-bytecode kinds ({}):",
+        histogram.len()
+    );
+    for (kind, count) in &histogram {
+        println!("  {kind:40} {count}");
+    }
+    assert!(!histogram.is_empty());
+}
+
+#[test]
+#[ignore = "dev tool: prints the static-bytecode kind histogram for a guest"]
+fn sha2_chain_kind_inventory() {
+    let histogram = kind_histogram("sha2-chain-guest", "sha2_chain");
+    println!(
+        "sha2-chain-guest expanded-bytecode kinds ({}):",
+        histogram.len()
+    );
+    for (kind, count) in &histogram {
+        println!("  {kind:40} {count}");
+    }
+    assert!(!histogram.is_empty());
+}
+
+#[test]
+#[ignore = "dev tool: prints the static-bytecode kind histogram for a guest"]
+fn sha3_chain_kind_inventory() {
+    let histogram = kind_histogram("sha3-chain-guest", "sha3_chain");
+    println!(
+        "sha3-chain-guest expanded-bytecode kinds ({}):",
+        histogram.len()
+    );
+    for (kind, count) in &histogram {
+        println!("  {kind:40} {count}");
+    }
+    assert!(!histogram.is_empty());
+}
+
+#[test]
+#[ignore = "dev tool: prints the static-bytecode kind histogram for a guest"]
+fn btreemap_kind_inventory() {
+    let histogram = kind_histogram("btreemap-guest", "btreemap");
+    println!(
+        "btreemap-guest expanded-bytecode kinds ({}):",
         histogram.len()
     );
     for (kind, count) in &histogram {

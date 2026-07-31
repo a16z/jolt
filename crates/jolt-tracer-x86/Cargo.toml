@@ -31,6 +31,7 @@ jolt-platform = { workspace = true, features = ["std"] }
 libc = "0.2"
 
 [dev-dependencies]
+jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 postcard = { workspace = true, features = ["use-std"] }
 rand = { workspace = true }

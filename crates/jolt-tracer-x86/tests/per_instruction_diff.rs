@@ -78,6 +78,34 @@ const SUPPORTED: &[&str] = &[
     "VirtualZeroExtendWord",
     "Xor",
     "XorI",
+    // Slice 3 (fast-pass coverage):
+    "Slt",
+    "Andn",
+    "Pow2I",
+    "Pow2W",
+    "Pow2IW",
+    "MovSign",
+    "VirtualRev8W",
+    "VirtualRotri",
+    "VirtualRotriw",
+    "VirtualShiftRightBitmaski",
+    "VirtualSra",
+    "VirtualXorRot32",
+    "VirtualXorRot24",
+    "VirtualXorRot16",
+    "VirtualXorRot63",
+    "VirtualXorRotW16",
+    "VirtualXorRotW12",
+    "VirtualXorRotW8",
+    "VirtualXorRotW7",
+    "AssertEq",
+    "AssertValidDiv0",
+    "AssertValidUnsignedRemainder",
+    "AssertMulUNoOverflow",
+    "VirtualChangeDivisor",
+    "VirtualChangeDivisorW",
+    "VirtualAdviceLen",
+    "VirtualAdviceLoad",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -147,6 +175,7 @@ struct Instance {
     row: JoltInstructionRow,
     pre_regs: [u64; REGS],
     scratch: Vec<u64>,
+    advice: Vec<u8>,
 }
 
 fn base_instance(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
@@ -159,6 +188,7 @@ fn base_instance(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
         row: default_row(kind),
         pre_regs,
         scratch,
+        advice: Vec::new(),
     }
 }
 
@@ -360,6 +390,114 @@ fn host_io(rng: &mut StdRng) -> Instance {
     i
 }
 
+fn imm_j_u64(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
+    // FormatJ: rd + a raw u64 immediate (stored bit-preserving in i128).
+    let mut i = base_instance(rng, kind);
+    i.row.operands.rd = Some(rd(rng));
+    i.row.operands.imm = (rng.gen::<u64>() as i64) as i128;
+    i
+}
+
+fn assert_eq_gen(rng: &mut StdRng) -> Instance {
+    let mut i = base_instance(rng, K::VirtualAssertEQ);
+    let rs1 = rd(rng);
+    let rs2 = rd(rng);
+    i.row.operands.rs1 = Some(rs1);
+    i.row.operands.rs2 = Some(rs2);
+    if rng.gen_ratio(1, 10) {
+        // Spoil mode: warn-and-continue on both sides.
+        i.row.operands.imm = 1;
+    } else {
+        i.row.operands.imm = 0;
+        i.pre_regs[rs2 as usize] = i.pre_regs[rs1 as usize];
+    }
+    i
+}
+
+fn assert_valid_div0(rng: &mut StdRng) -> Instance {
+    let mut i = base_instance(rng, K::VirtualAssertValidDiv0);
+    let rs1 = rd(rng);
+    let rs2 = rd(rng);
+    i.row.operands.rs1 = Some(rs1);
+    i.row.operands.rs2 = Some(rs2);
+    if rng.gen() {
+        // divisor == 0 requires quotient == u64::MAX.
+        i.pre_regs[rs1 as usize] = 0;
+        i.pre_regs[rs2 as usize] = u64::MAX;
+        if rs1 == rs2 {
+            i.pre_regs[rs1 as usize] = u64::MAX; // MAX != 0, valid either way
+        }
+    } else if i.pre_regs[rs1 as usize] == 0 {
+        i.pre_regs[rs1 as usize] = 1;
+    }
+    i
+}
+
+fn assert_valid_unsigned_remainder(rng: &mut StdRng) -> Instance {
+    let mut i = base_instance(rng, K::VirtualAssertValidUnsignedRemainder);
+    let rs1 = rd(rng);
+    let rs2 = rd(rng);
+    i.row.operands.rs1 = Some(rs1);
+    i.row.operands.rs2 = Some(rs2);
+    if rs1 == rs2 {
+        // remainder == divisor is only valid when both are zero.
+        i.pre_regs[rs1 as usize] = 0;
+    } else if rng.gen_ratio(1, 5) {
+        i.pre_regs[rs2 as usize] = 0; // divisor 0: anything passes
+    } else {
+        let divisor = i.pre_regs[rs2 as usize].max(1);
+        i.pre_regs[rs2 as usize] = divisor;
+        i.pre_regs[rs1 as usize] %= divisor;
+    }
+    i
+}
+
+fn assert_mulu_no_overflow(rng: &mut StdRng) -> Instance {
+    let mut i = base_instance(rng, K::VirtualAssertMulUNoOverflow);
+    let rs1 = rd(rng);
+    let rs2 = rd(rng);
+    i.row.operands.rs1 = Some(rs1);
+    i.row.operands.rs2 = Some(rs2);
+    // Keep both factors below 2^32 so the product cannot overflow.
+    i.pre_regs[rs1 as usize] &= 0xFFFF_FFFF;
+    i.pre_regs[rs2 as usize] &= 0xFFFF_FFFF;
+    i
+}
+
+fn change_divisor(rng: &mut StdRng, name: &str, wide: bool) -> Instance {
+    let mut i = alu_rr(rng, kind_by_name(name));
+    if rng.gen_ratio(1, 4) {
+        // Exercise the MIN/-1 edge.
+        let rs1 = i.row.operands.rs1.unwrap();
+        let rs2 = i.row.operands.rs2.unwrap();
+        if rs1 != 0 && rs2 != 0 && rs1 != rs2 {
+            i.pre_regs[rs1 as usize] = if wide {
+                i64::MIN as u64
+            } else {
+                (i32::MIN as i64) as u64
+            };
+            i.pre_regs[rs2 as usize] = u64::MAX; // -1
+        }
+    }
+    i
+}
+
+fn advice_len(rng: &mut StdRng) -> Instance {
+    let mut i = base_instance(rng, kind_by_name("VirtualAdviceLen"));
+    i.row.operands.rs1 = Some(reg(rng));
+    i.row.operands.rd = Some(rd(rng));
+    i.advice = (0..rng.gen_range(0..64)).map(|_| rng.gen()).collect();
+    i
+}
+
+fn advice_load(rng: &mut StdRng) -> Instance {
+    let mut i = base_instance(rng, kind_by_name("VirtualAdviceLoad"));
+    i.row.operands.rd = Some(rd(rng));
+    i.row.operands.imm = *[1i128, 2, 4, 8].get(rng.gen_range(0..4)).unwrap();
+    i.advice = (0..8 + rng.gen_range(0..32)).map(|_| rng.gen()).collect();
+    i
+}
+
 // ── Reference execution ─────────────────────────────────────────────
 
 struct RefOutcome {
@@ -382,6 +520,7 @@ fn reference_run(instance: &Instance) -> RefOutcome {
     for (index, &value) in instance.pre_regs.iter().enumerate().skip(1) {
         cpu.x[index] = value as i64;
     }
+    cpu.advice_tape = tracer::AdviceTape::from_bytes(instance.advice.clone());
     // The interpreter pre-increments PC before exec (tick_operate); link
     // values and fall-through PCs depend on it.
     cpu.update_pc(TEST_ADDR + 4);
@@ -419,8 +558,13 @@ fn run_difftest(name: &str, generate: fn(&mut StdRng) -> Instance) {
         let reference = reference_run(&instance);
 
         let program = single_row_program(instance.row);
-        let native = run_program(&program, &instance.pre_regs, &instance.scratch)
-            .unwrap_or_else(|e| panic!("{name}[{iteration}]: native run failed: {e:?}"));
+        let native = run_program(
+            &program,
+            &instance.pre_regs,
+            &instance.scratch,
+            &instance.advice,
+        )
+        .unwrap_or_else(|e| panic!("{name}[{iteration}]: native run failed: {e:?}"));
 
         assert_eq!(
             native.exit, 1,
@@ -515,6 +659,33 @@ difftests! {
     diff_assert_lte => assert_lte;
     diff_fence => fence;
     diff_host_io => host_io;
+    diff_slt => |r| alu_rr(r, K::SLT);
+    diff_andn => |r| alu_rr(r, K::ANDN);
+    diff_pow2i => |r| imm_j_u64(r, K::VirtualPow2I);
+    diff_pow2w => |r| unary(r, K::VirtualPow2W);
+    diff_pow2iw => |r| imm_j_u64(r, K::VirtualPow2IW);
+    diff_movsign => |r| unary(r, K::VirtualMovsign);
+    diff_rev8w => |r| unary(r, kind_by_name("VirtualRev8W"));
+    diff_rotri => |r| shift_imm(r, K::VirtualROTRI);
+    diff_rotriw => |r| shift_imm(r, K::VirtualROTRIW);
+    diff_shift_right_bitmaski => |r| imm_j_u64(r, K::VirtualShiftRightBitmaskI);
+    diff_sra_reg => |r| shift_reg(r, K::VirtualSRA);
+    diff_xorrot32 => |r| alu_rr(r, K::VirtualXORROT32);
+    diff_xorrot24 => |r| alu_rr(r, K::VirtualXORROT24);
+    diff_xorrot16 => |r| alu_rr(r, K::VirtualXORROT16);
+    diff_xorrot63 => |r| alu_rr(r, K::VirtualXORROT63);
+    diff_xorrotw16 => |r| alu_rr(r, K::VirtualXORROTW16);
+    diff_xorrotw12 => |r| alu_rr(r, K::VirtualXORROTW12);
+    diff_xorrotw8 => |r| alu_rr(r, K::VirtualXORROTW8);
+    diff_xorrotw7 => |r| alu_rr(r, K::VirtualXORROTW7);
+    diff_assert_eq => assert_eq_gen;
+    diff_assert_valid_div0 => assert_valid_div0;
+    diff_assert_valid_unsigned_remainder => assert_valid_unsigned_remainder;
+    diff_assert_mulu_no_overflow => assert_mulu_no_overflow;
+    diff_change_divisor => |r| change_divisor(r, "VirtualChangeDivisor", true);
+    diff_change_divisor_w => |r| change_divisor(r, "VirtualChangeDivisorW", false);
+    diff_advice_len => advice_len;
+    diff_advice_load => advice_load;
 }
 
 /// Every supported kind has a differential test above (one test per kind,
@@ -522,5 +693,5 @@ difftests! {
 /// test fails.
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 39);
+    assert_eq!(SUPPORTED.len(), 66);
 }

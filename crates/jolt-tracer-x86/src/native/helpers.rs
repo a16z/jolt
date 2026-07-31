@@ -151,7 +151,33 @@ pub extern "sysv64" fn assert_failed(state: *mut GuestState, code: u64, value: u
         0 => format!("RAM access (LH or LHU) is not halfword aligned: {value:x}"),
         1 => format!("RAM access (LW or LWU) is not word aligned: {value:x}"),
         2 => "VirtualAssertLTE failed".to_string(),
+        3 => format!("VirtualAssertEQ failed (lhs {value:x})"),
+        4 => format!("VirtualAssertValidDiv0 failed (quotient {value:x})"),
+        5 => format!("VirtualAssertValidUnsignedRemainder failed (remainder {value:x})"),
+        6 => "VirtualAssertMulUNoOverflow failed".to_string(),
         _ => format!("assert {code} failed with value {value:x}"),
     };
     fail(state, host, message)
+}
+
+/// `VirtualAdviceLen`: bytes left on the advice tape.
+pub extern "sysv64" fn advice_remaining(state: *mut GuestState) -> u64 {
+    let (_state, host) = host_context(state);
+    host.advice_tape.len().saturating_sub(host.advice_cursor) as u64
+}
+
+/// `VirtualAdviceLoad`: read `num_bytes` (1/2/4/8) little-endian from the
+/// tape, zero-filled; exhaustion is a helper error (the interpreter panics).
+pub extern "sysv64" fn advice_read(state: *mut GuestState, num_bytes: u64) -> u64 {
+    let (state, host) = host_context(state);
+    let n = num_bytes as usize;
+    if host.advice_cursor + n > host.advice_tape.len() {
+        return fail(state, host, "Failed to read from advice tape".to_string());
+    }
+    let mut value = 0u64;
+    for i in 0..n {
+        value |= (host.advice_tape[host.advice_cursor + i] as u64) << (i * 8);
+    }
+    host.advice_cursor += n;
+    value
 }
