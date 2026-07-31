@@ -877,54 +877,61 @@ impl<F: JoltField> SharedRaRound3<F> {
             &tables_111,
         ];
 
-        // Materialize all polynomials in parallel
         let num_polys = self.num_polys;
         let indices = &self.indices;
         let one_hot_params = &self.one_hot_params;
         let index_offset = self.index_offset;
         let new_len = indices.len() / 8;
+        let mut coefficients = (0..num_polys)
+            .map(|_| unsafe_allocate_zero_vec::<F>(new_len))
+            .collect::<Vec<_>>();
+        let coefficient_ptrs = coefficients
+            .iter_mut()
+            .map(|polynomial| polynomial.as_mut_ptr() as usize)
+            .collect::<Vec<_>>();
 
-        (0..num_polys)
+        // Eight source rows per output make this a 1.7 MiB RA-index window.
+        const MATERIALIZATION_BLOCK: usize = 1 << 12;
+        (0..new_len.div_ceil(MATERIALIZATION_BLOCK))
             .into_par_iter()
-            .map(|poly_idx| {
-                let coeffs: Vec<F> = match order {
-                    BindingOrder::LowToHigh => {
-                        (0..new_len)
-                            .into_par_iter()
-                            .map(|j| {
-                                // Sum over 8 consecutive indices, each using appropriate F table
-                                (0..8)
-                                    .map(|offset| {
-                                        indices[8 * j + offset]
-                                            .get_index(poly_idx + index_offset, one_hot_params)
-                                            .map_or(F::zero(), |k| {
-                                                table_groups[offset][poly_idx][k as usize]
-                                            })
-                                    })
-                                    .sum()
-                            })
-                            .collect()
+            .for_each(|block| {
+                let start = block * MATERIALIZATION_BLOCK;
+                let end = (start + MATERIALIZATION_BLOCK).min(new_len);
+                for (poly_idx, &pointer) in coefficient_ptrs.iter().enumerate() {
+                    let output = pointer as *mut F;
+                    for j in start..end {
+                        let mut value = F::zero();
+                        match order {
+                            BindingOrder::LowToHigh => {
+                                for offset in 0..8 {
+                                    if let Some(k) = indices[8 * j + offset]
+                                        .get_index(poly_idx + index_offset, one_hot_params)
+                                    {
+                                        value += table_groups[offset][poly_idx][k as usize];
+                                    }
+                                }
+                            }
+                            BindingOrder::HighToLow => {
+                                let eighth = indices.len() / 8;
+                                for segment in 0..8 {
+                                    if let Some(k) = indices[segment * eighth + j]
+                                        .get_index(poly_idx + index_offset, one_hot_params)
+                                    {
+                                        value += table_groups[segment][poly_idx][k as usize];
+                                    }
+                                }
+                            }
+                        }
+                        // SAFETY: The pointers come from stable, pre-sized vectors,
+                        // `j < new_len`, and parallel blocks give each element one writer.
+                        unsafe { *output.add(j) = value };
                     }
-                    BindingOrder::HighToLow => {
-                        let eighth = indices.len() / 8;
-                        (0..new_len)
-                            .into_par_iter()
-                            .map(|j| {
-                                (0..8)
-                                    .map(|seg| {
-                                        indices[seg * eighth + j]
-                                            .get_index(poly_idx + index_offset, one_hot_params)
-                                            .map_or(F::zero(), |k| {
-                                                table_groups[seg][poly_idx][k as usize]
-                                            })
-                                    })
-                                    .sum()
-                            })
-                            .collect()
-                    }
-                };
-                MultilinearPolynomial::from(coeffs)
-            })
+                }
+            });
+
+        coefficients
+            .into_iter()
+            .map(MultilinearPolynomial::from)
             .collect()
     }
 }
