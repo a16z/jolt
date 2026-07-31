@@ -14,8 +14,9 @@ use std::collections::BTreeMap;
 
 use dynasmrt::{x64::Assembler, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
 use jolt_program::execution::{JoltProgram, TraceError};
+use jolt_riscv::SourceInstructionKind;
 
-use super::state::GuestState;
+use super::state::{AdviceJob, GuestState};
 
 /// A compiled program: executable buffer plus the indirect-dispatch table.
 pub struct CompiledProgram {
@@ -24,6 +25,15 @@ pub struct CompiledProgram {
     /// One host code address per halfword in `[text_base, text_end)`;
     /// non-group-start slots point at the bad-jump stub.
     jump_table: Vec<usize>,
+    /// Advice computations, one per group that needs them; generated code
+    /// passes indices into this table.
+    advice_jobs: Vec<AdviceJob>,
+}
+
+impl CompiledProgram {
+    pub fn advice_jobs_ptr(&self) -> *const AdviceJob {
+        self.advice_jobs.as_ptr()
+    }
 }
 
 impl CompiledProgram {
@@ -42,6 +52,13 @@ impl CompiledProgram {
 
 pub(super) struct Emitter {
     pub ops: Assembler,
+    /// Advice jobs collected so far (index = the job id in generated code).
+    pub advice_jobs: Vec<AdviceJob>,
+    /// Next `VirtualAdvice` slot within the current group.
+    pub advice_slot: usize,
+    /// Whether the current group emitted an advice computation (i.e. its
+    /// `VirtualAdvice` rows have values to read).
+    pub advice_ready: bool,
     /// Dynamic label per group-start guest address (branch/jump targets).
     labels: BTreeMap<u64, DynamicLabel>,
     /// Guest addresses that start a compiled group, with their code offsets.
@@ -78,8 +95,15 @@ pub fn compile(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
     let text_end = rows.iter().map(|r| r.address as u64).max().unwrap_or(0) + 4;
     let text_span = text_end - text_base;
 
+    // Source rows keyed by address: the expanded bytecode erases the source
+    // kind and inline key, which the per-group advice computations need.
+    let sources = source_rows(program)?;
+
     let mut emitter = Emitter {
         ops: Assembler::new().map_err(|_| TraceError::Backend("failed to create x64 assembler"))?,
+        advice_jobs: Vec::new(),
+        advice_slot: 0,
+        advice_ready: false,
         labels: BTreeMap::new(),
         group_offsets: Vec::new(),
         text_base,
@@ -92,13 +116,24 @@ pub fn compile(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
     for row in rows {
         let address = row.address as u64;
         if previous_address != Some(address) {
-            // Group start: define the branch-target label and record the
-            // offset for the jump table.
+            // Group start: define the branch-target label, record the jump
+            // table offset, and emit this group's advice computation (which
+            // must observe the pre-group register state) before its rows.
             let label = emitter.label_for(address);
             let offset = emitter.ops.offset();
             emitter.ops.dynamic_label(label);
             emitter.group_offsets.push((address, offset));
             previous_address = Some(address);
+            emitter.advice_slot = 0;
+            emitter.advice_ready = false;
+            if let Some(source) = sources.get(&address) {
+                if let Some(job) = advice_job(source)? {
+                    emitter.advice_jobs.push(job);
+                    let index = emitter.advice_jobs.len() - 1;
+                    emit::advice_compute(&mut emitter, index);
+                    emitter.advice_ready = true;
+                }
+            }
         }
         emit::row(&mut emitter, row)?;
     }
@@ -108,6 +143,7 @@ pub fn compile(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
     let stubs = emit::stubs(&mut emitter);
 
     let group_offsets = core::mem::take(&mut emitter.group_offsets);
+    let advice_jobs = core::mem::take(&mut emitter.advice_jobs);
     let buffer = emitter
         .ops
         .finalize()
@@ -127,5 +163,69 @@ pub fn compile(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
         buffer,
         entry,
         jump_table,
+        advice_jobs,
     })
+}
+
+/// Decode the program's source instructions and key them by address.
+///
+/// Programs assembled directly from rows (the test/bench harness) carry no
+/// ELF; they get an empty map, and any group that actually needs advice then
+/// fails at emission (see the `VirtualAdvice` arm) rather than here.
+fn source_rows(
+    program: &JoltProgram,
+) -> Result<
+    BTreeMap<u64, jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>>,
+    TraceError,
+> {
+    if program.elf_bytes().is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let image = jolt_program::image::decode_elf(program.elf_bytes(), program.profile)
+        .map_err(|_| TraceError::Backend("failed to decode program ELF for source recovery"))?;
+    Ok(image
+        .instructions
+        .into_iter()
+        .map(|instruction| (instruction.row().address as u64, instruction))
+        .collect())
+}
+
+/// The advice computation a source instruction's group needs, if any.
+fn advice_job(
+    source: &jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>,
+) -> Result<Option<AdviceJob>, TraceError> {
+    use SourceInstructionKind as S;
+    let row = source.row();
+    let (rs1, rs2) = (row.operands.rs1, row.operands.rs2);
+    // Codes mirror the tracer's per-variant advice formulas (helpers.rs).
+    let code = match source.kind() {
+        S::Div(_) | S::Rem(_) => 0u8,
+        S::DivW(_) | S::RemW(_) => 1,
+        S::DivU(_) | S::RemU(_) => 2,
+        S::DivUW(_) | S::RemUW(_) => 3,
+        S::InlineDispatch(_) => {
+            let inline = row
+                .inline
+                .ok_or(TraceError::Backend("inline source row without inline key"))?;
+            let registration = tracer::instruction::inline::find_inline_registration(
+                u32::from(inline.opcode),
+                u32::from(inline.funct3),
+                u32::from(inline.funct7),
+            )
+            .ok_or(TraceError::Backend("no registered inline for source row"))?;
+            let operands =
+                tracer::instruction::format::format_inline::FormatInline::from(row.operands);
+            return Ok(Some(AdviceJob::Inline {
+                registration,
+                operands,
+            }));
+        }
+        _ => return Ok(None),
+    };
+    let (Some(rs1), Some(rs2)) = (rs1, rs2) else {
+        return Err(TraceError::Backend(
+            "div-family source row missing operands",
+        ));
+    };
+    Ok(Some(AdviceJob::Div { code, rs1, rs2 }))
 }

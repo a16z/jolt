@@ -125,6 +125,16 @@ fn sha3_chain_fast_run_matches_reference() {
 }
 
 #[test]
+fn muldiv_fast_run_matches_reference() {
+    // Exercises the DIV/REM advice groups (VirtualAdvice slots).
+    assert_fast_run_matches(
+        "muldiv-guest",
+        "muldiv",
+        vec![0xbd, 0xaa, 0xde, 0x5, 0x11, 0x5c],
+    );
+}
+
+#[test]
 fn btreemap_fast_run_matches_reference() {
     assert_fast_run_matches(
         "btreemap-guest",

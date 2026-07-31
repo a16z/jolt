@@ -22,8 +22,8 @@ use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 
 use super::super::helpers;
 use super::super::state::{
-    reg_offset, ExitReason, OFF_EXIT, OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_PC,
-    OFF_TRACE_LEN,
+    advice_slot_offset, reg_offset, ExitReason, OFF_EXIT, OFF_FAULT_ADDR, OFF_MEM_BASE,
+    OFF_MEM_SIZE, OFF_PC, OFF_TRACE_LEN,
 };
 use super::Emitter;
 
@@ -341,6 +341,12 @@ fn xor_rotw(e: &mut Emitter, row: &JoltInstructionRow, n: i8) {
     load_reg32(e, RCX, row.operands.rs2);
     dynasm!(e.ops ; .arch x64 ; xor eax, ecx ; ror eax, n);
     store_rd(e, RAX, row.operands.rd);
+}
+
+/// Emit a group's advice computation (job index in rsi), before its rows.
+pub fn advice_compute(e: &mut Emitter, job_index: usize) {
+    dynasm!(e.ops ; .arch x64 ; mov rsi, job_index as i32);
+    call_helper(e, helpers::advice_compute as *const () as usize);
 }
 
 pub fn row(e: &mut Emitter, row: &JoltInstructionRow) -> Result<(), TraceError> {
@@ -692,15 +698,31 @@ pub fn row(e: &mut Emitter, row: &JoltInstructionRow) -> Result<(), TraceError> 
             call_helper(e, helpers::advice_read as *const () as usize);
             store_rd(e, RAX, row.operands.rd);
         }
+        K::VirtualAdvice(_) => {
+            // The value comes from this group's advice slots, filled before
+            // the group's first row ran; slots are consumed in row order.
+            let slot = e.advice_slot;
+            if slot >= super::super::state::ADVICE_SLOTS {
+                return Err(TraceError::Backend(
+                    "too many VirtualAdvice rows in one group",
+                ));
+            }
+            e.advice_slot += 1;
+            dynasm!(e.ops ; .arch x64 ; mov rax, QWORD [r12 + advice_slot_offset(slot)]);
+            store_rd(e, RAX, row.operands.rd);
+        }
+
         K::Fence(_) => {}
 
         K::VirtualHostIO(_) => {
             call_helper(e, helpers::host_io as *const () as usize);
         }
 
-        other => {
-            // Fail-fast at compile time: never a silent wrong-semantics
-            // execution (spec invariant 7).
+        // Every other final kind is implemented above; `Noop` never appears
+        // in executable bytecode. Fail fast rather than execute wrong
+        // semantics (spec invariant 7); a newly added kind lands here until
+        // it has a template.
+        other @ K::Noop(_) => {
             let _ = other;
             return Err(TraceError::Backend(
                 "jolt-tracer-x86: unsupported instruction kind in bytecode",

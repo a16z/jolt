@@ -44,6 +44,28 @@ pub struct GuestState {
     pub mem_size: u64,
     /// Host context for helper calls (device, advice tape, panic state).
     pub host: *mut HostContext,
+    /// Runtime advice values for the group being executed, filled by the
+    /// group's advice helper and read by its `VirtualAdvice` rows in order.
+    pub advice_slots: [u64; ADVICE_SLOTS],
+    /// Per-program advice-job table (borrowed from the compiled artifact);
+    /// generated code passes a job index, helpers dereference it.
+    pub advice_jobs: *const AdviceJob,
+}
+
+/// Maximum runtime advice values one source-instruction group can need
+/// (largest today: the modular-division inlines at 8).
+pub const ADVICE_SLOTS: usize = 16;
+
+/// One group's advice computation, resolved at compile time.
+pub enum AdviceJob {
+    /// DIV/REM family: `code` selects the variant's formula.
+    Div { code: u8, rs1: u8, rs2: u8 },
+    /// A registered inline's `build_advice`, called through
+    /// [`InlineAdviceContext`](tracer::InlineAdviceContext).
+    Inline {
+        registration: &'static tracer::InlineRegistration,
+        operands: tracer::instruction::format::format_inline::FormatInline,
+    },
 }
 
 pub const OFF_X: i32 = 0;
@@ -54,6 +76,7 @@ pub const OFF_FAULT_ADDR: i32 = OFF_EXIT + 8;
 pub const OFF_MEM_BASE: i32 = OFF_FAULT_ADDR + 8;
 pub const OFF_MEM_SIZE: i32 = OFF_MEM_BASE + 8;
 pub const OFF_HOST: i32 = OFF_MEM_SIZE + 8;
+pub const OFF_ADVICE_SLOTS: i32 = OFF_HOST + 8;
 
 const _: () = {
     assert!(core::mem::offset_of!(GuestState, x) == OFF_X as usize);
@@ -64,7 +87,13 @@ const _: () = {
     assert!(core::mem::offset_of!(GuestState, mem_base) == OFF_MEM_BASE as usize);
     assert!(core::mem::offset_of!(GuestState, mem_size) == OFF_MEM_SIZE as usize);
     assert!(core::mem::offset_of!(GuestState, host) == OFF_HOST as usize);
+    assert!(core::mem::offset_of!(GuestState, advice_slots) == OFF_ADVICE_SLOTS as usize);
 };
+
+#[inline]
+pub const fn advice_slot_offset(slot: usize) -> i32 {
+    OFF_ADVICE_SLOTS + (slot as i32) * 8
+}
 
 #[inline]
 pub const fn reg_offset(register: u8) -> i32 {
