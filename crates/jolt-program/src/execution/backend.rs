@@ -13,7 +13,20 @@ pub trait ExecutionBackend {
 pub trait TraceSource {
     fn next_row(&mut self) -> Option<TraceRow>;
 
+    /// The full row sequence as one slice, if this source can serve it.
+    ///
+    /// Contract: the slice must equal exactly what the remaining `next_row`
+    /// calls would yield — a partially consumed source must return `None`
+    /// rather than a slice that includes already-consumed rows.
     fn rows(&self) -> Option<&[TraceRow]> {
+        None
+    }
+
+    /// A shared owning handle to the same rows [`Self::rows`] serves
+    /// (`None` whenever `rows` is) — long-lived consumers re-derive
+    /// per-cycle data from the handle instead of retaining materialized
+    /// copies past their borrow of the source.
+    fn shared_rows(&self) -> Option<std::sync::Arc<Vec<TraceRow>>> {
         None
     }
 }

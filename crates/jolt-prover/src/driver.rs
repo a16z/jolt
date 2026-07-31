@@ -27,7 +27,8 @@ use jolt_field::Field;
 use jolt_kernels::{
     PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-use jolt_sumcheck::{RecordedSumcheck, SumcheckRecorder};
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::{ProveRounds, RecordedSumcheck, SumcheckError, SumcheckRecorder};
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -117,6 +118,43 @@ pub struct Proved<F: Field, S: StageProver<F>, C> {
     pub output_claims: S::OutputClaims,
     pub output_points: S::OutputPoints,
     pub final_claim: F,
+}
+
+/// Instrumentation-only [`ProveRounds`] shim: the generated driver wraps each
+/// member's kernel so every `prove_round`/`finish_rounds` call runs inside a
+/// fresh tracing span named `<Relation>::prove_round`, attributing the
+/// engine's batched round-loop time per member in a Perfetto timeline. The
+/// delegation is transparent — zero behavior change; the driver reaches the
+/// kernel itself through [`inner`](Self::inner) for extraction and parking.
+pub struct SpannedRounds<K, S> {
+    pub inner: K,
+    pub span: S,
+}
+
+impl<F, K, S> ProveRounds<F> for SpannedRounds<Box<K>, S>
+where
+    F: Field,
+    K: ProveRounds<F> + ?Sized,
+    S: Fn() -> tracing::Span,
+{
+    fn num_rounds(&self) -> usize {
+        self.inner.num_rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let _guard = (self.span)().entered();
+        self.inner.prove_round(bind, round, previous_claim)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        let _guard = (self.span)().entered();
+        self.inner.finish_rounds(bind)
+    }
 }
 
 /// Mint one required member's kernel through the source's [`PrepareKernel`]
@@ -266,37 +304,56 @@ macro_rules! __stage_member {
         >
     };
     (prepare required $member:ident, $relation:ident, $source:expr, $batch:expr, $session:expr, $witness:expr, $inputs:expr, $points:expr, $challenges:expr) => {
-        $crate::driver::prepare_required::<F, $relation<F>, _>(
-            $source,
-            &$batch.$member,
-            $session,
-            $witness,
-            &$inputs.$member,
-            &$points.$member,
-            &$challenges.$member,
-        )?
+        ::tracing::info_span!(concat!(stringify!($relation), "::prepare")).in_scope(|| {
+            $crate::driver::prepare_required::<F, $relation<F>, _>(
+                $source,
+                &$batch.$member,
+                $session,
+                $witness,
+                &$inputs.$member,
+                &$points.$member,
+                &$challenges.$member,
+            )
+        })?
     };
     (prepare optional $member:ident, $relation:ident, $source:expr, $batch:expr, $session:expr, $witness:expr, $inputs:expr, $points:expr, $challenges:expr) => {
-        $crate::driver::prepare_optional::<F, $relation<F>, _>(
-            $source,
-            $batch.$member.as_ref(),
-            $session,
-            $witness,
-            $inputs.$member.as_ref(),
-            $points.$member.as_ref(),
-            $challenges.$member.as_ref(),
-        )?
+        ::tracing::info_span!(concat!(stringify!($relation), "::prepare")).in_scope(|| {
+            $crate::driver::prepare_optional::<F, $relation<F>, _>(
+                $source,
+                $batch.$member.as_ref(),
+                $session,
+                $witness,
+                $inputs.$member.as_ref(),
+                $points.$member.as_ref(),
+                $challenges.$member.as_ref(),
+            )
+        })?
+    };
+    // Rebind the member's kernel inside the instrumentation-only
+    // [`SpannedRounds`](crate::driver::SpannedRounds) shim; later arms reach
+    // the kernel through `.inner`.
+    (spanned required $member:ident, $relation:ident) => {
+        let mut $member = $crate::driver::SpannedRounds {
+            inner: $member,
+            span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
+        };
+    };
+    (spanned optional $member:ident, $relation:ident) => {
+        let mut $member = $member.map(|__kernel| $crate::driver::SpannedRounds {
+            inner: __kernel,
+            span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
+        });
     };
     (round_slot required $member:ident) => {
-        ::core::option::Option::Some(&mut *$member as &mut dyn ::jolt_sumcheck::ProveRounds<F>)
+        ::core::option::Option::Some(&mut $member as &mut dyn ::jolt_sumcheck::ProveRounds<F>)
     };
     (round_slot optional $member:ident) => {
         $member
             .as_mut()
-            .map(|__kernel| &mut **__kernel as &mut dyn ::jolt_sumcheck::ProveRounds<F>)
+            .map(|__kernel| __kernel as &mut dyn ::jolt_sumcheck::ProveRounds<F>)
     };
     (validate required $member:ident, $self:expr, $input_points:expr, $output_points:expr, $challenges:expr) => {
-        $member.validate_derived_tables(
+        $member.inner.validate_derived_tables(
             &$self.$member,
             &$input_points.$member,
             &$output_points.$member,
@@ -305,7 +362,7 @@ macro_rules! __stage_member {
     };
     (validate optional $member:ident, $self:expr, $input_points:expr, $output_points:expr, $challenges:expr) => {
         $crate::driver::validate_optional_tables(
-            $member.as_deref(),
+            $member.as_ref().map(|__kernel| &*__kernel.inner),
             $self.$member.as_ref(),
             $input_points.$member.as_ref(),
             $output_points.$member.as_ref(),
@@ -313,17 +370,20 @@ macro_rules! __stage_member {
         )?;
     };
     (extract required $member:ident, $inputs:expr) => {
-        $member.output_claims(&$inputs.$member)?
+        $member.inner.output_claims(&$inputs.$member)?
     };
     (extract optional $member:ident, $inputs:expr) => {
-        $crate::driver::extract_optional($member.as_deref_mut(), $inputs.$member.as_ref())?
+        $crate::driver::extract_optional(
+            $member.as_mut().map(|__kernel| &mut *__kernel.inner),
+            $inputs.$member.as_ref(),
+        )?
     };
     (park required $member:ident, $session:expr) => {
-        ::jolt_kernels::SumcheckKernel::park_residue($member, $session);
+        ::jolt_kernels::SumcheckKernel::park_residue($member.inner, $session);
     };
     (park optional $member:ident, $session:expr) => {
         if let ::core::option::Option::Some(__kernel) = $member {
-            ::jolt_kernels::SumcheckKernel::park_residue(__kernel, $session);
+            ::jolt_kernels::SumcheckKernel::park_residue(__kernel.inner, $session);
         }
     };
 }
@@ -406,10 +466,12 @@ macro_rules! impl_stage_prover {
                 Rec: ::jolt_sumcheck::SumcheckRecorder<F>,
                 T: ::jolt_transcript::Transcript<Challenge = F>,
             {
+                let __stage_span =
+                    ::tracing::info_span!(concat!($label, "::prove")).entered();
                 let (__batch, __coefficients) =
                     self.begin_batch(inputs, challenges, &mut recorder, transcript)?;
 
-                let ($(mut $member,)+) = $crate::driver::KernelSource::prepare_members(
+                let ($($member,)+) = $crate::driver::KernelSource::prepare_members(
                     kernels,
                     self,
                     session,
@@ -418,6 +480,7 @@ macro_rules! impl_stage_prover {
                     input_points,
                     challenges,
                 )?;
+                $($crate::driver::__stage_member!(spanned $presence $member, $relation);)+
 
                 let mut __rounds: ::std::vec::Vec<&mut dyn ::jolt_sumcheck::ProveRounds<F>> =
                     [$($crate::driver::__stage_member!(round_slot $presence $member),)+]

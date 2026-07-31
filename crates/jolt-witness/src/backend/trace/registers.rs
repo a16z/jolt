@@ -21,7 +21,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
 
         let cycles = checked_pow2(self.config.log_t)?;
         let register_count = checked_pow2(REGISTER_ADDRESS_BITS)?;
-        let mut values = vec![F::zero(); register_count * cycles];
+        let mut values = crate::alloc::zero_table(register_count * cycles);
         let mut trace = self.trace.trace.clone();
 
         if id == JoltVirtualPolynomial::RegistersVal {

@@ -111,6 +111,11 @@ fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F
 /// Panics if `prelude.max_degree == 0` and the batch has rounds to prove — a
 /// sumcheck round polynomial must have degree at least 1 (the same invariant
 /// `SumcheckClaim::new` enforces on the verify side).
+#[tracing::instrument(
+    skip_all,
+    name = "prove_batch",
+    fields(num_rounds = prelude.max_num_vars, members = members.len())
+)]
 pub fn prove_batch<F, R, T>(
     prelude: &BatchPrelude<F>,
     members: &mut [&mut dyn ProveRounds<F>],
@@ -177,6 +182,9 @@ where
     let mut pending_binds: Vec<Option<F>> = vec![None; members.len()];
 
     for round in 0..max_num_vars {
+        // Per-round span (~log T per batch): members' `<Relation>::prove_round`
+        // spans nest under it, never inside per-index inner loops.
+        let _round_span = tracing::info_span!("sumcheck_round", round).entered();
         let mut batched_coefficients = vec![F::zero(); prelude.max_degree + 1];
         let mut round_polys: Vec<Option<UnivariatePoly<F>>> = Vec::with_capacity(members.len());
 
@@ -299,6 +307,7 @@ fn check_uniskip_round<F: Field>(
 /// `b"opening_claim"` — before any post-uni-skip draw (the remainder batch's
 /// coefficient squeeze in particular), which is why the absorb lives here and
 /// not in the stage.
+#[tracing::instrument(skip_all, name = "prove_uniskip_clear")]
 pub fn prove_uniskip_clear<F, C, T>(
     round_poly: UnivariatePoly<F>,
     input_claim: F,

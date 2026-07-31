@@ -37,6 +37,7 @@ pub struct Stage1ProverOutput<F: Field, C> {
 }
 
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
+#[tracing::instrument(skip_all)]
 pub fn prove_stage1<F, PCS, C, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,

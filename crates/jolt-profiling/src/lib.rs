@@ -47,6 +47,9 @@ pub mod setup;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod memory;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stage_memory;
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
 pub mod monitor;
 
@@ -64,9 +67,19 @@ pub use units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use memory::{
-    end_memory_tracing_span, print_current_memory_usage, report_memory_usage,
+    end_memory_tracing_span, peak_rss_bytes, print_current_memory_usage, report_memory_usage,
     start_memory_tracing_span,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use stage_memory::{report_stage_memory, take_stage_memory_rows, StageMemoryLayer};
+
+#[cfg(target_arch = "wasm32")]
+pub fn peak_rss_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn report_stage_memory() {}
 
 #[cfg(target_arch = "wasm32")]
 pub fn start_memory_tracing_span(_label: &'static str) {}

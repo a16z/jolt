@@ -426,6 +426,12 @@ jobs:
       - name: Test lookup table prover ABI
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
+      # jolt-witness's parallel feature is not a default, so the shard loop
+      # above tests only the serial paths; the shipped provers enable it
+      # (via jolt-kernels' default), so test the rayon fast paths directly.
+      - name: Test jolt-witness with parallel
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-witness --features test-utils,parallel --cargo-quiet
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet

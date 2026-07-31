@@ -95,6 +95,10 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuar
         );
     }
 
+    // Boundary RSS sampling for the prover-stage spans; inert for all others.
+    #[cfg(not(target_arch = "wasm32"))]
+    layers.push(crate::stage_memory::StageMemoryLayer.boxed());
+
     tracing_subscriber::registry().with(layers).init();
 
     #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]

@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 default = ["parallel"]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
+parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
 
 [dependencies]
 jolt-claims.workspace = true
@@ -29,8 +29,14 @@ jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
+jolt-dory.workspace = true
+jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true

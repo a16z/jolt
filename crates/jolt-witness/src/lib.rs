@@ -29,6 +29,7 @@ pub mod field_inline;
 pub mod testing;
 pub mod witnesses;
 
+mod alloc;
 mod bundle;
 mod consumer;
 mod error;
@@ -42,7 +43,8 @@ pub use backend::{
 };
 pub use bundle::WitnessBundle;
 pub use consumer::{
-    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RowSource,
+    collect_bundles, collect_bundles_par, collect_par_map, collect_range_into, stream_witnesses,
+    ChunkVisitor, CollectBundles, ConsumerSet, OwnedRows, RandomAccessRows, RowSource,
     StreamConsumer,
 };
 pub use error::WitnessError;

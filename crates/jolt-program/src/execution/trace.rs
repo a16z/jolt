@@ -351,6 +351,13 @@ impl TraceSource for OwnedTrace {
     }
 
     fn rows(&self) -> Option<&[TraceRow]> {
-        Some(OwnedTrace::rows(self))
+        // Pristine sources only: after `next_row` consumption the full slice
+        // would diverge from the remaining stream.
+        (self.next == 0).then(|| self.rows.as_slice())
+    }
+
+    fn shared_rows(&self) -> Option<std::sync::Arc<Vec<TraceRow>>> {
+        // The same pristine guard as `rows`.
+        (self.next == 0).then(|| std::sync::Arc::clone(&self.rows))
     }
 }

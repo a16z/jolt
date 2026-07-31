@@ -2,10 +2,19 @@
 
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
+#[cfg(feature = "parallel")]
+use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::EqPolynomial;
 use jolt_witness::JoltWitnessOracle;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use crate::KernelError;
+
+/// Tables at least this large build in parallel; below it rayon dispatch
+/// costs more than the work.
+#[cfg(feature = "parallel")]
+const PAR_THRESHOLD: usize = 1 << 10;
 
 /// Materialize a dense field-element table of the oracle behind `opening`.
 pub(crate) fn dense_view<F: Field>(
@@ -17,7 +26,7 @@ pub(crate) fn dense_view<F: Field>(
 
 /// `eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index MSB).
 pub(crate) fn eq_table<F: Field>(point: &[F]) -> Vec<F> {
-    EqPolynomial::new(point.to_vec()).evaluations()
+    EqPolynomial::evals(point, None)
 }
 
 /// Fold the address dimension of an address-major `(K × T)` oracle grid by the
@@ -40,13 +49,16 @@ pub(crate) fn address_fold<F: Field>(
         });
     }
     let eq_address = eq_table(point);
-    Ok((0..cycles)
-        .map(|j| {
-            (0..addresses)
-                .map(|k| grid[(k << log_t) | j] * eq_address[k])
-                .sum()
-        })
-        .collect())
+    let fold = |j: usize| -> F {
+        (0..addresses)
+            .map(|k| grid[(k << log_t) | j] * eq_address[k])
+            .sum()
+    };
+    #[cfg(feature = "parallel")]
+    if grid.len() >= PAR_THRESHOLD {
+        return Ok((0..cycles).into_par_iter().map(fold).collect());
+    }
+    Ok((0..cycles).map(fold).collect())
 }
 
 /// Fold the cycle dimension of an address-major `(K × T)` oracle grid by the
@@ -69,19 +81,29 @@ pub(crate) fn cycle_fold<F: Field>(
         });
     }
     let eq_cycle = eq_table(point);
-    Ok((0..addresses)
-        .map(|k| {
-            (0..cycles)
-                .map(|j| grid[(k * cycles) | j] * eq_cycle[j])
-                .sum()
-        })
-        .collect())
+    let fold = |k: usize| -> F {
+        (0..cycles)
+            .map(|j| grid[(k * cycles) | j] * eq_cycle[j])
+            .sum()
+    };
+    #[cfg(feature = "parallel")]
+    if grid.len() >= PAR_THRESHOLD {
+        return Ok((0..addresses).into_par_iter().map(fold).collect());
+    }
+    Ok((0..addresses).map(fold).collect())
 }
 
 /// Tile `base` `copies` times: the `(address ‖ cycle)`-indexed replication of a
 /// cycle-indexed table across the address dimension (address bits are the high
 /// bits of the joint index).
 pub(crate) fn tile<F: Field>(base: &[F], copies: usize) -> Vec<F> {
+    #[cfg(feature = "parallel")]
+    if !base.is_empty() && base.len() * copies >= PAR_THRESHOLD {
+        let mut out: Vec<F> = unsafe_allocate_zero_vec(base.len() * copies);
+        out.par_chunks_mut(base.len())
+            .for_each(|chunk| chunk.copy_from_slice(base));
+        return out;
+    }
     let mut out = Vec::with_capacity(base.len() * copies);
     for _ in 0..copies {
         out.extend_from_slice(base);
@@ -92,6 +114,17 @@ pub(crate) fn tile<F: Field>(base: &[F], copies: usize) -> Vec<F> {
 /// Replicate a cycle-indexed table across the stream bit at the index LSB
 /// (`out[(t << 1) | s] = base[t]`).
 pub(crate) fn replicate_stream_lsb<F: Field>(base: &[F]) -> Vec<F> {
+    #[cfg(feature = "parallel")]
+    if base.len() >= PAR_THRESHOLD {
+        let mut out: Vec<F> = unsafe_allocate_zero_vec(base.len() * 2);
+        out.par_chunks_mut(2)
+            .zip(base.par_iter())
+            .for_each(|(pair, &value)| {
+                pair[0] = value;
+                pair[1] = value;
+            });
+        return out;
+    }
     let mut out = Vec::with_capacity(base.len() * 2);
     for &value in base {
         out.push(value);
@@ -103,6 +136,15 @@ pub(crate) fn replicate_stream_lsb<F: Field>(base: &[F]) -> Vec<F> {
 /// A per-stream constant table over the `(cycle ‖ stream)` domain with the
 /// stream bit at the index LSB (`out[(t << 1) | s] = values[s]`).
 pub(crate) fn stream_pair_lsb<F: Field>(values: [F; 2], cycles: usize) -> Vec<F> {
+    #[cfg(feature = "parallel")]
+    if cycles >= PAR_THRESHOLD {
+        let mut out: Vec<F> = unsafe_allocate_zero_vec(cycles * 2);
+        out.par_chunks_mut(2).for_each(|pair| {
+            pair[0] = values[0];
+            pair[1] = values[1];
+        });
+        return out;
+    }
     let mut out = Vec::with_capacity(cycles * 2);
     for _ in 0..cycles {
         out.push(values[0]);

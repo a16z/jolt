@@ -178,6 +178,37 @@ pub trait StreamingCommitment: CommitmentScheme {
         Self::feed(partial, &values, setup);
     }
 
+    /// Feed a batch of consecutive `row_width`-wide rows at once — equivalent
+    /// to calling [`feed_i128`](Self::feed_i128) on each window of `rows` in
+    /// order. Each row's commitment is independent and only the append order
+    /// is sequenced, so schemes may override this to compute the windows in
+    /// parallel.
+    fn feed_i128_rows(
+        partial: &mut Self::PartialCommitment,
+        rows: &[i128],
+        row_width: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        for row in rows.chunks(row_width) {
+            Self::feed_i128(partial, row, setup);
+        }
+    }
+
+    /// [`feed_i128_rows`](Self::feed_i128_rows) with the values produced by
+    /// `value` per flat index (`count` a multiple of `row_width`) — callers
+    /// feeding straight off a packed source skip staging a whole batch of
+    /// increments; schemes may override to materialize per window instead.
+    fn feed_i128_rows_with(
+        partial: &mut Self::PartialCommitment,
+        value: impl Fn(usize) -> i128 + Sync,
+        count: usize,
+        row_width: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        let rows: Vec<i128> = (0..count).map(value).collect();
+        Self::feed_i128_rows(partial, &rows, row_width, setup);
+    }
+
     fn begin_one_hot_column_major_stream(
         setup: &Self::ProverSetup,
         row_width: usize,
@@ -189,6 +220,41 @@ pub trait StreamingCommitment: CommitmentScheme {
         one_hot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::OneHotChunkCommitment;
+
+    /// Process a batch of consecutive `chunk_width`-column one-hot chunks at
+    /// once — equivalent to calling
+    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk) on each window
+    /// of `chunks` in order and collecting the results. Chunk commitments are
+    /// independent, so schemes may override this to compute the windows in
+    /// parallel.
+    fn process_one_hot_chunks(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Option<usize>],
+        chunk_width: usize,
+    ) -> Vec<Self::OneHotChunkCommitment> {
+        chunks
+            .chunks(chunk_width)
+            .map(|chunk| Self::process_one_hot_chunk(context, setup, one_hot_k, chunk))
+            .collect()
+    }
+
+    /// [`process_one_hot_chunks`](Self::process_one_hot_chunks) with the hot
+    /// addresses produced by `hot_address` per flat index — callers feeding
+    /// straight off a packed source skip staging a whole batch of addresses;
+    /// schemes may override to materialize per window instead.
+    fn process_one_hot_chunks_with(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        hot_address: impl Fn(usize) -> Option<usize> + Sync,
+        count: usize,
+        chunk_width: usize,
+    ) -> Vec<Self::OneHotChunkCommitment> {
+        let chunks: Vec<Option<usize>> = (0..count).map(hot_address).collect();
+        Self::process_one_hot_chunks(context, setup, one_hot_k, &chunks, chunk_width)
+    }
 
     fn finish_with_hint(
         partial: Self::PartialCommitment,
@@ -388,6 +454,11 @@ where
     type Hints = Vec<PCS::OpeningHint>;
     type Proof = PCS::Proof;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "HomomorphicBatch::prove_batch",
+        fields(claims = claims.len())
+    )]
     fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         claims: Self::Statement,
