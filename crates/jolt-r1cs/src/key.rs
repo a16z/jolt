@@ -206,8 +206,16 @@ impl<F: Field> R1csKey<F> {
     ///
     /// $$\tilde{M}_{local}(r_c, r_v) = \sum_k \widetilde{eq}(k, r_c) \sum_{(j, \alpha)} \alpha \cdot \widetilde{eq}(j, r_v)$$
     pub fn evaluate_local_mles(&self, constraint_point: &[F], var_point: &[F]) -> (F, F, F) {
-        debug_assert_eq!(constraint_point.len(), self.num_constraint_vars());
-        debug_assert_eq!(var_point.len(), self.num_var_vars());
+        assert_eq!(
+            constraint_point.len(),
+            self.num_constraint_vars(),
+            "constraint point dimension mismatch"
+        );
+        assert_eq!(
+            var_point.len(),
+            self.num_var_vars(),
+            "variable point dimension mismatch"
+        );
 
         let eq_con = EqPolynomial::new(constraint_point.to_vec()).evaluations();
         let eq_var = EqPolynomial::new(var_point.to_vec()).evaluations();
@@ -258,8 +266,8 @@ impl<F: Field> R1csKey<F> {
     /// $$\tilde{M}(r_x, r_y) = \widetilde{eq}(r_x^{cyc}, r_y^{cyc}) \cdot \tilde{M}_{local}(r_x^{con}, r_y^{var})$$
     pub fn evaluate_matrix_mles(&self, r_x: &[F], r_y: &[F]) -> (F, F, F) {
         let cv = self.num_cycle_vars();
-        debug_assert_eq!(r_x.len(), cv + self.num_constraint_vars());
-        debug_assert_eq!(r_y.len(), cv + self.num_var_vars());
+        assert_eq!(r_x.len(), self.num_row_vars(), "r_x dimension mismatch");
+        assert_eq!(r_y.len(), self.num_col_vars(), "r_y dimension mismatch");
 
         let (rx_cycle, rx_con) = r_x.split_at(cv);
         let (ry_cycle, ry_var) = r_y.split_at(cv);
@@ -275,8 +283,17 @@ impl<F: Field> R1csKey<F> {
     /// For each constraint k, computes `dot(M_row_k, witness_evals)` weighted
     /// by the eq polynomial at the constraint point.
     pub fn evaluate_sparse_matvec(&self, constraint_point: &[F], witness_evals: &[F]) -> (F, F, F) {
-        debug_assert_eq!(constraint_point.len(), self.num_constraint_vars());
-        debug_assert!(witness_evals.len() >= self.matrices.num_vars);
+        assert_eq!(
+            constraint_point.len(),
+            self.num_constraint_vars(),
+            "constraint point dimension mismatch"
+        );
+        assert!(
+            witness_evals.len() >= self.matrices.num_vars,
+            "witness evals must cover all {} variables, got {}",
+            self.matrices.num_vars,
+            witness_evals.len()
+        );
 
         let eq_con = EqPolynomial::new(constraint_point.to_vec()).evaluations();
 
@@ -328,6 +345,7 @@ impl<F: Field> R1csKey<F> {
     /// column indices (already a power of two by construction).
     pub fn combined_row(&self, r_x: &[F], rho_a: F, rho_b: F, rho_c: F) -> Vec<F> {
         let cv = self.num_cycle_vars();
+        assert_eq!(r_x.len(), self.num_row_vars(), "r_x dimension mismatch");
         let (rx_cycle, rx_con) = r_x.split_at(cv);
 
         let eq_con = EqPolynomial::new(rx_con.to_vec()).evaluations();
@@ -484,6 +502,48 @@ mod tests {
         // Constraint 0, var 1 → A has (1, 1), eq([0,1], [0,1]) = 1, so A(0, [0,1]) = 1
         let (a, _, _) = key.evaluate_local_mles(&[Fr::zero()], &[Fr::zero(), Fr::one()]);
         assert_eq!(a, Fr::one());
+    }
+
+    #[test]
+    #[should_panic(expected = "r_x dimension mismatch")]
+    fn matrix_mles_reject_short_r_x() {
+        let key = test_key(4);
+        let r_x = vec![Fr::one(); key.num_row_vars() - 1];
+        let r_y = vec![Fr::one(); key.num_col_vars()];
+        let _ = key.evaluate_matrix_mles(&r_x, &r_y);
+    }
+
+    #[test]
+    #[should_panic(expected = "r_y dimension mismatch")]
+    fn matrix_mles_reject_long_r_y() {
+        let key = test_key(4);
+        let r_x = vec![Fr::one(); key.num_row_vars()];
+        let r_y = vec![Fr::one(); key.num_col_vars() + 1];
+        let _ = key.evaluate_matrix_mles(&r_x, &r_y);
+    }
+
+    #[test]
+    #[should_panic(expected = "constraint point dimension mismatch")]
+    fn sparse_matvec_rejects_wrong_constraint_point() {
+        let key = test_key(1);
+        let w = vec![Fr::one(); 4];
+        let _ = key.evaluate_sparse_matvec(&[Fr::zero(), Fr::zero()], &w);
+    }
+
+    #[test]
+    #[should_panic(expected = "witness evals must cover")]
+    fn sparse_matvec_rejects_short_witness_evals() {
+        let key = test_key(1);
+        let w = vec![Fr::one(); key.matrices.num_vars - 1];
+        let _ = key.evaluate_sparse_matvec(&[Fr::zero()], &w);
+    }
+
+    #[test]
+    #[should_panic(expected = "r_x dimension mismatch")]
+    fn combined_row_rejects_wrong_r_x() {
+        let key = test_key(4);
+        let r_x = vec![Fr::one(); key.num_cycle_vars()];
+        let _ = key.combined_row(&r_x, Fr::one(), Fr::one(), Fr::one());
     }
 
     #[test]
