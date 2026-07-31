@@ -59,9 +59,8 @@ impl MetricsMonitor {
                         .count();
 
                     #[cfg(target_os = "linux")]
-                    let active_threads = std::fs::read_dir("/proc/self/task")
-                        .map(|entries| entries.count())
-                        .unwrap_or(0);
+                    let active_threads =
+                        std::fs::read_dir("/proc/self/task").map_or(0, |entries| entries.count());
 
                     #[cfg(not(target_os = "linux"))]
                     let active_threads = 0_usize;
