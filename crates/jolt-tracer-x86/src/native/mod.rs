@@ -86,6 +86,7 @@ impl X86TracerBackend {
         let mut host = HostContext {
             device,
             advice_tape: inputs.advice_tape.clone().unwrap_or_default(),
+            advice_cursor: 0,
             helper_error: None,
         };
 

@@ -8,6 +8,10 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs};
+
+// Link inline registrations for the inline-bearing guests.
+use jolt_inlines_keccak256 as _;
+use jolt_inlines_sha2 as _;
 use jolt_tracer_x86::X86TracerBackend;
 use tracer::TracerBackend;
 
@@ -43,8 +47,13 @@ fn build_guest_elf(package: &str, func: &str) -> Vec<u8> {
 
 fn setup(package: &str, func: &str, input: Vec<u8>) -> (JoltProgram, TraceInputs) {
     let elf = build_guest_elf(package, func);
-    let program =
-        jolt_program::execution::build_jolt_program(&elf).expect("failed to build Jolt program");
+    let mut provider = tracer::TracerInlineExpansionProvider::new();
+    let program = jolt_program::build_jolt_program_with_inline_provider(
+        &elf,
+        &mut provider,
+        jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
+    )
+    .expect("failed to build Jolt program");
     let memory_config = common::jolt_device::MemoryConfig {
         program_size: Some(program.program_end - common::constants::RAM_START_ADDRESS),
         ..Default::default()
@@ -53,16 +62,13 @@ fn setup(package: &str, func: &str, input: Vec<u8>) -> (JoltProgram, TraceInputs
     (program, inputs)
 }
 
-#[test]
-fn fibonacci_fast_run_matches_reference() {
+/// Run a guest through both engines and assert the fast pass agrees with the
+/// reference on everything the fast pass observes.
+fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>) {
     // Pin the reference to serial mode (the tracer env-dispatches to the
     // parallel pipeline).
     std::env::remove_var("TRACER_PARALLEL");
-    let (program, inputs) = setup(
-        "fibonacci-guest",
-        "fib",
-        postcard::to_stdvec(&100u32).unwrap(),
-    );
+    let (program, inputs) = setup(package, func, input);
 
     let reference = TracerBackend::new()
         .trace(&program, inputs.clone())
@@ -74,13 +80,55 @@ fn fibonacci_fast_run_matches_reference() {
         .fast_run(&program, inputs)
         .expect("x86 fast run failed");
 
-    assert_eq!(fast.trace_len, reference_rows.len(), "row count");
-    assert_eq!(fast.device.outputs, reference.device.outputs, "outputs");
-    assert_eq!(fast.device.panic, reference.device.panic, "panic flag");
+    assert_eq!(fast.trace_len, reference_rows.len(), "{package}: row count");
+    assert_eq!(
+        fast.device.outputs, reference.device.outputs,
+        "{package}: outputs"
+    );
+    assert_eq!(
+        fast.device.panic, reference.device.panic,
+        "{package}: panic flag"
+    );
     assert_eq!(
         Some(fast.final_memory),
         reference.final_memory,
-        "final memory"
+        "{package}: final memory"
     );
-    assert_eq!(Some(fast.advice_tape), reference.advice_tape, "advice tape");
+    assert_eq!(
+        Some(fast.advice_tape),
+        reference.advice_tape,
+        "{package}: advice tape"
+    );
+}
+
+#[test]
+fn fibonacci_fast_run_matches_reference() {
+    assert_fast_run_matches(
+        "fibonacci-guest",
+        "fib",
+        postcard::to_stdvec(&100u32).unwrap(),
+    );
+}
+
+#[test]
+fn sha2_chain_fast_run_matches_reference() {
+    let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    input.append(&mut postcard::to_stdvec(&8u32).unwrap());
+    assert_fast_run_matches("sha2-chain-guest", "sha2_chain", input);
+}
+
+#[test]
+fn sha3_chain_fast_run_matches_reference() {
+    let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    input.append(&mut postcard::to_stdvec(&4u32).unwrap());
+    assert_fast_run_matches("sha3-chain-guest", "sha3_chain", input);
+}
+
+#[test]
+fn btreemap_fast_run_matches_reference() {
+    assert_fast_run_matches(
+        "btreemap-guest",
+        "btreemap",
+        postcard::to_stdvec(&20u32).unwrap(),
+    );
 }

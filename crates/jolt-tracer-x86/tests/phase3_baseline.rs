@@ -150,12 +150,12 @@ fn phase3_baseline() {
     let (program, inputs) = setup(
         "fibonacci-guest",
         "fib",
-        postcard::to_stdvec(&400000u32).unwrap(),
+        postcard::to_stdvec(&400_000_u32).unwrap(),
     );
     report("fibonacci_400000", &program, &inputs, true);
 
     let mut chain_input = postcard::to_stdvec(&[5u8; 32]).unwrap();
-    chain_input.append(&mut postcard::to_stdvec(&4446u32).unwrap());
+    chain_input.append(&mut postcard::to_stdvec(&4_446u32).unwrap());
     let (program, inputs) = setup("sha2-chain-guest", "sha2_chain", chain_input);
     report("sha2_chain_4446", &program, &inputs, false);
 }
