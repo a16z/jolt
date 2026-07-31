@@ -224,7 +224,20 @@ impl TelemetryObjective {
     /// the measurement must compile against the *modified* worktree, and the
     /// artifact path is cwd-relative by design). One run serves every
     /// objective sharing this workload — see [`Self::extract_from_dir`].
+    ///
+    /// Any summary a previous run left at the deterministic path is removed
+    /// first, so a failed run can never expose a stale candidate's
+    /// measurements to a later [`Self::extract_from_dir`].
     pub fn run_profile_in(&self, work_dir: &Path) -> Result<(), MeasurementError> {
+        let stale = self.summary_path(work_dir);
+        if let Err(e) = std::fs::remove_file(&stale) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(MeasurementError::new(format!(
+                    "removing stale summary {}: {e}",
+                    stale.display()
+                )));
+            }
+        }
         let scale = self.scale().to_string();
         let status = Command::new("cargo")
             .current_dir(work_dir)

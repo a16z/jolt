@@ -151,17 +151,22 @@ impl OptimizeEnv for RealEnv {
         // in the worktree (stale-binary trap — see check_invariants below);
         // a failed measurement stays absent from the map, scoring INFINITY.
         // One profile run per workload serves every telemetry objective
-        // sharing it (e.g. all ten per-stage totals read one summary).
+        // sharing it (e.g. all ten per-stage totals read one summary). A
+        // workload counts as profiled only once its run *succeeds*
+        // (`run_profile_in` also clears any stale summary first), so a
+        // failed run can never leave later objectives reading a previous
+        // candidate's summary.
         let mut profiled_workloads: std::collections::HashSet<&str> =
             std::collections::HashSet::new();
         for obj in objectives {
             match obj {
                 OptimizationObjective::Telemetry(t) => {
-                    if profiled_workloads.insert(t.workload) {
+                    if !profiled_workloads.contains(t.workload) {
                         if let Err(e) = t.run_profile_in(&self.work_dir) {
                             eprintln!("profile run failed for {}: {e}", t.workload);
                             continue;
                         }
+                        profiled_workloads.insert(t.workload);
                     }
                     match t.extract_from_dir(&self.work_dir) {
                         Ok(v) => {
