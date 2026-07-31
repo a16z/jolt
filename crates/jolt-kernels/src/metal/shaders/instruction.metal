@@ -604,13 +604,14 @@ kernel void jk_irr_cycle_init(
     device const uint* row = rows + gid * 12u;
     ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
     ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
+    ulong out_word = ((ulong)p.out_base + (ulong)gid) * (ulong)FR_LIMBS;
     if (p.phase_count == 0u) {
         uint table_plus_one = row[8] & 0xFFu;
         bool flag = ((row[8] >> 8) & 0xFFu) != 0u;
         Fr256 value =
             (table_plus_one != 0u) ? fr_load(table_values, table_plus_one - 1u) : fr_zero();
         Fr256 raf = flag ? fr_load_const(p.raf_identity, 0) : fr_load_const(p.raf_interleaved, 0);
-        fr_store(out, p.out_base + gid, fr_add(value, raf));
+        fr_store(out + out_word, 0u, fr_add(value, raf));
         return;
     }
     uint phase = p.phase_begin;
@@ -621,7 +622,7 @@ kernel void jk_irr_cycle_init(
         shift -= 8u;
         product = fr_mont_mul(product, fr_load(v_tables, phase * 256u + jk_chunk8(lo, hi, shift)));
     }
-    fr_store(out, p.out_base + gid, product);
+    fr_store(out + out_word, 0u, product);
 }
 
 #define JK_IRR_MAX_FACTORS 16u
@@ -667,7 +668,9 @@ kernel void jk_irr_cycle_round(
     Fr256 steps[JK_IRR_MAX_FACTORS];
     for (uint f = 0u; f < f_count; f++) {
         Fr256 lo, hi;
-        jk_round_pair(cur + f * p.len * FR_LIMBS, nxt + f * (p.len >> 1) * FR_LIMBS,
+        ulong cur_word = (ulong)f * (ulong)p.len * (ulong)FR_LIMBS;
+        ulong nxt_word = (ulong)f * (ulong)(p.len >> 1) * (ulong)FR_LIMBS;
+        jk_round_pair(cur + cur_word, nxt + nxt_word,
                       bind, r, gid, active, lo, hi);
         evals[f] = hi;
         steps[f] = fr_sub(hi, lo);
