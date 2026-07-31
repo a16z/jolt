@@ -6,6 +6,7 @@ use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
 pub use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_openings::PrefixPacking;
+use jolt_poly::OneHotPolynomial;
 use jolt_riscv::JoltInstructionRow;
 
 use crate::field::JoltField;
@@ -15,6 +16,33 @@ use crate::zkvm::instruction::{
 };
 use crate::zkvm::lookup_table::LookupTables;
 use common::constants::XLEN;
+
+/// Packs equal-length semantic columns into prefix slots and pads unused
+/// slots with zero rows. Logical lane zero is virtual and therefore omitted
+/// from the physical one-hot polynomial.
+pub fn pack_one_hot_columns(
+    k: usize,
+    slot_capacity: usize,
+    columns: Vec<Vec<Option<u8>>>,
+) -> OneHotPolynomial {
+    assert!(slot_capacity.is_power_of_two());
+    assert!(!columns.is_empty() && columns.len() <= slot_capacity);
+    let rows = columns[0].len();
+    assert!(columns.iter().all(|column| column.len() == rows));
+
+    let mut indices = Vec::with_capacity(slot_capacity * rows);
+    for column in columns {
+        indices.extend(column.into_iter().map(|lane| match lane {
+            Some(0) | None => None,
+            Some(lane) => {
+                assert!((lane as usize) < k);
+                Some(lane)
+            }
+        }));
+    }
+    indices.resize(slot_capacity * rows, None);
+    OneHotPolynomial::new(k, indices)
+}
 
 /// Sparse unit-valued multilinear polynomial: value `1` at each listed
 /// position, `0` everywhere else — the witness form of a packed one-hot
@@ -158,23 +186,31 @@ impl FusedIncValue {
         (Self { delta }, store)
     }
 
-    /// The shifted unsigned encoding `2^64 + delta`: the MSB and low-64-bit
-    /// chunks. Padding (`delta = 0`) encodes as MSB hot with every chunk at
-    /// hot lane zero.
-    fn shifted(self) -> u128 {
+    fn balanced_bias(width: usize) -> i128 {
+        debug_assert!(width > 0 && UNSIGNED_INC_BITS.is_multiple_of(width));
+        let radix = 1i128 << width;
+        (radix / 2) * (((1i128 << UNSIGNED_INC_BITS) - 1) / (radix - 1))
+    }
+
+    fn biased_for_balanced_digits(self, width: usize) -> i128 {
         debug_assert!(self.delta.unsigned_abs() < 1u128 << UNSIGNED_INC_BITS);
-        (self.delta + (1i128 << UNSIGNED_INC_BITS)) as u128
+        self.delta + Self::balanced_bias(width)
     }
 
-    pub fn msb(self) -> bool {
-        self.shifted() >> UNSIGNED_INC_BITS == 1
+    /// The centered radix-`2^width` digit encoded modulo the radix.
+    pub fn balanced_chunk_hot_lane_bits(self, width: usize, index: usize) -> usize {
+        let radix = 1i128 << width;
+        let mask = radix - 1;
+        let standard_digit = (self.biased_for_balanced_digits(width) >> (width * index)) & mask;
+        ((standard_digit + radix / 2) & mask) as usize
     }
 
-    /// Chunk hot lane from a plain bit width (the shared-final-point invariant
-    /// fixes `width == log_k_chunk`).
-    pub fn chunk_hot_lane_bits(self, width: usize, index: usize) -> usize {
-        let low = self.shifted() & ((1u128 << UNSIGNED_INC_BITS) - 1);
-        ((low >> (width * index)) & ((1u128 << width) - 1)) as usize
+    /// The signed carry above bit 63, encoded modulo the chunk radix.
+    pub fn balanced_carry_hot_lane_bits(self, width: usize) -> usize {
+        let radix = 1i128 << width;
+        let carry = self.biased_for_balanced_digits(width) >> UNSIGNED_INC_BITS;
+        debug_assert!((-1..=1).contains(&carry));
+        carry.rem_euclid(radix) as usize
     }
 }
 
@@ -329,44 +365,69 @@ mod tests {
     use super::*;
     use jolt_claims::protocols::jolt::lattice::UnsignedIncChunking;
 
-    const LOG_K_CHUNK: usize = 8;
+    #[test]
+    fn physical_one_hot_prefix_order_matches_selector_reduction() {
+        use jolt_field::{Fr, FromPrimitiveInt};
+        use jolt_poly::{eq_index_msb, MultilinearPoly};
 
-    fn chunking() -> UnsignedIncChunking {
-        UnsignedIncChunking::new(LOG_K_CHUNK).unwrap()
-    }
+        let columns = vec![vec![Some(0), Some(2)], vec![Some(3), None]];
+        let packed = pack_one_hot_columns(4, 4, columns);
+        assert_eq!(
+            packed.indices(),
+            [None, Some(2), Some(3), None, None, None, None, None]
+        );
 
-    fn fused_trace() -> Vec<FusedIncValue> {
-        [7i128, -3, 0, (1 << 40) + 5, -(1 << 63), 1, -1, 0]
-            .into_iter()
-            .map(|delta| FusedIncValue { delta })
-            .collect()
+        let selector = [Fr::from_u64(3), Fr::from_u64(5)];
+        let logical = [Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
+        let first = OneHotPolynomial::new(4, vec![None, Some(2)]).evaluate(&logical);
+        let second = OneHotPolynomial::new(4, vec![Some(3), None]).evaluate(&logical);
+        let expected = eq_index_msb(&selector, 0) * first + eq_index_msb(&selector, 1) * second;
+        let point = [selector.as_slice(), logical.as_slice()].concat();
+        assert_eq!(packed.evaluate(&point), expected);
     }
 
     #[test]
-    fn chunks_and_msb_reconstruct_the_shifted_fused_increment() {
-        let encoding = chunking();
-        for (cycle, inc) in fused_trace().iter().enumerate() {
-            let mut reconstructed = 0u128;
-            for index in 0..encoding.chunk_count() {
-                let hot = inc.chunk_hot_lane_bits(encoding.chunk_width(), index);
-                assert!(hot < 1 << encoding.chunk_width(), "cycle {cycle}");
-                reconstructed |= (hot as u128) << (encoding.chunk_width() * index);
+    fn balanced_chunks_and_carry_reconstruct_the_fused_increment() {
+        let values = [
+            -(1i128 << 64) + 1,
+            -(1i128 << 63),
+            -129,
+            -128,
+            -127,
+            -1,
+            0,
+            1,
+            127,
+            128,
+            129,
+            (1i128 << 63) - 1,
+            (1i128 << 64) - 1,
+        ];
+        for width in [4, 8] {
+            let chunking = UnsignedIncChunking::new(width).unwrap();
+            let radix = 1i128 << width;
+            for delta in values {
+                let inc = FusedIncValue { delta };
+                let digits = (0..chunking.chunk_count()).map(|index| {
+                    let lane = inc.balanced_chunk_hot_lane_bits(width, index) as i128;
+                    if lane < radix / 2 {
+                        lane
+                    } else {
+                        lane - radix
+                    }
+                });
+                let carry_lane = inc.balanced_carry_hot_lane_bits(width) as i128;
+                let carry = if carry_lane < radix / 2 {
+                    carry_lane
+                } else {
+                    carry_lane - radix
+                };
+                let reconstructed = digits
+                    .enumerate()
+                    .fold(0, |sum, (index, digit)| sum + (digit << (width * index)))
+                    + (carry << UNSIGNED_INC_BITS);
+                assert_eq!(reconstructed, delta, "width={width}, delta={delta}");
             }
-            reconstructed |= u128::from(inc.msb()) << UNSIGNED_INC_BITS;
-            assert_eq!(
-                reconstructed as i128 - (1i128 << UNSIGNED_INC_BITS),
-                inc.delta,
-                "cycle {cycle}"
-            );
-        }
-    }
-
-    #[test]
-    fn padding_cycles_encode_msb_hot_and_zero_digits() {
-        let padding = FusedIncValue { delta: 0 };
-        assert!(padding.msb());
-        for index in 0..chunking().chunk_count() {
-            assert_eq!(padding.chunk_hot_lane_bits(LOG_K_CHUNK, index), 0);
         }
     }
 

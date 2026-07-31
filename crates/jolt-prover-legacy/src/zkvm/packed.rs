@@ -35,14 +35,9 @@ use jolt_openings::{
     prove_packed_openings, CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim,
     PackedProverGroup, PackedProverObject, PrefixPackedStatement, PrefixPacking,
 };
-use jolt_poly::OneHotPolynomial;
-use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
-use jolt_verifier::preprocessing::{
-    CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
-    JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
-};
+use jolt_verifier::preprocessing::JoltVerifierPreprocessing;
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
 use jolt_verifier::VerifierError;
 
@@ -76,7 +71,9 @@ use crate::zkvm::fiat_shamir_preamble;
 use crate::zkvm::instruction_lookups::ra_virtual::{
     InstructionRaSumcheckParams, InstructionRaSumcheckProver as LookupsRaSumcheckProver,
 };
-use crate::zkvm::packed_witness::{FusedIncValue, SparseUnitPolynomial, UNSIGNED_INC_BITS};
+use crate::zkvm::packed_witness::{
+    pack_one_hot_columns, FusedIncValue, SparseUnitPolynomial, UNSIGNED_INC_BITS,
+};
 use crate::zkvm::prover::JoltCpuProver;
 use crate::zkvm::ram::hamming_booleanity::{
     HammingBooleanitySumcheckParams, HammingBooleanitySumcheckProver,
@@ -663,15 +660,14 @@ impl AkitaPackedProver<'_> {
         .expect("Jolt always commits at least one RA polynomial")
     }
 
-    /// Builds the native `OneHotTrace` columns from compact per-cycle source
-    /// data. Each returned index buffer is handed to Akita by ownership, so
-    /// there is no witness clone at the PCS boundary.
+    /// Builds the physical prefix-packed `OneHotTrace` polynomial. Lane zero
+    /// is omitted; Stage 7 accounts for its public logical contribution.
     #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
     fn assemble_one_hot_trace(
         &self,
         plan: &OneHotTraceLayoutPlan,
         fused_inc: &[FusedIncValue],
-    ) -> Vec<OneHotPolynomial> {
+    ) -> jolt_poly::OneHotPolynomial {
         use crate::zkvm::instruction::LookupQuery;
         use crate::zkvm::ram::remap_address;
         use common::constants::XLEN;
@@ -692,7 +688,9 @@ impl AkitaPackedProver<'_> {
             })
             .collect::<Vec<_>>();
         let k = 1usize << params.log_k_chunk;
-        plan.columns
+        let columns = plan
+            .packing()
+            .ids()
             .par_iter()
             .map(|polynomial| {
                 let indices = cycle_data
@@ -709,19 +707,22 @@ impl AkitaPackedProver<'_> {
                             JoltCommittedPolynomial::RamRa(index) => (*ram_address)
                                 .map(|address| params.ram_address_chunk(address, *index) as usize),
                             JoltCommittedPolynomial::UnsignedIncChunk(index) => {
-                                Some(inc.chunk_hot_lane_bits(params.log_k_chunk, *index))
+                                Some(inc.balanced_chunk_hot_lane_bits(params.log_k_chunk, *index))
                             }
-                            JoltCommittedPolynomial::UnsignedIncMsb => Some(usize::from(inc.msb())),
+                            JoltCommittedPolynomial::UnsignedIncMsb => {
+                                Some(inc.balanced_carry_hot_lane_bits(params.log_k_chunk))
+                            }
                             _ => unreachable!("OneHotTrace plan contains only canonical columns"),
                         };
                         hot.map(|hot| {
                             u8::try_from(hot).expect("OneHotTrace K is at most the u8 lane domain")
                         })
                     })
-                    .collect();
-                OneHotPolynomial::new(k, indices)
+                    .collect::<Vec<_>>();
+                indices
             })
-            .collect()
+            .collect();
+        pack_one_hot_columns(k, plan.packing().slot_capacity(), columns)
     }
 
     /// The per-cycle fused increments, shared by the inc-column witness
@@ -746,14 +747,14 @@ impl AkitaPackedProver<'_> {
                 Arc::new(
                     fused_cycles
                         .par_iter()
-                        .map(|cycle| Some(cycle.chunk_hot_lane_bits(width, index) as u8))
+                        .map(|cycle| Some(cycle.balanced_chunk_hot_lane_bits(width, index) as u8))
                         .collect(),
                 )
             })
             .chain(core::iter::once(Arc::new(
                 fused_cycles
                     .par_iter()
-                    .map(|cycle| Some(u8::from(cycle.msb())))
+                    .map(|cycle| Some(cycle.balanced_carry_hot_lane_bits(width) as u8))
                     .collect(),
             )))
             .collect();
@@ -1443,8 +1444,8 @@ impl AkitaPackedProver<'_> {
         let one_hot_trace_witness = self.assemble_one_hot_trace(&plan, &fused_cycles);
         let (commitment, hint) = AkitaScheme::commit_one_hot_group_owned(
             object_setup,
-            object_setup.default_layout_digest(),
-            one_hot_trace_witness,
+            plan.layout_digest(),
+            vec![one_hot_trace_witness],
         )
         .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
@@ -1488,8 +1489,8 @@ impl AkitaPackedProver<'_> {
         // Stage 8: OneHotTrace opens as one native same-point batch. Advice
         // and ProgramOneHot remain auxiliary packed objects.
         let mut common_point: Option<Vec<AkitaField>> = None;
-        let mut evaluations = Vec::with_capacity(plan.columns.len());
-        for polynomial in &plan.columns {
+        let mut evaluations = Vec::with_capacity(plan.packing().ids().len());
+        for polynomial in plan.packing().ids() {
             let (leaf_point, value) = self.resolve_leaf_claim(*polynomial)?;
             let point = ONE_HOT_TRACE_LAYOUT
                 .column_point(*polynomial, self.one_hot_params.log_k_chunk, &leaf_point)
@@ -1512,9 +1513,16 @@ impl AkitaPackedProver<'_> {
         let common_point = common_point.ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
             reason: "OneHotTrace has no columns".to_string(),
         })?;
+        let packed_claims = plan.packed_claims(common_point, evaluations);
+        let packed_claim = plan
+            .packing()
+            .reduce_claims(&packed_claims, &mut self.transcript)
+            .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                reason: error.to_string(),
+            })?;
         let one_hot_trace_opening = AkitaScheme::open_one_hot_group_from_hint(
-            &common_point,
-            &evaluations,
+            packed_claim.point.as_slice(),
+            std::slice::from_ref(&packed_claim.value),
             object_setup,
             hint,
             &mut self.transcript,
@@ -1654,28 +1662,32 @@ pub fn akita_verifier_preprocessing(
 ) -> JoltVerifierPreprocessing<AkitaScheme, AkitaVc> {
     let program = match &preprocessing.shared.program {
         crate::zkvm::program::ProgramPreprocessing::Full(full) => {
-            VerifierProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
-                bytecode: full.bytecode.as_ref().clone(),
-                ram: full.ram.clone(),
-                memory_layout: preprocessing.shared.memory_layout.clone(),
-                max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-            }))
+            jolt_verifier::preprocessing::ProgramPreprocessing::Full(
+                jolt_program::preprocess::JoltProgramPreprocessing {
+                    bytecode: full.bytecode.as_ref().clone(),
+                    ram: full.ram.clone(),
+                    memory_layout: preprocessing.shared.memory_layout.clone(),
+                    max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
+                },
+            )
         }
         crate::zkvm::program::ProgramPreprocessing::Committed(committed) => {
-            VerifierProgramPreprocessing::Committed(VerifierCommittedProgramPreprocessing {
-                meta: ProgramMetadata {
-                    entry_address: committed.meta.entry_address,
-                    min_bytecode_address: committed.meta.min_bytecode_address,
-                    entry_bytecode_index: committed.meta.entry_bytecode_index,
-                    program_image_len_words: committed.meta.program_image_len_words,
-                    bytecode_len: committed.meta.bytecode_len,
+            jolt_verifier::preprocessing::ProgramPreprocessing::Committed(
+                jolt_verifier::preprocessing::CommittedProgramPreprocessing {
+                    meta: jolt_program::preprocess::ProgramMetadata {
+                        entry_address: committed.meta.entry_address,
+                        min_bytecode_address: committed.meta.min_bytecode_address,
+                        entry_bytecode_index: committed.meta.entry_bytecode_index,
+                        program_image_len_words: committed.meta.program_image_len_words,
+                        bytecode_len: committed.meta.bytecode_len,
+                    },
+                    memory_layout: preprocessing.shared.memory_layout.clone(),
+                    max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
+                    program_one_hot_commitment: program_one_hot_commitment
+                        .expect("committed-program mode requires the ProgramOneHot commitment"),
+                    bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
                 },
-                memory_layout: preprocessing.shared.memory_layout.clone(),
-                max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                program_one_hot_commitment: program_one_hot_commitment
-                    .expect("committed-program mode requires the ProgramOneHot commitment"),
-                bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
-            })
+            )
         }
     };
     let committed_mode = preprocessing.shared.program.is_committed();
