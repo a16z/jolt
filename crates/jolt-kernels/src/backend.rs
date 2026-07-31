@@ -177,7 +177,7 @@ where
 /// through every slot call.
 #[derive(Default)]
 pub struct ProofSession {
-    state: HashMap<TypeId, Box<dyn Any>>,
+    state: HashMap<TypeId, Box<dyn Any + Send>>,
 }
 
 impl ProofSession {
@@ -188,7 +188,7 @@ impl ProofSession {
         clippy::expect_used,
         reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
     )]
-    pub fn state_or_insert_with<T: Any>(&mut self, init: impl FnOnce() -> T) -> &mut T {
+    pub fn state_or_insert_with<T: Any + Send>(&mut self, init: impl FnOnce() -> T) -> &mut T {
         self.state
             .entry(TypeId::of::<T>())
             .or_insert_with(|| Box::new(init()))
@@ -197,7 +197,7 @@ impl ProofSession {
     }
 
     /// The calling backend's private state, if any slot created it yet.
-    pub fn state<T: Any>(&self) -> Option<&T> {
+    pub fn state<T: Any + Send>(&self) -> Option<&T> {
         self.state
             .get(&TypeId::of::<T>())
             .and_then(|boxed| boxed.downcast_ref::<T>())
@@ -211,7 +211,7 @@ impl ProofSession {
     /// missing or stale carry is a proof-time
     /// [`KernelError`](crate::KernelError), the accepted cost of keeping
     /// every batch member uniform.
-    pub fn park<T: Any>(&mut self, value: T) {
+    pub fn park<T: Any + Send>(&mut self, value: T) {
         let _ = self.state.insert(TypeId::of::<T>(), Box::new(value));
     }
 
@@ -220,12 +220,29 @@ impl ProofSession {
         clippy::expect_used,
         reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
     )]
-    pub fn take<T: Any>(&mut self) -> Option<T> {
+    pub fn take<T: Any + Send>(&mut self) -> Option<T> {
         self.state.remove(&TypeId::of::<T>()).map(|boxed| {
             *boxed
                 .downcast::<T>()
                 .expect("ProofSession state entry keyed by its own TypeId")
         })
+    }
+
+    /// Fork a session carrying only a cloned backend-private value. Used by
+    /// independent prefetch work that must not share the live session map.
+    pub fn fork_with<T: Any + Clone + Send>(&self) -> Self {
+        let mut fork = Self::default();
+        if let Some(value) = self.state::<T>() {
+            fork.park(value.clone());
+        }
+        fork
+    }
+
+    /// Transfer one backend-private carry into another isolated session.
+    pub fn move_to<T: Any + Send>(&mut self, destination: &mut Self) {
+        if let Some(value) = self.take::<T>() {
+            destination.park(value);
+        }
     }
 }
 

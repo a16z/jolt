@@ -20,6 +20,7 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
@@ -28,20 +29,19 @@ use std::collections::BTreeMap;
 use jolt_kernels::committed_program::{
     build_committed_bytecode_chunk_coeffs, program_image_words_padded,
 };
-use jolt_kernels::{CommitmentGrid, JoltBackend, KernelError, ProofSession};
+use jolt_kernels::{CommitmentGrid, KernelError};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
     AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
     VerifierOpeningClaim,
 };
-use jolt_poly::Point;
+use jolt_poly::{MultilinearPoly, Point};
 use jolt_transcript::Transcript;
 use jolt_verifier::proof::JoltCommitments;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::stages::stage8::{batch_entries, precommitted_final_openings};
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::JoltWitnessPlane;
 
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -51,30 +51,42 @@ pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
     pub joint_opening_proof: PCS::Proof,
 }
 
-/// Prove stage 8 on `transcript` (positioned at the stage-7 boundary).
-#[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
-#[tracing::instrument(skip_all)]
-pub fn prove_stage8<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
-    session: &mut ProofSession,
+/// Challenge-independent stage-8 materialization recipe. The top-level
+/// prover can execute this before stage 6b completes; only the resulting
+/// polynomial views cross the transcript boundary.
+pub struct Stage8MaterializationPlan<F: Field> {
+    layout: JoltRaPolynomialLayout,
+    pub order: Vec<JoltCommittedPolynomial>,
+    pub precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+    pub grid: CommitmentGrid,
+}
+
+/// Polynomial views prepared from [`Stage8MaterializationPlan`].
+pub struct Stage8Prepared<F: Field> {
+    plan: Stage8MaterializationPlan<F>,
+    polynomials: Vec<Box<dyn MultilinearPoly<F>>>,
+}
+
+impl<F: Field> Stage8Prepared<F> {
+    pub fn new(
+        plan: Stage8MaterializationPlan<F>,
+        polynomials: Vec<Box<dyn MultilinearPoly<F>>>,
+    ) -> Self {
+        Self { plan, polynomials }
+    }
+}
+
+/// Assemble everything stage 8's witness materialization needs without
+/// consulting stage 6b/7 outputs or the transcript.
+pub fn stage8_materialization_plan<F, PCS, VC>(
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
-    commitments: &JoltCommitments<PCS::Output>,
-    untrusted_advice_commitment: Option<&PCS::Output>,
-    trusted_advice_commitment: Option<&PCS::Output>,
-    hints: &[(JoltCommittedPolynomial, PCS::OpeningHint)],
-    stage6b: &Stage6bClearOutput<F>,
-    stage7: &Stage7ClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
-    transcript: &mut T,
-) -> Result<Stage8ProverOutput<PCS>, ProverError<F>>
+) -> Result<Stage8MaterializationPlan<F>, ProverError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
-    PCS::Output: HomomorphicCommitment<F>,
+    PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let precommitted = &checked.precommitted;
@@ -89,6 +101,84 @@ where
         reason: error.to_string(),
     })?;
     let layout = formula_dimensions.ra_layout;
+    let include_trusted = precommitted.trusted_advice.is_some();
+    let include_untrusted = precommitted.untrusted_advice.is_some();
+    let chunk_count = precommitted
+        .bytecode
+        .as_ref()
+        .map(|layout| layout.chunk_count());
+    let order =
+        final_opening_polynomial_order(layout, include_trusted, include_untrusted, chunk_count);
+    let grid = CommitmentGrid {
+        total_vars: config.commitment_total_vars(
+            preprocessing.verifier.program.memory_layout(),
+            include_trusted,
+            include_untrusted,
+            CommittedProgramCandidates::from_schedule(precommitted),
+        ),
+        log_t,
+        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
+        order: config.trace_polynomial_order,
+    };
+
+    let mut precommitted_tables = BTreeMap::new();
+    if let Some(bytecode_layout) = &precommitted.bytecode {
+        let program = preprocessing
+            .program()
+            .ok_or(ProverError::InvariantViolation {
+                reason: "full program preprocessing is unavailable",
+            })?;
+        let chunk_coeffs = build_committed_bytecode_chunk_coeffs::<F>(
+            &program.bytecode.bytecode,
+            bytecode_layout.chunk_count(),
+            bytecode_layout.trace_order(),
+        )?;
+        for (index, coeffs) in chunk_coeffs.into_iter().enumerate() {
+            let _ =
+                precommitted_tables.insert(JoltCommittedPolynomial::BytecodeChunk(index), coeffs);
+        }
+        let image_words = program_image_words_padded(&program.ram.bytecode_words);
+        let _ = precommitted_tables.insert(
+            JoltCommittedPolynomial::ProgramImageInit,
+            image_words.into_iter().map(F::from_u64).collect(),
+        );
+    }
+
+    Ok(Stage8MaterializationPlan {
+        layout,
+        order,
+        precommitted_tables,
+        grid,
+    })
+}
+
+/// Prove stage 8 on `transcript` (positioned at the stage-7 boundary).
+#[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
+#[tracing::instrument(skip_all)]
+pub fn prove_stage8<F, PCS, VC, T>(
+    checked: &CheckedInputs,
+    config: &ProverConfig,
+    preprocessing: &JoltProverPreprocessing<PCS, VC>,
+    commitments: &JoltCommitments<PCS::Output>,
+    untrusted_advice_commitment: Option<&PCS::Output>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    hints: &[(JoltCommittedPolynomial, PCS::OpeningHint)],
+    stage6b: &Stage6bClearOutput<F>,
+    stage7: &Stage7ClearOutput<F>,
+    prepared: Stage8Prepared<F>,
+    transcript: &mut T,
+) -> Result<Stage8ProverOutput<PCS>, ProverError<F>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
+    PCS::Output: HomomorphicCommitment<F>,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    let log_t = checked.trace_length.ilog2() as usize;
+    let precommitted = &checked.precommitted;
+    let Stage8Prepared { plan, polynomials } = prepared;
+    let layout = plan.layout;
 
     // The assembly, exactly as `stage8::verify` performs it before any
     // transcript operation.
@@ -151,61 +241,15 @@ where
         })
         .collect::<Result<_, ProverError<F>>>()?;
 
-    // Witness materialization (grid-embedded, batch order) and the hints
-    // reordered from stage 0's proof-commitment order.
-    let include_trusted = precommitted.trusted_advice.is_some();
-    let include_untrusted = precommitted.untrusted_advice.is_some();
-    let chunk_count = precommitted
-        .bytecode
-        .as_ref()
-        .map(|layout| layout.chunk_count());
-    let order =
-        final_opening_polynomial_order(layout, include_trusted, include_untrusted, chunk_count);
-    let grid = CommitmentGrid {
-        total_vars: config.commitment_total_vars(
-            preprocessing.verifier.program.memory_layout(),
-            include_trusted,
-            include_untrusted,
-            CommittedProgramCandidates::from_schedule(precommitted),
-        ),
-        log_t,
-        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
-        order: config.trace_polynomial_order,
-    };
-    if grid.total_vars != opening_point.len() {
+    // Witness materialization was prefetched from challenge-independent
+    // inputs; the opening claims and transcript work remain here.
+    if plan.grid.total_vars != opening_point.len() {
         return Err(ProverError::InvariantViolation {
             reason: "commitment grid width disagrees with the unified opening point",
         });
     }
-    // The committed-program polynomials are preprocessing data (not witness
-    // oracles): materialize them from the prover-retained full program.
-    let mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>> = BTreeMap::new();
-    if let Some(bytecode_layout) = &precommitted.bytecode {
-        let program = preprocessing
-            .program()
-            .ok_or(ProverError::InvariantViolation {
-                reason: "full program preprocessing is unavailable",
-            })?;
-        let chunk_coeffs = build_committed_bytecode_chunk_coeffs::<F>(
-            &program.bytecode.bytecode,
-            bytecode_layout.chunk_count(),
-            bytecode_layout.trace_order(),
-        )?;
-        for (index, coeffs) in chunk_coeffs.into_iter().enumerate() {
-            let _ =
-                precommitted_tables.insert(JoltCommittedPolynomial::BytecodeChunk(index), coeffs);
-        }
-        let image_words = program_image_words_padded(&program.ram.bytecode_words);
-        let _ = precommitted_tables.insert(
-            JoltCommittedPolynomial::ProgramImageInit,
-            image_words.into_iter().map(F::from_u64).collect(),
-        );
-    }
-    let polynomials =
-        backend
-            .joint_opening
-            .prepare(session, witness, &order, &precommitted_tables, grid)?;
-    let ordered_hints: Vec<PCS::OpeningHint> = order
+    let ordered_hints: Vec<PCS::OpeningHint> = plan
+        .order
         .iter()
         .map(|polynomial| {
             hints

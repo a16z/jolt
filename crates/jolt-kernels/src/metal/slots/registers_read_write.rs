@@ -453,8 +453,10 @@ impl PrepareKernel<Fr, RegistersReadWriteChecking<Fr>> for MetalRegistersReadWri
             });
         }
         let registers = Arc::clone(&record.registers);
+        let ram = Arc::clone(&record.ram);
         drop(record);
         TraceRecord::release(session);
+        crate::optimized::opening::park_opening_increments(session, &registers, &ram);
 
         let mut entries = Vec::with_capacity(cycles * 3);
         let mut offsets = Vec::with_capacity(cycles + 1);

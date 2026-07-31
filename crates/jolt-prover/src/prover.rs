@@ -21,7 +21,7 @@ use crate::stages::stage5::prove_stage5;
 use crate::stages::stage6a::prove_stage6a;
 use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
-use crate::stages::stage8::prove_stage8;
+use crate::stages::stage8::{prove_stage8, stage8_materialization_plan, Stage8Prepared};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and
@@ -137,35 +137,53 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage6b = prove_stage6b::<F, PCS, VC, VC::Output, T>(
-        backend,
-        &mut session,
-        &checked,
-        config,
-        preprocessing,
-        &stage1.clear_output,
-        &stage2.clear_output,
-        &stage3.clear_output,
-        &stage4.clear_output,
-        &stage5.clear_output,
-        &stage6a.clear_output,
-        witness,
-        &mut transcript,
-    )?;
-    let stage7 = prove_stage7::<F, PCS, VC, VC::Output, T>(
-        backend,
-        &mut session,
-        &checked,
-        config,
-        preprocessing,
-        &stage4.clear_output,
-        &stage6b.clear_output,
-        witness,
-        &mut transcript,
-    )?;
+    let stage8_plan = stage8_materialization_plan::<F, PCS, VC>(&checked, config, preprocessing)?;
+    let mut prefetch_session = backend.joint_opening.prefetch_session(&mut session);
+    let (stage6b, stage7, stage8_polynomials) = std::thread::scope(|scope| {
+        let prefetch = scope.spawn(|| {
+            backend.joint_opening.prepare(
+                &mut prefetch_session,
+                witness,
+                &stage8_plan.order,
+                &stage8_plan.precommitted_tables,
+                stage8_plan.grid,
+            )
+        });
+        let stage6b = prove_stage6b::<F, PCS, VC, VC::Output, T>(
+            backend,
+            &mut session,
+            &checked,
+            config,
+            preprocessing,
+            &stage1.clear_output,
+            &stage2.clear_output,
+            &stage3.clear_output,
+            &stage4.clear_output,
+            &stage5.clear_output,
+            &stage6a.clear_output,
+            witness,
+            &mut transcript,
+        )?;
+        let stage7 = prove_stage7::<F, PCS, VC, VC::Output, T>(
+            backend,
+            &mut session,
+            &checked,
+            config,
+            preprocessing,
+            &stage4.clear_output,
+            &stage6b.clear_output,
+            witness,
+            &mut transcript,
+        )?;
+        let polynomials = prefetch
+            .join()
+            .map_err(|_| ProverError::InvariantViolation {
+                reason: "stage-8 materialization prefetch panicked",
+            })??;
+        Ok::<_, ProverError<F>>((stage6b, stage7, polynomials))
+    })?;
+    let stage8_prepared = Stage8Prepared::new(stage8_plan, stage8_polynomials);
     let stage8 = prove_stage8::<F, PCS, VC, T>(
-        backend,
-        &mut session,
         &checked,
         config,
         preprocessing,
@@ -175,7 +193,7 @@ where
         &stage0.hints,
         &stage6b.clear_output,
         &stage7.clear_output,
-        witness,
+        stage8_prepared,
         &mut transcript,
     )?;
 

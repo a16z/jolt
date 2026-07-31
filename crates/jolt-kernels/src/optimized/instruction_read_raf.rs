@@ -184,6 +184,7 @@ pub(crate) fn collect_instruction_cycle_rows<F: Field>(
 ///
 /// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
 /// carry back for the later stages.
+#[derive(Clone)]
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
 
 /// Reclaim the parked stage-5 rows (the length guard makes a stale carry

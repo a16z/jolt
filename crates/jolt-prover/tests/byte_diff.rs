@@ -880,9 +880,26 @@ mod muldiv {
 
             // The stage-8 ratchet: the joint batched opening, then the final
             // end-of-proof transcript state — the whole clear proof.
+            let stage8_plan =
+                jolt_prover::stages::stage8::stage8_materialization_plan::<
+                    Fr,
+                    DoryScheme,
+                    Pedersen<Bn254G1>,
+                >(&legacy_pre_stage1.checked, &config, &prover_preprocessing)
+                .expect("stage 8 materialization plan");
+            let stage8_polynomials = backend
+                .joint_opening
+                .prepare(
+                    &mut session,
+                    &witness,
+                    &stage8_plan.order,
+                    &stage8_plan.precommitted_tables,
+                    stage8_plan.grid,
+                )
+                .expect("stage 8 polynomials materialize");
+            let stage8_prepared =
+                jolt_prover::stages::stage8::Stage8Prepared::new(stage8_plan, stage8_polynomials);
             let stage8 = prove_stage8::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                backend,
-                &mut session,
                 &legacy_pre_stage1.checked,
                 &config,
                 &prover_preprocessing,
@@ -892,7 +909,7 @@ mod muldiv {
                 &stage0.hints,
                 &stage6b.clear_output,
                 &stage7.clear_output,
-                &witness,
+                stage8_prepared,
                 &mut new_transcript,
             )
             .expect("stage 8 proves");
