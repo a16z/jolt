@@ -203,10 +203,6 @@ delegate_preset!(
 );
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    reason = "planner-backed setup tests should fail loudly on invalid shapes"
-)]
 mod tests {
     use super::*;
 

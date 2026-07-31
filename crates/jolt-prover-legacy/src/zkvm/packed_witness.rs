@@ -3,9 +3,9 @@
 //! sparse prefix-packed representations.
 
 use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
+use jolt_claims::protocols::jolt::lattice::PrefixPackedObjectPlan;
 pub use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
-use jolt_openings::PrefixPacking;
 use jolt_poly::OneHotPolynomial;
 use jolt_riscv::JoltInstructionRow;
 
@@ -216,7 +216,7 @@ impl FusedIncValue {
 
 /// Scatters the precommitted `ProgramOneHot` sub-columns (per-chunk bytecode lanes
 /// and the program image) into one-positions of the packed precommitted
-/// witness, per the canonical `precommitted_packing` slots. Row domain per
+/// witness, per the canonical `precommitted_packing_plan` slots. Row domain per
 /// chunk is `2^log_bytecode_rows` (bytecode rows, zero-padded); byte
 /// one-hot columns encode padding as hot_lane-0 hot (never all-zero), the
 /// selector/flag columns leave padding rows empty.
@@ -227,7 +227,7 @@ impl FusedIncValue {
 /// byte reconstruction and the base lane agree exactly (including negative
 /// immediates, which wrap to `p − |imm|`).
 pub fn assemble_precommitted_witness<F: JoltField>(
-    packing: &PrefixPacking<JoltCommittedPolynomial>,
+    plan: &PrefixPackedObjectPlan,
     instructions: &[JoltInstructionRow],
     log_bytecode_rows: usize,
     imm_byte_width: usize,
@@ -256,7 +256,12 @@ pub fn assemble_precommitted_witness<F: JoltField>(
     };
 
     let mut one_positions = Vec::new();
-    for (column, slot) in packing {
+    let packed_index = |column: &JoltCommittedPolynomial, local: usize| {
+        plan.packing()
+            .packed_index(column, local)
+            .map_err(|error| error.to_string())
+    };
+    for column in plan.packing().ids() {
         match column {
             JoltCommittedPolynomial::BytecodeRegisterSelector { chunk, lane } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
@@ -266,23 +271,24 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                         BytecodeRegisterLane::Rd => instruction.operands.rd,
                     };
                     if let Some(register) = register {
-                        one_positions.push(
-                            slot.packed_index(((register as usize) << log_bytecode_rows) | row),
-                        );
+                        one_positions.push(packed_index(
+                            column,
+                            ((register as usize) << log_bytecode_rows) | row,
+                        )?);
                     }
                 }
             }
             JoltCommittedPolynomial::BytecodeCircuitFlag { chunk, flag } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if instruction.circuit_flags()[*flag] {
-                        one_positions.push(slot.packed_index(row));
+                        one_positions.push(packed_index(column, row)?);
                     }
                 }
             }
             JoltCommittedPolynomial::BytecodeInstructionFlag { chunk, flag } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if instruction.instruction_flags()[*flag] {
-                        one_positions.push(slot.packed_index(row));
+                        one_positions.push(packed_index(column, row)?);
                     }
                 }
             }
@@ -290,7 +296,8 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if let Some(table) = InstructionLookup::<XLEN>::lookup_table(instruction) {
                         let index = LookupTables::<XLEN>::enum_index(&table);
-                        one_positions.push(slot.packed_index((index << log_bytecode_rows) | row));
+                        one_positions
+                            .push(packed_index(column, (index << log_bytecode_rows) | row)?);
                     }
                 }
             }
@@ -298,7 +305,7 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if !InterleavedBitsMarker::is_interleaved_operands(&instruction.circuit_flags())
                     {
-                        one_positions.push(slot.packed_index(row));
+                        one_positions.push(packed_index(column, row)?);
                     }
                 }
             }
@@ -310,9 +317,10 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                         let byte = instructions.get(row).map_or(0, |instruction| {
                             ((instruction.address as u64) >> (8 * limb)) as u8
                         }) as usize;
-                        one_positions.push(slot.packed_index(
+                        one_positions.push(packed_index(
+                            column,
                             (((byte << limb_bits) | limb) << log_bytecode_rows) | row,
-                        ));
+                        )?);
                     }
                 }
             }
@@ -324,17 +332,22 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                         None => vec![0u8; imm_byte_width],
                     };
                     for (limb, byte) in bytes.into_iter().enumerate() {
-                        one_positions.push(slot.packed_index(
+                        one_positions.push(packed_index(
+                            column,
                             ((((byte as usize) << imm_limb_bits) | limb) << log_bytecode_rows)
                                 | row,
-                        ));
+                        )?);
                     }
                 }
             }
             JoltCommittedPolynomial::ProgramImageBytes => {
                 let words = program_image_words
                     .ok_or_else(|| "program image words missing for ProgramOneHot".to_string())?;
-                let word_vars = slot.num_vars - 8 - WORD_BYTES.log_2();
+                let word_vars = plan
+                    .logical_num_vars(*column)
+                    .ok_or_else(|| "ProgramImageBytes logical arity missing".to_string())?
+                    - 8
+                    - WORD_BYTES.log_2();
                 let limb_bits = WORD_BYTES.log_2();
                 debug_assert!(words.len() <= 1 << word_vars);
                 for limb in 0..WORD_BYTES {
@@ -343,9 +356,10 @@ pub fn assemble_precommitted_witness<F: JoltField>(
                             .get(word_index)
                             .map_or(0, |word| (word >> (8 * limb)) as u8)
                             as usize;
-                        one_positions.push(slot.packed_index(
+                        one_positions.push(packed_index(
+                            column,
                             (((byte << limb_bits) | limb) << word_vars) | word_index,
-                        ));
+                        )?);
                     }
                 }
             }
@@ -463,7 +477,9 @@ mod precommitted_tests {
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
         committed_lane_vars, BYTECODE_LANE_LAYOUT,
     };
-    use jolt_claims::protocols::jolt::lattice::{precommitted_packing, PrecommittedPackingShape};
+    use jolt_claims::protocols::jolt::lattice::{
+        precommitted_packing_plan, PrecommittedPackingShape,
+    };
     use jolt_field::Fr as ClaimsFr;
     use jolt_field::FromPrimitiveInt;
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
@@ -587,10 +603,11 @@ mod precommitted_tests {
             imm_byte_width: IMM_BYTES,
             program_image_log_words: Some(1),
         };
-        let packing = precommitted_packing(&shape).unwrap();
+        let packing = precommitted_packing_plan(&shape).unwrap();
+        let bytecode = packing.bytecode();
         let program_image_words = [0xdeadbeefu64, 0x0102030405060708];
         let one_positions = assemble_precommitted_witness::<Fr>(
-            &packing,
+            bytecode,
             &instructions,
             LOG_ROWS,
             IMM_BYTES,
@@ -614,15 +631,17 @@ mod precommitted_tests {
         let eq_lane = jolt_poly::EqPolynomial::<ClaimsFr>::evals(&lane_point, None);
         let eq_row = jolt_poly::EqPolynomial::<ClaimsFr>::evals(&row_point, None);
         let mut reconstructed = ClaimsFr::from_u64(0);
-        for (column, slot) in &packing {
-            if matches!(column, JoltCommittedPolynomial::ProgramImageBytes) {
-                continue;
-            }
-            let cells = 1usize << (slot.num_vars - LOG_ROWS);
+        for column in bytecode.packing().ids() {
+            let num_vars = bytecode.logical_num_vars(*column).unwrap();
+            let cells = 1usize << (num_vars - LOG_ROWS);
             for cell in 0..cells {
-                let weight = cell_weight(&eq_lane, column, cell, LOG_ROWS, slot.num_vars);
+                let weight = cell_weight(&eq_lane, column, cell, LOG_ROWS, num_vars);
                 for (r, eq) in eq_row.iter().enumerate() {
-                    if witness.contains(&slot.packed_index((cell << LOG_ROWS) | r)) {
+                    let position = bytecode
+                        .packing()
+                        .packed_index(column, (cell << LOG_ROWS) | r)
+                        .unwrap();
+                    if witness.contains(&position) {
                         reconstructed += weight * *eq;
                     }
                 }

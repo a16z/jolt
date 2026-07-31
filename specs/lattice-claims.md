@@ -13,11 +13,11 @@ Akita is a lattice PCS: it commits to small-norm coefficient vectors and has no
 commitment homomorphism. Two consequences for Jolt:
 
 1. **No RLC of commitments.** The stage-8 final-opening step over homomorphic
-   commitments cannot be reused. The per-proof `OneHotTrace` commitment is therefore
-   one native Akita commitment group: every member is a strict `K x T` one-hot
-   polynomial, all members open at one canonical point, and one native Akita
-   batch proof settles the group. Advice and committed-program objects have
-   different domains and remain auxiliary `PrefixPacking` reductions.
+   commitments cannot be reused. The per-proof semantic columns are placed in
+   fixed-capacity prefix slots of one physical `OneHotTrace` polynomial. Their
+   common logical claim is reduced with a transcript-derived selector and one
+   native Akita proof opens the resulting physical point. Advice and
+   committed-program data use the same fixed-prefix API as independent objects.
 2. **0/1 cells, for efficiency.** Committing 0/1 vectors is where Akita is
    fast, so OneHotTrace and the auxiliary objects stay one-hot/boolean throughout — this is a
    performance choice, not a norm-bound requirement. Every committed column
@@ -89,15 +89,15 @@ encoding is not re-proven in-protocol.
 | Crate | Owns | Must NOT contain |
 |-------|------|------------------|
 | `jolt-claims` | ids, arities, symbolic relations, final-opening map, canonical OneHotTrace column order and layout digest | transcripts, witnesses, PCS |
-| `jolt-openings` | `PrefixPacking` slot assignment, suffix-compat check, eq-prefix reduction, transcript binding | Jolt-specific ids or protocol semantics |
-| `jolt-verifier` | `ConcreteSumcheck` impls, stage schedule, native OneHotTrace opening and auxiliary packed openings | relation algebra (sourced from `jolt-claims`) |
+| `jolt-openings` | fixed-capacity `PrefixPackedLayout`, selector reduction, transcript binding | Jolt-specific ids, mixed-point reduction, or protocol semantics |
+| `jolt-verifier` | `ConcreteSumcheck` impls, stage schedule, fixed-prefix statement assembly and direct Akita openings | relation algebra (sourced from `jolt-claims`) |
 | `jolt-witness`/prover | one-hot witness materialization and matching stage schedule | — |
 | `jolt-akita` | PCS transport | — |
 
-`jolt-claims` owns the ordered OneHotTrace column list and hashes the order, member
-identities, and dimensions into a nonzero setup digest. The proof never chooses
-this digest. `jolt-openings::PrefixPacking` remains the source of truth only for
-the auxiliary advice and committed-program objects.
+`jolt-claims` owns each object's ordered semantic columns, logical arities,
+zero-prefix embeddings, and nonzero setup digest. The proof never chooses a
+layout or digest. `jolt-openings::PrefixPackedLayout` owns only the physical
+fixed-capacity slot arithmetic and selector reduction.
 
 ## Module Layout
 
@@ -112,8 +112,8 @@ crates/jolt-claims/src/protocols/jolt/lattice/
 │                   definitions of the reconstruction relations' deriveds,
 │                   composed from jolt-poly's IdentityPolynomial /
 │                   eq_index_msb primitives); pure functions
-├── packing.rs      one_hot_trace_columns(..) -> canonical native member order;
-│                   auxiliary precommitted/advice PrefixPacking registration
+├── packing.rs      canonical semantic columns, fixed-prefix object plans,
+│                   zero-prefix embeddings, and auxiliary layout digests
 ├── strategy.rs     the one native OneHotTrace layout, common-point permutation,
 │                   setup shape, and canonical nonzero layout digest
 └── relations/
@@ -179,10 +179,9 @@ FusedInc,                  // gamma-batched RamInc/RdInc stream; opened once,
                            // stage-7 hamming reduction
 ```
 
-WARNING: enum `Ord` is protocol data for auxiliary objects — `PrefixPacking`
-assigns slots by `(num_vars, Id)` order. OneHotTrace does not use this ordering: its
-member order is constructed explicitly by `one_hot_trace_columns` and hashed into its
-canonical layout digest.
+Enum `Ord` is not protocol ordering. Every physical slot order is constructed
+explicitly by its semantic plan and hashed into the canonical layout digest;
+`Ord` is used only for keyed lookup.
 
 Per-relation challenge/public sub-enums live in `protocols/jolt/ids.rs` next to every other
 relation's (house convention) and are aggregated as appended
@@ -201,13 +200,11 @@ allowed the same id to denote claims at two different points.
 
 ## Commitment Layout
 
-Every native OneHotTrace column and every auxiliary packed column is identified by
-`JoltCommittedPolynomial`. The earlier draft's separate `LatticeColumn` id
-family is gone. OneHotTrace has one relation-produced claim per column at a shared
-point; auxiliary columns have one claim per prefix-packed slot.
-
-OneHotTrace is one native Akita group; the helper below supplies its canonical
-ordered member list. Auxiliary objects use separate prefix packings:
+Every semantic column is identified by `JoltCommittedPolynomial`; the earlier
+draft's separate `LatticeColumn` family is gone. `OneHotTrace` has one
+relation-produced claim per column at a shared logical point. Those columns
+occupy explicit slots of one physical polynomial, with unused capacity fixed
+to zero and logical address lane zero virtualized out of the witness.
 
 ```rust
 /// Canonical per-proof OneHotTrace column order.
@@ -220,8 +217,8 @@ pub fn one_hot_trace_columns(shape) -> Vec<JoltCommittedPolynomial>;
 // Advice columns are separate auxiliary objects, each over
 // 8 + 3 + advice_vars variables.
 
-/// Preprocessing-time packed commitment (committed-program mode).
-pub fn precommitted_packing(shape) -> PrefixPacking<JoltCommittedPolynomial>;
+/// Preprocessing-time fixed-prefix objects (committed-program mode).
+pub fn precommitted_packing_plan(shape) -> PrecommittedPackingPlan;
 // per chunk c:
 //   BytecodeRegisterSelector{c, rs1/rs2/rd}  log2(register_count) + log_bc each
 //   BytecodeCircuitFlag{c, 0..NUM_CIRCUIT_FLAGS}          log_bc each (0/1 col)
@@ -230,7 +227,8 @@ pub fn precommitted_packing(shape) -> PrefixPacking<JoltCommittedPolynomial>;
 //   BytecodeRafFlag{c}                                    log_bc  (0/1 col)
 //   BytecodeUnexpandedPcBytes{c}                      8 + 3 + log_bc
 //   BytecodeImmBytes{c}       8 + ceil_log2(field_byte_width) + log_bc
-// ProgramImageBytes                                   8 + 3 + log_words
+// The bytecode columns are zero-prefix embedded at the widest bytecode point.
+// ProgramImageBytes is a separate singleton object   8 + 3 + log_words
 // TrustedAdviceBytes (if present)                     8 + 3 + advice_vars
 ```
 
@@ -248,13 +246,15 @@ logical polynomial / slot / prefix, plus each family's own dimension names —
   dummy place cells are zero by convention (checked offline with the rest of
   the precommitted validity).
 
-Every OneHotTrace column has the same arity. Relation leaves use
-`(address || cycle)` order; the native Akita members use row-major
-`(cycle || address)` order. Stage 8 applies this one permutation to every
-member and rejects unless all mapped points are identical. A protocol-owned,
-nonzero digest binds the ordered member identities and dimensions into the
-Akita setup; the proof never supplies it. `PrefixPacking` continues to assign
-slots and reduction statements for auxiliary objects. The prototype's
+Every OneHotTrace column has the same logical arity. Relation leaves use
+`(address || cycle)` order; the physical Akita polynomial uses row-major
+`(slot || cycle || address)` order. Stage 8 applies the cycle/address
+permutation to every column,
+rejects unless all logical points agree, then prefixes the sampled selector.
+A protocol-owned nonzero digest binds the ordered identities, capacity, and
+dimensions into the Akita setup. Auxiliary objects follow the same API;
+shorter bytecode columns are embedded under a zero prefix, while the
+independently pointed program image is opened separately. The prototype's
 `PackingWitnessLayout`/`PackingFamilySpec`/`PackingFactDomain`/
 `PackingAlphabet`/`PackingFamilyId` model (~600 lines + digests) is deleted
 with no replacement.
@@ -466,11 +466,14 @@ would emit.
 OneHotTrace's native batch requires one evaluation per committed column at exactly
 one point. Stage 7 therefore lands all RA, increment chunk, and MSB claims at
 the same `(address || cycle)` point, after which Stage 8 applies the common
-row-major permutation. Any missing member, arity mismatch, or point mismatch
+row-major permutation. Any missing column, arity mismatch, or point mismatch
 is rejected before the native Akita verifier runs.
 
-Auxiliary packed objects retain the `PrefixPacking` invariant: one claim per
-slot, every slot claimed, with the generic reduction handling distinct points.
+Every fixed-prefix object has exactly one claim per occupied slot at one
+common logical point. Jolt's semantic plan may convert suffix-compatible
+shorter claims into that domain by multiplying their value by
+`eq(missing_prefix, 0)`. Truly independent points are separate objects; there
+is no generic arbitrary-point reduction sumcheck.
 
 **Padding invariant**: the hamming legs claim "exactly one hot cell per row"
 summed over the *full* Boolean hypercube, so padding rows must be encoded as
@@ -529,8 +532,8 @@ base stage-8 RLC order for lattice mode.
   there is no separate fused-inc member.
 - Stage 7 extends `HammingWeightClaimReduction` with hamming, Booleanity, and
   shifted-decode terms for all increment one-hot columns.
-- Stage 8 opens OneHotTrace directly with one native same-point Akita batch and runs
-  the generic packed-opening reduction only for auxiliary objects.
+- Stage 8 selector-reduces `OneHotTrace` and every present auxiliary object,
+  then runs one direct Akita opening per physical polynomial.
 - The Dory build instantiates the original Booleanity, increment claim
   reduction, HammingWeightClaimReduction, and homomorphic final opening.
 
@@ -548,14 +551,14 @@ base stage-8 RLC order for lattice mode.
   the chunk/MSB decomposition reconstructs signed increments including
   padding; auxiliary lane/advice reconstruction terms reproduce the committed
   evaluations.
-- Determinism: `one_hot_trace_columns`/`precommitted_packing` are pure functions of
+- Determinism: `one_hot_trace_columns`/`precommitted_packing_plan` are pure functions of
   shape (golden test), and every packed proof column has a claim source.
 
 ## Dropped From the Prototype (jolt-claims-ref) and Why
 
 | Prototype construct | Fate | Reason |
 |---|---|---|
-| `PackingWitnessLayout`/`FamilySpec`/`FactDomain`/`Alphabet`, offsets, digests | deleted | duplicate of `jolt-openings::PrefixPacking`; slot math is transport, not semantics |
+| `PackingWitnessLayout`/`FamilySpec`/`FactDomain`/`Alphabet`, offsets, digests | deleted | duplicate physical machinery; `PrefixPackedLayout` owns slot math while Jolt owns semantic digests |
 | `PackingFamilyId` (namespace/u64/u64 + bit-packed indices) | deleted | `JoltCommittedPolynomial` is the packing id (the interim `LatticeColumn` enum is deleted too) |
 | `JoltOpeningId::Lattice { relation, index }` | deleted | untyped; hid polynomial identity and point identity |
 | `PackingValidityRequirement`/`PackingValidityKind` + digest | deleted | validity is not metadata; it is the validity **relations** (prover-supplied columns) or an **offline preprocessing check** (public precommitted columns) |

@@ -728,7 +728,7 @@ fn every_commitment_wire_rejects_perturbation() {
 }
 
 /// Proof-shape tampers: a swapped phase proof, dropped reconstruction /
-/// auxiliary proofs, and an auxiliary evaluation offset — each fail-closed.
+/// auxiliary proofs, and swapped auxiliary object proofs — each fail-closed.
 #[test]
 fn akita_proof_shape_tampers_reject() {
     let muldiv = akita_muldiv_case();
@@ -742,18 +742,16 @@ fn akita_proof_shape_tampers_reject() {
     assert_rejects(advice.verify_proof(&proof));
 
     let mut proof = advice.proof.clone();
-    proof.joint_opening_proof.auxiliary = None;
+    proof.joint_opening_proof.auxiliary.clear();
     assert_rejects(advice.verify_proof(&proof));
 
     let committed = akita_committed_muldiv_case();
     let mut proof = committed.proof.clone();
-    proof.joint_opening_proof.auxiliary = None;
+    proof.joint_opening_proof.auxiliary.clear();
     assert_rejects(committed.verify_proof(&proof));
 
     let mut proof = committed.proof.clone();
-    if let Some(auxiliary) = proof.joint_opening_proof.auxiliary.as_mut() {
-        auxiliary.evaluations[0] += one();
-    }
+    proof.joint_opening_proof.auxiliary.swap(0, 1);
     assert_rejects(committed.verify_proof(&proof));
 }
 
