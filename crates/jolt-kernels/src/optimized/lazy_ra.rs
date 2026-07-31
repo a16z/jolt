@@ -8,7 +8,7 @@
 //! at scale (the committed instruction RA family alone is `8 × T`). But an
 //! unbound selector column is a point mass — `ra_i(·, j)` is
 //! `eq(r_chunk_i, chunk_i(j))`, one scale-table lookup per cycle — and the
-//! first cycle binds preserve that structure: after `b < 3` binds the bound
+//! first cycle binds preserve that structure: after `b < 4` binds the bound
 //! value at index `j` is the gather
 //!
 //! ```text
@@ -50,16 +50,16 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
     fn index(&self, i: usize, j: usize) -> Option<usize>;
 }
 
-/// `N` address-folded selector columns bound `LowToHigh`, lazily for the
-/// first three binds.
+/// `N` address-folded selector columns bound `LowToHigh`, lazily until the
+/// fourth bind materializes dense.
 pub(crate) enum LazyFoldedRa<F: Field, S> {
-    /// Fewer than three binds: per-polynomial branch scale tables (the base
+    /// Fewer than four binds: per-polynomial branch scale tables (the base
     /// table pre-scaled by each bound-bit pattern's eq weight), flattened
     /// offset-major — `tables[i][offset · stride_i + k]` with
     /// `stride_i = tables[i].len() / width` — plus the compact index source.
     Lazy {
         tables: Vec<Vec<F>>,
-        /// Bound-bit branch count (`2^binds`: 1, 2, or 4).
+        /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
         width: usize,
         source: S,
     },

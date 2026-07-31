@@ -139,7 +139,7 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
     /// batch's first table pre-scaled by `γ^v` so the round loop needs no
     /// batching multiplies — served lazily off the shared rows for the
-    /// first three binds instead of `N × T` dense.
+    /// first four binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
     rounds_bound: usize,
@@ -763,8 +763,9 @@ mod tests {
 
     #[test]
     fn parity_past_lazy_materialization() {
-        // log_t = 6: two lazy binds, the dense materialization at the third,
-        // and three plain multilinear binds after it.
+        // log_t = 6: three lazy binds, the dense materialization at the
+        // fourth (`T/16` = 4 entries), and two plain multilinear binds
+        // after it.
         assert_parity(6, 2, 2, 4, 7, false);
     }
 

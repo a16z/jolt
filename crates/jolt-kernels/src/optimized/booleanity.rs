@@ -31,7 +31,7 @@
 //!   pre-scaled by `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no
 //!   batching multiply in the round loop (legacy `SharedRaPolynomials`
 //!   pre-scaling), served by the shared [`LazyFoldedRa`] state machine —
-//!   index-encoded for the first three binds, dense at `T/8` after.
+//!   index-encoded for the first four binds, dense at `T/16` after.
 //! - **Split-eq / Gruen round messages (cycle phase).** Only the constant
 //!   and leading coefficients of the inner quadratic are accumulated, in
 //!   deferred-reduction lanes at every level (per-row products, per-block
@@ -559,7 +559,7 @@ struct OptimizedBooleanityCycleKernel<F: Field> {
     /// `EqAddressCycle` derived table.
     eq: GruenSplitEqPolynomial<F>,
     /// Pre-scaled (`γ^i`) shared address-folded tables, index-encoded for
-    /// the first three binds.
+    /// the first four binds (dense at `T/16` after).
     tables: LazyFoldedRa<F, BooleanityChunks>,
     gamma_powers: Vec<F>,
     gamma_powers_inv: Vec<F>,
@@ -1159,10 +1159,21 @@ mod tests {
         cycle_parity(1, 4, false);
     }
 
-    /// `log_t = 4` drives the shared-table state machine through
-    /// materialization (three staged binds) into dense rounds.
+    /// `log_t = 5` drives the shared-table state machine through
+    /// materialization (four staged binds, dense at `T/16`) into a dense
+    /// ROUND MESSAGE: at `log_t = 4` the materializing bind arrives only via
+    /// `finish_rounds`, so every checked round message would come from the
+    /// `Lazy` arm.
     #[test]
     fn cycle_kernel_matches_reference_through_dense_rounds() {
+        cycle_parity(5, 4, false);
+    }
+
+    /// `log_t = 4`: the materializing fourth bind arrives exactly at
+    /// `finish_rounds`, pinning the switch-at-the-boundary edge (output
+    /// claims extract from the just-materialized dense state).
+    #[test]
+    fn cycle_kernel_matches_reference_materializing_at_finish() {
         cycle_parity(4, 4, false);
     }
 
