@@ -97,6 +97,28 @@ The policy selects D128 only when the packed K256 polynomial has at least 41
 variables. With the current 32-column prefix this begins at `T = 2^28`.
 `T = 2^26` and `T = 2^27` remain on D64 and do not execute this kernel.
 
+### Follow-on layout and code-generation screen
+
+After landing the winner, the exact-shape probe compared the production
+SoA/i16 representation with three natural alternatives:
+
+| Representation | Bytes/ring | Median time | Change from SoA/i16 |
+|---|---:|---:|---:|
+| SoA limbs, i16 wraps | 2,304 | 11.94 ms | — |
+| SoA limbs, i32 wraps | 2,560 | 12.21 ms | +2.3% |
+| Interleaved limbs, i16 wraps | 2,304 | 17.80 ms | +49.1% |
+| Interleaved three-u64 carry chain | 3,072 | 16.95 ms | +42.0% |
+
+Generated AArch64 code explains why the compact SoA layout wins. LLVM already
+versioned and vectorized the bulk loops: it deinterleaves source Fp128 values
+with `ld2.2d`, performs vector limb additions and unsigned carry comparisons,
+narrows carry masks with `uzp1`, and updates eight i16 counters with `sub.8h`.
+Only the short prefix/tail uses scalar `adds`/`adcs`.
+
+Hand-vectorizing the same operations would reproduce existing code generation,
+while the wider and interleaved representations both failed the focused gate.
+No second implementation change was promoted from this screen.
+
 ## Rejected delayed product sums
 
 The experimental Akita field change made full Fp128 product accumulation exact
