@@ -132,6 +132,11 @@ impl JointOpeningPolynomials<Fr> for MetalJointOpening {
                 crate::metal::dory_folds::routine_hooks(),
             ));
             session.park(
+                dory::backends::arkworks::reduce_hook::install_resident_round_hook(
+                    crate::metal::dory_reduce::hooks(),
+                ),
+            );
+            session.park(
                 dory::backends::arkworks::pairing_hook::install_multi_pair_hook(
                     crate::metal::miller::multi_pair_device,
                 ),

@@ -25,6 +25,8 @@ use super::runtime::{KernelId, MetalContext};
 /// u32 words per Jacobian result (X, Y, Z × 8 limbs).
 pub const JAC_U32S: usize = 3 * FR_U32_LIMBS;
 
+const _: () = assert!(std::mem::size_of::<G1Projective>() == JAC_U32S * 4);
+
 /// Gather-index flag: sum the NEGATED base `(x, -y)`. Set by the signed
 /// MSM entries of the increment-column commit path; base positions must
 /// stay below it.

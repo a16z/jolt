@@ -67,6 +67,15 @@ pub trait PairingCurve: Clone {
     type G2: Group;
     type GT: Group; // Multiplicative subgroup F^* of the extension field
 
+    /// Optional device-resident transparent reduce-loop implementation.
+    /// Backends that do not install one keep the published host loop.
+    fn resident_round_hooks() -> Option<ResidentRoundHooks<Self>>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// e : G1 × G2 → GT
     fn pair(p: &Self::G1, q: &Self::G2) -> Self::GT;
 
@@ -125,6 +134,56 @@ pub trait PairingCurve: Clone {
     /// Delegates to `multi_pair`
     fn multi_pair_g1_setup(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
         Self::multi_pair(ps, qs)
+    }
+}
+
+/// Opaque backend state retained across Dory reduce rounds.
+pub type ResidentRoundState = Box<dyn std::any::Any>;
+
+/// Successful device-loop start and its leading-round budget.
+pub struct ResidentRoundStart {
+    pub state: ResidentRoundState,
+    pub rounds: usize,
+}
+
+/// Value-exact backend operations for the transparent reduce-round prefix.
+/// Transcript absorption remains in `evaluation_proof`.
+pub struct ResidentRoundHooks<E: PairingCurve> {
+    pub plan: fn(usize) -> usize,
+    pub start: fn(
+        &[E::G1],
+        &[E::G2],
+        &[E::G1],
+        &[E::G2],
+    ) -> Option<ResidentRoundStart>,
+    pub first_message: fn(
+        &mut ResidentRoundState,
+        &[<E::G1 as Group>::Scalar],
+        &[<E::G1 as Group>::Scalar],
+    ) -> crate::messages::FirstReduceMessage<E::G1, E::G2, E::GT>,
+    pub apply_first: fn(
+        &mut ResidentRoundState,
+        &<E::G1 as Group>::Scalar,
+        &<E::G1 as Group>::Scalar,
+    ),
+    pub second_message: fn(
+        &mut ResidentRoundState,
+        &[<E::G1 as Group>::Scalar],
+        &[<E::G1 as Group>::Scalar],
+    ) -> crate::messages::SecondReduceMessage<E::G1, E::G2, E::GT>,
+    pub apply_second: fn(
+        &mut ResidentRoundState,
+        &<E::G1 as Group>::Scalar,
+        &<E::G1 as Group>::Scalar,
+    ),
+    pub finish: fn(ResidentRoundState) -> (Vec<E::G1>, Vec<E::G2>),
+}
+
+impl<E: PairingCurve> Copy for ResidentRoundHooks<E> {}
+
+impl<E: PairingCurve> Clone for ResidentRoundHooks<E> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 

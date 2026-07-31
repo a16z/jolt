@@ -65,6 +65,32 @@ fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
 
 pub struct JoltG1Routines;
 
+impl JoltG1Routines {
+    pub(crate) fn host_fixed_scalar_mul_bases_then_add(
+        bases: &[ArkG1],
+        vs: &mut [ArkG1],
+        scalar: &ArkFr,
+    ) {
+        jolt_optimizations::vector_add_scalar_mul_g1_online(
+            g1_slice_mut(vs),
+            g1_slice(bases),
+            scalar.0,
+        );
+    }
+
+    pub(crate) fn host_fixed_scalar_mul_vs_then_add(
+        vs: &mut [ArkG1],
+        addends: &[ArkG1],
+        scalar: &ArkFr,
+    ) {
+        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
+            g1_slice_mut(vs),
+            scalar.0,
+            g1_slice(addends),
+        );
+    }
+}
+
 impl DoryRoutines<ArkG1> for JoltG1Routines {
     #[tracing::instrument(skip_all, name = "JoltG1Routines::msm", fields(len = bases.len()))]
     fn msm(bases: &[ArkG1], scalars: &[ArkFr]) -> ArkG1 {
@@ -96,11 +122,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
                 return;
             }
         }
-        jolt_optimizations::vector_add_scalar_mul_g1_online(
-            g1_slice_mut(vs),
-            g1_slice(bases),
-            scalar.0,
-        );
+        Self::host_fixed_scalar_mul_bases_then_add(bases, vs, scalar);
     }
 
     #[tracing::instrument(skip_all, name = "JoltG1Routines::fixed_scalar_mul_vs_then_add", fields(len = vs.len()))]
@@ -114,11 +136,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
                 return;
             }
         }
-        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-            g1_slice_mut(vs),
-            scalar.0,
-            g1_slice(addends),
-        );
+        Self::host_fixed_scalar_mul_vs_then_add(vs, addends, scalar);
     }
 
     fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
@@ -127,6 +145,32 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
 }
 
 pub struct JoltG2Routines;
+
+impl JoltG2Routines {
+    pub(crate) fn host_fixed_scalar_mul_bases_then_add(
+        bases: &[ArkG2],
+        vs: &mut [ArkG2],
+        scalar: &ArkFr,
+    ) {
+        jolt_optimizations::vector_add_scalar_mul_g2_online(
+            g2_slice_mut(vs),
+            g2_slice(bases),
+            scalar.0,
+        );
+    }
+
+    pub(crate) fn host_fixed_scalar_mul_vs_then_add(
+        vs: &mut [ArkG2],
+        addends: &[ArkG2],
+        scalar: &ArkFr,
+    ) {
+        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
+            g2_slice_mut(vs),
+            scalar.0,
+            g2_slice(addends),
+        );
+    }
+}
 
 impl DoryRoutines<ArkG2> for JoltG2Routines {
     #[tracing::instrument(skip_all, name = "JoltG2Routines::msm", fields(len = bases.len()))]
@@ -168,11 +212,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
                 return;
             }
         }
-        jolt_optimizations::vector_add_scalar_mul_g2_online(
-            g2_slice_mut(vs),
-            g2_slice(bases),
-            scalar.0,
-        );
+        Self::host_fixed_scalar_mul_bases_then_add(bases, vs, scalar);
     }
 
     #[tracing::instrument(skip_all, name = "JoltG2Routines::fixed_scalar_mul_vs_then_add", fields(len = vs.len()))]
@@ -186,11 +226,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
                 return;
             }
         }
-        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
-            g2_slice_mut(vs),
-            scalar.0,
-            g2_slice(addends),
-        );
+        Self::host_fixed_scalar_mul_vs_then_add(vs, addends, scalar);
     }
 
     fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {

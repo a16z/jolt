@@ -143,6 +143,14 @@ inline Fq256 fq_sqr(Fq256 a) {
     return fq_mul(a, a);
 }
 
+inline Fq256 fq_load_constant(constant uint* src) {
+    Fq256 r;
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        r.v[i] = src[i];
+    }
+    return r;
+}
+
 // Jacobian point; identity is Z = 0 (X, Y then irrelevant).
 struct G1Jac {
     Fq256 x;
@@ -173,6 +181,25 @@ inline G1AffinePt g1_load_base(device const uint* bases, uint idx) {
         p.y.v[i] = src[FR_LIMBS + i];
     }
     return p;
+}
+
+inline G1Jac g1_load_jac(device const uint* points, uint idx) {
+    device const uint* src = points + idx * (3u * FR_LIMBS);
+    G1Jac p;
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        p.x.v[i] = src[i];
+        p.y.v[i] = src[FR_LIMBS + i];
+        p.z.v[i] = src[2u * FR_LIMBS + i];
+    }
+    return p;
+}
+
+inline void g1_store_jac(device uint* dst, G1Jac p) {
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        dst[i] = p.x.v[i];
+        dst[FR_LIMBS + i] = p.y.v[i];
+        dst[2u * FR_LIMBS + i] = p.z.v[i];
+    }
 }
 
 // Doubling, a = 0 (dbl-2009-l): 2M + 5S.
@@ -235,6 +262,41 @@ inline G1Jac g1_madd(G1Jac acc, G1AffinePt q) {
     out.y = fq_sub(fq_mul(r2, fq_sub(v, out.x)), fq_dbl(y1j)); // Y3 = r(V-X3) - 2Y1·J
     // Z3 = (Z1 + H)^2 - Z1Z1 - HH
     out.z = fq_sub(fq_sub(fq_sqr(fq_add(acc.z, h)), z1z1), hh);
+    return out;
+}
+
+// General Jacobian addition (add-2007-bl), including identity, doubling,
+// and inverse-point cases. Resident Dory rounds cannot afford host
+// normalization between challenge folds.
+inline G1Jac g1_add_jac(G1Jac p, G1Jac q) {
+    if (fq_is_zero(p.z)) {
+        return q;
+    }
+    if (fq_is_zero(q.z)) {
+        return p;
+    }
+    Fq256 z1z1 = fq_sqr(p.z);
+    Fq256 z2z2 = fq_sqr(q.z);
+    Fq256 u1 = fq_mul(p.x, z2z2);
+    Fq256 u2 = fq_mul(q.x, z1z1);
+    Fq256 s1 = fq_mul(p.y, fq_mul(q.z, z2z2));
+    Fq256 s2 = fq_mul(q.y, fq_mul(p.z, z1z1));
+    Fq256 h = fq_sub(u2, u1);
+    Fq256 rr = fq_sub(s2, s1);
+    if (fq_is_zero(h)) {
+        return fq_is_zero(rr) ? g1_dbl(p) : g1_identity();
+    }
+    Fq256 i = fq_sqr(fq_dbl(h));
+    Fq256 j = fq_mul(h, i);
+    Fq256 r2 = fq_dbl(rr);
+    Fq256 v = fq_mul(u1, i);
+    G1Jac out;
+    out.x = fq_sub(fq_sub(fq_sqr(r2), j), fq_dbl(v));
+    out.y = fq_sub(fq_mul(r2, fq_sub(v, out.x)), fq_dbl(fq_mul(s1, j)));
+    out.z = fq_mul(
+        fq_sub(fq_sub(fq_sqr(fq_add(p.z, q.z)), z1z1), z2z2),
+        h
+    );
     return out;
 }
 
@@ -349,6 +411,239 @@ kernel void jk_g1_scalar_mul_add(
     }
     for (uint i = 0; i < FR_LIMBS; i++) {
         dst[2u * FR_LIMBS + i] = acc.z.v[i];
+    }
+}
+
+struct G1ProjectiveMulAddParams {
+    uint n;
+    uint p_offset;
+    uint q_offset;
+    int digits[66];
+    uint endo[FR_LIMBS];
+};
+
+kernel void jk_g1_projective_mul_add(
+    device const uint* ps [[buffer(0)]],
+    device const uint* qs [[buffer(1)]],
+    device uint* out [[buffer(2)]],
+    constant G1ProjectiveMulAddParams& p [[buffer(3)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n) {
+        return;
+    }
+    G1Jac point = g1_load_jac(ps, p.p_offset + tid);
+    G1Jac table[8];
+    table[0] = point;
+    table[1] = g1_dbl(point);
+    for (uint k = 2u; k < 8u; k++) {
+        table[k] = g1_add_jac(table[k - 1u], point);
+    }
+    Fq256 endo = fq_load_constant(p.endo);
+    G1Jac acc = g1_identity();
+    for (int w = 32; w >= 0; w--) {
+        if (w != 32) {
+            for (uint k = 0u; k < 4u; k++) {
+                acc = g1_dbl(acc);
+            }
+        }
+        int d1 = p.digits[w];
+        if (d1 != 0) {
+            uint magnitude = (uint)(d1 < 0 ? -d1 : d1);
+            G1Jac entry = table[magnitude - 1u];
+            if (d1 < 0) {
+                entry.y = fq_sub(fq_zero(), entry.y);
+            }
+            acc = g1_add_jac(acc, entry);
+        }
+        int d2 = p.digits[33 + w];
+        if (d2 != 0) {
+            uint magnitude = (uint)(d2 < 0 ? -d2 : d2);
+            G1Jac entry = table[magnitude - 1u];
+            entry.x = fq_mul(entry.x, endo);
+            if (d2 < 0) {
+                entry.y = fq_sub(fq_zero(), entry.y);
+            }
+            acc = g1_add_jac(acc, entry);
+        }
+    }
+    acc = g1_add_jac(acc, g1_load_jac(qs, p.q_offset + tid));
+    g1_store_jac(out + tid * (3u * FR_LIMBS), acc);
+}
+
+constant uint JK_DORY_MSM_WINDOWS = 32u;
+constant uint JK_DORY_MSM_BUCKETS = 128u;
+constant uint JK_DORY_MSM_BINS = JK_DORY_MSM_WINDOWS * JK_DORY_MSM_BUCKETS;
+
+kernel void jk_dory_msm_hist(
+    device const char* digits [[buffer(0)]],
+    device atomic_uint* hist [[buffer(1)]],
+    constant uint* params [[buffer(2)]],
+    uint tid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]],
+    uint tg_count [[threadgroups_per_grid]])
+{
+    threadgroup atomic_uint bins[4096];
+    for (uint bin = tid; bin < JK_DORY_MSM_BINS; bin += 256u) {
+        atomic_store_explicit(&bins[bin], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const uint len = params[0];
+    const uint total = JK_DORY_MSM_WINDOWS * len;
+    for (uint item = tg * 256u + tid; item < total; item += tg_count * 256u) {
+        const int digit = digits[item];
+        if (digit != 0) {
+            const uint window = item / len;
+            const uint magnitude = (uint)(digit < 0 ? -digit : digit);
+            atomic_fetch_add_explicit(
+                &bins[window * JK_DORY_MSM_BUCKETS + magnitude - 1u],
+                1u,
+                memory_order_relaxed);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint bin = tid; bin < JK_DORY_MSM_BINS; bin += 256u) {
+        const uint count = atomic_load_explicit(&bins[bin], memory_order_relaxed);
+        if (count != 0u) {
+            atomic_fetch_add_explicit(&hist[bin], count, memory_order_relaxed);
+        }
+    }
+}
+
+kernel void jk_dory_msm_offsets(
+    device const uint* hist [[buffer(0)]],
+    device uint* offsets [[buffer(1)]],
+    device uint* cursors [[buffer(2)]],
+    uint tid [[thread_index_in_threadgroup]])
+{
+    threadgroup uint scan[256];
+    threadgroup uint carry;
+    if (tid == 0u) {
+        carry = 0u;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint base = 0u; base < JK_DORY_MSM_BINS; base += 256u) {
+        const uint bin = base + tid;
+        scan[tid] = hist[bin];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint stride = 1u; stride < 256u; stride <<= 1u) {
+            const uint addend = tid >= stride ? scan[tid - stride] : 0u;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            scan[tid] += addend;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+        const uint exclusive = carry + (tid == 0u ? 0u : scan[tid - 1u]);
+        offsets[bin] = exclusive;
+        cursors[bin] = exclusive;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (tid == 255u) {
+            carry += scan[255];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0u) {
+        offsets[JK_DORY_MSM_BINS] = carry;
+    }
+}
+
+kernel void jk_dory_msm_scatter(
+    device const char* digits [[buffer(0)]],
+    device atomic_uint* cursors [[buffer(1)]],
+    device uint* order [[buffer(2)]],
+    constant uint* params [[buffer(3)]],
+    uint item [[thread_position_in_grid]])
+{
+    const uint len = params[0];
+    const uint total = JK_DORY_MSM_WINDOWS * len;
+    if (item >= total) {
+        return;
+    }
+    const int digit = digits[item];
+    if (digit == 0) {
+        return;
+    }
+    const uint window = item / len;
+    const uint index = item - window * len;
+    const uint magnitude = (uint)(digit < 0 ? -digit : digit);
+    const uint key = window * JK_DORY_MSM_BUCKETS + magnitude - 1u;
+    const uint slot = atomic_fetch_add_explicit(&cursors[key], 1u, memory_order_relaxed);
+    order[slot] = (index << 1u) | (digit < 0 ? 1u : 0u);
+}
+
+kernel void jk_g1_dory_msm_owner(
+    device const uint* bases [[buffer(0)]],
+    device const uint* order [[buffer(1)]],
+    device const uint* offsets [[buffer(2)]],
+    device uint* bucket_sums [[buffer(3)]],
+    constant uint* params [[buffer(4)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup G1Jac sums[128];
+    const uint parts = params[0];
+    const uint base_offset = params[1];
+    const uint buckets_per_group = 128u / parts;
+    const uint local_bucket = tid / parts;
+    const uint part = tid % parts;
+    const uint bucket = tg * buckets_per_group + local_bucket;
+    G1Jac acc = g1_identity();
+    if (bucket < JK_DORY_MSM_BINS) {
+        const uint start = offsets[bucket];
+        const uint end = offsets[bucket + 1u];
+        for (uint i = start + part; i < end; i += parts) {
+            const uint entry = order[i];
+            G1Jac point = g1_load_jac(bases, base_offset + (entry >> 1u));
+            if ((entry & 1u) != 0u) {
+                point.y = fq_sub(fq_zero(), point.y);
+            }
+            acc = g1_add_jac(acc, point);
+        }
+    }
+    sums[tid] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = parts >> 1u; stride > 0u; stride >>= 1u) {
+        if (part < stride) {
+            sums[tid] = g1_add_jac(sums[tid], sums[tid + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (part == 0u && bucket < JK_DORY_MSM_BINS) {
+        g1_store_jac(bucket_sums + bucket * (3u * FR_LIMBS), sums[tid]);
+    }
+}
+
+kernel void jk_g1_dory_msm_window_fold(
+    device const uint* bucket_sums [[buffer(0)]],
+    device uint* partials [[buffer(1)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint window [[threadgroup_position_in_grid]])
+{
+    threadgroup G1Jac buckets[128];
+    buckets[tid] = g1_load_jac(bucket_sums, window * JK_DORY_MSM_BUCKETS + tid);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 1u; stride < JK_DORY_MSM_BUCKETS; stride <<= 1u) {
+        G1Jac addend;
+        const bool active = tid + stride < JK_DORY_MSM_BUCKETS;
+        if (active) {
+            addend = buckets[tid + stride];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (active) {
+            buckets[tid] = g1_add_jac(buckets[tid], addend);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint stride = 64u; stride > 0u; stride >>= 1u) {
+        if (tid < stride) {
+            buckets[tid] = g1_add_jac(buckets[tid], buckets[tid + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0u) {
+        g1_store_jac(partials + window * (3u * FR_LIMBS), buckets[0]);
     }
 }
 

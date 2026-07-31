@@ -26,6 +26,7 @@
 //! - [`DoryHint`] — row commitments and commitment blind reusable as opening proof hint.
 
 mod hint_hook;
+mod host_tail;
 mod routines;
 mod routines_hook;
 mod scheme;
@@ -37,6 +38,7 @@ mod types;
 mod urs_lock;
 
 pub use hint_hook::{install_combine_hints_hook, CombineHintsFn, CombineHintsHookGuard};
+pub use host_tail::FastTail;
 pub use routines::{JoltG1Routines, JoltG2Routines};
 pub use routines_hook::{
     install_routine_hooks, G1ScalarMulAddFn, G2FixedBaseMulFn, G2ScalarMulAddFn, RoutineHooks,

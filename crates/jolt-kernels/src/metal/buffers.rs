@@ -142,6 +142,15 @@ impl DeviceBuffer<'_> {
             );
         }
     }
+
+    /// Borrow shared-storage contents as typed values after the producing
+    /// command buffer has completed.
+    pub(super) fn typed_slice<T>(&self, len: usize) -> &[T] {
+        assert!(len * std::mem::size_of::<T>() <= self.len_bytes);
+        // SAFETY: Metal shared allocations are page-aligned; the size check
+        // bounds the slice, and callers only request POD arkworks layouts.
+        unsafe { std::slice::from_raw_parts(self.raw.contents().as_ptr().cast::<T>(), len) }
+    }
 }
 
 impl MetalContext {
@@ -160,6 +169,39 @@ impl MetalContext {
             raw,
             len_bytes,
             copied: false,
+            _backing: PhantomData,
+        })
+    }
+
+    /// Device-owned shared buffer initialized from `words`.
+    pub(super) fn copy_u32s(&self, words: &[u32]) -> Result<DeviceBuffer<'static>, MetalError> {
+        // SAFETY: a u32 slice is a contiguous initialized byte range.
+        let bytes =
+            unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), size_of_val(words)) };
+        self.copy_bytes(bytes)
+    }
+
+    /// Device-owned shared buffer initialized from raw bytes.
+    pub(super) fn copy_bytes(&self, bytes: &[u8]) -> Result<DeviceBuffer<'static>, MetalError> {
+        let len_bytes = bytes.len();
+        if bytes.is_empty() {
+            return self.alloc_u32s(0);
+        }
+        let src: NonNull<c_void> = NonNull::from(&bytes[0]).cast();
+        // SAFETY: `src` spans `len_bytes` readable bytes; Metal copies them.
+        let raw = unsafe {
+            self.device().newBufferWithBytes_length_options(
+                src,
+                len_bytes,
+                MTLResourceOptions::StorageModeShared,
+            )
+        }
+        .ok_or(MetalError::Alloc { bytes: len_bytes })?;
+        let _ = alloc_trace::allocated(len_bytes, "device_copy");
+        Ok(DeviceBuffer {
+            raw,
+            len_bytes,
+            copied: true,
             _backing: PhantomData,
         })
     }

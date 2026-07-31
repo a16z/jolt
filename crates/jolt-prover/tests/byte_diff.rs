@@ -936,6 +936,8 @@ mod muldiv {
             // the gates read the environment on every consult.
             std::env::remove_var("JOLT_METAL_DISABLE");
             std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
+            std::env::set_var("JOLT_METAL_DORY_LOOP_MIN_TERMS", "0");
+            std::env::set_var("JOLT_METAL_DORY_HANDOFF_TERMS", "0");
             let device_rounds = jolt_kernels::metal::testing::device_probe_count();
             let backend = JoltBackend::<Fr, DoryScheme>::metal().expect("metal backend");
             assert_backend_matches_legacy(&backend);
@@ -1180,6 +1182,8 @@ mod advice_consumer {
             // nextest runs one process per test, so env mutation is safe.
             std::env::remove_var("JOLT_METAL_DISABLE");
             std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
+            std::env::set_var("JOLT_METAL_DORY_LOOP_MIN_TERMS", "0");
+            std::env::set_var("JOLT_METAL_DORY_HANDOFF_TERMS", "0");
             let device_rounds = jolt_kernels::metal::testing::device_probe_count();
             let backend = JoltBackend::<Fr, DoryScheme>::metal().expect("metal backend");
             let proof =

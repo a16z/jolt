@@ -109,6 +109,24 @@ inline G2AffinePt g2_load_base(device const uint* bases, uint idx) {
     return p;
 }
 
+inline G2Jac g2_load_jac(device const uint* points, uint idx) {
+    device const uint* src = points + idx * (6u * FR_LIMBS);
+    G2Jac p;
+    p.x = fq2_load(src);
+    p.y = fq2_load(src + 2u * FR_LIMBS);
+    p.z = fq2_load(src + 4u * FR_LIMBS);
+    return p;
+}
+
+inline Fq2El fq2_load_constant(constant uint* src) {
+    Fq2El r;
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        r.c0.v[i] = src[i];
+        r.c1.v[i] = src[FR_LIMBS + i];
+    }
+    return r;
+}
+
 inline Fq2El fq2_one() {
     Fq2El r;
     for (uint i = 0; i < FR_LIMBS; i++) {
@@ -178,6 +196,38 @@ inline G2Jac g2_madd(G2Jac acc, G2AffinePt q) {
     return out;
 }
 
+inline G2Jac g2_add_jac(G2Jac p, G2Jac q) {
+    if (fq2_is_zero(p.z)) {
+        return q;
+    }
+    if (fq2_is_zero(q.z)) {
+        return p;
+    }
+    Fq2El z1z1 = fq2_sqr(p.z);
+    Fq2El z2z2 = fq2_sqr(q.z);
+    Fq2El u1 = fq2_mul(p.x, z2z2);
+    Fq2El u2 = fq2_mul(q.x, z1z1);
+    Fq2El s1 = fq2_mul(p.y, fq2_mul(q.z, z2z2));
+    Fq2El s2 = fq2_mul(q.y, fq2_mul(p.z, z1z1));
+    Fq2El h = fq2_sub(u2, u1);
+    Fq2El rr = fq2_sub(s2, s1);
+    if (fq2_is_zero(h)) {
+        return fq2_is_zero(rr) ? g2_dbl(p) : g2_identity();
+    }
+    Fq2El i = fq2_sqr(fq2_dbl(h));
+    Fq2El j = fq2_mul(h, i);
+    Fq2El r2 = fq2_dbl(rr);
+    Fq2El v = fq2_mul(u1, i);
+    G2Jac out;
+    out.x = fq2_sub(fq2_sub(fq2_sqr(r2), j), fq2_dbl(v));
+    out.y = fq2_sub(fq2_mul(r2, fq2_sub(v, out.x)), fq2_dbl(fq2_mul(s1, j)));
+    out.z = fq2_mul(
+        fq2_sub(fq2_sub(fq2_sqr(fq2_add(p.z, q.z)), z1z1), z2z2),
+        h
+    );
+    return out;
+}
+
 inline void g2_store_jac(device uint* dst, G2Jac p) {
     Fq256 coords[6] = { p.x.c0, p.x.c1, p.y.c0, p.y.c1, p.z.c0, p.z.c1 };
     for (uint c = 0; c < 6; c++) {
@@ -229,6 +279,137 @@ kernel void jk_g2_scalar_mul_add(
         acc = g2_madd(acc, addend);
     }
     g2_store_jac(out + tid * (6u * FR_LIMBS), acc);
+}
+
+struct G2ProjectiveMulAddParams {
+    uint n;
+    uint p_offset;
+    uint q_offset;
+    int digits[66];
+    uint endo[2u * FR_LIMBS];
+};
+
+kernel void jk_g2_projective_mul_add(
+    device const uint* ps [[buffer(0)]],
+    device const uint* qs [[buffer(1)]],
+    device uint* out [[buffer(2)]],
+    constant G2ProjectiveMulAddParams& p [[buffer(3)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n) {
+        return;
+    }
+    G2Jac point = g2_load_jac(ps, p.p_offset + tid);
+    G2Jac table[8];
+    table[0] = point;
+    table[1] = g2_dbl(point);
+    for (uint k = 2u; k < 8u; k++) {
+        table[k] = g2_add_jac(table[k - 1u], point);
+    }
+    Fq2El endo = fq2_load_constant(p.endo);
+    G2Jac acc = g2_identity();
+    for (int w = 32; w >= 0; w--) {
+        if (w != 32) {
+            for (uint k = 0u; k < 4u; k++) {
+                acc = g2_dbl(acc);
+            }
+        }
+        int d1 = p.digits[w];
+        if (d1 != 0) {
+            uint magnitude = (uint)(d1 < 0 ? -d1 : d1);
+            G2Jac entry = table[magnitude - 1u];
+            if (d1 < 0) {
+                entry.y = fq2_sub(fq2_zero(), entry.y);
+            }
+            acc = g2_add_jac(acc, entry);
+        }
+        int d2 = p.digits[33 + w];
+        if (d2 != 0) {
+            uint magnitude = (uint)(d2 < 0 ? -d2 : d2);
+            G2Jac entry = table[magnitude - 1u];
+            entry.x = fq2_mul(entry.x, endo);
+            if (d2 < 0) {
+                entry.y = fq2_sub(fq2_zero(), entry.y);
+            }
+            acc = g2_add_jac(acc, entry);
+        }
+    }
+    acc = g2_add_jac(acc, g2_load_jac(qs, p.q_offset + tid));
+    g2_store_jac(out + tid * (6u * FR_LIMBS), acc);
+}
+
+kernel void jk_g2_dory_msm_owner(
+    device const uint* bases [[buffer(0)]],
+    device const uint* order [[buffer(1)]],
+    device const uint* offsets [[buffer(2)]],
+    device uint* bucket_sums [[buffer(3)]],
+    constant uint* params [[buffer(4)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup G2Jac sums[128];
+    const uint parts = params[0];
+    const uint base_offset = params[1];
+    const uint buckets_per_group = 128u / parts;
+    const uint local_bucket = tid / parts;
+    const uint part = tid % parts;
+    const uint bucket = tg * buckets_per_group + local_bucket;
+    G2Jac acc = g2_identity();
+    if (bucket < JK_DORY_MSM_BINS) {
+        const uint start = offsets[bucket];
+        const uint end = offsets[bucket + 1u];
+        for (uint i = start + part; i < end; i += parts) {
+            const uint entry = order[i];
+            G2Jac point = g2_load_jac(bases, base_offset + (entry >> 1u));
+            if ((entry & 1u) != 0u) {
+                point.y = fq2_sub(fq2_zero(), point.y);
+            }
+            acc = g2_add_jac(acc, point);
+        }
+    }
+    sums[tid] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = parts >> 1u; stride > 0u; stride >>= 1u) {
+        if (part < stride) {
+            sums[tid] = g2_add_jac(sums[tid], sums[tid + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (part == 0u && bucket < JK_DORY_MSM_BINS) {
+        g2_store_jac(bucket_sums + bucket * (6u * FR_LIMBS), sums[tid]);
+    }
+}
+
+kernel void jk_g2_dory_msm_window_fold(
+    device const uint* bucket_sums [[buffer(0)]],
+    device uint* partials [[buffer(1)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint window [[threadgroup_position_in_grid]])
+{
+    threadgroup G2Jac buckets[128];
+    buckets[tid] = g2_load_jac(bucket_sums, window * JK_DORY_MSM_BUCKETS + tid);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 1u; stride < JK_DORY_MSM_BUCKETS; stride <<= 1u) {
+        G2Jac addend;
+        const bool active = tid + stride < JK_DORY_MSM_BUCKETS;
+        if (active) {
+            addend = buckets[tid + stride];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (active) {
+            buckets[tid] = g2_add_jac(buckets[tid], addend);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint stride = 64u; stride > 0u; stride >>= 1u) {
+        if (tid < stride) {
+            buckets[tid] = g2_add_jac(buckets[tid], buckets[tid + stride]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0u) {
+        g2_store_jac(partials + window * (6u * FR_LIMBS), buckets[0]);
+    }
 }
 
 // out[i] = base · scalars[i]: ONE shared affine base (never the sentinel;
