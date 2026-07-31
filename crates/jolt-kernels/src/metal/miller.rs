@@ -9,6 +9,8 @@
 //! - [`miller_fly_partials`] — the stage-8 reduce-round shape: affine
 //!   (G1, G2) pairs with the G2 preparation ladder run inline on the
 //!   device, one pair per thread.
+//! - [`miller_fly_indexed_partials`] — the stage-0 shape after W3: G1 points
+//!   select affine G2 setup rows by index, avoiding the prepared table.
 //!
 //! Either way the batch Miller value is the exact Fq12 product of the
 //! partials ([`product_of_partials`]): a multi-Miller loop over a pair set
@@ -312,7 +314,7 @@ pub fn miller_table_partials(
 
 /// View affine G2 points as the device `uint` stream (identities included —
 /// the (0, 0) sentinel skips them on device, as arkworks' filter does).
-fn g2_points_as_u32s(points: &[G2Affine]) -> &[u32] {
+pub(super) fn g2_points_as_u32s(points: &[G2Affine]) -> &[u32] {
     // SAFETY: layout pinned by the const asserts in `super::field`.
     unsafe {
         std::slice::from_raw_parts(
@@ -346,6 +348,37 @@ pub fn miller_fly_partials(
     Ok(partials)
 }
 
+/// Stage-0 twin of [`miller_fly_partials`]: G2 setup rows remain shared,
+/// while `row_indices` selects one for each G1 point. This avoids expanding
+/// repeated setup rows or building the prepared-coefficient table.
+pub fn miller_fly_indexed_partials(
+    ctx: &MetalContext,
+    points: &[G1Affine],
+    row_indices: &[u32],
+    qs: &[G2Affine],
+) -> Result<Vec<u32>, MetalError> {
+    assert_eq!(points.len(), row_indices.len());
+    assert!(
+        row_indices.iter().all(|&row| (row as usize) < qs.len()),
+        "Miller row index exceeds the G2 table"
+    );
+    let n_pairs = points.len();
+    let ps_buf = ctx.wrap_slice(g1_points_as_u32s(points))?;
+    let row_indices_buf = ctx.wrap_slice(row_indices)?;
+    let qs_buf = ctx.wrap_slice(g2_points_as_u32s(qs))?;
+    let out_buf = ctx.alloc_u32s(n_pairs * FQ12_U32S)?;
+    let params = [u32::try_from(n_pairs).map_err(|_| MetalError::Execution("pair count".into()))?];
+    ctx.run_once(
+        KernelId::MillerFlyIndexed,
+        &params,
+        &[&ps_buf, &row_indices_buf, &qs_buf, &out_buf],
+        n_pairs,
+    )?;
+    let mut partials = vec![0u32; n_pairs * FQ12_U32S];
+    out_buf.copy_to_u32s(&mut partials);
+    Ok(partials)
+}
+
 /// Per-pair Fq-mul-equivalents fed to [`super::metal_gate`] so the shared
 /// `JOLT_METAL_MIN_TERMS` scale keeps meaning "work items": the shift
 /// calibrates the default threshold (2^16) to a 2048-pair floor. Below
@@ -354,7 +387,7 @@ pub fn miller_fly_partials(
 /// multi-pair shrinks linearly. In-pipeline sweep (sha2-chain @2^22,
 /// stage-8 wall): hook off → 2.20/2.18 s, ≥4096 pairs → 2.12,
 /// **≥2048 → 2.02/2.02**, ≥1024 → 2.11 (the third reduce round loses).
-const MILLER_FLY_WORK_PER_PAIR_LOG2: usize = 5;
+pub(super) const MILLER_FLY_WORK_PER_PAIR_LOG2: usize = 5;
 
 /// The stage-8 device multi-pairing — dory's `multi_pair*` hook. Serves
 /// the call with the exact GT the CPU path computes (device Miller
@@ -770,5 +803,23 @@ mod tests {
         let mut qs_id = qs.clone();
         qs_id[11] = G2Affine::identity();
         assert_eq!(fly(&ps_id, &qs_id), reference_miller(&ps_id, &qs_id));
+    }
+
+    #[test]
+    fn miller_fly_indexed_matches_arkworks() {
+        let _lock = gpu_lock();
+        let ctx = MetalContext::global().expect("metal context");
+        let mut rng = rng();
+        let (mut ps, qs) = random_pairs(&mut rng, 73);
+        let mut table = qs[..17].to_vec();
+        ps[19] = G1Affine::identity();
+        table[5] = G2Affine::identity();
+        let indices: Vec<u32> = (0..ps.len())
+            .map(|i| ((i * 11 + 3) % table.len()) as u32)
+            .collect();
+        let selected: Vec<G2Affine> = indices.iter().map(|&row| table[row as usize]).collect();
+        let got =
+            product_of_partials(&miller_fly_indexed_partials(ctx, &ps, &indices, &table).unwrap());
+        assert_eq!(got, reference_miller(&ps, &selected));
     }
 }

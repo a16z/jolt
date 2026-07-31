@@ -51,9 +51,9 @@ mod bench {
     use ark_ec::CurveGroup;
     use ark_ff::{One, UniformRand};
     use jolt_kernels::metal::miller::{
-        ell_coeffs_per_pair, flatten_prepared_coeffs, fq12_to_device_limbs, miller_fly_partials,
-        miller_table_partials, product_of_partials, uniform_seg_starts, ArkG2Prepared,
-        ELL_COEFF_U32S, FQ12_U32S,
+        ell_coeffs_per_pair, flatten_prepared_coeffs, fq12_to_device_limbs,
+        miller_fly_indexed_partials, miller_fly_partials, miller_table_partials,
+        product_of_partials, uniform_seg_starts, ArkG2Prepared, ELL_COEFF_U32S, FQ12_U32S,
     };
     use jolt_kernels::metal::testing::gpu_lock;
     use jolt_kernels::metal::{KernelId, MetalContext};
@@ -254,10 +254,10 @@ mod bench {
             best = best.min(secs);
         }
 
-        // Thread-scaling probe (occupancy proxy): fixed ppt=8, shrink the
-        // pair count; flat µs/pair until the device starves.
+        // Production table shape (2 pairs/thread), directly comparable to
+        // the indexed-fly scale sweep below.
         for n in [512usize, 1024, 2048, 4096, 8192] {
-            let segs = uniform_seg_starts(n, 8);
+            let segs = uniform_seg_starts(n, 2);
             let secs = min_secs(3, || {
                 let partials =
                     miller_table_partials(ctx, &ps[..n], &indices[..n], &segs, coeffs, N_PAIRS)
@@ -265,10 +265,10 @@ mod bench {
                 let _ = std::hint::black_box(&partials);
             });
             println!(
-                "  scale n={n:5}: {:.1} ms ({:.2} µs/pair, {} threads)",
+                "  scale ppt=2 n={n:5}: {:.1} ms ({:.2} µs/pair, {} threads)",
                 secs * 1e3,
                 secs / n as f64 * 1e6,
-                n / 8,
+                n / 2,
             );
         }
         println!();
@@ -277,15 +277,40 @@ mod bench {
 
     fn t3_miller_fly(ctx: &MetalContext, ps: &[G1Affine], qs: &[G2Affine]) -> f64 {
         println!("== T3: jk_miller_fly ({N_PAIRS} pairs, 1/thread) ==");
-        let secs = min_secs(3, || {
+        let direct_secs = min_secs(3, || {
             let partials = miller_fly_partials(ctx, ps, qs).unwrap();
             let _ = std::hint::black_box(&partials);
         });
+        let indices: Vec<u32> = (0..N_PAIRS as u32)
+            .map(|i| (i * 17 + 3) % N_PAIRS as u32)
+            .collect();
+        let secs = min_secs(3, || {
+            let partials = miller_fly_indexed_partials(ctx, ps, &indices, qs).unwrap();
+            let _ = std::hint::black_box(&partials);
+        });
         println!(
-            "fly: {:.1} ms ({:.2} µs/pair)\n",
+            "fly direct:  {:.1} ms ({:.2} µs/pair)",
+            direct_secs * 1e3,
+            direct_secs / N_PAIRS as f64 * 1e6
+        );
+        println!(
+            "fly indexed: {:.1} ms ({:.2} µs/pair)",
             secs * 1e3,
             secs / N_PAIRS as f64 * 1e6
         );
+        for n in [512usize, 1024, 2048, 4096, 8192] {
+            let scale_secs = min_secs(3, || {
+                let partials =
+                    miller_fly_indexed_partials(ctx, &ps[..n], &indices[..n], qs).unwrap();
+                let _ = std::hint::black_box(&partials);
+            });
+            println!(
+                "  scale n={n:5}: {:.1} ms ({:.2} µs/pair, {n} threads)",
+                scale_secs * 1e3,
+                scale_secs / n as f64 * 1e6,
+            );
+        }
+        println!();
         secs
     }
 

@@ -108,10 +108,11 @@ pub enum KernelId {
     Fq12Mul034,
     MillerTable,
     MillerFly,
+    MillerFlyIndexed,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 60] = [
+    pub const ALL: [Self; 61] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -172,6 +173,7 @@ impl KernelId {
         Self::Fq12Mul034,
         Self::MillerTable,
         Self::MillerFly,
+        Self::MillerFlyIndexed,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -236,6 +238,7 @@ impl KernelId {
             Self::Fq12Mul034 => "jk_fq12_mul034",
             Self::MillerTable => "jk_miller_table",
             Self::MillerFly => "jk_miller_fly",
+            Self::MillerFlyIndexed => "jk_miller_fly_indexed",
         }
     }
 
