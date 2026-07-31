@@ -47,6 +47,7 @@ jolt-eval-macros = { path = "macros" }
 [dev-dependencies]
 criterion = { workspace = true }
 iai-callgrind.workspace = true
+iai-callgrind-runner.workspace = true
 jolt-poly.workspace = true
 
 [[bench]]

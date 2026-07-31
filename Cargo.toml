@@ -386,6 +386,9 @@ spinners = { version = "4.2.0", default-features = false }
 # Testing
 criterion = { version = "0.8.2", features = ["html_reports"] }
 iai-callgrind = "0.16.1"
+# Runner summary structs only, as the schema oracle for the callgrind
+# objective's JSON parser (jolt-eval dev-dependency).
+iai-callgrind-runner = "0.16.1"
 serial_test = "3.5.0"
 
 # Logging
