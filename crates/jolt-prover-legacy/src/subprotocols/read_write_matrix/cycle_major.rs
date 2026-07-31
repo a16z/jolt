@@ -303,7 +303,7 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
         let ra_lookup_table = self.ra_lookup_table.as_ref();
         let wa_lookup_table = self.wa_lookup_table.as_ref();
 
-        let row_lengths: Vec<_> = self
+        let mut row_offsets: Vec<_> = self
             .entries
             .par_chunk_by(|x, y| x.row() / 2 == y.row() / 2)
             .map(|entries| {
@@ -323,29 +323,41 @@ impl<F: JoltField, E: CycleMajorMatrixEntry<F>> ReadWriteMatrixCycleMajor<F, E> 
             })
             .collect();
 
-        let bound_length = row_lengths.iter().map(|(_, bound_len)| bound_len).sum();
-        let mut bound_entries: Vec<E> = Vec::with_capacity(bound_length);
-        let mut bound_entries_slice = bound_entries.spare_capacity_mut();
-        let mut unbound_entries_slice = self.entries.as_slice();
-
-        let mut output_slices = Vec::with_capacity(row_lengths.len());
-        let mut input_slices = Vec::with_capacity(row_lengths.len());
-
-        // Split `self.entries` and the output buffer into vectors of non-overlapping slices
-        // that can be zipped together and parallelized over.
-        for (unbound_len, bound_len) in row_lengths.iter() {
-            let output_slice;
-            (output_slice, bound_entries_slice) = bound_entries_slice.split_at_mut(*bound_len);
-            output_slices.push(output_slice);
-            let input_slice;
-            (input_slice, unbound_entries_slice) = unbound_entries_slice.split_at(*unbound_len);
-            input_slices.push(input_slice);
+        let mut input_length = 0;
+        let mut bound_length = 0;
+        for offsets in &mut row_offsets {
+            let (input_row_length, bound_row_length) = *offsets;
+            *offsets = (input_length, bound_length);
+            input_length += input_row_length;
+            bound_length += bound_row_length;
         }
+        debug_assert_eq!(input_length, self.entries.len());
 
-        input_slices
+        let mut bound_entries: Vec<E> = Vec::with_capacity(bound_length);
+        let input_ptr = self.entries.as_ptr() as usize;
+        let output_ptr = bound_entries.as_mut_ptr() as usize;
+        row_offsets
             .par_iter()
-            .zip(output_slices.into_par_iter())
-            .for_each(|(input_slice, output_slice)| {
+            .enumerate()
+            .for_each(|(index, &(input_start, output_start))| {
+                let (input_end, output_end) = row_offsets
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or((input_length, bound_length));
+                // SAFETY: Prefix offsets partition both allocations into disjoint
+                // slices, and the output allocation has capacity `bound_length`.
+                let input_slice = unsafe {
+                    std::slice::from_raw_parts(
+                        (input_ptr as *const E).add(input_start),
+                        input_end - input_start,
+                    )
+                };
+                let output_slice = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        (output_ptr as *mut MaybeUninit<E>).add(output_start),
+                        output_end - output_start,
+                    )
+                };
                 let odd_row_start_index =
                     input_slice.partition_point(|entry| entry.row().is_even());
                 let (even_row, odd_row) = input_slice.split_at(odd_row_start_index);
