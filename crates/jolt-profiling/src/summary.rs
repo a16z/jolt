@@ -85,8 +85,10 @@ pub struct ProfileSummary {
     /// `null` if the trace contains no root span (see
     /// [`taxonomy::ROOT_SPAN`]).
     pub root: Option<RootSummary>,
-    /// Process-lifetime `getrusage` high-water mark, in GiB. Includes guest
-    /// compile / tracer execution, unlike `root.peak_memory_gib`.
+    /// Process-lifetime `getrusage` high-water mark, in GiB, sampled by the
+    /// harness right after the workload — before the flush-time trace
+    /// parse/rewrite can inflate it. Includes guest compile / tracer
+    /// execution, unlike `root.peak_memory_gib`.
     pub peak_rss_gib: Option<f64>,
     /// Per-label aggregates over every span instance on every thread.
     pub spans: BTreeMap<String, SpanAggregate>,
@@ -427,10 +429,22 @@ pub fn build_summary(
             .cloned(),
     );
 
+    // Stage intervals and StageMemoryRows are both recorded in span-close
+    // order, so the i-th interval of a label pairs with the i-th row of
+    // that label — occurrence-indexed, not first-match, so a trace with
+    // repeated stage labels (e.g. a future multi-prove harness) can't
+    // attach the first prove's boundary RSS to every instance. `ordered`
+    // preserves within-label close order by construction (stable filters).
+    let mut label_occurrence: HashMap<String, usize> = HashMap::new();
     let stages = ordered
         .into_iter()
         .map(|(label, interval)| {
-            let row = stage_rows.iter().find(|row| row.stage == label);
+            let occurrence = label_occurrence.entry(label.clone()).or_insert(0);
+            let row = stage_rows
+                .iter()
+                .filter(|row| row.stage == label)
+                .nth(*occurrence);
+            *occurrence += 1;
             let open = row.map(|r| r.rss_open_bytes as f64 / BYTES_PER_GIB);
             let close = row.map(|r| r.rss_close_bytes as f64 / BYTES_PER_GIB);
             StageSummary {
@@ -510,24 +524,43 @@ pub fn summary_path(trace_path: &Path) -> PathBuf {
     trace_path.with_extension("summary.json")
 }
 
+/// Atomic file replacement: write `{path}.tmp`, then rename over `path`.
+/// `fs::write` alone truncates first, so a crash mid-write would destroy the
+/// existing artifact — for a trace that took hours to produce, cheap
+/// insurance.
+fn write_atomic(path: &Path, data: &str) -> Result<(), SummaryError> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let io = std::fs::write(&tmp, data).and_then(|()| std::fs::rename(&tmp, path));
+    io.map_err(|source| SummaryError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 /// Flush-time pipeline entry: rewrite counter events in the trace file
-/// in place, then aggregate the same events (folding in the drained
-/// [`StageMemoryRow`]s and the `getrusage` peak) into
+/// (atomically — temp file + rename, never a truncating in-place write),
+/// then aggregate the same events (folding in the drained
+/// [`StageMemoryRow`]s and the caller-captured `getrusage` peak) into
 /// `{trace_name}.summary.json` next to it.
 ///
 /// Call after dropping [`TracingGuards`](crate::TracingGuards) — the chrome
-/// layer finalizes the trace file on guard drop.
+/// layer finalizes the trace file on guard drop. `peak_rss_bytes` must be
+/// sampled by the caller right after the workload (see
+/// [`peak_rss_bytes`](crate::memory::peak_rss_bytes)): sampling here would
+/// report this function's own trace parse/expand allocations — tooling
+/// memory, not the profiled workload — whenever they exceed the prove's
+/// footprint.
 pub fn finalize_trace(
     trace_path: &Path,
     ctx: &SummaryContext,
+    peak_rss_bytes: Option<u64>,
 ) -> Result<(PathBuf, ProfileSummary), SummaryError> {
     let events = read_events(trace_path)?;
     let events = convert_counter_events(events);
     let trace_json = serde_json::to_string(&events)?;
-    std::fs::write(trace_path, trace_json).map_err(|source| SummaryError::Write {
-        path: trace_path.to_path_buf(),
-        source,
-    })?;
+    write_atomic(trace_path, &trace_json)?;
 
     let timestamp_unix_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -537,17 +570,14 @@ pub fn finalize_trace(
         &events,
         ctx,
         &crate::stage_memory::take_stage_memory_rows(),
-        crate::memory::peak_rss_bytes(),
+        peak_rss_bytes,
         timestamp_unix_secs,
         git_rev(),
     );
 
     let out_path = summary_path(trace_path);
     let summary_json = serde_json::to_string_pretty(&summary)?;
-    std::fs::write(&out_path, summary_json).map_err(|source| SummaryError::Write {
-        path: out_path.clone(),
-        source,
-    })?;
+    write_atomic(&out_path, &summary_json)?;
     Ok((out_path, summary))
 }
 

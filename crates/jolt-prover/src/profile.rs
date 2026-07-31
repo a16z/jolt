@@ -166,6 +166,17 @@ pub enum BackendKind {
     Reference,
 }
 
+impl BackendKind {
+    /// The canonical name — the `run.backend` value telemetry consumers key
+    /// on. Adding a backend variant forces an arm here, which keeps the
+    /// summary metadata honest without a hand-maintained string elsewhere.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Reference => "reference",
+        }
+    }
+}
+
 /// `profile` subcommand arguments.
 #[derive(Debug, clap::Args)]
 pub struct ProfileArgs {
@@ -219,17 +230,66 @@ pub struct ProfileArtifacts {
     pub summary: Option<ProfileSummary>,
 }
 
+/// Largest supported `--scale`: keeps `1usize << scale` (and the derived
+/// Dory variable counts) far from shift overflow; 2^40 rows is already
+/// orders of magnitude past any provable trace.
+const MAX_SCALE: u32 = 40;
+
+/// Rejects out-of-range log2 trace lengths before they wrap a shift.
+fn validate_scale(scale: u32) {
+    assert!(
+        (1..=MAX_SCALE).contains(&scale),
+        "--scale {scale} out of range: expected a log2 trace length in 1..={MAX_SCALE}"
+    );
+}
+
+/// Exclusive-run guard: `benchmark-runs/{trace_name}.lock`, created with
+/// `create_new` and removed on drop. Two concurrent runs of the same
+/// (workload, scale) would race on the trace/summary/CSV artifact paths and
+/// corrupt them silently; failing loudly is the honest alternative for a
+/// deterministic-path harness.
+struct RunLock(PathBuf);
+
+impl RunLock {
+    fn acquire(trace_name: &str) -> Self {
+        fs::create_dir_all("benchmark-runs").expect("create benchmark-runs directory");
+        let path = PathBuf::from(format!("benchmark-runs/{trace_name}.lock"));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => Self(path),
+            Err(e) => panic!(
+                "another profile run for {trace_name} appears active ({}: {e}); \
+                 if no run is alive, delete the stale lock file",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl Drop for RunLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 /// Runs one profile invocation end to end. The bin's `main` is a thin
 /// wrapper over this so the smoke test can call it in-process.
 ///
 /// # Panics
 ///
-/// Panics on any pipeline failure (harness semantics), and if called twice
-/// in one process with a subscriber-installing format (the global tracing
-/// subscriber can only be set once).
+/// Panics on any pipeline failure (harness semantics), if `--scale` is out
+/// of range, if another run of the same (workload, scale) holds the
+/// artifact lock, and if called twice in one process with a
+/// subscriber-installing format (the global tracing subscriber can only be
+/// set once).
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
+    validate_scale(scale);
     let trace_name = format!("modular_{}_{scale}", args.name.as_str().replace('-', "_"));
+    let _run_lock = RunLock::acquire(&trace_name);
 
     // Per-stage heap flamegraphs (allocative feature): opt in before the
     // prove so the cfg-gated hooks inside `prove()` see the prefix.
@@ -248,6 +308,10 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
 
     run_workload(args.name, scale, args.backend);
 
+    // The workload's high-water mark, sampled before the flush-time trace
+    // parse/rewrite below can inflate it with tooling allocations.
+    let peak_rss = peak_rss_bytes();
+
     // Dropping the guards flushes the chrome trace; only then can the
     // flush-time pipeline parse it.
     drop(guards);
@@ -261,9 +325,10 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let ctx = SummaryContext {
         workload: args.name.as_str().to_string(),
         scale_log2: scale,
-        backend: "reference".to_string(),
+        backend: args.backend.as_str().to_string(),
     };
-    let (summary_file, summary) = finalize_trace(&trace_path, &ctx).expect("finalize chrome trace");
+    let (summary_file, summary) =
+        finalize_trace(&trace_path, &ctx, peak_rss).expect("finalize chrome trace");
 
     if let Some(root) = &summary.root {
         println!(
@@ -291,6 +356,8 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
 /// render them with `scripts/benchmark_summary.py`,
 /// `scripts/plot_benchmarks.py`, and `scripts/plot_memory_usage.py`.
 pub fn run_sweep(args: &BenchmarkArgs) -> bool {
+    validate_scale(args.min_scale);
+    validate_scale(args.max_scale);
     let workloads = args.benchmarks.clone().unwrap_or_else(|| {
         vec![
             Workload::Fibonacci,
@@ -500,7 +567,11 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind) {
     }
 
     // The same 7-field CSV line the legacy harness writes, under a
-    // modular-prefixed file name.
+    // modular-prefixed file name. Field 7 (`proof_size_compressed`)
+    // duplicates the raw size exactly as legacy does — its
+    // `prove_example_with_trace` returns `proof_size` for both fields, the
+    // compressed encoding having been retired — so the columns stay
+    // directly comparable across the two harnesses.
     let summary_line = format!(
         "{},{},{:.2},{},{:.2},{},{}\n",
         bench_name,

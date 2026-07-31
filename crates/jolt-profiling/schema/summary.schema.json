@@ -12,7 +12,7 @@
       }
     },
     "peak_rss_gib": {
-      "description": "Process-lifetime `getrusage` high-water mark, in GiB. Includes guest\ncompile / tracer execution, unlike `root.peak_memory_gib`.",
+      "description": "Process-lifetime `getrusage` high-water mark, in GiB, sampled by the\nharness right after the workload — before the flush-time trace\nparse/rewrite can inflate it. Includes guest compile / tracer\nexecution, unlike `root.peak_memory_gib`.",
       "type": [
         "number",
         "null"
