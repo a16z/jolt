@@ -145,6 +145,17 @@ impl InstructionCycleRow {
         };
         FusedInc(value).hot_lane(lane)
     }
+
+    #[cfg(feature = "akita")]
+    #[inline]
+    pub(crate) fn fused_inc<F: Field>(&self) -> F {
+        let magnitude = F::from_u64(self.fused_inc_magnitude);
+        if self.fused_inc_negative {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
 }
 
 const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 48);
