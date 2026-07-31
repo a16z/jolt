@@ -2,8 +2,8 @@ use akita_pcs::{ComputeBackendSetup, CpuBackend};
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError,
-    TransparentObjectSetup, VerifierOpeningClaim, ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, TransparentObjectSetup,
+    VerifierOpeningClaim, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;

@@ -248,7 +248,9 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                     },
                 ),
                 C::UnsignedIncMsb => {
-                    self.materialize_unsigned_inc_one_hot(crate::witnesses::UnsignedIncLane::Msb)
+                    self.materialize_unsigned_inc_one_hot(crate::witnesses::UnsignedIncLane::Msb {
+                        width: self.config.one_hot.committed_chunk_bits(),
+                    })
                 }
                 C::TrustedAdviceBytes => self.materialize_trusted_advice_bytes(),
                 C::UntrustedAdviceBytes => self.materialize_untrusted_advice_bytes(),

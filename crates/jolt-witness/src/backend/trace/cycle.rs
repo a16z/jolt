@@ -83,8 +83,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         let chunk_bits = self.config.one_hot.committed_chunk_bits();
         let cycles = checked_pow2(self.config.log_t)?;
         let hot_addresses: Vec<usize> = self.walk_cycles(|row, next, env| {
-            crate::witnesses::UnsignedIncHot::extract_indexed(lane, row, next, env)
-                .map(|hot| hot.0)
+            crate::witnesses::UnsignedIncHot::extract_indexed(lane, row, next, env).map(|hot| hot.0)
         })?;
         let mut values = vec![F::zero(); checked_pow2(self.one_hot_log_rows()?)?];
         for (cycle, address) in hot_addresses.into_iter().enumerate() {

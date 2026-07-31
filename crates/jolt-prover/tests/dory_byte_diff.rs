@@ -438,6 +438,7 @@ mod muldiv {
     use jolt_field::Fr;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::dory::stages::stage0::prove_stage0;
+    use jolt_prover::dory::stages::stage8::prove_stage8;
     use jolt_prover::stages::stage1::prove_stage1;
     use jolt_prover::stages::stage2::prove_stage2;
     use jolt_prover::stages::stage3::prove_stage3;
@@ -446,7 +447,6 @@ mod muldiv {
     use jolt_prover::stages::stage6a::prove_stage6a;
     use jolt_prover::stages::stage6b::prove_stage6b;
     use jolt_prover::stages::stage7::prove_stage7;
-    use jolt_prover::dory::stages::stage8::prove_stage8;
     use jolt_prover::{JoltBackend, JoltProverPreprocessing};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -935,22 +935,21 @@ mod muldiv {
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.
         for backend in [JoltBackend::reference(), JoltBackend::optimized()] {
-            let proof =
-                jolt_prover::dory::prove::<
-                    Fr,
-                    DoryScheme,
-                    Pedersen<Bn254G1>,
-                    Blake2bTranscript,
-                    _,
-                >(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    None,
-                    &witness,
-                    &public_io,
-                )
-                .expect("top-level prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                &witness,
+                &public_io,
+            )
+            .expect("top-level prove");
             assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
         }
@@ -1134,21 +1133,16 @@ mod advice_consumer {
         // exercises the RAM val-check advice cells and the optimized
         // val_init reconstruction against advice-populated initial memory.
         let backend = JoltBackend::<Fr, DoryScheme>::optimized();
-        let proof = jolt_prover::dory::prove::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            Blake2bTranscript,
-            _,
-        >(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            Some(&trusted_advice_commitment),
-            &witness,
-            &public_io,
-        )
-        .expect("optimized-backend prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&trusted_advice_commitment),
+                &witness,
+                &public_io,
+            )
+            .expect("optimized-backend prove");
         assert_eq!(
             proof, legacy_proof,
             "optimized-backend proof diverged from legacy"
@@ -1758,21 +1752,16 @@ mod chunk_boundary {
         // and the reference tier has no streaming chunk to gate. The chunked
         // walks under test are the optimized tier's.
         let backend = JoltBackend::<Fr, DoryScheme>::optimized();
-        let proof = jolt_prover::dory::prove::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            Blake2bTranscript,
-            _,
-        >(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("top-level prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                &witness,
+                &public_io,
+            )
+            .expect("top-level prove");
 
         // Component-wise asserts give per-stage granularity when bytes
         // diverge; the final whole-struct assert is the ratchet.

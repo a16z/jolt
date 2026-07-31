@@ -553,14 +553,18 @@ mod committed_muldiv {
             legacy_prover.one_hot_trace_setup_params(),
         )
         .expect("the transparent packed setup must derive");
-        let program_one_hot_commitment = program_one_hot.commitment.clone();
+        let program_one_hot_commitments = program_one_hot
+            .objects
+            .iter()
+            .map(|object| object.commitment.clone())
+            .collect::<Vec<_>>();
         let legacy_proof = legacy_prover
             .prove_packed(&object_setup, None, Some(&program_one_hot))
             .expect("legacy packed prove");
         let verifier_preprocessing = akita_verifier_preprocessing(
             &legacy_preprocessing,
             verifier_setup,
-            Some(program_one_hot_commitment.clone()),
+            Some(&program_one_hot),
         );
 
         // --- Modular side: the full program is rebuilt from the legacy
@@ -602,7 +606,7 @@ mod committed_muldiv {
             &prover_preprocessing,
             &config,
             None,
-            Some(&program_one_hot_commitment),
+            Some(&program_one_hot_commitments),
             &witness,
             &public_io,
         )

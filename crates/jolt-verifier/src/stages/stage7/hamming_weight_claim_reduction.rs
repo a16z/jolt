@@ -187,6 +187,11 @@ impl<F: Field> HammingWeightClaimReduction<F> {
     pub fn virtualization_points(&self) -> &[Vec<F>] {
         &self.virtualization_points
     }
+
+    #[cfg(feature = "akita")]
+    pub fn ram_hamming_weight(&self) -> Option<F> {
+        self.ram_hamming_weight
+    }
 }
 
 fn public_input_failed(reason: impl ToString) -> VerifierError {

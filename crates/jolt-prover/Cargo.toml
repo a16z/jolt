@@ -28,6 +28,7 @@ akita = [
   "jolt-verifier/akita",
   "jolt-claims/akita",
   "jolt-field/akita",
+  "jolt-kernels/akita",
   "jolt-prover-legacy/akita",
 ]
 

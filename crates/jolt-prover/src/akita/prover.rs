@@ -25,6 +25,7 @@ use crate::stages::stage6a::prove_stage6a;
 use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use jolt_claims::protocols::jolt::JoltAdviceKind;
 
 /// See [`super::prove`].
 pub fn prove<F, PCS, VC, T, W>(
@@ -32,7 +33,7 @@ pub fn prove<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&PCS::Output>,
-    program_one_hot: Option<&PCS::Output>,
+    program_one_hot: Option<&[PCS::Output]>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
@@ -163,6 +164,7 @@ where
     let trusted_object = trusted_advice
         .map(|commitment| {
             let object = commit_advice_one_hot::<PCS>(
+                JoltAdviceKind::Trusted,
                 &public_io.trusted_advice,
                 public_io.memory_layout.max_trusted_advice_size as usize,
             )?;
@@ -175,7 +177,7 @@ where
         })
         .transpose()?;
     let program_object = program_one_hot
-        .map(|commitment| {
+        .map(|commitments| {
             let chunk_count = checked
                 .precommitted
                 .bytecode
@@ -184,13 +186,17 @@ where
                 .ok_or(ProverError::InvariantViolation {
                     reason: "committed-program mode without a bytecode schedule",
                 })?;
-            let object = commit_program_one_hot::<PCS>(
-                witness.program_preprocessing(),
-                chunk_count,
-            )?;
-            if object.commitment != *commitment {
+            let object =
+                commit_program_one_hot::<PCS>(witness.program_preprocessing(), chunk_count)?;
+            if object.objects.len() != commitments.len()
+                || object
+                    .objects
+                    .iter()
+                    .zip(commitments)
+                    .any(|(object, commitment)| object.commitment != *commitment)
+            {
                 return Err(ProverError::Unsupported {
-                    reason: "the ProgramOneHot commitment does not match the retained program",
+                    reason: "the program commitments do not match the retained program",
                 });
             }
             Ok(object)

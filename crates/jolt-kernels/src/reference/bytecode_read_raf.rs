@@ -222,7 +222,8 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
             (6, LATTICE_FUSED_INC_STAGES) => (BASE_STAGES + LATTICE_FUSED_INC_STAGES, true),
             _ => {
                 return Err(KernelError::InvariantViolation {
-                    reason: "the bytecode read-raf stage shape matches neither the base five-stage \
+                    reason:
+                        "the bytecode read-raf stage shape matches neither the base five-stage \
                              fold nor the packed nine-stage fold",
                 })
             }
@@ -286,7 +287,11 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
         let pushforwards: Vec<Polynomial<F>> = stage_cycle_points
             .iter()
             .map(|point| pushforward(point, false))
-            .chain(fused_cycle_points.iter().map(|point| pushforward(point, true)))
+            .chain(
+                fused_cycle_points
+                    .iter()
+                    .map(|point| pushforward(point, true)),
+            )
             .collect();
 
         // The RAW stage-value tables; the RAF identity `Int(k) = k` binds as
