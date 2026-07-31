@@ -61,17 +61,21 @@ reduction                  = 8T bytes per affected stage
 The columns are phase-local, so the peak reduction is 8 B/cycle, not
 16 B/cycle.
 
-Using the current D128/K256 ownership model:
+Using the retained-state D128/K256 model available for this experiment:
 
 | Window | Before | After | After, B/cycle |
 |---|---:|---:|---:|
 | Stage 4, representative SHA-2 density | 67.244 GiB | 65.244 GiB | 260.978 |
 | Stage 5 transition after compact buckets | 67.059 GiB | 65.059 GiB | 260.24 |
 
-Stage 4 is now the modeled source-owned ceiling for this workload at about
-65.244 GiB, or 260.98 B/cycle. This is an ownership ceiling, not a prediction
-that macOS `ru_maxrss` will equal it; allocator-retained pages, thread stacks,
-and page-residency policy remain outside the model.
+This table counts retained objects but not the old cycle-major bind's
+construction overlap. The immediate follow-up audit found that its first
+register bind simultaneously held old and new entries plus three
+per-bound-row metadata vectors. That transition, and the accepted reduction
+from roughly 87.05 to 83.05 GiB, are derived in
+[`../akita-sparse-bind-offsets-2026-07-31/results.md`](../akita-sparse-bind-offsets-2026-07-31/results.md).
+The 65.244 GiB row should therefore not be read as the complete Stage 4
+construction ceiling.
 
 ## Integrated results
 
