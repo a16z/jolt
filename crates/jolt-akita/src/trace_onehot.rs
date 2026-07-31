@@ -1823,6 +1823,97 @@ fn add_rotated_rows<const D: usize>(
 }
 
 #[inline(always)]
+fn add_rotated_dense_contributions<const D: usize>(
+    dst: &mut [i32; D],
+    rotated: &[[i16; D]],
+    contributions: &[(usize, usize)],
+    table_index: impl Fn(usize, usize) -> usize + Copy,
+) {
+    let table =
+        |&(column, coefficient): &(usize, usize)| &rotated[table_index(column, coefficient)];
+    let mut remaining = contributions;
+    while remaining.len() >= 8 {
+        add_rotated_dense_tables(
+            dst,
+            [
+                table(&remaining[0]),
+                table(&remaining[1]),
+                table(&remaining[2]),
+                table(&remaining[3]),
+                table(&remaining[4]),
+                table(&remaining[5]),
+                table(&remaining[6]),
+                table(&remaining[7]),
+            ],
+        );
+        remaining = &remaining[8..];
+    }
+    match remaining {
+        [] => {}
+        [entry0] => add_rotated_dense(dst, table(entry0)),
+        [entry0, entry1] => {
+            add_rotated_dense_tables(dst, [table(entry0), table(entry1)]);
+        }
+        [entry0, entry1, entry2] => {
+            add_rotated_dense_tables(dst, [table(entry0), table(entry1), table(entry2)]);
+        }
+        [entry0, entry1, entry2, entry3] => add_rotated_dense_tables(
+            dst,
+            [table(entry0), table(entry1), table(entry2), table(entry3)],
+        ),
+        [entry0, entry1, entry2, entry3, entry4] => add_rotated_dense_tables(
+            dst,
+            [
+                table(entry0),
+                table(entry1),
+                table(entry2),
+                table(entry3),
+                table(entry4),
+            ],
+        ),
+        [entry0, entry1, entry2, entry3, entry4, entry5] => add_rotated_dense_tables(
+            dst,
+            [
+                table(entry0),
+                table(entry1),
+                table(entry2),
+                table(entry3),
+                table(entry4),
+                table(entry5),
+            ],
+        ),
+        [entry0, entry1, entry2, entry3, entry4, entry5, entry6] => {
+            add_rotated_dense_tables(
+                dst,
+                [
+                    table(entry0),
+                    table(entry1),
+                    table(entry2),
+                    table(entry3),
+                    table(entry4),
+                    table(entry5),
+                    table(entry6),
+                ],
+            );
+        }
+        _ => unreachable!("eight-entry batches leave at most seven contributions"),
+    }
+}
+
+fn fill_compact_rotation_table<const D: usize>(table: &mut [[i16; D]], dense: &[i8; D]) {
+    debug_assert_eq!(table.len(), D);
+    for (shift, row) in table.iter_mut().enumerate() {
+        let split = D - shift;
+        for (dst, &value) in row[shift..].iter_mut().zip(&dense[..split]) {
+            *dst = i16::from(value);
+        }
+        for (dst, &value) in row[..shift].iter_mut().zip(&dense[split..]) {
+            *dst = -i16::from(value);
+        }
+    }
+}
+
+#[inline(always)]
 fn add_rotated_contributions<const D: usize>(
     dst: &mut [i32; D],
     contributions: &[(usize, usize)],
@@ -1845,78 +1936,9 @@ fn add_rotated_contributions<const D: usize>(
             }
         }
         PreparedRotations::Dense(rotated) => {
-            let table = |&(column, coefficient): &(usize, usize)| {
-                &rotated[((trace_block * num_columns + column) * D) + coefficient]
-            };
-            let mut remaining = contributions;
-            while remaining.len() >= 8 {
-                add_rotated_dense_tables(
-                    dst,
-                    [
-                        table(&remaining[0]),
-                        table(&remaining[1]),
-                        table(&remaining[2]),
-                        table(&remaining[3]),
-                        table(&remaining[4]),
-                        table(&remaining[5]),
-                        table(&remaining[6]),
-                        table(&remaining[7]),
-                    ],
-                );
-                remaining = &remaining[8..];
-            }
-            match remaining {
-                [] => {}
-                [entry0] => add_rotated_dense(dst, table(entry0)),
-                [entry0, entry1] => {
-                    add_rotated_dense_tables(dst, [table(entry0), table(entry1)]);
-                }
-                [entry0, entry1, entry2] => {
-                    add_rotated_dense_tables(dst, [table(entry0), table(entry1), table(entry2)]);
-                }
-                [entry0, entry1, entry2, entry3] => add_rotated_dense_tables(
-                    dst,
-                    [table(entry0), table(entry1), table(entry2), table(entry3)],
-                ),
-                [entry0, entry1, entry2, entry3, entry4] => add_rotated_dense_tables(
-                    dst,
-                    [
-                        table(entry0),
-                        table(entry1),
-                        table(entry2),
-                        table(entry3),
-                        table(entry4),
-                    ],
-                ),
-                [entry0, entry1, entry2, entry3, entry4, entry5] => {
-                    add_rotated_dense_tables(
-                        dst,
-                        [
-                            table(entry0),
-                            table(entry1),
-                            table(entry2),
-                            table(entry3),
-                            table(entry4),
-                            table(entry5),
-                        ],
-                    );
-                }
-                [entry0, entry1, entry2, entry3, entry4, entry5, entry6] => {
-                    add_rotated_dense_tables(
-                        dst,
-                        [
-                            table(entry0),
-                            table(entry1),
-                            table(entry2),
-                            table(entry3),
-                            table(entry4),
-                            table(entry5),
-                            table(entry6),
-                        ],
-                    );
-                }
-                _ => unreachable!("eight-entry batches leave at most seven contributions"),
-            }
+            add_rotated_dense_contributions(dst, rotated, contributions, |column, coefficient| {
+                ((trace_block * num_columns + column) * D) + coefficient
+            });
         }
         PreparedRotations::Sparse(challenges) => {
             for &(column, coefficient) in contributions {
@@ -2008,6 +2030,17 @@ fn decompose_fold_packed_with_mode<const D: usize>(
             .min(cache_sized_chunk)
             .min(num_positions);
         let position_tasks = num_positions.div_ceil(position_chunk);
+        let use_local_dense_rotations = D == 128
+            && source.one_hot_k == 256
+            && matches!(&rotations, PreparedRotations::Compact(_));
+        let local_rotation_rows = if use_local_dense_rotations {
+            source.rows.num_columns().checked_mul(D).ok_or_else(|| {
+                AkitaError::InvalidInput("local decompose rotation table size overflow".to_string())
+            })?
+        } else {
+            0
+        };
+        let local_rotation_bytes = local_rotation_rows * std::mem::size_of::<[i16; D]>();
         let _compress_span = tracing::info_span!(
             "trace_onehot_decompose_accumulate",
             mode = "position_parallel",
@@ -2017,6 +2050,8 @@ fn decompose_fold_packed_with_mode<const D: usize>(
             position_chunk,
             position_working_set_bytes = position_chunk * std::mem::size_of::<[i32; D]>(),
             dense_rotations = rotations.is_dense(),
+            local_dense_rotations = use_local_dense_rotations,
+            local_rotation_bytes,
         )
         .entered();
         let mut compressed = vec![[0i32; D]; num_positions];
@@ -2026,7 +2061,21 @@ fn decompose_fold_packed_with_mode<const D: usize>(
             .try_for_each(|(position_task, compressed)| {
                 let position_start = position_task * position_chunk;
                 let position_end = position_start + compressed.len();
+                let mut local_rotations =
+                    use_local_dense_rotations.then(|| vec![[0i16; D]; local_rotation_rows]);
                 for trace_block in 0..blocks_per_column {
+                    if let Some(local_rotations) = local_rotations.as_mut() {
+                        let PreparedRotations::Compact(challenges) = &rotations else {
+                            unreachable!("local dense rotations require compact challenges");
+                        };
+                        for column in 0..source.rows.num_columns() {
+                            let prepared_block = trace_block * source.rows.num_columns() + column;
+                            fill_compact_rotation_table(
+                                &mut local_rotations[column * D..][..D],
+                                &challenges[prepared_block],
+                            );
+                        }
+                    }
                     let ring_start = trace_block * num_positions + position_start;
                     let ring_end = trace_block * num_positions + position_end;
                     if source.one_hot_k < D {
@@ -2086,6 +2135,21 @@ fn decompose_fold_packed_with_mode<const D: usize>(
                                         );
                                     }
                                 }
+                            },
+                        )?;
+                    } else if let Some(local_rotations) = local_rotations.as_ref() {
+                        visit_segment_ring_range::<D>(
+                            source,
+                            ring_start,
+                            ring_end,
+                            |ring, contributions| {
+                                let position = ring - trace_block * num_positions;
+                                add_rotated_dense_contributions(
+                                    &mut compressed[position - position_start],
+                                    local_rotations,
+                                    contributions,
+                                    |column, coefficient| column * D + coefficient,
+                                );
                             },
                         )?;
                     } else {
