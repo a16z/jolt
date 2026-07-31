@@ -162,8 +162,8 @@ impl FastTail {
     /// Apply the stock first challenge using its already-computed inverse.
     pub fn apply_first_challenge(&mut self, beta: &ArkFr, beta_inv: &ArkFr) {
         let n = self.n;
-        JoltG1Routines::fixed_scalar_mul_bases_then_add(&self.g1[..n], &mut self.v1, beta);
-        JoltG2Routines::fixed_scalar_mul_bases_then_add(&self.g2[..n], &mut self.v2, beta_inv);
+        JoltG1Routines::host_fixed_scalar_mul_bases_then_add(&self.g1[..n], &mut self.v1, beta);
+        JoltG2Routines::host_fixed_scalar_mul_bases_then_add(&self.g2[..n], &mut self.v2, beta_inv);
     }
 
     /// Stock transparent second message with tail-wide parallelism.
@@ -217,10 +217,10 @@ impl FastTail {
     pub fn apply_second_challenge(&mut self, alpha: &ArkFr, alpha_inv: &ArkFr) {
         let n2 = self.n / 2;
         let (v1_left, v1_right) = self.v1.split_at_mut(n2);
-        JoltG1Routines::fixed_scalar_mul_vs_then_add(v1_left, v1_right, alpha);
+        JoltG1Routines::host_fixed_scalar_mul_vs_then_add(v1_left, v1_right, alpha);
         self.v1.truncate(n2);
         let (v2_left, v2_right) = self.v2.split_at_mut(n2);
-        JoltG2Routines::fixed_scalar_mul_vs_then_add(v2_left, v2_right, alpha_inv);
+        JoltG2Routines::host_fixed_scalar_mul_vs_then_add(v2_left, v2_right, alpha_inv);
         self.v2.truncate(n2);
         self.n = n2;
     }
