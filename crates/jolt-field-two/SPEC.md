@@ -176,6 +176,52 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
   baseline compiled its two-case body for arbitrary `FpExt2Config`s; the
   port debug-asserts `NR ∈ {−1, 2}`.
 
+**Dropped-specialization evidence (checkpoint 8, packed):**
+
+- **Mechanism note:** the "engine macro stamped per width × ISA" pillar is
+  realized as generic types (`PackedFp32/64/128<P, I: SimdWord>`) over a
+  per-ISA vocabulary trait in `simd.rs`, with `macro_rules!` used only for
+  operator stamping (`impl_packed_arith!`) and vocabulary forwarding
+  (`fwd!`). Same one-source-of-truth outcome, stronger type checking, and
+  it moved weight from `engine.rs` (284/550) into `simd.rs` (352/350).
+- **Added (not in baseline's contract shape):** `ext4_mul`/`ext4_square`/
+  `ext8_mul`/`ext8_square` kernel hooks on `Packed` with schedule defaults
+  (`schedules.rs`), so the fp32 engines can override the deg-4 kernels with
+  fused deferred-reduction dot products and every backend shares one
+  formula source. This puts `packed.rs` at 105 vs its 90 budget; the hooks
+  cannot live elsewhere (overridable defaults need the trait).
+- **Kept:** the NEON 31-bit pseudo-Mersenne multiply kernel (`mul_pm31`,
+  all lanes stay 32-bit via `vqdmulhq_s32`), generalized to cover `C = 1`:
+  it serves the registered `Prime31Offset19` on the benched native ISA.
+- **Dropped:** the dedicated Mersenne31 (`C == 1`) multiply kernels on all
+  three ISAs — no registered prime has `C = 1`; NEON's kept `mul_pm31`
+  subsumes the case, x86 falls back to the value-identical generic fold.
+- **Dropped:** the `BITS == 31` immediate-shift fold variants
+  (`solinas_reduce_bits31` and friends, per-ISA) — value-identical
+  micro-opts duplicating the whole fold; 31-bit packed multiplies now go
+  through `mul_pm31` on NEON anyway, so only the ext dot products take the
+  variable-shift 64-bit fold.
+- **Dropped:** the NEON per-C shift-add chains for `C ∈ {19, 35, 99}`;
+  replaced by an ISA-generic `C = 2^a ± 1` shift-add fast path in the
+  shared engine (`mul_by_offset`, covers `C = 3`) — no in-tree benchmark
+  existed for the chains, and the generic `mul_small` handles the rest.
+- **Dropped:** the NEON `BITS == 32` dot-product carry-tracking machinery
+  (`add_u64_with_carry`/`carry_correction`/`SHIFT64_MOD_P`); all ISAs now
+  use the x86 per-product prefold strategy (value-identical, comparable op
+  count, one shared bound argument).
+- **Dropped:** the vectorized packed ext2/ext4 inverse formulas; all packed
+  inversion is lane-wise scalar (the `Packed::inverse` default). Every
+  formulation performs one lane-serial base-field Fermat inversion per
+  lane, which dominates; only ~20 non-inversion multiplies per lane change
+  from packed to scalar, on a cold path.
+- **Changed:** packed `Fp128` multiplication calls the scalar kernel per
+  lane on every ISA — on AArch64 that is the inline-asm multiply, strictly
+  better than the baseline NEON backend's duplicated portable fold
+  (avx2/avx512 baselines already went lane-by-lane).
+- **No unreduced coupling:** the packed layer consumes only `schedules.rs`
+  and the scalar field types; nothing awaits the checkpoint-7 `Unreduced`
+  surface.
+
 ## Design pillars
 
 1. **Const-generic scalar core**: `Fp64<const P: u64>` etc., fold constants
