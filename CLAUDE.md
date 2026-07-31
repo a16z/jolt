@@ -54,6 +54,10 @@ cargo run --release -p jolt-prover --features profiling -- profile --name fibona
 jq '.stages | map({label, s: (.wall_time_ns/1e9)})' benchmark-runs/perfetto_traces/modular_fibonacci_16.summary.json
 jq '.spans | to_entries | sort_by(-.value.total_ns) | .[:10]' benchmark-runs/perfetto_traces/modular_fibonacci_16.summary.json
 
+# Multi-scale sweep (one profile subprocess per run; results in benchmark-runs/results/modular_timings.csv,
+# rendered by scripts/benchmark_summary.py, plot_benchmarks.py, plot_memory_usage.py)
+cargo run --release -p jolt-prover --features profiling -- benchmark --min-scale 18 --max-scale 21 --resume
+
 # Per-stage heap flamegraph SVGs (benchmark-runs/flamegraphs/)
 cargo run --release -p jolt-prover --features profiling,allocative -- profile --name fibonacci --format chrome
 

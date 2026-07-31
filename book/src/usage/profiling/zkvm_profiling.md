@@ -35,6 +35,31 @@ feature enables the system monitor, so CPU/memory counters render as native
 Perfetto counter tracks directly from the emitted trace — no offline
 post-processing step.
 
+## Benchmark sweeps
+
+The `benchmark` subcommand sweeps workloads across scales — one `profile`
+subprocess per (workload, scale), continuing past failures, with `--resume`
+skipping runs whose result CSV already exists:
+
+```bash
+cargo run --release -p jolt-prover --features profiling -- \
+    benchmark --min-scale 18 --max-scale 21 --resume
+# --benchmarks fibonacci,sha2-chain limits the workload set
+```
+
+Results accumulate in `benchmark-runs/results/modular_timings.csv`; render
+them with:
+
+```bash
+python3 scripts/benchmark_summary.py     # per-scale table
+python3 scripts/plot_benchmarks.py       # speed + proof-size plots
+python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.json)
+```
+
+Mind the machine: the reference backend retains ~18 GiB regardless of scale
+and grows steeply with it — large-scale sweeps are for big-memory hosts
+until an optimized backend lands.
+
 The span labels are a versioned public schema — taxonomy v1 lives in the
 `jolt-profiling` crate docs (`crates/jolt-profiling/src/taxonomy.rs`), the
 normative source for label names, level policy, and the hot-loop rule.

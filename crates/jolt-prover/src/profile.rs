@@ -147,6 +147,17 @@ pub enum OutputFormat {
     None,
 }
 
+impl OutputFormat {
+    /// The clap value name, for the sweep's self-exec.
+    const fn as_cli_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Chrome => "chrome",
+            Self::None => "none",
+        }
+    }
+}
+
 /// Prover backend selector. `reference` is the only backend today and is a
 /// test oracle: absolute numbers are provisional, attribution is meaningful
 /// relatively, and optimized backends slot into the same instrumented seams.
@@ -172,6 +183,32 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
+}
+
+/// `benchmark` subcommand arguments: a multi-scale sweep over the workload
+/// table, one `profile` subprocess per (workload, scale) — the port of the
+/// retired `scripts/jolt_benchmarks.sh` (subprocess-per-run keeps the global
+/// tracing subscriber and the per-run `getrusage` peak RSS correct).
+#[derive(Debug, clap::Args)]
+pub struct BenchmarkArgs {
+    /// Workloads to sweep (comma-separated; default: all four).
+    #[clap(long, value_enum, value_delimiter = ',')]
+    pub benchmarks: Option<Vec<Workload>>,
+
+    /// Smallest log2 trace length in the sweep.
+    #[clap(long, default_value_t = 18)]
+    pub min_scale: u32,
+
+    /// Largest log2 trace length in the sweep (inclusive).
+    #[clap(long, default_value_t = 21)]
+    pub max_scale: u32,
+
+    /// Skip (workload, scale) pairs whose per-run result CSV already exists.
+    #[clap(long)]
+    pub resume: bool,
+
+    #[clap(long, value_enum, default_value = "chrome")]
+    pub format: OutputFormat,
 }
 
 /// Artifact paths of one profile run (`None` unless `--format chrome`).
@@ -244,6 +281,92 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         summary_path: Some(summary_file),
         summary: Some(summary),
     }
+}
+
+/// Runs the multi-scale benchmark sweep: one `profile` subprocess (this same
+/// executable) per (workload, scale), continuing past failures. Returns
+/// `true` when every run succeeded.
+///
+/// Results accumulate in `benchmark-runs/results/modular_timings.csv`;
+/// render them with `scripts/benchmark_summary.py`,
+/// `scripts/plot_benchmarks.py`, and `scripts/plot_memory_usage.py`.
+pub fn run_sweep(args: &BenchmarkArgs) -> bool {
+    let workloads = args.benchmarks.clone().unwrap_or_else(|| {
+        vec![
+            Workload::Fibonacci,
+            Workload::Sha2Chain,
+            Workload::Sha3Chain,
+            Workload::BTreeMap,
+        ]
+    });
+    let exe = std::env::current_exe().expect("resolve current executable");
+
+    let mut completed = 0u32;
+    let mut skipped = 0u32;
+    let mut failed: Vec<String> = Vec::new();
+
+    for scale in args.min_scale..=args.max_scale {
+        println!("=== Running benchmarks at scale 2^{scale} ===");
+        for &workload in &workloads {
+            let name = workload.as_str();
+            let result_file = format!("benchmark-runs/results/modular_{name}_{scale}.csv");
+            if args.resume && std::path::Path::new(&result_file).exists() {
+                println!("  ⏭ Skipping {name} (found {result_file})");
+                skipped += 1;
+                continue;
+            }
+
+            let scale_arg = scale.to_string();
+            let command_line = format!(
+                "{} profile --name {name} --scale {scale_arg} --format {}",
+                exe.display(),
+                args.format.as_cli_str(),
+            );
+            let status = std::process::Command::new(&exe)
+                .args([
+                    "profile",
+                    "--name",
+                    name,
+                    "--scale",
+                    &scale_arg,
+                    "--format",
+                    args.format.as_cli_str(),
+                ])
+                .status();
+            match status {
+                Ok(status) if status.success() => completed += 1,
+                Ok(status) => {
+                    eprintln!("  ❌ FAILED ({status}): {command_line}");
+                    failed.push(command_line);
+                }
+                Err(e) => {
+                    eprintln!("  ❌ FAILED to spawn ({e}): {command_line}");
+                    failed.push(command_line);
+                }
+            }
+        }
+        println!();
+    }
+
+    println!("================================================");
+    println!("Benchmark sweep summary:");
+    println!("  ✓ Completed: {completed}");
+    if skipped > 0 {
+        println!("  ⏭ Skipped: {skipped}");
+    }
+    if !failed.is_empty() {
+        println!("  ❌ Failed: {}", failed.len());
+        for command_line in &failed {
+            println!("     {command_line}");
+        }
+    }
+    println!();
+    println!("Render results with:");
+    println!("  python3 scripts/benchmark_summary.py");
+    println!("  python3 scripts/plot_benchmarks.py");
+    println!("  python3 scripts/plot_memory_usage.py");
+
+    failed.is_empty()
 }
 
 fn run_workload(workload: Workload, scale: u32, backend: BackendKind) {
@@ -392,11 +515,21 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind) {
     if let Err(e) = fs::write(&individual_file, &summary_line) {
         eprintln!("Failed to write individual result file {individual_file}: {e}");
     }
+    // Header on creation: the summary/plot scripts read this by column name.
+    let consolidated = "benchmark-runs/results/modular_timings.csv";
+    let line = if std::path::Path::new(consolidated).exists() {
+        summary_line
+    } else {
+        format!(
+            "benchmark_name,scale,prover_time_s,trace_length,proving_hz,\
+             proof_size,proof_size_compressed\n{summary_line}"
+        )
+    };
     if let Err(e) = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("benchmark-runs/results/modular_timings.csv")
-        .and_then(|mut f| f.write_all(summary_line.as_bytes()))
+        .open(consolidated)
+        .and_then(|mut f| f.write_all(line.as_bytes()))
     {
         eprintln!("Failed to write consolidated timing: {e}");
     }
