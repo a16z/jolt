@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785425835899,
+  "lastUpdate": 1785529679566,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -129910,6 +129910,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 863172,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6f0a404a00788c6aadcdf1b8cf9d0f37b92c8f7",
+          "message": "feat(jolt-prover): BlindFold ZK support in the modular prover (#1690)\n\n* docs(specs): BlindFold ZK support in the modular prover\n\n* refactor(jolt-openings): return the joint evaluation from prove_batch_zk\n\n* feat(jolt-blindfold): prover-side construction and witness assembly\n\n* refactor(jolt-verifier): promote the stage spine to verify_stages and expose the BlindFold construction\n\n* feat(jolt-kernels): zk feature selecting the hiding streaming finishes\n\n* feat(jolt-prover): compile-time zk mode seam through the stage recipes\n\n* test(jolt-prover): modular ZK e2e — muldiv accept, tamper reject, committed program\n\n* chore: update Cargo.lock for the jolt-prover zk feature deps\n\n* refactor(blindfold): keep the ZK replay prover-side with a zero jolt-verifier diff\n\nThe verify_stages promotion and blindfold::build_construction are reverted:\njolt-verifier returns to its pre-PR state and the prover consumes only its\nexisting public verification surface. The replay spine lives in\njolt-prover (the zk-audit pattern), and witness assembly becomes\nBlindFoldProtocol::assign_witness — a matrix-driven product solver over the\nprotocol's public parts, needing no statement or baked sources.\n\n* fix: harden the ZK replay seam and solver contract after review\n\nThe replay-vs-forward transcript compare is now a hard\nProverError::InvariantViolation (32 bytes, release provers diagnose drift\nat the seam instead of as a downstream BlindFold failure), solve_products\nasserts the emission-order contract it rests on, and the prove doc no\nlonger claims a clear-only envelope.\n\n* test: cover ZK advice e2e and the product-auxiliary solver\n\nzk_advice_consumer_modular_proof_is_accepted closes the ZK x advice gap:\nhiding trusted-advice preprocessing commit (commit_advice under zk),\nprove-time hiding untrusted commit, and the advice claim reductions\nthrough BlindFold, verified by the unmodified jolt-verifier. The\nproduct-bearing assignment fixture pins solve_products at unit level —\nstage 2's input claim is a product of two stage-1 output-claim openings,\nso the lowering allocates an auxiliary the constant-claim fixture never\ndid.\n\n* refactor(jolt-verifier): typed claims swap on JoltProof replaces the shell rebuild\n\nThe ZK tail's () -> BlindFoldProof swap changes JoltProof's type\nparameter, which forced an 11-field destructure and rebuild in the\nprover. Move that rebuild into a with_claims combinator next to the\nstruct, where a future field addition already has to go, and collapse\nthe prover tail to one line.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(jolt-blindfold): validate blinding vector lengths in assign_witness\n\nEvery other dimension of CommittedSumcheckWitness was hard-checked, but\nthe blind vectors flowed into slice_rows positionally, where resize()\nsilently truncates a surplus or zero-fills a deficit. Blinds never enter\nthe R1CS, so no satisfiability check can catch the miscount — a shifted\npairing would reuse retained blinds across rows or zero-blind a\nsecret-bearing row, failing only at the remote verifier.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* test(jolt-kernels): pin the mode seam's hiding and determinism per flavor\n\nA zk build whose streaming finishes were mis-routed to the transparent\narm would stay fully green — zero-blind commitments verify everywhere,\nthe byte-diff suite is clear-only, and jolt-dory's blinding tests call\nfinish_zk directly, bypassing the seam. Pin the seam itself: identical\nstreams must differ under zk (fresh blinds) and match without it.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* ci: run the modular jolt-prover fixture and zk acceptance suites\n\nThe crate-matrix job tests modular crates with default features only, so\nthe byte-diff ratchets (prover-fixtures) and the ZK e2e suite\n(prover-fixtures,zk) — this PR's headline feature — never ran in CI.\nPiggyback on the legacy prover jobs, which already install the jolt CLI\nthe fixture builds need, mirroring the akita suites' precedent.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* Revert \"test(jolt-kernels): pin the mode seam's hiding and determinism per flavor\"\n\nThis reverts commit 875508fe6b7abd09495eae82f0bb9a0bbfae54a9, and drops\nthe CI comment's reference to the reverted hiding-finish pins (the\nkernels zk step itself stays — it covers the crate's zk unit suite).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-07-31T12:18:52-07:00",
+          "tree_id": "21582a7c8d9ac8ba870778c207d39cfa01595460",
+          "url": "https://github.com/a16z/jolt/commit/b6f0a404a00788c6aadcdf1b8cf9d0f37b92c8f7"
+        },
+        "date": 1785529675451,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.1356,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 873568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.438,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 501332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 505064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7733,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498044,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6183,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498900,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.2348,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.2495,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 202888,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5345,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861548,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5929,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 503304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4819,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 506964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.8649,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500316,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.1165,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.7785,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1046860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.1996,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 644828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 110.9111,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2122476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5848,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 511196,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6186,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 17.029,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 868572,
             "unit": "KB",
             "extra": ""
           }
