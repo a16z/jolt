@@ -3617,6 +3617,7 @@ dependencies = [
  "bincode 2.0.1",
  "clap",
  "common",
+ "jolt-akita",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
