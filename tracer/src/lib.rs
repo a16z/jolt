@@ -1236,6 +1236,51 @@ mod tests {
     }
 
     #[test]
+    /// A count-preserving replay divergence must trip the boundary-state
+    /// verification. Fault injection corrupts one worker register after
+    /// replay (row counts stay equal), so only the boundary check can catch
+    /// it; without it the trace would be assembled silently.
+    fn test_boundary_divergence_panics() {
+        use crate::parallel::{run_two_pass, TwoPassConfig, TEST_CORRUPT_BOUNDARY_STATE};
+        use std::sync::atomic::Ordering;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let elf = build_muldiv_guest();
+        let memory_config = MemoryConfig {
+            program_size: Some(elf.len() as u64),
+            ..Default::default()
+        };
+        let emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
+        TEST_CORRUPT_BOUNDARY_STATE.store(true, Ordering::Relaxed);
+
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_two_pass(
+                    emulator,
+                    &TwoPassConfig {
+                        workers: 1,
+                        chunk_rows: 64,
+                        capacity_rows: 1 << 24,
+                    },
+                )
+            }));
+            let _ = done_tx.send(result.is_err());
+        });
+
+        match done_rx.recv_timeout(Duration::from_secs(60)) {
+            Ok(panicked) => assert!(
+                panicked,
+                "a count-preserving state divergence must panic the trace"
+            ),
+            Err(_) => {
+                panic!("two-pass trace hung on boundary divergence instead of panicking")
+            }
+        }
+    }
+
+    #[test]
     fn test_trace_length() {
         let elf = build_muldiv_guest();
         let memory_config = MemoryConfig {
