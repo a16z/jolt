@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, JoltDerivedId, JoltRelationId, RamRaClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -24,7 +24,7 @@ use crate::VerifierError;
 /// Wire this relation's consumed opening *values* from the upstream outputs: the
 /// RAF-evaluation and read-write openings (stage 2) and the val-check opening
 /// (stage 4). Takes the ZK-agnostic output-claims aggregates.
-pub fn ram_ra_claim_reduction_input_values_from_upstream<F: Field>(
+pub fn ram_ra_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4OutputClaims<F>,
 ) -> RamRaClaimReductionInputClaims<F> {
@@ -37,7 +37,7 @@ pub fn ram_ra_claim_reduction_input_values_from_upstream<F: Field>(
 
 /// Wire this relation's consumed opening *points* from the upstream output-points
 /// aggregates.
-pub fn ram_ra_claim_reduction_input_points_from_upstream<F: Field>(
+pub fn ram_ra_claim_reduction_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
 ) -> RamRaClaimReductionInputClaims<Vec<F>> {
@@ -49,14 +49,14 @@ pub fn ram_ra_claim_reduction_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RamRaClaimReduction<F: Field> {
+pub struct RamRaClaimReduction<F: JoltField> {
     symbolic: relations::ram::RaClaimReduction,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> RamRaClaimReduction<F> {
+impl<F: JoltField> RamRaClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, ram_log_k: usize) -> Self {
         Self {
             symbolic: relations::ram::RaClaimReduction::new(trace_dimensions),
@@ -74,7 +74,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> RamRaClaimReduction<F> {
+impl<F: JoltField> RamRaClaimReduction<F> {
     pub fn trace_dimensions(&self) -> TraceDimensions {
         self.trace_dimensions
     }
@@ -84,7 +84,7 @@ impl<F: Field> RamRaClaimReduction<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
     type Symbolic = relations::ram::RaClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {

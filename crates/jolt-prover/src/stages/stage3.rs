@@ -9,7 +9,7 @@
 //! backend's slots.
 
 use jolt_claims::protocols::jolt::TraceDimensions;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
@@ -28,7 +28,7 @@ use crate::{ProverConfig, ProverError, StageProver as _};
 /// Stage 3's outputs: the wire proof, the wire claims (the raw batch
 /// aggregate — no uni-skip wrapper), and the verifier-typed cross-stage
 /// carrier downstream stages consume.
-pub struct Stage3ProverOutput<F: Field, C> {
+pub struct Stage3ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage3OutputClaims<F>,
     pub clear_output: Stage3ClearOutput<F>,
@@ -45,7 +45,7 @@ pub fn prove_stage3<F, PCS, C, T>(
     transcript: &mut T,
 ) -> Result<Stage3ProverOutput<F, C>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,

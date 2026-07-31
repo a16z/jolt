@@ -14,6 +14,17 @@ use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, Wi
 use ark_ff::{BigInteger, PrimeField, UniformRand};
 use rand_core::RngCore;
 
+macro_rules! from_primitives {
+    ($ty:ident: $via:ident[$($prim:ty),*]) => {
+        $(impl From<$prim> for $ty {
+            #[inline(always)]
+            fn from(v: $prim) -> Self {
+                <$ty as Ring>::$via(v as _)
+            }
+        })*
+    };
+}
+
 /// Stamps a BN254 field wrapper: operators, conversions, serde (canonical
 /// 32-byte LE), ark-serialize interop, and the canonical-encoding surface.
 macro_rules! wrap_bn254 {
@@ -44,6 +55,11 @@ macro_rules! wrap_bn254 {
                 wrapper.0
             }
         }
+
+        // Primitive-integer From conversions (reducing), matching the surface
+        // the plain arkworks types exposed to consumers.
+        from_primitives!($ty: from_u128[bool, u8, u16, u32, u64, u128]);
+        from_primitives!($ty: from_i128[i8, i16, i32, i64, i128]);
 
         impl std::fmt::Debug for $ty {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

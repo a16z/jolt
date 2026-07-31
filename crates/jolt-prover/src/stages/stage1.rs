@@ -11,7 +11,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
     OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{prove_uniskip_clear, ClearSumcheckRecorder, SumcheckProof};
@@ -29,7 +29,7 @@ use crate::{ProverError, StageProver as _};
 
 /// Stage 1's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
-pub struct Stage1ProverOutput<F: Field, C> {
+pub struct Stage1ProverOutput<F: JoltField, C> {
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage1OutputClaims<F>,
@@ -45,7 +45,7 @@ pub fn prove_stage1<F, PCS, C, T>(
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, C>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,

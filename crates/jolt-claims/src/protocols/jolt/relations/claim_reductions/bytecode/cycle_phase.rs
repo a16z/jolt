@@ -1,6 +1,6 @@
 //! Cycle phase of the two-phase committed-bytecode claim-reduction relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use super::BytecodeReductionShape;
@@ -81,7 +81,7 @@ impl SymbolicSumcheck for CyclePhase {
         TWO_PHASE_DEGREE_BOUND
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let eta = challenge(BytecodeClaimReductionChallenge::Eta);
         let mut input = JoltExpr::zero();
         for stage in 0..NUM_BYTECODE_VAL_STAGES {
@@ -90,7 +90,7 @@ impl SymbolicSumcheck for CyclePhase {
         input
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let (dimensions, chunk_count) = self.shape;
         if dimensions.has_address_phase() {
             opening(cycle_phase_intermediate_opening())
@@ -105,7 +105,7 @@ mod tests {
     use super::*;
 
     use crate::protocols::jolt::{BooleanityChallenge, PrecommittedReductionDimensions};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

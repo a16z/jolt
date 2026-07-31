@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use jolt_claims::{InputClaims, OutputClaims, Source, SumcheckChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -52,7 +52,7 @@ use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 /// the round loop cannot miss a leaf.
 pub struct NaiveSumcheckProver<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -75,7 +75,7 @@ where
 
 impl<F, R> NaiveSumcheckProver<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -189,7 +189,7 @@ where
 
 impl<F, R> ProveRounds<F> for NaiveSumcheckProver<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -278,7 +278,7 @@ where
 
 impl<F, R> SumcheckKernel<F> for NaiveSumcheckProver<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -354,7 +354,7 @@ mod tests {
     use jolt_claims::{
         challenge, derived, opening, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
     };
-    use jolt_field::{Field, Fr, FromPrimitiveInt, RingCore};
+    use jolt_field::{Fr, JoltField, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         append_sumcheck_claim, prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder,
@@ -435,11 +435,11 @@ mod tests {
             3
         }
 
-        fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
             opening(virt(JoltVirtualPolynomial::UnexpandedPC))
         }
 
-        fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
             opening(virt(JoltVirtualPolynomial::LookupOutput))
                 * opening(virt(JoltVirtualPolynomial::LeftLookupOperand))
                 * derived(JoltDerivedId::Test)
@@ -451,12 +451,12 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct ToyRelation<F: Field> {
+    struct ToyRelation<F: JoltField> {
         symbolic: ToySymbolic,
         reference_point: Vec<F>,
     }
 
-    impl<F: Field> ConcreteSumcheck<F> for ToyRelation<F> {
+    impl<F: JoltField> ConcreteSumcheck<F> for ToyRelation<F> {
         type Symbolic = ToySymbolic;
 
         fn symbolic(&self) -> &ToySymbolic {
@@ -873,22 +873,22 @@ mod tests {
             self.0.degree()
         }
 
-        fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
             opening(virt(JoltVirtualPolynomial::LookupOutput))
         }
 
-        fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
             self.0.output_expression::<F>()
         }
     }
 
     #[derive(Clone)]
-    struct ToyLeafRelation<F: Field> {
+    struct ToyLeafRelation<F: JoltField> {
         symbolic: ToyLeafSymbolic,
         reference_point: Vec<F>,
     }
 
-    impl<F: Field> ConcreteSumcheck<F> for ToyLeafRelation<F> {
+    impl<F: JoltField> ConcreteSumcheck<F> for ToyLeafRelation<F> {
         type Symbolic = ToyLeafSymbolic;
 
         fn symbolic(&self) -> &ToyLeafSymbolic {

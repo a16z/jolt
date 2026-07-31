@@ -4,7 +4,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::JoltBackend;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -53,7 +53,7 @@ pub fn prove<F, PCS, VC, T, W>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,

@@ -158,7 +158,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     }
 }
 
-impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_, T> {
+impl<F: JoltField, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_, T> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         self.shape_of(id)
     }

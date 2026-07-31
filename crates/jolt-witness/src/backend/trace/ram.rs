@@ -3,7 +3,7 @@
 use super::*;
 
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
-    pub(crate) fn materialize_ram_read_write_virtual<F: Field>(
+    pub(crate) fn materialize_ram_read_write_virtual<F: JoltField>(
         &self,
         id: JoltVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
@@ -16,7 +16,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         }
     }
 
-    pub(crate) fn materialize_ram_val<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_ram_val<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
         let mut state = self.initial_ram_state()?;
@@ -50,7 +50,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         Ok(values)
     }
 
-    pub(crate) fn materialize_ram_ra<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_ram_ra<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
         let mut values = vec![F::zero(); addresses * cycles];
@@ -70,7 +70,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         Ok(values)
     }
 
-    pub(crate) fn materialize_ram_val_final<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_ram_val_final<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         self.final_ram_state()
             .map(|state| state.into_iter().map(F::from_u64).collect())
     }

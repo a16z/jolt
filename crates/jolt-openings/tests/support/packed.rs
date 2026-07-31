@@ -1,4 +1,4 @@
-use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
+use jolt_field::{Field, Fr, Ring};
 use jolt_openings::{EvaluationClaim, OpeningsError, PrefixPacking};
 use jolt_poly::Polynomial;
 use rand_chacha::ChaCha20Rng;
@@ -72,7 +72,7 @@ pub fn independent_claims(
         .collect()
 }
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaterializedPackedWitness<Id, F> {
@@ -85,7 +85,7 @@ pub fn materialize_packed<Id, F>(
 ) -> Result<MaterializedPackedWitness<Id, F>, OpeningsError>
 where
     Id: Clone + Ord,
-    F: Field,
+    F: JoltField,
 {
     let packing = PrefixPacking::new(
         polynomials

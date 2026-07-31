@@ -3,13 +3,13 @@ use std::{
     hash::Hash,
 };
 
-use jolt_field::{CanonicalRepr, FieldCore, FromPrimitiveInt};
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 /// Scalar capabilities used by the verifier-side sumcheck crate.
 pub trait SumcheckScalar:
-    FieldCore
-    + FromPrimitiveInt
-    + CanonicalRepr
+    Field
+    + Ring
+    + CanonicalEncoding
     + Copy
     + Default
     + Eq
@@ -23,12 +23,12 @@ pub trait SumcheckScalar:
 }
 
 impl<F> SumcheckScalar for F where
-    F: FieldCore
-        + FromPrimitiveInt
-        + FromPrimitiveInt
-        + CanonicalRepr
-        + CanonicalRepr
-        + CanonicalRepr
+    F: Field
+        + Ring
+        + Ring
+        + CanonicalEncoding
+        + CanonicalEncoding
+        + CanonicalEncoding
         + Copy
         + Default
         + Eq

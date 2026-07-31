@@ -7,7 +7,7 @@
 
 use std::marker::PhantomData;
 
-use jolt_field::{CanonicalBytes, CanonicalRepr, Field, FromPrimitiveInt};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, JoltField, Ring};
 use spongefish::{DuplexSpongeInterface, Encoding};
 
 use crate::codec::BytesMsg;
@@ -30,7 +30,7 @@ pub const MAX_LABEL_LEN: usize = 32;
 /// barriers.
 pub trait Transcript: Default + Sync + Send + 'static {
     /// The challenge type produced by this transcript.
-    type Challenge: CanonicalRepr;
+    type Challenge: CanonicalEncoding;
 
     /// Creates a new transcript with the given domain separation label.
     ///
@@ -81,7 +81,7 @@ pub trait Transcript: Default + Sync + Send + 'static {
     #[must_use]
     fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge>
     where
-        Self::Challenge: Field,
+        Self::Challenge: JoltField,
     {
         let gamma = self.challenge_scalar();
         let mut powers = vec![Self::Challenge::from_u64(1); len];
@@ -204,7 +204,7 @@ impl AppendToTranscript for U64Word {
 pub struct SpongeTranscript<H, F = jolt_field::Fr>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: CanonicalRepr,
+    F: CanonicalEncoding,
 {
     sponge: H,
     _field: PhantomData<F>,
@@ -213,7 +213,7 @@ where
 impl<H, F> Default for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: CanonicalRepr,
+    F: CanonicalEncoding,
 {
     fn default() -> Self {
         Self::new(b"")
@@ -239,7 +239,7 @@ fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] 
 impl<H, F> Transcript for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: CanonicalRepr,
+    F: CanonicalEncoding,
 {
     type Challenge = F;
 

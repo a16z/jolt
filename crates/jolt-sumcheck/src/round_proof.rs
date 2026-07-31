@@ -1,6 +1,6 @@
 //! Per-round sumcheck messages.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
@@ -26,7 +26,7 @@ pub trait ClearRound<F: SumcheckScalar>: RoundMessage {
     }
 }
 
-impl<F: Field> RoundMessage for UnivariatePoly<F> {
+impl<F: JoltField> RoundMessage for UnivariatePoly<F> {
     fn degree(&self) -> usize {
         UnivariatePolynomial::degree(self)
     }
@@ -38,7 +38,7 @@ impl<F: Field> RoundMessage for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> ClearRound<F> for UnivariatePoly<F> {
+impl<F: JoltField> ClearRound<F> for UnivariatePoly<F> {
     fn evaluate(&self, challenge: F) -> F {
         UnivariatePoly::evaluate(self, challenge)
     }
@@ -53,12 +53,12 @@ impl<F: Field> ClearRound<F> for UnivariatePoly<F> {
 }
 
 /// Round polynomial paired with a Fiat-Shamir domain-separation label.
-pub struct LabeledRoundPoly<'a, F: Field> {
+pub struct LabeledRoundPoly<'a, F: JoltField> {
     poly: &'a UnivariatePoly<F>,
     label: &'static [u8],
 }
 
-impl<'a, F: Field> LabeledRoundPoly<'a, F> {
+impl<'a, F: JoltField> LabeledRoundPoly<'a, F> {
     pub fn new(poly: &'a UnivariatePoly<F>, label: &'static [u8]) -> Self {
         Self { poly, label }
     }
@@ -72,7 +72,7 @@ impl<'a, F: Field> LabeledRoundPoly<'a, F> {
     }
 }
 
-impl<F: Field> RoundMessage for LabeledRoundPoly<'_, F> {
+impl<F: JoltField> RoundMessage for LabeledRoundPoly<'_, F> {
     fn degree(&self) -> usize {
         <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
     }
@@ -86,7 +86,7 @@ impl<F: Field> RoundMessage for LabeledRoundPoly<'_, F> {
     }
 }
 
-impl<F: Field> ClearRound<F> for LabeledRoundPoly<'_, F> {
+impl<F: JoltField> ClearRound<F> for LabeledRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
     }
@@ -102,12 +102,12 @@ impl<F: Field> ClearRound<F> for LabeledRoundPoly<'_, F> {
 /// Compressed round polynomial with label. Wire format omits the linear
 /// coefficient `c_1`; the verifier recovers it from the sum-check invariant
 /// `running_sum = s(0) + s(1) = 2·c_0 + c_1 + c_2 + … + c_d`.
-pub struct CompressedLabeledRoundPoly<'a, F: Field> {
+pub struct CompressedLabeledRoundPoly<'a, F: JoltField> {
     poly: &'a UnivariatePoly<F>,
     label: &'static [u8],
 }
 
-impl<'a, F: Field> CompressedLabeledRoundPoly<'a, F> {
+impl<'a, F: JoltField> CompressedLabeledRoundPoly<'a, F> {
     pub fn new(poly: &'a UnivariatePoly<F>, label: &'static [u8]) -> Self {
         Self { poly, label }
     }
@@ -121,7 +121,7 @@ impl<'a, F: Field> CompressedLabeledRoundPoly<'a, F> {
     }
 }
 
-impl<F: Field> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
+impl<F: JoltField> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
     fn degree(&self) -> usize {
         <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
     }
@@ -136,7 +136,7 @@ impl<F: Field> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
     }
 }
 
-impl<F: Field> ClearRound<F> for CompressedLabeledRoundPoly<'_, F> {
+impl<F: JoltField> ClearRound<F> for CompressedLabeledRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
     }

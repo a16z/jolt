@@ -1,6 +1,6 @@
 //! Hamming-weight claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
@@ -97,7 +97,7 @@ impl SymbolicSumcheck for ClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut input = JoltExpr::zero();
 
@@ -111,7 +111,7 @@ impl SymbolicSumcheck for ClaimReduction {
         input
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut output = JoltExpr::zero();
 
@@ -134,7 +134,7 @@ mod tests {
     use crate::protocols::jolt::geometry::dimensions::JoltFormulaDimensionsError;
     use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
     use crate::protocols::jolt::geometry::ram::ram_hamming_weight;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn layout(
         instruction: usize,

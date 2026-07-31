@@ -2,7 +2,7 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
     FIELD_REGISTERS_LOG_K,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_program::{
     execution::{JoltProgram, TraceOutput, TraceRow, TraceSource},
     field_inline::{
@@ -28,27 +28,27 @@ pub mod witnesses;
 pub const FIELD_INLINE_LABEL: &str = "jolt_vm.field_inline";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FieldInlineRegisterReadRow<F: Field> {
+pub struct FieldInlineRegisterReadRow<F: JoltField> {
     pub register: u8,
     pub value: F,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FieldInlineRegisterWriteRow<F: Field> {
+pub struct FieldInlineRegisterWriteRow<F: JoltField> {
     pub register: u8,
     pub pre_value: F,
     pub post_value: F,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FieldInlineRegisterReadWriteRow<F: Field> {
+pub struct FieldInlineRegisterReadWriteRow<F: JoltField> {
     pub rs1: Option<FieldInlineRegisterReadRow<F>>,
     pub rs2: Option<FieldInlineRegisterReadRow<F>>,
     pub rd: Option<FieldInlineRegisterWriteRow<F>>,
     pub rd_increment: F,
 }
 
-pub trait FieldInlineRegisterReadWriteRows<F: Field> {
+pub trait FieldInlineRegisterReadWriteRows<F: JoltField> {
     fn field_inline_register_read_write_rows(
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
@@ -199,14 +199,18 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
 
     /// Materializes one cycle-domain witness column; rows beyond the trace
     /// are zero. All per-witness logic lives on `W`.
-    fn materialize_cycle<F: Field, W: Extract + FieldValue<F> + Send>(
+    fn materialize_cycle<F: JoltField, W: Extract + FieldValue<F> + Send>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
         self.walk_cycles(|row, env| W::extract(row, None, env).map(FieldValue::value))
     }
 
     /// [`Self::materialize_cycle`] for indexed witness families.
-    fn materialize_cycle_indexed<F: Field, W: ExtractIndexed<I> + FieldValue<F>, I: Copy + Sync>(
+    fn materialize_cycle_indexed<
+        F: JoltField,
+        W: ExtractIndexed<I> + FieldValue<F>,
+        I: Copy + Sync,
+    >(
         &self,
         index: I,
     ) -> Result<Vec<F>, WitnessError> {
@@ -215,7 +219,7 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
         })
     }
 
-    fn walk_cycles<F: Field>(
+    fn walk_cycles<F: JoltField>(
         &self,
         value: impl Fn(&TraceRow, &WitnessEnv<'_>) -> Result<F, WitnessError> + Sync,
     ) -> Result<Vec<F>, WitnessError> {
@@ -233,7 +237,7 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
         Ok(values)
     }
 
-    fn materialize_register_virtual<F: Field>(
+    fn materialize_register_virtual<F: JoltField>(
         &self,
         id: FieldInlineVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
@@ -310,7 +314,7 @@ impl TraceBackedFieldInlineWitness<'_> {
         }
     }
 
-    pub fn oracle_table<F: Field>(
+    pub fn oracle_table<F: JoltField>(
         &self,
         id: FieldInlinePolynomialId,
     ) -> Result<Vec<F>, WitnessError> {
@@ -339,7 +343,7 @@ impl TraceBackedFieldInlineWitness<'_> {
     }
 }
 
-impl<F: Field> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWitness<'_> {
+impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWitness<'_> {
     fn field_inline_register_read_write_rows(
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
@@ -385,7 +389,7 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
     }
 }
 
-impl<F: Field, T: TraceSource> FieldInlineRegisterReadWriteRows<F> for TraceBackend<'_, T> {
+impl<F: JoltField, T: TraceSource> FieldInlineRegisterReadWriteRows<F> for TraceBackend<'_, T> {
     fn field_inline_register_read_write_rows(
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
@@ -394,7 +398,7 @@ impl<F: Field, T: TraceSource> FieldInlineRegisterReadWriteRows<F> for TraceBack
     }
 }
 
-fn field_register_row<F: Field>(
+fn field_register_row<F: JoltField>(
     row: &TraceRow,
     env: &WitnessEnv<'_>,
 ) -> Result<FieldInlineRegisterReadWriteRow<F>, WitnessError> {
@@ -632,7 +636,7 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::{
         execution::{
             JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput,

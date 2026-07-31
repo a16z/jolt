@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -28,7 +28,7 @@ impl<const XLEN: usize> LookupTable for SignExtendHalfWordTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let half_word_size = XLEN / 2;
@@ -63,7 +63,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTa
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         let [one, lower_half_word, sign_extension_upper_half] = suffixes.try_into().unwrap();
         prefixes[Prefixes::LowerHalfWord] * one
             + lower_half_word

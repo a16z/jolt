@@ -7,7 +7,7 @@
 //! when they share row geometry.
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
 use jolt_witness::{JoltWitnessOracle, RowSource, WitnessBundle};
@@ -89,7 +89,7 @@ pub struct WitnessCommitment<PCS: CommitmentScheme> {
 /// caller absorbs the returned commitments.
 pub trait CommitWitness<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     fn commit_witness(

@@ -91,7 +91,7 @@ use jolt_claims::protocols::jolt::{
     },
     SpartanOuterPublic,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use thiserror::Error as ThisError;
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
@@ -129,7 +129,7 @@ pub enum Rv64SpartanOuterRemainderError {
 
 /// Coefficients needed to evaluate the RV64 Spartan outer remainder claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Rv64SpartanOuterRemainder<F: Field> {
+pub struct Rv64SpartanOuterRemainder<F: JoltField> {
     tau_kernel: F,
     linear_forms: SpartanOuterLinearForms<F>,
 }
@@ -142,7 +142,7 @@ pub struct Rv64SpartanOuterRemainderChallenges<'a, F> {
     pub remainder: &'a [F],
 }
 
-impl<F: Field> Rv64SpartanOuterRemainder<F> {
+impl<F: JoltField> Rv64SpartanOuterRemainder<F> {
     /// Derives the verifier-side remainder claim coefficients for RV64.
     pub fn new(
         dimensions: &SpartanOuterDimensions,
@@ -220,7 +220,7 @@ impl<F: Field> Rv64SpartanOuterRemainder<F> {
     }
 }
 
-fn eval_linear_form<F: Field>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
+fn eval_linear_form<F: JoltField>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
     coefficients
         .iter()
         .zip(inputs)
@@ -238,7 +238,7 @@ fn eval_linear_form<F: Field>(coefficients: &[F], constant: F, inputs: &[F]) -> 
     clippy::expect_used,
     reason = "compile-time constant table; silent i128→i64 truncation would be a correctness bug"
 )]
-fn row<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
+fn row<F: JoltField>(entries: &[(usize, i128)]) -> SparseRow<F> {
     entries
         .iter()
         .filter(|(_, c)| *c != 0)
@@ -251,7 +251,7 @@ fn row<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
 
 /// Helper: sparse row entry from i128 coefficient, handling large constants
 /// that don't fit in i64 (e.g. 2^64 bias).
-fn row_wide<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
+fn row_wide<F: JoltField>(entries: &[(usize, i128)]) -> SparseRow<F> {
     entries
         .iter()
         .filter(|(_, c)| *c != 0)
@@ -259,7 +259,7 @@ fn row_wide<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
         .collect()
 }
 
-fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
+fn rv64_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     let mut a_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
     let mut b_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
     let mut c_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
@@ -507,7 +507,7 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     (a_rows, b_rows, c_rows)
 }
 
-fn append_product_constraints<F: Field>(
+fn append_product_constraints<F: JoltField>(
     a_rows: &mut Vec<SparseRow<F>>,
     b_rows: &mut Vec<SparseRow<F>>,
     c_rows: &mut Vec<SparseRow<F>>,
@@ -537,7 +537,7 @@ fn append_product_constraints<F: Field>(
 /// standard 38-variable per-cycle witness layout. Product constraints are
 /// intentionally excluded for consumers that handle multiplication checks in
 /// a separate protocol step.
-pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn rv64_spartan_outer_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
     let (a_rows, b_rows, c_rows) = rv64_eq_constraint_rows();
     crate::ConstraintMatrices::new(
         NUM_EQ_CONSTRAINTS,
@@ -556,7 +556,7 @@ pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F
 ///
 /// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–35,
 /// product factors at 36–37).
-pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn rv64_trace_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
@@ -576,7 +576,7 @@ pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 #[expect(clippy::expect_used, reason = "tests may unwind via panic")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use num_traits::Zero;
 
     /// A no-op cycle: const=1, all else zero. All eq-conditional guards

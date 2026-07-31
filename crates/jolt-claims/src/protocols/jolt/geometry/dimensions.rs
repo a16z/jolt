@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 pub use super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
@@ -71,7 +71,7 @@ impl TraceDimensions {
         self.log_t
     }
 
-    pub fn cycle_opening_point<F: Field>(
+    pub fn cycle_opening_point<F: JoltField>(
         self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -141,7 +141,7 @@ impl ReadWriteDimensions {
         self.log_t + self.log_k - self.phase1_num_rounds
     }
 
-    pub fn read_write_opening_point<F: Field>(
+    pub fn read_write_opening_point<F: JoltField>(
         self,
         challenges: &[F],
     ) -> Result<ReadWriteOpeningPoint<F>, JoltFormulaPointError> {
@@ -179,7 +179,7 @@ impl ReadWriteDimensions {
         })
     }
 
-    pub fn address_opening_point<F: Field>(
+    pub fn address_opening_point<F: JoltField>(
         self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -215,7 +215,7 @@ impl ReadWriteDimensions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReadWriteOpeningPoint<F: Field> {
+pub struct ReadWriteOpeningPoint<F: JoltField> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
@@ -327,7 +327,7 @@ impl JoltOneHotConfig {
         self.lookups_ra_virtual_log_k_chunk as usize
     }
 
-    pub fn committed_address_chunks<F: Field>(self, r_address: &[F]) -> Vec<Vec<F>> {
+    pub fn committed_address_chunks<F: JoltField>(self, r_address: &[F]) -> Vec<Vec<F>> {
         committed_address_chunks(r_address, self.committed_chunk_bits())
     }
 
@@ -349,7 +349,7 @@ impl JoltOneHotConfig {
     }
 }
 
-pub fn committed_address_chunks<F: Field>(r_address: &[F], chunk_bits: usize) -> Vec<Vec<F>> {
+pub fn committed_address_chunks<F: JoltField>(r_address: &[F], chunk_bits: usize) -> Vec<Vec<F>> {
     if chunk_bits == 0 {
         return Vec::new();
     }
@@ -490,7 +490,7 @@ mod tests {
         PrecommittedClaimReduction, PrecommittedReductionLayout,
     };
     use super::*;
-    use jolt_field::{FieldCore, Fr, FromPrimitiveInt};
+    use jolt_field::{Field, Fr, Ring};
     use jolt_poly::EqPolynomial;
 
     fn dimensions() -> JoltOneHotDimensions {

@@ -1,7 +1,7 @@
 //! Witness backends: implementors of the id-indexed oracle surface.
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 
 use crate::{RowSource, Shape, WitnessBundle, WitnessError};
@@ -14,7 +14,7 @@ pub mod trace;
 /// sets and the config's committed set — must be servable before witness
 /// generation starts. The servable set is the backend's exhaustive match
 /// (its `shape` resolving), never a curated list.
-pub fn validate_servable<F: Field>(
+pub fn validate_servable<F: JoltField>(
     oracle: &dyn JoltWitnessOracle<F>,
     ids: impl IntoIterator<Item = JoltPolynomialId>,
 ) -> Result<(), WitnessError> {
@@ -44,7 +44,7 @@ pub trait BundleSource {
 /// Typed consumers (bundles over `stream_witnesses`) are statically
 /// dispatched and do not go through this trait; both paths meet at the same
 /// `Extract` impls.
-pub trait JoltWitnessOracle<F: Field> {
+pub trait JoltWitnessOracle<F: JoltField> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError>;
 
     /// Materializes the oracle's dense field-element evaluations, row-major
@@ -70,7 +70,9 @@ pub trait ProgramSource {
 /// typed bundles through [`crate::collect_bundles`], so no stage recipe
 /// stages row vectors on the side), and the program view.
 /// Blanket-implemented; the supertrait set is exactly what kernels consume.
-pub trait JoltWitnessPlane<F: Field>: JoltWitnessOracle<F> + RowSource + ProgramSource {}
+pub trait JoltWitnessPlane<F: JoltField>: JoltWitnessOracle<F> + RowSource + ProgramSource {}
 
-impl<F: Field, T> JoltWitnessPlane<F> for T where T: JoltWitnessOracle<F> + RowSource + ProgramSource
-{}
+impl<F: JoltField, T> JoltWitnessPlane<F> for T where
+    T: JoltWitnessOracle<F> + RowSource + ProgramSource
+{
+}

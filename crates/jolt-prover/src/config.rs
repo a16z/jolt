@@ -10,7 +10,7 @@
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
-use jolt_field::FieldCore;
+use jolt_field::Field;
 use jolt_program::execution::{RamAccess, TraceRow};
 
 use crate::ProverError;
@@ -43,7 +43,7 @@ impl ProverConfig {
     /// final no-op), size RAM to the highest touched (remapped) address or the
     /// program image extent, and pick the chunking policies from `log_T`.
     #[expect(non_snake_case)]
-    pub fn derive<F: FieldCore>(
+    pub fn derive<F: Field>(
         rows: &[TraceRow],
         memory_layout: &MemoryLayout,
         min_bytecode_address: u64,

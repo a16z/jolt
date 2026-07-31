@@ -101,7 +101,7 @@ use std::{
     ops::Index,
 };
 
-use jolt_field::{Field, FromPrimitiveInt};
+use jolt_field::{JoltField, Ring};
 use jolt_poly::{
     boolean_bits_msb, eq_index_msb, math::Math, thread::unsafe_allocate_zero_vec, EqPolynomial,
     MultilinearPoly, Polynomial,
@@ -269,7 +269,7 @@ where
     }
 
     /// Forms the physical point `prefix_point || logical_point`.
-    pub fn pack_point<F: Field>(
+    pub fn pack_point<F: JoltField>(
         &self,
         prefix_point: &[F],
         logical_point: &[F],
@@ -288,7 +288,7 @@ where
     }
 
     /// Extracts the logical suffix point for `id` from a full packed point.
-    pub fn logical_point<F: Field>(
+    pub fn logical_point<F: JoltField>(
         &self,
         id: &Id,
         packed_point: &[F],
@@ -311,7 +311,7 @@ where
         statement: &'a PrefixPackedStatement<F, Id, C>,
     ) -> Result<PreparedPrefixPackedStatement<'a, F, C>, OpeningsError>
     where
-        F: Field,
+        F: JoltField,
         Id: Debug,
     {
         let claims = statement.claims.as_slice();
@@ -399,7 +399,7 @@ impl<F, Id, C> PrefixPackedStatement<F, Id, C> {
     }
 }
 
-pub struct PreparedPrefixPackedStatement<'a, F: Field, C> {
+pub struct PreparedPrefixPackedStatement<'a, F: JoltField, C> {
     packed_num_vars: usize,
     pub(crate) commitment: &'a C,
     ordered_claims: Vec<(&'a EvaluationClaim<F>, &'a PrefixSlot)>,
@@ -407,7 +407,7 @@ pub struct PreparedPrefixPackedStatement<'a, F: Field, C> {
 
 impl<F, C> PreparedPrefixPackedStatement<'_, F, C>
 where
-    F: Field,
+    F: JoltField,
 {
     pub fn num_claims(&self) -> usize {
         self.ordered_claims.len()
@@ -461,7 +461,7 @@ where
 
 impl<F, C> AppendToTranscript for PreparedPrefixPackedStatement<'_, F, C>
 where
-    F: Field,
+    F: JoltField,
     C: AppendToTranscript,
 {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
@@ -500,7 +500,7 @@ const PARALLEL_MIN_CHUNK: usize = 1 << 12;
 
 /// The dense round fold shared by the dense object path and the sparse
 /// stepper's dense tail: `[Σ s_lo·w_lo, Σ s_hi·w_hi, Σ (s_hi−s_lo)(w_hi−w_lo)]`.
-fn dense_round_evaluations<F: Field>(
+fn dense_round_evaluations<F: JoltField>(
     selector_low: &[F],
     selector_high: &[F],
     witness_low: &[F],
@@ -541,7 +541,7 @@ struct SparseSelectorSlot<'a, F> {
     point: &'a [F],
 }
 
-impl<'a, F: Field> SparseSelectorSlot<'a, F> {
+impl<'a, F: JoltField> SparseSelectorSlot<'a, F> {
     fn new(alpha: F, slot: &'a PrefixSlot, point: &'a [F]) -> Self {
         Self {
             scalar: alpha,
@@ -587,7 +587,7 @@ struct RoundSelectorSlot<F> {
     low: Vec<F>,
 }
 
-impl<F: Field> RoundSelectorSlot<F> {
+impl<F: JoltField> RoundSelectorSlot<F> {
     fn new(slot: &SparseSelectorSlot<'_, F>, bound: usize, remaining_vars: usize) -> Self {
         let (block, point) = slot.remaining(bound, remaining_vars);
         let low_vars = point.len() / 2;
@@ -613,7 +613,7 @@ struct GroupedRoundSelector<'a, F> {
     slots: &'a [RoundSelectorSlot<F>],
 }
 
-impl<'a, F: Field> GroupedRoundSelector<'a, F> {
+impl<'a, F: JoltField> GroupedRoundSelector<'a, F> {
     fn new(slots: &'a [RoundSelectorSlot<F>], remaining_vars: usize) -> Self {
         let mut groups: Vec<(usize, Vec<Vec<u32>>)> = Vec::new();
         for (slot_index, slot) in slots.iter().enumerate() {
@@ -649,7 +649,7 @@ impl<'a, F: Field> GroupedRoundSelector<'a, F> {
 
 /// Dense remaining-domain selector and witness tables for the delegated tail
 /// rounds of the sparse stepper.
-fn materialize_remaining<F: Field>(
+fn materialize_remaining<F: JoltField>(
     slots: &[SparseSelectorSlot<'_, F>],
     positions: &[usize],
     bound_weights: &[F],
@@ -685,7 +685,7 @@ fn materialize_remaining<F: Field>(
 /// the number of one-positions, the (now small) selector/witness tables are
 /// materialized and later rounds run dense. The check happens at the start
 /// of `round_evaluations`.
-struct SparseReductionInstance<'a, F: Field> {
+struct SparseReductionInstance<'a, F: JoltField> {
     slots: Vec<SparseSelectorSlot<'a, F>>,
     positions: Vec<usize>,
     /// Bound challenges (msb-first). A position's accumulated weight is
@@ -699,7 +699,7 @@ struct SparseReductionInstance<'a, F: Field> {
     dense: Option<(Polynomial<F>, Polynomial<F>)>,
 }
 
-impl<'a, F: Field> SparseReductionInstance<'a, F> {
+impl<'a, F: JoltField> SparseReductionInstance<'a, F> {
     #[tracing::instrument(
         skip_all,
         name = "SparseReductionInstance::new",
@@ -942,7 +942,7 @@ fn packed_opening_challenges<F, C, T>(
     transcript: &mut T,
 ) -> (Vec<Vec<F>>, Vec<F>)
 where
-    F: Field,
+    F: JoltField,
     C: AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
@@ -1005,14 +1005,14 @@ where
     // (one-hot) witnesses — same field values, no `2^n` materialization —
     // plus the rounds to wait before the object's variables bind and its
     // total `Σ_z E(z)·W(z)` (the constant while padded).
-    enum ObjectState<'a, F: Field> {
+    enum ObjectState<'a, F: JoltField> {
         Dense {
             selector: Polynomial<F>,
             witness: Polynomial<F>,
         },
         Sparse(SparseReductionInstance<'a, F>),
     }
-    struct ObjectProver<'a, F: Field> {
+    struct ObjectProver<'a, F: JoltField> {
         state: ObjectState<'a, F>,
         padding_rounds: usize,
         total: F,
@@ -1292,7 +1292,7 @@ fn verify_reduction_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<(Vec<F>, F), OpeningsError>
 where
-    F: Field,
+    F: JoltField,
     T: Transcript<Challenge = F>,
 {
     if round_polynomials.len() != num_rounds {
@@ -1319,7 +1319,7 @@ where
 
 fn append_round_polynomial<F, T>(coefficients: &[F; 3], transcript: &mut T)
 where
-    F: Field,
+    F: JoltField,
     T: Transcript<Challenge = F>,
 {
     transcript.append(&Label(b"packed_reduction_round"));
@@ -1341,7 +1341,7 @@ fn coefficient_count(num_vars: usize) -> Result<usize, OpeningsError> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn field(value: u64) -> Fr {
         Fr::from_u64(value)

@@ -1,5 +1,5 @@
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
 use jolt_sumcheck::{CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
@@ -14,7 +14,7 @@ const INNER_SUMCHECK_DEGREE: usize = 2;
 const INNER_SUMCHECK_LABEL: &[u8] = b"inner_sumcheck_poly";
 
 #[derive(Clone, Copy, Debug)]
-pub struct BlindFoldWitness<'a, F: Field> {
+pub struct BlindFoldWitness<'a, F: JoltField> {
     pub rows: &'a [Vec<F>],
     pub blindings: &'a [F],
     pub eval_outputs: &'a [F],
@@ -23,7 +23,7 @@ pub struct BlindFoldWitness<'a, F: Field> {
 
 pub trait BlindFoldRowCommitter<F, VC>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     fn commit_rows(
@@ -136,7 +136,7 @@ pub struct DirectBlindFoldRowCommitter;
 
 impl<F, VC> BlindFoldRowCommitter<F, VC> for DirectBlindFoldRowCommitter
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     fn commit_rows(
@@ -158,7 +158,7 @@ pub fn prove<F, VC, T, R>(
     rng: &mut R,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -184,7 +184,7 @@ pub fn prove_with_row_committer<F, VC, T, R, C>(
     row_committer: &mut C,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -590,7 +590,7 @@ fn validate_witness<F, VC>(
     witness: BlindFoldWitness<'_, F>,
 ) -> Result<(), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     let _ = log2_power_of_two("witness row count", protocol.dimensions.witness.row_count)?;
@@ -638,7 +638,7 @@ fn ensure_row_capacity<F, VC>(
     row_len: usize,
 ) -> Result<(), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     let capacity = VC::capacity(setup);
@@ -659,7 +659,7 @@ fn commit_rows<F, VC>(
     name: &'static str,
 ) -> Result<Vec<VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     ensure_len(name, rows.len(), blindings.len())?;
@@ -689,7 +689,7 @@ fn open_committed_rows<F, VC>(
     name: &'static str,
 ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     let row_count = basis_len_from_point_len("row point", row_point.len())?;
@@ -722,7 +722,7 @@ fn basis_len_from_point_len<F>(
     point_len: usize,
 ) -> Result<usize, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if point_len >= usize::BITS as usize {
         return Err(ProverError::DimensionOverflow {
@@ -734,7 +734,7 @@ where
 }
 
 #[derive(Clone, Debug)]
-struct SumcheckTrace<F: Field> {
+struct SumcheckTrace<F: JoltField> {
     proof: CompressedSumcheckProof<F>,
     point: Vec<F>,
 }
@@ -748,7 +748,7 @@ fn prove_outer_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let num_vars = log2_power_of_two("outer folded R1CS sumcheck", error_values.len())?;
@@ -857,7 +857,7 @@ fn prove_inner_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     let witness_values = flatten(witness_rows);
@@ -922,7 +922,7 @@ where
 
 fn matrix_vector_product<F>(rows: &[SparseRow<F>], vector: &[F]) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
 {
     rows.par_iter().map(|row| dot(row, vector)).collect()
 }
@@ -935,7 +935,7 @@ fn linear_form_project_columns<F>(
     weights: [F; 3],
 ) -> Result<Vec<F>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if row_weights.len() < r1cs.num_constraints {
         return Err(ConstraintMatrixEvalError::RowWeightsLengthMismatch {
@@ -988,7 +988,7 @@ fn project_matrix_columns<F>(
     end_col: usize,
     weight: F,
 ) where
-    F: Field,
+    F: JoltField,
 {
     if weight.is_zero() {
         return;
@@ -1005,7 +1005,7 @@ fn project_matrix_columns<F>(
 
 fn abc_at_point<F>(r1cs: &ConstraintMatrices<F>, u: F, witness: &[F], point: &[F]) -> (F, F, F)
 where
-    F: Field,
+    F: JoltField,
 {
     let row_weights = EqPolynomial::<F>::evals(point, None);
     let z = z_vector(u, witness);
@@ -1029,7 +1029,7 @@ fn open_witness_coordinate<F, VC, C>(
     name: &'static str,
 ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
     C: BlindFoldRowCommitter<F, VC>,
 {
@@ -1099,7 +1099,7 @@ fn append_vector_opening<F, T>(
 
 fn random_rows<F, R>(row_count: usize, row_len: usize, rng: &mut R) -> Vec<Vec<F>>
 where
-    F: Field,
+    F: JoltField,
     R: RngCore,
 {
     (0..row_count)
@@ -1107,7 +1107,7 @@ where
         .collect()
 }
 
-fn zero_rows<F: Field>(row_count: usize, row_len: usize) -> Vec<Vec<F>> {
+fn zero_rows<F: JoltField>(row_count: usize, row_len: usize) -> Vec<Vec<F>> {
     vec![vec![F::zero(); row_len]; row_count]
 }
 
@@ -1117,7 +1117,7 @@ fn fold_rows<F>(
     challenge: F,
 ) -> Result<Vec<Vec<F>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     ensure_len("random witness rows", real.len(), random.len())?;
     let mut folded = Vec::with_capacity(real.len());
@@ -1147,7 +1147,7 @@ fn fold_scalars<F>(
     challenge: F,
 ) -> Result<Vec<F>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     ensure_len(name, real.len(), random.len())?;
     Ok(real
@@ -1164,7 +1164,7 @@ fn fold_error_rows<F>(
     challenge: F,
 ) -> Result<Vec<Vec<F>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     ensure_len("cross-term error rows", real.len(), cross.len())?;
     ensure_len("random error rows", real.len(), random.len())?;
@@ -1209,7 +1209,7 @@ fn fold_error_scalars<F>(
     challenge: F,
 ) -> Result<Vec<F>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     ensure_len(name, real.len(), cross.len())?;
     ensure_len(name, real.len(), random.len())?;
@@ -1230,7 +1230,7 @@ fn error_rows_for<F>(
     row_len: usize,
 ) -> Result<Vec<Vec<F>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let _ = log2_power_of_two("error row length", row_len)?;
     let target_len = row_count
@@ -1260,7 +1260,7 @@ fn cross_term_error_rows_for<F>(
     row_len: usize,
 ) -> Result<Vec<Vec<F>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     let _ = log2_power_of_two("error row length", row_len)?;
     let target_len = row_count
@@ -1285,7 +1285,7 @@ where
 
 fn boolean_point<F>(index: usize, num_vars: usize) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
 {
     (0..num_vars)
         .map(|bit| {
@@ -1301,7 +1301,7 @@ fn pad_to_len<F>(
     target_len: usize,
 ) -> Result<(), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if values.len() > target_len {
         return Err(ProverError::LengthMismatch {
@@ -1316,7 +1316,7 @@ where
 
 fn z_vector<F>(u: F, witness: &[F]) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
 {
     let mut z = Vec::with_capacity(witness.len() + 1);
     z.push(u);
@@ -1326,7 +1326,7 @@ where
 
 fn dot<F>(row: &[(usize, F)], witness: &[F]) -> F
 where
-    F: Field,
+    F: JoltField,
 {
     row.iter()
         .map(|&(column, coefficient)| coefficient * witness[column])
@@ -1335,14 +1335,14 @@ where
 
 fn flatten<F>(rows: &[Vec<F>]) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
 {
     rows.iter().flat_map(|row| row.iter().copied()).collect()
 }
 
 fn ensure_len<F>(name: &'static str, expected: usize, actual: usize) -> Result<(), ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if expected != actual {
         return Err(ProverError::LengthMismatch {
@@ -1356,7 +1356,7 @@ where
 
 fn log2_power_of_two<F>(name: &'static str, value: usize) -> Result<usize, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if value == 0 || !value.is_power_of_two() {
         return Err(ProverError::InvalidPowerOfTwo { name, value });

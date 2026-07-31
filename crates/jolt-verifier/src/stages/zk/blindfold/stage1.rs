@@ -86,7 +86,7 @@ where
     )
 }
 
-fn stage1_spartan_outer_output_expr<F: Field>(
+fn stage1_spartan_outer_output_expr<F: JoltField>(
     openings: &[JoltVirtualPolynomial],
 ) -> VerifierExpr<F> {
     // The factored quadratic form, mirroring the jolt-claims relation: each

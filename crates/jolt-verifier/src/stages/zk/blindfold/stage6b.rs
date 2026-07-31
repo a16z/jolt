@@ -163,7 +163,7 @@ where
     )
 }
 
-fn stage6_cycle_output_openings_and_aliases<F: Field>(
+fn stage6_cycle_output_openings_and_aliases<F: JoltField>(
     formula_dimensions: JoltFormulaDimensions,
     bytecode_ra_opening_points: &[Vec<F>],
     booleanity_opening_point: &[F],

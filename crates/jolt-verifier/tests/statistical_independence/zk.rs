@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use ark_serialize::CanonicalSerialize;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_field::{CanonicalBytes, CanonicalRepr, Fr};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]

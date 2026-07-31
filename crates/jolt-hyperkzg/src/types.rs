@@ -54,7 +54,7 @@ impl<P: PairingGroup> PartialEq for HyperKZGCommitment<P> {
 
 impl<P: PairingGroup> Eq for HyperKZGCommitment<P> {}
 
-impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
+impl<P: PairingGroup, F: jolt_field::JoltField> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
     #[inline]
     fn add(c1: &Self, c2: &Self) -> Self {
         Self {

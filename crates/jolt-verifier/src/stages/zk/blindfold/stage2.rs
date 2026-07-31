@@ -265,7 +265,7 @@ where
     )
 }
 
-fn selected_product_uniskip_input_expr<F: Field>(
+fn selected_product_uniskip_input_expr<F: JoltField>(
     weights: &[F],
 ) -> Result<VerifierExpr<F>, VerifierError> {
     let [product_weight, should_branch_weight, should_jump_weight, rest @ ..] = weights else {
@@ -298,7 +298,7 @@ fn selected_product_uniskip_input_expr<F: Field>(
     Ok(expr)
 }
 
-fn selected_product_remainder_output_expr<F: Field>(
+fn selected_product_remainder_output_expr<F: JoltField>(
     weights: &[F],
     tau_kernel: F,
 ) -> Result<VerifierExpr<F>, VerifierError> {

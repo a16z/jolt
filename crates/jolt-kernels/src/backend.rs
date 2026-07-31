@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 use jolt_verifier::stages::relations::{
@@ -86,7 +86,7 @@ use crate::KernelError;
 /// surfaces the same distant way.
 pub trait PrepareKernel<F, R>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -113,7 +113,7 @@ where
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
@@ -158,7 +158,7 @@ where
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// Open the proof-scoped session that slot state lives in. One session
@@ -260,7 +260,7 @@ mod kernel_slots_derive_tests {
     // delegation is unrepresentable.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
-    struct ToyRegistry<F: Field> {
+    struct ToyRegistry<F: JoltField> {
         label: String,
         shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
         slot_count: usize,

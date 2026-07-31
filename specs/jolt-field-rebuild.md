@@ -273,6 +273,22 @@ Final per-file actuals are recorded in the file-structure table below
   `engine.rs` (284/550) by the generic-types-over-vocabulary design;
   recorded at checkpoint 8.
 
+## Replacement-time deviations
+
+1. **`JoltField` drops the serde bounds** (`Serialize + DeserializeOwned`)
+   while the temporary `akita` bootstrap edge exists: the pre-cutover
+   `akita-field` type is foreign, so the orphan rule forbids giving it serde
+   impls here, and it must satisfy `JoltField` for the akita lanes to build.
+   This matches the old umbrella (`Field` never carried serde bounds); every
+   first-party type keeps its `impl_serde_bytes!` impls. Restore the bounds
+   at the akita cutover when the bootstrap edge is deleted.
+2. **`CanonicalEncoding` re-split**: byte surface extracted as a bare
+   `CanonicalBytes` supertrait (transcript absorption and `NoCommitment`
+   bind to bytes only; same decision as the baseline's ff5bf9c split).
+3. **bn254 `From<primitive>` impls added** (`from_primitives!`): the old
+   crate's `Fr`/`Fq` exposed the plain arkworks `From` conversions; 94+
+   consumer call sites rely on them.
+
 ## Remaining before replacement
 
 1. **x86-64 runtime validation:** AVX2/AVX-512 packed backends and the

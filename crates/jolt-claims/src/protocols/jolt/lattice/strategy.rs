@@ -5,7 +5,7 @@
 //! common `(cycle || address)` point.
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::OpeningsError;
 
 use super::super::JoltCommittedPolynomial;
@@ -101,7 +101,7 @@ impl OneHotTraceLayout {
 
     /// Maps a column's leaf-claim point from `(address || cycle)` to the
     /// row-major committed order `(cycle || address)`.
-    pub fn column_point<F: Field>(
+    pub fn column_point<F: JoltField>(
         &self,
         polynomial: JoltCommittedPolynomial,
         chunk_width: usize,
@@ -144,7 +144,7 @@ fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
 mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn shape(log_t: usize) -> OneHotTraceShape {
         OneHotTraceShape {

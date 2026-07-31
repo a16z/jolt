@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
@@ -41,7 +41,7 @@ use crate::{
     SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -62,7 +62,7 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBackend 
     }
 }
 
-pub struct BooleanityAddressKernel<F: Field> {
+pub struct BooleanityAddressKernel<F: JoltField> {
     rounds: usize,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
@@ -76,7 +76,7 @@ pub struct BooleanityAddressKernel<F: Field> {
     rounds_bound: usize,
 }
 
-impl<F: Field> BooleanityAddressKernel<F> {
+impl<F: JoltField> BooleanityAddressKernel<F> {
     pub fn new(
         relation: &BooleanityAddressPhase<F>,
         dimensions: BooleanityDimensions,
@@ -144,7 +144,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> BooleanityAddressKernel<F> {
+impl<F: JoltField> BooleanityAddressKernel<F> {
     fn bind(&mut self, challenge: F) {
         let one_minus_sqr = (F::one() - challenge) * (F::one() - challenge);
         let challenge_sqr = challenge * challenge;
@@ -164,7 +164,7 @@ impl<F: Field> BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for BooleanityAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -225,7 +225,7 @@ impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     type Relation = BooleanityAddressPhase<F>;
 
     fn output_claims(
@@ -252,7 +252,7 @@ impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

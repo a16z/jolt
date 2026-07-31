@@ -10,7 +10,7 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
@@ -166,7 +166,7 @@ where
 /// `derive_output_term` never runs). An address phase is present exactly when its
 /// precommitted layout is committed and its dimensions carry active address rounds
 /// — the presence flag the input / challenge aggregates track in lockstep.
-pub fn build_stage7_sumchecks<F: Field>(
+pub fn build_stage7_sumchecks<F: JoltField>(
     hamming_dimensions: HammingDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
@@ -267,7 +267,7 @@ pub fn build_stage7_sumchecks<F: Field>(
 /// with active address rounds first (an absent layout yields `Ok(None)`, matching
 /// the member's presence flag), then lift missing stage-6b cycle-phase variables
 /// to `MissingOpeningClaim` before building the instance.
-fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
+fn address_phase_member<F: JoltField, L: PrecommittedReductionLayout, M>(
     layout: Option<&L>,
     cycle_phase_variables: Option<Vec<F>>,
     missing_cycle_opening: JoltOpeningId,
@@ -289,7 +289,7 @@ fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
 /// phase runs (tracking each `Stage7Sumchecks` member's presence), so a present
 /// member always has its input cell populated. Public because the prover's
 /// stage-7 recipe builds its batch inputs through the same wiring.
-pub fn stage7_input_values_from_upstream<F: Field>(
+pub fn stage7_input_values_from_upstream<F: JoltField>(
     sumchecks: &Stage7Sumchecks<F>,
     stage6: &Stage6bClearOutput<F>,
 ) -> Result<Stage7InputClaims<F>, VerifierError> {

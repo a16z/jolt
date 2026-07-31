@@ -16,7 +16,7 @@ use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
@@ -44,7 +44,7 @@ use crate::{ProverConfig, ProverError, StageProver as _};
 
 /// Stage 2's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
-pub struct Stage2ProverOutput<F: Field, C> {
+pub struct Stage2ProverOutput<F: JoltField, C> {
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage2OutputClaims<F>,
@@ -62,7 +62,7 @@ pub fn prove_stage2<F, PCS, C, T>(
     transcript: &mut T,
 ) -> Result<Stage2ProverOutput<F, C>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,

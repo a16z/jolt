@@ -13,7 +13,7 @@ use jolt_akita::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaNativeBatchStatement,
     AkitaNativeBatching, AkitaScheme,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, OpeningsError, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
@@ -24,7 +24,7 @@ use support::{batch_polynomials, f, layout, native_setup, polynomial, setup_for}
 
 type VerifierSetup = <AkitaScheme as CommitmentScheme>::VerifierSetup;
 
-fn require_jolt_field<F: Field>() {}
+fn require_jolt_field<F: JoltField>() {}
 
 #[test]
 fn akita_field_satisfies_jolt_field_bundle() {

@@ -22,7 +22,7 @@
 
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
@@ -50,7 +50,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// cross-stage carrier stage 7 consumes. The precommitted reduction state
 /// that spans into stage 7's address phase travels as `ProofSession` carries,
 /// not output fields.
-pub struct Stage6bProverOutput<F: Field, C> {
+pub struct Stage6bProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6bOutputClaims<F>,
     pub clear_output: Stage6bClearOutput<F>,
@@ -74,7 +74,7 @@ pub fn prove_stage6b<F, PCS, VC, C, T>(
     transcript: &mut T,
 ) -> Result<Stage6bProverOutput<F, C>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     C: Clone + AppendToTranscript,

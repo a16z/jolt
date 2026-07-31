@@ -34,7 +34,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::{BytecodeReadRafPublic, JoltDerivedId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
@@ -60,7 +60,7 @@ pub struct BytecodeReadRafWitness {
     pub bytecode_pc: BytecodePc,
 }
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -102,7 +102,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBac
     }
 }
 
-pub struct BytecodeReadRafAddressKernel<F: Field> {
+pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     rounds: usize,
     /// Committed-program mode stages the five raw bound `Val_s` wire claims.
     committed_program: bool,
@@ -123,7 +123,7 @@ pub struct BytecodeReadRafAddressKernel<F: Field> {
     rounds_bound: usize,
 }
 
-impl<F: Field> BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
     pub fn new(
         relation: &BytecodeReadRafAddressPhase<F>,
         dimensions: BytecodeReadRafDimensions,
@@ -215,7 +215,7 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
     fn bind(&mut self, challenge: F) {
         for table in self.pushforwards.iter_mut().chain(self.values.iter_mut()) {
             table.bind_with_order(challenge, BindingOrder::LowToHigh);
@@ -230,7 +230,7 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -281,7 +281,7 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
 
     fn output_claims(
@@ -314,7 +314,7 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

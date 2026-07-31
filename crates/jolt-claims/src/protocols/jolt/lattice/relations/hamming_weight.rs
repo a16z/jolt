@@ -1,7 +1,7 @@
 //! Lattice-mode Hamming-weight claim reduction, extended with the fused
 //! increment's one-hot decomposition.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
@@ -134,7 +134,7 @@ impl SymbolicSumcheck for LatticeHammingWeightClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut input = JoltExpr::zero();
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
@@ -160,7 +160,7 @@ impl SymbolicSumcheck for LatticeHammingWeightClaimReduction {
                 * (opening(fused_inc_read_raf_opening()) + constant(F::pow2(UNSIGNED_INC_BITS)))
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let eq_booleanity = derived(HammingWeightClaimReductionPublic::EqBooleanity);
         let identity = derived(HammingWeightClaimReductionPublic::IdentityAtAddress);
@@ -215,7 +215,7 @@ mod tests {
         HammingWeightClaimReductionChallenge, JoltChallengeId, JoltCommittedPolynomial,
         JoltDerivedId,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn fused_increment_terms_extend_the_ra_reduction() {

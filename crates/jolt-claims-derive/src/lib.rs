@@ -464,7 +464,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     Ok(quote! {
         // The value resolver lives on the value cell (`C = F`): each field is read
         // as `F` (or `Vec<F>` / `Option<F>`) directly.
-        impl<F: ::jolt_field::Field> ::jolt_claims::OutputClaims<F> for #name<F> {
+        impl<F: ::jolt_field::JoltField> ::jolt_claims::OutputClaims<F> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
@@ -492,7 +492,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         // (`C = Vec<F>`): each field is a `Vec<F>` point (or `Vec<Vec<F>>` /
         // `Option<Vec<F>>`). A field and its accessor share a name; `x` reads the
         // field, `x()` calls the accessor.
-        impl<F: ::jolt_field::Field> #name<::std::vec::Vec<F>> {
+        impl<F: ::jolt_field::JoltField> #name<::std::vec::Vec<F>> {
             #(#point_accessors)*
         }
     })
@@ -581,7 +581,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     let point_accessors = plans.iter().map(point_accessor);
 
     Ok(quote! {
-        impl<F: ::jolt_field::Field> ::jolt_claims::InputClaims<F> for #name<F> {
+        impl<F: ::jolt_field::JoltField> ::jolt_claims::InputClaims<F> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
@@ -597,7 +597,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
 
-        impl<F: ::jolt_field::Field> #name<::std::vec::Vec<F>> {
+        impl<F: ::jolt_field::JoltField> #name<::std::vec::Vec<F>> {
             #(#point_accessors)*
         }
     })
@@ -706,7 +706,7 @@ fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     Ok(quote! {
-        impl<#field: ::jolt_field::Field> ::jolt_claims::SumcheckChallenges<#field> for #name<#field> {
+        impl<#field: ::jolt_field::JoltField> ::jolt_claims::SumcheckChallenges<#field> for #name<#field> {
             fn from_transcript_values<__I: ::core::iter::Iterator<Item = #field>>(
                 values: __I,
             ) -> ::core::result::Result<Self, ::jolt_claims::ChallengeDrawError> {

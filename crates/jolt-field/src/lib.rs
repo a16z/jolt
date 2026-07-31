@@ -6,8 +6,9 @@
 //! and [`WithAccumulator`] (deferred-reduction fused multiply-add).
 //! [`JoltField`] is the blanket-implemented bundle of everything Jolt's
 //! protocol stack requires of a scalar field: `Field + CanonicalEncoding +
-//! WithAccumulator + Serialize + DeserializeOwned`. Because the impl is a
-//! blanket, no field type can forget to opt in.
+//! WithAccumulator`. Because the impl is a blanket, no field type can forget
+//! to opt in. (The serde bounds are deliberately absent while the temporary
+//! `akita` bootstrap edge exists; see [`JoltField`].)
 //!
 //! # Architecture: contracts and backends
 //!

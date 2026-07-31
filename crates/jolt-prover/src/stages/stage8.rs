@@ -22,7 +22,7 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::{
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use std::collections::BTreeMap;
 
 use jolt_kernels::committed_program::{
@@ -69,7 +69,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage8ProverOutput<PCS>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     PCS::Output: HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,

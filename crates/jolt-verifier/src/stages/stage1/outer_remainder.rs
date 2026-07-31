@@ -25,7 +25,7 @@ pub use jolt_claims::protocols::jolt::relations::spartan::{
 };
 use jolt_claims::protocols::jolt::{relations, JoltDerivedId, JoltRelationId, SpartanOuterPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_r1cs::constraints::jolt::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
 };
@@ -36,7 +36,7 @@ use crate::VerifierError;
 /// Wire the consumed opening *value* from the Spartan outer uni-skip's reduced output
 /// claim: only the value feeds the input claim (the output point comes from this
 /// relation's own sumcheck point).
-pub fn outer_remainder_input_values_from_uniskip_output<F: Field>(
+pub fn outer_remainder_input_values_from_uniskip_output<F: JoltField>(
     uniskip_output_claim: F,
 ) -> OuterRemainderInputClaims<F> {
     OuterRemainderInputClaims {
@@ -57,7 +57,7 @@ struct OuterRemainderCoefficients<F> {
     bz_constant: F,
 }
 
-impl<F: Field> OuterRemainderCoefficients<F> {
+impl<F: JoltField> OuterRemainderCoefficients<F> {
     fn from_public_coefficients(
         variable_count: usize,
         coefficients: Vec<(JoltSpartanOuterPublic, F)>,
@@ -97,7 +97,7 @@ impl<F: Field> OuterRemainderCoefficients<F> {
 }
 
 #[derive(Clone)]
-pub struct OuterRemainder<F: Field> {
+pub struct OuterRemainder<F: JoltField> {
     symbolic: relations::spartan::OuterRemainder,
     variable_count: usize,
     /// The stage-1 `tau` draw and the uni-skip reduction challenge — two of the
@@ -115,7 +115,7 @@ pub struct OuterRemainder<F: Field> {
     coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
 }
 
-impl<F: Field> OuterRemainder<F> {
+impl<F: JoltField> OuterRemainder<F> {
     pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
         let variable_count = dimensions.variables().len();
         Self {
@@ -171,7 +171,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
     type Symbolic = relations::spartan::OuterRemainder;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -257,7 +257,7 @@ mod tests {
     use crate::stages::relations::OutputClaims;
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::jolt::JoltOpeningId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     /// The produced `OuterRemainderOutputClaims` field (declaration) order is the
     /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so the generated absorb

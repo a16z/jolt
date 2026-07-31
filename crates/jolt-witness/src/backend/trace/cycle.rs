@@ -11,7 +11,7 @@ use crate::{BundleSource, RowSource, WitnessBundle};
 impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     /// Materializes one cycle-domain witness column by walking the trace
     /// once; all per-witness logic lives on `W`.
-    pub(crate) fn materialize_cycle<F: Field, W: Extract + ToField>(
+    pub(crate) fn materialize_cycle<F: JoltField, W: Extract + ToField>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
         self.walk_cycles(|row, next, env| W::extract(row, next, env).map(ToField::to_field))
@@ -19,7 +19,11 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
 
     /// [`Self::materialize_cycle`] for indexed witness families; `index`
     /// selects the family member.
-    pub(crate) fn materialize_cycle_indexed<F: Field, W: ExtractIndexed<I> + ToField, I: Copy>(
+    pub(crate) fn materialize_cycle_indexed<
+        F: JoltField,
+        W: ExtractIndexed<I> + ToField,
+        I: Copy,
+    >(
         &self,
         index: I,
     ) -> Result<Vec<F>, WitnessError> {
@@ -44,7 +48,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         chunk_bits: usize,
     ) -> Result<Vec<F>, WitnessError>
     where
-        F: Field,
+        F: JoltField,
         W: ExtractIndexed<RaChunkSelector> + Into<Option<usize>>,
     {
         let selector = RaChunkSelector::new(index, chunks, chunk_bits)?;

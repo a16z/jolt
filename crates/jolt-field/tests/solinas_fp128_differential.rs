@@ -11,7 +11,10 @@ use jolt_field as two;
 
 use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne, Ring};
+use two::{
+    Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne,
+    Ring,
+};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xf128_a5a5)

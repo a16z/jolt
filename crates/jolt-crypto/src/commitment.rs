@@ -3,7 +3,7 @@ use std::{
     fmt::{self, Debug},
 };
 
-use jolt_field::{Accumulator, Field, WithAccumulator};
+use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_transcript::AppendToTranscript;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -31,7 +31,7 @@ pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
 pub trait VectorCommitment:
     Commitment<Output: Copy + AppendToTranscript + Serialize + DeserializeOwned>
 {
-    type Field: Field;
+    type Field: JoltField;
 
     /// Transparent setup parameters (generators, public parameters, etc.).
     type Setup: Clone + Send + Sync;
@@ -223,7 +223,7 @@ impl Error for VectorOpeningError {}
 /// Blanket-implemented for [`JoltGroup`](crate::JoltGroup) over any field
 /// (via `scalar_mul` + addition). Non-group commitment types (e.g., lattice
 /// vectors) can implement this trait directly for their native scalar field.
-pub trait HomomorphicCommitment<F: Field>: Clone + Default {
+pub trait HomomorphicCommitment<F: JoltField>: Clone + Default {
     /// Computes `c1 + c2`.
     #[must_use]
     fn add(c1: &Self, c2: &Self) -> Self;
@@ -270,7 +270,7 @@ fn point_len_to_basis_len(point_len: usize) -> Result<usize, VectorOpeningError>
 }
 
 #[cfg(feature = "parallel")]
-fn combine_rows<F: Field>(
+fn combine_rows<F: JoltField>(
     flattened_rows: &[F],
     row_len: usize,
     row_weights: &[F],
@@ -309,7 +309,7 @@ fn combine_rows<F: Field>(
 }
 
 #[cfg(not(feature = "parallel"))]
-fn combine_rows<F: Field>(
+fn combine_rows<F: JoltField>(
     flattened_rows: &[F],
     row_len: usize,
     row_weights: &[F],
@@ -330,7 +330,7 @@ fn combine_rows<F: Field>(
     combined_vector
 }
 
-fn inner_product<F: Field>(lhs: &[F], rhs: &[F]) -> F {
+fn inner_product<F: JoltField>(lhs: &[F], rhs: &[F]) -> F {
     #[cfg(feature = "parallel")]
     {
         if lhs.len() >= PAR_THRESHOLD {
@@ -366,7 +366,7 @@ fn inner_product<F: Field>(lhs: &[F], rhs: &[F]) -> F {
 
 fn combine_commitments<F, C>(commitments: &[C], weights: &[F]) -> C
 where
-    F: Field,
+    F: JoltField,
     C: HomomorphicCommitment<F> + Copy + Send + Sync,
 {
     #[cfg(feature = "parallel")]
@@ -390,7 +390,7 @@ where
         })
 }
 
-impl<G: crate::JoltGroup, F: Field> HomomorphicCommitment<F> for G {
+impl<G: crate::JoltGroup, F: JoltField> HomomorphicCommitment<F> for G {
     #[inline]
     fn add(c1: &G, c2: &G) -> G {
         *c1 + c2
