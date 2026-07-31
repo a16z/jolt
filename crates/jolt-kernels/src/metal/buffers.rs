@@ -612,13 +612,6 @@ struct SlabState {
     free: Vec<std::ops::Range<usize>>,
     leased: usize,
     carved: bool,
-    /// When set, every free range is tagged reusable until its next carve. Retired
-    /// pages otherwise remain in the physical footprint until compressor
-    /// timing happens to reclaim them, which stalls large later proofs.
-    reclaimable: bool,
-    /// A failed reuse transition makes the slab unavailable rather than
-    /// letting Metal write pages the VM still considers discardable.
-    poisoned: bool,
 }
 
 impl ArenaSlab {
@@ -632,17 +625,6 @@ impl ArenaSlab {
         if !(base.as_ptr() as usize).is_multiple_of(PAGE_SIZE) || len_bytes < PAGE_SIZE {
             return None;
         }
-        let reusable_bytes = len_bytes - len_bytes % PAGE_SIZE;
-        // SAFETY: the retired owner keeps this page-aligned allocation alive,
-        // and no pass can still reference it when the producing slot retires
-        // the buffer. Consumers overwrite every carved element before read.
-        let reclaimable = unsafe {
-            libc::madvise(
-                base.as_ptr().cast(),
-                reusable_bytes,
-                libc::MADV_FREE_REUSABLE,
-            ) == 0
-        };
         Some(Arc::new(Self {
             _owner: buffer,
             base,
@@ -650,18 +632,8 @@ impl ArenaSlab {
                 free: std::iter::once(0..len_bytes).collect(),
                 leased: 0,
                 carved: false,
-                reclaimable,
-                poisoned: false,
             }),
         }))
-    }
-
-    fn advise(&self, offset: usize, len: usize, advice: libc::c_int) -> bool {
-        debug_assert!(offset.is_multiple_of(PAGE_SIZE));
-        debug_assert!(len.is_multiple_of(PAGE_SIZE));
-        // SAFETY: callers hold the slab state lock, the owner keeps the
-        // allocation live, and the page-aligned range is inside that owner.
-        unsafe { libc::madvise(self.base.as_ptr().add(offset).cast(), len, advice) == 0 }
     }
 
     /// Total free bytes (for pool ordering; ranges may be fragmented).
@@ -680,14 +652,6 @@ impl ArenaSlab {
     pub(super) fn exhausted(&self) -> bool {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.carved && state.leased == 0
-    }
-
-    #[cfg(test)]
-    pub(super) fn reclaimable(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .reclaimable
     }
 
     /// Carve a `len`-element lease out of the smallest fitting free range,
@@ -713,11 +677,6 @@ impl ArenaSlab {
                 .map(|(index, _)| index)?;
             let range = state.free.swap_remove(best);
             let offset = range.start;
-            if state.reclaimable && !self.advise(offset, take_bytes, libc::MADV_FREE_REUSE) {
-                state.poisoned = true;
-                state.free.clear();
-                return None;
-            }
             if range.len() > take_bytes {
                 state.free.push(range.start + take_bytes..range.end);
             }
@@ -735,13 +694,8 @@ impl ArenaSlab {
             let Some(raw) = raw else {
                 // Roll the range back; the caller falls through to a fresh
                 // allocation.
+                state.free.push(offset..offset + take_bytes);
                 state.leased -= 1;
-                if state.reclaimable && !self.advise(offset, take_bytes, libc::MADV_FREE_REUSABLE) {
-                    state.poisoned = true;
-                    state.free.clear();
-                } else if !state.poisoned {
-                    state.free.push(offset..offset + take_bytes);
-                }
                 return None;
             };
             (offset, raw)
@@ -800,21 +754,9 @@ impl<T: Copy> Drop for ArenaLease<T> {
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        state.leased -= 1;
-        if state.poisoned {
-            return;
-        }
-        if state.reclaimable
-            && !self
-                .slab
-                .advise(self.offset_bytes, take_bytes, libc::MADV_FREE_REUSABLE)
-        {
-            state.poisoned = true;
-            state.free.clear();
-            return;
-        }
         state
             .free
             .push(self.offset_bytes..self.offset_bytes + take_bytes);
+        state.leased -= 1;
     }
 }
