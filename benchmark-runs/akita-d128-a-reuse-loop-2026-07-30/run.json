@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-07-31T00:58:48Z",
+  "goal": "Test whether aligned D128 trace-block batching can reuse streamed A rings and further reduce the 2^28 Akita root commitment",
+  "hypothesis": "Two trace blocks share the same A position schedule, so processing them together can halve A-ring reads while the accepted narrow accumulators keep the active destination state near the former one-block wide footprint",
+  "parent": {
+    "jolt_revision": "1457f45f3fd6bb58898110ebea7277dbf144b8cc",
+    "jolt_tree": "c695f578f341765c01e9d568ac9bb48fe704fdee",
+    "akita_revision": "67c3c88deeb1b3dbd0439397b1c9ebafb5b3fb36"
+  },
+  "metric": {
+    "name": "trace_onehot_commit_accumulate_seconds",
+    "direction": "min",
+    "baseline": 82.49,
+    "minimum_target_gain_fraction": 0.05
+  },
+  "guards": {
+    "proof_must_verify": true,
+    "global_analytical_peak_must_not_increase": true,
+    "maximum_rss_bytes": 96636764160,
+    "process_swaps": 0,
+    "unaffected_span_regression_fraction": 0.03
+  },
+  "evaluator": {
+    "workload": "forced-K256 sha2_chain_akita_perf",
+    "log_t": 28,
+    "command": "PERF_LOG_T=28 PERF_TRACE=1 /usr/bin/time -l cargo nextest run --release -p jolt-prover-legacy --features akita -E 'test(sha2_chain_akita_perf)' --run-ignored all --no-capture --cargo-quiet",
+    "timeout_seconds": 900
+  },
+  "scope": {
+    "editable": [
+      "crates/jolt-akita/src/trace_onehot.rs"
+    ],
+    "frozen": [
+      "crates/jolt-prover-legacy/src/zkvm/packed.rs",
+      "scripts/perf/analyze_trace.py",
+      "benchmark-runs/perfetto_traces/akita_28_d128_reduced_final.json"
+    ]
+  },
+  "search": {
+    "policy": "bounded greedy block-batch sweep",
+    "candidate_order": [
+      "two aligned trace blocks per task",
+      "four aligned trace blocks only if batch two clears the screen"
+    ],
+    "max_trials": 4,
+    "max_seconds": 5400,
+    "validation_trials_reserved": 1
+  }
+}
