@@ -25,13 +25,96 @@ use crate::constraint::ConstraintMatrices;
 ///
 /// Stores per-cycle sparse constraint matrices and dimensional metadata.
 /// All evaluation methods exploit the uniform (repeated-constraint) structure.
+///
+/// Dimensional invariants (power-of-two `num_cycles`, padded dimensions
+/// re-derivable from the matrices, non-overflowing `total_rows`/`total_cols`
+/// products) are established at construction. Deserialization routes through
+/// [`RawR1csKey`] and revalidates them; malformed input is rejected before
+/// any consumer sees the struct.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
+#[serde(
+    bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"),
+    try_from = "RawR1csKey<F>"
+)]
 pub struct R1csKey<F: Field> {
-    pub matrices: ConstraintMatrices<F>,
-    pub num_cycles: usize,
-    pub num_constraints_padded: usize,
-    pub num_vars_padded: usize,
+    pub(crate) matrices: ConstraintMatrices<F>,
+    pub(crate) num_cycles: usize,
+    pub(crate) num_constraints_padded: usize,
+    pub(crate) num_vars_padded: usize,
+}
+
+/// Deserialization helper; never exposed directly.
+#[derive(Deserialize)]
+#[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
+struct RawR1csKey<F: Field> {
+    matrices: ConstraintMatrices<F>,
+    num_cycles: usize,
+    num_constraints_padded: usize,
+    num_vars_padded: usize,
+}
+
+impl<F: Field> TryFrom<RawR1csKey<F>> for R1csKey<F> {
+    type Error = String;
+
+    fn try_from(raw: RawR1csKey<F>) -> Result<Self, Self::Error> {
+        let RawR1csKey {
+            matrices,
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        } = raw;
+        check_key_invariants(
+            &matrices,
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        )?;
+        Ok(Self {
+            matrices,
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        })
+    }
+}
+
+fn check_key_invariants<F: Field>(
+    matrices: &ConstraintMatrices<F>,
+    num_cycles: usize,
+    num_constraints_padded: usize,
+    num_vars_padded: usize,
+) -> Result<(), String> {
+    if !num_cycles.is_power_of_two() {
+        return Err(format!(
+            "num_cycles must be a power of two, got {num_cycles}"
+        ));
+    }
+    if num_constraints_padded != matrices.num_constraints.next_power_of_two() {
+        return Err(format!(
+            "num_constraints_padded = {num_constraints_padded}, expected {} (next power of two of {} constraints)",
+            matrices.num_constraints.next_power_of_two(),
+            matrices.num_constraints,
+        ));
+    }
+    if num_vars_padded != matrices.num_vars.next_power_of_two() {
+        return Err(format!(
+            "num_vars_padded = {num_vars_padded}, expected {} (next power of two of {} variables)",
+            matrices.num_vars.next_power_of_two(),
+            matrices.num_vars,
+        ));
+    }
+    // Guarantees total_rows()/total_cols() cannot overflow downstream.
+    if num_cycles.checked_mul(num_constraints_padded).is_none() {
+        return Err(format!(
+            "total row count overflows usize: {num_cycles} cycles * {num_constraints_padded} padded constraints"
+        ));
+    }
+    if num_cycles.checked_mul(num_vars_padded).is_none() {
+        return Err(format!(
+            "total column count overflows usize: {num_cycles} cycles * {num_vars_padded} padded variables"
+        ));
+    }
+    Ok(())
 }
 
 impl<F: Field> R1csKey<F> {
@@ -39,18 +122,49 @@ impl<F: Field> R1csKey<F> {
     ///
     /// # Panics
     ///
-    /// Panics if `num_cycles` is not a power of two.
+    /// Panics if `num_cycles` is not a power of two, or if the total
+    /// row/column counts (`num_cycles` times the padded per-cycle
+    /// dimensions) overflow `usize`.
+    #[expect(
+        clippy::expect_used,
+        reason = "constructor invariant violation indicates a programmer error"
+    )]
     pub fn new(matrices: ConstraintMatrices<F>, num_cycles: usize) -> Self {
-        assert!(
-            num_cycles.is_power_of_two(),
-            "num_cycles must be a power of two, got {num_cycles}"
-        );
+        let num_constraints_padded = matrices.num_constraints.next_power_of_two();
+        let num_vars_padded = matrices.num_vars.next_power_of_two();
+        check_key_invariants(
+            &matrices,
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        )
+        .expect("R1csKey::new invariant violated");
         Self {
-            num_constraints_padded: matrices.num_constraints.next_power_of_two(),
-            num_vars_padded: matrices.num_vars.next_power_of_two(),
             matrices,
             num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
         }
+    }
+
+    #[inline]
+    pub fn matrices(&self) -> &ConstraintMatrices<F> {
+        &self.matrices
+    }
+
+    #[inline]
+    pub fn num_cycles(&self) -> usize {
+        self.num_cycles
+    }
+
+    #[inline]
+    pub fn num_constraints_padded(&self) -> usize {
+        self.num_constraints_padded
+    }
+
+    #[inline]
+    pub fn num_vars_padded(&self) -> usize {
+        self.num_vars_padded
     }
 
     #[inline]
@@ -297,6 +411,54 @@ mod tests {
 
     fn test_key(num_cycles: usize) -> R1csKey<Fr> {
         R1csKey::new(test_matrices(), num_cycles)
+    }
+
+    #[test]
+    #[should_panic(expected = "power of two")]
+    fn new_rejects_non_power_of_two_cycles() {
+        let _ = R1csKey::new(test_matrices(), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "overflows usize")]
+    fn new_rejects_total_size_overflow() {
+        // 2 constraints pad to 2; (1 << 63) * 2 overflows usize.
+        let _ = R1csKey::new(test_matrices(), 1 << 63);
+    }
+
+    fn raw_key(
+        num_cycles: usize,
+        num_constraints_padded: usize,
+        num_vars_padded: usize,
+    ) -> RawR1csKey<Fr> {
+        RawR1csKey {
+            matrices: test_matrices(),
+            num_cycles,
+            num_constraints_padded,
+            num_vars_padded,
+        }
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test should fail loudly")]
+    fn try_from_accepts_consistent_dimensions() {
+        let key = R1csKey::try_from(raw_key(4, 2, 4)).expect("consistent raw key");
+        assert_eq!(key.num_cycles(), 4);
+        assert_eq!(key.num_constraints_padded(), 2);
+        assert_eq!(key.num_vars_padded(), 4);
+    }
+
+    #[test]
+    fn try_from_rejects_dimensional_invariant_violations() {
+        // Zero num_cycles would make num_cycle_vars() return 64.
+        assert!(R1csKey::try_from(raw_key(0, 2, 4)).is_err());
+        assert!(R1csKey::try_from(raw_key(3, 2, 4)).is_err());
+        // Padded dimensions inconsistent with the embedded matrices.
+        assert!(R1csKey::try_from(raw_key(4, 1, 4)).is_err());
+        assert!(R1csKey::try_from(raw_key(4, 4, 4)).is_err());
+        assert!(R1csKey::try_from(raw_key(4, 2, 2)).is_err());
+        // total_rows()/total_cols() products must not overflow.
+        assert!(R1csKey::try_from(raw_key(1 << 63, 2, 4)).is_err());
     }
 
     #[test]

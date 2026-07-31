@@ -54,8 +54,7 @@ impl<'a, F: Field> R1csSource<'a, F> {
     fn compute_matvec(&self, matrix: &[Vec<(usize, F)>]) -> Vec<F> {
         let k_pad = self.key.num_constraints_padded;
         let v_pad = self.key.num_vars_padded;
-        let total = self.key.num_cycles * k_pad;
-        let mut result = vec![F::zero(); total];
+        let mut result = vec![F::zero(); self.key.total_rows()];
 
         let compute_cycle = |(c, chunk): (usize, &mut [F])| {
             let w_base = c * v_pad;
