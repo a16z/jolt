@@ -32,7 +32,16 @@ pub struct R1csSource<'a, F: Field> {
 }
 
 impl<'a, F: Field> R1csSource<'a, F> {
+    /// # Panics
+    ///
+    /// Panics if the witness length does not match the key's padded layout
+    /// (`num_cycles * num_vars_padded`).
     pub fn new(key: &'a R1csKey<F>, witness: &'a [F]) -> Self {
+        assert_eq!(
+            witness.len(),
+            key.total_cols(),
+            "witness length must match the padded layout (num_cycles * num_vars_padded)"
+        );
         Self {
             key,
             witness,
@@ -175,6 +184,38 @@ mod tests {
         let az = source.compute_matvec(&key.matrices.a);
         assert_eq!(az[0], Fr::from_u64(3));
         assert_eq!(az[key.num_constraints_padded], Fr::from_u64(5));
+    }
+
+    #[test]
+    #[should_panic(expected = "witness length must match the padded layout")]
+    fn new_rejects_short_witness() {
+        let one = Fr::one();
+        let m = ConstraintMatrices::new(
+            1,
+            3,
+            vec![vec![(1, one)]],
+            vec![vec![(1, one)]],
+            vec![vec![(2, one)]],
+        );
+        let key = R1csKey::new(m, 2);
+        let witness = vec![Fr::zero(); key.total_cols() - 1];
+        let _ = R1csSource::new(&key, &witness);
+    }
+
+    #[test]
+    #[should_panic(expected = "witness length must match the padded layout")]
+    fn new_rejects_oversized_witness() {
+        let one = Fr::one();
+        let m = ConstraintMatrices::new(
+            1,
+            3,
+            vec![vec![(1, one)]],
+            vec![vec![(1, one)]],
+            vec![vec![(2, one)]],
+        );
+        let key = R1csKey::new(m, 2);
+        let witness = vec![Fr::zero(); key.total_cols() + 1];
+        let _ = R1csSource::new(&key, &witness);
     }
 
     #[test]
