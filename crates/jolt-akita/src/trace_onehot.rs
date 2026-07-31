@@ -730,18 +730,6 @@ fn flush_wide<const D: usize>(
     }
 }
 
-fn flush_wide_rank<const D: usize>(
-    wide: &mut [AkitaWideRing<D>],
-    reduced: &mut [CyclotomicRing<AkitaField, D>],
-    n_a: usize,
-    a: usize,
-) {
-    for (column, wide) in wide.iter_mut().enumerate() {
-        let index = column * n_a + a;
-        reduced[index] += std::mem::replace(wide, WideCyclotomicRing::zero()).reduce();
-    }
-}
-
 fn flush_deferred_rank<const D: usize>(
     rank_deferred: &mut [DeferredFp128Ring<D>],
     reduced: &mut [CyclotomicRing<AkitaField, D>],
@@ -1062,16 +1050,7 @@ fn commit_packed<const D: usize>(
                     let mut lanes = vec![NO_HOT_LANE; num_columns];
                     let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
                     let mut ring_masks = vec![[0u32; 4]; K256_ROW_BATCH];
-                    let mut rank_wide = if D == 128 {
-                        Vec::new()
-                    } else {
-                        vec![WideCyclotomicRing::zero(); num_columns]
-                    };
-                    let mut rank_deferred = if D == 128 {
-                        vec![DeferredFp128Ring::zero(); num_columns]
-                    } else {
-                        Vec::new()
-                    };
+                    let mut rank_deferred = vec![DeferredFp128Ring::zero(); num_columns];
                     for tile_start in (row_start..row_end).step_by(K256_ROW_BATCH) {
                         let tile_len = (row_end - tile_start).min(K256_ROW_BATCH);
                         for row_offset in 0..tile_len {
@@ -1105,35 +1084,17 @@ fn commit_packed<const D: usize>(
                                     let position = ring - block_ring_start;
                                     let a_col = position * plan.num_digits_inner;
                                     let mut remaining = mask;
-                                    if D == 128 {
-                                        while remaining != 0 {
-                                            let column = remaining.trailing_zeros() as usize;
-                                            remaining &= remaining - 1;
-                                            let hot = hot_values[row_offset * num_columns + column]
-                                                as usize;
-                                            rank_deferred[column]
-                                                .shift_accumulate(&a_row[a_col], hot % D);
-                                        }
-                                    } else {
-                                        let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
-                                        while remaining != 0 {
-                                            let column = remaining.trailing_zeros() as usize;
-                                            remaining &= remaining - 1;
-                                            let hot = hot_values[row_offset * num_columns + column]
-                                                as usize;
-                                            a_wide.shift_accumulate_into(
-                                                &mut rank_wide[column],
-                                                hot % D,
-                                            );
-                                        }
+                                    while remaining != 0 {
+                                        let column = remaining.trailing_zeros() as usize;
+                                        remaining &= remaining - 1;
+                                        let hot =
+                                            hot_values[row_offset * num_columns + column] as usize;
+                                        rank_deferred[column]
+                                            .shift_accumulate(&a_row[a_col], hot % D);
                                     }
                                 }
                             }
-                            if D == 128 {
-                                flush_deferred_rank(&mut rank_deferred, &mut reduced, plan.n_a, a);
-                            } else {
-                                flush_wide_rank(&mut rank_wide, &mut reduced, plan.n_a, a);
-                            }
+                            flush_deferred_rank(&mut rank_deferred, &mut reduced, plan.n_a, a);
                         }
                     }
                 } else {
@@ -2483,9 +2444,7 @@ mod tests {
         assert!(TracePackedOneHot::new(16, 64, 8, rows).is_err());
     }
 
-    #[test]
-    fn deferred_fp128_shift_accumulator_matches_canonical_at_batch_bound() {
-        const D: usize = 128;
+    fn assert_deferred_fp128_shift_accumulator<const D: usize>() {
         let source: CyclotomicRing<AkitaField, D> =
             CyclotomicRing::from_coefficients(std::array::from_fn(|_| -AkitaField::one()));
         let mut expected: CyclotomicRing<AkitaField, D> = CyclotomicRing::zero();
@@ -2510,6 +2469,12 @@ mod tests {
         deferred.shift_accumulate(&source, D - 1);
         assert_eq!(deferred.reduce_and_clear(), expected_after_reuse);
         assert_eq!(std::mem::size_of::<DeferredFp128Ring<D>>(), 18 * D);
+    }
+
+    #[test]
+    fn deferred_fp128_shift_accumulator_matches_canonical_at_batch_bound() {
+        assert_deferred_fp128_shift_accumulator::<64>();
+        assert_deferred_fp128_shift_accumulator::<128>();
     }
 
     fn assert_opening_kernels_match_materialized<const D: usize>(
