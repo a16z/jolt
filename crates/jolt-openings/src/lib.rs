@@ -54,5 +54,5 @@ pub use packing::{
 pub use schemes::{
     AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, GroupCommitmentMetadata,
     GroupSetupMetadata, HomomorphicBatch, StreamingCommitment, TransparentObjectSetup,
-    ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
+    ZkBatchOpening, ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
 };

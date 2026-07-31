@@ -9,32 +9,44 @@
 //! assembly, and proof assembly. See `specs/clean-slate-prover.md`.
 //!
 //! Two parallel prover paths share that orchestration ([`config`],
-//! [`preprocessing`], [`driver`], [`error`]):
+//! [`preprocessing`], [`driver`], [`error`], [`recorder`]):
 //!
 //! - `dory` — the homomorphic pipeline over an elliptic-curve PCS:
 //!   streaming per-polynomial witness commitments, the stage 0–8 recipes,
-//!   and the RLC-batched joint opening (`dory::prove`);
+//!   and the RLC-batched joint opening (`dory::prove`), in the compiled
+//!   proof mode (transparent, or BlindFold ZK under the `zk` feature);
 //! - `akita` — the packed pipeline over the lattice PCS: one native
 //!   `OneHotTrace` commitment group, the fused-inc/reconstruction stage
 //!   swaps, and the native same-point joint opening (`akita::prove`).
 //!
 //! Like `jolt-verifier`, one compiled prover proves exactly one protocol:
 //! the `akita` feature swaps the shared wire types to the packed envelope,
-//! so exactly one of the two path modules compiles into any given build.
+//! so exactly one of the two path modules compiles into any given build,
+//! and the `zk` feature swaps the shared recorders to the committed flavor.
 //!
 //! [`config`]: ProverConfig
 //! [`preprocessing`]: JoltProverPreprocessing
 //! [`driver`]: StageProver
 //! [`error`]: ProverError
+//! [`recorder`]: ProofMode
+
+// The packed protocol is transparent-only: its native openings have no
+// hiding mode and the BlindFold tail has no packed plumbing (the same
+// exclusion jolt-prover-legacy enforces).
+#[cfg(all(feature = "akita", feature = "zk"))]
+compile_error!("the `akita` and `zk` features are mutually exclusive");
 
 #[cfg(feature = "akita")]
 pub mod akita;
+#[cfg(feature = "zk")]
+mod blindfold;
 mod config;
 #[cfg(not(feature = "akita"))]
 pub mod dory;
 pub mod driver;
 mod error;
 mod preprocessing;
+mod recorder;
 pub mod stages;
 
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
@@ -42,3 +54,4 @@ pub use driver::{KernelSource, Proved, StageProver};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession};
 pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
+pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};

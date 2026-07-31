@@ -14,6 +14,9 @@ workspace = true
 [features]
 default = ["parallel"]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
+# Compile-time ZK mode: witness commitments finish through the hiding
+# streaming paths. Selected by jolt-prover's `zk` feature.
+zk = []
 
 [dependencies]
 jolt-claims.workspace = true
