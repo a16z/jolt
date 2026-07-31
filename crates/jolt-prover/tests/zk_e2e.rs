@@ -322,7 +322,9 @@ mod zk {
 
     use super::support;
 
-    fn prove_muldiv_zk() -> (
+    fn prove_muldiv_zk(
+        backend: JoltBackend<Fr, DoryScheme>,
+    ) -> (
         support::VerifierPreprocessing,
         common::jolt_device::JoltDevice,
         support::Proof,
@@ -368,7 +370,6 @@ mod zk {
             pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(&memory_layout, &[])),
             committed_program: None,
         };
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -384,17 +385,36 @@ mod zk {
     #[test]
     fn zk_muldiv_modular_proof_is_accepted() {
         support::with_zk_stack(|| {
-            let (preprocessing, public_io, proof) = prove_muldiv_zk();
+            let (preprocessing, public_io, proof) =
+                prove_muldiv_zk(JoltBackend::<Fr, DoryScheme>::reference());
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             support::verify_modular(&preprocessing, &public_io, &proof, None)
                 .expect("modular ZK proof must verify");
         });
     }
 
+    /// The optimized backend under the ZK envelope: its commit slot must
+    /// finish through the hiding streamed paths (`ModeStreamingCommitment`
+    /// routes `finish_streamed`/`finish_streamed_one_hot` to the ZK
+    /// finishes), or the witness commitments would leak. Constructing
+    /// `optimized()` here also pins the zk-mode compile of the optimized
+    /// tier, which the reference-only tests never exercise.
+    #[test]
+    fn zk_muldiv_optimized_backend_proof_is_accepted() {
+        support::with_zk_stack(|| {
+            let (preprocessing, public_io, proof) =
+                prove_muldiv_zk(JoltBackend::<Fr, DoryScheme>::optimized());
+            assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
+            support::verify_modular(&preprocessing, &public_io, &proof, None)
+                .expect("optimized-backend ZK proof must verify");
+        });
+    }
+
     #[test]
     fn zk_muldiv_tampered_blindfold_is_rejected() {
         support::with_zk_stack(|| {
-            let (preprocessing, public_io, mut proof) = prove_muldiv_zk();
+            let (preprocessing, public_io, mut proof) =
+                prove_muldiv_zk(JoltBackend::<Fr, DoryScheme>::reference());
             let JoltProofClaims::Zk { blindfold_proof } = &mut proof.claims else {
                 panic!("ZK proof must carry the BlindFold claims variant");
             };

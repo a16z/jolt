@@ -26,7 +26,9 @@
 //! Each module documents its own port; [`JoltBackend::optimized`] wires them.
 
 use jolt_field::Field;
-use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_openings::CommitmentScheme;
+
+use crate::commitment::ModeStreamingCommitment;
 
 use crate::JoltBackend;
 
@@ -79,7 +81,7 @@ where
     /// construction bounds as the reference backend.
     pub fn optimized() -> Self
     where
-        PCS: StreamingCommitment,
+        PCS: ModeStreamingCommitment,
     {
         let mut backend = Self::reference();
 

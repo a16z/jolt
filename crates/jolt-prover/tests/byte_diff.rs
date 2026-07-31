@@ -1709,7 +1709,7 @@ mod advice_committed {
 /// pipelined commit), and once behind [`support::HiddenRows`], which forces
 /// the sequential chunked walk so the boundary carry and the streamed
 /// fallback consumers actually produce the pinned bytes.
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod chunk_boundary {
     // Anchor the sha2 inline's inventory registration into this test binary;
@@ -1919,7 +1919,7 @@ mod chunk_boundary {
 /// at log_T ≥ 24 vs the modular tiers' fixed 16 × 8-bit) derives from the
 /// ACTUAL trace length inside the sumcheck, not from any injectable config
 /// — that argument rests on the reference kernel's exactness note alone.
-#[cfg(feature = "prover-fixtures")]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod wide_one_hot {
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
