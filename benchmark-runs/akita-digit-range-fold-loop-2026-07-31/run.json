@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-31T04:15:54Z",
+  "goal": "Parallelize the high-basis Akita digit-range fold without changing the protocol or analytical memory",
+  "parent": {
+    "jolt_revision": "55213e9fa412effa687972b34ba49143c58eabc2",
+    "jolt_tree": "6a3dd21797edeed4beb47f37d29d3e7787aac0cd",
+    "akita_revision": "67c3c88deeb1b3dbd0439397b1c9ebafb5b3fb36",
+    "akita_tree": "d055fc8ab029f948217e4acda7852c1e07c67733"
+  },
+  "accepted": {
+    "jolt_revision": "953196965cf90d7ba7f19bebecc5558dedf11186",
+    "jolt_tree": "9fa4f4780cb46e9f4b284c58abbaf8195db88fae",
+    "akita_revision": "a56b933cd097deebd3a1d937d1308e7d02ea6e0a",
+    "akita_tree": "ac441a60e071459a526353f4ddbea85260770b68"
+  },
+  "evaluator": {
+    "workload": "forced-K256 sha2_chain_akita_perf",
+    "log_t": 28,
+    "log_k_chunk": 8,
+    "lookups_ra_virtual_log_k_chunk": 32,
+    "trace_parser": "scripts/perf/analyze_trace.py"
+  },
+  "guards": {
+    "proof_must_verify": true,
+    "protocol_must_not_change": true,
+    "global_analytical_peak_must_not_increase": true,
+    "maximum_rss_bytes": 96636764160,
+    "process_swaps": 0
+  },
+  "artifacts": {
+    "parent_trace": "benchmark-runs/perfetto_traces/akita_28_exact_buckets.json",
+    "candidate_trace": "benchmark-runs/perfetto_traces/akita_28_fold_waves.json",
+    "candidate_trace_sha256": "bd8f1970c81b02596aebc5cbe2a3ebf7e7eee865022cde9eae20820f8dc9ca2f"
+  }
+}
