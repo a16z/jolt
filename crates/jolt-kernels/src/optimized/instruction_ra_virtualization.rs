@@ -502,6 +502,8 @@ mod tests {
                     row.raf_flag.0,
                     None,
                     None,
+                    #[cfg(feature = "akita")]
+                    jolt_witness::witnesses::FusedInc::default(),
                 )
             })
             .collect()

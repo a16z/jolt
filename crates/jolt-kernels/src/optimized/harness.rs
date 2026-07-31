@@ -9,9 +9,11 @@
 //! per-kernel tests.
 #![expect(clippy::expect_used, clippy::panic, reason = "test-only module")]
 
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::{Field, Fr, FromPrimitiveInt};
 use jolt_sumcheck::SumcheckError;
+#[cfg(not(feature = "akita"))]
 use jolt_witness::JoltWitnessOracle;
 
 use crate::SumcheckKernel;
@@ -32,6 +34,7 @@ pub(crate) fn synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
 /// Probe the committed one-hot family sizes and chunk bits off the backend's
 /// shape surface: family count by scanning indices until the shape errors,
 /// chunk bits from `log(one-hot rows) − log_t`.
+#[cfg(not(feature = "akita"))]
 pub(crate) fn probe_one_hot_family(
     witness: &impl JoltWitnessOracle<Fr>,
     family: impl Fn(usize) -> JoltCommittedPolynomial,

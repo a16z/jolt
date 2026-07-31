@@ -173,9 +173,7 @@ where
         // These relations add fused-inc columns or openings in the packed
         // protocol; their optimized kernels currently serve the base shape.
         backend.base.bytecode_read_raf_address = Box::new(ReferenceBackend);
-        backend.base.booleanity_address = Box::new(ReferenceBackend);
         backend.base.bytecode_read_raf_cycle = Box::new(ReferenceBackend);
-        backend.base.booleanity_cycle = Box::new(ReferenceBackend);
         backend.base.hamming_weight_claim_reduction = Box::new(ReferenceBackend);
         backend
     }
