@@ -24,10 +24,9 @@ use jolt_claims::protocols::jolt::lattice::relations::advice_reconstruction::{
     trusted_advice_bytes_opening, untrusted_advice_bytes_opening,
 };
 use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
-    bytecode_circuit_flag_opening, bytecode_imm_bytes_opening,
-    bytecode_instruction_flag_opening, bytecode_lookup_selector_opening,
-    bytecode_raf_flag_opening, bytecode_register_selector_opening,
-    bytecode_unexpanded_pc_bytes_opening,
+    bytecode_circuit_flag_opening, bytecode_imm_bytes_opening, bytecode_instruction_flag_opening,
+    bytecode_lookup_selector_opening, bytecode_raf_flag_opening,
+    bytecode_register_selector_opening, bytecode_unexpanded_pc_bytes_opening,
 };
 use jolt_claims::protocols::jolt::{
     BytecodeChunkReconstructionPublic, BytecodeRegisterLane, JoltDerivedId,
@@ -199,9 +198,7 @@ where
             });
         }
 
-        let byte_column = witness.oracle_table(
-            untrusted_advice_bytes_opening().polynomial_id(),
-        )?;
+        let byte_column = witness.oracle_table(untrusted_advice_bytes_opening().polynomial_id())?;
 
         // The publics, materialized over the big-endian (byte ‖ place ‖ word)
         // cell domain; LowToHigh binding reproduces the verifier's
@@ -304,7 +301,8 @@ where
         KernelError<F>,
     > {
         let r_word = inputs.points.word.as_slice();
-        let image_words = super::witness::program_image_words_padded(witness.program_preprocessing());
+        let image_words =
+            super::witness::program_image_words_padded(witness.program_preprocessing());
         if image_words.len() != 1usize << r_word.len() {
             return Err(KernelError::InvariantViolation {
                 reason: "program image word point arity disagrees with the padded image",
@@ -378,9 +376,13 @@ where
         let relation = inputs.relation;
         let rounds = relation.rounds();
         let chunks = inputs.claims.chunks.len();
-        let shared_point = inputs.points.chunks.first().ok_or(KernelError::InvariantViolation {
-            reason: "bytecode reconstruction consumed no chunk points",
-        })?;
+        let shared_point = inputs
+            .points
+            .chunks
+            .first()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode reconstruction consumed no chunk points",
+            })?;
         let lane_vars = committed_lane_vars();
         if shared_point.len() < lane_vars {
             return Err(KernelError::InvariantViolation {
@@ -499,7 +501,9 @@ where
             let _ = opening_tables.insert(
                 bytecode_raf_flag_opening(chunk),
                 Polynomial::new(replicated(fold_flag(&|instruction| {
-                    !decode_row(instruction).circuit_flags().is_interleaved_operands()
+                    !decode_row(instruction)
+                        .circuit_flags()
+                        .is_interleaved_operands()
                 }))),
             );
             {

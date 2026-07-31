@@ -369,15 +369,16 @@ mod zk {
             committed_program: None,
         };
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("modular ZK prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                &witness,
+                &public_io,
+            )
+            .expect("modular ZK prove");
         (prover_preprocessing.verifier, public_io, proof)
     }
 
@@ -468,16 +469,21 @@ mod zk {
                 &prover_preprocessing.pcs_setup,
             );
 
-            let proof =
-                jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    Some(&trusted),
-                    &witness,
-                    &public_io,
-                )
-                .expect("modular ZK advice prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&trusted),
+                &witness,
+                &public_io,
+            )
+            .expect("modular ZK advice prove");
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             assert!(
                 proof.untrusted_advice_commitment.is_some(),
@@ -586,16 +592,21 @@ mod zk {
                 }),
             };
             let backend = JoltBackend::<Fr, DoryScheme>::reference();
-            let proof =
-                jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    None,
-                    &witness,
-                    &public_io,
-                )
-                .expect("modular committed ZK prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                &witness,
+                &public_io,
+            )
+            .expect("modular committed ZK prove");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None)
                 .expect("modular committed ZK proof must verify");
         });

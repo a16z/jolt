@@ -86,7 +86,9 @@ where
     let mut evaluations = Vec::with_capacity(plan.columns.len());
     for polynomial in &plan.columns {
         let claim = leaves.get(polynomial).ok_or_else(|| {
-            batch_failed::<F>(format!("missing final OneHotTrace claim for {polynomial:?}"))
+            batch_failed::<F>(format!(
+                "missing final OneHotTrace claim for {polynomial:?}"
+            ))
         })?;
         let point = ONE_HOT_TRACE_LAYOUT
             .column_point(*polynomial, chunk_width, claim.point.as_slice())
@@ -141,8 +143,7 @@ where
         (JoltAdviceKind::Trusted, trusted_advice),
     ] {
         let Some(object) = object else { continue };
-        let packing =
-            advice_bytes_packing(kind, object.word_vars).map_err(batch_failed::<F>)?;
+        let packing = advice_bytes_packing(kind, object.word_vars).map_err(batch_failed::<F>)?;
         let statement = object_statement(&packing, object.commitment.clone(), &leaves)
             .map_err(ProverError::Verifier)?;
         auxiliaries.push(Auxiliary {
@@ -185,9 +186,7 @@ where
                 setup: auxiliary.setup,
             })
             .collect();
-        Some(
-            prove_packed_openings(objects, groups, transcript).map_err(batch_failed::<F>)?,
-        )
+        Some(prove_packed_openings(objects, groups, transcript).map_err(batch_failed::<F>)?)
     };
 
     Ok(AkitaJointOpeningProof {

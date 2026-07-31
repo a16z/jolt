@@ -20,7 +20,9 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         )
     }
 
-    pub(crate) fn materialize_trusted_advice_bytes<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_trusted_advice_bytes<F: Field>(
+        &self,
+    ) -> Result<Vec<F>, WitnessError> {
         materialize_advice_bytes(
             "trusted",
             &self.trace.device.trusted_advice,

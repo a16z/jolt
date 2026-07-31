@@ -130,12 +130,18 @@ impl<F: Field> MultilinearPoly<F> for CommittedOneHotShape {
         self.num_vars
     }
 
-    #[expect(clippy::unimplemented, reason = "hint-owned witnesses are never evaluated here")]
+    #[expect(
+        clippy::unimplemented,
+        reason = "hint-owned witnesses are never evaluated here"
+    )]
     fn evaluate(&self, _point: &[F]) -> F {
         unimplemented!("hint-owned one-hot witness is evaluated by the Akita backend")
     }
 
-    #[expect(clippy::unimplemented, reason = "hint-owned witnesses are never streamed here")]
+    #[expect(
+        clippy::unimplemented,
+        reason = "hint-owned witnesses are never streamed here"
+    )]
     fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[F])) {
         unimplemented!("hint-owned one-hot witness is streamed by the Akita backend")
     }
@@ -178,8 +184,7 @@ pub fn assemble_one_hot_trace<F: Field>(
         let mut indices: Vec<Option<u8>> = Vec::with_capacity(rows.len());
         match polynomial {
             JoltCommittedPolynomial::InstructionRa(index) => {
-                let selector =
-                    RaChunkSelector::new(*index, ra_layout.instruction(), log_k_chunk)?;
+                let selector = RaChunkSelector::new(*index, ra_layout.instruction(), log_k_chunk)?;
                 for row in &rows {
                     indices.push(Some(hot_u8(selector.chunk_u128(row.lookup_index.0))?));
                 }
@@ -262,7 +267,10 @@ where
     let mut one_positions = Vec::with_capacity(WORD_BYTES * words);
     for limb in 0..WORD_BYTES {
         for word_index in 0..words {
-            let byte = advice_bytes.get(word_index * 8 + limb).copied().unwrap_or(0) as usize;
+            let byte = advice_bytes
+                .get(word_index * 8 + limb)
+                .copied()
+                .unwrap_or(0) as usize;
             one_positions.push((((byte << limb_bits) | limb) << word_vars) | word_index);
         }
     }
@@ -280,9 +288,11 @@ where
 }
 
 fn commit_failed<F: Field>(error: OpeningsError) -> ProverError<F> {
-    ProverError::Verifier(jolt_verifier::VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
-    })
+    ProverError::Verifier(
+        jolt_verifier::VerifierError::FinalOpeningVerificationFailed {
+            reason: error.to_string(),
+        },
+    )
 }
 
 /// The precommitted `ProgramOneHot` commitment object (committed-program
@@ -329,9 +339,11 @@ where
         program_image_log_words: Some(image_words.len().ilog2() as usize),
     };
     let packing = precommitted_packing(&shape).map_err(|error| {
-        ProverError::Verifier(jolt_verifier::VerifierError::FinalOpeningVerificationFailed {
-            reason: error.to_string(),
-        })
+        ProverError::Verifier(
+            jolt_verifier::VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            },
+        )
     })?;
     let one_positions = assemble_precommitted_witness::<PCS::Field>(
         &packing,
@@ -465,7 +477,10 @@ pub fn assemble_precommitted_witness<F: Field>(
             }
             JoltCommittedPolynomial::BytecodeRafFlag { chunk } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
-                    if !decode_row(instruction).circuit_flags().is_interleaved_operands() {
+                    if !decode_row(instruction)
+                        .circuit_flags()
+                        .is_interleaved_operands()
+                    {
                         one_positions.push(slot.packed_index(row));
                     }
                 }

@@ -197,10 +197,8 @@ where
                 .ok_or(ProverError::InvariantViolation {
                     reason: "committed-program mode without a bytecode schedule",
                 })?;
-            let object = commit_program_one_hot::<PCS>(
-                witness.program_preprocessing(),
-                chunk_count,
-            )?;
+            let object =
+                commit_program_one_hot::<PCS>(witness.program_preprocessing(), chunk_count)?;
             if object.commitment != *commitment {
                 return Err(ProverError::Unsupported {
                     reason: "the ProgramOneHot commitment does not match the retained program",

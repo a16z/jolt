@@ -31,7 +31,11 @@
 /// and the same modular-side pipeline (trace + config + witness + prove +
 /// verify); the per-mode differences — advice, committed program, trace
 /// order — stay in the test bodies.
-#[cfg(all(feature = "prover-fixtures", not(feature = "akita"), not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -424,7 +428,11 @@ mod support {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "akita"), not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -433,6 +441,7 @@ mod muldiv {
     use jolt_field::Fr;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::dory::stages::stage0::prove_stage0;
+    use jolt_prover::dory::stages::stage8::prove_stage8;
     use jolt_prover::stages::stage1::prove_stage1;
     use jolt_prover::stages::stage2::prove_stage2;
     use jolt_prover::stages::stage3::prove_stage3;
@@ -441,7 +450,6 @@ mod muldiv {
     use jolt_prover::stages::stage6a::prove_stage6a;
     use jolt_prover::stages::stage6b::prove_stage6b;
     use jolt_prover::stages::stage7::prove_stage7;
-    use jolt_prover::dory::stages::stage8::prove_stage8;
     use jolt_prover::{JoltBackend, JoltProverPreprocessing};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -944,7 +952,11 @@ mod muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "akita"), not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1114,7 +1126,11 @@ mod advice_consumer {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "akita"), not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod committed_muldiv {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1286,7 +1302,11 @@ mod committed_muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "akita"), not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod address_major {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1411,7 +1431,11 @@ mod address_major {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "akita"), not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod advice_committed {
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -1593,7 +1617,11 @@ mod advice_committed {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", not(feature = "akita"), not(feature = "zk"))))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+)))]
 #[test]
 #[ignore = "enable --features prover-fixtures (without akita or zk — the harness byte-compares \
             clear Dory proofs; one compiled prover proves one protocol) to run the legacy \
