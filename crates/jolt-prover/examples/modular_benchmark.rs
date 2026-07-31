@@ -334,10 +334,12 @@ fn run_benchmark(
     }
     report_stage_memory();
 
-    // The same 7-field CSV line the legacy harness writes, under a
-    // modular-prefixed file name.
+    // The legacy harness's 7 CSV fields plus a trailing backend column —
+    // reference and optimized runs at the same benchmark/scale must stay
+    // distinguishable in both the file name and the consolidated rows, or
+    // parity/performance evidence gets misattributed.
     let summary_line = format!(
-        "{},{},{:.2},{},{:.2},{},{}\n",
+        "{},{},{:.2},{},{:.2},{},{},{backend_label}\n",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -346,7 +348,8 @@ fn run_benchmark(
         proof_size,
         proof_size,
     );
-    let individual_file = format!("benchmark-runs/results/modular_{bench_name}_{scale}.csv");
+    let individual_file =
+        format!("benchmark-runs/results/modular_{bench_name}_{scale}_{backend_label}.csv");
     if let Err(e) = fs::write(&individual_file, &summary_line) {
         eprintln!("Failed to write individual result file {individual_file}: {e}");
     }
