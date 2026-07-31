@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-31T03:14:00Z",
+  "goal": "Remove high-T PIOP memory traffic without changing the proof or increasing analytical memory",
+  "parent": {
+    "jolt_revision": "dc035d36abba86149133b02f27f822176dc2c1ca",
+    "jolt_tree": "1ca83a5f0ebfe4bbc4fb48b3e2be0e827a0504e3"
+  },
+  "accepted": {
+    "jolt_revision": "f25ca8e656502316adee7b2a7f387521d1272561",
+    "jolt_tree": "1094f346859d19a15336bf392a5abaa09b48dea2"
+  },
+  "evaluator": {
+    "screen_log_t": 22,
+    "promotion_log_t": 26,
+    "target_log_t": 28,
+    "log_k_chunk": 8,
+    "lookups_ra_virtual_log_k_chunk": 32,
+    "trace_parser": "scripts/perf/analyze_trace.py"
+  },
+  "guards": {
+    "proof_must_verify": true,
+    "maximum_rss_bytes": 96636764160,
+    "process_swaps": 0,
+    "protocol_must_not_change": true
+  }
+}
