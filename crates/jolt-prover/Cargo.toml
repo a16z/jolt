@@ -25,6 +25,7 @@ prover-fixtures = ["jolt-prover-legacy/host"]
 # and a host-only legacy build against an akita-shaped jolt-verifier fails to
 # compile.
 akita = [
+  "dep:jolt-akita",
   "jolt-verifier/akita",
   "jolt-claims/akita",
   "jolt-field/akita",
@@ -34,6 +35,7 @@ akita = [
 
 [dependencies]
 common.workspace = true
+jolt-akita = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
