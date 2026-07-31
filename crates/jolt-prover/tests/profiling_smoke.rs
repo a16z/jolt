@@ -4,10 +4,14 @@
 //! proves must be present in the trace — so a silent span rename fails CI
 //! rather than drifting.
 //!
-//! Scale 2^13 — fibonacci's minimum guest scale, and the largest that fits
-//! CI memory: the reference backend's stage-2 naive RAM kernels retain
-//! ~18 GiB regardless of trace length (the CI job adds swap for exactly
-//! that), and 2^16 peaks near 80 GiB. Label coverage is scale-independent.
+//! Scale 2^13 — fibonacci's minimum guest scale. Label coverage is
+//! scale-independent.
+//!
+//! NOT wired into CI yet: the reference backend's naive RAM kernels retain
+//! ~18 GiB regardless of trace length (`ram_K` is priced off the guest's
+//! default 32 MB heap, not the trace), which exceeds hosted-runner memory.
+//! Hook up a dedicated `rust.yml` job (guest toolchain + jolt CLI, like the
+//! legacy test jobs) once an optimized backend fits runner memory.
 //!
 //! Run explicitly (needs the guest toolchain, like the byte-diff harness):
 //! `cargo nextest run -p jolt-prover --features profiling -E 'binary(profiling_smoke)'`

@@ -253,55 +253,13 @@ jobs:
       - name: Run jolt-prover-legacy tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features akita
 
-  # The profiling smoke test needs the guest toolchain (fibonacci compile via
-  # the legacy host machinery), which the sharded per-crate discovery loop
-  # does not install — hence this dedicated job mirroring the legacy test
-  # jobs. It proves fibonacci at 2^13 through the profile harness and asserts
-  # both telemetry artifacts and every always-present taxonomy-v1 span label.
-  test-prover-profiling:
-    runs-on: ubuntu-latest
-    name: Test jolt-prover (profiling smoke)
-    steps:
-      - uses: actions/checkout@v7
-      # The reference backend's stage-2 naive RAM kernels retain ~18 GiB
-      # regardless of trace length — past the 16 GB hosted-runner RAM, which
-      # otherwise kills the runner mid-prove ("runner received a shutdown
-      # signal").
-      # /mnt: the runner's ephemeral data disk (~65 GB free); the root
-      # /swapfile already exists and is active on hosted runners.
-      - name: Add swap for the reference backend
-        run: |
-          sudo fallocate -l 10G /mnt/swapfile
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: rust-src
-          cache: false
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-tests
-          save-if: false
-          cache-directories: ~/.cache/dory
-      - name: Cache ZeroOS musl toolchain
-        id: cache-zeroos-musl
-        uses: actions/cache@v6
-        with:
-          path: ~/.zeroos/musl
-          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
-      - name: Install ZeroOS musl toolchain
-        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
-        run: |
-          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
-          mkdir -p ~/.zeroos
-          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
-      - name: Build and install jolt CLI
-        run: cargo install --path . --locked --force --profile ci --target-dir target
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Run profiling smoke test
-        run: cargo nextest run --cargo-profile ci -p jolt-prover --features profiling -E 'binary(profiling_smoke)'
+  # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
+  # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
+  # wired into CI yet. It proves through the reference backend, whose naive
+  # RAM kernels retain ~18 GiB regardless of trace length — past
+  # hosted-runner memory. Hook it up as a dedicated job (guest toolchain +
+  # jolt CLI install, mirroring the legacy test jobs above) once an
+  # optimized backend fits runner memory.
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest
