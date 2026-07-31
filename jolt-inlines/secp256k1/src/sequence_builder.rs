@@ -185,9 +185,9 @@ impl MulqBuilder {
                         self.operands.rs2,
                         i as i64 * 8,
                     );
+                    // The advised quotient stays in registers until every check
+                    // has run; see the store loop at the end of this sequence.
                     self.asm.emit_j::<VirtualAdvice>(*self.a[i], 0);
-                    self.asm
-                        .emit_s::<SD>(self.operands.rs3, *self.a[i], i as i64 * 8);
                 }
             }
             self.asm.emit_j::<VirtualAdvice>(*self.w[i], 0);
@@ -370,6 +370,16 @@ impl MulqBuilder {
             .emit_b::<VirtualAssertEQ>(*self.r[1], *self.w[3], 0);
         self.asm
             .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[1], 0);
+        // WARNING: the division result must be stored only after the checks
+        // above. `rs3` may alias `rs1`, in which case an earlier store would
+        // overwrite the dividend and reduce `cb + wp == 2^256 w + a` to a
+        // tautology, admitting an arbitrary quotient.
+        if let MulqType::Div = self.op_type {
+            for i in 0..4 {
+                self.asm
+                    .emit_s::<SD>(self.operands.rs3, *self.a[i], i as i64 * 8);
+            }
+        }
         self.asm.release_many(self.a);
         match self.op_type {
             MulqType::Square => {}

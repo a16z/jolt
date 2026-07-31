@@ -7,7 +7,10 @@ mod sequence_tests {
     };
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::{Fq, Fr};
-    use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+    use tracer::emulator::mmu::DRAM_BASE;
+    use tracer::utils::inline_test_harness::{
+        InlineMemoryLayout, InlineTestHarness, RegisterMapping,
+    };
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value
@@ -197,6 +200,65 @@ mod sequence_tests {
         let a = [1u64, 1u64, 1u64, 1u64];
         let b = [1u64, 1u64, 1u64, 1u64];
         assert_divr_trace_equiv(&a, &b);
+    }
+
+    /// Division with the result buffer aliasing the dividend (`rs3 == rs1`).
+    /// The advised quotient must be stored only after every `VirtualAssertEQ`
+    /// against the dividend has run, otherwise the checks compare the stored
+    /// result against itself and any value would be accepted.
+    fn assert_div_trace_equiv_aliased(funct3: u32, a: &[u64; 4], b: &[u64; 4], expected: [u64; 4]) {
+        // rs1 == rs3: dividend and result share one 32-byte region
+        let layout = InlineMemoryLayout {
+            input_base: DRAM_BASE,
+            input_size: 32,
+            input2_base: Some(DRAM_BASE + 32),
+            input2_size: Some(32),
+            output_base: DRAM_BASE,
+            output_size: 32,
+            rs1_mapping: RegisterMapping::Input,
+            rs2_mapping: RegisterMapping::Input2,
+            rs3_mapping: Some(RegisterMapping::Output),
+        };
+
+        let mut harness = InlineTestHarness::new(layout);
+        harness.setup_registers();
+        harness.load_input64(a);
+        harness.load_input2_64(b);
+        harness.execute_inline(InlineTestHarness::create_default_instruction(
+            INLINE_OPCODE,
+            funct3,
+            SECP256K1_FUNCT7,
+        ));
+        let result_vec = harness.read_output64(4);
+        let mut result = [0u64; 4];
+        result.copy_from_slice(&result_vec);
+        assert_eq!(result, expected, "aliased div result mismatch");
+    }
+
+    #[test]
+    fn test_secp256k1_div_aliased_dividend_and_result() {
+        let a = [
+            0x123456789ABCDEF0,
+            0x0FEDCBA987654321,
+            0x1111111111111111,
+            0x2222222222222222,
+        ];
+        let b = [
+            0x0FEDCBA987654321,
+            0x123456789ABCDEF0,
+            0x3333333333333333,
+            0x4444444444444444,
+        ];
+
+        let expected_q = (Fq::new(BigInt(b)).inverse().unwrap() * Fq::new(BigInt(a)))
+            .into_bigint()
+            .0;
+        assert_div_trace_equiv_aliased(SECP256K1_DIVQ_FUNCT3, &a, &b, expected_q);
+
+        let expected_r = (Fr::new(BigInt(b)).inverse().unwrap() * Fr::new(BigInt(a)))
+            .into_bigint()
+            .0;
+        assert_div_trace_equiv_aliased(SECP256K1_DIVR_FUNCT3, &a, &b, expected_r);
     }
 
     fn assert_mulr_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
