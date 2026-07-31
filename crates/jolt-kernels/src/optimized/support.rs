@@ -17,7 +17,7 @@ const COLLECT_ROWS_CHUNK: usize = 1 << 16;
 /// realloc). Chunk size never changes the collected bundles — the pass
 /// carries the lookahead row across chunk boundaries — so this is walk-shape
 /// only.
-pub(crate) fn collect_rows<B: WitnessBundle + Clone + Send + Sync>(
+pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
@@ -32,7 +32,7 @@ pub(crate) fn collect_rows<B: WitnessBundle + Clone + Send + Sync>(
     struct Presized<B> {
         rows: Vec<B>,
     }
-    impl<B: WitnessBundle + Clone + Send + Sync> StreamConsumer for Presized<B> {
+    impl<B: WitnessBundle + Copy + Send + Sync> StreamConsumer for Presized<B> {
         type Witness = B;
 
         fn consume(&mut self, chunk: &[B]) {
@@ -244,7 +244,7 @@ pub(crate) enum BundleStore<B> {
     Retained(Vec<B>),
 }
 
-impl<B: WitnessBundle + Clone + Send + Sync> BundleStore<B> {
+impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
     /// Resolve for a witness plane: the owning handle when the source is
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.

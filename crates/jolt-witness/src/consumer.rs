@@ -247,20 +247,66 @@ impl<'a> RandomAccessRows<'a> {
 #[cfg(feature = "parallel")]
 const COLLECT_PAR_CHUNK: usize = 1 << 12;
 
+/// Deterministic error latch for the index-parallel collectors: keeps the
+/// failure at the LOWEST index, so an invalid trace reports the same error
+/// the sequential walk would hit first, independent of thread timing.
+///
+/// Blocking lock throughout: contention exists only on error paths, which
+/// never overlap the happy path's cost (each worker chunk stops at its first
+/// failure).
+#[cfg(feature = "parallel")]
+pub struct FirstErrorLatch {
+    slot: std::sync::Mutex<Option<(usize, WitnessError)>>,
+}
+
+#[cfg(feature = "parallel")]
+#[expect(
+    clippy::unwrap_used,
+    reason = "no lock user can panic while holding the latch"
+)]
+impl FirstErrorLatch {
+    pub fn new() -> Self {
+        Self {
+            slot: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Record `failure` at `index` if it precedes the held one.
+    pub fn record(&self, index: usize, failure: WitnessError) {
+        let mut guard = self.slot.lock().unwrap();
+        if guard.as_ref().is_none_or(|(held, _)| index < *held) {
+            *guard = Some((index, failure));
+        }
+    }
+
+    /// The lowest-index failure, if any worker recorded one.
+    pub fn take(self) -> Option<WitnessError> {
+        self.slot.into_inner().unwrap().map(|(_, failure)| failure)
+    }
+}
+
+#[cfg(feature = "parallel")]
+impl Default for FirstErrorLatch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// In-place parallel collection of `window(0..count)` into a fresh vector:
 /// workers write straight into the destination's spare capacity — no
 /// per-thread segment buffers or concatenation (rayon's `Result` collect
-/// loses indexedness and stages every segment). First error wins; the
-/// partially-written buffer is abandoned without drops (elements are plain
-/// data across every caller).
+/// loses indexedness and stages every segment). The lowest-index error wins
+/// (deterministic across runs); on error the partially-written buffer is
+/// abandoned without drops — sound because `V: Copy` rules out drop
+/// obligations by construction.
 #[cfg(feature = "parallel")]
-pub(crate) fn par_collect_windows<V: Send>(
+pub(crate) fn par_collect_windows<V: Copy + Send>(
     count: usize,
     window: impl Fn(usize) -> Result<V, WitnessError> + Send + Sync,
 ) -> Result<Vec<V>, WitnessError> {
     let mut out: Vec<V> = Vec::with_capacity(count);
     let spare = &mut out.spare_capacity_mut()[..count];
-    let error = std::sync::Mutex::new(None);
+    let error = FirstErrorLatch::new();
     spare
         .par_chunks_mut(COLLECT_PAR_CHUNK)
         .enumerate()
@@ -272,16 +318,13 @@ pub(crate) fn par_collect_windows<V: Send>(
                         let _ = slot.write(value);
                     }
                     Err(failure) => {
-                        if let Ok(mut guard) = error.try_lock() {
-                            let _ = guard.get_or_insert(failure);
-                        }
+                        error.record(base + offset, failure);
                         return;
                     }
                 }
             }
         });
-    #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
-    if let Some(failure) = error.into_inner().unwrap() {
+    if let Some(failure) = error.take() {
         return Err(failure);
     }
     // SAFETY: the error latch is empty, so every chunk ran to completion and
@@ -294,8 +337,9 @@ pub(crate) fn par_collect_windows<V: Send>(
 /// through `pack` element by element (so packed forms never stage the wide
 /// bundle): values are identical to the sequential pass's — extraction is
 /// pure per cycle window, and the lookahead row at the end of the range
-/// matches the chunk walk's `next_after`.
-pub fn collect_par_map<B: WitnessBundle, V: Send>(
+/// matches the chunk walk's `next_after`. `V: Copy` makes the collectors'
+/// leak-free-on-error invariant compiler-checked.
+pub fn collect_par_map<B: WitnessBundle, V: Copy + Send>(
     access: &RandomAccessRows<'_>,
     cycles: usize,
     pack: impl Fn(B) -> V + Send + Sync,
@@ -309,7 +353,7 @@ pub fn collect_par_map<B: WitnessBundle, V: Send>(
 
 /// [`collect_par_map`] without the packing step: index-parallel collection
 /// of the bundles themselves.
-pub fn collect_bundles_par<B: WitnessBundle + Send>(
+pub fn collect_bundles_par<B: WitnessBundle + Copy + Send>(
     access: &RandomAccessRows<'_>,
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
@@ -319,21 +363,22 @@ pub fn collect_bundles_par<B: WitnessBundle + Send>(
 /// Index-parallel collection of one cycle sub-range into a reusable buffer
 /// (cleared first, allocation kept): the pipelining collector's shape — a
 /// caller overlapping extraction with downstream work re-fills two buffers
-/// alternately instead of allocating per delivery. Elements must be plain
-/// data (every witness bundle is); on error the buffer is left cleared.
-pub fn collect_range_into<B: WitnessBundle + Send>(
+/// alternately instead of allocating per delivery. `B: Copy` rules out drop
+/// obligations, so leaving the buffer cleared on error leaks nothing; the
+/// lowest-index error wins (deterministic across runs).
+pub fn collect_range_into<B: WitnessBundle + Copy + Send>(
     access: &RandomAccessRows<'_>,
     range: Range<usize>,
     out: &mut Vec<B>,
 ) -> Result<(), WitnessError> {
     let start = range.start;
-    let count = range.end.saturating_sub(start);
     out.clear();
     #[cfg(feature = "parallel")]
     {
+        let count = range.end.saturating_sub(start);
         out.reserve(count);
         let spare = &mut out.spare_capacity_mut()[..count];
-        let error = std::sync::Mutex::new(None);
+        let error = FirstErrorLatch::new();
         spare
             .par_chunks_mut(COLLECT_PAR_CHUNK)
             .enumerate()
@@ -345,16 +390,13 @@ pub fn collect_range_into<B: WitnessBundle + Send>(
                             let _ = slot.write(bundle);
                         }
                         Err(failure) => {
-                            if let Ok(mut guard) = error.try_lock() {
-                                let _ = guard.get_or_insert(failure);
-                            }
+                            error.record(base + offset, failure);
                             return;
                         }
                     }
                 }
             });
-        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
-        if let Some(failure) = error.into_inner().unwrap() {
+        if let Some(failure) = error.take() {
             return Err(failure);
         }
         // SAFETY: the error latch is empty, so every chunk ran to completion
@@ -407,7 +449,7 @@ const BUNDLE_PASS_CHUNK: usize = 1 << 12;
     name = "collect_bundles",
     fields(bundle = core::any::type_name::<B>(), cycles)
 )]
-pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
+pub fn collect_bundles<B: WitnessBundle + Copy + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
@@ -443,7 +485,7 @@ impl<W> CollectBundles<W> {
     }
 }
 
-impl<W: WitnessBundle + Clone + Send + Sync> StreamConsumer for CollectBundles<W> {
+impl<W: WitnessBundle + Copy + Send + Sync> StreamConsumer for CollectBundles<W> {
     type Witness = W;
 
     fn consume(&mut self, chunk: &[W]) {

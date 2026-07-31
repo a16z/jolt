@@ -34,7 +34,7 @@ pub fn validate_servable<F: Field>(
 /// ([`crate::stream_witnesses`] with a collecting consumer), so backends and
 /// the future streaming engine share the same walk.
 pub trait BundleSource {
-    fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError>;
+    fn bundles<B: WitnessBundle + Copy + Send + Sync>(&self) -> Result<Vec<B>, WitnessError>;
 }
 
 /// The object-safe id-indexed witness surface of the Jolt VM protocol — what

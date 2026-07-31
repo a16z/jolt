@@ -105,6 +105,10 @@ pub struct TraceBackend<'a, T: TraceSource> {
     pub program: &'a JoltProgram,
     pub preprocessing: &'a JoltProgramPreprocessing,
     pub trace: TraceOutput<T>,
+    /// Lazily cached owning copy of `preprocessing` for [`crate::OwnedRows`]
+    /// handles: one deep clone on the first `owned_rows` call, shared by
+    /// every kernel that outlives its borrow of the backend.
+    pub(crate) owned_preprocessing: std::sync::OnceLock<std::sync::Arc<JoltProgramPreprocessing>>,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness<'a>>,
 }
@@ -122,6 +126,7 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
             program: inputs.program,
             preprocessing: inputs.preprocessing,
             trace: inputs.trace,
+            owned_preprocessing: std::sync::OnceLock::new(),
             #[cfg(feature = "field-inline")]
             field_inline: None,
         }

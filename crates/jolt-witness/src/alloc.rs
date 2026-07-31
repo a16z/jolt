@@ -12,34 +12,41 @@ use jolt_field::Field;
 ///
 /// # Safety contract
 ///
-/// `F::zero()` must be represented as all-zero bytes (true for Montgomery-form
-/// prime fields, where zero's representative is 0). Verified in debug builds.
+/// `F::zero()` must be represented as all-zero bytes and `F` must have no
+/// padding bytes (true for Montgomery-form prime fields, where zero's
+/// representative is 0). The all-zero-bytes property is asserted at runtime
+/// in ALL builds — one `size_of::<F>()` byte-compare per call, nothing next
+/// to the allocation — so a nonzero-repr `Field` implementation fails loudly
+/// instead of exposing invalid values in release; the assertion reads the
+/// bytes of one `F::zero()` value, so it cannot detect padding.
 #[expect(
     clippy::unwrap_used,
     reason = "Layout::array only fails on overflow, which the callers' checked row-count arithmetic already rules out"
 )]
 pub(crate) fn zero_table<F: Field>(len: usize) -> Vec<F> {
-    if len == 0 {
-        return Vec::new();
-    }
-    #[cfg(debug_assertions)]
-    {
-        // SAFETY: reads the zero element's bytes to verify the all-zeros
-        // invariant `alloc_zeroed` relies on.
-        unsafe {
-            let value = &F::zero();
-            let ptr = std::ptr::from_ref::<F>(value).cast::<u8>();
-            let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
-            assert!(
-                bytes.iter().all(|&byte| byte == 0),
-                "F::zero() is not all-zero bytes — zero_table is invalid for this field"
-            );
-        }
+    // `alloc_zeroed` requires a nonzero layout size: use safe construction
+    // for empty tables and zero-sized `F` instead of violating that contract.
+    if len == 0 || std::mem::size_of::<F>() == 0 {
+        return std::iter::repeat_with(F::zero).take(len).collect();
     }
 
-    // SAFETY: `alloc_zeroed` returns a valid zero-initialized allocation and
-    // all-zero bytes are a valid `F` (the zero element), per the contract
-    // above.
+    // SAFETY: reads the zero element's bytes to verify the all-zeros
+    // invariant `alloc_zeroed` relies on. Runs in all builds: a release-only
+    // wrong-repr instantiation would otherwise construct invalid `F` values.
+    unsafe {
+        let value = &F::zero();
+        let ptr = std::ptr::from_ref::<F>(value).cast::<u8>();
+        let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
+        assert!(
+            bytes.iter().all(|&byte| byte == 0),
+            "F::zero() is not all-zero bytes — zero_table is invalid for this field"
+        );
+    }
+
+    // SAFETY: `len` and `size_of::<F>()` are nonzero (checked above), so the
+    // layout satisfies `alloc_zeroed`'s nonzero-size requirement, and the
+    // assertion above guarantees all-zero bytes are a valid `F` (the zero
+    // element).
     unsafe {
         let layout = std::alloc::Layout::array::<F>(len).unwrap();
         let ptr = std::alloc::alloc_zeroed(layout).cast::<F>();

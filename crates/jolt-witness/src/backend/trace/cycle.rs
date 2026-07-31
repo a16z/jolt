@@ -78,8 +78,9 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     /// A slice-backed trace ([`TraceSource::rows`]) takes an index-parallel
     /// path — extraction is pure per cycle window, so the walk order is
     /// unobservable. The sequential walk remains the fallback (and the only
-    /// public contract) for re-emulating sources.
-    fn walk_cycles<V: Send>(
+    /// public contract) for re-emulating sources. `V: Copy` keeps the
+    /// parallel collector's leak-free-on-error invariant compiler-checked.
+    fn walk_cycles<V: Copy + Send>(
         &self,
         value: impl Fn(&TraceRow, Option<&TraceRow>, &WitnessEnv<'_>) -> Result<V, WitnessError>
             + Send
@@ -132,11 +133,12 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
     fn owned_rows(&self) -> Option<crate::OwnedRows> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
         self.trace.trace.shared_rows().map(|rows| {
-            crate::OwnedRows::new(
-                rows,
-                cycles,
-                std::sync::Arc::new(self.preprocessing.clone()),
-            )
+            // One deep clone per backend, cached: three kernels take owned
+            // handles per proof, and the preprocessing is program-sized.
+            let preprocessing = self
+                .owned_preprocessing
+                .get_or_init(|| std::sync::Arc::new(self.preprocessing.clone()));
+            crate::OwnedRows::new(rows, cycles, std::sync::Arc::clone(preprocessing))
         })
     }
 
@@ -208,7 +210,7 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
 }
 
 impl<T: TraceSource + Clone> BundleSource for TraceBackend<'_, T> {
-    fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
+    fn bundles<B: WitnessBundle + Copy + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
         crate::collect_bundles(self, checked_pow2(self.config.log_t)?)
     }
 }
