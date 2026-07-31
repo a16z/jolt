@@ -1,37 +1,33 @@
 //! Differential tests for the extension towers (`FpExt2`/`FpExt4`/`FpExt8`)
-//! against jolt-field, with an independent schoolbook oracle: polynomial
-//! multiplication modulo the defining relation implemented directly here
-//! over `u128` values (256-bit limb multiply + binary long division for the
-//! base-field modular ops — no Solinas folding, no shared code).
+//! against an independent schoolbook oracle: polynomial multiplication
+//! modulo the defining relation implemented directly here over `u128`
+//! values (256-bit limb multiply + binary long division for the base-field
+//! modular ops — no Solinas folding, no shared code).
 //!
 //! Coverage: both `FpExt2` non-residue configs and the quartic/octic towers
 //! over `Fp32`/`Fp64`/`Fp128` bases (registered primes plus `Fp32<251>`,
 //! the one small prime with `p ≡ 3 mod 4` where `NegOneNr` is a genuine
-//! field, and `Fp64<2^32 − 99>`, the base the baseline's own ext tests
-//! use). Where the extension is not known to be a field (reducible defining
-//! polynomial), every check is strict parity with the baseline rather than
-//! a field identity.
+//! field, and `Fp64<2^32 − 99>`). Where the extension is not known to be a
+//! field (reducible defining polynomial), inversion is only verified when
+//! it succeeds (`x · x⁻¹ = 1`); a spurious `None` for an invertible element
+//! is not detectable without a polynomial-gcd oracle.
 
 #![cfg(feature = "solinas")]
 #![expect(clippy::unwrap_used, reason = "test code")]
 
-use jolt_field as base;
 use jolt_field_two as two;
 
-use base::{
-    CanonicalField, ExtField as BaseExtField, FieldCore, FromPrimitiveInt, HalvingField, RingCore,
-};
 use num_traits::{One, Zero};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{CanonicalBytes, CanonicalEncoding, ExtField, Field, Ring};
+use two::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xE87_D1FF)
 }
 
 /// 128×128 → 256-bit schoolbook multiply over 64-bit halves (independent of
-/// both crates' `mul_wide`).
+/// the crate's `mul_wide`).
 fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     let (a0, a1) = (a as u64 as u128, a >> 64);
     let (b0, b1) = (b as u64 as u128, b >> 64);
@@ -122,18 +118,31 @@ fn cheb_mul_oracle(a: &[u128], b: &[u128], p: u128) -> Vec<u128> {
     out
 }
 
-/// Full differential + oracle sweep for one paired extension instantiation.
+/// `x^e` via square-and-multiply over the crate's extension multiply (which
+/// the same suite verifies against the schoolbook oracle).
+fn ext_pow<E: Field>(mut base: E, mut e: u128) -> E {
+    let mut acc = E::one();
+    while e > 0 {
+        if (e & 1) == 1 {
+            acc *= base;
+        }
+        base *= base;
+        e >>= 1;
+    }
+    acc
+}
+
+/// Full oracle sweep for one extension instantiation.
 ///
-/// `is_field: false` keeps every check strict parity with the baseline but
-/// does not require nonzero elements to invert (reducible defining
-/// polynomial over that base).
+/// `is_field: false` runs every ring-level check but does not require
+/// nonzero elements to invert (reducible defining polynomial over that
+/// base).
 macro_rules! check_ext {
-    ($E2:ty, $EB:ty, $F2:ty, $FB:ty, $p:expr, $d:expr, $oracle:expr, is_field: $is_field:expr, $rng:expr) => {{
+    ($E2:ty, $F2:ty, $p:expr, $d:expr, $oracle:expr, is_field: $is_field:expr, $rng:expr) => {{
         let p: u128 = $p;
         let d: usize = $d;
         let oracle = $oracle;
         assert_eq!(<$E2 as ExtField<$F2>>::DEGREE, d);
-        assert_eq!(<$EB as BaseExtField<$FB>>::EXT_DEGREE, d);
         assert_eq!(
             std::mem::size_of::<$E2>(),
             std::mem::size_of::<[$F2; $d]>(),
@@ -141,27 +150,15 @@ macro_rules! check_ext {
         );
 
         let f2 = |v: u128| <$F2 as CanonicalEncoding>::from_u128_checked(v).unwrap();
-        let fb = |v: u128| <$FB as CanonicalField>::from_canonical_u128_checked(v).unwrap();
         let mk2 = |vals: &[u128]| {
             <$E2 as ExtField<$F2>>::from_base_slice(
                 &vals.iter().map(|&v| f2(v)).collect::<Vec<_>>(),
-            )
-        };
-        let mkb = |vals: &[u128]| {
-            <$EB as BaseExtField<$FB>>::from_base_slice(
-                &vals.iter().map(|&v| fb(v)).collect::<Vec<_>>(),
             )
         };
         let vec2 = |e: &$E2| {
             <$E2 as ExtField<$F2>>::to_base_vec(e)
                 .iter()
                 .map(|c| c.to_u128_checked().unwrap())
-                .collect::<Vec<u128>>()
-        };
-        let vecb = |e: &$EB| {
-            <$EB as BaseExtField<$FB>>::to_base_vec(e)
-                .iter()
-                .map(|c| c.to_canonical_u128())
                 .collect::<Vec<u128>>()
         };
         let sample = |rng: &mut ChaCha20Rng| -> Vec<u128> {
@@ -171,23 +168,31 @@ macro_rules! check_ext {
         let cfg = bincode::config::standard();
         for _ in 0..48 {
             let (va, vb, vc) = (sample($rng), sample($rng), sample($rng));
-            let (xa, ba) = (mk2(&va), mkb(&va));
-            let (ya, yb) = (mk2(&vb), mkb(&vb));
-            let (za, _zb) = (mk2(&vc), mkb(&vc));
+            let xa = mk2(&va);
+            let ya = mk2(&vb);
+            let za = mk2(&vc);
 
             // from_base_slice / to_base_vec round trip.
             assert_eq!(vec2(&xa), va);
-            assert_eq!(vecb(&ba), va);
 
-            // Arithmetic vs baseline, mul/square also vs the schoolbook oracle.
-            assert_eq!(vec2(&(xa + ya)), vecb(&(ba + yb)));
-            assert_eq!(vec2(&(xa - ya)), vecb(&(ba - yb)));
-            assert_eq!(vec2(&(-xa)), vecb(&(-ba)));
+            // Arithmetic vs the coefficient-wise / schoolbook oracles.
+            let add_expect: Vec<u128> = va
+                .iter()
+                .zip(vb.iter())
+                .map(|(&x, &y)| addmod(x, y, p))
+                .collect();
+            let sub_expect: Vec<u128> = va
+                .iter()
+                .zip(vb.iter())
+                .map(|(&x, &y)| submod(x, y, p))
+                .collect();
+            let neg_expect: Vec<u128> = va.iter().map(|&x| submod(0, x, p)).collect();
+            assert_eq!(vec2(&(xa + ya)), add_expect, "add vs oracle");
+            assert_eq!(vec2(&(xa - ya)), sub_expect, "sub vs oracle");
+            assert_eq!(vec2(&(-xa)), neg_expect, "neg vs oracle");
             let prod = xa * ya;
-            assert_eq!(vec2(&prod), vecb(&(ba * yb)));
             assert_eq!(vec2(&prod), oracle(&va, &vb), "mul vs schoolbook oracle");
             let sq = Ring::square(&xa);
-            assert_eq!(vec2(&sq), vecb(&RingCore::square(&ba)));
             assert_eq!(vec2(&sq), oracle(&va, &va), "square vs schoolbook oracle");
 
             // By-ref and assigning operator forms agree with the owned ones.
@@ -204,62 +209,55 @@ macro_rules! check_ext {
             assert_eq!((xa + ya) * za, xa * za + ya * za, "distributivity");
             assert_eq!((xa * ya) * za, xa * (ya * za), "associativity");
 
-            // Inversion: strict parity, plus the field identity when Some.
-            match (xa.inverse(), ba.inverse()) {
-                (Some(ti), Some(bi)) => {
-                    assert_eq!(vec2(&ti), vecb(&bi));
-                    assert_eq!(ti * xa, <$E2 as One>::one());
-                }
-                (ti, bi) => {
-                    assert_eq!(ti.is_none(), bi.is_none(), "inverse parity");
-                    assert!(!$is_field || xa.is_zero(), "field ext must invert nonzero");
-                }
+            // Inversion: `x · x⁻¹ = 1` pins the value (multiply is
+            // oracle-verified); in a genuine field nonzero must invert.
+            match xa.inverse() {
+                Some(ti) => assert_eq!(ti * xa, <$E2 as One>::one()),
+                None => assert!(!$is_field || xa.is_zero(), "field ext must invert nonzero"),
             }
 
             // Halving.
             let h = xa.half();
-            assert_eq!(vec2(&h), vecb(&ba.half()));
             assert_eq!(h + h, xa);
 
             // lift_base / mul_base against the full extension multiply.
             let sv = $rng.gen::<u128>() % p;
-            let (s2, sb) = (f2(sv), fb(sv));
+            let s2 = f2(sv);
+            let lifted = <$E2 as ExtField<$F2>>::lift_base(s2);
+            let mut lift_expect = vec![0u128; d];
+            lift_expect[0] = sv;
+            assert_eq!(vec2(&lifted), lift_expect, "lift_base embeds at coeff 0");
             let m2 = xa.mul_base(s2);
-            assert_eq!(
-                m2,
-                xa * <$E2 as ExtField<$F2>>::lift_base(s2),
-                "mul_base vs full multiply"
-            );
-            assert_eq!(vec2(&m2), vecb(&ba.mul_base(sb)));
-            assert_eq!(
-                vec2(&<$E2 as ExtField<$F2>>::lift_base(s2)),
-                vecb(&<$EB as BaseExtField<$FB>>::lift_base(sb))
-            );
+            assert_eq!(m2, xa * lifted, "mul_base vs full multiply");
+            let scale_expect: Vec<u128> = va.iter().map(|&x| mulmod(x, sv, p)).collect();
+            assert_eq!(vec2(&m2), scale_expect, "mul_base scales coefficients");
 
-            // Integer embeddings.
+            // Integer embeddings: base-field embedding at coefficient 0.
             let (w64, i64v): (u64, i64) = ($rng.gen(), $rng.gen());
             let (w128, i128v): (u128, i128) = ($rng.gen(), $rng.gen());
+            let embed = |v: u128, neg: bool| {
+                let mut out = vec![0u128; d];
+                let r = oracle_mod(&[v as u64, (v >> 64) as u64], p);
+                out[0] = if neg { submod(0, r, p) } else { r };
+                out
+            };
             assert_eq!(
                 vec2(&<$E2 as Ring>::from_u64(w64)),
-                vecb(&<$EB as FromPrimitiveInt>::from_u64(w64))
+                embed(w64 as u128, false)
             );
             assert_eq!(
                 vec2(&<$E2 as Ring>::from_i64(i64v)),
-                vecb(&<$EB as FromPrimitiveInt>::from_i64(i64v))
+                embed(i64v.unsigned_abs() as u128, i64v < 0)
             );
-            assert_eq!(
-                vec2(&<$E2 as Ring>::from_u128(w128)),
-                vecb(&<$EB as FromPrimitiveInt>::from_u128(w128))
-            );
+            assert_eq!(vec2(&<$E2 as Ring>::from_u128(w128)), embed(w128, false));
             assert_eq!(
                 vec2(&<$E2 as Ring>::from_i128(i128v)),
-                vecb(&<$EB as FromPrimitiveInt>::from_i128(i128v))
+                embed(i128v.unsigned_abs(), i128v < 0)
             );
 
-            // Wire bytes: baseline equality, structural shape, round trip.
+            // Wire bytes: structural shape and round trip (absolute bytes
+            // are pinned by the golden fixtures in golden_bytes.rs).
             let t_bytes = bincode::serde::encode_to_vec(xa, cfg).unwrap();
-            let b_bytes = bincode::serde::encode_to_vec(ba, cfg).unwrap();
-            assert_eq!(t_bytes, b_bytes, "wire bytes diverge");
             let expected: Vec<u8> = <$E2 as ExtField<$F2>>::to_base_vec(&xa)
                 .iter()
                 .flat_map(|c| c.to_bytes_le_vec())
@@ -269,21 +267,34 @@ macro_rules! check_ext {
             assert_eq!(back, xa);
         }
 
-        // Frobenius powers 0..2·degree: parity for pow, inv_pow, and the
-        // roundtrip (the roundtrip equals the identity in a genuine field).
+        // Frobenius powers 0..2·degree against the semantic definition:
+        // one Frobenius application is `x ↦ x^q` (computed with a test-local
+        // square-and-multiply over the oracle-verified extension multiply),
+        // `frobenius_pow(·, k)` applies it `k mod d` times, and
+        // `frobenius_inv_pow` is its inverse power.
+        let q = two::pseudo_mersenne_modulus(
+            <$F2 as CanonicalEncoding>::MODULUS_BITS,
+            <$F2 as PseudoMersenne>::OFFSET,
+        )
+        .unwrap();
         for _ in 0..2 {
             let v = sample($rng);
-            let (x2, xb2) = (mk2(&v), mkb(&v));
+            let x2 = mk2(&v);
             for power in 0..=(2 * d) {
+                let mut expect = x2;
+                for _ in 0..(power % d) {
+                    expect = ext_pow(expect, q);
+                }
                 let ft = <$E2 as ExtField<$F2>>::frobenius_pow(x2, power);
-                let fb2 = <$EB as BaseExtField<$FB>>::frobenius_pow(xb2, power);
-                assert_eq!(vec2(&ft), vecb(&fb2), "frobenius_pow({power})");
+                assert_eq!(ft, expect, "frobenius_pow({power}) vs x^(q^k)");
                 let gt = <$E2 as ExtField<$F2>>::frobenius_inv_pow(x2, power);
-                let gb = <$EB as BaseExtField<$FB>>::frobenius_inv_pow(xb2, power);
-                assert_eq!(vec2(&gt), vecb(&gb), "frobenius_inv_pow({power})");
+                let inv_power = (d - (power % d)) % d;
+                let mut inv_expect = x2;
+                for _ in 0..inv_power {
+                    inv_expect = ext_pow(inv_expect, q);
+                }
+                assert_eq!(gt, inv_expect, "frobenius_inv_pow({power})");
                 let rt = <$E2 as ExtField<$F2>>::frobenius_inv_pow(ft, power);
-                let rb = <$EB as BaseExtField<$FB>>::frobenius_inv_pow(fb2, power);
-                assert_eq!(vec2(&rt), vecb(&rb), "frobenius roundtrip parity");
                 if $is_field {
                     assert_eq!(rt, x2, "frobenius roundtrip is the identity");
                 }
@@ -303,11 +314,9 @@ macro_rules! check_ext {
         }
         for va in &patterns {
             for vb in &patterns {
-                let (x2, xb2) = (mk2(va), mkb(va));
-                let (y2, yb2) = (mk2(vb), mkb(vb));
+                let (x2, y2) = (mk2(va), mk2(vb));
                 let prod = x2 * y2;
-                assert_eq!(vec2(&prod), vecb(&(xb2 * yb2)), "boundary {va:?}·{vb:?}");
-                assert_eq!(vec2(&prod), oracle(va, vb), "boundary vs oracle");
+                assert_eq!(vec2(&prod), oracle(va, vb), "boundary {va:?}·{vb:?}");
             }
             let x2 = mk2(va);
             assert_eq!(vec2(&Ring::square(&x2)), oracle(va, va), "boundary square");
@@ -330,7 +339,7 @@ macro_rules! check_ext {
         assert_eq!(xs.iter().product::<$E2>(), expected_prod);
 
         // Canonical rejection: a wire encoding whose first coefficient is
-        // `p` itself must be rejected by both crates; so must short input.
+        // `p` itself must be rejected; so must short input.
         let nb = <$F2 as CanonicalBytes>::NUM_BYTES;
         let mut bad = vec![0u8; nb * d];
         bad[..nb].copy_from_slice(&p.to_le_bytes()[..nb]);
@@ -339,43 +348,37 @@ macro_rules! check_ext {
             "non-canonical coefficient must be rejected"
         );
         assert!(
-            bincode::serde::decode_from_slice::<$EB, _>(&bad, cfg).is_err(),
-            "baseline rejects the same encoding"
-        );
-        assert!(
             bincode::serde::decode_from_slice::<$E2, _>(&bad[..nb * d - 1], cfg).is_err(),
             "truncated encoding must be rejected"
         );
 
-        // Identical random sampling: same seed, same element stream.
+        // Random sampling spec: with the same seed, `random` draws the `d`
+        // base-field coefficients in order.
         let (mut r1, mut r2) = (
             ChaCha20Rng::seed_from_u64(0x5EED_0001),
             ChaCha20Rng::seed_from_u64(0x5EED_0001),
         );
         for _ in 0..20 {
             let t: $E2 = Field::random(&mut r1);
-            let b: $EB = FieldCore::random(&mut r2);
-            assert_eq!(vec2(&t), vecb(&b), "random stream diverges");
+            let coeffs: Vec<$F2> = (0..d).map(|_| <$F2 as Field>::random(&mut r2)).collect();
+            let expected = <$E2 as ExtField<$F2>>::from_base_slice(&coeffs);
+            assert_eq!(t, expected, "random stream diverges from coefficient draws");
         }
     }};
 }
 
-/// Frobenius/Moore machinery parity: canonical thetas, validate, solve
-/// (values and Ok/Err), plus rejection cases.
+/// Frobenius/Moore machinery: canonical thetas are the packing basis,
+/// solutions satisfy the Moore system in oracle-verified arithmetic, and
+/// singular/mismatched inputs are rejected. In a genuine field the basis
+/// thetas are linearly independent, so validate/solve must succeed.
 macro_rules! check_moore {
-    ($E2:ty, $EB:ty, $F2:ty, $FB:ty, $p:expr, $d:expr, $rng:expr) => {{
+    ($E2:ty, $F2:ty, $p:expr, $d:expr, is_field: $is_field:expr, $rng:expr) => {{
         let p: u128 = $p;
         let d: usize = $d;
         let f2 = |v: u128| <$F2 as CanonicalEncoding>::from_u128_checked(v).unwrap();
-        let fb = |v: u128| <$FB as CanonicalField>::from_canonical_u128_checked(v).unwrap();
         let mk2 = |vals: &[u128]| {
             <$E2 as ExtField<$F2>>::from_base_slice(
                 &vals.iter().map(|&v| f2(v)).collect::<Vec<_>>(),
-            )
-        };
-        let mkb = |vals: &[u128]| {
-            <$EB as BaseExtField<$FB>>::from_base_slice(
-                &vals.iter().map(|&v| fb(v)).collect::<Vec<_>>(),
             )
         };
         let vec2 = |e: &$E2| {
@@ -384,44 +387,32 @@ macro_rules! check_moore {
                 .map(|c| c.to_u128_checked().unwrap())
                 .collect::<Vec<u128>>()
         };
-        let vecb = |e: &$EB| {
-            <$EB as BaseExtField<$FB>>::to_base_vec(e)
-                .iter()
-                .map(|c| c.to_canonical_u128())
-                .collect::<Vec<u128>>()
-        };
 
         for w in 1..=d {
             let t = two::canonical_frobenius_thetas::<$F2, $E2>(w).unwrap();
-            let b = base::canonical_frobenius_thetas::<$FB, $EB>(w).unwrap();
             assert_eq!(t.len(), w);
-            for (idx, (te, be)) in t.iter().zip(b.iter()).enumerate() {
-                assert_eq!(vec2(te), vecb(be), "theta {idx} parity");
+            for (idx, te) in t.iter().enumerate() {
                 let mut basis = vec![0u128; d];
                 basis[idx] = 1;
                 assert_eq!(vec2(te), basis, "thetas are the packing basis");
             }
             let tv = two::validate_canonical_frobenius_thetas::<$F2, $E2>(w);
-            let bv = base::validate_canonical_frobenius_thetas::<$FB, $EB>(w);
-            assert_eq!(tv.is_ok(), bv.is_ok(), "validate parity at width {w}");
+            if $is_field {
+                assert!(tv.is_ok(), "basis thetas must validate in a field");
+            }
         }
         assert!(two::canonical_frobenius_thetas::<$F2, $E2>(d + 1).is_err());
-        assert!(base::canonical_frobenius_thetas::<$FB, $EB>(d + 1).is_err());
 
         let thetas_t = two::canonical_frobenius_thetas::<$F2, $E2>(d).unwrap();
-        let thetas_b = base::canonical_frobenius_thetas::<$FB, $EB>(d).unwrap();
         let rhs_vals: Vec<Vec<u128>> = (0..d)
             .map(|_| (0..d).map(|_| $rng.gen::<u128>() % p).collect())
             .collect();
         let rhs_t: Vec<$E2> = rhs_vals.iter().map(|v| mk2(v)).collect();
-        let rhs_b: Vec<$EB> = rhs_vals.iter().map(|v| mkb(v)).collect();
         let st = two::solve_frobenius_moore::<$F2, $E2>(&thetas_t, &rhs_t);
-        let sb = base::solve_frobenius_moore::<$FB, $EB>(&thetas_b, &rhs_b);
-        assert_eq!(st.is_ok(), sb.is_ok(), "solve parity");
-        if let (Ok(zt), Ok(zb)) = (st, sb) {
-            for (a, b) in zt.iter().zip(zb.iter()) {
-                assert_eq!(vec2(a), vecb(b), "Moore solution parity");
-            }
+        if $is_field {
+            assert!(st.is_ok(), "Moore solve must succeed in a field");
+        }
+        if let Ok(zt) = st {
             // The solution satisfies the Moore system in rebuilt arithmetic.
             for (row, want) in rhs_t.iter().enumerate() {
                 let got = thetas_t
@@ -437,12 +428,10 @@ macro_rules! check_moore {
         // Rejections: duplicate thetas (singular) and dimension mismatch.
         if d >= 2 {
             let one2 = <$E2 as One>::one();
-            let oneb = <$EB as One>::one();
             assert!(
                 two::solve_frobenius_moore::<$F2, $E2>(&[one2, one2], &[one2, one2]).is_err(),
                 "duplicate thetas must be singular"
             );
-            assert!(base::solve_frobenius_moore::<$FB, $EB>(&[oneb, oneb], &[oneb, oneb]).is_err());
         }
         assert!(
             two::solve_frobenius_moore::<$F2, $E2>(&thetas_t, &rhs_t[..d - 1]).is_err(),
@@ -456,21 +445,17 @@ const P64: u128 = (1 << 64) - 59;
 const P128: u128 = u128::MAX - 274;
 const P251: u128 = 251;
 
-// `2^32 − 99` as a u64-backed field: the base the baseline's own ext tests
-// exercise (`Fp64<4294967197>`).
+// `2^32 − 99` as a u64-backed field: exercises the sub-word Fp64 towers.
 type F64Small2 = two::Fp64<4_294_967_197>;
-type F64SmallB = base::Fp64<4_294_967_197>;
 
 macro_rules! ext_suite {
-    ($name2:ident, $name4:ident, $name8:ident, $moore:ident, $F2:ty, $FB:ty, $p:expr, e2_field: $e2f:expr, neg_one_field: $nof:expr, e48_field: $e48f:expr) => {
+    ($name2:ident, $name4:ident, $name8:ident, $moore:ident, $F2:ty, $p:expr, e2_field: $e2f:expr, neg_one_field: $nof:expr, e48_field: $e48f:expr) => {
         #[test]
         fn $name2() {
             let mut rng = rng();
             check_ext!(
                 two::FpExt2<$F2, two::TwoNr>,
-                base::FpExt2<$FB, base::TwoNr>,
                 $F2,
-                $FB,
                 $p,
                 2,
                 |a: &[u128], b: &[u128]| quad_mul_oracle(a, b, 2, $p),
@@ -479,9 +464,7 @@ macro_rules! ext_suite {
             );
             check_ext!(
                 two::FpExt2<$F2, two::NegOneNr>,
-                base::FpExt2<$FB, base::NegOneNr>,
                 $F2,
-                $FB,
                 $p,
                 2,
                 |a: &[u128], b: &[u128]| quad_mul_oracle(a, b, $p - 1, $p),
@@ -495,9 +478,7 @@ macro_rules! ext_suite {
             let mut rng = rng();
             check_ext!(
                 two::FpExt4<$F2>,
-                base::FpExt4<$FB>,
                 $F2,
-                $FB,
                 $p,
                 4,
                 |a: &[u128], b: &[u128]| cheb_mul_oracle(a, b, $p),
@@ -511,9 +492,7 @@ macro_rules! ext_suite {
             let mut rng = rng();
             check_ext!(
                 two::FpExt8<$F2>,
-                base::FpExt8<$FB>,
                 $F2,
-                $FB,
                 $p,
                 8,
                 |a: &[u128], b: &[u128]| cheb_mul_oracle(a, b, $p),
@@ -527,15 +506,14 @@ macro_rules! ext_suite {
             let mut rng = rng();
             check_moore!(
                 two::FpExt2<$F2, two::TwoNr>,
-                base::FpExt2<$FB, base::TwoNr>,
                 $F2,
-                $FB,
                 $p,
                 2,
+                is_field: $e2f,
                 &mut rng
             );
-            check_moore!(two::FpExt4<$F2>, base::FpExt4<$FB>, $F2, $FB, $p, 4, &mut rng);
-            check_moore!(two::FpExt8<$F2>, base::FpExt8<$FB>, $F2, $FB, $p, 8, &mut rng);
+            check_moore!(two::FpExt4<$F2>, $F2, $p, 4, is_field: $e48f, &mut rng);
+            check_moore!(two::FpExt8<$F2>, $F2, $p, 8, is_field: $e48f, &mut rng);
         }
     };
 }
@@ -546,7 +524,6 @@ ext_suite!(
     ext8_over_prime32_offset99,
     moore_over_prime32_offset99,
     two::Prime32Offset99,
-    base::Prime32Offset99,
     P32,
     e2_field: true,
     neg_one_field: false,
@@ -559,7 +536,6 @@ ext_suite!(
     ext8_over_fp32_251,
     moore_over_fp32_251,
     two::Fp32<251>,
-    base::Fp32<251>,
     P251,
     e2_field: true,
     neg_one_field: true,
@@ -572,7 +548,6 @@ ext_suite!(
     ext8_over_prime64_offset59,
     moore_over_prime64_offset59,
     two::Prime64Offset59,
-    base::Prime64Offset59,
     P64,
     e2_field: true,
     neg_one_field: false,
@@ -585,7 +560,6 @@ ext_suite!(
     ext8_over_fp64_2pow32_99,
     moore_over_fp64_2pow32_99,
     F64Small2,
-    F64SmallB,
     P32,
     e2_field: true,
     neg_one_field: false,
@@ -598,47 +572,47 @@ ext_suite!(
     ext8_over_prime128_offset275,
     moore_over_prime128_offset275,
     two::Prime128Offset275,
-    base::Prime128Offset275,
     P128,
     e2_field: true,
     neg_one_field: false,
     e48_field: false
 );
 
-/// `Ext2` is the `TwoNr` alias in both crates.
+/// `Ext2` is the `TwoNr` alias; conjugate negates the `u` coefficient and
+/// `norm(x) = x · conj(x) = x₀² − nr·x₁²` lands in the base field.
 #[test]
-fn ext2_alias_matches() {
+fn ext2_alias_and_conjugate_norm() {
     let mut r = rng();
-    let v: u128 = r.gen::<u128>() % P64;
-    let w: u128 = r.gen::<u128>() % P64;
-    let a: two::Ext2<two::Prime64Offset59> = <two::FpExt2<two::Prime64Offset59, two::TwoNr>>::new(
-        <two::Prime64Offset59 as CanonicalEncoding>::from_u128_checked(v).unwrap(),
-        <two::Prime64Offset59 as CanonicalEncoding>::from_u128_checked(w).unwrap(),
-    );
-    let b: base::Ext2<base::Prime64Offset59> = base::FpExt2::new(
-        base::Prime64Offset59::from_canonical_u128_checked(v).unwrap(),
-        base::Prime64Offset59::from_canonical_u128_checked(w).unwrap(),
-    );
-    assert_eq!(
-        Ring::square(&a)
-            .conjugate()
-            .norm()
-            .to_u128_checked()
-            .unwrap(),
-        RingCore::square(&b).conjugate().norm().to_canonical_u128(),
-        "conjugate/norm parity"
-    );
+    type F = two::Prime64Offset59;
+    for _ in 0..32 {
+        let v: u128 = r.gen::<u128>() % P64;
+        let w: u128 = r.gen::<u128>() % P64;
+        let a: two::Ext2<F> = <two::FpExt2<F, two::TwoNr>>::new(
+            <F as CanonicalEncoding>::from_u128_checked(v).unwrap(),
+            <F as CanonicalEncoding>::from_u128_checked(w).unwrap(),
+        );
+        let conj = a.conjugate();
+        assert_eq!(conj.coeffs[0], a.coeffs[0]);
+        assert_eq!(conj.coeffs[1], -a.coeffs[1]);
+        let prod = a * conj;
+        assert_eq!(
+            prod,
+            <two::Ext2<F> as ExtField<F>>::lift_base(a.norm()),
+            "norm is x · conj(x)"
+        );
+        let sq = Ring::square(&a);
+        // norm(conj(a²)) = norm(a²) = norm(a)², all in oracle-verified mul.
+        assert_eq!(sq.conjugate().norm(), a.norm() * a.norm());
+    }
 }
 
 /// The reflexive impl: a pseudo-Mersenne base field is its own degree-1
-/// extension in both crates.
+/// extension.
 #[test]
 fn degree_one_reflexive_ext_matches() {
     let mut r = rng();
     type F2 = two::Prime64Offset59;
-    type FB = base::Prime64Offset59;
     assert_eq!(<F2 as ExtField<F2>>::DEGREE, 1);
-    assert_eq!(<FB as BaseExtField<FB>>::EXT_DEGREE, 1);
     for _ in 0..32 {
         let v = r.gen::<u128>() % P64;
         let s = r.gen::<u128>() % P64;
@@ -646,15 +620,8 @@ fn degree_one_reflexive_ext_matches() {
             <F2 as CanonicalEncoding>::from_u128_checked(v).unwrap(),
             <F2 as CanonicalEncoding>::from_u128_checked(s).unwrap(),
         );
-        let (xb, sb) = (
-            FB::from_canonical_u128_checked(v).unwrap(),
-            FB::from_canonical_u128_checked(s).unwrap(),
-        );
         assert_eq!(<F2 as ExtField<F2>>::lift_base(s2), s2);
-        assert_eq!(
-            x2.mul_base(s2).to_u128_checked().unwrap(),
-            xb.mul_base(sb).to_canonical_u128()
-        );
+        assert_eq!(x2.mul_base(s2), x2 * s2);
         assert_eq!(<F2 as ExtField<F2>>::from_base_slice(&[x2]), x2);
         assert_eq!(<F2 as ExtField<F2>>::to_base_vec(&x2), vec![x2]);
         assert_eq!(<F2 as ExtField<F2>>::frobenius_pow(x2, 3), x2);

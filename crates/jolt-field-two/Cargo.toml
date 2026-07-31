@@ -36,8 +36,7 @@ allocative = ["dep:allocative"]
 
 [dev-dependencies]
 bincode = { workspace = true }
-# Differential-testing oracle: the crate this one is rebuilding.
-jolt-field = { path = "../jolt-field", features = ["solinas"] }
+num-bigint = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 

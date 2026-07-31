@@ -2,8 +2,9 @@
 //! acceptance): the generic coefficient-formula schedule (what the crate
 //! ships as the `PseudoMersenne` hook default) vs a local port of the
 //! baseline's fused u128-accumulation `Fp32` override, on batched degree-4
-//! muls and squares over `Prime32Offset99`. The baseline `FpExt4<Fp32>`
-//! (which ships the fused override) is included for context.
+//! muls and squares over `Prime32Offset99`. (The original jolt-field
+//! baseline, which shipped the fused override, timed identically to the
+//! local port while both crates coexisted.)
 //!
 //! Outcome recorded in specs/jolt-field-rebuild.md: the fused port LOST on aarch64/Apple M4
 //! (generic ≈ 2.5x faster on mul, ≈ 1.85x on square; the port reproduces
@@ -13,13 +14,8 @@
 //!
 //! Run: `cargo bench -p jolt-field-two --features solinas --bench ext4_kernels`
 
-#![expect(
-    clippy::unwrap_used,
-    clippy::print_stdout,
-    reason = "bench harness: canonical conversions of canonical values; stdout is the report"
-)]
+#![expect(clippy::print_stdout, reason = "bench harness: stdout is the report")]
 
-use jolt_field as base;
 use jolt_field_two as two;
 
 use rand::SeedableRng;
@@ -31,8 +27,6 @@ use two::{CanonicalEncoding, Field, Ring};
 
 type Fp = two::Prime32Offset99;
 type E4 = two::FpExt4<Fp>;
-type BaseFp = base::Prime32Offset99;
-type BaseE4 = base::FpExt4<BaseFp>;
 
 const N: usize = 1 << 12;
 const REPS: usize = 100;
@@ -132,19 +126,6 @@ fn main() {
     let pairs: Vec<(E4, E4)> = (0..N)
         .map(|_| (E4::random(&mut rng), E4::random(&mut rng)))
         .collect();
-    let base_pairs: Vec<(BaseE4, BaseE4)> = pairs
-        .iter()
-        .map(|(a, b)| {
-            let conv = |x: &E4| {
-                BaseE4::new(x.coeffs.map(|c| {
-                    base::CanonicalField::from_canonical_u128_checked(c.to_u128_checked().unwrap())
-                        .unwrap()
-                }))
-            };
-            (conv(a), conv(b))
-        })
-        .collect();
-
     // Sanity: the fused port agrees with the wired generic path.
     for (a, b) in pairs.iter().take(64) {
         assert_eq!((*a * *b).coeffs, fused_mul(a.coeffs, b.coeffs));
@@ -153,23 +134,19 @@ fn main() {
 
     let generic_mul_ns = measure(&pairs, |(a, b)| (a * b).coeffs[0]);
     let fused_mul_ns = measure(&pairs, |(a, b)| fused_mul(a.coeffs, b.coeffs)[0]);
-    let base_mul_ns = measure(&base_pairs, |(a, b)| (a * b).coeffs[0]);
 
     let generic_sq_ns = measure(&pairs, |(a, _)| Ring::square(&a).coeffs[0]);
     let fused_sq_ns = measure(&pairs, |(a, _)| fused_square(a.coeffs)[0]);
-    let base_sq_ns = measure(&base_pairs, |(a, _)| base::RingCore::square(&a).coeffs[0]);
 
     println!("ext4 over Prime32Offset99, {N} elements x {REPS} reps, best of {TRIALS}");
     println!("  mul    generic default (wired): {generic_mul_ns:7.2} ns/op");
     println!("  mul    fused port (dropped)   : {fused_mul_ns:7.2} ns/op");
-    println!("  mul    baseline fused override: {base_mul_ns:7.2} ns/op");
     println!(
         "  mul    fused/generic           : {:.2}x",
         fused_mul_ns / generic_mul_ns
     );
     println!("  square generic default (wired): {generic_sq_ns:7.2} ns/op");
     println!("  square fused port (dropped)   : {fused_sq_ns:7.2} ns/op");
-    println!("  square baseline fused override: {base_sq_ns:7.2} ns/op");
     println!(
         "  square fused/generic           : {:.2}x",
         fused_sq_ns / generic_sq_ns

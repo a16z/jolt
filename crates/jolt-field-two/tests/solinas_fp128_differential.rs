@@ -1,19 +1,15 @@
-//! Differential tests for the two-limb Solinas field (`Fp128`) against
-//! jolt-field across every 128-bit prime offset, with a 4×64-limb schoolbook
-//! multiply + binary long division as the independent oracle (`u128` cannot
-//! hold the 256-bit intermediates, and num-bigint is not a dev-dependency).
+//! Differential tests for the two-limb Solinas field (`Fp128`) across every
+//! 128-bit prime offset, with a 4x64-limb schoolbook multiply + binary long
+//! division as the independent oracle (`u128` cannot hold the 256-bit
+//! intermediates).
 
 #![cfg(feature = "solinas")]
-#![expect(clippy::unwrap_used, reason = "test code")]
+// NB: no `expect(clippy::unwrap_used)` — every unwrap here sits inside a
+// local `macro_rules!` expansion, where the lint does not fire.
 
-use jolt_field as base;
 use jolt_field_two as two;
 
-use base::{
-    CanonicalBytes as BaseCanonicalBytes, CanonicalField, CanonicalRepr, FieldCore, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RingCore,
-};
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use two::{Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne, Ring};
 
@@ -21,7 +17,7 @@ fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xf128_a5a5)
 }
 
-/// 128×128 → 256-bit schoolbook multiply over 64-bit halves; independent of
+/// 128x128 -> 256-bit schoolbook multiply over 64-bit halves; independent of
 /// the crate's `mul_wide` (different limb/carry structure, no shared code).
 fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     let (a0, a1) = (a as u64 as u128, a >> 64);
@@ -69,58 +65,43 @@ fn oracle_sub(a: u128, b: u128, p: u128) -> u128 {
     oracle_add(a, p - b, p)
 }
 
-/// Full differential + oracle sweep for one (rebuilt, baseline, modulus)
-/// triple. `inverses: false` skips inverse checks for moduli of unverified
-/// primality (used by the `C = 2^a ± 1` shift-path coverage).
+/// Full oracle sweep for one (field type, modulus) pair. `inverses: false`
+/// skips inverse checks for moduli of unverified primality (used by the
+/// `C = 2^a ± 1` shift-path coverage).
 macro_rules! check_prime128 {
-    ($two:ty, $base:ty, $p:expr, $rng:expr) => {
-        check_prime128!($two, $base, $p, $rng, inverses: true)
+    ($two:ty, $p:expr, $rng:expr) => {
+        check_prime128!($two, $p, $rng, inverses: true)
     };
-    ($two:ty, $base:ty, $p:expr, $rng:expr, inverses: $inverses:expr) => {{
+    ($two:ty, $p:expr, $rng:expr, inverses: $inverses:expr) => {{
         let p: u128 = $p;
         let c: u128 = 0u128.wrapping_sub(p);
-        let sample = |rng: &mut ChaCha20Rng| -> ($two, $base, u128) {
+        let sample = |rng: &mut ChaCha20Rng| -> ($two, u128) {
             let raw: u128 = rng.gen();
             let v = oracle_mod(&[raw as u64, (raw >> 64) as u64], p);
             let t = <$two as CanonicalEncoding>::from_u128_reduced(raw);
             assert_eq!(t.to_u128_checked(), Some(v), "reduction vs oracle");
-            let b = <$base as CanonicalField>::from_canonical_u128_reduced(raw);
-            assert_eq!(b.to_canonical_u128(), v, "baseline reduction vs oracle");
-            let b = <$base as CanonicalField>::from_canonical_u128_checked(v).unwrap();
-            (t, b, v)
+            (t, v)
         };
 
-        // Metadata parity.
-        assert_eq!(
-            <$two as CanonicalEncoding>::MODULUS_BITS,
-            <$base as CanonicalField>::modulus_bits()
-        );
+        // Metadata.
+        assert_eq!(<$two as CanonicalEncoding>::MODULUS_BITS, 128);
         assert_eq!(<$two as PseudoMersenne>::OFFSET, c);
-        assert_eq!(
-            <$two as PseudoMersenne>::OFFSET,
-            <$base as PseudoMersenneField>::MODULUS_OFFSET
-        );
-        assert_eq!(
-            <$two as CanonicalBytes>::NUM_BYTES,
-            <$base as BaseCanonicalBytes>::NUM_BYTES
-        );
         assert_eq!(<$two as CanonicalBytes>::NUM_BYTES, 16);
 
         let cfg = bincode::config::standard();
         for _ in 0..200 {
-            let (ta, ba, va) = sample($rng);
-            let (tb, bb, vb) = sample($rng);
+            let (ta, va) = sample($rng);
+            let (tb, vb) = sample($rng);
 
-            // Arithmetic vs baseline and vs the limb oracle.
-            let cases: [($two, $base, u128); 4] = [
-                (ta + tb, ba + bb, oracle_add(va, vb, p)),
-                (ta - tb, ba - bb, oracle_sub(va, vb, p)),
-                (ta * tb, ba * bb, oracle_mul(va, vb, p)),
-                (-ta, -ba, oracle_sub(0, va, p)),
+            // Arithmetic vs the limb oracle.
+            let cases: [($two, u128); 4] = [
+                (ta + tb, oracle_add(va, vb, p)),
+                (ta - tb, oracle_sub(va, vb, p)),
+                (ta * tb, oracle_mul(va, vb, p)),
+                (-ta, oracle_sub(0, va, p)),
             ];
-            for (t, b, v) in cases {
+            for (t, v) in cases {
                 assert_eq!(t.to_u128_checked(), Some(v));
-                assert_eq!(b.to_canonical_u128(), v);
             }
 
             // By-ref and assigning operator forms agree with the owned ones.
@@ -137,42 +118,41 @@ macro_rules! check_prime128 {
                 Ring::square(&ta).to_u128_checked(),
                 Some(oracle_mul(va, va, p))
             );
-            assert_eq!(
-                Ring::square(&ta).to_u128_checked().unwrap(),
-                RingCore::square(&ba).to_canonical_u128()
-            );
-            assert_eq!(
-                ta.half().to_u128_checked().unwrap(),
-                ba.half().to_canonical_u128()
-            );
+            let half = if va % 2 == 0 {
+                va / 2
+            } else {
+                // (va + p) / 2 without overflowing u128.
+                (va >> 1) + (p >> 1) + 1
+            };
+            assert_eq!(ta.half().to_u128_checked(), Some(half));
             assert_eq!((ta.half() + ta.half()).to_u128_checked(), Some(va));
             if $inverses {
-                match (ta.inverse(), ba.inverse()) {
-                    (Some(ti), Some(bi)) => {
-                        assert_eq!(ti.to_u128_checked().unwrap(), bi.to_canonical_u128());
-                        assert_eq!((ti * ta).to_u128_checked(), Some(1));
-                    }
-                    (ti, bi) => assert_eq!(ti.is_none(), bi.is_none()),
+                // Inverse is unique given the oracle-verified multiply, so
+                // `ti * ta == 1` pins the value; None only at zero.
+                match ta.inverse() {
+                    Some(ti) => assert_eq!((ti * ta).to_u128_checked(), Some(1)),
+                    None => assert_eq!(va, 0, "inverse must exist for nonzero"),
                 }
             }
 
-            // Wide multiplies: limb parity with the baseline, then round-trip
-            // through solinas_reduce against the independent oracle.
-            assert_eq!(ta.to_limbs(), ba.to_limbs());
-            assert_eq!(ta.mul_wide(tb), ba.mul_wide(bb));
+            // Wide multiplies: limb equality with the independent oracle,
+            // then round-trip through solinas_reduce.
+            assert_eq!(ta.to_limbs(), [va as u64, (va >> 64) as u64]);
             assert_eq!(ta.mul_wide(tb), oracle_mul_256(va, vb));
             assert_eq!(
                 <$two>::solinas_reduce(&ta.mul_wide(tb)).to_u128_checked(),
                 Some(oracle_mul(va, vb, p))
             );
             let x64: u64 = $rng.gen();
-            assert_eq!(ta.mul_wide_u64(x64), ba.mul_wide_u64(x64));
+            let wide64 = oracle_mul_256(va, x64 as u128);
+            assert_eq!(wide64[3], 0);
+            assert_eq!(ta.mul_wide_u64(x64), [wide64[0], wide64[1], wide64[2]]);
             assert_eq!(
                 <$two>::solinas_reduce(&ta.mul_wide_u64(x64)).to_u128_checked(),
                 Some(oracle_mul(va, x64 as u128, p))
             );
             let x128: u128 = $rng.gen::<u128>() % p;
-            assert_eq!(ta.mul_wide_u128(x128), ba.mul_wide_u128(x128));
+            assert_eq!(ta.mul_wide_u128(x128), oracle_mul_256(va, x128));
             assert_eq!(
                 <$two>::solinas_reduce(&ta.mul_wide_u128(x128)).to_u128_checked(),
                 Some(oracle_mul(va, x128, p))
@@ -181,26 +161,35 @@ macro_rules! check_prime128 {
             // Integer conversions.
             let xi: i64 = $rng.gen();
             assert_eq!(
-                <$two as Ring>::from_u64(x64).to_u128_checked().unwrap(),
-                <$base as FromPrimitiveInt>::from_u64(x64).to_canonical_u128()
+                <$two as Ring>::from_u64(x64).to_u128_checked(),
+                Some(x64 as u128 % p)
+            );
+            let xi_expected = if xi >= 0 {
+                xi as u128 % p
+            } else {
+                oracle_sub(0, xi.unsigned_abs() as u128 % p, p)
+            };
+            assert_eq!(
+                <$two as Ring>::from_i64(xi).to_u128_checked(),
+                Some(xi_expected)
             );
             assert_eq!(
-                <$two as Ring>::from_i64(xi).to_u128_checked().unwrap(),
-                <$base as FromPrimitiveInt>::from_i64(xi).to_canonical_u128()
-            );
-            assert_eq!(
-                ta.mul_u64(x64).to_u128_checked().unwrap(),
-                ba.mul_u64(x64).to_canonical_u128()
+                ta.mul_u64(x64).to_u128_checked(),
+                Some(oracle_mul(va, x64 as u128, p))
             );
 
             // Transcript surface: bytes, reducing decodes, challenges.
-            assert_eq!(ta.to_bytes_le_vec(), ba.to_bytes_le_vec());
             assert_eq!(ta.to_bytes_le_vec(), va.to_le_bytes().to_vec());
             assert_eq!(
                 CanonicalEncoding::num_bits(&ta),
-                CanonicalRepr::num_bits(&ba)
+                128 - va.leading_zeros(),
+                "num_bits vs oracle"
             );
-            assert_eq!(ta.to_u64_checked(), ba.to_canonical_u64_checked());
+            assert_eq!(
+                ta.to_u64_checked(),
+                (va >> 64 == 0).then_some(va as u64),
+                "to_u64_checked vs oracle"
+            );
             let challenge: [u8; 32] = $rng.gen();
             for len in [8usize, 16, 32] {
                 let ours = <$two as CanonicalEncoding>::from_bytes_le_reduced(&challenge[..len]);
@@ -210,36 +199,31 @@ macro_rules! check_prime128 {
                     "challenge derivation defaults to the reducing decode"
                 );
                 assert_eq!(
-                    <$two as CanonicalEncoding>::from_scalar_challenge_bytes(&challenge[..len])
-                        .to_u128_checked(),
-                    Some(
-                        <$base as CanonicalRepr>::from_scalar_challenge_bytes(&challenge[..len])
-                            .to_canonical_u128()
-                    ),
-                    "scalar challenge derivation diverges from baseline"
+                    <$two as CanonicalEncoding>::from_scalar_challenge_bytes(&challenge[..len]),
+                    ours,
+                    "scalar challenge derivation defaults to the reducing decode"
                 );
                 let mut padded = [0u8; 32];
                 padded[..len].copy_from_slice(&challenge[..len]);
-                let limbs: [u64; 4] =
-                    std::array::from_fn(|i| u64::from_le_bytes(padded[8 * i..8 * i + 8].try_into().unwrap()));
+                let limbs: [u64; 4] = std::array::from_fn(|i| {
+                    u64::from_le_bytes(padded[8 * i..8 * i + 8].try_into().unwrap())
+                });
                 assert_eq!(
                     ours.to_u128_checked(),
                     Some(oracle_mod(&limbs, p)),
                     "decode vs oracle"
                 );
-                assert_eq!(
-                    ours.to_u128_checked().unwrap(),
-                    <$base as CanonicalRepr>::from_le_bytes_mod_order(&challenge[..len])
-                        .to_canonical_u128()
-                );
             }
 
-            // Wire bytes: equality, cross-decode, canonical rejection.
+            // Wire bytes: canonical LE encoding, decode round-trip.
             let t_bytes = bincode::serde::encode_to_vec(ta, cfg).unwrap();
-            let b_bytes = bincode::serde::encode_to_vec(ba, cfg).unwrap();
-            assert_eq!(t_bytes, b_bytes, "wire bytes diverge");
+            assert_eq!(
+                t_bytes,
+                va.to_le_bytes().to_vec(),
+                "wire bytes are the canonical LE encoding"
+            );
             let (t_back, _): ($two, usize) =
-                bincode::serde::decode_from_slice(&b_bytes, cfg).unwrap();
+                bincode::serde::decode_from_slice(&t_bytes, cfg).unwrap();
             assert_eq!(t_back.to_u128_checked(), Some(va));
         }
 
@@ -294,11 +278,6 @@ macro_rules! check_prime128 {
         for limbs in &limb_cases {
             let got = <$two>::solinas_reduce(limbs).to_u128_checked().unwrap();
             assert_eq!(got, oracle_mod(limbs, p), "solinas_reduce vs oracle: {limbs:?}");
-            assert_eq!(
-                got,
-                <$base>::solinas_reduce(limbs).to_canonical_u128(),
-                "solinas_reduce vs baseline: {limbs:?}"
-            );
         }
 
         // Zero/One and iterator Sum/Product (owned and by-ref).
@@ -343,51 +322,30 @@ macro_rules! check_prime128 {
 #[test]
 fn fp128_offset275_matches() {
     let mut rng = rng();
-    check_prime128!(
-        two::Prime128Offset275,
-        base::Prime128Offset275,
-        u128::MAX - 274,
-        &mut rng
-    );
+    check_prime128!(two::Prime128Offset275, u128::MAX - 274, &mut rng);
 }
 
 #[test]
 fn fp128_offset159_matches() {
     let mut rng = rng();
-    check_prime128!(
-        two::Prime128Offset159,
-        base::Prime128Offset159,
-        u128::MAX - 158,
-        &mut rng
-    );
+    check_prime128!(two::Prime128Offset159, u128::MAX - 158, &mut rng);
 }
 
 #[test]
 fn fp128_offset2355_matches() {
     let mut rng = rng();
-    check_prime128!(
-        two::Prime128Offset2355,
-        base::Prime128Offset2355,
-        u128::MAX - 2354,
-        &mut rng
-    );
+    check_prime128!(two::Prime128Offset2355, u128::MAX - 2354, &mut rng);
 }
 
 #[test]
 fn fp128_offset_a7f7_matches() {
     let mut rng = rng();
-    check_prime128!(
-        two::Prime128OffsetA7F7,
-        base::Prime128OffsetA7F7,
-        u128::MAX - 0xFFFF_A7F6,
-        &mut rng
-    );
+    check_prime128!(two::Prime128OffsetA7F7, u128::MAX - 0xFFFF_A7F6, &mut rng);
     assert_eq!(
         two::pseudo_mersenne_modulus(128, 0xFFFF_A7F7),
         Some(u128::MAX - 0xFFFF_A7F6)
     );
-    // Registered coverage stops at PRIME_OFFSET_MAX; A7F7 is above it, like
-    // the baseline registry.
+    // Registered coverage stops at PRIME_OFFSET_MAX; A7F7 is above it.
     assert!(!two::is_registered_prime_offset(128, 0xFFFF_A7F7));
     assert!(two::is_registered_prime_offset(128, 275));
 }
@@ -402,7 +360,6 @@ fn fp128_shift_kind_c_paths_match() {
     // C = 5 = 2^2 + 1 (shift-kind +1).
     check_prime128!(
         two::Fp128<{ u128::MAX - 4 }>,
-        base::Fp128<{ u128::MAX - 4 }>,
         u128::MAX - 4,
         &mut rng,
         inverses: false
@@ -410,22 +367,29 @@ fn fp128_shift_kind_c_paths_match() {
     // C = 7 = 2^3 − 1 (shift-kind −1).
     check_prime128!(
         two::Fp128<{ u128::MAX - 6 }>,
-        base::Fp128<{ u128::MAX - 6 }>,
         u128::MAX - 6,
         &mut rng,
         inverses: false
     );
 }
 
-/// Identical rejection sampling: same seed, same element stream.
+/// The rejection-sampling stream is pinned against a test-local
+/// reimplementation of its spec: draw (lo, hi) words, accept if < p.
 #[test]
-fn fp128_random_matches_baseline() {
+fn fp128_random_matches_spec() {
     fn check<const P: u128>() {
         let (mut r1, mut r2) = (rng(), rng());
         for _ in 0..100 {
             let t: two::Fp128<P> = two::Field::random(&mut r1);
-            let b: base::Fp128<P> = FieldCore::random(&mut r2);
-            assert_eq!(t.to_u128_checked().unwrap(), b.to_canonical_u128());
+            let expected = loop {
+                let lo = r2.next_u64();
+                let hi = r2.next_u64();
+                let v = lo as u128 | (hi as u128) << 64;
+                if v < P {
+                    break v;
+                }
+            };
+            assert_eq!(t.to_u128_checked(), Some(expected));
         }
     }
     check::<{ u128::MAX - 274 }>();
