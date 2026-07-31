@@ -212,7 +212,7 @@ jobs:
       # uncovered (the crate-matrix job runs default features only).
       - name: Run jolt-prover tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zk
-      # The jolt-kernels mode seam in its zk flavor (hiding-finish pins).
+      # The jolt-kernels unit suite in its zk flavor.
       - name: Run jolt-kernels tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
 

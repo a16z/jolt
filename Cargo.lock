@@ -3458,7 +3458,6 @@ name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
  "jolt-claims",
- "jolt-dory",
  "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
