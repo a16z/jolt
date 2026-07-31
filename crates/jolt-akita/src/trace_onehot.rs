@@ -14,7 +14,9 @@ use akita_algebra::ring::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, ExtField, FromPrimitiveInt, MulBaseUnreduced};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FromPrimitiveInt, MulBaseUnreduced, PseudoMersenneField,
+};
 use akita_prover::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use akita_prover::compute::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
@@ -40,8 +42,80 @@ const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
 const D64_K16_SHIFT_KEY_SPACE: usize = 1 << 16;
 const SHARED_SHIFT_MIN_COLUMNS: u8 = 3;
 const K256_ROW_BATCH: usize = 1 << 13;
+const _: () = assert!(K256_ROW_BATCH <= i16::MAX as usize);
 
 type AkitaWideRing<const D: usize> = WideCyclotomicRing<<AkitaField as HasWide>::Wide, D>;
+
+// Canonical reduction on every add costs more than tracking 2^128 wraps and
+// applying 2^128 = MODULUS_OFFSET only when the tile is flushed.
+#[derive(Clone)]
+struct DeferredFp128Ring<const D: usize> {
+    lo: [u64; D],
+    hi: [u64; D],
+    wraps: [i16; D],
+}
+
+impl<const D: usize> DeferredFp128Ring<D> {
+    fn zero() -> Self {
+        Self {
+            lo: [0; D],
+            hi: [0; D],
+            wraps: [0; D],
+        }
+    }
+
+    #[inline(always)]
+    fn add_coefficient(&mut self, index: usize, value: AkitaField) {
+        let [value_lo, value_hi] = value.to_limbs();
+        let (lo, carry_lo) = self.lo[index].overflowing_add(value_lo);
+        let (hi, carry_hi) = self.hi[index].carrying_add(value_hi, carry_lo);
+        self.lo[index] = lo;
+        self.hi[index] = hi;
+        self.wraps[index] += i16::from(carry_hi);
+    }
+
+    #[inline(always)]
+    fn sub_coefficient(&mut self, index: usize, value: AkitaField) {
+        let [value_lo, value_hi] = value.to_limbs();
+        let (lo, borrow_lo) = self.lo[index].overflowing_sub(value_lo);
+        let (hi, borrow_hi) = self.hi[index].borrowing_sub(value_hi, borrow_lo);
+        self.lo[index] = lo;
+        self.hi[index] = hi;
+        self.wraps[index] -= i16::from(borrow_hi);
+    }
+
+    #[inline(always)]
+    fn shift_accumulate(&mut self, source: &CyclotomicRing<AkitaField, D>, shift: usize) {
+        debug_assert!(shift < D);
+        let (lo, hi) = source.coefficients().split_at(D - shift);
+        for (index, &value) in lo.iter().enumerate() {
+            self.add_coefficient(index + shift, value);
+        }
+        for (index, &value) in hi.iter().enumerate() {
+            self.sub_coefficient(index, value);
+        }
+    }
+
+    fn reduce_and_clear(&mut self) -> CyclotomicRing<AkitaField, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+            let lo = std::mem::take(&mut self.lo[index]);
+            let hi = std::mem::take(&mut self.hi[index]);
+            let wraps = std::mem::take(&mut self.wraps[index]);
+            debug_assert!(usize::from(wraps.unsigned_abs()) <= K256_ROW_BATCH);
+
+            let base =
+                AkitaField::from_canonical_u128_reduced(u128::from(lo) | (u128::from(hi) << 64));
+            let correction = AkitaField::from_canonical_u128_reduced(
+                u128::from(wraps.unsigned_abs()) * AkitaField::MODULUS_OFFSET,
+            );
+            if wraps >= 0 {
+                base + correction
+            } else {
+                base - correction
+            }
+        }))
+    }
+}
 
 struct D64K16ShiftGroups {
     group_by_key: Vec<u8>,
@@ -668,15 +742,15 @@ fn flush_wide_rank<const D: usize>(
     }
 }
 
-fn flush_reduced_rank<const D: usize>(
-    rank_reduced: &mut [CyclotomicRing<AkitaField, D>],
+fn flush_deferred_rank<const D: usize>(
+    rank_deferred: &mut [DeferredFp128Ring<D>],
     reduced: &mut [CyclotomicRing<AkitaField, D>],
     n_a: usize,
     a: usize,
 ) {
-    for (column, value) in rank_reduced.iter_mut().enumerate() {
+    for (column, value) in rank_deferred.iter_mut().enumerate() {
         let index = column * n_a + a;
-        reduced[index] += std::mem::replace(value, CyclotomicRing::zero());
+        reduced[index] += value.reduce_and_clear();
     }
 }
 
@@ -993,8 +1067,8 @@ fn commit_packed<const D: usize>(
                     } else {
                         vec![WideCyclotomicRing::zero(); num_columns]
                     };
-                    let mut rank_reduced = if D == 128 {
-                        vec![CyclotomicRing::zero(); num_columns]
+                    let mut rank_deferred = if D == 128 {
+                        vec![DeferredFp128Ring::zero(); num_columns]
                     } else {
                         Vec::new()
                     };
@@ -1037,10 +1111,8 @@ fn commit_packed<const D: usize>(
                                             remaining &= remaining - 1;
                                             let hot = hot_values[row_offset * num_columns + column]
                                                 as usize;
-                                            a_row[a_col].shift_accumulate_into(
-                                                &mut rank_reduced[column],
-                                                hot % D,
-                                            );
+                                            rank_deferred[column]
+                                                .shift_accumulate(&a_row[a_col], hot % D);
                                         }
                                     } else {
                                         let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
@@ -1058,7 +1130,7 @@ fn commit_packed<const D: usize>(
                                 }
                             }
                             if D == 128 {
-                                flush_reduced_rank(&mut rank_reduced, &mut reduced, plan.n_a, a);
+                                flush_deferred_rank(&mut rank_deferred, &mut reduced, plan.n_a, a);
                             } else {
                                 flush_wide_rank(&mut rank_wide, &mut reduced, plan.n_a, a);
                             }
@@ -2345,6 +2417,35 @@ mod tests {
             k: 16,
         });
         assert!(TracePackedOneHot::new(16, 64, 8, rows).is_err());
+    }
+
+    #[test]
+    fn deferred_fp128_shift_accumulator_matches_canonical_at_batch_bound() {
+        const D: usize = 128;
+        let source: CyclotomicRing<AkitaField, D> =
+            CyclotomicRing::from_coefficients(std::array::from_fn(|_| -AkitaField::one()));
+        let mut expected: CyclotomicRing<AkitaField, D> = CyclotomicRing::zero();
+        let mut deferred: DeferredFp128Ring<D> = DeferredFp128Ring::zero();
+
+        for _ in 0..K256_ROW_BATCH {
+            source.shift_accumulate_into(&mut expected, D / 2);
+            deferred.shift_accumulate(&source, D / 2);
+        }
+
+        assert!(deferred
+            .wraps
+            .iter()
+            .all(|wraps| usize::from(wraps.unsigned_abs()) <= K256_ROW_BATCH));
+        assert_eq!(deferred.reduce_and_clear(), expected);
+        assert!(deferred.lo.iter().all(|&limb| limb == 0));
+        assert!(deferred.hi.iter().all(|&limb| limb == 0));
+        assert!(deferred.wraps.iter().all(|&wraps| wraps == 0));
+
+        let mut expected_after_reuse = CyclotomicRing::zero();
+        source.shift_accumulate_into(&mut expected_after_reuse, D - 1);
+        deferred.shift_accumulate(&source, D - 1);
+        assert_eq!(deferred.reduce_and_clear(), expected_after_reuse);
+        assert_eq!(std::mem::size_of::<DeferredFp128Ring<D>>(), 18 * D);
     }
 
     fn assert_opening_kernels_match_materialized<const D: usize>(
