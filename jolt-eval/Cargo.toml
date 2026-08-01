@@ -9,6 +9,7 @@ jolt-verifier = { workspace = true }
 jolt-dory = { workspace = true }
 jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
+jolt-tracer-x86 = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
 jolt-transcript = { workspace = true, features = [

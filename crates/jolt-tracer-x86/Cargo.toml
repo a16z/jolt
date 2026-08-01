@@ -36,6 +36,10 @@ jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 postcard = { workspace = true, features = ["use-std"] }
 rand = { workspace = true }
 
+[[bin]]
+name = "jolt-emu-x86"
+path = "src/bin/jolt_emu_x86.rs"
+
 [[bench]]
 name = "iai"
 harness = false
