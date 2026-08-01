@@ -289,7 +289,32 @@ Final per-file actuals are recorded in the file-structure table below
    crate's `Fr`/`Fq` exposed the plain arkworks `From` conversions; 94+
    consumer call sites rely on them.
 
-## Remaining before replacement
+## Replacement validation evidence
+
+The replacement (swap `cf8a66ae3`, consumer rebind `079356e30`) is
+validated by the following battery, all green:
+
+- **Proof bytes unchanged (the hard invariant, verified at the strongest
+  applicable strength):** a standard-mode `muldiv` proof built from the
+  pre-replacement commit (`2b800e1ca`, old crate) and one from the
+  replacement branch, with the Dory URS cache pinned to a shared directory,
+  are byte-identical in all 63,372 bytes (`cmp` finds no difference). ZK
+  proofs are randomized (BlindFold), so the applicable check is size
+  equality: 65,947 bytes on both builds. (Earlier recorded baselines
+  63,371/65,946 predate the PR branch's merge of main; the one-byte drift
+  exists identically on both sides of the replacement.)
+- **e2e:** `muldiv` passes in `--features host` and `--features host,zk`
+  (3/3 each, including the committed-program variants).
+- **Test lanes:** workspace default sweep 2,338/2,338; jolt-prover-legacy
+  host 444/444, zk 480/480, akita 445/445; jolt-verifier
+  akita,prover-fixtures 84/84; jolt-field solinas-only 110/110. The crate's
+  own oracle-free suite: 125/125 all-features.
+- **Clippy lanes (`--all-targets -- -D warnings`):** host; host,zk;
+  jolt-verifier akita and akita,prover-fixtures; jolt-prover-legacy akita;
+  field-inline; plus `+avx2` and `+avx512f,+avx512dq` `cargo check`
+  cross-compiles to `x86_64-apple-darwin`.
+
+## Remaining after replacement
 
 1. **x86-64 runtime validation:** AVX2/AVX-512 packed backends and the
    fp128 portable mul path are `cargo check`-validated with
@@ -297,12 +322,13 @@ Final per-file actuals are recorded in the file-structure table below
    differential suite and the fp128 differentials on real x86-64 hardware.
 2. **Bench re-evaluation entries:** rerun the fused deg-4 kernel bench
    (`benches/ext4_kernels.rs`) on x86-64 before deciding the
-   `PseudoMersenne` hook overrides stay generic (checkpoint 6 caveat);
-   thin comparison bench vs baseline for the scalar/packed hot paths.
-3. **The replacement PR itself:** rebind consumers to the new trait names,
-   delete `jolt-field`, re-point the `jolt-field` workspace alias; decide
-   the fate of the unconsumed parallel helpers (checkpoint 9 audit above);
-   CI wiring with a target-feature lane so SIMD is not CI-dark.
+   `PseudoMersenne` hook overrides stay generic (checkpoint 6 caveat).
+3. **CI wiring:** a target-feature lane so SIMD is not CI-dark.
+4. **Parallel helpers:** still zero consumers after the rebind (the old
+   crate's `parallel` module also had none); delete `solinas::parallel`
+   and the `parallel` feature, or wire a consumer.
+5. **Akita cutover follow-ups:** delete the `akita` bootstrap edge and
+   restore `JoltField`'s serde bounds (deviation 1 above).
 
 ## Design pillars
 
