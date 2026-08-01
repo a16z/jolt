@@ -19,6 +19,7 @@ use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 /// the opening cell (`F` for the serialized wire value, `Vec<F>` for the derived
 /// opening point). Field declaration order is the canonical Fiat-Shamir order
 /// (single-sourced via [`OutputClaims::canonical_order`]).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

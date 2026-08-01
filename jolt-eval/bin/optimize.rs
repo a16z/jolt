@@ -147,6 +147,63 @@ impl OptimizeEnv for RealEnv {
             }
         }
 
+        // String-keyed telemetry/callgrind objectives measure via subprocess
+        // in the worktree (stale-binary trap — see check_invariants below);
+        // a failed measurement stays absent from the map, scoring INFINITY.
+        // One profile run per workload serves every telemetry objective
+        // sharing it (e.g. all ten per-stage totals read one summary). A
+        // workload counts as profiled only once its run *succeeds*
+        // (`run_profile_in` also clears any stale summary first), so a
+        // failed run can never leave later objectives reading a previous
+        // candidate's summary.
+        // The workload's single shared run must satisfy every objective that
+        // reads it: enable the allocative lane iff any of them is a heap
+        // metric (a time metric's value is unaffected beyond the lane's
+        // noise-level snapshot cost).
+        let allocative_workloads: std::collections::HashSet<&str> = objectives
+            .iter()
+            .filter_map(|obj| match obj {
+                OptimizationObjective::Telemetry(t) if t.needs_allocative() => Some(t.workload),
+                _ => None,
+            })
+            .collect();
+        let mut profiled_workloads: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
+        for obj in objectives {
+            match obj {
+                OptimizationObjective::Telemetry(t) => {
+                    if !profiled_workloads.contains(t.workload) {
+                        if let Err(e) = t.run_profile_in_with(
+                            &self.work_dir,
+                            allocative_workloads.contains(t.workload),
+                        ) {
+                            eprintln!("profile run failed for {}: {e}", t.workload);
+                            continue;
+                        }
+                        profiled_workloads.insert(t.workload);
+                    }
+                    match t.extract_from_dir(&self.work_dir) {
+                        Ok(v) => {
+                            results.insert(*obj, v);
+                        }
+                        Err(e) => eprintln!("measurement failed for {}: {e}", obj.name()),
+                    }
+                }
+                OptimizationObjective::Callgrind(c) => match c.measure_in(&self.work_dir) {
+                    Ok(v) => {
+                        results.insert(*obj, v);
+                    }
+                    Err(e) => eprintln!("measurement failed for {}: {e}", obj.name()),
+                },
+                // Measured by their own channels above (Criterion / static
+                // analysis). Spelled out rather than `_` so a future keyed
+                // objective family fails to compile here instead of being
+                // silently skipped.
+                OptimizationObjective::StaticAnalysis(_)
+                | OptimizationObjective::Performance(_) => {}
+            }
+        }
+
         results
     }
 

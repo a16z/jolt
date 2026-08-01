@@ -1536,6 +1536,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "camino"
+version = "1.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb1307f12aa967b5a58416e87b3653360e0fd614a016b6e970db08fecbb1b80d"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "cargo-platform"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e35af189006b9c0f00a064685c727031e3ed2d8020f7ba284d78cc2671bd36ea"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "cargo_metadata"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd5eb614ed4c27c5d706420e4320fbe3216ab31fa1c33cd8246ac36dae4479ba"
+dependencies = [
+ "camino",
+ "cargo-platform",
+ "semver 1.0.27",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1550,7 +1582,7 @@ dependencies = [
  "find-msvc-tools",
  "jobserver",
  "libc",
- "shlex",
+ "shlex 2.0.1",
 ]
 
 [[package]]
@@ -1636,6 +1668,7 @@ dependencies = [
  "anstyle",
  "clap_lex",
  "strsim",
+ "terminal_size",
 ]
 
 [[package]]
@@ -1693,6 +1726,15 @@ name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
+
+[[package]]
+name = "colored"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
+dependencies = [
+ "windows-sys 0.48.0",
+]
 
 [[package]]
 name = "common"
@@ -2377,6 +2419,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_home"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7f84e12ccf0a7ddc17a6c41c93326024c42920d7ee630d04950e6926645c0fe"
+
+[[package]]
 name = "env_logger"
 version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2815,6 +2863,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
+name = "higher-kinded-types"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "561985554c8b8d4808605c90a5f1979cc6c31a5d20b78465cd59501233c6678e"
+dependencies = [
+ "never-say-never",
+]
+
+[[package]]
 name = "hmac"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2865,7 +2922,29 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b74c9743c00c3bca4aaffc69c87cae56837796cd362438daf354a3f785788c68"
 dependencies = [
+ "anyhow",
+ "bincode 1.3.3",
+ "cargo_metadata",
+ "clap",
+ "colored",
+ "derive_more",
+ "env_logger",
+ "glob",
+ "indexmap 2.14.0",
+ "inferno 0.12.6",
+ "itertools 0.14.0",
+ "lazy_static",
+ "log",
+ "polonius-the-crab",
+ "regex",
+ "sanitize-filename",
  "serde",
+ "serde_json",
+ "shlex 1.3.0",
+ "strum 0.27.2",
+ "tempfile",
+ "version-compare",
+ "which",
 ]
 
 [[package]]
@@ -3175,6 +3254,7 @@ dependencies = [
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-claims-derive",
@@ -3254,12 +3334,15 @@ dependencies = [
  "enumset",
  "eyre",
  "hex",
+ "iai-callgrind",
+ "iai-callgrind-runner",
  "jolt-crypto",
  "jolt-dory",
  "jolt-eval-macros",
  "jolt-field",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
+ "jolt-poly",
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-riscv",
@@ -3460,6 +3543,7 @@ dependencies = [
 name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "jolt-claims",
  "jolt-field",
  "jolt-kernels-derive",
@@ -3474,6 +3558,7 @@ dependencies = [
  "jolt-witness",
  "rayon",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -3573,11 +3658,15 @@ name = "jolt-profiling"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "inferno 0.12.6",
+ "libc",
  "memory-stats",
  "pprof",
  "prost 0.14.4",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
  "sysinfo",
+ "thiserror 2.0.18",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
@@ -3602,15 +3691,23 @@ dependencies = [
 name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
+ "allocative",
+ "bincode 2.0.1",
+ "chrono",
+ "clap",
  "common",
+ "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
  "jolt-kernels",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-sumcheck",
@@ -3620,8 +3717,10 @@ dependencies = [
  "postcard",
  "rand_core 0.6.4",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracer",
+ "tracing",
 ]
 
 [[package]]
@@ -3661,6 +3760,7 @@ dependencies = [
  "jolt-openings",
  "jolt-optimizations",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-program",
  "jolt-riscv",
  "jolt-sumcheck",
@@ -3789,6 +3889,7 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
+ "allocative",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "bincode 2.0.1",
  "common",
@@ -3837,6 +3938,7 @@ dependencies = [
  "jolt-witness-derive",
  "rayon",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -4199,6 +4301,12 @@ name = "multimap"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
+
+[[package]]
+name = "never-say-never"
+version = "6.6.666"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf5a574dadd7941adeaa71823ecba5e28331b8313fb2e1c6a5c7e5981ea53ad6"
 
 [[package]]
 name = "nix"
@@ -4923,6 +5031,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
 dependencies = [
  "plotters-backend",
+]
+
+[[package]]
+name = "polonius-the-crab"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e97ca2c89572ae41bbec1c99498251f87dd5a94e500c5ec19c382dd593dd5ce9"
+dependencies = [
+ "higher-kinded-types",
+ "never-say-never",
 ]
 
 [[package]]
@@ -5903,6 +6021,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sanitize-filename"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc984f4f9ceb736a7bb755c3e3bd17dc56370af2600c9780dcc48c66453da34d"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "schemars"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6035,6 +6162,10 @@ name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+dependencies = [
+ "serde",
+ "serde_core",
+]
 
 [[package]]
 name = "semver-parser"
@@ -6333,6 +6464,12 @@ dependencies = [
 
 [[package]]
 name = "shlex"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
@@ -6530,6 +6667,15 @@ dependencies = [
 
 [[package]]
 name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "strum"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
@@ -6548,6 +6694,18 @@ dependencies = [
  "quote",
  "rustversion",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -6677,6 +6835,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "terminal_size"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
+dependencies = [
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7154,6 +7322,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
+name = "version-compare"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03c2856837ef78f57382f06b2b8563a2f512f7185d732608fd9176cb3b8edf0e"
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7252,6 +7426,17 @@ checksum = "854ba17bb104abfb26ba36da9729addc7ce7f06f5c0f90f3c391f8461cca21f9"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "which"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fabb953106c3c8eea8306e4393700d7657561cb43122571b172bbfb7c7ba1d"
+dependencies = [
+ "env_home",
+ "rustix",
+ "winsafe",
 ]
 
 [[package]]
@@ -7560,6 +7745,12 @@ checksum = "09dac053f1cd375980747450bfc7250c264eaae0583872e845c0c7cd578872b5"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wit-bindgen"

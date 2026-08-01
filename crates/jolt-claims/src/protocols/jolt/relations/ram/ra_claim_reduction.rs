@@ -15,6 +15,7 @@ use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChal
 
 /// Produced RAM-RA reduced opening, generic over the opening cell (`F` for the
 /// serialized wire value, `Vec<F>` for the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -42,6 +43,7 @@ pub struct RamRaClaimReductionInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the RAM `ra` claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamRaClaimReductionChallenges<F> {
     #[challenge(RamRaClaimReductionChallenge::Gamma)]
     pub gamma: F,
