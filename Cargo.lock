@@ -3131,10 +3131,8 @@ dependencies = [
 name = "jolt-akita"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
  "akita-challenges",
  "akita-config",
- "akita-field",
  "akita-pcs",
  "akita-planner",
  "akita-prover",
@@ -3522,10 +3520,8 @@ dependencies = [
  "rand 0.8.7",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "rayon",
  "serde",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
