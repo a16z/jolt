@@ -63,6 +63,43 @@ fn signed_products(c: &mut Criterion) {
     group.finish();
 }
 
+fn signed_u64_products(c: &mut Criterion) {
+    let mut rng = ChaCha20Rng::seed_from_u64(13);
+    let values = (0..TERMS)
+        .map(|_| AkitaField::random(&mut rng))
+        .collect::<Vec<_>>();
+    let scalars = (0..TERMS)
+        .map(|index| (rng.next_u64(), index % 2 == 0))
+        .collect::<Vec<_>>();
+
+    let mut group = c.benchmark_group("signed_u64_product_accumulator");
+    group.throughput(Throughput::Elements(TERMS as u64));
+    group.bench_function(BenchmarkId::new("fp128_wide", TERMS), |bench| {
+        bench.iter(|| {
+            let mut accumulator = AkitaSignedProductAccumulator::default();
+            for (&value, &(magnitude, is_positive)) in values.iter().zip(&scalars) {
+                let scalar = S256::new([magnitude, 0, 0, 0], is_positive);
+                accumulator.fmadd_s256(black_box(value), black_box(&scalar));
+            }
+            black_box(accumulator.reduce())
+        });
+    });
+    group.bench_function(BenchmarkId::new("fp128_one_limb", TERMS), |bench| {
+        bench.iter(|| {
+            let mut accumulator = AkitaSignedProductAccumulator::default();
+            for (&value, &(magnitude, is_positive)) in values.iter().zip(&scalars) {
+                accumulator.fmadd_signed_u64(
+                    black_box(value),
+                    black_box(magnitude),
+                    black_box(is_positive),
+                );
+            }
+            black_box(accumulator.reduce())
+        });
+    });
+    group.finish();
+}
+
 fn small_scalars(c: &mut Criterion) {
     let mut rng = ChaCha20Rng::seed_from_u64(11);
     let fp128_values = (0..TERMS)
@@ -146,5 +183,11 @@ fn field_products(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, signed_products, small_scalars, field_products);
+criterion_group!(
+    benches,
+    signed_products,
+    signed_u64_products,
+    small_scalars,
+    field_products
+);
 criterion_main!(benches);

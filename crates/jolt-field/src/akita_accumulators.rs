@@ -156,6 +156,19 @@ impl SignedProductAccumulator for AkitaSignedProductAccumulator {
     }
 
     #[inline(always)]
+    fn fmadd_signed_u64(&mut self, value: AkitaField, magnitude: u64, is_positive: bool) {
+        if magnitude == 0 {
+            return;
+        }
+        let term = value.mul_u64_unreduced(magnitude);
+        if is_positive {
+            self.pos += term;
+        } else {
+            self.neg += term;
+        }
+    }
+
+    #[inline(always)]
     fn reduce(self) -> AkitaField {
         AkitaField::reduce_mul_u64_accum(self.pos) - AkitaField::reduce_mul_u64_accum(self.neg)
     }
@@ -219,6 +232,9 @@ mod tests {
             candidate.fmadd_s256(value, &scalar);
             expected.fmadd_s256(value, &scalar);
         }
+        let value = AkitaField::random(&mut rng);
+        candidate.fmadd_signed_u64(value, u64::MAX, false);
+        expected.fmadd_signed_u64(value, u64::MAX, false);
         assert_eq!(candidate.reduce(), expected.reduce());
     }
 

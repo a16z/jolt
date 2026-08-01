@@ -6,6 +6,10 @@ pub trait SignedProductAccumulator: Default + Copy + Send + Sync {
 
     fn fmadd_s256(&mut self, value: Self::Element, scalar: &S256);
 
+    fn fmadd_signed_u64(&mut self, value: Self::Element, magnitude: u64, is_positive: bool) {
+        self.fmadd_s256(value, &S256::new([magnitude, 0, 0, 0], is_positive));
+    }
+
     fn reduce(self) -> Self::Element;
 }
 
