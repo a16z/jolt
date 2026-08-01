@@ -119,13 +119,12 @@ impl InstructionCycleRow {
             "mapped PC exceeds packed row"
         );
         let table_plus_one = table_index.map_or(0, |index| index as u64 + 1);
-        let mut packed_pc_and_flags = pc_plus_one
+        let packed_pc_and_flags = pc_plus_one
             | (table_plus_one << PACKED_TABLE_SHIFT)
             | (u64::from(raf_flag) << PACKED_RAF_SHIFT);
         #[cfg(feature = "akita")]
-        if fused_inc.0 < 0 {
-            packed_pc_and_flags |= 1 << PACKED_INC_SIGN_SHIFT;
-        }
+        let packed_pc_and_flags =
+            packed_pc_and_flags | (u64::from(fused_inc.0 < 0) << PACKED_INC_SIGN_SHIFT);
         Self {
             lookup_index_lo: lookup_index as u64,
             lookup_index_hi: (lookup_index >> 64) as u64,

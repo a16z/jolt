@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::needless_update,
+        reason = "the default update initializes the field-inline-only trace field"
+    )
+)]
+
 use common::{
     constants::RAM_START_ADDRESS,
     jolt_device::{JoltDevice, MemoryConfig, MemoryLayout},
