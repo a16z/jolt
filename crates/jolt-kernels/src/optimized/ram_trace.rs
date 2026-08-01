@@ -19,7 +19,7 @@ use super::support::collect_rows;
 use crate::{KernelError, ProofSession};
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
-pub(crate) const NO_ACCESS: u64 = u64::MAX;
+pub(crate) const NO_ACCESS: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RamAccessBundle {
@@ -32,7 +32,12 @@ struct RamAccessBundle {
 pub(crate) struct RamAccessColumns {
     /// Remapped word address per cycle; [`NO_ACCESS`] when the cycle makes no
     /// remappable RAM access (no-ops and address 0).
-    pub addresses: Vec<u64>,
+    pub addresses: Vec<u32>,
+}
+
+/// RAM values have one final consumer in stage 4, so they are parked
+/// separately from the address column and consumed there.
+pub(crate) struct RamAccessValues {
     /// Pre-access word value per cycle (a read's value, a write's pre-value);
     /// 0 on no-access cycles.
     pub pre_values: Vec<u64>,
@@ -63,22 +68,39 @@ impl RamAccessColumns {
     fn collect<F: Field>(
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
-    ) -> Result<Self, KernelError<F>> {
+    ) -> Result<(Self, RamAccessValues), KernelError<F>> {
         let cycles = 1usize << log_t;
         let bundles: Vec<RamAccessBundle> = collect_rows(witness, cycles)?;
         let mut addresses = Vec::with_capacity(cycles);
         let mut pre_values = Vec::with_capacity(cycles);
         let mut post_values = Vec::with_capacity(cycles);
         for bundle in bundles {
-            addresses.push(bundle.address.0.unwrap_or(NO_ACCESS));
+            let address = match bundle.address.0 {
+                Some(address) => {
+                    let address = u32::try_from(address).map_err(|_| KernelError::Unsupported {
+                        reason: "optimized RAM kernels require remapped addresses below 2^32 - 1",
+                    })?;
+                    if address == NO_ACCESS {
+                        return Err(KernelError::Unsupported {
+                            reason:
+                                "optimized RAM kernels reserve u32::MAX as the no-access sentinel",
+                        });
+                    }
+                    address
+                }
+                None => NO_ACCESS,
+            };
+            addresses.push(address);
             pre_values.push(bundle.pre_value.0);
             post_values.push(bundle.post_value.0);
         }
-        Ok(Self {
-            addresses,
-            pre_values,
-            post_values,
-        })
+        Ok((
+            Self { addresses },
+            RamAccessValues {
+                pre_values,
+                post_values,
+            },
+        ))
     }
 
     /// The session-shared columns: collected on first request (whichever RAM
@@ -93,8 +115,10 @@ impl RamAccessColumns {
         log_t: usize,
     ) -> Result<Arc<Self>, KernelError<F>> {
         if session.state::<Arc<Self>>().is_none() {
-            let columns = Arc::new(Self::collect(witness, log_t)?);
+            let (columns, values) = Self::collect(witness, log_t)?;
+            let columns = Arc::new(columns);
             session.park(columns);
+            session.park(values);
         }
         let columns = Arc::clone(
             session
@@ -115,13 +139,29 @@ impl RamAccessColumns {
         Ok(columns)
     }
 
+    /// Reclaims the value columns at their final consumer while leaving the
+    /// shared address column available to later stages.
+    pub fn shared_with_values<F: Field>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+    ) -> Result<(Arc<Self>, RamAccessValues), KernelError<F>> {
+        let columns = Self::shared(session, witness, log_t)?;
+        let values = session
+            .take::<RamAccessValues>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "RAM access value columns were already consumed",
+            })?;
+        Ok((columns, values))
+    }
+
     /// Bounds-check every accessed address against the proof's `K`, matching
     /// the grid materializers' fail-loud contract.
     pub fn validate_addresses<F: Field>(&self, ram_k: usize) -> Result<(), KernelError<F>> {
         if self
             .addresses
             .iter()
-            .any(|&address| address != NO_ACCESS && address >= ram_k as u64)
+            .any(|&address| address != NO_ACCESS && address as usize >= ram_k)
         {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM access address remapped beyond ram_K",
@@ -170,10 +210,11 @@ impl RamAccessColumns {
     /// being consistent with the final memory image (exactly what the RAM
     /// val/output sumchecks prove). A dishonest witness diverges here and
     /// fails the engine's round checks loudly.
-    pub fn reconstruct_val_init<F: Field>(&self, val_final: Vec<F>) -> Vec<F> {
+    pub fn reconstruct_val_init<F: Field>(&self, pre_values: &[u64], val_final: Vec<F>) -> Vec<F> {
+        debug_assert_eq!(self.addresses.len(), pre_values.len());
         let mut val_init = val_final;
         let mut seen = vec![false; val_init.len()];
-        for (&address, &pre_value) in self.addresses.iter().zip(&self.pre_values) {
+        for (&address, &pre_value) in self.addresses.iter().zip(pre_values) {
             if address == NO_ACCESS {
                 continue;
             }

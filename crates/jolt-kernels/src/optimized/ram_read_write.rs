@@ -291,7 +291,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
             });
         }
 
-        let columns = RamAccessColumns::shared(session, witness, log_t)?;
+        let (columns, values) = RamAccessColumns::shared_with_values(session, witness, log_t)?;
         columns.validate_addresses(1usize << log_k)?;
 
         let entries: Vec<CycleMajorEntry<F>> = columns
@@ -300,12 +300,12 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
             .enumerate()
             .filter(|&(_, &address)| address != NO_ACCESS)
             .map(|(cycle, &address)| {
-                let pre_value = columns.pre_values[cycle];
+                let pre_value = values.pre_values[cycle];
                 CycleMajorEntry {
                     row: cycle,
                     col: address as usize,
                     prev_val: pre_value,
-                    next_val: columns.post_values[cycle],
+                    next_val: values.post_values[cycle],
                     val: F::from_u64(pre_value),
                     ra: F::one(),
                 }
@@ -321,7 +321,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
                 reason: "RAM read-write witness tables disagree with the relation geometry",
             });
         }
-        let val_init = Polynomial::new(columns.reconstruct_val_init(val_final));
+        let val_init = Polynomial::new(columns.reconstruct_val_init(&values.pre_values, val_final));
 
         Ok(Box::new(RamReadWriteKernel {
             phase: Some(Phase::Cycle {
@@ -340,6 +340,8 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -348,6 +350,7 @@ mod tests {
         RamReadWriteChallenges, RamReadWriteInputClaims,
     };
 
+    use super::super::ram_trace::RamAccessValues;
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
     };
@@ -424,6 +427,8 @@ mod tests {
                 },
             )
             .unwrap();
+            assert!(session.state::<RamAccessValues>().is_none());
+            assert!(session.state::<Arc<RamAccessColumns>>().is_some());
 
             let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k);
             assert_parity(
