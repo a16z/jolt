@@ -586,6 +586,105 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     rounds_bound: usize,
 }
 
+fn build_cycle_buckets<F: Field>(
+    rows: &[InstructionCycleRow],
+) -> Result<Vec<Vec<u32>>, KernelError<F>> {
+    let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
+
+    #[cfg(feature = "parallel")]
+    {
+        let chunk_size = rows.len().div_ceil(rayon::current_num_threads()).max(1);
+        let chunk_counts: Vec<(Vec<usize>, bool)> = rows
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut counts = vec![0; num_tables];
+                let mut invalid = false;
+                for row in chunk {
+                    if let Some(table) = row.table_index() {
+                        if let Some(count) = counts.get_mut(table) {
+                            *count += 1;
+                        } else {
+                            invalid = true;
+                        }
+                    }
+                }
+                (counts, invalid)
+            })
+            .collect();
+        if chunk_counts.iter().any(|(_, invalid)| *invalid) {
+            return Err(KernelError::InvariantViolation {
+                reason: "stage-5 row selects an unknown lookup table",
+            });
+        }
+
+        let mut totals = vec![0; num_tables];
+        let chunk_offsets: Vec<Vec<usize>> = chunk_counts
+            .iter()
+            .map(|(counts, _)| {
+                counts
+                    .iter()
+                    .enumerate()
+                    .map(|(table, count)| {
+                        let offset = totals[table];
+                        totals[table] += count;
+                        offset
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut buckets: Vec<Vec<u32>> = totals
+            .iter()
+            .map(|count| Vec::with_capacity(*count))
+            .collect();
+        let bucket_ptrs: Vec<usize> = buckets
+            .iter_mut()
+            .map(|bucket| bucket.as_mut_ptr() as usize)
+            .collect();
+        rows.par_chunks(chunk_size)
+            .zip(chunk_offsets.into_par_iter())
+            .enumerate()
+            .for_each(|(chunk_index, (chunk, mut offsets))| {
+                let base = chunk_index * chunk_size;
+                for (offset, row) in chunk.iter().enumerate() {
+                    if let Some(table) = row.table_index() {
+                        let output = bucket_ptrs[table] as *mut u32;
+                        // SAFETY: each chunk writes its pre-counted, disjoint
+                        // range and no bucket reallocates during the fill.
+                        unsafe { output.add(offsets[table]).write((base + offset) as u32) };
+                        offsets[table] += 1;
+                    }
+                }
+            });
+        for (bucket, count) in buckets.iter_mut().zip(totals) {
+            // SAFETY: the fill writes every slot in each exact-capacity bucket.
+            unsafe { bucket.set_len(count) };
+        }
+        Ok(buckets)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut counts = vec![0; num_tables];
+        for row in rows {
+            if let Some(table) = row.table_index() {
+                let count = counts
+                    .get_mut(table)
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "stage-5 row selects an unknown lookup table",
+                    })?;
+                *count += 1;
+            }
+        }
+        let mut buckets: Vec<Vec<u32>> = counts.into_iter().map(Vec::with_capacity).collect();
+        for (cycle, row) in rows.iter().enumerate() {
+            if let Some(table) = row.table_index() {
+                buckets[table].push(cycle as u32);
+            }
+        }
+        Ok(buckets)
+    }
+}
+
 impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
@@ -629,17 +728,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
-        let mut buckets = vec![Vec::new(); LookupTableKind::<RISCV_XLEN>::COUNT];
-        for (j, row) in rows.iter().enumerate() {
-            if let Some(table_index) = row.table_index() {
-                buckets
-                    .get_mut(table_index)
-                    .ok_or(KernelError::InvariantViolation {
-                        reason: "stage-5 row selects an unknown lookup table",
-                    })?
-                    .push(j as u32);
-            }
-        }
+        let buckets = build_cycle_buckets(&rows)?;
 
         let mut kernel = Self {
             dimensions,
@@ -1405,7 +1494,7 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel};
+    use super::{build_cycle_buckets, InstructionCycleRow, OptimizedInstructionReadRafKernel};
 
     /// Packs reference-typed fixture rows into the optimized kernel's shared
     /// row form (the stage-5 kernel reads no PC/RAM columns).
@@ -1469,6 +1558,19 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn cycle_buckets_preserve_cycle_order() {
+        let rows = pack(&fixture_rows(9, 0xB0C7));
+        let actual = build_cycle_buckets::<Fr>(&rows).unwrap();
+        let mut expected = vec![Vec::new(); LookupTableKind::<RISCV_XLEN>::COUNT];
+        for (cycle, row) in rows.iter().enumerate() {
+            if let Some(table) = row.table_index() {
+                expected[table].push(cycle as u32);
+            }
+        }
+        assert_eq!(actual, expected);
     }
 
     /// The sumcheck input claim from first principles:
