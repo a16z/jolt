@@ -99,6 +99,24 @@ where
             JoltProofClaims::Zk { blindfold_proof } => Ok(blindfold_proof),
         }
     }
+
+    /// Replace the claims payload, retyping the `ZkProof` slot; every wire
+    /// field carries over unchanged.
+    pub fn with_claims<Z>(self, claims: JoltProofClaims<PCS::Field, Z>) -> JoltProof<PCS, VC, Z> {
+        JoltProof {
+            protocol: self.protocol,
+            commitments: self.commitments,
+            stages: self.stages,
+            joint_opening_proof: self.joint_opening_proof,
+            untrusted_advice_commitment: self.untrusted_advice_commitment,
+            claims,
+            trace_length: self.trace_length,
+            ram_K: self.ram_K,
+            rw_config: self.rw_config,
+            one_hot_config: self.one_hot_config,
+            trace_polynomial_order: self.trace_polynomial_order,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

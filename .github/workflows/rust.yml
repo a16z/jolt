@@ -79,13 +79,19 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
       - name: cargo clippy -p jolt-prover-legacy --features akita
         run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
-      # The modular prover's packed (Akita) scaffolding: the stub prove path
-      # plus the ignored byte-diff/e2e suites (they run once the port lands).
-      # Lint both alone and with prover-fixtures so the suites keep compiling.
+      # The modular prover's packed (Akita) path and its fixture suites.
       - name: cargo clippy -p jolt-prover --features akita
         run: cargo clippy -p jolt-prover --all-targets --features akita
       - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
         run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
+      # The profiling feature gates the profile harness bin and smoke test.
+      # The smoke test cannot RUN in CI yet (reference-backend memory — see
+      # the NOTE above the legacy test jobs), but everything behind the
+      # feature must keep compiling. Lint it in both flamegraph modes.
+      - name: cargo clippy -p jolt-prover --features profiling
+        run: cargo clippy -p jolt-prover --all-targets --features profiling
+      - name: cargo clippy -p jolt-prover --features profiling,allocative
+        run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
@@ -175,6 +181,11 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
+      # The MODULAR prover's clear-mode acceptance suites: the byte-diff
+      # ratchets asserting wire-for-wire equality with the legacy prover,
+      # plus the engine/driver twins.
+      - name: Run jolt-prover tests with fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
 
   test-prover-zk:
     runs-on: ubuntu-latest
@@ -208,6 +219,15 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features zk
+      # The MODULAR prover's ZK acceptance suite: muldiv accept, tamper
+      # reject, advice, and committed-program e2es against the unmodified
+      # jolt-verifier ZK path — the PR's headline feature, otherwise
+      # uncovered (the crate-matrix job runs default features only).
+      - name: Run jolt-prover tests with zk feature
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zk
+      # The jolt-kernels unit suite in its zk flavor.
+      - name: Run jolt-kernels tests with zk feature
+        run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
 
   test-prover-akita:
     runs-on: ubuntu-latest
@@ -250,6 +270,14 @@ jobs:
       # wire-for-wire equality with the legacy packed prover.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
+
+  # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
+  # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
+  # wired into CI yet. It proves through the reference backend, whose naive
+  # RAM kernels retain ~18 GiB regardless of trace length — past
+  # hosted-runner memory. Hook it up as a dedicated job (guest toolchain +
+  # jolt CLI install, mirroring the legacy test jobs above) once an
+  # optimized backend fits runner memory.
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest

@@ -115,6 +115,25 @@ pub struct OptimizedInstructionClaimReductionKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for OptimizedInstructionClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("combined"),
+            poly_heap_bytes(&self.combined),
+        );
+        visitor.visit_simple(allocative::Key::new("rows"), vec_heap_bytes(&self.rows));
+        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        visitor.visit_simple(
+            allocative::Key::new("bound_challenges"),
+            vec_heap_bytes(&self.bound_challenges),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
     pub fn new(
         tau_low: &[F],

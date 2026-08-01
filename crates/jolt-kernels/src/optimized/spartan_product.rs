@@ -147,6 +147,24 @@ struct SpartanProductCarry<F: Field> {
     t1_values: Vec<F>,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanProductCarry<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("tau_low"),
+            vec_heap_bytes(&self.tau_low),
+        );
+        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("t1_values"),
+            vec_heap_bytes(&self.t1_values),
+        );
+        visitor.exit();
+    }
+}
+
 /// Extended-node evaluations of
 /// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
 fn extended_t1_values<F: Field>(
@@ -320,6 +338,34 @@ struct ProductRemainderKernel<F: Field> {
     rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for ProductRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("left"), poly_heap_bytes(&self.left));
+        visitor.visit_simple(allocative::Key::new("right"), poly_heap_bytes(&self.right));
+        visitor.visit_simple(
+            allocative::Key::new("scratch"),
+            vec_heap_bytes(&self.scratch),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("split_eq"),
+            gruen_heap_bytes(&self.split_eq),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("challenges"),
+            vec_heap_bytes(&self.challenges),
+        );
+        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("lagrange_weights"),
+            vec_heap_bytes(&self.lagrange_weights),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> ProductRemainderKernel<F> {

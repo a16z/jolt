@@ -48,6 +48,12 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
     /// The scale-table index of polynomial `i`'s hot address at unbound
     /// cycle `j`; `None` when the cycle is cold for that polynomial.
     fn index(&self, i: usize, j: usize) -> Option<usize>;
+
+    /// Heap owned by source metadata, excluding shared witness columns.
+    #[cfg(feature = "allocative")]
+    fn heap_bytes(&self) -> usize {
+        0
+    }
 }
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily for the
@@ -82,6 +88,17 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         match self {
             Self::Lazy { tables, .. } => tables.len(),
             Self::Dense(polys) => polys.len(),
+        }
+    }
+
+    #[cfg(feature = "allocative")]
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::backend::{nested_vec_heap_bytes, polys_heap_bytes};
+        match self {
+            Self::Lazy { tables, source, .. } => {
+                nested_vec_heap_bytes(tables) + source.heap_bytes()
+            }
+            Self::Dense(polys) => polys_heap_bytes(polys),
         }
     }
 

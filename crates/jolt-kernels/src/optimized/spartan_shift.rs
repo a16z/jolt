@@ -230,6 +230,50 @@ struct ShiftKernel<F: Field> {
     bound_challenges: Vec<F>,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for ShiftKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        for (key, table) in [
+            ("r_outer", &self.r_outer),
+            ("r_product", &self.r_product),
+            ("bound_challenges", &self.bound_challenges),
+        ] {
+            visitor.visit_simple(allocative::Key::new(key), vec_heap_bytes(table));
+        }
+        visitor.visit_simple(allocative::Key::new("rows"), vec_heap_bytes(&self.rows));
+        let phase_bytes = match &self.phase {
+            Phase::PrefixSuffix { pairs } => pairs
+                .iter()
+                .map(|(p, q)| vec_heap_bytes(p) + vec_heap_bytes(q))
+                .sum(),
+            Phase::Dense {
+                eq_plus_one_outer,
+                eq_plus_one_product,
+                unexpanded_pc,
+                pc,
+                is_virtual,
+                is_first_in_sequence,
+                is_noop,
+            } => [
+                eq_plus_one_outer,
+                eq_plus_one_product,
+                unexpanded_pc,
+                pc,
+                is_virtual,
+                is_first_in_sequence,
+                is_noop,
+            ]
+            .into_iter()
+            .map(vec_heap_bytes)
+            .sum(),
+        };
+        visitor.visit_simple(allocative::Key::new("phase"), phase_bytes);
+        visitor.exit();
+    }
+}
+
 impl<F: Field> ShiftKernel<F> {
     fn rounds_bound(&self) -> usize {
         self.bound_challenges.len()

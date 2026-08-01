@@ -65,6 +65,7 @@ impl AdviceReconstructionDimensions {
 
 /// The untrusted advice byte one-hot opening at the bound point — the final
 /// claim the packed opening consumes for the slot.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -89,6 +90,7 @@ pub struct UntrustedAdviceReconstructionInputClaims<C> {
 /// and the struct cannot be built from a per-field scalar stream —
 /// `from_transcript_values` fails rather than fabricate a reference point.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct UntrustedAdviceReconstructionChallenges<F> {
     /// The fresh reference point the booleanity/hamming legs compare against,
     /// drawn over the full `(byte ‖ place ‖ word)` cell domain before the
@@ -173,6 +175,7 @@ pub fn untrusted_advice_bytes_opening() -> JoltOpeningId {
 
 /// The trusted advice byte one-hot opening at `(bound (byte ‖ place) ‖
 /// r_word)` — the final claim the packed opening consumes for the slot.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

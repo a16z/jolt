@@ -141,6 +141,19 @@ impl<F: Field> SplitLt<F> {
         Self::new_plus_constant(r_cycle, F::zero())
     }
 
+    #[cfg(feature = "allocative")]
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::backend::vec_heap_bytes;
+        match self {
+            Self::Split {
+                lt_lo,
+                lt_hi,
+                eq_hi,
+            } => vec_heap_bytes(lt_lo) + vec_heap_bytes(lt_hi) + vec_heap_bytes(eq_hi),
+            Self::Dense(table) => vec_heap_bytes(table),
+        }
+    }
+
     /// `LT(·, r_cycle) + constant` — the constant rides in the hi table.
     pub(crate) fn new_plus_constant(r_cycle: &[F], constant: F) -> Self {
         let mid = r_cycle.len() / 2;
@@ -242,6 +255,16 @@ impl<F: Field> SplitLt<F> {
 pub(crate) enum BundleStore<B> {
     Owned(jolt_witness::OwnedRows),
     Retained(Vec<B>),
+}
+
+#[cfg(feature = "allocative")]
+impl<B> BundleStore<B> {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Owned(_) => 0,
+            Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
+        }
+    }
 }
 
 impl<B: WitnessBundle + Clone + Send + Sync> BundleStore<B> {

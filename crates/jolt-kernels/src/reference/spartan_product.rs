@@ -40,11 +40,51 @@ use crate::{
 };
 use jolt_witness::JoltWitnessPlane;
 
+// Size arithmetic rather than a derive: a derive would demand
+// `F: Allocative` of the generic `UniskipKernel` impl below that parks this
+// kernel. Field elements are flat, so the tables size exactly.
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanProductKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        for (key, table) in [
+            (allocative::Key::new("eq_cycle"), &self.eq_cycle),
+            (
+                allocative::Key::new("left_instruction_input"),
+                &self.left_instruction_input,
+            ),
+            (allocative::Key::new("lookup_output"), &self.lookup_output),
+            (allocative::Key::new("jump_flag"), &self.jump_flag),
+            (
+                allocative::Key::new("right_instruction_input"),
+                &self.right_instruction_input,
+            ),
+            (allocative::Key::new("branch_flag"), &self.branch_flag),
+            (allocative::Key::new("next_is_noop"), &self.next_is_noop),
+            (
+                allocative::Key::new("write_lookup_output_to_rd"),
+                &self.write_lookup_output_to_rd,
+            ),
+            (
+                allocative::Key::new("virtual_instruction"),
+                &self.virtual_instruction,
+            ),
+        ] {
+            visitor.visit_simple(key, vec_heap_bytes(table));
+        }
+        visitor.exit();
+    }
+}
+
 impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
     /// the slot as the single `late_tau` entry of
     /// [`first_round_poly`](UniskipKernel::first_round_poly).
-    #[tracing::instrument(skip_all, name = "SpartanProductUniskip::prepare")]
+    // The backend-neutral `SpartanProductUniskip::*` spans live at the
+    // stage-2 call boundary (`crates/jolt-prover/src/stages/stage2.rs`), so
+    // every `UniskipKernel` implementation inherits them — see the
+    // taxonomy's kernel-seam contract.
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -56,7 +96,6 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "SpartanProductUniskip::first_round_poly")]
     fn first_round_poly(
         &self,
         session: &mut ProofSession,

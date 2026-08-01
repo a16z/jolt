@@ -122,6 +122,25 @@ pub struct OptimizedInstructionInputKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for OptimizedInstructionInputKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, polys_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        let state_bytes = match &self.state {
+            InputState::Native(rows) => vec_heap_bytes(rows),
+            InputState::Dense(polys) => polys_heap_bytes(polys),
+        };
+        visitor.visit_simple(allocative::Key::new("state"), state_bytes);
+        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        visitor.visit_simple(
+            allocative::Key::new("bind_scratch"),
+            vec_heap_bytes(&self.bind_scratch),
+        );
+        visitor.exit();
+    }
+}
+
 /// `(value at t = 0, step)` of the pair's linear extension, as exact
 /// integers.
 #[inline]

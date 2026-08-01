@@ -196,6 +196,26 @@ struct ValEvaluationKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for ValEvaluationKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        let inc_bytes = match &self.inc {
+            IncSource::Deferred(_) => 0,
+            IncSource::Ready(inc) => poly_heap_bytes(inc),
+        };
+        visitor.visit_simple(allocative::Key::new("inc"), inc_bytes);
+        let wa_bytes = match &self.wa {
+            WaState::Indices { rd, eq_address } => vec_heap_bytes(rd) + vec_heap_bytes(eq_address),
+            WaState::Dense(table) => vec_heap_bytes(table),
+        };
+        visitor.visit_simple(allocative::Key::new("wa"), wa_bytes);
+        visitor.visit_simple(allocative::Key::new("lt"), self.lt.heap_bytes());
+        visitor.exit();
+    }
+}
+
 impl<F: Field> ValEvaluationKernel<F> {
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         let remaining = self.rounds - self.rounds_bound;

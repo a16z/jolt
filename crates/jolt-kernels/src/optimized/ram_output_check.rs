@@ -109,6 +109,24 @@ struct OutputCheckKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for OutputCheckKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        for (key, bytes) in [
+            ("io_mask", poly_heap_bytes(&self.io_mask)),
+            ("val_io", poly_heap_bytes(&self.val_io)),
+            ("val_final", poly_heap_bytes(&self.val_final)),
+            ("bind_scratch", vec_heap_bytes(&self.bind_scratch)),
+        ] {
+            visitor.visit_simple(allocative::Key::new(key), bytes);
+        }
+        visitor.exit();
+    }
+}
+
 impl<F: Field> OutputCheckKernel<F> {
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.rounds_bound == self.ram_log_k {

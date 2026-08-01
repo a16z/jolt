@@ -21,7 +21,7 @@
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
-use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_openings::CommitmentScheme;
 use jolt_witness::{
     collect_range_into, stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer,
 };
@@ -29,7 +29,8 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use crate::commitment::{
-    CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
+    finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
+    CommittedColumnsWitness, ModeStreamingCommitment, WitnessCommitment,
 };
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
@@ -45,7 +46,7 @@ const SUPERCHUNK_CYCLES: usize = 1 << 21;
 impl<F, PCS> CommitWitness<F, PCS> for OptimizedBackend
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     #[tracing::instrument(
         skip_all,
@@ -98,7 +99,7 @@ fn commit_streaming<F, PCS>(
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
     let row_width = grid.num_columns();
@@ -129,7 +130,7 @@ fn commit_streamed<F, PCS>(
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
     let row_width = grid.num_columns();
@@ -157,7 +158,7 @@ fn commit_pipelined<F, PCS>(
 ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     let cycles = 1usize << grid.log_t;
     let row_width = grid.num_columns();
@@ -196,7 +197,7 @@ fn package<F, PCS>(
 ) -> Vec<WitnessCommitment<PCS>>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     outputs
         .into_iter()
@@ -211,7 +212,7 @@ where
 
 /// One column's in-progress commitment — the reference kernel's states,
 /// advanced a superchunk at a time through the batch entry points.
-enum ColumnCommitState<PCS: StreamingCommitment> {
+enum ColumnCommitState<PCS: ModeStreamingCommitment> {
     Increment {
         kind: ColumnKind,
         partial: PCS::PartialCommitment,
@@ -226,14 +227,14 @@ enum ColumnCommitState<PCS: StreamingCommitment> {
 /// The superchunked commit consumer: every column advances over the same
 /// window sequence as the reference kernel, columns in parallel and windows
 /// in parallel inside each batch call.
-struct BatchedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> {
+struct BatchedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> {
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     row_width: usize,
     setup: &'a PCS::ProverSetup,
 }
 
-impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
+impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
     BatchedColumns<'a, F, PCS>
 {
     fn begin(
@@ -270,10 +271,10 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
     fn finish(self, setup: &PCS::ProverSetup) -> Vec<(PCS::Output, PCS::OpeningHint)> {
         let one_hot_k = self.one_hot_k;
         let finish_column = |column: ColumnCommitState<PCS>| match column {
-            ColumnCommitState::Increment { partial, .. } => PCS::finish_with_hint(partial, setup),
+            ColumnCommitState::Increment { partial, .. } => finish_streamed::<PCS>(partial, setup),
             ColumnCommitState::OneHot {
                 chunk_commitments, ..
-            } => PCS::finish_one_hot_column_major_chunks(setup, one_hot_k, &chunk_commitments),
+            } => finish_streamed_one_hot::<PCS>(setup, one_hot_k, &chunk_commitments),
         };
         #[cfg(feature = "parallel")]
         {
@@ -286,7 +287,7 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
     }
 }
 
-impl<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamConsumer
+impl<F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> StreamConsumer
     for BatchedColumns<'_, F, PCS>
 {
     type Witness = CommittedColumnsWitness;
@@ -334,7 +335,7 @@ impl<F: Field, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamCon
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "test module")]
 

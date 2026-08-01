@@ -109,6 +109,20 @@ struct RamValCheckKernel<F: Field> {
     lt: SplitLt<F>,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for RamValCheckKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("inc"),
+            crate::backend::poly_heap_bytes(&self.inc),
+        );
+        visitor.visit_simple(allocative::Key::new("ra"), self.ra.heap_bytes());
+        visitor.visit_simple(allocative::Key::new("lt"), self.lt.heap_bytes());
+        visitor.exit();
+    }
+}
+
 impl<F: Field> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);

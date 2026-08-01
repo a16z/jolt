@@ -145,6 +145,22 @@ struct RamRaVirtualizationKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for RamRaVirtualizationKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("folded_ra"),
+            self.folded_ra.heap_bytes(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("gruen"),
+            crate::backend::gruen_heap_bytes(&self.gruen),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: Field> RamRaVirtualizationKernel<F> {
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.rounds_bound == self.log_t {

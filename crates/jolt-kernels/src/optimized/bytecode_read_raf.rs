@@ -99,6 +99,15 @@ pub(crate) struct PcRow {
 #[cfg(not(feature = "akita"))]
 struct PcRowsKey(Arc<Vec<PcRow>>);
 
+#[cfg(all(feature = "allocative", not(feature = "akita")))]
+impl allocative::Allocative for PcRowsKey {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        crate::backend::visit_arc_vec(&mut visitor, allocative::Key::new("rows"), &self.0);
+        visitor.exit();
+    }
+}
+
 #[cfg(not(feature = "akita"))]
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct PcBundle {
@@ -429,6 +438,27 @@ struct AddressKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for AddressKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        for (key, bytes) in [
+            ("stage_weights", vec_heap_bytes(&self.stage_weights)),
+            ("raf_weights", vec_heap_bytes(&self.raf_weights)),
+            ("pushforwards", polys_heap_bytes(&self.pushforwards)),
+            ("values", polys_heap_bytes(&self.values)),
+            ("stage_values", vec_heap_bytes(&self.stage_values)),
+            ("int_table", poly_heap_bytes(&self.int_table)),
+            ("entry_trace", poly_heap_bytes(&self.entry_trace)),
+            ("entry_expected", poly_heap_bytes(&self.entry_expected)),
+        ] {
+            visitor.visit_simple(allocative::Key::new(key), bytes);
+        }
+        visitor.exit();
+    }
+}
+
 impl<F: Field> AddressKernel<F> {
     #[inline]
     fn stage_pair(&self, stage: usize, y: usize) -> (F, F) {
@@ -583,6 +613,14 @@ impl<F: Field> LazyFusedInc<F> {
         Self::Lazy {
             branch_weights: vec![F::one()],
             rows,
+        }
+    }
+
+    #[cfg(feature = "allocative")]
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Lazy { branch_weights, .. } => crate::backend::vec_heap_bytes(branch_weights),
+            Self::Dense(polynomial) => crate::backend::poly_heap_bytes(polynomial),
         }
     }
 
@@ -819,6 +857,11 @@ impl ChunkIndexSource for BytecodePcChunks {
             row.mapped_pc().map(|pc| self.selectors[i].chunk_usize(pc))
         }
     }
+
+    #[cfg(feature = "allocative")]
+    fn heap_bytes(&self) -> usize {
+        crate::backend::vec_heap_bytes(&self.selectors)
+    }
 }
 
 struct CycleKernel<F: Field> {
@@ -834,6 +877,34 @@ struct CycleKernel<F: Field> {
     /// order (index-aligned with `ra`).
     output_openings: Vec<JoltOpeningId>,
     rounds_bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for CycleKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("ra"), self.ra.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("combined"),
+            poly_heap_bytes(&self.combined),
+        );
+        #[cfg(feature = "akita")]
+        visitor.visit_simple(
+            allocative::Key::new("fused_inc"),
+            self.fused_inc.heap_bytes(),
+        );
+        #[cfg(feature = "akita")]
+        visitor.visit_simple(
+            allocative::Key::new("fused_combined"),
+            poly_heap_bytes(&self.fused_combined),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("output_openings"),
+            vec_heap_bytes(&self.output_openings),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> CycleKernel<F> {

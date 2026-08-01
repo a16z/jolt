@@ -16,6 +16,7 @@ use crate::{derived, opening, ChallengeDrawError, InputClaims, OutputClaims, Sum
 /// The produced RAM `val_final` opening, sharing the single output-check opening
 /// point. Generic over the opening cell (`F` for the serialized wire value,
 /// `Vec<F>` for the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -61,6 +62,7 @@ impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<F> {
 /// as an `Expr` leaf), and the struct cannot be built from a per-field scalar
 /// stream — `from_transcript_values` fails rather than fabricate a point.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamOutputCheckChallenges<F> {
     pub output_address: Vec<F>,
 }

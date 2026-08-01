@@ -93,13 +93,15 @@ EOF
 } > "$FUZZ_DIR/Cargo.toml.tmp"
 mv "$FUZZ_DIR/Cargo.toml.tmp" "$FUZZ_DIR/Cargo.toml"
 
-# ── Criterion benchmarks ─────────────────────────────────────────────
+# ── Criterion + callgrind benchmarks ─────────────────────────────────
 #
 # Bench files are hand-authored (they carry domain-specific config).
 # This script only syncs Cargo.toml [[bench]] entries from whatever
-# .rs files exist in benches/.
+# .rs files exist in benches/ (Criterion) and benches/callgrind/
+# (iai-callgrind; regenerated with an explicit path so the
+# delete-and-reinsert pass below preserves them).
 
-echo "=== Syncing Criterion bench entries ==="
+echo "=== Syncing bench entries ==="
 
 mkdir -p "$BENCH_DIR"
 
@@ -108,6 +110,12 @@ for f in "$BENCH_DIR"/*.rs; do
     [ -f "$f" ] || continue
     basename "$f" .rs
 done | sort -u > /tmp/jolt_bench_entries
+
+# Collect iai-callgrind bench names (benches/callgrind/*.rs)
+for f in "$BENCH_DIR"/callgrind/*.rs; do
+    [ -f "$f" ] || continue
+    basename "$f" .rs
+done | sort -u > /tmp/jolt_callgrind_entries
 
 # Update Cargo.toml [[bench]] entries
 CARGO_TOML="$EVAL_DIR/Cargo.toml"
@@ -133,8 +141,18 @@ harness = false
 
 EOF
     done < /tmp/jolt_bench_entries
+    while read -r name; do
+        [ -z "$name" ] && continue
+        cat <<EOF
+[[bench]]
+name = "$name"
+path = "benches/callgrind/$name.rs"
+harness = false
+
+EOF
+    done < /tmp/jolt_callgrind_entries
     sed -n '/^\[\[bin\]\]/,$p' "$tmpfile"
 } > "$CARGO_TOML"
-rm -f "$tmpfile" /tmp/jolt_fuzz_entries /tmp/jolt_bench_entries
+rm -f "$tmpfile" /tmp/jolt_fuzz_entries /tmp/jolt_bench_entries /tmp/jolt_callgrind_entries
 
 echo "=== Done ==="

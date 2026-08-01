@@ -119,6 +119,23 @@ struct IncKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for IncKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::poly_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        for (key, bytes) in [
+            ("ram_inc", poly_heap_bytes(&self.ram_inc)),
+            ("rd_inc", poly_heap_bytes(&self.rd_inc)),
+            ("ram_weights", poly_heap_bytes(&self.ram_weights)),
+            ("rd_weights", poly_heap_bytes(&self.rd_weights)),
+        ] {
+            visitor.visit_simple(allocative::Key::new(key), bytes);
+        }
+        visitor.exit();
+    }
+}
+
 impl<F: Field> IncKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(

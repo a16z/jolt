@@ -17,6 +17,7 @@ use crate::{opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumc
 /// The address-phase produced openings: the `BytecodeReadRafAddrClaim`
 /// intermediate, plus (committed-program mode only) the staged `BytecodeValClaim`
 /// openings. In full-program mode `val_stages` is empty.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -119,6 +120,7 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
 /// sumcheck: the batching `gamma` plus the five per-stage gammas (the same set
 /// the full monolith folds).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReadRafAddressPhaseChallenges<F> {
     #[challenge(BytecodeReadRafChallenge::Gamma)]
     pub gamma: F,

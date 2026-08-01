@@ -168,6 +168,131 @@ where
     }
 }
 
+/// [`Allocative`](allocative::Allocative) when the `allocative` feature is
+/// on, vacuous otherwise. Everything stored in a [`ProofSession`] must be
+/// heap-measurable so the profile harness's per-stage flamegraphs can
+/// attribute the cross-stage carries — the dominant retained memory — rather
+/// than an opaque `Box<dyn Any>`.
+#[cfg(feature = "allocative")]
+pub trait MaybeAllocative: allocative::Allocative {}
+#[cfg(feature = "allocative")]
+impl<T: allocative::Allocative + ?Sized> MaybeAllocative for T {}
+/// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
+/// is on, vacuous otherwise.
+#[cfg(not(feature = "allocative"))]
+pub trait MaybeAllocative {}
+#[cfg(not(feature = "allocative"))]
+impl<T: ?Sized> MaybeAllocative for T {}
+
+/// One session entry: the erased value plus, under the `allocative` feature,
+/// a monomorphized visitor captured at insertion — where the concrete type
+/// is still known — so heap flamegraphs can see through the `dyn Any`.
+struct Carry {
+    value: Box<dyn Any>,
+    #[cfg(feature = "allocative")]
+    visit: fn(&dyn Any, &mut allocative::Visitor<'_>),
+}
+
+impl Carry {
+    fn new<T: Any + MaybeAllocative>(value: T) -> Self {
+        Self {
+            value: Box::new(value),
+            #[cfg(feature = "allocative")]
+            visit: visit_carry::<T>,
+        }
+    }
+}
+
+/// Visits one carry's concrete value, keyed by its type name (the frame
+/// label in the rendered flamegraph).
+#[cfg(feature = "allocative")]
+fn visit_carry<T: Any + allocative::Allocative>(
+    value: &dyn Any,
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    if let Some(value) = value.downcast_ref::<T>() {
+        visitor.visit_field(allocative::Key::new(std::any::type_name::<T>()), value);
+    }
+}
+
+/// Allocator-reserved bytes behind a `Vec` of flat elements. Field elements
+/// carry no per-element heap (true of every production field), so parked
+/// kernels can size their tables arithmetically — no `F: Allocative` bound
+/// leaking into the generic reference impls that park them.
+#[cfg(feature = "allocative")]
+pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
+    v.capacity() * size_of::<T>()
+}
+
+/// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
+/// inner reservation.
+#[cfg(feature = "allocative")]
+pub(crate) fn nested_vec_heap_bytes<T>(v: &Vec<Vec<T>>) -> usize {
+    v.capacity() * size_of::<Vec<T>>()
+        + v.iter()
+            .map(|inner| inner.capacity() * size_of::<T>())
+            .sum::<usize>()
+}
+
+/// Heap bytes behind a dense polynomial's evaluation table, by `len()` —
+/// [`Polynomial`](jolt_poly::Polynomial) exposes no capacity. Exact at the
+/// mid-stage snapshot (taken before any binding, when freshly built tables
+/// have `len == capacity`); undercounts the truncated slack of bound state.
+#[cfg(feature = "allocative")]
+pub(crate) fn poly_heap_bytes<T>(poly: &jolt_poly::Polynomial<T>) -> usize {
+    poly.len() * size_of::<T>()
+}
+
+/// [`poly_heap_bytes`] summed over a table list, plus the outer spine.
+#[cfg(feature = "allocative")]
+pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usize {
+    polys.capacity() * size_of::<jolt_poly::Polynomial<T>>()
+        + polys.iter().map(poly_heap_bytes).sum::<usize>()
+}
+
+/// Heap retained by an unbound Gruen split-equality table. The cache stores
+/// every power-of-two prefix below each current table, so each side has
+/// `2 * current_len - 1` field elements.
+#[cfg(feature = "allocative")]
+pub(crate) fn gruen_heap_bytes<F: jolt_field::Field>(
+    split: &jolt_poly::GruenSplitEqPolynomial<F>,
+) -> usize {
+    let in_len = split.e_in_current_len();
+    let out_len = split.e_out_current_len();
+    let in_levels = in_len.ilog2() as usize + 1;
+    let out_levels = out_len.ilog2() as usize + 1;
+    let point_len = in_levels + out_levels - 1;
+    point_len * size_of::<F>()
+        + (in_levels + out_levels) * size_of::<Vec<F>>()
+        + (2 * in_len + 2 * out_len - 2) * size_of::<F>()
+}
+
+/// Visit a shared flat vector without walking its elements. This preserves
+/// `Arc` deduplication while keeping heap snapshots O(1) in the trace size.
+#[cfg(feature = "allocative")]
+pub(crate) fn visit_arc_vec<T>(
+    visitor: &mut allocative::Visitor<'_>,
+    key: allocative::Key,
+    value: &std::sync::Arc<Vec<T>>,
+) {
+    let Some(mut visitor) = visitor.enter_shared(
+        key,
+        size_of::<*const Vec<T>>(),
+        std::sync::Arc::as_ptr(value).cast(),
+    ) else {
+        return;
+    };
+    visitor.visit_simple(
+        allocative::Key::new("ArcInner"),
+        2 * size_of::<usize>() + size_of::<Vec<T>>(),
+    );
+    visitor.visit_simple(
+        allocative::Key::new("elements"),
+        value.capacity() * size_of::<T>(),
+    );
+    visitor.exit();
+}
+
 /// Backend-owned state with proof lifetime, opaque to orchestration.
 ///
 /// Slots stash and share private state keyed by a backend-private type, so
@@ -175,9 +300,13 @@ where
 /// residency, cross-member shared tables, and cross-stage carries all live
 /// here, invisible to the stage recipes that thread `&mut ProofSession`
 /// through every slot call.
+///
+/// Inserted state must be [`MaybeAllocative`]: under the `allocative`
+/// feature the session captures a per-entry visitor, so per-stage heap
+/// flamegraphs attribute the carries' real contents.
 #[derive(Default)]
 pub struct ProofSession {
-    state: HashMap<TypeId, Box<dyn Any>>,
+    state: HashMap<TypeId, Carry>,
 }
 
 impl ProofSession {
@@ -188,10 +317,14 @@ impl ProofSession {
         clippy::expect_used,
         reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
     )]
-    pub fn state_or_insert_with<T: Any>(&mut self, init: impl FnOnce() -> T) -> &mut T {
+    pub fn state_or_insert_with<T: Any + MaybeAllocative>(
+        &mut self,
+        init: impl FnOnce() -> T,
+    ) -> &mut T {
         self.state
             .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(init()))
+            .or_insert_with(|| Carry::new(init()))
+            .value
             .downcast_mut::<T>()
             .expect("ProofSession state entry keyed by its own TypeId")
     }
@@ -200,7 +333,7 @@ impl ProofSession {
     pub fn state<T: Any>(&self) -> Option<&T> {
         self.state
             .get(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.downcast_ref::<T>())
+            .and_then(|carry| carry.value.downcast_ref::<T>())
     }
 
     /// Park `value` as a cross-stage carry, replacing any previous carry of
@@ -211,8 +344,8 @@ impl ProofSession {
     /// missing or stale carry is a proof-time
     /// [`KernelError`](crate::KernelError), the accepted cost of keeping
     /// every batch member uniform.
-    pub fn park<T: Any>(&mut self, value: T) {
-        let _ = self.state.insert(TypeId::of::<T>(), Box::new(value));
+    pub fn park<T: Any + MaybeAllocative>(&mut self, value: T) {
+        let _ = self.state.insert(TypeId::of::<T>(), Carry::new(value));
     }
 
     /// Reclaim (remove and return) a parked carry, if present.
@@ -221,11 +354,27 @@ impl ProofSession {
         reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
     )]
     pub fn take<T: Any>(&mut self) -> Option<T> {
-        self.state.remove(&TypeId::of::<T>()).map(|boxed| {
-            *boxed
+        self.state.remove(&TypeId::of::<T>()).map(|carry| {
+            *carry
+                .value
                 .downcast::<T>()
                 .expect("ProofSession state entry keyed by its own TypeId")
         })
+    }
+}
+
+/// Deep visitation: each entry's monomorphized visitor (captured at
+/// insertion) sees through the `Box<dyn Any>`, so per-stage flamegraphs
+/// attribute the parked kernel tables — the dominant retained memory —
+/// keyed by their type names.
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for ProofSession {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        for carry in self.state.values() {
+            (carry.visit)(carry.value.as_ref(), &mut visitor);
+        }
+        visitor.exit();
     }
 }
 

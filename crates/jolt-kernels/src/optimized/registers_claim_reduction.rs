@@ -185,6 +185,36 @@ struct ClaimReductionKernel<F: Field> {
     bound_challenges: Vec<F>,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for ClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
+        visitor.visit_simple(allocative::Key::new("values"), vec_heap_bytes(&self.values));
+        let phase_bytes = match &self.phase {
+            Phase::PrefixSuffix { p, q } => vec_heap_bytes(p) + vec_heap_bytes(q),
+            Phase::Dense {
+                eq,
+                rd_write_value,
+                rs1_value,
+                rs2_value,
+            } => {
+                vec_heap_bytes(eq)
+                    + vec_heap_bytes(rd_write_value)
+                    + vec_heap_bytes(rs1_value)
+                    + vec_heap_bytes(rs2_value)
+            }
+        };
+        visitor.visit_simple(allocative::Key::new("phase"), phase_bytes);
+        visitor.visit_simple(
+            allocative::Key::new("bound_challenges"),
+            vec_heap_bytes(&self.bound_challenges),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: Field> ClaimReductionKernel<F> {
     fn rounds_bound(&self) -> usize {
         self.bound_challenges.len()

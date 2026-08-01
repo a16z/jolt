@@ -19,6 +19,7 @@ use crate::{
 /// bytecode, RAM) in canonical layout order. Every produced opening shares the
 /// single hamming-weight opening point. Generic over the opening cell (`F` for
 /// the serialized wire value, `Vec<F>` for the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -58,6 +59,7 @@ pub struct HammingWeightClaimReductionInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the hamming-weight claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct HammingWeightClaimReductionChallenges<F> {
     #[challenge(HammingWeightClaimReductionChallenge::Gamma)]
     pub gamma: F,

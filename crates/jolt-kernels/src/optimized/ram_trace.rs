@@ -94,6 +94,18 @@ pub(crate) struct RamAccessColumns {
     pub addresses: Vec<u32>,
 }
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RamAccessColumns {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("addresses"),
+            crate::backend::vec_heap_bytes(&self.addresses),
+        );
+        visitor.exit();
+    }
+}
+
 /// RAM values have one final consumer in stage 4, so they are parked
 /// separately from the address column and consumed there.
 pub(crate) struct RamAccessValues {
@@ -102,6 +114,22 @@ pub(crate) struct RamAccessValues {
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
     pub post_values: Vec<u64>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RamAccessValues {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("pre_values"),
+            crate::backend::vec_heap_bytes(&self.pre_values),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("post_values"),
+            crate::backend::vec_heap_bytes(&self.post_values),
+        );
+        visitor.exit();
+    }
 }
 
 impl RamAccessColumns {

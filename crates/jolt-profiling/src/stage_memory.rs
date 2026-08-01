@@ -1,9 +1,10 @@
 //! Per-stage RSS tracking driven by span lifecycle.
 //!
 //! [`StageMemoryLayer`] watches the prover-stage spans both provers emit
-//! (`prove_stage0`..`prove_stage8`, plus the top-level `prove` /
-//! `prove_parts` spans), samples the process RSS when each span opens and
-//! closes, and records the rows for [`report_stage_memory`]. It also emits a
+//! (`prove_stage0`..`prove_stage8`, plus the whole-run roots
+//! `jolt_prover::prove` / `prove_parts` / `E2E`), samples the process RSS
+//! when each span opens and closes, and records the rows for
+//! [`report_stage_memory`]. It also emits a
 //! `stage_rss` tracing event at every close, so a Chrome/Perfetto trace
 //! carries the boundary RSS as an instant event next to the stage's slice.
 //!
@@ -34,15 +35,32 @@ pub struct StageMemoryRow {
     pub rss_close_bytes: u64,
 }
 
-static STAGE_MEMORY_ROWS: Mutex<Vec<StageMemoryRow>> = Mutex::new(Vec::new());
+/// Cap on retained rows: a prove records ~11 rows, so this covers ~90
+/// undrained proves while bounding the global log in a long-lived process
+/// that installs the layer but never calls [`take_stage_memory_rows`].
+const MAX_STAGE_MEMORY_ROWS: usize = 1024;
+
+/// The global row log plus a saturation marker, so overflow warns once per
+/// drain instead of per dropped row.
+struct RowLog {
+    rows: Vec<StageMemoryRow>,
+    warned_full: bool,
+}
+
+static STAGE_MEMORY_ROWS: Mutex<RowLog> = Mutex::new(RowLog {
+    rows: Vec::new(),
+    warned_full: false,
+});
 
 /// The stage spans worth boundary-sampling: the per-stage prover recipes
 /// (modular `prove_stage0`..`prove_stage8`, legacy `prove_stage1`..) and the
-/// whole-run roots (legacy `prove_parts`, both harnesses' `E2E`). The bare
-/// `prove` name is deliberately not matched — the dory crate uses it for an
-/// inner opening-proof span.
+/// whole-run roots (modular `jolt_prover::prove`, legacy `prove_parts`, both
+/// harnesses' `E2E`).
 fn tracked(name: &str) -> bool {
-    name.starts_with("prove_stage") || name == "prove_parts" || name == "E2E"
+    name.starts_with("prove_stage")
+        || name == crate::taxonomy::ROOT_SPAN
+        || name == "prove_parts"
+        || name == "E2E"
 }
 
 /// A `tracing_subscriber` layer sampling process RSS at stage-span
@@ -87,16 +105,26 @@ where
             rss_close_gib = row.rss_close_bytes as f64 / BYTES_PER_GIB,
             "stage_rss"
         );
-        STAGE_MEMORY_ROWS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(row);
+        let mut log = STAGE_MEMORY_ROWS.lock().unwrap_or_else(|e| e.into_inner());
+        if log.rows.len() >= MAX_STAGE_MEMORY_ROWS {
+            if !log.warned_full {
+                log.warned_full = true;
+                tracing::warn!(
+                    cap = MAX_STAGE_MEMORY_ROWS,
+                    "stage-memory row log is full; dropping rows until it is drained"
+                );
+            }
+            return;
+        }
+        log.rows.push(row);
     }
 }
 
 /// Drain and return the rows recorded so far, in span-close order.
 pub fn take_stage_memory_rows() -> Vec<StageMemoryRow> {
-    std::mem::take(&mut *STAGE_MEMORY_ROWS.lock().unwrap_or_else(|e| e.into_inner()))
+    let mut log = STAGE_MEMORY_ROWS.lock().unwrap_or_else(|e| e.into_inner());
+    log.warned_full = false;
+    std::mem::take(&mut log.rows)
 }
 
 /// Print the recorded per-stage RSS table to stdout and clear the log.

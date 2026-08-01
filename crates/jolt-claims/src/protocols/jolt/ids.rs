@@ -169,6 +169,7 @@ pub enum BytecodeReadRafPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub enum JoltAdviceKind {
     Trusted,
     Untrusted,

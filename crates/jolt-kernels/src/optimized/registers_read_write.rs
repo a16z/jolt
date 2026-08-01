@@ -110,6 +110,18 @@ impl WitnessBundle for RegisterCycleRow {
 /// the trace to collect them).
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for SharedRdIndices {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("indices"),
+            crate::backend::vec_heap_bytes(&self.0),
+        );
+        visitor.exit();
+    }
+}
+
 /// The row-window size of the streaming entry-collection pass (matches
 /// `support::collect_rows`: wide enough to amortize the per-chunk rayon
 /// extraction dispatch).
@@ -932,6 +944,44 @@ struct ReadWriteKernel<F: Field> {
     rs2_indices: Vec<Option<u8>>,
     bound_challenges: Vec<F>,
     rounds_bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for ReadWriteKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        let entries_bytes = match &self.entries {
+            SparseEntries::Indexed {
+                entries,
+                ra_lut,
+                wa_lut,
+            } => {
+                vec_heap_bytes(entries)
+                    + vec_heap_bytes(&ra_lut.values)
+                    + vec_heap_bytes(&wa_lut.values)
+            }
+            SparseEntries::Direct(entries) => vec_heap_bytes(entries),
+        };
+        visitor.visit_simple(allocative::Key::new("entries"), entries_bytes);
+        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        visitor.visit_simple(allocative::Key::new("inc"), poly_heap_bytes(&self.inc));
+        for (key, table) in [
+            ("ra", &self.ra),
+            ("wa", &self.wa),
+            ("val", &self.val),
+            ("bound_challenges", &self.bound_challenges),
+        ] {
+            visitor.visit_simple(allocative::Key::new(key), vec_heap_bytes(table));
+        }
+        for (key, table) in [
+            ("rs1_indices", &self.rs1_indices),
+            ("rs2_indices", &self.rs2_indices),
+        ] {
+            visitor.visit_simple(allocative::Key::new(key), vec_heap_bytes(table));
+        }
+        visitor.exit();
+    }
 }
 
 /// Bind one cycle variable of the sparse matrix in place: merge every

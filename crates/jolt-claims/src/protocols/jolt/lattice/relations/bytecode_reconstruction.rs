@@ -56,6 +56,7 @@ pub struct BytecodeChunkReconstructionInputClaims<C> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeChunkReconstructionChallenges<F> {
     #[challenge(BytecodeChunkReconstructionChallenge::Gamma)]
     pub gamma: F,
@@ -69,6 +70,7 @@ pub struct BytecodeChunkReconstructionChallenges<F> {
 /// `#[derive(OutputClaims)]` `Vec` convention (single `usize` index) cannot
 /// express — the trait impl is hand-written below in the same
 /// field-declaration order the derive would use.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
