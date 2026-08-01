@@ -52,6 +52,7 @@ pub struct Stage4ProverOutput<F: Field, C> {
 
 /// Prove stage 4 on `transcript` (positioned at the stage-3 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
+#[tracing::instrument(skip_all)]
 pub fn prove_stage4<F, PCS, VC, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
@@ -139,10 +140,19 @@ where
         .advice_blocks
         .iter()
         .map(|(kind, block)| {
+            // Backend-neutral kernel-seam span at the call boundary — see
+            // the taxonomy's kernel-seam contract.
             let opening_value =
-                backend
-                    .advice_opening
-                    .evaluate(session, *kind, &block.opening_point, witness)?;
+                tracing::info_span!("AdviceOpeningEvaluation::evaluate", kind = ?kind).in_scope(
+                    || {
+                        backend.advice_opening.evaluate(
+                            session,
+                            *kind,
+                            &block.opening_point,
+                            witness,
+                        )
+                    },
+                )?;
             Ok(VerifiedRamValCheckAdviceContribution {
                 kind: *kind,
                 selector: block.selector,
