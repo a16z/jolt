@@ -326,11 +326,11 @@ pub fn collect_range_into<B: WitnessBundle + Send>(
     range: Range<usize>,
     out: &mut Vec<B>,
 ) -> Result<(), WitnessError> {
-    let start = range.start;
-    let count = range.end.saturating_sub(start);
     out.clear();
     #[cfg(feature = "parallel")]
     {
+        let start = range.start;
+        let count = range.end.saturating_sub(start);
         out.reserve(count);
         let spare = &mut out.spare_capacity_mut()[..count];
         let error = std::sync::Mutex::new(None);
