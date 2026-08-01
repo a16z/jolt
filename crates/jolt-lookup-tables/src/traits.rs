@@ -112,6 +112,16 @@ pub trait LookupQuery<const XLEN: usize> {
 
     /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
+
+    /// Returns the instruction inputs, lookup operands, and lookup output.
+    #[inline]
+    fn to_lookup_values(&self) -> ((u64, i128), (u64, u128), u64) {
+        (
+            self.to_instruction_inputs(),
+            self.to_lookup_operands(),
+            self.to_lookup_output(),
+        )
+    }
 }
 
 #[cfg(feature = "field-inline")]
@@ -234,6 +244,24 @@ macro_rules! impl_jolt_lookup_query {
                     )*
                 }
             }
+
+            #[inline]
+            fn to_lookup_values(&self) -> ((u64, i128), (u64, u128), u64) {
+                match self.instruction_kind {
+                    JoltInstruction::Noop(_) => ((0, 0), (0, 0), 0),
+                    $(
+                        $(#[$meta])*
+                        JoltInstruction::$variant(_) => {
+                            let instruction = jolt_riscv::instructions::$variant(self.cycle);
+                            (
+                                LookupQuery::<XLEN>::to_instruction_inputs(&instruction),
+                                LookupQuery::<XLEN>::to_lookup_operands(&instruction),
+                                LookupQuery::<XLEN>::to_lookup_output(&instruction),
+                            )
+                        }
+                    )*
+                }
+            }
         }
     };
 }
@@ -245,7 +273,7 @@ mod tests {
     use super::*;
     use jolt_riscv::{
         instructions::{Add, Ld, Noop},
-        Flags, InterleavedBitsMarker, JoltInstructionRow, JoltInstructionRowData,
+        Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionRow, JoltInstructionRowData,
         NormalizedOperands,
     };
 
@@ -307,6 +335,41 @@ mod tests {
 
         fn ram_write_value(&self) -> Option<u64> {
             None
+        }
+    }
+
+    #[test]
+    fn fused_lookup_values_match_individual_queries() {
+        let operands = NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 17,
+        };
+        for instruction_kind in [
+            JoltInstruction::Noop(Noop(())),
+            JoltInstruction::Add(Add(())),
+            JoltInstruction::Ld(Ld(())),
+        ] {
+            let cycle = TestCycle {
+                instruction: JoltInstructionRow {
+                    instruction_kind,
+                    operands,
+                    ..Default::default()
+                },
+                rs1: Some(11),
+                rs2: Some(23),
+                rd: Some((29, 31)),
+            };
+            let query = JoltLookupQuery::new(instruction_kind, cycle);
+            assert_eq!(
+                LookupQuery::<64>::to_lookup_values(&query),
+                (
+                    LookupQuery::<64>::to_instruction_inputs(&query),
+                    LookupQuery::<64>::to_lookup_operands(&query),
+                    LookupQuery::<64>::to_lookup_output(&query),
+                )
+            );
         }
     }
 

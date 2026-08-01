@@ -742,9 +742,13 @@ impl<F: Field> OuterRemainderKernel<F> {
     /// The 35 produced opening values at the bound cycle point: one
     /// eq-weighted walk over the typed rows (`compute_claimed_inputs`),
     /// mixed-width accumulators per input.
+    #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
         let reversed: Vec<F> = self.challenges[1..].iter().rev().copied().collect();
-        let weights = EqPolynomial::<F>::evals(&reversed, None);
+        let weights = {
+            let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
+            EqPolynomial::<F>::evals(&reversed, None)
+        };
         let cycles = weights.len();
         let access = self.rows.access();
 
@@ -767,21 +771,26 @@ impl<F: Field> OuterRemainderKernel<F> {
             left
         };
 
-        #[cfg(feature = "parallel")]
-        {
-            (0..blocks).into_par_iter().map(block).try_reduce(
-                || vec![F::zero(); VARIABLE_COUNT],
-                |left, right| Ok(merge(left, right)),
-            )
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            let mut folded = vec![F::zero(); VARIABLE_COUNT];
-            for index in 0..blocks {
-                folded = merge(folded, block(index)?);
+        let claimed = {
+            let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
+            #[cfg(feature = "parallel")]
+            {
+                (0..blocks).into_par_iter().map(block).try_reduce(
+                    || vec![F::zero(); VARIABLE_COUNT],
+                    |left, right| Ok(merge(left, right)),
+                )
             }
-            Ok(folded)
-        }
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                let mut folded = vec![F::zero(); VARIABLE_COUNT];
+                for index in 0..blocks {
+                    folded = merge(folded, block(index)?);
+                }
+                Ok(folded)
+            }
+        };
+        claimed
     }
 }
 
