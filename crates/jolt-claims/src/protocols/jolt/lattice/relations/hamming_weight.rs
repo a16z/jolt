@@ -70,6 +70,7 @@ pub struct LatticeHammingWeightClaimReductionInputClaims<C> {
     pub fused_inc: C,
 }
 
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
