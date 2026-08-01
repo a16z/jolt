@@ -90,7 +90,8 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
                 pre_value: 7,
                 post_value: 11,
             }),
-            ..Default::default()
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
         },
     ];
     let config = JoltVmWitnessConfig::new(
