@@ -240,13 +240,24 @@ impl TelemetryObjective {
             .map_or(16, |(_, scale)| *scale)
     }
 
-    /// The summary artifact path a profile run leaves under `work_dir` —
-    /// deterministic because this objective chose the workload and scale.
-    pub fn summary_path(&self, work_dir: &Path) -> std::path::PathBuf {
-        work_dir.join(format!(
-            "benchmark-runs/perfetto_traces/modular_{}_{}.summary.json",
+    /// The trace name this objective's profile run uses (also the suffix of
+    /// its per-run directories and `latest_` link).
+    fn trace_name(&self) -> String {
+        format!(
+            "modular_{}_{}",
             self.workload.replace('-', "_"),
             self.scale()
+        )
+    }
+
+    /// The summary artifact path a profile run leaves under `work_dir` —
+    /// deterministic because this objective chose the workload and scale,
+    /// and because the harness flips the `latest_{trace_name}` link to the
+    /// run's timestamped directory only on success.
+    pub fn summary_path(&self, work_dir: &Path) -> std::path::PathBuf {
+        let trace_name = self.trace_name();
+        work_dir.join(format!(
+            "benchmark-runs/latest_{trace_name}/{trace_name}.summary.json"
         ))
     }
 
@@ -255,9 +266,10 @@ impl TelemetryObjective {
     /// artifact path is cwd-relative by design). One run serves every
     /// objective sharing this workload — see [`Self::extract_from_dir`].
     ///
-    /// Any summary a previous run left at the deterministic path is removed
-    /// first, so a failed run can never expose a stale candidate's
-    /// measurements to a later [`Self::extract_from_dir`].
+    /// Any `latest_` link a previous run left is removed first, so a failed
+    /// run can never expose a previous candidate's artifacts to a later
+    /// [`Self::extract_from_dir`] (the harness re-points the link only after
+    /// a run completes).
     pub fn run_profile_in(&self, work_dir: &Path) -> Result<(), MeasurementError> {
         self.run_profile_in_with(work_dir, self.needs_allocative())
     }
@@ -272,11 +284,11 @@ impl TelemetryObjective {
         work_dir: &Path,
         allocative: bool,
     ) -> Result<(), MeasurementError> {
-        let stale = self.summary_path(work_dir);
+        let stale = work_dir.join(format!("benchmark-runs/latest_{}", self.trace_name()));
         if let Err(e) = std::fs::remove_file(&stale) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 return Err(MeasurementError::new(format!(
-                    "removing stale summary {}: {e}",
+                    "removing stale latest link {}: {e}",
                     stale.display()
                 )));
             }
@@ -588,7 +600,7 @@ mod tests {
         let obj = TelemetryObjective::parse("telemetry:sha2-chain:prover_time_s").unwrap();
         assert_eq!(
             obj.summary_path(Path::new("/work")),
-            Path::new("/work/benchmark-runs/perfetto_traces/modular_sha2_chain_22.summary.json")
+            Path::new("/work/benchmark-runs/latest_modular_sha2_chain_22/modular_sha2_chain_22.summary.json")
         );
     }
 }

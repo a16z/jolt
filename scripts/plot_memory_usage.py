@@ -97,7 +97,9 @@ def load_memory_data(traces_dir):
         print(f"Error: Traces directory not found at {traces_dir}")
         return dict(data)
 
-    summary_files = sorted(traces_dir.glob("*.summary.json"))
+    # One summary per (workload, scale): read through the latest_* links
+    # so superseded runs in timestamped directories are not double-counted.
+    summary_files = sorted(traces_dir.glob("latest_*/*.summary.json"))
 
     if not summary_files:
         print(f"Warning: No summary files found in {traces_dir}", file=sys.stderr)
@@ -171,7 +173,7 @@ def create_memory_plot(data, output_path):
 def main():
     parser = argparse.ArgumentParser(
         description='Generate memory usage plot from summary.json artifacts')
-    parser.add_argument('--traces-dir', default='benchmark-runs/perfetto_traces',
+    parser.add_argument('--traces-dir', default='benchmark-runs',
                         help='Directory containing *.summary.json artifacts')
     parser.add_argument('--output-dir', default='benchmark-runs',
                         help='Directory to save the output plot')

@@ -156,7 +156,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='Generate benchmark plots from CSV data')
     parser.add_argument('--csv',
-                        default='benchmark-runs/results/modular_timings.csv',
+                        default='benchmark-runs/modular_timings.csv',
                         help='Path to the benchmark CSV file '
                              '(written by `jolt-prover benchmark`)')
     parser.add_argument('--output-dir', default='benchmark-runs',

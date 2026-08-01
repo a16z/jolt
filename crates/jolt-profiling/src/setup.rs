@@ -49,6 +49,24 @@ pub struct TracingGuards(#[expect(dead_code)] Vec<Box<dyn Any>>);
 ///
 /// Panics if called more than once (the global subscriber can only be set once).
 pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuards {
+    setup_tracing_with_trace_path(
+        formats,
+        std::path::Path::new(&format!("benchmark-runs/perfetto_traces/{trace_name}.json")),
+    )
+}
+
+/// [`setup_tracing`] with an explicit chrome-trace output path — the modular
+/// profile harness groups every artifact into a per-run directory and puts
+/// the trace there.
+pub fn setup_tracing_with_trace_path(
+    formats: &[TracingFormat],
+    trace_path: &std::path::Path,
+) -> TracingGuards {
+    let trace_name = trace_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("trace")
+        .to_string();
     let _ = PPROF_PREFIX.get_or_init(|| {
         std::env::var("PPROF_PREFIX")
             .unwrap_or_else(|_| format!("benchmark-runs/pprof/{trace_name}_"))
@@ -82,17 +100,16 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuar
         layers.push(collector_layer);
     }
     if formats.contains(&TracingFormat::Chrome) {
-        let trace_file = format!("benchmark-runs/perfetto_traces/{trace_name}.json");
-        let _ = std::fs::create_dir_all("benchmark-runs/perfetto_traces");
+        if let Some(parent) = trace_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let (chrome_layer, guard) = ChromeLayerBuilder::new()
             .include_args(true)
-            .file(trace_file)
+            .file(trace_path)
             .build();
         layers.push(chrome_layer.boxed());
         guards.push(Box::new(guard));
-        tracing::info!(
-            "Chrome tracing enabled. Output: benchmark-runs/perfetto_traces/{trace_name}.json"
-        );
+        tracing::info!("Chrome tracing enabled. Output: {}", trace_path.display());
     }
 
     // Boundary RSS sampling for the prover-stage spans; inert for all others.

@@ -20,7 +20,10 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 | `sha3-chain` | 2^22 |
 | `btreemap` | 2^20 |
 
-Artifacts land in `benchmark-runs/perfetto_traces/` under the current
+Artifacts are grouped by run: each invocation writes into
+`benchmark-runs/{timestamp}_{trace_name}/`, and
+`benchmark-runs/latest_{trace_name}` is symlinked to the newest successful
+run — the stable path every example below reads. All paths are under the current
 working directory, overwriting in place:
 
 - `modular_{workload}_{scale}.json` — chrome trace (hyphens in the workload
@@ -47,7 +50,8 @@ cargo run --release -p jolt-prover --features profiling -- \
 # --benchmarks fibonacci,sha2-chain limits the workload set
 ```
 
-Results accumulate in `benchmark-runs/results/modular_timings.csv`; render
+Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
+in the run directories); render
 them with:
 
 ```bash
@@ -69,7 +73,7 @@ normative source for label names, level policy, and the hot-loop rule.
 `summary.json` answers the canonical questions with `jq` alone:
 
 ```bash
-S=benchmark-runs/perfetto_traces/modular_sha2_chain_22.summary.json
+S=benchmark-runs/latest_modular_sha2_chain_22/modular_sha2_chain_22.summary.json
 
 # Total prover wallclock (seconds) and dark time (root time not covered by
 # any stage span)
@@ -105,7 +109,7 @@ uv pip install perfetto==0.57.2
 ```python
 from perfetto.trace_processor import TraceProcessor
 
-tp = TraceProcessor(trace="benchmark-runs/perfetto_traces/modular_sha2_chain_22.json")
+tp = TraceProcessor(trace="benchmark-runs/latest_modular_sha2_chain_22/modular_sha2_chain_22.json")
 q = tp.query("""
     SELECT name, COUNT(*) AS n, SUM(dur)/1e9 AS total_s
     FROM slice GROUP BY name ORDER BY total_s DESC LIMIT 15
@@ -144,7 +148,7 @@ cargo run --release -p jolt-prover --features profiling -- \
 cargo run --release -p jolt-prover --features profiling -- \
     profile --name sha2-chain --format chrome
 jq '.root | {s: (.wall_time_ns/1e9), dark: .dark_time_fraction}' \
-    benchmark-runs/perfetto_traces/modular_sha2_chain_22.summary.json
+    benchmark-runs/latest_modular_sha2_chain_22/modular_sha2_chain_22.summary.json
 ```
 
 Budgets: `root.wall_time_ns` (chrome) ≤ 105% of the `--format none` Instant
@@ -159,7 +163,7 @@ self-contained page:
 ```bash
 cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
-open benchmark-runs/perfetto_traces/modular_fibonacci_13.memory.html
+open benchmark-runs/latest_modular_fibonacci_13/modular_fibonacci_13.memory.html
 ```
 
 **`{trace_name}.memory.html`** is the human view — one time axis carrying
@@ -171,7 +175,7 @@ byte scale, topped with the gray "unattributed" residual up to the envelope
 snapshot's full-depth icicle; a table view carries every exact byte count.
 
 The machine views: each snapshot persists as exact-bytes folded-stacks text
-(`benchmark-runs/flamegraphs/{trace_name}_{StageLabel}_prepared.folded`,
+(`{run_dir}/{trace_name}_{StageLabel}_prepared.folded`,
 `root;child BYTES` per line), and the per-snapshot totals land in
 `summary.json`'s `heap` section (per-root bytes, keyed by snapshot label),
 so heap attribution is one `jq` away:
@@ -179,7 +183,7 @@ so heap attribution is one `jq` away:
 ```bash
 jq '.heap | map_values({gib: (.total_bytes / 1073741824),
                         top: (.roots | to_entries | max_by(.value) | .key)})' \
-    benchmark-runs/perfetto_traces/modular_fibonacci_13.summary.json
+    benchmark-runs/latest_modular_fibonacci_13/modular_fibonacci_13.summary.json
 ```
 
 One snapshot per driver batch, taken right after every member kernel's
