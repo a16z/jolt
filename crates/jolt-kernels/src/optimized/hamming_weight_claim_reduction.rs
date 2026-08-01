@@ -106,7 +106,7 @@ fn pushforwards<F: Field>(
             let eq = eq_cycle[j];
             let mut slot = 0;
             for selector in &selectors.instruction {
-                partial[slot][selector.chunk_u128(row.lookup_index)] += eq;
+                partial[slot][selector.chunk_u128(row.lookup_index())] += eq;
                 slot += 1;
             }
             for selector in &selectors.bytecode {
