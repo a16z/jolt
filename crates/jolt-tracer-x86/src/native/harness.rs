@@ -8,6 +8,12 @@ use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
 use super::compile;
+
+/// The row-emission seam, re-exported so emitter A/B experiments (benches,
+/// integration tests, the Alternative 11 stencil spike) can build their own
+/// `EmitterSet` and compile with it.
+pub use super::compile::emitter::{EmitOutcome, EmitterSet, RowEmitter};
+pub use super::compile::{compile_with, CompiledProgram};
 use super::memory::MemoryPlane;
 use super::state::{ExitReason, GuestState, HostContext};
 
