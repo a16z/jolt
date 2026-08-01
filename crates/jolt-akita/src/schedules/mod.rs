@@ -24,8 +24,9 @@ pub(crate) use akita_schedules::generated::{
     PlannerCostModelId, SelectionPolicyId,
 };
 pub(crate) use akita_types::{
-    ChunkedWitnessCfg, DecompositionParams, PolynomialGroupLayout, PrecommittedGroupDescriptor,
-    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,
+    ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
+    TensorChallengeShape,
 };
 
 #[expect(
@@ -63,7 +64,7 @@ pub fn jolt_fp128_d64_onehot_k256_table() -> Option<GeneratedScheduleTable> {
 pub mod emit {
     use akita_config::{policy_of, CommitmentConfig};
     use akita_pcs::AkitaError;
-    use akita_planner::{find_group_batch_schedule, EmitSpec};
+    use akita_planner::{find_schedule, EmitSpec};
     use akita_types::{
         AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
     };
@@ -88,7 +89,7 @@ pub mod emit {
     fn regen_group_batch<Cfg: CommitmentConfig>(
         key: AkitaScheduleLookupKey,
     ) -> Result<FoldSchedule, AkitaError> {
-        let planned = find_group_batch_schedule(
+        let planned = find_schedule(
             &key,
             &policy_of::<Cfg>(),
             Cfg::ring_challenge_config,
