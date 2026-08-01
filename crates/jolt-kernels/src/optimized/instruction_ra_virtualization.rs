@@ -112,7 +112,7 @@ impl ChunkIndexSource for LookupIndexChunks {
     fn index(&self, i: usize, j: usize) -> Option<usize> {
         let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
         let mask = (1u128 << self.committed_chunk_bits) - 1;
-        Some(((self.rows[j].lookup_index >> shift) & mask) as usize)
+        Some(((self.rows[j].lookup_index() >> shift) & mask) as usize)
     }
 }
 

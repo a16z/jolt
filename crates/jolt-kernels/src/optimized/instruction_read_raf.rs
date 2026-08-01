@@ -77,21 +77,29 @@ const _: () = assert!(
 );
 
 /// One packed per-cycle row: the stage-5 facts plus the bytecode/RAM and
-/// packed fused-inc sources used by later one-hot kernels. Sentinel and
-/// sign-magnitude packing keep the row at 48 bytes, so those extra sources
-/// occupy existing padding rather than increasing retained memory.
+/// packed fused-inc sources used by later one-hot kernels. The lookup index
+/// is split into native limbs and the PC/table/flags share one word, keeping
+/// the retained row at 40 bytes in Akita mode.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct InstructionCycleRow {
-    pub(crate) lookup_index: u128,
-    pc_plus_one: u64,
+    lookup_index_lo: u64,
+    lookup_index_hi: u64,
     ram_address_plus_one: u64,
     #[cfg(feature = "akita")]
     fused_inc_magnitude: u64,
-    table_index: Option<u8>,
-    pub(crate) raf_flag: bool,
-    #[cfg(feature = "akita")]
-    fused_inc_negative: bool,
+    packed_pc_and_flags: u64,
 }
+
+const PACKED_PC_BITS: u32 = 56;
+const PACKED_TABLE_BITS: u32 = 6;
+const PACKED_PC_MASK: u64 = (1 << PACKED_PC_BITS) - 1;
+const PACKED_TABLE_MASK: u64 = (1 << PACKED_TABLE_BITS) - 1;
+const PACKED_TABLE_SHIFT: u32 = PACKED_PC_BITS;
+const PACKED_RAF_SHIFT: u32 = PACKED_TABLE_SHIFT + PACKED_TABLE_BITS;
+#[cfg(feature = "akita")]
+const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
+
+const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
 
 impl InstructionCycleRow {
     pub(crate) fn new(
@@ -105,27 +113,46 @@ impl InstructionCycleRow {
         debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
         #[cfg(feature = "akita")]
         debug_assert!(fused_inc.0.unsigned_abs() <= u64::MAX as u128);
+        let pc_plus_one = mapped_pc.map_or(0, |pc| pc as u64 + 1);
+        assert!(
+            pc_plus_one <= PACKED_PC_MASK,
+            "mapped PC exceeds packed row"
+        );
+        let table_plus_one = table_index.map_or(0, |index| index as u64 + 1);
+        let mut packed_pc_and_flags = pc_plus_one
+            | (table_plus_one << PACKED_TABLE_SHIFT)
+            | (u64::from(raf_flag) << PACKED_RAF_SHIFT);
+        #[cfg(feature = "akita")]
+        if fused_inc.0 < 0 {
+            packed_pc_and_flags |= 1 << PACKED_INC_SIGN_SHIFT;
+        }
         Self {
-            lookup_index,
-            pc_plus_one: mapped_pc.map_or(0, |pc| pc as u64 + 1),
+            lookup_index_lo: lookup_index as u64,
+            lookup_index_hi: (lookup_index >> 64) as u64,
             ram_address_plus_one: remapped_ram_address.map_or(0, |address| address + 1),
             #[cfg(feature = "akita")]
             fused_inc_magnitude: fused_inc.0.unsigned_abs() as u64,
-            table_index: table_index.map(|index| index as u8),
-            raf_flag,
-            #[cfg(feature = "akita")]
-            fused_inc_negative: fused_inc.0 < 0,
+            packed_pc_and_flags,
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn lookup_index(&self) -> u128 {
+        u128::from(self.lookup_index_lo) | (u128::from(self.lookup_index_hi) << 64)
     }
 
     #[inline]
     pub(crate) fn table_index(&self) -> Option<usize> {
-        self.table_index.map(usize::from)
+        let table_plus_one =
+            ((self.packed_pc_and_flags >> PACKED_TABLE_SHIFT) & PACKED_TABLE_MASK) as usize;
+        table_plus_one.checked_sub(1)
     }
 
     #[inline]
     pub(crate) fn mapped_pc(&self) -> Option<usize> {
-        self.pc_plus_one.checked_sub(1).map(|pc| pc as usize)
+        (self.packed_pc_and_flags & PACKED_PC_MASK)
+            .checked_sub(1)
+            .map(|pc| pc as usize)
     }
 
     #[inline]
@@ -133,11 +160,16 @@ impl InstructionCycleRow {
         self.ram_address_plus_one.checked_sub(1)
     }
 
+    #[inline]
+    pub(crate) fn raf_flag(&self) -> bool {
+        self.packed_pc_and_flags & (1 << PACKED_RAF_SHIFT) != 0
+    }
+
     #[cfg(feature = "akita")]
     #[inline]
     pub(crate) fn fused_inc_hot_lane(&self, lane: UnsignedIncLane) -> usize {
         let magnitude = i128::from(self.fused_inc_magnitude);
-        let value = if self.fused_inc_negative {
+        let value = if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
             -magnitude
         } else {
             magnitude
@@ -149,7 +181,7 @@ impl InstructionCycleRow {
     #[inline]
     pub(crate) fn fused_inc<F: Field>(&self) -> F {
         let magnitude = F::from_u64(self.fused_inc_magnitude);
-        if self.fused_inc_negative {
+        if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
             -magnitude
         } else {
             magnitude
@@ -157,7 +189,10 @@ impl InstructionCycleRow {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 48);
+#[cfg(feature = "akita")]
+const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 40);
+#[cfg(not(feature = "akita"))]
+const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 32);
 
 /// The bundle row the packing pass extracts; never materialized beyond one
 /// streaming chunk.
@@ -235,7 +270,7 @@ pub(crate) fn collect_instruction_cycle_rows<F: Field>(
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
 
 /// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
-/// so same-stage co-consumers share one collection but the 48 B × T rows
+/// so same-stage co-consumers share one collection but the 40 B × T rows
 /// never outlive their stage — later stages re-derive them index-parallel
 /// instead of carrying them across the prover's peak window.
 pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
@@ -580,7 +615,7 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     cycle: Option<CycleState<F>>,
     /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
     /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
-    /// handoff so the full 48 B rows can free — the final flag walk needs
+    /// handoff so the full 40 B rows can free — the final flag walk needs
     /// only this byte per cycle.
     claim_columns: Vec<u8>,
     rounds_bound: usize,
@@ -779,7 +814,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             let rows = Arc::clone(&self.rows);
             let v_prev = std::mem::take(&mut self.v_tables[phase - 1]);
             for_each_index_mut(&mut self.u_evals, |j, u| {
-                *u *= v_prev[((rows[j].lookup_index >> shift) as usize) & (CHUNK_SIZE - 1)];
+                *u *= v_prev[((rows[j].lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
             });
             self.v_tables[phase - 1] = v_prev;
         }
@@ -802,17 +837,18 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             |range| {
                 let mut scan = RafScan::<F>::new();
                 for (row, &u) in rows[range.clone()].iter().zip(&u_evals[range]) {
-                    let chunk = ((row.lookup_index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
-                    let suffix_bits = row.lookup_index & suffix_mask;
+                    let lookup_index = row.lookup_index();
+                    let chunk = ((lookup_index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
+                    let suffix_bits = lookup_index & suffix_mask;
                     if CANONICAL_INSTRUCTION_ADDRESS
-                        && row.raf_flag
+                        && row.raf_flag()
                         && (upper_suffix_bits == 0
                             || (suffix_bits >> (suffix_len - upper_suffix_bits))
                                 == (1u128 << upper_suffix_bits) - 1)
                     {
                         scan.upper_all_ones[chunk].add(u);
                     }
-                    if !row.raf_flag {
+                    if !row.raf_flag() {
                         scan.shift_half[chunk].add(u);
                         let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
                         let left = u64::from(left);
@@ -949,10 +985,9 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                     for &j in &bucket[range] {
                         let row = &rows[j as usize];
                         let u = u_evals[j as usize];
-                        let chunk =
-                            ((row.lookup_index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
-                        let suffix_bits =
-                            LookupBits::new(row.lookup_index & suffix_mask, suffix_len);
+                        let lookup_index = row.lookup_index();
+                        let chunk = ((lookup_index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
+                        let suffix_bits = LookupBits::new(lookup_index & suffix_mask, suffix_len);
                         for (s_index, suffix) in suffixes.iter().enumerate() {
                             let slot = &mut accumulators[s_index * CHUNK_SIZE + chunk];
                             if one_position == Some(s_index) {
@@ -1195,7 +1230,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         }
 
         // Snap the packed output-claim facts first: past this handoff the
-        // final flag walk reads one byte per cycle, not the 48 B row.
+        // final flag walk reads one byte per cycle, not the 40 B row.
         let rows = self.rows.as_slice();
         const {
             assert!(
@@ -1206,7 +1241,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         self.claim_columns = map_indices(rows.len(), |j| {
             let row = &rows[j];
             let table = row.table_index().map_or(0, |index| index as u8 + 1);
-            table | (u8::from(row.raf_flag) << 7)
+            table | (u8::from(row.raf_flag()) << 7)
         });
 
         // The tables stay pending: the first cycle message evaluates these
@@ -1254,7 +1289,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         let ra_count = self.dimensions.num_virtual_ra_polys();
         let phases_per_ra = self.phases() / ra_count;
         let address_bits = self.address_bits();
-        let index = self.rows[j].lookup_index;
+        let index = self.rows[j].lookup_index();
         let mut phase = i * phases_per_ra;
         let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
         let mut product = self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
@@ -1571,6 +1606,28 @@ mod tests {
             }
         }
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn packed_instruction_row_roundtrips() {
+        let lookup_index = u128::MAX - 17;
+        let table = LookupTableKind::<RISCV_XLEN>::COUNT - 1;
+        let row = InstructionCycleRow::new(
+            lookup_index,
+            Some(table),
+            true,
+            Some(u32::MAX as usize),
+            Some(u64::MAX - 1),
+            #[cfg(feature = "akita")]
+            jolt_witness::witnesses::FusedInc(-123),
+        );
+        assert_eq!(row.lookup_index(), lookup_index);
+        assert_eq!(row.table_index(), Some(table));
+        assert_eq!(row.mapped_pc(), Some(u32::MAX as usize));
+        assert_eq!(row.remapped_ram_address(), Some(u64::MAX - 1));
+        assert!(row.raf_flag());
+        #[cfg(feature = "akita")]
+        assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
     }
 
     /// The sumcheck input claim from first principles:
