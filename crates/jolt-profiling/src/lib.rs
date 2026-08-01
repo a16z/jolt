@@ -62,6 +62,9 @@ pub mod stage_memory;
 #[cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 pub mod summary;
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
+pub mod memory_viz;
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
 pub mod monitor;
 

@@ -175,6 +175,12 @@ pub struct HeapSnapshot {
     /// member kernels' concrete type names (which name the relation) and
     /// `ProofSession`.
     pub roots: BTreeMap<String, u64>,
+    /// When the snapshot fired, in ns since the root span opened — joined
+    /// from the driver's `heap_snapshot` instant event. `null` when the
+    /// event or the root span is missing (e.g. traces from before the event
+    /// existed).
+    #[serde(default)]
+    pub at_ns: Option<u64>,
 }
 
 /// Parses one folded-stacks blob (`root;child;… BYTES` per line, the
@@ -194,14 +200,20 @@ pub fn parse_folded(folded: &str) -> HeapSnapshot {
         *roots.entry(root.to_string()).or_default() += bytes;
         total_bytes += bytes;
     }
-    HeapSnapshot { total_bytes, roots }
+    HeapSnapshot {
+        total_bytes,
+        roots,
+        at_ns: None,
+    }
 }
 
-/// Collects every `{prefix}<label>.folded` snapshot the allocative lane
-/// left, keyed by `<label>`. `prefix` is the same path-string prefix the
-/// flamegraph writer uses (`{dir}/{trace_name}_`).
+/// Reads every `{prefix}<label>.folded` blob the allocative lane left,
+/// keyed by `<label>`. `prefix` is the same path-string prefix the
+/// flamegraph writer uses (`{dir}/{trace_name}_`). The raw text feeds both
+/// the summary's heap section (via [`parse_folded`]) and the
+/// memory-timeline viz's full-depth icicles.
 #[cfg(feature = "allocative")]
-fn heap_snapshots_from_folded(prefix: &str) -> BTreeMap<String, HeapSnapshot> {
+fn read_folded_files(prefix: &str) -> BTreeMap<String, String> {
     let mut snapshots = BTreeMap::new();
     let prefix_path = Path::new(prefix);
     let (Some(stem), Some(dir)) = (
@@ -228,7 +240,7 @@ fn heap_snapshots_from_folded(prefix: &str) -> BTreeMap<String, HeapSnapshot> {
             continue;
         };
         if let Ok(folded) = std::fs::read_to_string(entry.path()) {
-            let _ = snapshots.insert(label.to_string(), parse_folded(&folded));
+            let _ = snapshots.insert(label.to_string(), folded);
         }
     }
     snapshots
@@ -314,9 +326,9 @@ struct OpenSpan {
 
 /// Half-open microsecond interval of one closed span instance.
 #[derive(Clone, Copy)]
-struct Interval {
-    start_us: f64,
-    end_us: f64,
+pub(crate) struct Interval {
+    pub(crate) start_us: f64,
+    pub(crate) end_us: f64,
 }
 
 impl Interval {
@@ -337,12 +349,15 @@ fn us_to_ns(us: f64) -> u64 {
     }
 }
 
-/// Everything [`build_summary`] needs from one replay of the event stream.
-struct TraceAggregate {
-    spans: BTreeMap<String, SpanAggregate>,
-    root: Option<(Interval, u64)>,
-    stage_intervals: Vec<(String, Interval)>,
-    counter_points: BTreeMap<String, Vec<(f64, f64)>>,
+/// Everything [`build_summary`] (and the memory-timeline viz) needs from
+/// one replay of the event stream.
+pub(crate) struct TraceAggregate {
+    pub(crate) spans: BTreeMap<String, SpanAggregate>,
+    pub(crate) root: Option<(Interval, u64)>,
+    pub(crate) stage_intervals: Vec<(String, Interval)>,
+    pub(crate) counter_points: BTreeMap<String, Vec<(f64, f64)>>,
+    /// `heap_snapshot` instant events: snapshot label → absolute trace µs.
+    pub(crate) snapshot_instants: Vec<(String, f64)>,
 }
 
 /// Replays the chrome events through per-thread span stacks, producing
@@ -351,12 +366,13 @@ struct TraceAggregate {
 /// Accepts both raw (`counters.*` instant events) and converted (`"ph": "C"`)
 /// counter encodings, so it can run before or after
 /// [`convert_counter_events`].
-fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggregate {
+pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggregate {
     let mut stacks: HashMap<u64, Vec<OpenSpan>> = HashMap::new();
     let mut spans: BTreeMap<String, SpanAggregate> = BTreeMap::new();
     let mut root: Option<(Interval, u64)> = None;
     let mut stage_intervals: Vec<(String, Interval)> = Vec::new();
     let mut counter_points: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
+    let mut snapshot_instants: Vec<(String, f64)> = Vec::new();
 
     for event in events {
         let Some(obj) = event.as_object() else {
@@ -431,6 +447,18 @@ fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggregate {
                 }
             }
             _ => {
+                // The driver's `heap_snapshot` instant events carry the
+                // snapshot label in their `snapshot` field. tracing-chrome
+                // records the `&str` through `Debug`, so the value arrives
+                // quote-wrapped — trim before joining.
+                if let Some(label) = obj
+                    .get("args")
+                    .and_then(Value::as_object)
+                    .and_then(|args| args.get("snapshot"))
+                    .and_then(Value::as_str)
+                {
+                    snapshot_instants.push((label.trim_matches('"').to_string(), ts));
+                }
                 if let Some(samples) = counter_samples(event) {
                     for (key, value) in samples {
                         counter_points.entry(key).or_default().push((ts, value));
@@ -445,6 +473,7 @@ fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggregate {
         root,
         stage_intervals,
         counter_points,
+        snapshot_instants,
     }
 }
 
@@ -466,10 +495,21 @@ pub fn build_summary(
     peak_rss_bytes: Option<u64>,
     timestamp_unix_secs: u64,
     git_rev: Option<String>,
-    heap: BTreeMap<String, HeapSnapshot>,
+    mut heap: BTreeMap<String, HeapSnapshot>,
 ) -> ProfileSummary {
     let aggregate = aggregate_events(events, taxonomy::ROOT_SPAN);
     let memory_points = aggregate.counter_points.get(MEMORY_COUNTER);
+
+    // Situate the allocative snapshots on the trace clock: join the
+    // driver's `heap_snapshot` instant events by label, as ns since the
+    // root span opened.
+    if let Some((root_interval, _)) = aggregate.root {
+        for (label, ts_us) in &aggregate.snapshot_instants {
+            if let Some(snapshot) = heap.get_mut(label) {
+                snapshot.at_ns = Some(us_to_ns((ts_us - root_interval.start_us).max(0.0)));
+            }
+        }
+    }
 
     let root = aggregate.root.map(|(interval, dark_ns)| {
         let wall_ns = interval.duration_ns();
@@ -606,7 +646,7 @@ pub fn summary_path(trace_path: &Path) -> PathBuf {
 /// `fs::write` alone truncates first, so a crash mid-write would destroy the
 /// existing artifact — for a trace that took hours to produce, cheap
 /// insurance.
-fn write_atomic(path: &Path, data: &str) -> Result<(), SummaryError> {
+pub(crate) fn write_atomic(path: &Path, data: &str) -> Result<(), SummaryError> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
@@ -645,13 +685,18 @@ pub fn finalize_trace(
         .map(|d| d.as_secs())
         .unwrap_or_default();
     // Heap attribution from the allocative lane's mid-stage snapshots, if
-    // the harness opted in (prefix set + .folded twins on disk).
+    // the harness opted in (prefix set + .folded twins on disk). The raw
+    // folded text is kept for the memory-timeline viz's icicles.
     #[cfg(feature = "allocative")]
-    let heap = crate::flamegraph::flamegraph_prefix()
-        .map(heap_snapshots_from_folded)
+    let folded_files = crate::flamegraph::flamegraph_prefix()
+        .map(read_folded_files)
         .unwrap_or_default();
     #[cfg(not(feature = "allocative"))]
-    let heap = BTreeMap::new();
+    let folded_files: BTreeMap<String, String> = BTreeMap::new();
+    let heap = folded_files
+        .iter()
+        .map(|(label, folded)| (label.clone(), parse_folded(folded)))
+        .collect();
 
     let summary = build_summary(
         &events,
@@ -666,6 +711,15 @@ pub fn finalize_trace(
     let out_path = summary_path(trace_path);
     let summary_json = serde_json::to_string_pretty(&summary)?;
     write_atomic(&out_path, &summary_json)?;
+
+    // The memory-timeline companion (`{trace_name}.memory.html`): only
+    // meaningful when the allocative lane produced snapshots and the trace
+    // has a root span to anchor time.
+    if !summary.heap.is_empty() && summary.root.is_some() {
+        let aggregate = aggregate_events(&events, taxonomy::ROOT_SPAN);
+        let _ =
+            crate::memory_viz::write_memory_viz(trace_path, &summary, &aggregate, &folded_files)?;
+    }
     Ok((out_path, summary))
 }
 

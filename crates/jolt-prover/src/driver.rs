@@ -178,6 +178,10 @@ pub fn mid_stage_flamegraph(
     let Some(prefix) = jolt_profiling::flamegraph_prefix() else {
         return;
     };
+    // Timestamp the snapshot on the trace's own clock so the summary (and
+    // the memory-timeline viz) can situate the composition against the
+    // continuous memory counters.
+    tracing::info!(snapshot = label, "heap_snapshot");
     let mut flamegraph = allocative::FlameGraphBuilder::default();
     flamegraph.visit_root(session);
     visit_members(&mut flamegraph);

@@ -104,6 +104,16 @@
       "description": "One allocative mid-stage snapshot's heap attribution.",
       "type": "object",
       "properties": {
+        "at_ns": {
+          "description": "When the snapshot fired, in ns since the root span opened — joined\nfrom the driver's `heap_snapshot` instant event. `null` when the\nevent or the root span is missing (e.g. traces from before the event\nexisted).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
         "roots": {
           "description": "Live bytes per root frame — the top level of the folded stacks: the\nmember kernels' concrete type names (which name the relation) and\n`ProofSession`.",
           "type": "object",

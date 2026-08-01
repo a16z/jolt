@@ -8,6 +8,7 @@
   { "ph": "E", "pid": 1, "name": "prove_stage0", "tid": 1, "ts": 1000.0 },
   { "ph": "B", "pid": 1, "name": "prove_stage1", "tid": 1, "ts": 1200.0 },
   { "ph": "B", "pid": 1, "name": "Stage1Batch::prove", "tid": 1, "ts": 1300.0 },
+  { "ph": "i", "pid": 1, "name": "event crates/jolt-prover/src/driver.rs:184", "tid": 1, "ts": 1350.0, "s": "t", "args": { "message": "heap_snapshot", "snapshot": "\"Stage2Batch_prepared\"" } },
   { "ph": "B", "pid": 1, "name": "prove_batch", "tid": 1, "ts": 1400.0, "args": { "num_rounds": 16, "members": 3 } },
   { "ph": "B", "pid": 1, "name": "sumcheck_round", "tid": 1, "ts": 1450.0, "args": { "round": 0 } },
   { "ph": "B", "pid": 1, "name": "EqPolynomial::evals", "tid": 2, "ts": 1500.0 },

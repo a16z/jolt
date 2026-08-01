@@ -69,9 +69,21 @@ fn counter_events_convert_to_chrome_counter_tracks() {
         .collect();
     assert_eq!(counters.len(), 4);
     assert_eq!(converted.len(), original_len - 3 + 4);
-    assert!(converted
-        .iter()
-        .all(|e| e.get("ph").and_then(Value::as_str) != Some("i")));
+    // No raw counter instants survive; non-counter instants (the
+    // `heap_snapshot` marker) pass through untouched.
+    assert!(converted.iter().all(|e| {
+        e.get("args")
+            .and_then(Value::as_object)
+            .is_none_or(|args| !args.keys().any(|k| k.starts_with("counters.")))
+    }));
+    assert_eq!(
+        converted
+            .iter()
+            .filter(|e| e.get("ph").and_then(Value::as_str) == Some("i"))
+            .count(),
+        1,
+        "the heap_snapshot instant survives conversion"
+    );
 
     let memory: Vec<&Value> = counters
         .iter()
@@ -280,12 +292,15 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
 
     assert_eq!(out_path, summary_path(&trace_path));
     assert_eq!(summary.peak_rss_gib, Some(4.0));
-    // The rewrite converted every counter instant into a "C" event.
+    // The rewrite converted every counter instant into a "C" event
+    // (non-counter instants like `heap_snapshot` pass through).
     let rewritten: Vec<Value> =
         serde_json::from_str(&std::fs::read_to_string(&trace_path).unwrap()).unwrap();
-    assert!(rewritten
-        .iter()
-        .all(|e| e.get("ph").and_then(Value::as_str) != Some("i")));
+    assert!(rewritten.iter().all(|e| {
+        e.get("args")
+            .and_then(Value::as_object)
+            .is_none_or(|args| !args.keys().any(|k| k.starts_with("counters.")))
+    }));
     // Atomic replacement leaves no temp files behind.
     assert!(std::fs::read_dir(&dir).unwrap().all(|entry| !entry
         .unwrap()
@@ -308,6 +323,19 @@ fn summary_round_trips_through_strict_schema_structs() {
     let reparsed: ProfileSummary = serde_json::from_str(&json).unwrap();
     assert_eq!(reparsed.schema_version, summary.schema_version);
     assert_eq!(reparsed.spans.len(), summary.spans.len());
+}
+
+/// The driver's `heap_snapshot` instant events situate each snapshot on the
+/// trace clock: the fixture fires one for `Stage2Batch_prepared` at
+/// 1350 µs, and the root opens at 0 — so the joined `at_ns` is 1.35 ms.
+#[test]
+fn heap_snapshots_join_their_instant_events() {
+    let summary = fixture_summary(&fixture_events());
+    assert_eq!(
+        summary.heap["Stage2Batch_prepared"].at_ns,
+        Some(1_350_000),
+        "snapshot instant joins by label, ns since the root span opened"
+    );
 }
 
 /// Drift lock between the serde structs (normative) and the checked-in JSON
