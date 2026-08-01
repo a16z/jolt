@@ -30,6 +30,7 @@ mod operands;
 mod pc;
 mod ram;
 mod registers;
+mod spartan;
 
 pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
@@ -45,6 +46,7 @@ pub use operands::{
 pub use pc::{BytecodePc, MappedPc, NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
 pub use ram::{RamAddress, RamHammingWeight, RamReadValue, RamWriteValue, RemappedRamAddress};
 pub use registers::{RdWriteValue, Rs1Value, Rs2Value};
+pub use spartan::SpartanOuterRow;
 
 pub(crate) use ram::ram_access_address;
 

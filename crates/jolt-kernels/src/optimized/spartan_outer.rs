@@ -58,7 +58,6 @@ use jolt_poly::lagrange::{
 use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
-use jolt_riscv::CircuitFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -66,13 +65,15 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_verifier::VerifierError;
+use jolt_witness::witnesses::SpartanOuterRow;
+#[cfg(test)]
 use jolt_witness::witnesses::{
     Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput, NextIsFirstInSequence,
     NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamReadValue,
     RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
     ShouldBranch, ShouldJump, UnexpandedPc,
 };
-use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -88,82 +89,6 @@ const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
-
-/// The per-cycle Spartan outer witness: all 35 R1CS inputs as their native
-/// small scalars, extracted in one typed trace-row walk.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-pub struct SpartanOuterRow {
-    #[opening(LeftInstructionInput)]
-    pub left_instruction_input: LeftInstructionInput,
-    #[opening(RightInstructionInput)]
-    pub right_instruction_input: RightInstructionInput,
-    #[opening(Product)]
-    pub product: Product,
-    #[opening(ShouldBranch)]
-    pub should_branch: ShouldBranch,
-    #[opening(PC)]
-    pub pc: Pc,
-    #[opening(UnexpandedPC)]
-    pub unexpanded_pc: UnexpandedPc,
-    #[opening(Imm)]
-    pub imm: Imm,
-    #[opening(RamAddress)]
-    pub ram_address: RamAddress,
-    #[opening(Rs1Value)]
-    pub rs1_value: Rs1Value,
-    #[opening(Rs2Value)]
-    pub rs2_value: Rs2Value,
-    #[opening(RdWriteValue)]
-    pub rd_write_value: RdWriteValue,
-    #[opening(RamReadValue)]
-    pub ram_read_value: RamReadValue,
-    #[opening(RamWriteValue)]
-    pub ram_write_value: RamWriteValue,
-    #[opening(LeftLookupOperand)]
-    pub left_lookup_operand: LeftLookupOperand,
-    #[opening(RightLookupOperand)]
-    pub right_lookup_operand: RightLookupOperand,
-    #[opening(NextUnexpandedPC)]
-    pub next_unexpanded_pc: NextUnexpandedPc,
-    #[opening(NextPC)]
-    pub next_pc: NextPc,
-    #[opening(NextIsVirtual)]
-    pub next_is_virtual: NextIsVirtual,
-    #[opening(NextIsFirstInSequence)]
-    pub next_is_first_in_sequence: NextIsFirstInSequence,
-    #[opening(LookupOutput)]
-    pub lookup_output: LookupOutput,
-    #[opening(ShouldJump)]
-    pub should_jump: ShouldJump,
-    #[opening(OpFlags(CircuitFlags::AddOperands))]
-    pub add_operands: OpFlag,
-    #[opening(OpFlags(CircuitFlags::SubtractOperands))]
-    pub subtract_operands: OpFlag,
-    #[opening(OpFlags(CircuitFlags::MultiplyOperands))]
-    pub multiply_operands: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Load))]
-    pub load: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Store))]
-    pub store: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Jump))]
-    pub jump: OpFlag,
-    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD))]
-    pub write_lookup_output_to_rd: OpFlag,
-    #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
-    pub virtual_instruction: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Assert))]
-    pub assert_flag: OpFlag,
-    #[opening(OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC))]
-    pub do_not_update_unexpanded_pc: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Advice))]
-    pub advice: OpFlag,
-    #[opening(OpFlags(CircuitFlags::IsCompressed))]
-    pub is_compressed: OpFlag,
-    #[opening(OpFlags(CircuitFlags::IsFirstInSequence))]
-    pub is_first_in_sequence: OpFlag,
-    #[opening(OpFlags(CircuitFlags::IsLastInSequence))]
-    pub is_last_in_sequence: OpFlag,
-}
 
 /// One cycle's integer values of the 19 eq-conditional rows, split into the
 /// two uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as
