@@ -3607,6 +3607,7 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
