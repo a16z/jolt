@@ -101,9 +101,9 @@ prover implementation overhead from the cost of the selected protocol
 geometry. Restoring an old rank is not an admissible optimization unless it is
 accepted by the current SIS and fold-bound analysis.
 
-The distilled head completed verified runs at 2^22, 2^26, and 2^28 in 4.31 s,
-51.67 s, and 205.45 s, with peak RSS of 3.98 GiB, 26.22 GiB, and 76.41 GiB.
-The 2^28 run caused no swapouts. Its source-owned peak estimate is about
-307 B/cycle, close to the observed 305.6 B/cycle. The retained traces and the
-schedule-controlled comparison are recorded in
+The distilled head completed verified runs at 2^20, 2^22, 2^26, and 2^28 in
+1.48 s, 4.31 s, 51.67 s, and 205.45 s, with peak RSS of 1.53 GiB, 3.98 GiB,
+26.22 GiB, and 76.41 GiB. The 2^28 run caused no swapouts. Its source-owned
+peak estimate is about 307 B/cycle, close to the observed 305.6 B/cycle. The
+retained traces and the schedule-controlled comparison are recorded in
 `benchmark-runs/akita-upstream-prover-stack-2026-07-31.md`.
