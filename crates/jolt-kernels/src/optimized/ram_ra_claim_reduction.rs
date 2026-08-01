@@ -128,7 +128,7 @@ fn build_q_tables<F: Field>(
     prefix_bits: usize,
 ) -> [Vec<F>; TERMS] {
     let prefix_size = 1usize << prefix_bits;
-    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u64]| {
+    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u32]| {
         for (i, &address) in chunk.iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
@@ -189,7 +189,7 @@ fn gather_h_prime<F: Field>(
 ) -> Vec<F> {
     let prefix_size = 1usize << prefix_bits;
     let suffix_size = 1usize << suffix_bits;
-    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u64]| {
+    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u32]| {
         for (i, &address) in chunk.iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
