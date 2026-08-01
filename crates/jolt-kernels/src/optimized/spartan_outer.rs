@@ -320,12 +320,23 @@ fn extended_products(
             if c == 0 {
                 continue;
             }
-            let c_signed = S64::from_i64(c);
-            az_first += c * values.a_first[i];
-            bz_first += c_signed.mul_trunc::<3, 3>(&values.b_first[i]);
+            let a_first = values.a_first[i];
+            if a_first != 0 {
+                az_first += c * a_first;
+            }
+            let b_first = &values.b_first[i];
+            if b_first.magnitude_limbs() != [0; 3] {
+                S64::from_i64(c).fmadd_trunc::<3, 3>(b_first, &mut bz_first);
+            }
             if i < SECOND_GROUP_LEN {
-                az_second += c * values.a_second[i];
-                bz_second += c_signed.mul_trunc::<3, 3>(&values.b_second[i]);
+                let a_second = values.a_second[i];
+                if a_second != 0 {
+                    az_second += c * a_second;
+                }
+                let b_second = &values.b_second[i];
+                if b_second.magnitude_limbs() != [0; 3] {
+                    S64::from_i64(c).fmadd_trunc::<3, 3>(b_second, &mut bz_second);
+                }
             }
         }
         out[slot] = (
