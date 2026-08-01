@@ -153,19 +153,30 @@ measurement, and `dark_time_fraction` ≤ 0.05.
 ## Memory profiling (allocative)
 
 With the `allocative` feature, the same profile command additionally emits
-per-stage heap flamegraph SVGs to
-`benchmark-runs/flamegraphs/{trace_name}_stage{N}.svg`, visiting each
-stage's clear-output carrier and the proof session:
+heap flamegraph SVGs to `benchmark-runs/flamegraphs/`:
 
 ```bash
 cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
 ```
 
-The proof session's cross-stage carries (the parked kernel tables — the
-dominant retained memory) are attributed by concrete type name: everything
-inserted into the session is `MaybeAllocative`, and the session captures a
-per-entry visitor at park time that sees through the `Box<dyn Any>`.
+Two snapshots per stage, answering different questions:
+
+- **`{trace_name}_{StageLabel}_prepared.svg`** (mid-stage, one per driver
+  batch) — taken right after every member kernel's `prepare`, with all
+  tables materialized and nothing bound yet: **the stage's retained-memory
+  peak**. This is where the multi-GiB naive kernel tables show up. Every
+  `SumcheckKernel` is `MaybeAllocative`, so the live members are visited
+  directly, keyed by their concrete kernel type (which names the relation).
+- **`{trace_name}_stage{N}.svg`** (end-of-stage) — what *survives* the
+  stage: the clear-output carrier plus the proof session. The session's
+  cross-stage carries (e.g. the 6b→7 precommitted reduction) are attributed
+  by concrete type name — everything inserted into the session is
+  `MaybeAllocative`, and the session captures a per-entry visitor at park
+  time that sees through the `Box<dyn Any>`. Near-empty end-of-stage graphs
+  with a large `_prepared` graph mean the stage frees its working set on
+  exit (and any lingering RSS plateau is allocator retention, not live
+  data).
 
 ## jolt-eval telemetry objectives
 

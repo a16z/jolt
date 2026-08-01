@@ -176,13 +176,13 @@ where
 #[cfg(feature = "allocative")]
 pub trait MaybeAllocative: allocative::Allocative {}
 #[cfg(feature = "allocative")]
-impl<T: allocative::Allocative> MaybeAllocative for T {}
+impl<T: allocative::Allocative + ?Sized> MaybeAllocative for T {}
 /// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
 /// is on, vacuous otherwise.
 #[cfg(not(feature = "allocative"))]
 pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]
-impl<T> MaybeAllocative for T {}
+impl<T: ?Sized> MaybeAllocative for T {}
 
 /// One session entry: the erased value plus, under the `allocative` feature,
 /// a monomorphized visitor captured at insertion — where the concrete type
@@ -232,6 +232,22 @@ pub(crate) fn nested_vec_heap_bytes<T>(v: &Vec<Vec<T>>) -> usize {
         + v.iter()
             .map(|inner| inner.capacity() * size_of::<T>())
             .sum::<usize>()
+}
+
+/// Heap bytes behind a dense polynomial's evaluation table, by `len()` —
+/// [`Polynomial`](jolt_poly::Polynomial) exposes no capacity. Exact at the
+/// mid-stage snapshot (taken before any binding, when freshly built tables
+/// have `len == capacity`); undercounts the truncated slack of bound state.
+#[cfg(feature = "allocative")]
+pub(crate) fn poly_heap_bytes<T>(poly: &jolt_poly::Polynomial<T>) -> usize {
+    poly.len() * size_of::<T>()
+}
+
+/// [`poly_heap_bytes`] summed over a table list, plus the outer spine.
+#[cfg(feature = "allocative")]
+pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usize {
+    polys.capacity() * size_of::<jolt_poly::Polynomial<T>>()
+        + polys.iter().map(poly_heap_bytes).sum::<usize>()
 }
 
 /// Backend-owned state with proof lifetime, opaque to orchestration.

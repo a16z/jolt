@@ -575,6 +575,19 @@ mod twin_tests {
             )+};
         }
         impl_self_sized_allocative!(PrepareCallLog, ResidueCallLog, ParkedToyGamma);
+
+        // The toy kernel is a `SumcheckKernel`, so the mid-stage snapshot's
+        // `MaybeAllocative` supertrait reaches it too.
+        impl<R> allocative::Allocative for DenseKernel<R> {
+            fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+                let mut visitor = visitor.enter_self_sized::<Self>();
+                visitor.visit_simple(
+                    allocative::Key::new("evals"),
+                    self.evals.capacity() * size_of::<Fr>(),
+                );
+                visitor.exit();
+            }
+        }
     }
 
     struct SessionCarriedToyGamma;

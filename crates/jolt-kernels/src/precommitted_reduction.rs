@@ -237,6 +237,39 @@ pub struct CycleReductionKernel<F: Field, R> {
     _relation: PhantomData<fn() -> R>,
 }
 
+// The two phase kernels share the carry's shape and its size-arithmetic
+// rationale (see the `PrecommittedReductionCarry` impl above).
+#[cfg(feature = "allocative")]
+macro_rules! impl_reduction_kernel_allocative {
+    ($($kernel:ident),+ $(,)?) => {$(
+        impl<F: Field, R> allocative::Allocative for $kernel<F, R> {
+            fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+                use crate::backend::{nested_vec_heap_bytes, vec_heap_bytes};
+                let mut visitor = visitor.enter_self_sized::<Self>();
+                visitor.visit_simple(
+                    allocative::Key::new("reduction"),
+                    size_of::<PrecommittedClaimReduction>(),
+                );
+                visitor.visit_simple(
+                    allocative::Key::new("tables.value"),
+                    vec_heap_bytes(&self.tables.value),
+                );
+                visitor.visit_simple(
+                    allocative::Key::new("tables.eq"),
+                    vec_heap_bytes(&self.tables.eq),
+                );
+                visitor.visit_simple(
+                    allocative::Key::new("tables.aux"),
+                    nested_vec_heap_bytes(&self.tables.aux),
+                );
+                visitor.exit();
+            }
+        }
+    )+};
+}
+#[cfg(feature = "allocative")]
+impl_reduction_kernel_allocative!(CycleReductionKernel, AddressReductionKernel);
+
 impl<F: Field, R> CycleReductionKernel<F, R> {
     /// Build a member from tables ALREADY permuted into Dory opening-round
     /// order (see [`lsb_permutation`] / [`permute_coefficients`]).

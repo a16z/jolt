@@ -163,6 +163,27 @@ where
     }
 }
 
+/// One heap snapshot per driver batch, taken right after `prepare_members`
+/// — every member kernel alive with its tables materialized, the stage's
+/// retained-memory peak (end-of-stage snapshots see only what survives the
+/// batch) — written to `{prefix}{label}.svg`. Inert unless the profile
+/// harness opted in via `jolt_profiling::set_flamegraph_prefix`. The proof
+/// session rides along so mid-stage carries are attributed too.
+#[cfg(feature = "allocative")]
+pub fn mid_stage_flamegraph(
+    label: &str,
+    session: &ProofSession,
+    visit_members: impl FnOnce(&mut allocative::FlameGraphBuilder),
+) {
+    let Some(prefix) = jolt_profiling::flamegraph_prefix() else {
+        return;
+    };
+    let mut flamegraph = allocative::FlameGraphBuilder::default();
+    flamegraph.visit_root(session);
+    visit_members(&mut flamegraph);
+    jolt_profiling::write_flamegraph_svg(flamegraph, format!("{prefix}{label}.svg"));
+}
+
 /// Mint one required member's kernel through the source's [`PrepareKernel`]
 /// slot.
 pub fn prepare_required<F, R, B>(
@@ -356,6 +377,16 @@ macro_rules! __stage_member {
             },
         });
     };
+    // `SumcheckKernel`'s `MaybeAllocative` supertrait is `Allocative` under
+    // this cfg, so the `dyn SumcheckKernel` upcasts at the argument.
+    (flame required $member:ident, $fg:ident) => {
+        $fg.visit_root(&*$member.inner);
+    };
+    (flame optional $member:ident, $fg:ident) => {
+        if let ::core::option::Option::Some(__kernel) = $member.as_ref() {
+            $fg.visit_root(&*__kernel.inner);
+        }
+    };
     (round_slot required $member:ident) => {
         ::core::option::Option::Some(&mut $member as &mut dyn ::jolt_sumcheck::ProveRounds<F>)
     };
@@ -493,6 +524,18 @@ macro_rules! impl_stage_prover {
                     challenges,
                 )?;
                 $($crate::driver::__stage_member!(spanned $presence $member, $relation);)+
+
+                // Mid-stage heap snapshot: the members' tables are
+                // materialized and nothing is bound yet — the peak the
+                // end-of-stage flamegraphs structurally miss.
+                #[cfg(feature = "allocative")]
+                $crate::driver::mid_stage_flamegraph(
+                    concat!($label, "_prepared"),
+                    session,
+                    |__fg| {
+                        $($crate::driver::__stage_member!(flame $presence $member, __fg);)+
+                    },
+                );
 
                 let mut __rounds: ::std::vec::Vec<&mut dyn ::jolt_sumcheck::ProveRounds<F>> =
                     [$($crate::driver::__stage_member!(round_slot $presence $member),)+]
