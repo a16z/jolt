@@ -25,7 +25,26 @@ use super::super::state::{
     advice_slot_offset, reg_offset, ExitReason, OFF_EXIT, OFF_FAULT_ADDR, OFF_MEM_BASE,
     OFF_MEM_SIZE, OFF_PC, OFF_TRACE_LEN,
 };
+use super::emitter::{EmitOutcome, RowEmitter};
 use super::Emitter;
+
+/// The dynasm-template emitter: the production implementor of the
+/// [`RowEmitter`] seam, covering every final-bytecode row kind.
+pub struct DynasmEmitter;
+
+impl RowEmitter for DynasmEmitter {
+    fn emit_row(
+        &self,
+        cx: &mut Emitter,
+        row: &JoltInstructionRow,
+    ) -> Result<EmitOutcome, TraceError> {
+        emit_row_template(cx, row)
+    }
+
+    fn emit_advice_compute(&self, cx: &mut Emitter, job_index: usize) {
+        advice_compute(cx, job_index);
+    }
+}
 
 const RAX: u8 = 0;
 const RCX: u8 = 1;
@@ -349,7 +368,7 @@ pub fn advice_compute(e: &mut Emitter, job_index: usize) {
     call_helper(e, helpers::advice_compute as *const () as usize);
 }
 
-pub fn row(e: &mut Emitter, row: &JoltInstructionRow) -> Result<(), TraceError> {
+fn emit_row_template(e: &mut Emitter, row: &JoltInstructionRow) -> Result<EmitOutcome, TraceError> {
     use JoltInstructionKind as K;
 
     // Every row is one trace row.
@@ -719,15 +738,13 @@ pub fn row(e: &mut Emitter, row: &JoltInstructionRow) -> Result<(), TraceError> 
         }
 
         // Every other final kind is implemented above; `Noop` never appears
-        // in executable bytecode. Fail fast rather than execute wrong
-        // semantics (spec invariant 7); a newly added kind lands here until
-        // it has a template.
+        // in executable bytecode. Reporting `Unsupported` (rather than
+        // erroring) lets another emitter in the set claim the kind; the set
+        // raises the fail-fast error when none does.
         other @ K::Noop(_) => {
             let _ = other;
-            return Err(TraceError::Backend(
-                "jolt-tracer-x86: unsupported instruction kind in bytecode",
-            ));
+            return Ok(EmitOutcome::Unsupported);
         }
     }
-    Ok(())
+    Ok(EmitOutcome::Emitted)
 }

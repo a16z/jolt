@@ -9,6 +9,7 @@
 //! by the differential tests.
 
 mod emit;
+pub mod emitter;
 
 use std::collections::BTreeMap;
 
@@ -17,6 +18,7 @@ use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::SourceInstructionKind;
 
 use super::state::{AdviceJob, GuestState};
+use emitter::EmitterSet;
 
 /// A compiled program: executable buffer plus the indirect-dispatch table.
 pub struct CompiledProgram {
@@ -50,7 +52,9 @@ impl CompiledProgram {
     }
 }
 
-pub(super) struct Emitter {
+/// Emission context handed to a [`RowEmitter`](emitter::RowEmitter): the
+/// assembler plus the per-group state a row template may need.
+pub struct Emitter {
     pub ops: Assembler,
     /// Advice jobs collected so far (index = the job id in generated code).
     pub advice_jobs: Vec<AdviceJob>,
@@ -78,7 +82,17 @@ impl Emitter {
     }
 }
 
+/// Compile with the production emitter set (dynasm templates).
 pub fn compile(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
+    compile_with(program, &EmitterSet::dynasm())
+}
+
+/// Compile with an explicit emitter set — the A/B entry point for
+/// alternative row emitters (see `compile/emitter.rs`).
+pub fn compile_with(
+    program: &JoltProgram,
+    emitters: &EmitterSet,
+) -> Result<CompiledProgram, TraceError> {
     // VirtualSRL uses `tzcnt`; on pre-BMI1 CPUs it silently decodes as `bsf`
     // with different zero-input semantics, so refuse rather than mis-execute.
     if !std::arch::is_x86_feature_detected!("bmi1") {
@@ -130,12 +144,12 @@ pub fn compile(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
                 if let Some(job) = advice_job(source)? {
                     emitter.advice_jobs.push(job);
                     let index = emitter.advice_jobs.len() - 1;
-                    emit::advice_compute(&mut emitter, index);
+                    emitters.emit_advice_compute(&mut emitter, index)?;
                     emitter.advice_ready = true;
                 }
             }
         }
-        emit::row(&mut emitter, row)?;
+        emitters.emit_row(&mut emitter, row)?;
     }
 
     // Execution falling off the end of the program is a bad jump.
