@@ -160,23 +160,22 @@ cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
 ```
 
-Two snapshots per stage, answering different questions:
-
-- **`{trace_name}_{StageLabel}_prepared.svg`** (mid-stage, one per driver
-  batch) — taken right after every member kernel's `prepare`, with all
-  tables materialized and nothing bound yet: **the stage's retained-memory
-  peak**. This is where the multi-GiB naive kernel tables show up. Every
-  `SumcheckKernel` is `MaybeAllocative`, so the live members are visited
-  directly, keyed by their concrete kernel type (which names the relation).
-- **`{trace_name}_stage{N}.svg`** (end-of-stage) — what *survives* the
-  stage: the clear-output carrier plus the proof session. The session's
-  cross-stage carries (e.g. the 6b→7 precommitted reduction) are attributed
-  by concrete type name — everything inserted into the session is
-  `MaybeAllocative`, and the session captures a per-entry visitor at park
-  time that sees through the `Box<dyn Any>`. Near-empty end-of-stage graphs
-  with a large `_prepared` graph mean the stage frees its working set on
-  exit (and any lingering RSS plateau is allocator retention, not live
-  data).
+One snapshot per driver batch: **`{trace_name}_{StageLabel}_prepared.svg`**,
+taken right after every member kernel's `prepare`, with all tables
+materialized and nothing bound yet — **the stage's retained-memory peak**.
+This is where the multi-GiB naive kernel tables show up. Every
+`SumcheckKernel` is `MaybeAllocative`, so the live members are visited
+directly, keyed by their concrete kernel type (which names the relation);
+the proof session rides along, its carries attributed by concrete type name
+through the per-entry visitors captured at park time. (End-of-stage
+snapshots were dropped: stage working sets free on exit, so they were
+near-empty by construction — anything genuinely carried across a boundary,
+like the 6b→7 precommitted reduction, appears inside the consuming kernel
+in the *next* stage's `_prepared` snapshot. A lingering RSS plateau after a
+large `_prepared` graph is allocator retention, not live data. Stages 0 and
+8 have no sumcheck batch and therefore no flamegraph — their memory lives
+inside the commit and joint-opening slot calls; use the counter tracks and
+the per-stage RSS table there.)
 
 ## jolt-eval telemetry objectives
 
