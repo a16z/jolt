@@ -19,7 +19,7 @@ use akita_types::{
 fn dp_planned_schedule<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
 ) -> Result<akita_types::FoldSchedule, AkitaError> {
-    let planned = akita_planner::find_group_batch_schedule(
+    let planned = akita_planner::find_schedule(
         key,
         &akita_config::policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -57,7 +57,7 @@ fn catalog_setup_envelope<Cfg: CommitmentConfig>(
         let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             entry.root.final_group.layout,
         ))?;
-        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
     Ok(Some(envelope))
@@ -137,7 +137,7 @@ macro_rules! delegate_preset {
                     )?
                     .root_final_group_layout()?,
                 );
-                setup_matrix_envelope_for_schedule(&dp_planned_schedule::<Self>(&key)?)
+                setup_matrix_envelope_for_schedule(&dp_planned_schedule::<Self>(&key)?, Self::D)
             }
 
             fn basis_range() -> (u32, u32) {
