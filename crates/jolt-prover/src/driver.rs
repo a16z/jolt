@@ -166,7 +166,7 @@ where
 /// One heap snapshot per driver batch, taken right after `prepare_members`
 /// — every member kernel alive with its tables materialized, the stage's
 /// retained-memory peak (end-of-stage snapshots see only what survives the
-/// batch) — written to `{prefix}{label}.svg`. Inert unless the profile
+/// batch) — written to `{prefix}{label}.folded`. Inert unless the profile
 /// harness opted in via `jolt_profiling::set_flamegraph_prefix`. The proof
 /// session rides along so mid-stage carries are attributed too.
 #[cfg(feature = "allocative")]
@@ -185,7 +185,7 @@ pub fn mid_stage_flamegraph(
     let mut flamegraph = allocative::FlameGraphBuilder::default();
     flamegraph.visit_root(session);
     visit_members(&mut flamegraph);
-    jolt_profiling::write_flamegraph_svg(flamegraph, format!("{prefix}{label}.svg"));
+    jolt_profiling::write_flamegraph_folded(flamegraph, format!("{prefix}{label}.folded"));
 }
 
 /// Mint one required member's kernel through the source's [`PrepareKernel`]

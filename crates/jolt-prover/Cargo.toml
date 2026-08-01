@@ -48,7 +48,7 @@ profiling = [
   "postcard/use-std",
   "dep:tracer",
 ]
-# Per-stage heap flamegraph SVGs from the profile harness: emitted inside
+# Per-batch heap snapshots from the profile harness: emitted inside
 # `prove()` after each stage (inert unless the harness sets a prefix),
 # visiting the stage clear-output carriers and the proof session.
 allocative = [

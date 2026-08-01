@@ -99,8 +99,9 @@ pub struct ProfileSummary {
     /// Heap attribution from the allocative lane's mid-stage snapshots,
     /// keyed by snapshot label (e.g. `Stage2Batch_prepared`). Empty unless
     /// the run was profiled with the `allocative` feature. Exact bytes,
-    /// parsed from the `.folded` twins next to the SVGs; full stack detail
-    /// stays in those files.
+    /// parsed from the `.folded` snapshots in the flamegraphs directory;
+    /// full stack detail stays in those files and renders in
+    /// `{trace_name}.memory.html`.
     #[serde(default)]
     pub heap: BTreeMap<String, HeapSnapshot>,
 }

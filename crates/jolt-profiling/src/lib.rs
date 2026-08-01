@@ -74,7 +74,8 @@ mod pprof_guard;
 pub mod flamegraph;
 #[cfg(feature = "allocative")]
 pub use flamegraph::{
-    flamegraph_prefix, print_data_structure_heap_usage, set_flamegraph_prefix, write_flamegraph_svg,
+    flamegraph_prefix, print_data_structure_heap_usage, set_flamegraph_prefix,
+    write_flamegraph_folded,
 };
 
 mod units;

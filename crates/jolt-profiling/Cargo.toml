@@ -21,7 +21,7 @@ workspace = true
 default = ["summary"]
 monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
-allocative = ["dep:inferno", "dep:allocative"]
+allocative = ["dep:allocative"]
 # The flush-time summary pipeline (`summary` module): chrome-trace
 # aggregation into the schema-versioned `summary.json`.
 summary = ["dep:schemars", "dep:serde", "dep:serde_json", "dep:thiserror"]
@@ -30,7 +30,6 @@ summary = ["dep:schemars", "dep:serde", "dep:serde_json", "dep:thiserror"]
 tracing.workspace = true
 tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
-inferno = { workspace = true, optional = true }
 allocative = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

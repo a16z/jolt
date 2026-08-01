@@ -152,20 +152,29 @@ measurement, and `dark_time_fraction` ≤ 0.05.
 
 ## Memory profiling (allocative)
 
-With the `allocative` feature, the same profile command additionally emits
-heap flamegraph SVGs to `benchmark-runs/flamegraphs/`:
+With the `allocative` feature, the same profile command additionally
+captures per-batch heap snapshots and renders the whole memory story as a
+self-contained page:
 
 ```bash
 cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
+open benchmark-runs/perfetto_traces/modular_fibonacci_13.memory.html
 ```
 
-Each snapshot is written twice: the SVG for humans, and an exact-bytes
-`.folded` twin (canonical folded-stacks format, `root;child BYTES` per line)
-for machines — the SVG's hover text is integer-MiB rounded, the `.folded`
-file is not. The per-snapshot totals also land in `summary.json`'s `heap`
-section (per-root bytes, keyed by snapshot label), so heap attribution is
-one `jq` away:
+**`{trace_name}.memory.html`** is the human view — one time axis carrying
+the continuous RSS envelope (the monitor's `memory_gib` counter), the stage
+spans as labeled bands, and at each snapshot instant a stacked composition
+column of the live batch kernels, colored by relation family on one shared
+byte scale, topped with the gray "unattributed" residual up to the envelope
+(allocator retention + unvisited allocations). Click a column for the
+snapshot's full-depth icicle; a table view carries every exact byte count.
+
+The machine views: each snapshot persists as exact-bytes folded-stacks text
+(`benchmark-runs/flamegraphs/{trace_name}_{StageLabel}_prepared.folded`,
+`root;child BYTES` per line), and the per-snapshot totals land in
+`summary.json`'s `heap` section (per-root bytes, keyed by snapshot label),
+so heap attribution is one `jq` away:
 
 ```bash
 jq '.heap | map_values({gib: (.total_bytes / 1073741824),
@@ -173,9 +182,9 @@ jq '.heap | map_values({gib: (.total_bytes / 1073741824),
     benchmark-runs/perfetto_traces/modular_fibonacci_13.summary.json
 ```
 
-One snapshot per driver batch: **`{trace_name}_{StageLabel}_prepared.svg`**,
-taken right after every member kernel's `prepare`, with all tables
-materialized and nothing bound yet — **the stage's retained-memory peak**.
+One snapshot per driver batch, taken right after every member kernel's
+`prepare`, with all tables materialized and nothing bound yet — **the
+stage's retained-memory peak**.
 This is where the multi-GiB naive kernel tables show up. Every
 `SumcheckKernel` is `MaybeAllocative`, so the live members are visited
 directly, keyed by their concrete kernel type (which names the relation);

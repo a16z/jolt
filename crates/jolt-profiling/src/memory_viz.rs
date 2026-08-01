@@ -8,8 +8,8 @@
 //! with the gray "unattributed" residual up to the RSS envelope (allocator
 //! retention + unvisited allocations). Clicking a column opens the
 //! snapshot's full-depth icicle. No external dependencies: the data is
-//! inlined as JSON and rendered by inline SVG/JS, so the file works
-//! anywhere the SVG flamegraphs do.
+//! inlined as JSON and rendered by inline SVG/JS, so the file opens
+//! anywhere.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -12,7 +12,7 @@
       }
     },
     "heap": {
-      "description": "Heap attribution from the allocative lane's mid-stage snapshots,\nkeyed by snapshot label (e.g. `Stage2Batch_prepared`). Empty unless\nthe run was profiled with the `allocative` feature. Exact bytes,\nparsed from the `.folded` twins next to the SVGs; full stack detail\nstays in those files.",
+      "description": "Heap attribution from the allocative lane's mid-stage snapshots,\nkeyed by snapshot label (e.g. `Stage2Batch_prepared`). Empty unless\nthe run was profiled with the `allocative` feature. Exact bytes,\nparsed from the `.folded` snapshots in the flamegraphs directory;\nfull stack detail stays in those files and renders in\n`{trace_name}.memory.html`.",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/HeapSnapshot"
