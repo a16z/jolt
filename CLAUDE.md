@@ -43,22 +43,22 @@ cargo install --path . --locked
 ### Profiling
 
 ```bash
-# Modular prover (primary): emits benchmark-runs/{timestamp}_modular_{name}_{scale}/ containing modular_{name}_{scale}.json
-# (Perfetto UI / trace_processor SQL), .summary.json (machine-queryable), and .memory.html,
+# Modular prover (primary): emits benchmark-runs/{timestamp}_modular_{name}_{scale}/ containing trace.json
+# (Perfetto UI / trace_processor SQL), summary.json (machine-queryable), and memory.html,
 # with benchmark-runs/latest_modular_{name}_{scale} symlinked to the newest successful run.
 cargo run --release -p jolt-prover --features profiling -- profile --name fibonacci --format chrome
 # --name options (default scale): fibonacci (16), sha2-chain (22), sha3-chain (22), btreemap (20)
 # --scale <log2 trace length> overrides; --format none = no-subscriber Instant baseline
 
 # Canonical summary queries (no Perfetto UI needed) — see book/src/usage/profiling/zkvm_profiling.md
-jq '.stages | map({label, s: (.wall_time_ns/1e9)})' benchmark-runs/latest_modular_fibonacci_16/modular_fibonacci_16.summary.json
-jq '.spans | to_entries | sort_by(-.value.total_ns) | .[:10]' benchmark-runs/latest_modular_fibonacci_16/modular_fibonacci_16.summary.json
+jq '.stages | map({label, s: (.wall_time_ns/1e9)})' benchmark-runs/latest_modular_fibonacci_16/summary.json
+jq '.spans | to_entries | sort_by(-.value.total_ns) | .[:10]' benchmark-runs/latest_modular_fibonacci_16/summary.json
 
 # Multi-scale sweep (one profile subprocess per run; results in benchmark-runs/modular_timings.csv,
 # rendered by scripts/benchmark_summary.py, plot_benchmarks.py, plot_memory_usage.py)
 cargo run --release -p jolt-prover --features profiling -- benchmark --min-scale 18 --max-scale 21 --resume
 
-# Per-batch heap snapshots (*.folded in the run directory, exact bytes; totals in summary.json's .heap; rendered by {trace_name}.memory.html)
+# Per-batch heap snapshots (*.folded in the run directory, exact bytes; totals in summary.json's .heap; rendered by memory.html)
 cargo run --release -p jolt-prover --features profiling,allocative -- profile --name fibonacci --format chrome
 
 # jolt-eval telemetry objectives over the same summary (grammar: telemetry:<workload>:<metric>)

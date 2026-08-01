@@ -37,12 +37,10 @@ fn profile_run_emits_conformant_artifacts() {
     let summary_path = artifacts.summary_path.expect("summary path");
     // Artifacts are grouped into a per-run directory
     // (benchmark-runs/{timestamp}_modular_fibonacci_13/), with the
-    // `latest_` link pointing at this run.
-    assert_eq!(trace_path.file_name().unwrap(), "modular_fibonacci_13.json");
-    assert_eq!(
-        summary_path.file_name().unwrap(),
-        "modular_fibonacci_13.summary.json"
-    );
+    // `latest_` link pointing at this run; the directory name carries the
+    // run identity, so the files inside use fixed names.
+    assert_eq!(trace_path.file_name().unwrap(), "trace.json");
+    assert_eq!(summary_path.file_name().unwrap(), "summary.json");
     assert_eq!(summary_path.parent(), trace_path.parent());
     let run_dir = trace_path.parent().unwrap();
     let dir_name = run_dir.file_name().unwrap().to_str().unwrap();

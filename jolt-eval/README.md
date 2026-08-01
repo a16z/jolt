@@ -57,7 +57,8 @@ telemetry pipeline (see `book/src/usage/profiling/zkvm_profiling.md`):
 measurement runs `cargo run --release -p jolt-prover --features profiling --
 profile --name <workload> --scale <scale> --format chrome` as a subprocess in
 the work dir and reads the metric from
-`benchmark-runs/perfetto_traces/modular_{workload}_{scale}.summary.json`.
+`benchmark-runs/latest_modular_{workload}_{scale}/summary.json` (through the
+symlink the profile harness flips to the newest successful run).
 Key grammar, pinned:
 
 ```text

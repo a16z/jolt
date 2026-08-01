@@ -255,9 +255,9 @@ impl TelemetryObjective {
     /// and because the harness flips the `latest_{trace_name}` link to the
     /// run's timestamped directory only on success.
     pub fn summary_path(&self, work_dir: &Path) -> std::path::PathBuf {
-        let trace_name = self.trace_name();
         work_dir.join(format!(
-            "benchmark-runs/latest_{trace_name}/{trace_name}.summary.json"
+            "benchmark-runs/latest_{}/summary.json",
+            self.trace_name()
         ))
     }
 
@@ -600,7 +600,7 @@ mod tests {
         let obj = TelemetryObjective::parse("telemetry:sha2-chain:prover_time_s").unwrap();
         assert_eq!(
             obj.summary_path(Path::new("/work")),
-            Path::new("/work/benchmark-runs/latest_modular_sha2_chain_22/modular_sha2_chain_22.summary.json")
+            Path::new("/work/benchmark-runs/latest_modular_sha2_chain_22/summary.json")
         );
     }
 }

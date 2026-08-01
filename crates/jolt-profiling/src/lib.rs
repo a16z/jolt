@@ -9,7 +9,7 @@
 //!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
 //!   rewritten into native Perfetto counter tracks at flush (`summary::finalize_trace`).
 //! - **Flush-time summary** — `summary::finalize_trace` renders the chrome trace's
-//!   span stream into a machine-queryable `{trace_name}.summary.json` (see the
+//!   span stream into a machine-queryable `summary.json` next to the trace (see the
 //!   `taxonomy` module for the normative span schema).
 //! - **CPU profiling** (`pprof` feature) — scoped `pprof` guards that write `.pb`
 //!   flamegraph files on drop.

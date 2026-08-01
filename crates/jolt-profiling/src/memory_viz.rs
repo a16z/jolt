@@ -1,5 +1,5 @@
-//! The memory-timeline companion page: one self-contained
-//! `{trace_name}.memory.html` per allocative profile run.
+//! The memory-timeline companion page: one self-contained `memory.html`
+//! per allocative profile run, next to the run's trace.
 //!
 //! One time axis carries the whole memory story — the continuous
 //! `memory_gib` counter as the RSS envelope, the stage spans as labeled
@@ -25,10 +25,11 @@ const TEMPLATE: &str = include_str!("memory_viz.html");
 /// (the envelope's shape survives; per-sample detail stays in the trace).
 const MAX_RSS_POINTS: usize = 1500;
 
-/// Derives `{trace_name}.memory.html` next to the trace, mirroring
-/// [`summary_path`](crate::summary::summary_path).
+/// Derives `memory.html` next to the trace, mirroring
+/// [`summary_path`](crate::summary::summary_path) — the per-run directory
+/// keeps the fixed sibling name collision-free.
 pub fn memory_viz_path(trace_path: &Path) -> PathBuf {
-    trace_path.with_extension("memory.html")
+    trace_path.with_file_name("memory.html")
 }
 
 /// Renders and writes the page. Call with the flush-time aggregate of the
@@ -89,9 +90,12 @@ pub(crate) fn write_memory_viz(
         .collect();
 
     let payload = json!({
+        // Page title: the run directory's name ({timestamp}_{trace_name})
+        // identifies both the workload and the specific run.
         "trace_name": trace_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
             .unwrap_or("trace"),
         "run": summary.run,
         "peak_rss_gib": summary.peak_rss_gib,
@@ -146,17 +150,20 @@ mod tests {
         let summary = build_summary(&events, &ctx, &[], Some(1 << 30), 0, None, heap);
         let aggregate = aggregate_events(&events, crate::taxonomy::ROOT_SPAN);
 
-        let trace_path = std::env::temp_dir().join("memory_viz_test_trace.json");
+        let run_dir =
+            std::env::temp_dir().join(format!("jolt_memory_viz_test_{}", std::process::id()));
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let trace_path = run_dir.join("trace.json");
         let out = write_memory_viz(&trace_path, &summary, &aggregate, &folded).unwrap();
         let html = std::fs::read_to_string(&out).unwrap();
-        let _ = std::fs::remove_file(&out);
+        let _ = std::fs::remove_dir_all(&run_dir);
 
         assert_eq!(
             summary.heap["Stage1Batch_prepared"].at_ns,
             Some(250_000),
             "snapshot instant joined by label"
         );
-        assert!(out.ends_with("memory_viz_test_trace.memory.html"));
+        assert_eq!(out, run_dir.join("memory.html"));
         assert!(!html.contains("__DATA_JSON__"), "payload was substituted");
         assert!(html.contains("Stage1Batch_prepared"), "snapshot inlined");
         assert!(html.contains("\"at_s\":"), "snapshot instant inlined");

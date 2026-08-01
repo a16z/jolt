@@ -2,7 +2,7 @@
 //!
 //! Snapshots are persisted as exact-bytes folded-stacks text (the canonical
 //! flamegraph interchange format); the memory-timeline page
-//! (`{trace_name}.memory.html`) and the summary's `heap` section are the
+//! (the run's `memory.html`) and the summary's `heap` section are the
 //! renderings.
 
 use std::path::Path;

@@ -3,9 +3,9 @@
 //! telemetry artifacts from the same span stream —
 //! one per-run directory `benchmark-runs/{timestamp}_{trace_name}/` (with a
 //! `latest_{trace_name}` symlink flipped to it on success) holding
-//! `{trace_name}.json` (Perfetto UI /
-//! `trace_processor` SQL) and `{trace_name}.summary.json` (machine-queryable
-//! aggregates for `jolt-eval` and `jq`).
+//! `trace.json` (Perfetto UI / `trace_processor` SQL) and `summary.json`
+//! (machine-queryable aggregates for `jolt-eval` and `jq`) — the directory
+//! name carries the run identity, so the files inside use fixed names.
 //!
 //! ```text
 //! cargo run --release -p jolt-prover --features profiling -- \
@@ -217,7 +217,8 @@ pub struct BenchmarkArgs {
     #[clap(long, default_value_t = 21)]
     pub max_scale: u32,
 
-    /// Skip (workload, scale) pairs whose per-run result CSV already exists.
+    /// Skip (workload, scale) pairs whose `latest_` link already exists
+    /// (i.e. some run of that pair completed).
     #[clap(long)]
     pub resume: bool,
 
@@ -307,9 +308,9 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     // Per-batch heap snapshots (allocative feature): opt in before the
     // prove so the cfg-gated hooks inside `prove()` see the prefix.
     #[cfg(feature = "allocative")]
-    jolt_profiling::set_flamegraph_prefix(format!("{}/{trace_name}_", run_dir.display()));
+    jolt_profiling::set_flamegraph_prefix(format!("{}/", run_dir.display()));
 
-    let trace_path = run_dir.join(format!("{trace_name}.json"));
+    let trace_path = run_dir.join("trace.json");
     let guards = match args.format {
         OutputFormat::None => None,
         OutputFormat::Default => Some(setup_tracing_with_trace_path(
@@ -610,8 +611,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         );
     }
 
-    // The same 7-field CSV line the legacy harness writes, under a
-    // modular-prefixed file name. Field 7 (`proof_size_compressed`)
+    // The same 7-field CSV line the legacy harness writes, in the run
+    // directory. Field 7 (`proof_size_compressed`)
     // duplicates the raw size exactly as legacy does — its
     // `prove_example_with_trace` returns `proof_size` for both fields, the
     // compressed encoding having been retired — so the columns stay
@@ -626,10 +627,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         proof_size,
         proof_size,
     );
-    let individual_file = run_dir.join(format!(
-        "modular_{}_{scale}.csv",
-        bench_name.replace('-', "_")
-    ));
+    let individual_file = run_dir.join("timings.csv");
     if let Err(e) = fs::write(&individual_file, &summary_line) {
         eprintln!(
             "Failed to write individual result file {}: {e}",

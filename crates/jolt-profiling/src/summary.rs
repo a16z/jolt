@@ -6,7 +6,7 @@
 //! (`"ph": "C"` — `tracing-chrome` cannot emit them itself, which is what
 //! previously forced the offline `postprocess_trace.py` step), writes the
 //! trace back, and aggregates the same events into
-//! `{trace_name}.summary.json`. Both artifacts therefore derive from one
+//! `summary.json` next to the trace. Both artifacts therefore derive from one
 //! event stream by construction.
 //!
 //! The serde structs here are the normative summary schema, mirrored by the
@@ -99,9 +99,8 @@ pub struct ProfileSummary {
     /// Heap attribution from the allocative lane's mid-stage snapshots,
     /// keyed by snapshot label (e.g. `Stage2Batch_prepared`). Empty unless
     /// the run was profiled with the `allocative` feature. Exact bytes,
-    /// parsed from the `.folded` snapshots in the flamegraphs directory;
-    /// full stack detail stays in those files and renders in
-    /// `{trace_name}.memory.html`.
+    /// parsed from the `.folded` snapshots in the run directory; full stack
+    /// detail stays in those files and renders in the run's `memory.html`.
     #[serde(default)]
     pub heap: BTreeMap<String, HeapSnapshot>,
 }
@@ -210,24 +209,19 @@ pub fn parse_folded(folded: &str) -> HeapSnapshot {
 
 /// Reads every `{prefix}<label>.folded` blob the allocative lane left,
 /// keyed by `<label>`. `prefix` is the same path-string prefix the
-/// flamegraph writer uses (`{dir}/{trace_name}_`). The raw text feeds both
-/// the summary's heap section (via [`parse_folded`]) and the
-/// memory-timeline viz's full-depth icicles.
+/// flamegraph writer uses — a bare run directory (`{run_dir}/`) in the
+/// per-run layout, where the empty file-name part matches every `.folded`
+/// file in the directory. The raw text feeds both the summary's heap
+/// section (via [`parse_folded`]) and the memory-timeline viz's full-depth
+/// icicles.
 #[cfg(feature = "allocative")]
 fn read_folded_files(prefix: &str) -> BTreeMap<String, String> {
     let mut snapshots = BTreeMap::new();
-    let prefix_path = Path::new(prefix);
-    let (Some(stem), Some(dir)) = (
-        prefix_path.file_name().and_then(|name| name.to_str()),
-        prefix_path.parent(),
-    ) else {
-        return snapshots;
-    };
-    let dir = if dir.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        dir
-    };
+    // Split on the last separator by string, not Path methods: a trailing
+    // `/` means "directory + empty stem", which `Path::file_name` would
+    // misread as the directory's own name.
+    let (dir, stem) = prefix.rsplit_once('/').unwrap_or((".", prefix));
+    let dir = Path::new(if dir.is_empty() { "." } else { dir });
     let Ok(entries) = std::fs::read_dir(dir) else {
         return snapshots;
     };
@@ -637,10 +631,11 @@ fn read_events(path: &Path) -> Result<Vec<Value>, SummaryError> {
     }
 }
 
-/// The summary artifact path for a given trace path:
-/// `{trace_name}.json` → `{trace_name}.summary.json`.
+/// The summary artifact path for a given trace path: `summary.json` next to
+/// the trace. The trace lives in a per-run directory, so a fixed sibling
+/// name cannot collide across runs.
 pub fn summary_path(trace_path: &Path) -> PathBuf {
-    trace_path.with_extension("summary.json")
+    trace_path.with_file_name("summary.json")
 }
 
 /// Atomic file replacement: write `{path}.tmp`, then rename over `path`.
@@ -662,7 +657,7 @@ pub(crate) fn write_atomic(path: &Path, data: &str) -> Result<(), SummaryError> 
 /// (atomically — temp file + rename, never a truncating in-place write),
 /// then aggregate the same events (folding in the drained
 /// [`StageMemoryRow`]s and the caller-captured `getrusage` peak) into
-/// `{trace_name}.summary.json` next to it.
+/// `summary.json` next to it.
 ///
 /// Call after dropping [`TracingGuards`](crate::TracingGuards) — the chrome
 /// layer finalizes the trace file on guard drop. `peak_rss_bytes` must be
@@ -713,7 +708,7 @@ pub fn finalize_trace(
     let summary_json = serde_json::to_string_pretty(&summary)?;
     write_atomic(&out_path, &summary_json)?;
 
-    // The memory-timeline companion (`{trace_name}.memory.html`): only
+    // The memory-timeline companion (`memory.html`): only
     // meaningful when the allocative lane produced snapshots and the trace
     // has a root span to anchor time.
     if !summary.heap.is_empty() && summary.root.is_some() {

@@ -280,7 +280,7 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let trace_path = dir.join("modular_fibonacci_16.json");
+    let trace_path = dir.join("trace.json");
     std::fs::write(&trace_path, FIXTURE).unwrap();
 
     let (out_path, summary) = jolt_profiling::summary::finalize_trace(
@@ -359,9 +359,9 @@ fn checked_in_schema_matches_structs() {
 fn summary_path_derives_from_trace_path() {
     assert_eq!(
         summary_path(std::path::Path::new(
-            "benchmark-runs/perfetto_traces/modular_fibonacci_16.json"
+            "benchmark-runs/20260801-000000_modular_fibonacci_16/trace.json"
         )),
-        std::path::Path::new("benchmark-runs/perfetto_traces/modular_fibonacci_16.summary.json")
+        std::path::Path::new("benchmark-runs/20260801-000000_modular_fibonacci_16/summary.json")
     );
 }
 
