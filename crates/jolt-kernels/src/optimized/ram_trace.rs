@@ -13,9 +13,12 @@ use std::sync::Arc;
 use allocative::{Allocative, Key, Visitor};
 use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
-use jolt_witness::{JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
+#[cfg(feature = "parallel")]
+use jolt_witness::{RandomAccessRows, WitnessError};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
-use super::support::collect_rows;
 use crate::{KernelError, ProofSession};
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
@@ -26,6 +29,64 @@ struct RamAccessBundle {
     address: RemappedRamAddress,
     pre_value: RamReadValue,
     post_value: RamWriteValue,
+}
+
+#[derive(Clone, Copy)]
+enum AddressEncodingError {
+    TooLarge,
+    SentinelCollision,
+}
+
+impl AddressEncodingError {
+    fn into_kernel_error<F: Field>(self) -> KernelError<F> {
+        let reason = match self {
+            Self::TooLarge => "optimized RAM kernels require remapped addresses below 2^32 - 1",
+            Self::SentinelCollision => {
+                "optimized RAM kernels reserve u32::MAX as the no-access sentinel"
+            }
+        };
+        KernelError::Unsupported { reason }
+    }
+}
+
+fn encode_address(address: Option<u64>) -> Result<u32, AddressEncodingError> {
+    let Some(address) = address else {
+        return Ok(NO_ACCESS);
+    };
+    let address = u32::try_from(address).map_err(|_| AddressEncodingError::TooLarge)?;
+    if address == NO_ACCESS {
+        return Err(AddressEncodingError::SentinelCollision);
+    }
+    Ok(address)
+}
+
+struct CollectRamAccessColumns {
+    addresses: Vec<u32>,
+    pre_values: Vec<u64>,
+    post_values: Vec<u64>,
+    address_error: Option<AddressEncodingError>,
+}
+
+impl StreamConsumer for CollectRamAccessColumns {
+    type Witness = RamAccessBundle;
+
+    fn consume(&mut self, chunk: &[RamAccessBundle]) {
+        for bundle in chunk {
+            let address = encode_address(bundle.address.0).unwrap_or_else(|failure| {
+                let _ = self.address_error.get_or_insert(failure);
+                NO_ACCESS
+            });
+            self.addresses.push(address);
+            self.pre_values.push(bundle.pre_value.0);
+            self.post_values.push(bundle.post_value.0);
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+enum CollectFailure {
+    Witness(WitnessError),
+    Address(AddressEncodingError),
 }
 
 /// Column-major per-cycle RAM access data over the full padded cycle domain.
@@ -70,29 +131,94 @@ impl RamAccessColumns {
         log_t: usize,
     ) -> Result<(Self, RamAccessValues), KernelError<F>> {
         let cycles = 1usize << log_t;
-        let bundles: Vec<RamAccessBundle> = collect_rows(witness, cycles)?;
+        #[cfg(feature = "parallel")]
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, cycles);
+            }
+        }
+
+        const COLLECT_CHUNK: usize = 1 << 16;
+        let mut consumers = (CollectRamAccessColumns {
+            addresses: Vec::with_capacity(cycles),
+            pre_values: Vec::with_capacity(cycles),
+            post_values: Vec::with_capacity(cycles),
+            address_error: None,
+        },);
+        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+        let collected = consumers.0;
+        if let Some(failure) = collected.address_error {
+            return Err(failure.into_kernel_error());
+        }
+        Ok((
+            Self {
+                addresses: collected.addresses,
+            },
+            RamAccessValues {
+                pre_values: collected.pre_values,
+                post_values: collected.post_values,
+            },
+        ))
+    }
+
+    /// Slice-backed traces scatter directly into the three final columns,
+    /// avoiding a full-width `RamAccessBundle` vector at the collection peak.
+    #[cfg(feature = "parallel")]
+    fn collect_par<F: Field>(
+        access: &RandomAccessRows<'_>,
+        cycles: usize,
+    ) -> Result<(Self, RamAccessValues), KernelError<F>> {
+        const CHUNK: usize = 1 << 12;
         let mut addresses = Vec::with_capacity(cycles);
         let mut pre_values = Vec::with_capacity(cycles);
         let mut post_values = Vec::with_capacity(cycles);
-        for bundle in bundles {
-            let address = match bundle.address.0 {
-                Some(address) => {
-                    let address = u32::try_from(address).map_err(|_| KernelError::Unsupported {
-                        reason: "optimized RAM kernels require remapped addresses below 2^32 - 1",
-                    })?;
-                    if address == NO_ACCESS {
-                        return Err(KernelError::Unsupported {
-                            reason:
-                                "optimized RAM kernels reserve u32::MAX as the no-access sentinel",
-                        });
-                    }
-                    address
+        let error = std::sync::Mutex::new(None);
+        (
+            addresses.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            pre_values.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            post_values.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+        )
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(chunk_index, (addresses, pre_values, post_values))| {
+                let base = chunk_index * CHUNK;
+                for offset in 0..addresses.len() {
+                    let bundle = match access.window::<RamAccessBundle>(base + offset) {
+                        Ok(bundle) => bundle,
+                        Err(failure) => {
+                            if let Ok(mut guard) = error.try_lock() {
+                                let _ = guard.get_or_insert(CollectFailure::Witness(failure));
+                            }
+                            return;
+                        }
+                    };
+                    let address = match encode_address(bundle.address.0) {
+                        Ok(address) => address,
+                        Err(failure) => {
+                            if let Ok(mut guard) = error.try_lock() {
+                                let _ = guard.get_or_insert(CollectFailure::Address(failure));
+                            }
+                            return;
+                        }
+                    };
+                    let _ = addresses[offset].write(address);
+                    let _ = pre_values[offset].write(bundle.pre_value.0);
+                    let _ = post_values[offset].write(bundle.post_value.0);
                 }
-                None => NO_ACCESS,
-            };
-            addresses.push(address);
-            pre_values.push(bundle.pre_value.0);
-            post_values.push(bundle.post_value.0);
+            });
+        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
+        if let Some(failure) = error.into_inner().unwrap() {
+            return Err(match failure {
+                CollectFailure::Witness(failure) => failure.into(),
+                CollectFailure::Address(failure) => failure.into_kernel_error(),
+            });
+        }
+        // SAFETY: with no latched error, every worker initialized its entire
+        // disjoint span in all three vectors.
+        unsafe {
+            addresses.set_len(cycles);
+            pre_values.set_len(cycles);
+            post_values.set_len(cycles);
         }
         Ok((
             Self { addresses },
