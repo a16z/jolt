@@ -31,8 +31,9 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// harness opted in via `jolt_profiling::set_flamegraph_prefix`. The stage's
 /// clear-output carrier is recovered by downcast to the concrete BN254
 /// field (the only production field), so `prove` needs no `Allocative`
-/// bound on `F`; the proof session is visited shallowly (its carries are
-/// `Box<dyn Any>` — see the `ProofSession` impl in `jolt-kernels`).
+/// bound on `F`; the proof session visits its carries deeply through the
+/// per-entry visitors captured at park time (see the `ProofSession` impl in
+/// `jolt-kernels`), which is where the retained kernel tables show up.
 #[cfg(feature = "allocative")]
 fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn core::any::Any) {
     use jolt_field::Fr;

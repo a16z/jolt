@@ -162,9 +162,10 @@ cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
 ```
 
-Caveat: the proof session's cross-stage carries are `Box<dyn Any>` and are
-attributed shallowly (entry count only); the flamegraphs' deep content is
-the stage claim/point carriers.
+The proof session's cross-stage carries (the parked kernel tables — the
+dominant retained memory) are attributed by concrete type name: everything
+inserted into the session is `MaybeAllocative`, and the session captures a
+per-entry visitor at park time that sees through the `Box<dyn Any>`.
 
 ## jolt-eval telemetry objectives
 
