@@ -69,7 +69,14 @@ fn catalog_setup_envelope<Cfg: CommitmentConfig>(
 /// multi-group layouts (never produced by Jolt's shapes) fall back to the base
 /// preset's DP planning.
 macro_rules! delegate_preset {
-    ($(#[$doc:meta])* $name:ident, $base:ty, $catalog:expr) => {
+    (
+        $(#[$doc:meta])*
+        $name:ident,
+        $base:ty,
+        $catalog:expr,
+        $basis_range:expr,
+        $onehot_chunk_size:expr
+    ) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, Default)]
         pub struct $name;
@@ -133,11 +140,11 @@ macro_rules! delegate_preset {
             }
 
             fn basis_range() -> (u32, u32) {
-                <$base>::basis_range()
+                $basis_range
             }
 
             fn onehot_chunk_size() -> usize {
-                <$base>::onehot_chunk_size()
+                $onehot_chunk_size
             }
 
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
@@ -185,21 +192,36 @@ delegate_preset!(
     /// `D64OneHotK16` with planner fallback for uncatalogued Jolt shapes.
     JoltD64OneHotK16,
     akita_config::proof_optimized::fp128::D64OneHotK16,
-    None
+    None,
+    akita_config::proof_optimized::fp128::D64OneHotK16::basis_range(),
+    akita_config::proof_optimized::fp128::D64OneHotK16::onehot_chunk_size()
 );
 
 delegate_preset!(
     /// `D64OneHot` (K=256) with planner fallback for uncatalogued Jolt shapes.
     JoltD64OneHotK256,
     akita_config::proof_optimized::fp128::D64OneHot,
-    None
+    None,
+    akita_config::proof_optimized::fp128::D64OneHot::basis_range(),
+    akita_config::proof_optimized::fp128::D64OneHot::onehot_chunk_size()
+);
+
+delegate_preset!(
+    /// D128, K=256 policy for the largest packed trace.
+    JoltD128OneHotK256,
+    akita_config::proof_optimized::fp128::D128OneHot,
+    None,
+    (6, 6),
+    256
 );
 
 delegate_preset!(
     /// `D64Dense` with planner fallback for exact advice and program shapes.
     JoltD64Dense,
     akita_config::proof_optimized::fp128::D64Dense,
-    None
+    None,
+    akita_config::proof_optimized::fp128::D64Dense::basis_range(),
+    akita_config::proof_optimized::fp128::D64Dense::onehot_chunk_size()
 );
 
 #[cfg(test)]
@@ -211,5 +233,13 @@ mod tests {
         assert!(JoltD64Dense::max_setup_matrix_size(14, 2).is_ok());
         assert!(JoltD64OneHotK16::max_setup_matrix_size(16, 2).is_ok());
         assert!(JoltD64OneHotK256::max_setup_matrix_size(16, 2).is_ok());
+    }
+
+    #[test]
+    fn d128_k256_policy_uses_fixed_large_trace_geometry() {
+        assert_eq!(JoltD128OneHotK256::D, 128);
+        assert_eq!(JoltD128OneHotK256::basis_range(), (6, 6));
+        assert_eq!(JoltD128OneHotK256::onehot_chunk_size(), 256);
+        assert!(JoltD128OneHotK256::max_setup_matrix_size(41, 1).is_ok());
     }
 }
