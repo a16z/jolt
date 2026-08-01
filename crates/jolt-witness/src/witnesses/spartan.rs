@@ -68,11 +68,11 @@ impl WitnessBundle for SpartanOuterRow {
         let instruction_flags = instruction.instruction_flags();
 
         let query = lookup_query(row);
-        let (left_instruction_input, right_instruction_input) =
-            LookupQuery::<RV64_XLEN>::to_instruction_inputs(&query);
-        let (left_lookup_operand, right_lookup_operand) =
-            LookupQuery::<RV64_XLEN>::to_lookup_operands(&query);
-        let lookup_output = LookupQuery::<RV64_XLEN>::to_lookup_output(&query);
+        let (
+            (left_instruction_input, right_instruction_input),
+            (left_lookup_operand, right_lookup_operand),
+            lookup_output,
+        ) = LookupQuery::<RV64_XLEN>::to_lookup_values(&query);
 
         let (ram_address, ram_read_value, ram_write_value) = match row.ram_access {
             RamAccess::Read(read) => (read.address, read.value, read.value),
