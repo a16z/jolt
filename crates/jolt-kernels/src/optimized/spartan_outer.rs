@@ -285,7 +285,12 @@ fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (
     let mut bz = <F as WithSignedProductAccumulator>::SignedProductAccumulator::default();
     for ((&weight, &guard), magnitude) in weights.iter().zip(guards).zip(magnitudes) {
         az.fmadd_i64(weight, guard);
-        bz.fmadd_s256(weight, &widen(magnitude));
+        let limbs = magnitude.magnitude_limbs();
+        if limbs[1] == 0 && limbs[2] == 0 {
+            bz.fmadd_signed_u64(weight, limbs[0], magnitude.is_positive);
+        } else {
+            bz.fmadd_s256(weight, &widen(magnitude));
+        }
     }
     (az.reduce(), bz.reduce())
 }
@@ -842,34 +847,46 @@ impl<F: Field> ClaimAccumulator<F> {
         flag(33, row.is_first_in_sequence.0);
         flag(34, row.is_last_in_sequence.0);
 
-        let mut word = |index: usize, value: u64| {
-            self.wide[index].fmadd_s256(weight, &S256::from_u64(value));
+        let mut word = |index: usize, magnitude: u128, is_positive: bool| {
+            if let Ok(magnitude) = u64::try_from(magnitude) {
+                self.wide[index].fmadd_signed_u64(weight, magnitude, is_positive);
+            } else {
+                self.wide[index].fmadd_s256(
+                    weight,
+                    &S256::new(
+                        [magnitude as u64, (magnitude >> 64) as u64, 0, 0],
+                        is_positive,
+                    ),
+                );
+            }
         };
-        word(0, row.left_instruction_input.0);
-        word(4, row.pc.0);
-        word(5, row.unexpanded_pc.0);
-        word(7, row.ram_address.0);
-        word(8, row.rs1_value.0);
-        word(9, row.rs2_value.0);
-        word(10, row.rd_write_value.0);
-        word(11, row.ram_read_value.0);
-        word(12, row.ram_write_value.0);
-        word(13, row.left_lookup_operand.0);
-        word(15, row.next_unexpanded_pc.0);
-        word(16, row.next_pc.0);
-        word(19, row.lookup_output.0);
+        word(0, u128::from(row.left_instruction_input.0), true);
+        word(4, u128::from(row.pc.0), true);
+        word(5, u128::from(row.unexpanded_pc.0), true);
+        word(7, u128::from(row.ram_address.0), true);
+        word(8, u128::from(row.rs1_value.0), true);
+        word(9, u128::from(row.rs2_value.0), true);
+        word(10, u128::from(row.rd_write_value.0), true);
+        word(11, u128::from(row.ram_read_value.0), true);
+        word(12, u128::from(row.ram_write_value.0), true);
+        word(13, u128::from(row.left_lookup_operand.0), true);
+        word(15, u128::from(row.next_unexpanded_pc.0), true);
+        word(16, u128::from(row.next_pc.0), true);
+        word(19, u128::from(row.lookup_output.0), true);
 
         let product_limbs = row.product.0.magnitude_limbs();
-        self.wide[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
-        self.wide[2].fmadd_s256(
-            weight,
-            &S256::new(
-                [product_limbs[0], product_limbs[1], 0, 0],
-                row.product.0.is_positive,
-            ),
+        word(
+            1,
+            row.right_instruction_input.0.unsigned_abs(),
+            row.right_instruction_input.0 >= 0,
         );
-        self.wide[6].fmadd_s256(weight, &S256::from_i128(row.imm.0));
-        self.wide[14].fmadd_s256(weight, &S256::from_u128(row.right_lookup_operand.0));
+        word(
+            2,
+            (u128::from(product_limbs[1]) << 64) | u128::from(product_limbs[0]),
+            row.product.0.is_positive,
+        );
+        word(6, row.imm.0.unsigned_abs(), row.imm.0 >= 0);
+        word(14, row.right_lookup_operand.0, true);
     }
 
     fn finish(self) -> Vec<F> {
