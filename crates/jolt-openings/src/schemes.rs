@@ -325,6 +325,18 @@ pub trait BatchOpeningScheme {
         T: Transcript<Challenge = Self::Field>;
 }
 
+/// The prover-side outputs of a hiding batch opening: the native proof, the
+/// hiding commitment binding the joint evaluation, that commitment's blind,
+/// and the joint evaluation itself (`Σ γⁱ · evalᵢ`) — the last two are the
+/// secrets a downstream ZK layer (BlindFold's final-opening binding) opens
+/// the hiding commitment with.
+pub struct ZkBatchOpening<S: ZkBatchOpeningScheme + ?Sized> {
+    pub proof: S::Proof,
+    pub hiding_commitment: S::HidingCommitment,
+    pub blind: S::Blind,
+    pub joint_evaluation: S::Field,
+}
+
 /// ZK same-point batching for schemes with native hiding openings.
 ///
 /// The cleartext evaluations are not part of the public statement — the
@@ -336,10 +348,6 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
     type HidingCommitment;
     type Blind;
 
-    #[expect(
-        clippy::type_complexity,
-        reason = "ZK batch openings return the native proof, hiding commitment, and blind"
-    )]
     fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
@@ -348,7 +356,7 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
         hints: Self::Hints,
         evaluations: Vec<Self::Field>,
         transcript: &mut T,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
+    ) -> Result<ZkBatchOpening<Self>, OpeningsError>
     where
         Self: 'a,
         T: Transcript<Challenge = Self::Field>;
@@ -546,7 +554,7 @@ where
         hints: Self::Hints,
         evaluations: Vec<Self::Field>,
         transcript: &mut T,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
+    ) -> Result<ZkBatchOpening<Self>, OpeningsError>
     where
         Self: 'a,
         T: Transcript<Challenge = Self::Field>,
@@ -588,7 +596,12 @@ where
         )?;
         ZkEvaluationClaim::new(point.as_slice(), &hiding_commitment)
             .append_to_transcript(transcript);
-        Ok((proof, hiding_commitment, blind))
+        Ok(ZkBatchOpening {
+            proof,
+            hiding_commitment,
+            blind,
+            joint_evaluation: joint_eval,
+        })
     }
 
     fn verify_batch_zk<T>(

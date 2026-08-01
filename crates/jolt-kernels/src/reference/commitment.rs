@@ -29,14 +29,15 @@ use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 
 use crate::commitment::{
-    CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
+    finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
+    CommittedColumnsWitness, ModeStreamingCommitment, WitnessCommitment,
 };
 use crate::{KernelError, ProofSession, ReferenceBackend};
 
 impl<F, PCS> CommitWitness<F, PCS> for ReferenceBackend
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F> + StreamingCommitment,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
     fn commit_witness(
         &self,
@@ -81,7 +82,7 @@ where
                 for row in table.chunks(row_width) {
                     PCS::feed(&mut partial, row, setup);
                 }
-                let (commitment, hint) = PCS::finish_with_hint(partial, setup);
+                let (commitment, hint) = finish_streamed::<PCS>(partial, setup);
                 Ok(WitnessCommitment {
                     id,
                     commitment,
@@ -106,7 +107,7 @@ where
         for row in values.chunks(grid.num_columns()) {
             PCS::feed(&mut partial, row, setup);
         }
-        let (commitment, hint) = PCS::finish_with_hint(partial, setup);
+        let (commitment, hint) = finish_streamed::<PCS>(partial, setup);
         Ok(WitnessCommitment {
             id,
             commitment,
@@ -198,7 +199,7 @@ fn column_kinds<F: JoltField>(
 
 /// The fused cycle-major commit consumer: every column's in-progress
 /// commitment, advanced per row window.
-struct FusedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + StreamingCommitment> {
+struct FusedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> {
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     setup: &'a PCS::ProverSetup,
@@ -223,7 +224,7 @@ enum ColumnCommitState<PCS: StreamingCommitment> {
     },
 }
 
-impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
     FusedColumns<'a, F, PCS>
 {
     fn begin(
@@ -264,17 +265,17 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + StreamingCommitment>
             .into_iter()
             .map(|column| match column {
                 ColumnCommitState::Increment { partial, .. } => {
-                    PCS::finish_with_hint(partial, setup)
+                    finish_streamed::<PCS>(partial, setup)
                 }
                 ColumnCommitState::OneHot {
                     chunk_commitments, ..
-                } => PCS::finish_one_hot_column_major_chunks(setup, one_hot_k, &chunk_commitments),
+                } => finish_streamed_one_hot::<PCS>(setup, one_hot_k, &chunk_commitments),
             })
             .collect()
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F> + StreamingCommitment> StreamConsumer
+impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> StreamConsumer
     for FusedColumns<'_, F, PCS>
 {
     type Witness = CommittedColumnsWitness;

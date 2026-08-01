@@ -1,5 +1,5 @@
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::{Field, JoltField};
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
@@ -536,7 +536,7 @@ where
 
 fn power_of_two_len<F>(name: &'static str, num_vars: usize) -> Result<usize, VerificationError<F>>
 where
-    F: Field,
+    F: JoltField,
 {
     if num_vars >= usize::BITS as usize {
         return Err(VerificationError::InvalidPowerOfTwo {
