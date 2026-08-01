@@ -48,6 +48,18 @@ pub fn write_flamegraph_svg<P: AsRef<Path>>(flamegraph: FlameGraphBuilder, path:
     opts.flame_chart = true;
 
     let flamegraph_src = flamegraph.finish_and_write_flame_graph();
+    // The machine-queryable twin: exact byte counts in the canonical
+    // folded-stacks format ("root;child BYTES" per line). The SVG's hover
+    // text is integer-MiB rounded; queries and the summary's heap section
+    // read this instead.
+    let folded_path = path.as_ref().with_extension("folded");
+    if let Err(e) = std::fs::write(&folded_path, &flamegraph_src) {
+        tracing::warn!(
+            path = %folded_path.display(),
+            error = %e,
+            "failed to write folded flamegraph"
+        );
+    }
     let input = Cursor::new(flamegraph_src);
 
     let output = match File::create(path.as_ref()) {

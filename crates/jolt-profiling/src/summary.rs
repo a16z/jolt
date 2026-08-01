@@ -96,6 +96,13 @@ pub struct ProfileSummary {
     pub stages: Vec<StageSummary>,
     /// Per-counter sample statistics (`memory_gib`, `cpu_percent`, …).
     pub counters: BTreeMap<String, CounterSummary>,
+    /// Heap attribution from the allocative lane's mid-stage snapshots,
+    /// keyed by snapshot label (e.g. `Stage2Batch_prepared`). Empty unless
+    /// the run was profiled with the `allocative` feature. Exact bytes,
+    /// parsed from the `.folded` twins next to the SVGs; full stack detail
+    /// stays in those files.
+    #[serde(default)]
+    pub heap: BTreeMap<String, HeapSnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -156,6 +163,75 @@ pub struct CounterSummary {
     pub samples: u64,
     pub max: f64,
     pub mean: f64,
+}
+
+/// One allocative mid-stage snapshot's heap attribution.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HeapSnapshot {
+    /// Total live bytes across every visited root at the snapshot.
+    pub total_bytes: u64,
+    /// Live bytes per root frame — the top level of the folded stacks: the
+    /// member kernels' concrete type names (which name the relation) and
+    /// `ProofSession`.
+    pub roots: BTreeMap<String, u64>,
+}
+
+/// Parses one folded-stacks blob (`root;child;… BYTES` per line, the
+/// flamegraph interchange format the allocative lane persists) into
+/// per-root totals. Malformed lines are skipped.
+pub fn parse_folded(folded: &str) -> HeapSnapshot {
+    let mut roots: BTreeMap<String, u64> = BTreeMap::new();
+    let mut total_bytes = 0u64;
+    for line in folded.lines() {
+        let Some((stack, bytes)) = line.rsplit_once(' ') else {
+            continue;
+        };
+        let Ok(bytes) = bytes.parse::<u64>() else {
+            continue;
+        };
+        let root = stack.split(';').next().unwrap_or(stack);
+        *roots.entry(root.to_string()).or_default() += bytes;
+        total_bytes += bytes;
+    }
+    HeapSnapshot { total_bytes, roots }
+}
+
+/// Collects every `{prefix}<label>.folded` snapshot the allocative lane
+/// left, keyed by `<label>`. `prefix` is the same path-string prefix the
+/// flamegraph writer uses (`{dir}/{trace_name}_`).
+#[cfg(feature = "allocative")]
+fn heap_snapshots_from_folded(prefix: &str) -> BTreeMap<String, HeapSnapshot> {
+    let mut snapshots = BTreeMap::new();
+    let prefix_path = Path::new(prefix);
+    let (Some(stem), Some(dir)) = (
+        prefix_path.file_name().and_then(|name| name.to_str()),
+        prefix_path.parent(),
+    ) else {
+        return snapshots;
+    };
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return snapshots;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(label) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(stem))
+            .and_then(|name| name.strip_suffix(".folded"))
+        else {
+            continue;
+        };
+        if let Ok(folded) = std::fs::read_to_string(entry.path()) {
+            let _ = snapshots.insert(label.to_string(), parse_folded(&folded));
+        }
+    }
+    snapshots
 }
 
 /// Run identity threaded into [`RunMetadata`] by the profile harness.
@@ -390,6 +466,7 @@ pub fn build_summary(
     peak_rss_bytes: Option<u64>,
     timestamp_unix_secs: u64,
     git_rev: Option<String>,
+    heap: BTreeMap<String, HeapSnapshot>,
 ) -> ProfileSummary {
     let aggregate = aggregate_events(events, taxonomy::ROOT_SPAN);
     let memory_points = aggregate.counter_points.get(MEMORY_COUNTER);
@@ -491,6 +568,7 @@ pub fn build_summary(
         spans: aggregate.spans,
         stages,
         counters,
+        heap,
     }
 }
 
@@ -566,6 +644,15 @@ pub fn finalize_trace(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default();
+    // Heap attribution from the allocative lane's mid-stage snapshots, if
+    // the harness opted in (prefix set + .folded twins on disk).
+    #[cfg(feature = "allocative")]
+    let heap = crate::flamegraph::flamegraph_prefix()
+        .map(heap_snapshots_from_folded)
+        .unwrap_or_default();
+    #[cfg(not(feature = "allocative"))]
+    let heap = BTreeMap::new();
+
     let summary = build_summary(
         &events,
         ctx,
@@ -573,6 +660,7 @@ pub fn finalize_trace(
         peak_rss_bytes,
         timestamp_unix_secs,
         git_rev(),
+        heap,
     );
 
     let out_path = summary_path(trace_path);

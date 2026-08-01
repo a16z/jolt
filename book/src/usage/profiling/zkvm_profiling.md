@@ -160,6 +160,19 @@ cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
 ```
 
+Each snapshot is written twice: the SVG for humans, and an exact-bytes
+`.folded` twin (canonical folded-stacks format, `root;child BYTES` per line)
+for machines — the SVG's hover text is integer-MiB rounded, the `.folded`
+file is not. The per-snapshot totals also land in `summary.json`'s `heap`
+section (per-root bytes, keyed by snapshot label), so heap attribution is
+one `jq` away:
+
+```bash
+jq '.heap | map_values({gib: (.total_bytes / 1073741824),
+                        top: (.roots | to_entries | max_by(.value) | .key)})' \
+    benchmark-runs/perfetto_traces/modular_fibonacci_13.summary.json
+```
+
 One snapshot per driver batch: **`{trace_name}_{StageLabel}_prepared.svg`**,
 taken right after every member kernel's `prepare`, with all tables
 materialized and nothing bound yet — **the stage's retained-memory peak**.

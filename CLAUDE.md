@@ -58,7 +58,7 @@ jq '.spans | to_entries | sort_by(-.value.total_ns) | .[:10]' benchmark-runs/per
 # rendered by scripts/benchmark_summary.py, plot_benchmarks.py, plot_memory_usage.py)
 cargo run --release -p jolt-prover --features profiling -- benchmark --min-scale 18 --max-scale 21 --resume
 
-# Per-stage heap flamegraph SVGs (benchmark-runs/flamegraphs/)
+# Per-batch heap flamegraphs (benchmark-runs/flamegraphs/, SVG + exact-bytes .folded twin; totals in summary.json's .heap)
 cargo run --release -p jolt-prover --features profiling,allocative -- profile --name fibonacci --format chrome
 
 # jolt-eval telemetry objectives over the same summary (grammar: telemetry:<workload>:<metric>)

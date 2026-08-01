@@ -2,13 +2,13 @@
 //! conversion, aggregation semantics (self time, dark time, stage windows),
 //! trace/summary consistency, and schema drift.
 
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 #![expect(clippy::unwrap_used)]
 
 use jolt_profiling::stage_memory::StageMemoryRow;
 use jolt_profiling::summary::{
-    build_summary, convert_counter_events, summary_path, ProfileSummary, SummaryContext,
-    SUMMARY_SCHEMA_JSON,
+    build_summary, convert_counter_events, parse_folded, summary_path, ProfileSummary,
+    SummaryContext, SUMMARY_SCHEMA_JSON,
 };
 use jolt_profiling::taxonomy;
 use serde_json::Value;
@@ -44,6 +44,15 @@ fn fixture_summary(events: &[Value]) -> ProfileSummary {
         Some(4 * GIB as u64),
         1_700_000_000,
         Some("abc1234".to_string()),
+        // Exercise the heap section through the same strict-schema tests:
+        // one snapshot parsed from a folded-stacks blob, as the allocative
+        // lane would supply.
+        [(
+            "Stage2Batch_prepared".to_string(),
+            parse_folded("KernelA;opening_tables 6442450944\nKernelA;derived_tables 2147483648\nProofSession 1024\n"),
+        )]
+        .into_iter()
+        .collect(),
     )
 }
 
@@ -225,7 +234,15 @@ fn repeated_stage_labels_pair_rows_by_occurrence() {
             rss_close_bytes: 5 * GIB as u64,
         },
     ];
-    let summary = build_summary(&events, &fixture_context(), &rows, None, 0, None);
+    let summary = build_summary(
+        &events,
+        &fixture_context(),
+        &rows,
+        None,
+        0,
+        None,
+        Default::default(),
+    );
 
     assert_eq!(summary.stages.len(), 2);
     // First close (100→200µs) gets row 0, second (300→700µs) row 1.
@@ -318,4 +335,15 @@ fn summary_path_derives_from_trace_path() {
         )),
         std::path::Path::new("benchmark-runs/perfetto_traces/modular_fibonacci_16.summary.json")
     );
+}
+
+#[test]
+fn folded_stacks_parse_into_per_root_totals() {
+    let snapshot = parse_folded(
+        "KernelA;opening_tables 100\nKernelA;derived_tables 50\nProofSession 8\nnot a folded line\n",
+    );
+    assert_eq!(snapshot.total_bytes, 158);
+    assert_eq!(snapshot.roots["KernelA"], 150);
+    assert_eq!(snapshot.roots["ProofSession"], 8);
+    assert_eq!(snapshot.roots.len(), 2);
 }

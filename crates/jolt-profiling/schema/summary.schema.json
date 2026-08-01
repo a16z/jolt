@@ -11,6 +11,14 @@
         "$ref": "#/$defs/CounterSummary"
       }
     },
+    "heap": {
+      "description": "Heap attribution from the allocative lane's mid-stage snapshots,\nkeyed by snapshot label (e.g. `Stage2Batch_prepared`). Empty unless\nthe run was profiled with the `allocative` feature. Exact bytes,\nparsed from the `.folded` twins next to the SVGs; full stack detail\nstays in those files.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/HeapSnapshot"
+      },
+      "default": {}
+    },
     "peak_rss_gib": {
       "description": "Process-lifetime `getrusage` high-water mark, in GiB, sampled by the\nharness right after the workload — before the flush-time trace\nparse/rewrite can inflate it. Includes guest compile / tracer\nexecution, unlike `root.peak_memory_gib`.",
       "type": [
@@ -90,6 +98,32 @@
         "samples",
         "max",
         "mean"
+      ]
+    },
+    "HeapSnapshot": {
+      "description": "One allocative mid-stage snapshot's heap attribution.",
+      "type": "object",
+      "properties": {
+        "roots": {
+          "description": "Live bytes per root frame — the top level of the folded stacks: the\nmember kernels' concrete type names (which name the relation) and\n`ProofSession`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "total_bytes": {
+          "description": "Total live bytes across every visited root at the snapshot.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "total_bytes",
+        "roots"
       ]
     },
     "RootSummary": {
