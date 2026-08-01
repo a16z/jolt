@@ -15,6 +15,7 @@ jolt-poly.workspace = true
 jolt-transcript.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 jolt-dory.workspace = true
