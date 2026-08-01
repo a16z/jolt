@@ -49,15 +49,17 @@ streamed 29-lane commitment input, virtualized zero/selector prefixes, lazy RA
 materialization, compact sparse entries and instruction rows, deferred Fp128
 accumulators, stage-local ownership, and early release of setup, NTT, RAM, and
 opening state. The external Akita dependency is the corresponding performance
-stack at `8c2560586741ef08ce6c3619455bd96e1a0c1c34`.
+stack at `04c2f1e41a992035a967cb32f1bbc2a4922702b4`.
 
-Akita's `perf/akita-protocol-opts` currently equals Akita `origin/main` because
-this work does not change Akita proof bytes, transcript order, or verifier
-equations. The optimized Akita branch does contain shared setup-cache plumbing
-and one verifier setup-read call site. That stays with the prover stack: it
-re-derives the same public matrix coefficients and preserves serialized setup
-bytes. Any later change to a verifier equation or proof container must move to
-the protocol branch before review.
+Akita's `perf/akita-protocol-opts` adds rank-aware direct schedule selection and
+preserves that objective when an empty-precommit key passes through the grouped
+planner. It changes deterministic schedule selection and catalog identity, but
+not transcript order, verifier equations, or any SIS/fold acceptance bound. The
+optimized Akita branch also contains shared setup-cache plumbing and one
+verifier setup-read call site. That stays with the prover stack: it re-derives
+the same public matrix coefficients and preserves serialized setup bytes. Any
+later change to a verifier equation or proof container must move to the
+protocol branch before review.
 
 ## Delivery and compatibility
 
@@ -68,14 +70,15 @@ The intended review order is:
 3. Jolt `perf/akita-prover-opt` against the merged Jolt protocol commit, pinned
    to the merged Akita prover commit.
 
-The Jolt prover branch contains the protocol head as an ancestor through merge
-commit `843afb6a5`. D128 and schedule-catalog patches had already been replayed
-after the modular port, so the three overlapping adapter conflicts kept the
-prover's streaming implementation. The resulting proof statement is the one
-reviewed on the protocol branch. This merge can be flattened when the two
-upstream bases settle; that mechanical cleanup must not change proof bytes.
-Benchmark artifacts remain ignored. Durable design and acceptance notes belong
-in `specs/`.
+The Jolt prover branch contains the initial protocol head through merge commit
+`843afb6a5` and the corrected rank-aware schedule head through `f8bba81bd`.
+D128 and schedule-catalog patches had already been replayed after the modular
+port, so the overlapping adapter conflicts kept the prover's streaming
+implementation. The resulting proof statement is the one reviewed on the
+protocol branch. These merges can be flattened when the two upstream bases
+settle; that mechanical cleanup must not change proof bytes. Benchmark
+artifacts remain ignored. Durable design and acceptance notes belong in
+`specs/`.
 
 ## Acceptance
 
@@ -84,26 +87,28 @@ tests, Akita adapter tests, verifier tampering tests, and standard/ZK e2e tests.
 Prover acceptance requires the full optimized-kernel parity suite, modular
 Akita byte-diff tests, committed-program tests, and both host clippy modes.
 
-Performance is checked on `sha2-chain`, K256. At 2^20, 2^22, and 2^24, compare
-three warm samples and reject a repeatable prover-time regression above 3%. At
-2^26, retain a verified Perfetto trace and compare commitment, PIOP, opening,
-wall time, and peak RSS. At 2^28, one verified run must remain below 90 GiB
-without swap growth; its component scaling and D128 selection must match the
-analytical ledger. A memory change may not add repeatable prover time, and a
-speed change may not increase the analytical peak. Dory is reported from the
-same harness but is not changed by this stack.
+Performance is checked on `sha2-chain` with the production-selected K16/K256
+configuration. At 2^20, 2^22, and 2^24, compare three warm samples and reject
+a repeatable prover-time regression above 3%. At 2^26, retain a verified
+Perfetto trace and compare commitment, PIOP, opening, wall time, and peak RSS.
+At 2^28, one verified run must remain below 90 GiB without swap growth; its
+component scaling and D128 selection must match the analytical ledger. A
+memory change may not add repeatable prover time, and a speed change must
+report any analytical-memory trade. Dory is reported from the same harness
+but is not changed by this stack.
 
-The frozen reference and current Akita main do not select the same root
-geometry at the two largest scales. Current main uses D64 rank 7 with
-`P = 2^20` at 2^26 and D128 rank 4 with `P = 2^18` at 2^28. The old reference
-used ranks 6 and 3 with `P = 2^21`. Performance triage must therefore separate
-prover implementation overhead from the cost of the selected protocol
-geometry. Restoring an old rank is not an admissible optimization unless it is
-accepted by the current SIS and fold-bound analysis.
+Minimum-payload planning uses D64 rank 7 with `P = 2^20` at 2^26 and D128 rank
+4 with `P = 2^18` at 2^28. Both lower-rank alternatives are accepted by the
+current SIS and fold-bound analysis. With 1% payload slack, the current planner
+selects D64 rank 6 and D128 rank 3 with `P = 2^21`; the D64 proof grows by 112
+bytes and the D128 proof payload is unchanged. Exact schedule tests pin both
+geometries so future planner-policy drift fails locally.
 
-The distilled head completed verified runs at 2^20, 2^22, 2^26, and 2^28 in
-1.48 s, 4.31 s, 51.67 s, and 205.45 s, with peak RSS of 1.53 GiB, 3.98 GiB,
-26.22 GiB, and 76.41 GiB. The 2^28 run caused no swapouts. Its source-owned
-peak estimate is about 307 B/cycle, close to the observed 305.6 B/cycle. The
-retained traces and the schedule-controlled comparison are recorded in
+The corrected head completed verified runs at 2^20, 2^22, 2^24, 2^26, and
+2^28 in 1.46 s, 4.33 s, 15.49 s, 49.78 s, and 173.48 s, with peak RSS of 1.44
+GiB, 3.96 GiB, 11.03 GiB, 31.22 GiB, and 72.40 GiB. The 2^26 D64 schedule is
+3.7% faster than the rank-7 control but costs 5.0 GiB RSS. The 2^28 D128
+schedule is 15.6% faster and uses 4.01 GiB less RSS than the rank-4 control;
+it caused no swapouts and measures 289.6 B/cycle. The retained traces and
+schedule-controlled comparison are recorded in
 `benchmark-runs/akita-upstream-prover-stack-2026-07-31.md`.
