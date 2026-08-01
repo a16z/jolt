@@ -7,7 +7,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
     pub(crate) fn materialize_trusted_advice<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
         materialize_advice(
             "trusted",
-            &self.trace.device.trusted_advice,
+            &self.device.trusted_advice,
             self.preprocessing.memory_layout.max_trusted_advice_size as usize,
         )
     }
@@ -15,7 +15,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
     pub(crate) fn materialize_untrusted_advice<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
         materialize_advice(
             "untrusted",
-            &self.trace.device.untrusted_advice,
+            &self.device.untrusted_advice,
             self.preprocessing.memory_layout.max_untrusted_advice_size as usize,
         )
     }
@@ -25,7 +25,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
     ) -> Result<Vec<F>, WitnessError> {
         materialize_advice_bytes(
             "trusted",
-            &self.trace.device.trusted_advice,
+            &self.device.trusted_advice,
             self.preprocessing.memory_layout.max_trusted_advice_size as usize,
         )
     }
@@ -35,7 +35,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
     ) -> Result<Vec<F>, WitnessError> {
         materialize_advice_bytes(
             "untrusted",
-            &self.trace.device.untrusted_advice,
+            &self.device.untrusted_advice,
             self.preprocessing.memory_layout.max_untrusted_advice_size as usize,
         )
     }

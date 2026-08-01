@@ -52,7 +52,7 @@ pub mod __private {
     pub use jolt_claims::protocols::jolt::{
         JoltCommittedPolynomial, JoltPolynomialId, JoltVirtualPolynomial,
     };
-    pub use jolt_program::execution::TraceRow;
+    pub use jolt_riscv::JoltTraceRow as TraceRow;
 }
 
 /// XLEN of the RV64 Jolt VM this crate derives witnesses for.

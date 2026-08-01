@@ -1,9 +1,9 @@
 use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
 use jolt_field::Field;
-use jolt_program::execution::{RamAccess, TraceRow};
 use jolt_riscv::CircuitFlags;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
-use super::{row_circuit_flags, Extract, ExtractIndexed, ToField, WitnessEnv};
+use super::{Extract, ExtractIndexed, ToField, WitnessEnv};
 use crate::WitnessError;
 
 /// Signed delta written to rd this cycle; 0 when the instruction has no rd
@@ -27,9 +27,10 @@ impl Extract for RdInc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.registers.rd {
-            Some(write) => write.post_value as i128 - write.pre_value as i128,
-            None => 0,
+        Ok(Self(if row.rd_index().is_some() {
+            row.rd_write_value() as i128 - row.rd_pre_value() as i128
+        } else {
+            0
         }))
     }
 }
@@ -46,9 +47,10 @@ impl Extract for RamInc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.ram_access {
-            RamAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
-            RamAccess::Read(_) | RamAccess::NoOp => 0,
+        Ok(Self(if row.is_store() {
+            row.ram_write_value() as i128 - row.ram_read_value() as i128
+        } else {
+            0
         }))
     }
 }
@@ -105,10 +107,10 @@ impl Extract for FusedInc {
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let store = row_circuit_flags(row)?[CircuitFlags::Store];
+        let store = row.circuit_flags()[CircuitFlags::Store];
         debug_assert_eq!(
             store,
-            matches!(row.ram_access, RamAccess::Write(_)),
+            row.is_store(),
             "Store circuit flag disagrees with the cycle's RAM-write access"
         );
         let ram_delta = RamInc::extract(row, next, env)?.0;

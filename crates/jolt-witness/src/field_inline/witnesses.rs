@@ -12,8 +12,20 @@ use jolt_field::{Field, ReducingBytes};
 use jolt_program::{execution::TraceRow, field_inline::FieldEncodedValue};
 use jolt_riscv::FieldInlineOp;
 
-use crate::witnesses::{Extract, ExtractIndexed, WitnessEnv};
+use crate::witnesses::WitnessEnv;
 use crate::WitnessError;
+
+pub(crate) trait FieldExtract: Sized {
+    fn extract(row: &TraceRow, env: &WitnessEnv<'_>) -> Result<Self, WitnessError>;
+}
+
+pub(crate) trait FieldExtractIndexed<I>: Sized {
+    fn extract_indexed(
+        index: I,
+        row: &TraceRow,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError>;
+}
 
 /// Decoded field value read from field-register rs1; zero when absent.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -75,12 +87,8 @@ impl<F: Field> FieldValue<F> for FieldOpFlag {
     }
 }
 
-impl<F: Field> Extract for FieldRs1Value<F> {
-    fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
+impl<F: Field> FieldExtract for FieldRs1Value<F> {
+    fn extract(row: &TraceRow, _env: &WitnessEnv<'_>) -> Result<Self, WitnessError> {
         Ok(Self(row.field_inline.as_deref().map_or_else(F::zero, {
             |data| {
                 data.rs1
@@ -90,12 +98,8 @@ impl<F: Field> Extract for FieldRs1Value<F> {
     }
 }
 
-impl<F: Field> Extract for FieldRs2Value<F> {
-    fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
+impl<F: Field> FieldExtract for FieldRs2Value<F> {
+    fn extract(row: &TraceRow, _env: &WitnessEnv<'_>) -> Result<Self, WitnessError> {
         Ok(Self(row.field_inline.as_deref().map_or_else(F::zero, {
             |data| {
                 data.rs2
@@ -105,12 +109,8 @@ impl<F: Field> Extract for FieldRs2Value<F> {
     }
 }
 
-impl<F: Field> Extract for FieldRdValue<F> {
-    fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
+impl<F: Field> FieldExtract for FieldRdValue<F> {
+    fn extract(row: &TraceRow, _env: &WitnessEnv<'_>) -> Result<Self, WitnessError> {
         Ok(Self(row.field_inline.as_deref().map_or_else(F::zero, {
             |data| {
                 data.rd
@@ -120,35 +120,26 @@ impl<F: Field> Extract for FieldRdValue<F> {
     }
 }
 
-impl<F: Field> Extract for FieldProduct<F> {
-    fn extract(
-        row: &TraceRow,
-        next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        let rs1 = FieldRs1Value::<F>::extract(row, next, env)?.0;
-        let rs2 = FieldRs2Value::<F>::extract(row, next, env)?.0;
+impl<F: Field> FieldExtract for FieldProduct<F> {
+    fn extract(row: &TraceRow, env: &WitnessEnv<'_>) -> Result<Self, WitnessError> {
+        let rs1 = FieldRs1Value::<F>::extract(row, env)?.0;
+        let rs2 = FieldRs2Value::<F>::extract(row, env)?.0;
         Ok(Self(rs1 * rs2))
     }
 }
 
-impl<F: Field> Extract for FieldInvProduct<F> {
-    fn extract(
-        row: &TraceRow,
-        next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        let rs1 = FieldRs1Value::<F>::extract(row, next, env)?.0;
-        let rd = FieldRdValue::<F>::extract(row, next, env)?.0;
+impl<F: Field> FieldExtract for FieldInvProduct<F> {
+    fn extract(row: &TraceRow, env: &WitnessEnv<'_>) -> Result<Self, WitnessError> {
+        let rs1 = FieldRs1Value::<F>::extract(row, env)?.0;
+        let rd = FieldRdValue::<F>::extract(row, env)?.0;
         Ok(Self(rs1 * rd))
     }
 }
 
-impl ExtractIndexed<FieldInlineOpFlag> for FieldOpFlag {
+impl FieldExtractIndexed<FieldInlineOpFlag> for FieldOpFlag {
     fn extract_indexed(
         flag: FieldInlineOpFlag,
         row: &TraceRow,
-        _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(
@@ -159,12 +150,8 @@ impl ExtractIndexed<FieldInlineOpFlag> for FieldOpFlag {
     }
 }
 
-impl<F: Field> Extract for FieldRdInc<F> {
-    fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
+impl<F: Field> FieldExtract for FieldRdInc<F> {
+    fn extract(row: &TraceRow, _env: &WitnessEnv<'_>) -> Result<Self, WitnessError> {
         Ok(Self(
             row.field_inline
                 .as_deref()
