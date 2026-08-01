@@ -16,7 +16,7 @@ use akita_types::{
     setup_matrix_envelope_for_schedule, AkitaScheduleLookupKey, SetupMatrixEnvelope,
 };
 
-fn planned_schedule<Cfg: CommitmentConfig>(
+fn dp_planned_schedule<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
 ) -> Result<akita_types::FoldSchedule, AkitaError> {
     let planned = akita_planner::find_group_batch_schedule(
@@ -136,7 +136,7 @@ macro_rules! delegate_preset {
                     )?
                     .root_final_group_layout()?,
                 );
-                setup_matrix_envelope_for_schedule(&planned_schedule::<Self>(&key)?)
+                setup_matrix_envelope_for_schedule(&dp_planned_schedule::<Self>(&key)?)
             }
 
             fn basis_range() -> (u32, u32) {
@@ -174,7 +174,7 @@ macro_rules! delegate_preset {
                     Self::fold_challenge_shape_at_level,
                     Self::schedule_catalog(),
                 ) {
-                    Err(AkitaError::UnsupportedSchedule(_)) => planned_schedule::<Self>(&key),
+                    Err(AkitaError::UnsupportedSchedule(_)) => dp_planned_schedule::<Self>(&key),
                     result => result,
                 }
             }
@@ -182,26 +182,33 @@ macro_rules! delegate_preset {
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
             ) -> Result<akita_types::FoldSchedule, akita_pcs::AkitaError> {
-                Self::runtime_schedule(akita_config::opening_schedule_key::<Self>(layout)?)
+                if layout.num_groups() == 1 {
+                    layout.check()?;
+                    Self::runtime_schedule(AkitaScheduleLookupKey::single(
+                        layout.root_final_group_layout()?,
+                    ))
+                } else {
+                    <$base>::get_params_for_prove(layout)
+                }
             }
         }
     };
 }
 
 delegate_preset!(
-    /// `D64OneHotK16` with planner fallback for uncatalogued Jolt shapes.
+    /// `D64OneHotK16` with the Jolt-generated K=16 schedule catalog.
     JoltD64OneHotK16,
     akita_config::proof_optimized::fp128::D64OneHotK16,
-    None,
+    crate::schedules::jolt_fp128_d64_onehot_k16_table(),
     akita_config::proof_optimized::fp128::D64OneHotK16::basis_range(),
     akita_config::proof_optimized::fp128::D64OneHotK16::onehot_chunk_size()
 );
 
 delegate_preset!(
-    /// `D64OneHot` (K=256) with planner fallback for uncatalogued Jolt shapes.
+    /// `D64OneHot` (K=256) with the Jolt-generated large-trace catalog.
     JoltD64OneHotK256,
     akita_config::proof_optimized::fp128::D64OneHot,
-    None,
+    crate::schedules::jolt_fp128_d64_onehot_k256_table(),
     akita_config::proof_optimized::fp128::D64OneHot::basis_range(),
     akita_config::proof_optimized::fp128::D64OneHot::onehot_chunk_size()
 );
@@ -229,17 +236,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exact_shapes_have_planner_backed_setup_envelopes() {
+    fn exact_shapes_have_setup_envelopes() {
         assert!(JoltD64Dense::max_setup_matrix_size(14, 2).is_ok());
-        assert!(JoltD64OneHotK16::max_setup_matrix_size(16, 2).is_ok());
-        assert!(JoltD64OneHotK256::max_setup_matrix_size(16, 2).is_ok());
+        assert!(JoltD64OneHotK16::max_setup_matrix_size(34, 1).is_ok());
+        assert!(JoltD64OneHotK256::max_setup_matrix_size(43, 1).is_ok());
     }
 
     #[test]
-    fn d128_k256_policy_uses_fixed_large_trace_geometry() {
+    #[expect(clippy::unwrap_used)]
+    fn d128_k256_policy_uses_the_large_trace_geometry() {
         assert_eq!(JoltD128OneHotK256::D, 128);
         assert_eq!(JoltD128OneHotK256::basis_range(), (6, 6));
         assert_eq!(JoltD128OneHotK256::onehot_chunk_size(), 256);
-        assert!(JoltD128OneHotK256::max_setup_matrix_size(41, 1).is_ok());
+
+        let layout = akita_types::OpeningClaimsLayout::new(41, 1).unwrap();
+        let schedule = JoltD128OneHotK256::get_params_for_prove(&layout).unwrap();
+        let commitment = &schedule.root.params.final_group.commitment;
+        assert_eq!(commitment.inner_commit_matrix.output_rank(), 4);
+        assert_eq!(commitment.num_positions_per_block, 1 << 18);
+
+        let envelope = JoltD128OneHotK256::max_setup_matrix_size(41, 1).unwrap();
+        assert_eq!(envelope.max_setup_len * 128 * 16, 11usize << 30);
     }
 }
