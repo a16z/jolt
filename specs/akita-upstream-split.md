@@ -68,12 +68,14 @@ The intended review order is:
 3. Jolt `perf/akita-prover-opt` against the merged Jolt protocol commit, pinned
    to the merged Akita prover commit.
 
-The current Jolt prover worktree is logically, but not yet ancestrally, stacked
-on the fifth protocol commit: its D128 change was replayed after the modular
-port because those files had diverged. Rebase it once the modular parity and
-protocol heads settle; do not resolve that mechanical rebase by changing proof
-bytes. Benchmark artifacts remain ignored. Durable design and acceptance notes
-belong in `specs/`.
+The Jolt prover branch contains the protocol head as an ancestor through merge
+commit `843afb6a5`. D128 and schedule-catalog patches had already been replayed
+after the modular port, so the three overlapping adapter conflicts kept the
+prover's streaming implementation. The resulting proof statement is the one
+reviewed on the protocol branch. This merge can be flattened when the two
+upstream bases settle; that mechanical cleanup must not change proof bytes.
+Benchmark artifacts remain ignored. Durable design and acceptance notes belong
+in `specs/`.
 
 ## Acceptance
 
@@ -82,17 +84,26 @@ tests, Akita adapter tests, verifier tampering tests, and standard/ZK e2e tests.
 Prover acceptance requires the full optimized-kernel parity suite, modular
 Akita byte-diff tests, committed-program tests, and both host clippy modes.
 
-Performance is checked on `sha2-chain`, K256, against the frozen reference
-branch with the same Akita revision. At 2^20, 2^22, and 2^24, compare three
-warm samples and reject a repeatable prover-time regression above 3%. At 2^26,
-retain a verified Perfetto trace and compare commitment, PIOP, opening, wall
-time, and peak RSS. At 2^28, one verified run must remain below 90 GiB without
-swap growth; its component scaling and D128 selection must match the analytical
-ledger. A memory change may not add repeatable prover time, and a speed change
-may not increase the analytical peak. Dory is reported from the same harness
-but is not changed by this stack.
+Performance is checked on `sha2-chain`, K256. At 2^20, 2^22, and 2^24, compare
+three warm samples and reject a repeatable prover-time regression above 3%. At
+2^26, retain a verified Perfetto trace and compare commitment, PIOP, opening,
+wall time, and peak RSS. At 2^28, one verified run must remain below 90 GiB
+without swap growth; its component scaling and D128 selection must match the
+analytical ledger. A memory change may not add repeatable prover time, and a
+speed change may not increase the analytical peak. Dory is reported from the
+same harness but is not changed by this stack.
 
-Still unverified on the distilled prover head: the final 2^26 and 2^28 runs
-after the latest RAM lifetime and collection changes. The protocol branch has
-passed its targeted suite; full workspace host and host+zk clippy remain final
-pre-push gates.
+The frozen reference and current Akita main do not select the same root
+geometry at the two largest scales. Current main uses D64 rank 7 with
+`P = 2^20` at 2^26 and D128 rank 4 with `P = 2^18` at 2^28. The old reference
+used ranks 6 and 3 with `P = 2^21`. Performance triage must therefore separate
+prover implementation overhead from the cost of the selected protocol
+geometry. Restoring an old rank is not an admissible optimization unless it is
+accepted by the current SIS and fold-bound analysis.
+
+The distilled head completed verified runs at 2^22, 2^26, and 2^28 in 4.31 s,
+51.67 s, and 205.45 s, with peak RSS of 3.98 GiB, 26.22 GiB, and 76.41 GiB.
+The 2^28 run caused no swapouts. Its source-owned peak estimate is about
+307 B/cycle, close to the observed 305.6 B/cycle. The retained traces and the
+schedule-controlled comparison are recorded in
+`benchmark-runs/akita-upstream-prover-stack-2026-07-31.md`.
