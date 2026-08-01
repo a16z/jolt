@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -116,7 +116,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-field",
  "akita-transcript",
@@ -127,7 +127,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -141,7 +141,7 @@ dependencies = [
 [[package]]
 name = "akita-field"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-serialization",
  "num-traits",
@@ -153,7 +153,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -173,7 +173,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -184,7 +184,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -205,7 +205,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-challenges",
  "akita-field",
@@ -215,7 +215,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -223,7 +223,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -237,7 +237,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-algebra",
  "akita-field",
@@ -249,7 +249,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -260,7 +260,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -279,7 +279,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/markosg04/akita.git?rev=8c2560586741ef08ce6c3619455bd96e1a0c1c34#8c2560586741ef08ce6c3619455bd96e1a0c1c34"
+source = "git+https://github.com/markosg04/akita.git?rev=5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4#5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -588,7 +588,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -3234,7 +3234,6 @@ dependencies = [
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
- "jolt-optimizations",
  "jolt-poly",
  "jolt-transcript",
  "rand_chacha 0.3.1",
@@ -3463,26 +3462,20 @@ dependencies = [
 name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
- "common",
  "jolt-claims",
- "jolt-dory",
  "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
- "jolt-program",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
  "rayon",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -3585,7 +3578,6 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "inferno 0.12.6",
- "libc",
  "memory-stats",
  "pprof",
  "prost 0.14.4",
@@ -3614,35 +3606,26 @@ dependencies = [
 name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
- "bincode 2.0.1",
- "clap",
  "common",
- "jolt-akita",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
- "jolt-inlines-keccak256",
- "jolt-inlines-sha2",
  "jolt-kernels",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
- "jolt-profiling",
  "jolt-program",
  "jolt-prover-legacy",
- "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
  "postcard",
  "rand_core 0.6.4",
- "rayon",
  "serde",
  "thiserror 2.0.18",
  "tracer",
- "tracing",
 ]
 
 [[package]]
@@ -3682,7 +3665,6 @@ dependencies = [
  "jolt-openings",
  "jolt-optimizations",
  "jolt-poly",
- "jolt-profiling",
  "jolt-program",
  "jolt-riscv",
  "jolt-sumcheck",
@@ -3859,7 +3841,6 @@ dependencies = [
  "jolt-witness-derive",
  "rayon",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -5166,7 +5147,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
