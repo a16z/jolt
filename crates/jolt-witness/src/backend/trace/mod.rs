@@ -152,10 +152,18 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
             final_memory,
         } = inputs.trace;
         let mut trace_rows = Vec::new();
+        let mut trailing_padding = 0;
         #[cfg(feature = "field-inline")]
         let mut raw_rows = Vec::new();
         while let Some(row) = trace.next_row() {
-            trace_rows.push(compact_trace_row(&row, inputs.preprocessing)?);
+            let compact = compact_trace_row(&row, inputs.preprocessing)?;
+            if compact == JoltTraceRow::default() {
+                trailing_padding += 1;
+            } else {
+                trace_rows.resize(trace_rows.len() + trailing_padding, JoltTraceRow::default());
+                trailing_padding = 0;
+                trace_rows.push(compact);
+            }
             #[cfg(feature = "field-inline")]
             raw_rows.push(row);
         }

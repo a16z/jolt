@@ -47,7 +47,7 @@ mod dory_benchmark {
         BYTES_PER_GIB,
     };
     use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
+        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput,
     };
     use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
     use jolt_prover_legacy::curve::Bn254Curve;
@@ -257,15 +257,13 @@ mod dory_benchmark {
         )
         .expect("derive config");
         let public_io = trace_output.device.clone();
-        let padded_output = pad_trace(trace_output, config.trace_length);
-
         let witness = TraceBackend::new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
                 config.one_hot_config,
             ),
-            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         );
 
         // PCS setup sized like the byte-diff harness: the main one-hot matrix
@@ -394,25 +392,6 @@ mod dory_benchmark {
             .expect("modular trace")
     }
 
-    /// Pad to the padded trace length with no-op rows, as legacy does.
-    fn pad_trace(
-        trace_output: TraceOutput<OwnedTrace>,
-        trace_length: usize,
-    ) -> TraceOutput<OwnedTrace> {
-        // Exact capacity up front: `to_vec` + `resize` would grow amortized,
-        // leaving ~2x the padded length as dead capacity (8.7 GB of heap at
-        // 2^25) and paying an extra whole-trace realloc copy.
-        let source = trace_output.trace.rows();
-        let mut rows = Vec::with_capacity(trace_length.max(source.len()));
-        rows.extend_from_slice(source);
-        rows.resize(trace_length, TraceRow::default());
-        TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-        )
-    }
-
     /// A word-aligned advice buffer's balanced Dory matrix variable count.
     fn advice_vars(max_advice_size_bytes: u64) -> usize {
         ((max_advice_size_bytes / 8) as usize)
@@ -452,7 +431,7 @@ mod akita_benchmark {
         BYTES_PER_GIB,
     };
     use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
+        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput,
     };
     use jolt_prover::{akita, JoltProverPreprocessing, ProverConfig};
     use jolt_prover_legacy::host;
@@ -672,10 +651,9 @@ mod akita_benchmark {
             .expect("full program preprocessing")
             .clone();
         let public_io = trace_output.device.clone();
-        let padded_output = pad_trace(trace_output, config.trace_length);
         let witness = TraceBackend::new(
             JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         );
         let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
             verifier: verifier_preprocessing,
@@ -793,21 +771,6 @@ mod akita_benchmark {
                 },
             )
             .expect("modular trace")
-    }
-
-    fn pad_trace(
-        trace_output: TraceOutput<OwnedTrace>,
-        trace_length: usize,
-    ) -> TraceOutput<OwnedTrace> {
-        let source = trace_output.trace.rows();
-        let mut rows = Vec::with_capacity(trace_length.max(source.len()));
-        rows.extend_from_slice(source);
-        rows.resize(trace_length, TraceRow::default());
-        TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-        )
     }
 }
 
