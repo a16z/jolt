@@ -9,9 +9,7 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [dependencies]
-akita-algebra.workspace = true
 akita-config.workspace = true
-akita-field.workspace = true
 akita-pcs = { workspace = true, features = ["parallel"] }
 akita-prover = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true
