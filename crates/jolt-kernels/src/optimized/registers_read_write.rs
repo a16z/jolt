@@ -30,10 +30,11 @@
 //!   computed straight from the per-cycle indices with a 2-way split-eq walk
 //!   (legacy's `compute_rs2_ra_claim`, applied to both operands — no γ⁻¹).
 //!
-//! - **u16 coefficient lookup table** (legacy's `OneHotCoeffLookupTable`):
-//!   entries carry `u16` indices into small ra/wa value tables instead of two
-//!   field elements — 64 bytes per entry instead of 128 through the first
-//!   four cycle rounds, exactly where the entry count peaks (≤ 3·T). The
+//! - **Compact coefficient lookup tables** (legacy's
+//!   `OneHotCoeffLookupTable`): entries carry a `u16` read index and `u8`
+//!   write index instead of two field elements, and cycle rows fit in `u32` —
+//!   40 bytes per Fp128 entry through the first three cycle binds, exactly
+//!   where the entry count peaks (≤ 3·T). The
 //!   tables square on each bind (all `b + r·(a − b)` pairs) and the entries
 //!   combine indices, so every looked-up value equals the field element the
 //!   direct representation would hold; entries deref to field coefficients
@@ -117,7 +118,7 @@ const COLLECT_CHUNK: usize = 1 << 16;
 /// Streaming consumer building the sparse entries and the operand index
 /// columns in one trace pass, no whole-trace row materialization.
 struct CollectRegisterEntries<F: Field> {
-    entries: Vec<SparseEntry<F, LutIndex>>,
+    entries: Vec<IndexedSparseEntry<F>>,
     rs1_indices: Vec<Option<u8>>,
     rs2_indices: Vec<Option<u8>>,
     rd_indices: Vec<Option<u8>>,
@@ -129,7 +130,8 @@ impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
     fn consume(&mut self, chunk: &[RegisterCycleRow]) {
         for cycle in chunk {
             let row = self.rs1_indices.len();
-            let (cells, len) = cycle_entries(row, cycle);
+            debug_assert!(u32::try_from(row).is_ok());
+            let (cells, len) = cycle_entries(row as u32, cycle);
             self.entries.extend_from_slice(&cells[..len]);
             self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
             self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
@@ -234,11 +236,11 @@ fn collect_register_entries_par<F: Field>(
         offsets.push(total);
         total += count;
     }
-    let mut entries: Vec<SparseEntry<F, LutIndex>> = Vec::with_capacity(total);
+    let mut entries: Vec<IndexedSparseEntry<F>> = Vec::with_capacity(total);
     {
-        let mut rest: &mut [MaybeUninit<SparseEntry<F, LutIndex>>] =
+        let mut rest: &mut [MaybeUninit<IndexedSparseEntry<F>>] =
             &mut entries.spare_capacity_mut()[..total];
-        let mut windows: Vec<&mut [MaybeUninit<SparseEntry<F, LutIndex>>]> =
+        let mut windows: Vec<&mut [MaybeUninit<IndexedSparseEntry<F>>]> =
             Vec::with_capacity(chunk_count);
         for &count in &counts {
             let (head, tail) = rest.split_at_mut(count);
@@ -258,7 +260,7 @@ fn collect_register_entries_par<F: Field>(
                     // but stay conservative and latch again.
                     match access.window::<RegisterCycleRow>(row) {
                         Ok(cycle) => {
-                            let (cells, len) = cycle_entries(row, &cycle);
+                            let (cells, len) = cycle_entries(row as u32, &cycle);
                             for cell in &cells[..len] {
                                 let _ = window[written].write(*cell);
                                 written += 1;
@@ -453,17 +455,60 @@ impl<F: Field> OneHotCoeff<F> for LutIndex {
     }
 }
 
+/// A `u8` index for the write-coefficient table. That table reaches at most
+/// 256 entries before the read table forces both columns into field form.
+#[derive(Clone, Copy, Debug)]
+struct SmallLutIndex(u8);
+
+impl<F: Field> OneHotCoeff<F> for SmallLutIndex {
+    #[inline]
+    fn bind(even: Option<Self>, odd: Option<Self>, _r: F, lut: &CoeffLut<F>) -> Self {
+        let bits = lut.bits();
+        debug_assert!(bits <= 4, "small coefficient LUT bound past u8 saturation");
+        match (even, odd) {
+            (Some(even), Some(odd)) => Self((odd.0 << bits) | even.0),
+            (Some(even), None) => even,
+            (None, Some(odd)) => Self(odd.0 << bits),
+            (None, None) => unreachable!("merge visits only represented cells"),
+        }
+    }
+
+    #[inline]
+    fn eval_pair(even: Option<Self>, odd: Option<Self>, lut: &CoeffLut<F>) -> [F; 2] {
+        match (even, odd) {
+            (Some(even), Some(odd)) => {
+                let even = lut.values[even.0 as usize];
+                [even, lut.values[odd.0 as usize] - even]
+            }
+            (Some(even), None) => {
+                let even = lut.values[even.0 as usize];
+                [even, -even]
+            }
+            (None, Some(odd)) => [F::zero(), lut.values[odd.0 as usize]],
+            (None, None) => unreachable!("merge visits only represented cells"),
+        }
+    }
+
+    #[inline]
+    fn value(self, lut: &CoeffLut<F>) -> F {
+        lut.values[self.0 as usize]
+    }
+}
+
+type IndexedSparseEntry<F> = SparseEntry<F, LutIndex, SmallLutIndex>;
+type DirectSparseEntry<F> = SparseEntry<F, F, F>;
+
 /// One non-zero cell of the conceptual `K × T` register matrices: the bound
 /// `Val` coefficient plus the γ-combined read and write coefficients of one
-/// touched register slice, with the coefficient representation `C` chosen by
-/// the round (indices while the LUTs can grow, field values after).
+/// touched register slice, with the coefficient representations `R` and `W`
+/// chosen by the round (indices while the LUTs can grow, field values after).
 ///
 /// `prev_val`/`next_val` stay raw `u64`s: a register is constant between
 /// touches, and a constant slice's bound coefficient is the constant itself,
 /// so the values neighboring this entry's slice never need field form until
 /// they participate in a merge.
 #[derive(Clone, Copy, Debug)]
-struct SparseEntry<F, C> {
+struct SparseEntry<F, R, W> {
     /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     val: F,
     /// Register value just before this entry's row slice.
@@ -471,16 +516,16 @@ struct SparseEntry<F, C> {
     /// Register value just after this entry's row slice.
     next_val: u64,
     /// Cycle-domain row index (before binding: the cycle).
-    row: usize,
+    row: u32,
     /// Bound `γ·rs1_ra + γ²·rs2_ra` coefficient.
-    ra: C,
+    ra: R,
     /// Bound `rd_wa` coefficient.
-    wa: C,
+    wa: W,
     /// Register index.
     col: u8,
 }
 
-impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
+impl<F: Field, R: OneHotCoeff<F>, W: OneHotCoeff<F>> SparseEntry<F, R, W> {
     /// Bind two vertically adjacent cells (rows `2j`/`2j+1`, same column)
     /// with `r`. A missing side is an untouched slice: its `Val` is the
     /// neighbor's raw boundary value and its `ra`/`wa` are zero.
@@ -496,8 +541,8 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
                 debug_assert_eq!(even.col, odd.col);
                 Self {
                     val: even.val + r.mul_0_optimized(odd.val - even.val),
-                    ra: C::bind(Some(even.ra), Some(odd.ra), r, ra_lut),
-                    wa: C::bind(Some(even.wa), Some(odd.wa), r, wa_lut),
+                    ra: R::bind(Some(even.ra), Some(odd.ra), r, ra_lut),
+                    wa: W::bind(Some(even.wa), Some(odd.wa), r, wa_lut),
                     prev_val: even.prev_val,
                     next_val: odd.next_val,
                     row: even.row / 2,
@@ -508,8 +553,8 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
                 let odd_val = F::from_u64(even.next_val);
                 Self {
                     val: even.val + r.mul_0_optimized(odd_val - even.val),
-                    ra: C::bind(Some(even.ra), None, r, ra_lut),
-                    wa: C::bind(Some(even.wa), None, r, wa_lut),
+                    ra: R::bind(Some(even.ra), None, r, ra_lut),
+                    wa: W::bind(Some(even.wa), None, r, wa_lut),
                     prev_val: even.prev_val,
                     next_val: even.next_val,
                     row: even.row / 2,
@@ -520,8 +565,8 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
                 let even_val = F::from_u64(odd.prev_val);
                 Self {
                     val: even_val + r.mul_0_optimized(odd.val - even_val),
-                    ra: C::bind(None, Some(odd.ra), r, ra_lut),
-                    wa: C::bind(None, Some(odd.wa), r, wa_lut),
+                    ra: R::bind(None, Some(odd.ra), r, ra_lut),
+                    wa: W::bind(None, Some(odd.wa), r, wa_lut),
                     prev_val: odd.prev_val,
                     next_val: odd.next_val,
                     row: odd.row / 2,
@@ -545,8 +590,8 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
         match (even, odd) {
             (Some(even), Some(odd)) => {
                 debug_assert_eq!(even.col, odd.col);
-                let ra = C::eval_pair(Some(even.ra), Some(odd.ra), ra_lut);
-                let wa = C::eval_pair(Some(even.wa), Some(odd.wa), wa_lut);
+                let ra = R::eval_pair(Some(even.ra), Some(odd.ra), ra_lut);
+                let wa = W::eval_pair(Some(even.wa), Some(odd.wa), wa_lut);
                 acc[0].fmadd(ra[0], even.val);
                 acc[0].fmadd(wa[0], even.val + inc_evals[0]);
                 let val_m = odd.val - even.val;
@@ -554,8 +599,8 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
                 acc[1].fmadd(wa[1], val_m + inc_evals[1]);
             }
             (Some(even), None) => {
-                let ra = C::eval_pair(Some(even.ra), None, ra_lut);
-                let wa = C::eval_pair(Some(even.wa), None, wa_lut);
+                let ra = R::eval_pair(Some(even.ra), None, ra_lut);
+                let wa = W::eval_pair(Some(even.wa), None, wa_lut);
                 let val_m = F::from_u64(even.next_val) - even.val;
                 acc[0].fmadd(ra[0], even.val);
                 acc[0].fmadd(wa[0], even.val + inc_evals[0]);
@@ -564,8 +609,8 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
             }
             (None, Some(odd)) => {
                 // The even side has zero ra/wa, so the t = 0 term vanishes.
-                let ra = C::eval_pair(None, Some(odd.ra), ra_lut);
-                let wa = C::eval_pair(None, Some(odd.wa), wa_lut);
+                let ra = R::eval_pair(None, Some(odd.ra), ra_lut);
+                let wa = W::eval_pair(None, Some(odd.wa), wa_lut);
                 let val_m = odd.val - F::from_u64(odd.prev_val);
                 acc[1].fmadd(ra[1], val_m);
                 acc[1].fmadd(wa[1], val_m + inc_evals[1]);
@@ -581,15 +626,15 @@ const RA_RS1: LutIndex = LutIndex(1);
 const RA_RS2: LutIndex = LutIndex(2);
 const RA_BOTH: LutIndex = LutIndex(3);
 /// wa seed indices: `[0, 1]`.
-const WA_ZERO: LutIndex = LutIndex(0);
-const WA_HOT: LutIndex = LutIndex(1);
+const WA_ZERO: SmallLutIndex = SmallLutIndex(0);
+const WA_HOT: SmallLutIndex = SmallLutIndex(1);
 
 /// Build the (sorted-by-column) sparse entries of one cycle as seed-table
 /// indices. Returns the filled prefix length (0–3).
 fn cycle_entries<F: Field>(
-    row: usize,
+    row: u32,
     cycle: &RegisterCycleRow,
-) -> ([SparseEntry<F, LutIndex>; 3], usize) {
+) -> ([IndexedSparseEntry<F>; 3], usize) {
     let empty = SparseEntry {
         val: F::zero(),
         ra: RA_ZERO,
@@ -652,7 +697,7 @@ fn cycle_entries<F: Field>(
 
 /// Merged length of two adjacent sorted-by-column rows (a bind dry run —
 /// the count is value-independent).
-fn merge_count<F, C>(evens: &[SparseEntry<F, C>], odds: &[SparseEntry<F, C>]) -> usize {
+fn merge_count<F, R, W>(evens: &[SparseEntry<F, R, W>], odds: &[SparseEntry<F, R, W>]) -> usize {
     let mut i = 0;
     let mut j = 0;
     let mut produced = 0;
@@ -672,13 +717,13 @@ fn merge_count<F, C>(evens: &[SparseEntry<F, C>], odds: &[SparseEntry<F, C>]) ->
 
 /// Merge-bind two adjacent sorted-by-column rows into `out` (sized by
 /// [`merge_count`]), keeping column order.
-fn merge_fill<F: Field, C: OneHotCoeff<F>>(
-    evens: &[SparseEntry<F, C>],
-    odds: &[SparseEntry<F, C>],
+fn merge_fill<F: Field, R: OneHotCoeff<F>, W: OneHotCoeff<F>>(
+    evens: &[SparseEntry<F, R, W>],
+    odds: &[SparseEntry<F, R, W>],
     r: F,
     ra_lut: &CoeffLut<F>,
     wa_lut: &CoeffLut<F>,
-    out: &mut [core::mem::MaybeUninit<SparseEntry<F, C>>],
+    out: &mut [core::mem::MaybeUninit<SparseEntry<F, R, W>>],
 ) {
     let mut i = 0;
     let mut j = 0;
@@ -723,9 +768,9 @@ fn merge_fill<F: Field, C: OneHotCoeff<F>>(
     clippy::type_complexity,
     reason = "the (evens, odds) slice pair, spelled in full"
 )]
-fn split_pair_group<F, C>(
-    group: &[SparseEntry<F, C>],
-) -> (&[SparseEntry<F, C>], &[SparseEntry<F, C>]) {
+fn split_pair_group<F, R, W>(
+    group: &[SparseEntry<F, R, W>],
+) -> (&[SparseEntry<F, R, W>], &[SparseEntry<F, R, W>]) {
     let odd_start = group.partition_point(|entry| entry.row % 2 == 0);
     group.split_at(odd_start)
 }
@@ -763,6 +808,11 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         if r_cycle.len() != log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "registers read-write input point has the wrong variable count",
+            });
+        }
+        if log_t >= 32 {
+            return Err(KernelError::Unsupported {
+                reason: "optimized registers read-write checking requires fewer than 2^32 cycles",
             });
         }
         let cycles = 1usize << log_t;
@@ -821,11 +871,11 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
 /// rounds — the peak-memory window), direct field values after.
 enum SparseEntries<F: Field> {
     Indexed {
-        entries: Vec<SparseEntry<F, LutIndex>>,
+        entries: Vec<IndexedSparseEntry<F>>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
     },
-    Direct(Vec<SparseEntry<F, F>>),
+    Direct(Vec<DirectSparseEntry<F>>),
 }
 
 impl<F: Field> SparseEntries<F> {
@@ -837,11 +887,11 @@ impl<F: Field> SparseEntries<F> {
     /// Dereference every index through the bound tables — the exact field
     /// values the direct representation would have accumulated.
     fn deref(
-        entries: Vec<SparseEntry<F, LutIndex>>,
+        entries: Vec<IndexedSparseEntry<F>>,
         ra_lut: &CoeffLut<F>,
         wa_lut: &CoeffLut<F>,
-    ) -> Vec<SparseEntry<F, F>> {
-        let deref_entry = |entry: &SparseEntry<F, LutIndex>| SparseEntry {
+    ) -> Vec<DirectSparseEntry<F>> {
+        let deref_entry = |entry: &IndexedSparseEntry<F>| SparseEntry {
             val: entry.val,
             prev_val: entry.prev_val,
             next_val: entry.next_val,
@@ -885,16 +935,18 @@ struct ReadWriteKernel<F: Field> {
 
 /// Bind one cycle variable of the sparse matrix in place: merge every
 /// adjacent row pair, exact-sized by a dry-run count pass.
-fn bind_sparse_entries<F, C>(
-    entries: &mut Vec<SparseEntry<F, C>>,
+fn bind_sparse_entries<F, R, W>(
+    entries: &mut Vec<SparseEntry<F, R, W>>,
     r: F,
     ra_lut: &CoeffLut<F>,
     wa_lut: &CoeffLut<F>,
 ) where
     F: Field,
-    C: OneHotCoeff<F>,
+    R: OneHotCoeff<F>,
+    W: OneHotCoeff<F>,
 {
-    let pair_predicate = |a: &SparseEntry<F, C>, b: &SparseEntry<F, C>| a.row / 2 == b.row / 2;
+    let pair_predicate =
+        |a: &SparseEntry<F, R, W>, b: &SparseEntry<F, R, W>| a.row / 2 == b.row / 2;
 
     // Pair-aligned block decomposition: fixed-size blocks advanced to the
     // next row-pair edge, so no merge group straddles a block. Per-group
@@ -934,7 +986,7 @@ fn bind_sparse_entries<F, C>(
     let counts: Vec<usize> = (0..blocks).map(count_block).collect();
 
     let bound_length: usize = counts.iter().sum();
-    let mut bound: Vec<SparseEntry<F, C>> = Vec::with_capacity(bound_length);
+    let mut bound: Vec<SparseEntry<F, R, W>> = Vec::with_capacity(bound_length);
     let mut out_slices = Vec::with_capacity(blocks);
     let mut out_rest = bound.spare_capacity_mut();
     for &count in &counts {
@@ -943,24 +995,25 @@ fn bind_sparse_entries<F, C>(
         out_slices.push(out_slice);
     }
 
-    let entries_ref: &[SparseEntry<F, C>] = entries;
-    let fill_block = |(block, out): (usize, &mut [core::mem::MaybeUninit<SparseEntry<F, C>>])| {
-        let mut written = 0usize;
-        for group in entries_ref[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
-            let (evens, odds) = split_pair_group(group);
-            let take = merge_count(evens, odds);
-            merge_fill(
-                evens,
-                odds,
-                r,
-                ra_lut,
-                wa_lut,
-                &mut out[written..written + take],
-            );
-            written += take;
-        }
-        debug_assert_eq!(written, out.len());
-    };
+    let entries_ref: &[SparseEntry<F, R, W>] = entries;
+    let fill_block =
+        |(block, out): (usize, &mut [core::mem::MaybeUninit<SparseEntry<F, R, W>>])| {
+            let mut written = 0usize;
+            for group in entries_ref[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
+                let (evens, odds) = split_pair_group(group);
+                let take = merge_count(evens, odds);
+                merge_fill(
+                    evens,
+                    odds,
+                    r,
+                    ra_lut,
+                    wa_lut,
+                    &mut out[written..written + take],
+                );
+                written += take;
+            }
+            debug_assert_eq!(written, out.len());
+        };
     #[cfg(feature = "parallel")]
     out_slices.into_par_iter().enumerate().for_each(fill_block);
     #[cfg(not(feature = "parallel"))]
@@ -979,8 +1032,8 @@ fn bind_sparse_entries<F, C>(
 /// The cycle-round quadratic inner factor `[q(0), leading coefficient]` over
 /// the sparse entries in either coefficient representation — the summand
 /// values are representation-independent by construction.
-fn sparse_quadratic<F, C>(
-    entries: &[SparseEntry<F, C>],
+fn sparse_quadratic<F, R, W>(
+    entries: &[SparseEntry<F, R, W>],
     ra_lut: &CoeffLut<F>,
     wa_lut: &CoeffLut<F>,
     e_in: &[F],
@@ -989,7 +1042,8 @@ fn sparse_quadratic<F, C>(
 ) -> [F; 2]
 where
     F: Field,
-    C: OneHotCoeff<F>,
+    R: OneHotCoeff<F>,
+    W: OneHotCoeff<F>,
 {
     let e_in_len = e_in.len();
     let in_bits = if e_in_len <= 1 {
@@ -999,11 +1053,11 @@ where
     };
     let mask = (1usize << in_bits) - 1;
 
-    let group_contribution = |group: &[SparseEntry<F, C>]| -> [F; 2] {
-        let x_out = (group[0].row / 2) >> in_bits;
+    let group_contribution = |group: &[SparseEntry<F, R, W>]| -> [F; 2] {
+        let x_out = ((group[0].row / 2) as usize) >> in_bits;
         let mut acc = [F::Accumulator::default(), F::Accumulator::default()];
         for pair_group in group.chunk_by(|a, b| a.row / 2 == b.row / 2) {
-            let z = pair_group[0].row / 2;
+            let z = (pair_group[0].row / 2) as usize;
             let e_in_eval = if e_in_len <= 1 {
                 F::one()
             } else {
@@ -1083,7 +1137,7 @@ where
         [e_out_eval * acc[0].reduce(), e_out_eval * acc[1].reduce()]
     };
 
-    let group_predicate = |a: &SparseEntry<F, C>, b: &SparseEntry<F, C>| {
+    let group_predicate = |a: &SparseEntry<F, R, W>, b: &SparseEntry<F, R, W>| {
         (a.row / 2) >> in_bits == (b.row / 2) >> in_bits
     };
     #[cfg(feature = "parallel")]
@@ -1467,7 +1521,6 @@ pub(crate) mod test_support {
         rows: Vec<TraceRow>,
         state: [u64; 128],
         counter: u64,
-        instruction: JoltInstructionRow,
     }
 
     impl TraceFixture {
@@ -1476,28 +1529,11 @@ pub(crate) mod test_support {
                 rows: Vec::new(),
                 state: [0; 128],
                 counter: 0xDEAD_BEEF_0BAD_F00D,
-                instruction: JoltInstructionRow {
-                    instruction_kind: JoltInstructionKind::ADDI,
-                    address: 0x8000_0000,
-                    operands: NormalizedOperands {
-                        rd: Some(1),
-                        rs1: Some(2),
-                        rs2: None,
-                        imm: 3,
-                    },
-                    virtual_sequence_remaining: None,
-                    is_first_in_sequence: false,
-                    is_compressed: false,
-                },
             }
         }
 
         pub(crate) fn noop(&mut self) {
-            let instruction = self.instruction;
-            self.rows.push(TraceRow {
-                instruction,
-                ..TraceRow::default()
-            });
+            self.rows.push(TraceRow::default());
         }
 
         /// One cycle touching the given operands; the write value is a fresh
@@ -1527,7 +1563,19 @@ pub(crate) mod test_support {
                     }
                 }),
             };
-            let instruction = self.instruction;
+            let instruction = JoltInstructionRow {
+                instruction_kind: JoltInstructionKind::ADDI,
+                address: 0x8000_0000 + 4 * self.rows.len(),
+                operands: NormalizedOperands {
+                    rd,
+                    rs1,
+                    rs2,
+                    imm: 3,
+                },
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            };
             self.rows.push(TraceRow {
                 instruction,
                 registers,
@@ -1542,13 +1590,15 @@ pub(crate) mod test_support {
             f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
         ) -> R {
             assert!(self.rows.len() <= 1 << log_t, "fixture overflows 2^log_t");
+            let bytecode = self
+                .rows
+                .iter()
+                .map(|row| row.instruction)
+                .filter(|instruction| instruction.instruction_kind != JoltInstructionKind::NoOp)
+                .collect();
             let preprocessing = JoltProgramPreprocessing {
-                bytecode: BytecodePreprocessing::preprocess(
-                    vec![self.instruction],
-                    self.instruction.address as u64,
-                    RV64IMAC_JOLT,
-                )
-                .unwrap(),
+                bytecode: BytecodePreprocessing::preprocess(bytecode, 0x8000_0000, RV64IMAC_JOLT)
+                    .unwrap(),
                 ram: RAMPreprocessing::default(),
                 memory_layout: Default::default(),
                 max_padded_trace_length: 1 << log_t,
@@ -1758,7 +1808,13 @@ mod tests {
         assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture,
         TraceFixture,
     };
-    use super::OptimizedRegistersReadWrite;
+    use super::{IndexedSparseEntry, OptimizedRegistersReadWrite, SmallLutIndex};
+
+    #[test]
+    fn indexed_entry_keeps_fp128_layout_compact() {
+        assert_eq!(core::mem::size_of::<SmallLutIndex>(), 1);
+        assert_eq!(core::mem::size_of::<IndexedSparseEntry<[u64; 2]>>(), 40);
+    }
 
     fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {
         fixture.with_plane(log_t, |backend| {
