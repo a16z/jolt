@@ -779,7 +779,7 @@ pub(crate) mod testing {
         f: impl FnOnce(&TraceBackend<'_, OwnedTrace>, BooleanityDimensions) -> R,
     ) -> R {
         let instruction_a = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::ADDI,
+            instruction_kind: JoltInstructionKind::LD,
             address: 0x8000_0000,
             operands: NormalizedOperands {
                 rd: Some(1),
@@ -802,9 +802,20 @@ pub(crate) mod testing {
             },
             ..instruction_a
         };
+        let instruction_c = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            address: 0x8000_0008,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: None,
+                imm: 3,
+            },
+            ..instruction_a
+        };
         let preprocessing = JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
-                vec![instruction_a, instruction_b],
+                vec![instruction_a, instruction_b, instruction_c],
                 instruction_a.address as u64,
                 RV64IMAC_JOLT,
             )
@@ -846,7 +857,7 @@ pub(crate) mod testing {
                 },
                 RamAccess::Read(RamRead {
                     address: 0x8000_1000,
-                    value: 7,
+                    value: 8,
                 }),
             ),
             // Hot bytecode (different PC / lookup index), hot RAM (write).
@@ -869,22 +880,15 @@ pub(crate) mod testing {
                     post_value: 11,
                 }),
             ),
-            // Cold bytecode, hot RAM.
-            row(
-                None,
-                RegisterState::default(),
-                RamAccess::Read(RamRead {
-                    address: 0x8000_1010,
-                    value: 5,
-                }),
-            ),
+            // Cold bytecode and RAM.
+            row(None, RegisterState::default(), RamAccess::NoOp),
             // Hot bytecode, cold RAM.
             row(
-                Some(instruction_a),
+                Some(instruction_c),
                 RegisterState {
                     rs1: Some(RegisterRead {
                         register: 2,
-                        value: 8,
+                        value: 5,
                     }),
                     rd: Some(RegisterWrite {
                         register: 1,

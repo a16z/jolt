@@ -497,6 +497,7 @@ impl<F: Field> OneHotCoeff<F> for SmallLutIndex {
 
 type IndexedSparseEntry<F> = SparseEntry<F, LutIndex, SmallLutIndex>;
 type DirectSparseEntry<F> = SparseEntry<F, F, F>;
+type SparseEntrySlot<F, R, W> = core::mem::MaybeUninit<SparseEntry<F, R, W>>;
 
 /// One non-zero cell of the conceptual `K × T` register matrices: the bound
 /// `Val` coefficient plus the γ-combined read and write coefficients of one
@@ -996,24 +997,23 @@ fn bind_sparse_entries<F, R, W>(
     }
 
     let entries_ref: &[SparseEntry<F, R, W>] = entries;
-    let fill_block =
-        |(block, out): (usize, &mut [core::mem::MaybeUninit<SparseEntry<F, R, W>>])| {
-            let mut written = 0usize;
-            for group in entries_ref[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
-                let (evens, odds) = split_pair_group(group);
-                let take = merge_count(evens, odds);
-                merge_fill(
-                    evens,
-                    odds,
-                    r,
-                    ra_lut,
-                    wa_lut,
-                    &mut out[written..written + take],
-                );
-                written += take;
-            }
-            debug_assert_eq!(written, out.len());
-        };
+    let fill_block = |(block, out): (usize, &mut [SparseEntrySlot<F, R, W>])| {
+        let mut written = 0usize;
+        for group in entries_ref[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
+            let (evens, odds) = split_pair_group(group);
+            let take = merge_count(evens, odds);
+            merge_fill(
+                evens,
+                odds,
+                r,
+                ra_lut,
+                wa_lut,
+                &mut out[written..written + take],
+            );
+            written += take;
+        }
+        debug_assert_eq!(written, out.len());
+    };
     #[cfg(feature = "parallel")]
     out_slices.into_par_iter().enumerate().for_each(fill_block);
     #[cfg(not(feature = "parallel"))]

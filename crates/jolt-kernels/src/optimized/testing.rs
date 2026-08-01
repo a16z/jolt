@@ -18,7 +18,8 @@ use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, TraceOutput, TraceRow,
+    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
+    RegisterWrite, TraceOutput, TraceRow,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -105,8 +106,8 @@ pub(crate) fn with_ram_fixture_init<R>(
         ..Default::default()
     };
 
-    let instruction = JoltInstructionRow {
-        instruction_kind: JoltInstructionKind::ADDI,
+    let load = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::LD,
         address: 0x8000_0000,
         operands: NormalizedOperands {
             rd: Some(1),
@@ -118,10 +119,21 @@ pub(crate) fn with_ram_fixture_init<R>(
         is_first_in_sequence: false,
         is_compressed: false,
     };
+    let store = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::SD,
+        address: 0x8000_0004,
+        operands: NormalizedOperands {
+            rd: None,
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        },
+        ..load
+    };
     let preprocessing = JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
-            vec![instruction],
-            instruction.address as u64,
+            vec![load, store],
+            load.address as u64,
             RV64IMAC_JOLT,
         )
         .unwrap(),
@@ -149,28 +161,63 @@ pub(crate) fn with_ram_fixture_init<R>(
         word: TERMINATION_WORD,
         post: 1,
     });
+    let mut rd_value = 0;
     let rows: Vec<TraceRow> = script
         .into_iter()
         .map(|op| {
-            let ram_access = match op {
-                RamOp::Read { word } => RamAccess::Read(RamRead {
-                    address: BASE_ADDRESS + 8 * word,
-                    value: state[word as usize],
-                }),
+            let (instruction, registers, ram_access) = match op {
+                RamOp::Read { word } => {
+                    let address = BASE_ADDRESS + 8 * word;
+                    let value = state[word as usize];
+                    let registers = RegisterState {
+                        rs1: Some(RegisterRead {
+                            register: 2,
+                            value: address,
+                        }),
+                        rd: Some(RegisterWrite {
+                            register: 1,
+                            pre_value: rd_value,
+                            post_value: value,
+                        }),
+                        ..Default::default()
+                    };
+                    rd_value = value;
+                    (load, registers, RamAccess::Read(RamRead { address, value }))
+                }
                 RamOp::Write { word, post } => {
+                    let address = BASE_ADDRESS + 8 * word;
                     let pre_value = state[word as usize];
                     state[word as usize] = post;
-                    RamAccess::Write(RamWrite {
-                        address: BASE_ADDRESS + 8 * word,
-                        pre_value,
-                        post_value: post,
-                    })
+                    (
+                        store,
+                        RegisterState {
+                            rs1: Some(RegisterRead {
+                                register: 2,
+                                value: address,
+                            }),
+                            rs2: Some(RegisterRead {
+                                register: 3,
+                                value: post,
+                            }),
+                            ..Default::default()
+                        },
+                        RamAccess::Write(RamWrite {
+                            address,
+                            pre_value,
+                            post_value: post,
+                        }),
+                    )
                 }
-                RamOp::None => RamAccess::NoOp,
+                RamOp::None => (
+                    JoltInstructionRow::default(),
+                    RegisterState::default(),
+                    RamAccess::NoOp,
+                ),
             };
             TraceRow {
+                instruction,
+                registers,
                 ram_access,
-                ..Default::default()
             }
         })
         .collect();
