@@ -201,6 +201,10 @@ available through the opt-in iai-callgrind lane
 ```bash
 cargo run -p jolt-eval --bin measure-objectives -- \
     --objective telemetry:fibonacci:prover_time_s
+# Heap attribution as an objective (builds the profile run with allocative;
+# exact bytes; the root frame after the snapshot label is verbatim):
+cargo run -p jolt-eval --bin measure-objectives -- \
+    --objective telemetry:fibonacci:heap:Stage2Batch_prepared
 ```
 
 ---

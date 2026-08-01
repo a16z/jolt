@@ -97,9 +97,11 @@ New tests:
                 | peak_memory_gib       (max over counters.memory_gib samples in the root span)
                 | total:<span-label>    (inclusive time summed over all instances, seconds)
                 | self:<span-label>     (exclusive time summed over all instances, seconds)
+                | heap:<snapshot>       (allocative mid-stage snapshot total, exact bytes)
+                | heap:<snapshot>:<root> (one root frame's bytes; root is verbatim)
    ```
 
-   Parsing: split on the first three `:` only — everything after the third colon is the **verbatim span label and may itself contain `:`** (e.g. `telemetry:sha2-chain:total:EqPolynomial::evals`). Measurement runs the workload at its default scale from the workload table. A key referencing a label absent from `summary.json` is a **measurement error, never 0.0** (silent zeros would corrupt optimizer accept/reject decisions). All time metrics are reported in seconds (converted from the summary's ns), matching existing objectives.
+   Parsing: split on the first three `:` only — everything after the third colon is the **verbatim span label and may itself contain `:`** (e.g. `telemetry:sha2-chain:total:EqPolynomial::evals`). Measurement runs the workload at its default scale from the workload table. A key referencing a label absent from `summary.json` is a **measurement error, never 0.0** (silent zeros would corrupt optimizer accept/reject decisions). All time metrics are reported in seconds (converted from the summary's ns), matching existing objectives; `heap:` metrics report exact bytes and build the profile subprocess with the `allocative` feature (the optimizer's shared per-workload run enables it when any sharer needs it). (Implementation note, extension: the `heap:` family was added post-implementation once the allocative lane's snapshots landed in `summary.json` — snapshot labels are the flamegraph names, root frames the kernel type names.)
 
    Curated defaults ship as named `ObjectiveFunction`s (modular-prover e2e time, per-stage totals, commit time, per-stage `prove_batch` round-loop time) so `optimize --list` stays useful.
 
