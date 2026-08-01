@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785529679566,
+  "lastUpdate": 1785623051016,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -130162,6 +130162,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 868572,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Andrew Tretyakov",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fa303e27f62122c2edc2e727f121c319c8ca8932",
+          "message": "feat(profiling): per-stage and per-sumcheck perfetto coverage for the modular prover (#1712)\n\n* feat(profiling): per-stage and per-sumcheck perfetto coverage for the modular prover\n\nInstrumentation so a Perfetto trace attributes modular-prover time and\nmemory per stage and per sumcheck member, plus an e2e benchmark harness\nmirroring the legacy CLI:\n\n- jolt-prover: #[tracing::instrument] on prove() and every stage recipe\n  (names match legacy's prove_stage1..8); the generated stage driver\n  emits <StageLabel>::prove, <Relation>::prepare, and per-round\n  <Relation>::prove_round spans (SpannedRounds instrumentation shim —\n  zero behavior change, byte-diff suite still passes)\n- jolt-kernels: spans on the bespoke slots (commit_witness,\n  commit_advice, joint opening, both uni-skip fronts, advice opening,\n  committed bytecode chunk build)\n- jolt-sumcheck: prove_batch + per-round sumcheck_round spans,\n  prove_uniskip_clear\n- jolt-witness: stream_witnesses, collect_bundles, oracle_table spans\n- jolt-openings: HomomorphicBatch::prove_batch span\n- jolt-profiling: peak_rss_bytes() (getrusage high-water mark) and\n  StageMemoryLayer sampling RSS at prove_stage* span boundaries,\n  installed by setup_tracing\n- new examples/modular_benchmark.rs (gated on prover-fixtures): full\n  modular pipeline (trace, config, witness, reference-backend prove,\n  verify) with the legacy benchmark CLI semantics, kHz + peak RSS +\n  per-stage RSS reporting, perfetto output under\n  benchmark-runs/perfetto_traces/modular_*\n- legacy bin: same peak-RSS print and stage-memory layer for\n  apples-to-apples reports\n\njolt-prover changes are instrumentation-only (spans + the tracing dep);\nno protocol logic changed.\n\n* fix(profiling): gate StageMemoryLayer install off wasm32 in the legacy bin\n\nThe wasm CI job builds jolt-prover-legacy (default features) for\nwasm32-unknown-unknown, where jolt-profiling exposes only the no-op\nmemory stubs — the layer type itself is native-only.\n\n* docs(specs): prover-telemetry — machine-queryable telemetry for the modular prover\n\nCodifies this PR's span conventions as taxonomy v1 and specs the remaining\npipeline: a flush-time summary.json rendered from the same span stream as the\nPerfetto trace, canonical queries without the UI, string-keyed jolt-eval\ntelemetry objectives, an opt-in iai-callgrind lane, and memory semantics that\nfold the StageMemoryLayer boundary rows and getrusage peak RSS into the\nsummary schema.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(profiling): machine-queryable telemetry for the modular prover\n\nImplements specs/prover-telemetry.md, all phases:\n\n- Taxonomy v1 as jolt-profiling crate docs plus machine-usable label\n  constants (doc comments in taxonomy.rs instead of a README). Root span\n  renamed prove -> jolt_prover::prove; StageMemoryLayer's bare-prove\n  collision special-case dropped.\n- Flush-time summary pipeline: counters.* monitor events rewritten into\n  native Perfetto counter tracks (no postprocess_trace.py step for the\n  modular prover) and the same span stream aggregated into a\n  schema-versioned {trace_name}.summary.json — drift-locked JSON Schema,\n  union/same-thread dark-time and self-time semantics, StageMemoryLayer\n  boundary rows and getrusage peak RSS folded in.\n- Profiling-gated [[bin]] jolt-prover with the profile subcommand\n  (workload scale table, --format none no-subscriber baseline, --backend\n  reference), subsuming and retiring examples/modular_benchmark.rs.\n- jolt-eval: string-keyed Telemetry/Callgrind objective variants\n  (interned to stay Copy); grammars telemetry:<workload>:<metric> and\n  callgrind:<bench>:instructions; absent label is a measurement error,\n  never 0.0; wired into RealEnv::measure (one profile run per workload)\n  and measure-objectives; four curated minimize_modular_* functions.\n- Opt-in iai-callgrind lane: eq_evals bench under benches/callgrind/,\n  sync_targets.sh now preserves explicit-path bench entries.\n- Allocative lane: per-stage heap flamegraph SVGs emitted inside prove()\n  (inert unless the harness sets a prefix), feature-gated Allocative\n  derives across claim/challenge structs and stage clear-outputs,\n  shallow ProofSession visitation (dyn Any carries stay opaque).\n- Profiling smoke test (fibonacci 2^16) asserting both artifacts and\n  every always-present taxonomy label, with a dedicated rust.yml job\n  mirroring the legacy musl-toolchain test jobs.\n- Docs: zkvm_profiling.md rewritten modular-first (jq recipes, pinned\n  trace_processor provisioning, budget procedure), jolt-eval README,\n  CLAUDE.md profiling commands.\n\nVerified: fixture and smoke suites green, byte-diff purity 5/5, muldiv\ne2e in host and host,zk, clippy in host / host,zk / allocative,host.\nDark time 0.0% on fibonacci 2^16; the sha2-chain 2^22 budget procedure\nis documented in the book but not run here (reference-backend hours).\n\n* style: taplo-format jolt-eval/fuzz/Cargo.toml (sync_targets.sh trailing newline)\n\n* fix(ci): profiling smoke at 2^13 with swap — reference backend OOMs hosted runners\n\nThe stage-2 naive RAM kernels retain ~18 GiB regardless of trace length\n(the summary pipeline's own boundary-RSS rows show it), and fibonacci at\n2^16 peaks near 80 GiB — the smoke job's \"runner received a shutdown\nsignal\" failures were the 16 GB hosted runner dying, not flakes. Scale\n2^13 is fibonacci's minimum guest scale; label coverage is\nscale-independent, and the CI job gains a 10 G swapfile for the\nresidual. Spec note updated.\n\n* fix(ci): swapfile on /mnt — hosted runners already mount an active /swapfile\n\n* ci: drop the profiling smoke job — reference backend exceeds runner memory\n\nThe naive RAM kernels retain ~18 GiB regardless of trace length (ram_K\nis priced off the guest's default 32 MB heap, not the trace), so the\nsmoke prove cannot fit a 16 GB hosted runner at any scale. The test\nstays in-tree and runs explicitly; a pointer comment in rust.yml marks\nwhere to wire the dedicated job once an optimized backend fits runner\nmemory. This goes away with an optimized prover regardless.\n\n* feat(profiling): port the benchmark sweep into the jolt-prover bin\n\n`jolt-prover benchmark` replaces scripts/jolt_benchmarks.sh: sweeps\nworkloads across --min-scale..=--max-scale, one `profile` subprocess of\nthe same executable per run (fresh process keeps the global tracing\nsubscriber and per-run getrusage peak RSS correct), --resume skips runs\nwhose per-run CSV exists, failures accumulate without stopping the\nsweep, non-zero exit at the end.\n\nmodular_timings.csv gains a header row on creation, and the plotting\nscripts move to the modular prover: benchmark_summary.py and\nplot_benchmarks.py default to modular_timings.csv;\nplot_memory_usage.py reads peak_rss_gib from the summary.json artifacts\ninstead of parsing legacy memory_gb trace counters (no postprocess step).\n\nVerified end to end: sweep with resume over fibonacci 2^13..2^14, all\nthree scripts rendered from the real artifacts.\n\n* fix(jolt-eval): parse the real iai-callgrind 0.16.1 summary schema\n\nThe callgrind objective's parser accepted a shape iai-callgrind never\nemits: it looked for Ir as a bare number or single-field wrapper, but the\nrunner serializes Ir as a MetricsDiff ({\"diffs\":..,\"metrics\":\n{\"Left\"|\"Both\":..}}) inside profiles[].summaries.total.summary.Callgrind\n— so real runner output failed with 'no Ir event kind', and the old\nDFS-in-document-order rationale additionally relied on map ordering the\nworkspace serde_json (BTreeMap, no preserve_order) does not provide.\n\nMirror the runner's BenchmarkSummary spine with typed structs, drill the\nexplicit Callgrind/Ir pointer path on the total (parts would double-count\n--trace-children runs), take the new-run value from EitherOrBoth, and gate\non the summary schema version (\"6\") so incompatible runner upgrades fail\nloudly. The fixture is now validated by deserializing through the actual\niai-callgrind-runner summary types (new dev-dependency, same pinned\nversion), so the test fixture can no longer drift from the real schema.\n\nReview findings: codex pullrequestreview-4831964098 (callgrind objective),\nclaude pullrequestreview-4831983234 (document-order dependence).\n\n* fix(profiling): backend-neutral commit seams, mode-correct taxonomy, distinct finish_rounds label\n\nThree span-schema fixes from review:\n\n- commit_witness/commit_advice were instrumented on the ReferenceBackend\n  impl, so any other JoltBackend would silently lose two labels the\n  taxonomy advertises as backend-neutral kernel seams. The spans now live\n  at the stage-0 call boundary; every CommitWitness backend inherits them.\n\n- always_present_spans() promised clear-mode-only labels\n  (prove_uniskip_clear, HomomorphicBatch::prove_batch) that a zk-feature\n  prover never emits — its siblings weren't instrumented at all. Both ZK\n  siblings (prove_uniskip_committed, HomomorphicBatch::prove_batch_zk) are\n  now instrumented, the taxonomy carries CLEAR_MODE_SPANS/ZK_MODE_SPANS,\n  and always_present_spans(ProverMode) returns the mode-correct presence\n  set; the smoke test selects the mode from cfg(feature = \"zk\") and now\n  passes in both modes (run explicitly, clear + zk).\n\n- SpannedRounds attributed finish_rounds under <Relation>::prove_round,\n  conflating the terminal bind with the round slices (and nesting a\n  \"prove_round\" directly under prove_batch). finish_rounds gets its own\n  <Relation>::finish_rounds label, documented in the naming convention.\n\nTaxonomy stays v1: these amend the unreleased v1 label set in-PR, before\nany consumer exists.\n\nReview findings: codex pullrequestreview-4831964098 (kernel seams, ZK\npresence set), claude pullrequestreview-4831983234 (finish_rounds\nattribution).\n\n* fix(profiling): harden the profile pipeline against measurement and artifact corruption\n\nSummary pipeline (finalize_trace / build_summary):\n- peak_rss_gib is now sampled by the harness right after the workload and\n  passed into finalize_trace, instead of being read after the flush-time\n  trace parse/expand/reserialize — which could become the process\n  high-water mark and report tooling memory as the workload metric.\n- The trace rewrite and the summary write go through temp-file + rename:\n  fs::write truncates first, so a crash mid-write (OOM is live on the\n  reference backend) destroyed the only artifact of a potentially\n  hours-long run.\n- Stage intervals pair with StageMemoryRows by per-label occurrence index\n  (both are recorded in close order), not first match, so repeated stage\n  labels can no longer all inherit the first prove's boundary RSS.\n\nStageMemoryLayer:\n- The global row log is capped (1024 rows, one warn per saturation) so a\n  long-lived process that installs the layer but never drains it cannot\n  grow the log unboundedly.\n\nProfile harness (profile.rs):\n- --scale is validated (1..=40) before 1usize << scale can wrap.\n- A per-(workload, scale) lock file makes concurrent runs on the same\n  artifact paths fail loudly instead of silently corrupting the\n  trace/summary/CSV set.\n- run.backend comes from BackendKind::as_str() — a new backend variant now\n  forces the summary metadata arm instead of silently mislabeling.\n- The CSV's field 7 duplication of the raw proof size is documented as\n  deliberate legacy parity (legacy's prove_example_with_trace returns\n  proof_size for both fields; the compressed encoding was retired).\n\nReview findings: codex pullrequestreview-4831964098 (peak RSS, stage rows,\nrow-log growth, scale shift, artifact collisions), claude\npullrequestreview-4831983234 (atomic rewrite, stage-row pairing,\nrun.backend, CSV column).\n\n* fix(jolt-eval): never expose a stale candidate summary to telemetry objectives\n\nThe optimizer marked a workload as profiled before run_profile_in\nsucceeded: if the first objective's profile run failed, later objectives\nsharing the workload skipped profiling and read whatever summary a\nprevious candidate left at the deterministic path — mixing stale and\ncurrent measurements. The workload is now inserted only after a\nsuccessful run, and run_profile_in removes any pre-existing summary\nbefore launching, so a failed run leaves nothing to misread (absent\nsummary = measurement error = INFINITY score, per the module contract).\n\nReview finding: codex pullrequestreview-4831964098.\n\n* build(profiling): gate the summary pipeline behind a jolt-profiling feature\n\nThe summary module's schemars/serde_json/thiserror stack compiled into\nevery --features host build through the new legacy host -> jolt-profiling\nedge, although the legacy bin only uses the subscriber stack and\nstage-memory reporting. The summary module now sits behind a summary\nfeature (default, so the crate's own dev loop and schema drift-lock tests\nkeep running); subscriber-only consumers (legacy, akita's bench dev-dep,\njolt-prover's test dev-dep) opt out via default-features = false, and\njolt-prover's profiling feature enables jolt-profiling/summary explicitly.\nStandard host builds' dep graphs are back where they were pre-PR.\n\nReview finding: claude pullrequestreview-4831983234.\n\n* docs: stop overstating the profiling smoke test as CI-enforced\n\nThe taxonomy module, CLAUDE.md, and the spec's conformance section all\nclaimed a silent span rename 'fails CI', but the smoke test is\ndeliberately not wired into CI yet (reference backend exceeds\nhosted-runner memory — see the NOTE in rust.yml). The wording now says\nwhat actually holds: the smoke test enforces label presence when run\nexplicitly, with a pointer to the deferred CI job.\n\nReview finding: claude pullrequestreview-4831983234.\n\n* fix(profiling): expect clippy::panic in the profile harness module\n\nThe RunLock guard's contention failure is a deliberate panic (harness\nsemantics — same policy as the module's existing expect_used), but\nclippy::panic only fires when linting with the profiling feature enabled,\nwhich the standard --features host clippy lanes never do. Caught by\nlinting -p jolt-prover --features profiling explicitly.\n\n* fix(profiling): emit all kernel-seam spans at backend-neutral call boundaries\n\nThe uniskip, advice-opening, and joint-opening seam spans lived as\n#[tracing::instrument] attributes on the ReferenceBackend impls, so the\ntaxonomy's \"any backend inherits these by implementing the same traits\"\nheld only for the commit seams already moved to stage 0 — a second\nbackend would emit none of them and the drift would surface only when\nsomeone profiled it. Move the remaining six labels to the stage-1/2/4/8\nslot call boundaries (the commit_witness pattern) and strip the\nimpl-side attributes. Labels and fields are unchanged, so summaries,\ntelemetry objectives, and the smoke test see the same trace.\nInstrumentation-only: no protocol logic touched.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* ci: lint the profiling feature so the harness cannot rot\n\nThe profiling smoke test is deliberately deferred from CI (the\nreference backend exceeds hosted-runner memory), but nothing compiled\nthe feature at all: the sharded per-crate test loop enables only\ntest-utils, and the workspace clippy lanes never see profiling. Add\nexplicit clippy steps for -p jolt-prover --features profiling and\nprofiling,allocative next to the other feature-gated lanes, so the\n~700-line harness surface keeps compiling even while its runtime job\nwaits on an optimized backend.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* docs(specs): record the plot_memory_usage.py repoint as a deviation\n\nThe spec pinned plot_memory_usage.py as untouched legacy tooling, but\nthe PR retired its only caller (jolt_benchmarks.sh) and repointed it at\nthe modular summary.json artifacts. Record that as an\nimplementation-decision deviation alongside the existing\ntaxonomy-location and smoke-scale notes, so the spec matches what the\ncode does.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-eval): make the keyed-objective dispatch exhaustive\n\nThe telemetry/callgrind measurement loop in RealEnv::measure ended in\n`_ => {}`, so a future string-keyed objective family added to\nOptimizationObjective would be silently skipped here rather than\nfailing to compile. Spell out the StaticAnalysis/Performance arms\n(measured by their own channels earlier in the function).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* clippy\n\n* fix(profiling): measure ProofSession carries in per-stage flamegraphs\n\nSession entries were Box<dyn Any>, so the per-stage heap flamegraphs\nattributed only map scaffolding while every parked kernel table hid\nbehind the erasure. Everything inserted into the session is now\nMaybeAllocative (Allocative under the allocative feature, vacuous\notherwise): insertion captures a monomorphized visitor per entry, and\nthe session's Allocative impl replays them, keyed by concrete type\nname. The parked kernels size their tables arithmetically (field\nelements are flat, so Vec capacity x element size is exact) — no\nF: Allocative bound leaking into the generic reference impls that park\nthem.\n\nValidated end to end (fibonacci 2^13, --features profiling,allocative):\nclippy green on kernels/prover in all four feature lanes, and the\nProofSession frame renders in the stage SVGs. Scope note: cross-stage\ncarries (the 6b->7 precommitted reduction, future backend residency)\nare now measured, but fibonacci parks-and-reclaims the Spartan kernels\nwithin a single stage and carries nothing across boundaries — its\nboundary flamegraphs are honestly near-empty, and the ~10 GiB peak RSS\nlives in batch-member kernels during the round loop, invisible to\nend-of-stage snapshots. Surfacing that needs a mid-stage hook over the\nlive kernels, left as follow-up.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(profiling): mid-stage heap snapshots of the live batch kernels\n\nThe per-stage flamegraphs fire at stage boundaries, where (without\nadvice or a committed program) almost nothing is retained: the\nmulti-GiB working set lives in the batch-member kernels DURING the\nround loop and was structurally invisible to boundary snapshots. The\ngenerated driver now snapshots every live member right after\nprepare_members — tables materialized, nothing bound yet: the stage's\nretained-memory peak — into {prefix}{StageLabel}_prepared.svg,\nalongside the existing end-of-stage {prefix}stage{N}.svg.\n\nSumcheckKernel gains the MaybeAllocative supertrait (vacuous without\nthe allocative feature), and every kernel implements it with size\narithmetic (Vec capacity / Polynomial len x element size — exact at\nthe snapshot point, where nothing is bound), so neither F nor the\nrelation markers pick up Allocative bounds.\n\nValidated end to end (fibonacci 2^13, --features profiling,allocative):\nStage2Batch_prepared.svg attributes 8,192 MiB (99.9%) to\nNaiveSumcheckProver<Fr, RamReadWriteChecking<Fr>> — 6,144 MiB opening\ntables + 2,048 MiB derived tables — resolving the previously opaque\n10 GiB peak RSS. Clippy green in all four feature lanes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(profiling): drop the end-of-stage flamegraphs\n\nWith the mid-stage snapshots in place, the boundary snapshots carried no\nunique signal: stage working sets free on exit, so the stage{N}.svg\nfiles were near-empty by construction (the original all-zeros\nconfusion), and anything genuinely carried across a boundary — the\n6b->7 precommitted reduction — appears inside the consuming kernel in\nthe next batch's _prepared snapshot anyway. Remove stage_flamegraph and\nits ten call sites; a profile run now emits exactly one flamegraph per\ndriver batch. Stages 0 and 8 have no batch and no flamegraph — their\nmemory lives inside the commit and joint-opening slot calls (counter\ntracks and the RSS table cover them).\n\nThe clear-output Allocative derives across jolt-claims/jolt-verifier\nare deliberately retained: cfg_attr costs nothing when the feature is\noff, and they keep the carriers measurable for ad-hoc\nprint_data_structure_heap_usage checks.\n\nValidated: clippy green (plain, allocative, profiling+allocative); an\ne2e fibonacci 2^13 run emits exactly the eight {StageLabel}_prepared\nSVGs with the 8,192 MiB RamReadWriteChecking attribution intact.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(profiling): machine-queryable heap attribution\n\nThe allocative lane emitted only SVGs — the sole telemetry artifact\nwhose numbers a machine could reach exclusively by scraping\ninteger-MiB-rounded hover text. Bring it under the one-stream/\ntwo-renderings rule:\n\n- every flamegraph SVG now has an exact-bytes .folded twin (the\n  canonical folded-stacks format the builder already produced and\n  discarded);\n- summary.json gains a heap section — per-snapshot totals and per-root\n  bytes parsed from the .folded twins at flush time, keyed by snapshot\n  label; a schema field (regenerated, schema_version unchanged:\n  additive with a default), empty when the lane is off.\n\nOne jq now answers \"where is the memory\": at fibonacci 2^13 the heap\nsection reports Stage2Batch_prepared at 8.006 GiB, topped by\nNaiveSumcheckProver<Fr, RamReadWriteChecking<Fr>>.\n\nAlso gates the summary_pipeline integration test on the summary\nfeature: it referenced the feature-gated module unconditionally, so\n`clippy -p jolt-profiling --all-targets --no-default-features` was\nbroken (pre-existing; masked in the workspace lane by dependent\nfeature unification).\n\nValidated: jolt-profiling tests green (27, schema drift-lock\nregenerated); clippy green on default / no-default / allocative,monitor\n/ prover profiling,allocative; e2e fibonacci 2^13 emits 8 .folded twins\nand the heap section above.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-eval): heap: metric family for telemetry objectives\n\nExtends the telemetry key grammar with the allocative lane's summary\nsection, so heap attribution is optimizer-addressable without editing\njolt-eval:\n\n  telemetry:<workload>:heap:<snapshot>         snapshot total, exact bytes\n  telemetry:<workload>:heap:<snapshot>:<root>  one root frame's bytes\n                                               (root verbatim, may contain ':')\n\nAbsent snapshots/roots are measurement errors, never 0.0 — including\nthe empty heap section an allocative-less run serializes. Heap metrics\nbuild the profile subprocess with the allocative feature automatically;\nthe optimizer's shared per-workload run ORs its sharers' needs\n(run_profile_in_with), so one run still serves every objective of a\nworkload and a time metric never silently reads a lane-less summary.\n\nGrammar blocks updated in the module doc, jolt-eval README, the spec\n(recorded as a post-implementation extension), and the book.\n\nValidated: clippy -p jolt-eval --all-targets green; 9 telemetry unit\ntests incl. heap parse (verbatim roots), extraction, and\nabsence-is-error for snapshot, root, and lane-off cases.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(profiling): memory-timeline page — heap snapshots on the RSS envelope\n\nThe allocative flamegraphs answered \"what is this snapshot made of\" one\nSVG at a time, each normalized to its own total and unmoored from time.\nThis adds their replacement view: one self-contained\n{trace_name}.memory.html per allocative profile run, generated at flush\ntime from the same event stream as every other artifact.\n\nOne time axis carries the whole memory story: the continuous memory_gib\ncounter as the RSS envelope, the stage spans as labeled bands, and at\neach snapshot instant a stacked composition column of the live batch\nkernels — colored by relation family (validated 8-slot palette, light\nand dark), on one shared linear byte scale, topped with the gray\n\"unattributed\" residual up to the envelope (allocator retention +\nunvisited allocations). Clicking a column opens the snapshot's\nfull-depth icicle, parsed from the .folded twin. Tooltips everywhere,\nkeyboard-focusable columns, and a table view with exact bytes.\n\nPlumbing: the generated driver emits a heap_snapshot instant event when\nit takes a snapshot (same trace clock as the counters), and the summary\njoins it into the heap section as at_ns since the root span opened —\nnote tracing-chrome records the &str field through Debug, so the join\ntrims the quote-wrapping. Schema regenerated (additive, version\nunchanged).\n\nValidated: 28 jolt-profiling tests green (incl. a page-generation unit\ntest and the instant-event join); clippy green across default /\nno-default / allocative,monitor / prover profiling,allocative; e2e\nfibonacci 2^13 inlines all 8 snapshots with timestamps (Stage2Batch at\n5.95s, 8.006 GiB), 279 RSS points, and 10 stage bands.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(profiling): drop inferno SVG emission — folded + memory.html only\n\nWith the memory-timeline page rendering the heap snapshots (exact bytes,\nshared scale, situated in time), the inferno SVGs were strictly worse on\nevery axis they existed for: per-file normalization made snapshots\nincomparable, and the hover text rounded to integer MiB before computing\npercentages. Heap snapshots now persist in exactly one form — the\nfolded-stacks text — with two renderings built from it: summary.json's\nheap section and {trace_name}.memory.html. write_flamegraph_svg becomes\nwrite_flamegraph_folded, and inferno leaves jolt-profiling's dependency\ntree entirely (the legacy prover keeps its own copy, per the\nlegacy-retrofit non-goal). Spec/book/CLAUDE.md updated; schema\nregenerated (the heap field's doc comment feeds schemars descriptions).\n\nValidated: 28 jolt-profiling tests green; clippy green (default,\nallocative+monitor, prover profiling+allocative); e2e fibonacci 2^13\nemits 0 SVGs, 8 .folded snapshots, and the three artifacts.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(profiling): group benchmark-runs artifacts by run directory\n\nEach profile run now writes all of its artifacts (chrome trace,\nsummary.json, memory.html, .folded heap snapshots, per-run timings CSV)\ninto benchmark-runs/{timestamp}_{trace_name}/ instead of scattering\nthem across perfetto_traces/, flamegraphs/, and results/. A\nbenchmark-runs/latest_{trace_name} symlink is flipped on success and\nserves as the deterministic path for jolt-eval telemetry objectives,\njq queries, and the sweep --resume check. The consolidated sweep CSV\nlives at benchmark-runs/modular_timings.csv.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(profiling): drop trace_name prefix from per-run artifact file names\n\nThe run directory name ({timestamp}_{trace_name}) already carries the run\nidentity, so the files inside use fixed names: trace.json, summary.json,\nmemory.html, timings.csv, and {StageLabel}_prepared.folded.\nplot_memory_usage.py now reads run identity from the summary's run\nmetadata instead of parsing filenames, and the pprof default prefix\nfollows the run directory. Legacy setup_tracing paths are unchanged.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-08-01T14:18:27-07:00",
+          "tree_id": "3817e0ac0f9486a9aca1a39ecb3a4cf4f82ca450",
+          "url": "https://github.com/a16z/jolt/commit/fa303e27f62122c2edc2e727f121c319c8ca8932"
+        },
+        "date": 1785623047088,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6134,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 873684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3366,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 511192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 507136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7115,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5755,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 499216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.015,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 508912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.0849,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 201936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4451,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5572,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 507208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.451,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.5311,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 497772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.9537,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.7308,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1055504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.5371,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 640468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 104.1609,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2116972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4934,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 501752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5608,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.747,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 863988,
             "unit": "KB",
             "extra": ""
           }
