@@ -287,16 +287,16 @@ dory = { package = "dory-pcs", version = "0.4.0", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f8f761f6cf3431327dcc3c1981c4c6c7208b3cf3", default-features = false }
+akita-algebra = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-config = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-field = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-pcs = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-prover = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-planner = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-schedules = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-challenges = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-transcript = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
+akita-types = { git = "https://github.com/markosg04/akita.git", rev = "5b59a07d4ab2f6017d1c62aa26a81e982edbd5d4", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
