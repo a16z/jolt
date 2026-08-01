@@ -1231,3 +1231,29 @@ fn slice_fast_paths_match_the_sequential_fallback() {
     };
     assert_eq!(collect(&slice_backend), collect(&iterator_backend));
 }
+
+#[test]
+fn backend_drops_only_canonical_trailing_padding() {
+    let instruction_row = instruction(RAM_START_ADDRESS as usize);
+    let bytecode =
+        BytecodePreprocessing::preprocess(vec![instruction_row], RAM_START_ADDRESS, RV64IMAC_JOLT)
+            .unwrap();
+    let preprocessing = preprocessing_with_bytecode(bytecode);
+    let program = JoltProgram::default();
+    let rows = vec![
+        TraceRow {
+            instruction: instruction_row,
+            ..Default::default()
+        },
+        TraceRow::default(),
+        TraceRow::default(),
+    ];
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
+    let backend = TraceBackend::new(config().with_log_t(2), inputs);
+
+    assert_eq!(backend.trace_rows.len(), 1);
+    assert_eq!(
+        materialized_virtual_view(&backend, JoltVirtualPolynomial::NextIsNoop).unwrap(),
+        [1, 1, 1, 1].map(Fr::from_u64)
+    );
+}
