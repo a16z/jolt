@@ -4,6 +4,7 @@
 use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
+use jolt_riscv::JoltTraceRow as TraceRow;
 use std::ops::Range;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
@@ -103,10 +104,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     /// One pass over `2^log_t` cycles with the one-row lookahead window;
     /// rows beyond the trace are padding (default) rows.
     ///
-    /// A slice-backed trace ([`TraceSource::rows`]) takes an index-parallel
-    /// path — extraction is pure per cycle window, so the walk order is
-    /// unobservable. The sequential walk remains the fallback (and the only
-    /// public contract) for re-emulating sources.
+    /// Extraction is pure per cycle window, so the walk is index-parallel.
     fn walk_cycles<V: Send>(
         &self,
         value: impl Fn(&TraceRow, Option<&TraceRow>, &WitnessEnv<'_>) -> Result<V, WitnessError>
@@ -117,55 +115,39 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         let env = WitnessEnv {
             preprocessing: self.preprocessing,
         };
-        if let Some(physical) = self.trace.trace.rows() {
-            let padding = TraceRow::default();
-            let window = |index: usize| {
-                let current = physical.get(index).unwrap_or(&padding);
-                let next = (index + 1 < rows).then(|| physical.get(index + 1).unwrap_or(&padding));
-                value(current, next, &env)
-            };
-            #[cfg(feature = "parallel")]
-            return crate::consumer::par_collect_windows(rows, window);
-            #[cfg(not(feature = "parallel"))]
-            return (0..rows).map(window).collect();
-        }
-        let mut values = Vec::with_capacity(rows);
-        let mut trace = self.trace.trace.clone();
-        let mut current = trace.next_row().unwrap_or_default();
-        for index in 0..rows {
-            let next = (index + 1 < rows).then(|| trace.next_row().unwrap_or_default());
-            values.push(value(&current, next.as_ref(), &env)?);
-            if let Some(row) = next {
-                current = row;
-            }
-        }
-        Ok(values)
+        let physical = self.trace_rows.as_slice();
+        let padding = TraceRow::default();
+        let window = |index: usize| {
+            let current = physical.get(index).unwrap_or(&padding);
+            let next = (index + 1 < rows).then(|| physical.get(index + 1).unwrap_or(&padding));
+            value(current, next, &env)
+        };
+        #[cfg(feature = "parallel")]
+        return crate::consumer::par_collect_windows(rows, window);
+        #[cfg(not(feature = "parallel"))]
+        return (0..rows).map(window).collect();
     }
 }
 
 impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
     fn random_access(&self) -> Option<crate::RandomAccessRows<'_>> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
-        self.trace.trace.rows().map(|rows| {
-            crate::RandomAccessRows::new(
-                rows,
-                cycles,
-                WitnessEnv {
-                    preprocessing: self.preprocessing,
-                },
-            )
-        })
+        Some(crate::RandomAccessRows::new(
+            &self.trace_rows,
+            cycles,
+            WitnessEnv {
+                preprocessing: self.preprocessing,
+            },
+        ))
     }
 
     fn owned_rows(&self) -> Option<crate::OwnedRows> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
-        self.trace.trace.shared_rows().map(|rows| {
-            crate::OwnedRows::new(
-                rows,
-                cycles,
-                std::sync::Arc::new(self.preprocessing.clone()),
-            )
-        })
+        Some(crate::OwnedRows::new(
+            std::sync::Arc::clone(&self.trace_rows),
+            cycles,
+            std::sync::Arc::new(self.preprocessing.clone()),
+        ))
     }
 
     fn visit_chunks(
@@ -187,49 +169,22 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
         let env = WitnessEnv {
             preprocessing: self.preprocessing,
         };
-        // Slice-backed traces visit borrowed subslices directly — no per-row
-        // copies; only a buffer overlapping the padding tail materializes.
-        if let Some(physical) = self.trace.trace.rows() {
-            let padding = TraceRow::default();
-            let mut position = range.start;
-            while position < range.end {
-                let chunk_end = (position + chunk_size).min(range.end);
-                let next_after: Option<&TraceRow> =
-                    (chunk_end < total).then(|| physical.get(chunk_end).unwrap_or(&padding));
-                if chunk_end <= physical.len() {
-                    visitor(&physical[position..chunk_end], next_after, &env)?;
-                } else {
-                    let mut rows = Vec::with_capacity(chunk_end - position);
-                    rows.extend_from_slice(&physical[position.min(physical.len())..]);
-                    rows.resize(chunk_end - position, TraceRow::default());
-                    visitor(&rows, next_after, &env)?;
-                }
-                position = chunk_end;
-            }
-            return Ok(());
-        }
-        let mut trace = self.trace.trace.clone();
-        for _ in 0..range.start {
-            let _ = trace.next_row();
-        }
-        // Rows beyond the physical trace are padding (default) rows; the
-        // lookahead row after each buffer doubles as the first row of the
-        // next one.
+        let physical = self.trace_rows.as_slice();
+        let padding = TraceRow::default();
         let mut position = range.start;
-        let mut carried: Option<TraceRow> = None;
         while position < range.end {
             let chunk_end = (position + chunk_size).min(range.end);
-            let mut rows = Vec::with_capacity(chunk_end - position);
-            if let Some(row) = carried.take() {
-                rows.push(row);
-            }
-            while position + rows.len() < chunk_end {
-                rows.push(trace.next_row().unwrap_or_default());
+            let next_after =
+                (chunk_end < total).then(|| physical.get(chunk_end).unwrap_or(&padding));
+            if chunk_end <= physical.len() {
+                visitor(&physical[position..chunk_end], next_after, &env)?;
+            } else {
+                let mut rows = Vec::with_capacity(chunk_end - position);
+                rows.extend_from_slice(&physical[position.min(physical.len())..]);
+                rows.resize(chunk_end - position, TraceRow::default());
+                visitor(&rows, next_after, &env)?;
             }
             position = chunk_end;
-            // The lookahead row doubles as the first row of the next buffer.
-            carried = (position < total).then(|| trace.next_row().unwrap_or_default());
-            visitor(&rows, carried.as_ref(), &env)?;
         }
         Ok(())
     }

@@ -59,9 +59,9 @@ impl WitnessBundle for RegisterValuesRow {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self([
-            row.registers.rd.map_or(0, |write| write.post_value),
-            row.registers.rs1.map_or(0, |read| read.value),
-            row.registers.rs2.map_or(0, |read| read.value),
+            row.rd_write_value(),
+            row.rs1_value(),
+            row.rs2_value(),
         ]))
     }
 

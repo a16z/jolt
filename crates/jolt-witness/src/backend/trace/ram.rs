@@ -24,29 +24,24 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         let addresses = self.config.ram_k;
         let mut state = self.initial_ram_state()?;
         let mut values = crate::alloc::zero_table(addresses * cycles);
-        let mut trace = self.trace.trace.clone();
 
         for cycle in 0..cycles {
             for (address, value) in state.iter().copied().enumerate() {
                 values[address * cycles + cycle] = F::from_u64(value);
             }
 
-            let Some(row) = trace.next_row() else {
+            let Some(row) = self.trace_rows.get(cycle) else {
                 continue;
             };
-            match row.ram_access {
-                RamAccess::Read(read) => {
-                    if let Some(address) = self.remapped_ram_address(read.address)? {
-                        values[address * cycles + cycle] = F::from_u64(read.value);
-                    }
+            if row.is_load() {
+                if let Some(address) = self.remapped_ram_address(row.ram_address())? {
+                    values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
                 }
-                RamAccess::Write(write) => {
-                    if let Some(address) = self.remapped_ram_address(write.address)? {
-                        values[address * cycles + cycle] = F::from_u64(write.pre_value);
-                        state[address] = write.post_value;
-                    }
+            } else if row.is_store() {
+                if let Some(address) = self.remapped_ram_address(row.ram_address())? {
+                    values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
+                    state[address] = row.ram_write_value();
                 }
-                RamAccess::NoOp => {}
             }
         }
 
@@ -57,13 +52,12 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
         let mut values = crate::alloc::zero_table(addresses * cycles);
-        let mut trace = self.trace.trace.clone();
 
         for cycle in 0..cycles {
-            let Some(row) = trace.next_row() else {
+            let Some(row) = self.trace_rows.get(cycle) else {
                 continue;
             };
-            if let Some(raw_address) = ram_access_address(row.ram_access) {
+            if let Some(raw_address) = ram_access_address(row) {
                 if let Some(address) = self.remapped_ram_address(raw_address)? {
                     values[address * cycles + cycle] = F::one();
                 }
@@ -103,34 +97,34 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 "bytecode",
             )?;
         }
-        if !self.trace.device.trusted_advice.is_empty() {
+        if !self.device.trusted_advice.is_empty() {
             let start = self.remapped_required_address(
-                self.trace.device.memory_layout.trusted_advice_start,
+                self.device.memory_layout.trusted_advice_start,
                 "trusted advice",
             )?;
             populate_ram_bytes(
                 &mut state,
                 start,
-                &self.trace.device.trusted_advice,
+                &self.device.trusted_advice,
                 "trusted advice",
             )?;
         }
-        if !self.trace.device.untrusted_advice.is_empty() {
+        if !self.device.untrusted_advice.is_empty() {
             let start = self.remapped_required_address(
-                self.trace.device.memory_layout.untrusted_advice_start,
+                self.device.memory_layout.untrusted_advice_start,
                 "untrusted advice",
             )?;
             populate_ram_bytes(
                 &mut state,
                 start,
-                &self.trace.device.untrusted_advice,
+                &self.device.untrusted_advice,
                 "untrusted advice",
             )?;
         }
-        if !self.trace.device.inputs.is_empty() {
-            let start = self
-                .remapped_required_address(self.trace.device.memory_layout.input_start, "input")?;
-            populate_ram_bytes(&mut state, start, &self.trace.device.inputs, "input")?;
+        if !self.device.inputs.is_empty() {
+            let start =
+                self.remapped_required_address(self.device.memory_layout.input_start, "input")?;
+            populate_ram_bytes(&mut state, start, &self.device.inputs, "input")?;
         }
         Ok(state)
     }
@@ -143,59 +137,50 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
             });
         }
         let mut state = vec![0; self.config.ram_k];
-        if let Some(final_memory) = &self.trace.final_memory {
+        if let Some(final_memory) = &self.final_memory {
             self.populate_final_memory_image(&mut state, &final_memory.bytes)?;
         }
-        if !self.trace.device.trusted_advice.is_empty() {
+        if !self.device.trusted_advice.is_empty() {
             let start = self.remapped_required_address(
-                self.trace.device.memory_layout.trusted_advice_start,
+                self.device.memory_layout.trusted_advice_start,
                 "trusted advice",
             )?;
             populate_ram_bytes(
                 &mut state,
                 start,
-                &self.trace.device.trusted_advice,
+                &self.device.trusted_advice,
                 "trusted advice",
             )?;
         }
-        if !self.trace.device.untrusted_advice.is_empty() {
+        if !self.device.untrusted_advice.is_empty() {
             let start = self.remapped_required_address(
-                self.trace.device.memory_layout.untrusted_advice_start,
+                self.device.memory_layout.untrusted_advice_start,
                 "untrusted advice",
             )?;
             populate_ram_bytes(
                 &mut state,
                 start,
-                &self.trace.device.untrusted_advice,
+                &self.device.untrusted_advice,
                 "untrusted advice",
             )?;
         }
-        if !self.trace.device.inputs.is_empty() {
-            let start = self
-                .remapped_required_address(self.trace.device.memory_layout.input_start, "input")?;
-            populate_ram_bytes(&mut state, start, &self.trace.device.inputs, "input")?;
+        if !self.device.inputs.is_empty() {
+            let start =
+                self.remapped_required_address(self.device.memory_layout.input_start, "input")?;
+            populate_ram_bytes(&mut state, start, &self.device.inputs, "input")?;
         }
-        if !self.trace.device.outputs.is_empty() {
-            let start = self.remapped_required_address(
-                self.trace.device.memory_layout.output_start,
-                "output",
-            )?;
-            populate_ram_bytes(&mut state, start, &self.trace.device.outputs, "output")?;
+        if !self.device.outputs.is_empty() {
+            let start =
+                self.remapped_required_address(self.device.memory_layout.output_start, "output")?;
+            populate_ram_bytes(&mut state, start, &self.device.outputs, "output")?;
         }
 
         let panic_index =
-            self.remapped_required_address(self.trace.device.memory_layout.panic, "panic")?;
-        set_ram_word(
-            &mut state,
-            panic_index,
-            self.trace.device.panic as u64,
-            "panic",
-        )?;
-        if !self.trace.device.panic {
-            let termination_index = self.remapped_required_address(
-                self.trace.device.memory_layout.termination,
-                "termination",
-            )?;
+            self.remapped_required_address(self.device.memory_layout.panic, "panic")?;
+        set_ram_word(&mut state, panic_index, self.device.panic as u64, "panic")?;
+        if !self.device.panic {
+            let termination_index = self
+                .remapped_required_address(self.device.memory_layout.termination, "termination")?;
             set_ram_word(&mut state, termination_index, 1, "termination")?;
         }
         Ok(state)

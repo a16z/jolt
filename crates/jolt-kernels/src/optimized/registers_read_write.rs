@@ -91,12 +91,11 @@ impl WitnessBundle for RegisterCycleRow {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self {
-            rs1: row.registers.rs1.map(|read| (read.register, read.value)),
-            rs2: row.registers.rs2.map(|read| (read.register, read.value)),
+            rs1: row.rs1_index().map(|register| (register, row.rs1_value())),
+            rs2: row.rs2_index().map(|register| (register, row.rs2_value())),
             rd: row
-                .registers
-                .rd
-                .map(|write| (write.register, write.pre_value, write.post_value)),
+                .rd_index()
+                .map(|register| (register, row.rd_pre_value(), row.rd_write_value())),
         })
     }
 

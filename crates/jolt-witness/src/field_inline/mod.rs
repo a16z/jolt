@@ -15,11 +15,11 @@ use jolt_riscv::{field_inline_operand_shape, FieldInlineOperandShape, FieldInlin
 use rayon::prelude::*;
 
 use self::witnesses::{
-    decode_value, FieldInvProduct, FieldOpFlag, FieldProduct, FieldRdInc, FieldRdValue,
-    FieldRs1Value, FieldRs2Value, FieldValue,
+    decode_value, FieldExtract, FieldExtractIndexed, FieldInvProduct, FieldOpFlag, FieldProduct,
+    FieldRdInc, FieldRdValue, FieldRs1Value, FieldRs2Value, FieldValue,
 };
 use crate::backend::trace::{checked_pow2, TraceBackend};
-use crate::witnesses::{Extract, ExtractIndexed, WitnessEnv};
+use crate::witnesses::WitnessEnv;
 use crate::{PolynomialEncoding, Shape, WitnessError};
 
 pub mod witnesses;
@@ -199,20 +199,22 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
 
     /// Materializes one cycle-domain witness column; rows beyond the trace
     /// are zero. All per-witness logic lives on `W`.
-    fn materialize_cycle<F: Field, W: Extract + FieldValue<F> + Send>(
+    fn materialize_cycle<F: Field, W: FieldExtract + FieldValue<F> + Send>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
-        self.walk_cycles(|row, env| W::extract(row, None, env).map(FieldValue::value))
+        self.walk_cycles(|row, env| W::extract(row, env).map(FieldValue::value))
     }
 
     /// [`Self::materialize_cycle`] for indexed witness families.
-    fn materialize_cycle_indexed<F: Field, W: ExtractIndexed<I> + FieldValue<F>, I: Copy + Sync>(
+    fn materialize_cycle_indexed<
+        F: Field,
+        W: FieldExtractIndexed<I> + FieldValue<F>,
+        I: Copy + Sync,
+    >(
         &self,
         index: I,
     ) -> Result<Vec<F>, WitnessError> {
-        self.walk_cycles(|row, env| {
-            W::extract_indexed(index, row, None, env).map(FieldValue::value)
-        })
+        self.walk_cycles(|row, env| W::extract_indexed(index, row, env).map(FieldValue::value))
     }
 
     fn walk_cycles<F: Field>(
@@ -363,7 +365,7 @@ impl<'a, T: TraceSource + Clone> TraceBackend<'a, T> {
             self.config.log_t,
             self.program,
             self.preprocessing,
-            &self.trace,
+            &self.raw_trace,
         )
     }
 
@@ -418,7 +420,7 @@ fn field_register_row<F: Field>(
         rs1,
         rs2,
         rd,
-        rd_increment: FieldRdInc::extract(row, None, env)?.0,
+        rd_increment: FieldRdInc::extract(row, env)?.0,
     })
 }
 

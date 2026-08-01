@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

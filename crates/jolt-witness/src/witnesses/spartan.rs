@@ -2,15 +2,14 @@ use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::signed::{S128, S64};
 use jolt_lookup_tables::LookupQuery;
-use jolt_program::execution::{RamAccess, TraceRow};
-use jolt_riscv::{CircuitFlags, Flags, InstructionFlags};
+use jolt_riscv::JoltTraceRow as TraceRow;
+use jolt_riscv::{CircuitFlags, InstructionFlags};
 
 use super::{
-    decode_instruction, lookup_query, pc_for_row, row_is_noop, Imm, LeftInstructionInput,
-    LeftLookupOperand, LookupOutput, NextIsFirstInSequence, NextIsVirtual, NextPc,
-    NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue,
-    RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump,
-    UnexpandedPc, WitnessEnv,
+    lookup_query, row_is_noop, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
+    RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
+    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
 use crate::{WitnessBundle, WitnessError, RV64_XLEN};
 
@@ -63,9 +62,8 @@ impl WitnessBundle for SpartanOuterRow {
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let instruction = decode_instruction(row)?;
-        let circuit_flags = instruction.circuit_flags();
-        let instruction_flags = instruction.instruction_flags();
+        let circuit_flags = row.circuit_flags();
+        let instruction_flags = row.instruction_flags();
 
         let query = lookup_query(row);
         let (
@@ -74,19 +72,13 @@ impl WitnessBundle for SpartanOuterRow {
             lookup_output,
         ) = LookupQuery::<RV64_XLEN>::to_lookup_values(&query);
 
-        let (ram_address, ram_read_value, ram_write_value) = match row.ram_access {
-            RamAccess::Read(read) => (read.address, read.value, read.value),
-            RamAccess::Write(write) => (write.address, write.pre_value, write.post_value),
-            RamAccess::NoOp => (0, 0, 0),
-        };
-        let next_flags = next
-            .and_then(|row| decode_instruction(row).ok())
-            .map(|instruction| instruction.circuit_flags());
-        let pc = pc_for_row(row, env.preprocessing)? as u64;
-        let next_pc = next
-            .map(|row| pc_for_row(row, env.preprocessing))
-            .transpose()?
-            .map_or(0, |pc| pc as u64);
+        let ram_address = row.ram_address();
+        let ram_read_value = row.ram_read_value();
+        let ram_write_value = row.ram_write_value();
+        let next_flags = next.map(TraceRow::circuit_flags);
+        let pc = row.pc();
+        let next_pc = next.map_or(0, TraceRow::pc);
+        let _ = env;
 
         let flag = |flag| OpFlag(circuit_flags[flag]);
         Ok(Self {
@@ -100,19 +92,17 @@ impl WitnessBundle for SpartanOuterRow {
                 instruction_flags[InstructionFlags::Branch] && lookup_output == 1,
             ),
             pc: Pc(pc),
-            unexpanded_pc: UnexpandedPc(row.instruction.address as u64),
-            imm: Imm(row.instruction.operands.imm),
+            unexpanded_pc: UnexpandedPc(row.unexpanded_pc()),
+            imm: Imm(row.imm()),
             ram_address: RamAddress(ram_address),
-            rs1_value: Rs1Value(row.registers.rs1.map_or(0, |read| read.value)),
-            rs2_value: Rs2Value(row.registers.rs2.map_or(0, |read| read.value)),
-            rd_write_value: RdWriteValue(row.registers.rd.map_or(0, |write| write.post_value)),
+            rs1_value: Rs1Value(row.rs1_value()),
+            rs2_value: Rs2Value(row.rs2_value()),
+            rd_write_value: RdWriteValue(row.rd_write_value()),
             ram_read_value: RamReadValue(ram_read_value),
             ram_write_value: RamWriteValue(ram_write_value),
             left_lookup_operand: LeftLookupOperand(left_lookup_operand),
             right_lookup_operand: RightLookupOperand(right_lookup_operand),
-            next_unexpanded_pc: NextUnexpandedPc(
-                next.map_or(0, |row| row.instruction.address as u64),
-            ),
+            next_unexpanded_pc: NextUnexpandedPc(next.map_or(0, TraceRow::unexpanded_pc)),
             next_pc: NextPc(next_pc),
             next_is_virtual: NextIsVirtual(
                 next_flags.is_some_and(|flags| flags[CircuitFlags::VirtualInstruction]),
