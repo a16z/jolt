@@ -109,6 +109,13 @@ struct RamValCheckKernel<F: Field> {
     lt: SplitLt<F>,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(RamValCheckKernel, |kernel| {
+    crate::backend::poly_heap_bytes(&kernel.inc)
+        + kernel.ra.heap_bytes(|source| source.columns.heap_bytes())
+        + kernel.lt.heap_bytes()
+});
+
 impl<F: Field> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);

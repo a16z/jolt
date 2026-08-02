@@ -90,6 +90,11 @@ struct OptimizedRamHammingBooleanityKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedRamHammingBooleanityKernel, |kernel| {
+    kernel.eq.heap_bytes() + crate::backend::poly_heap_bytes(&kernel.hamming)
+});
+
 impl<F: Field> OptimizedRamHammingBooleanityKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.eq.bind(challenge);

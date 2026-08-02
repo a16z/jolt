@@ -298,6 +298,17 @@ struct OptimizedBooleanityAddressKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedBooleanityAddressKernel, |kernel| {
+    use crate::backend::{
+        nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
+    };
+    vec_heap_bytes(&kernel.gamma_weights)
+        + polys_heap_bytes(&kernel.linear)
+        + nested_vec_heap_bytes(&kernel.squared)
+        + poly_heap_bytes(&kernel.eq_address)
+});
+
 impl<F: Field> OptimizedBooleanityAddressKernel<F> {
     fn new(rounds: usize, gamma: F, reference_address: &[F], masses: Vec<Vec<F>>) -> Self {
         let linear: Vec<Polynomial<F>> = masses.into_iter().map(Polynomial::new).collect();
@@ -566,6 +577,17 @@ struct OptimizedBooleanityCycleKernel<F: Field> {
     layout: JoltRaPolynomialLayout,
     rounds_bound: usize,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedBooleanityCycleKernel, |kernel| {
+    use crate::backend::{arc_vec_heap_bytes, vec_heap_bytes};
+    kernel.eq.heap_bytes()
+        + kernel.tables.heap_bytes(|source| {
+            arc_vec_heap_bytes(&source.rows) + vec_heap_bytes(&source.selectors)
+        })
+        + vec_heap_bytes(&kernel.gamma_powers)
+        + vec_heap_bytes(&kernel.gamma_powers_inv)
+});
 
 impl<F: Field> OptimizedBooleanityCycleKernel<F> {
     fn bind(&mut self, challenge: F) {

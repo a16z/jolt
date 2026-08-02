@@ -276,6 +276,35 @@ struct RaReductionKernel<F: Field> {
     phase: Phase<F>,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(RaReductionKernel, |kernel| {
+    use crate::backend::vec_heap_bytes;
+    match &kernel.phase {
+        Phase::Prefix {
+            p,
+            q,
+            eq_hi,
+            columns,
+            eq_address,
+            r_cycle_lo,
+            challenges,
+        } => {
+            p.iter()
+                .chain(q)
+                .chain(eq_hi)
+                .chain(r_cycle_lo)
+                .map(vec_heap_bytes)
+                .sum::<usize>()
+                + columns.heap_bytes()
+                + vec_heap_bytes(eq_address)
+                + vec_heap_bytes(challenges)
+        }
+        Phase::Suffix { h, eq_hi, .. } => {
+            vec_heap_bytes(h) + eq_hi.iter().map(vec_heap_bytes).sum::<usize>()
+        }
+    }
+});
+
 impl<F: Field> RaReductionKernel<F> {
     fn bind(&mut self, r: F) {
         self.rounds_bound += 1;

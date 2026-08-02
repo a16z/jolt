@@ -367,6 +367,22 @@ struct SpartanOuterCarry<F: Field> {
     t1_values: Vec<F>,
 }
 
+#[cfg(feature = "allocative")]
+impl RowsStore {
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Owned(_) => 0,
+            Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
+        }
+    }
+}
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(SpartanOuterCarry, |carry| {
+    use crate::backend::vec_heap_bytes;
+    vec_heap_bytes(&carry.tau) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
+});
+
 /// Where the kernel's typed rows live. A slice-backed witness serves an
 /// owning handle and every pass re-extracts its windows on the fly — the
 /// materialized row vector (~176 B × T, the prover's peak allocation at
@@ -610,6 +626,25 @@ struct OuterRemainderKernel<F: Field> {
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OuterRemainderKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    poly_heap_bytes(&kernel.az)
+        + poly_heap_bytes(&kernel.bz)
+        + vec_heap_bytes(&kernel.scratch)
+        + kernel.split_eq.heap_bytes()
+        + vec_heap_bytes(&kernel.challenges)
+        + kernel.rows.heap_bytes()
+        + vec_heap_bytes(&kernel.opening_ids)
+        + kernel
+            .derived
+            .az_weights
+            .iter()
+            .chain(&kernel.derived.bz_weights)
+            .map(vec_heap_bytes)
+            .sum::<usize>()
+});
 
 impl<F: Field> OuterRemainderKernel<F> {
     fn prepare(

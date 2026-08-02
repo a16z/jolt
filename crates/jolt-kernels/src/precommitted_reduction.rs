@@ -241,7 +241,7 @@ pub struct PrecommittedReductionCarry<F, R> {
 #[cfg(feature = "allocative")]
 impl<F, R> allocative::Allocative for PrecommittedReductionCarry<F, R> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{nested_vec_heap_bytes, vec_heap_bytes};
+        use crate::backend::{poly_heap_bytes, polys_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("reduction"),
@@ -249,15 +249,15 @@ impl<F, R> allocative::Allocative for PrecommittedReductionCarry<F, R> {
         );
         visitor.visit_simple(
             allocative::Key::new("tables.value"),
-            vec_heap_bytes(&self.tables.value),
+            poly_heap_bytes(&self.tables.value),
         );
         visitor.visit_simple(
             allocative::Key::new("tables.eq"),
-            vec_heap_bytes(&self.tables.eq),
+            poly_heap_bytes(&self.tables.eq),
         );
         visitor.visit_simple(
             allocative::Key::new("tables.aux"),
-            nested_vec_heap_bytes(&self.tables.aux),
+            polys_heap_bytes(&self.tables.aux),
         );
         visitor.exit();
     }
@@ -279,7 +279,7 @@ macro_rules! impl_reduction_kernel_allocative {
     ($($kernel:ident),+ $(,)?) => {$(
         impl<F: Field, R> allocative::Allocative for $kernel<F, R> {
             fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-                use crate::backend::{nested_vec_heap_bytes, vec_heap_bytes};
+                use crate::backend::{poly_heap_bytes, polys_heap_bytes};
                 let mut visitor = visitor.enter_self_sized::<Self>();
                 visitor.visit_simple(
                     allocative::Key::new("reduction"),
@@ -287,15 +287,15 @@ macro_rules! impl_reduction_kernel_allocative {
                 );
                 visitor.visit_simple(
                     allocative::Key::new("tables.value"),
-                    vec_heap_bytes(&self.tables.value),
+                    poly_heap_bytes(&self.tables.value),
                 );
                 visitor.visit_simple(
                     allocative::Key::new("tables.eq"),
-                    vec_heap_bytes(&self.tables.eq),
+                    poly_heap_bytes(&self.tables.eq),
                 );
                 visitor.visit_simple(
                     allocative::Key::new("tables.aux"),
-                    nested_vec_heap_bytes(&self.tables.aux),
+                    polys_heap_bytes(&self.tables.aux),
                 );
                 visitor.exit();
             }

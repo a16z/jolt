@@ -145,6 +145,14 @@ struct RamRaVirtualizationKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(RamRaVirtualizationKernel, |kernel| {
+    kernel
+        .folded_ra
+        .heap_bytes(|source| source.columns.heap_bytes())
+        + kernel.gruen.heap_bytes()
+});
+
 impl<F: Field> RamRaVirtualizationKernel<F> {
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.rounds_bound == self.log_t {

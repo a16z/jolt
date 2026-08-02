@@ -224,6 +224,11 @@ pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
     v.capacity() * size_of::<T>()
 }
 
+#[cfg(feature = "allocative")]
+pub(crate) fn arc_vec_heap_bytes<T>(v: &std::sync::Arc<Vec<T>>) -> usize {
+    size_of::<Vec<T>>() + v.capacity() * size_of::<T>()
+}
+
 /// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
 /// inner reservation.
 #[cfg(feature = "allocative")]

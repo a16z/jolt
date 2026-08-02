@@ -27,7 +27,7 @@ use crate::stages::stage7::prove_stage7;
 use crate::stages::stage8::prove_stage8;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-/// Per-stage heap flamegraphs for the profile harness: inert unless the
+/// Per-stage heap snapshots for the profile harness: inert unless the
 /// harness opted in via `jolt_profiling::set_flamegraph_prefix`. The stage's
 /// clear-output carrier is recovered by downcast to the concrete BN254
 /// field (the only production field), so `prove` needs no `Allocative`
@@ -59,7 +59,7 @@ fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn core::any:
         jolt_verifier::stages::stage7::outputs::Stage7ClearOutput<Fr>,
     );
     flamegraph.visit_root(session);
-    jolt_profiling::write_flamegraph_svg(flamegraph, format!("{prefix}{stage}.svg"));
+    jolt_profiling::write_flamegraph_folded(flamegraph, format!("{prefix}{stage}.folded"));
 }
 
 #[cfg(not(feature = "allocative"))]

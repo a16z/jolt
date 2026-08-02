@@ -84,6 +84,11 @@ pub(crate) struct PcRow {
 /// The session key of the shared per-cycle PC scan.
 struct PcRowsKey(Arc<Vec<PcRow>>);
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_allocative!(PcRowsKey, |rows| {
+    crate::backend::arc_vec_heap_bytes(&rows.0)
+});
+
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct PcBundle {
     bytecode_pc: BytecodePc,
@@ -344,6 +349,20 @@ struct AddressKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(AddressKernel, |kernel| {
+    use crate::backend::poly_heap_bytes;
+    kernel
+        .pushforwards
+        .iter()
+        .chain(&kernel.values)
+        .map(poly_heap_bytes)
+        .sum::<usize>()
+        + poly_heap_bytes(&kernel.int_table)
+        + poly_heap_bytes(&kernel.entry_trace)
+        + poly_heap_bytes(&kernel.entry_expected)
+});
+
 impl<F: Field> AddressKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(
@@ -596,6 +615,16 @@ struct CycleKernel<F: Field> {
     output_openings: Vec<JoltOpeningId>,
     rounds_bound: usize,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(CycleKernel, |kernel| {
+    use crate::backend::{arc_vec_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+    kernel
+        .ra
+        .heap_bytes(|source| arc_vec_heap_bytes(&source.rows) + vec_heap_bytes(&source.selectors))
+        + poly_heap_bytes(&kernel.combined)
+        + vec_heap_bytes(&kernel.output_openings)
+});
 
 impl<F: Field> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {

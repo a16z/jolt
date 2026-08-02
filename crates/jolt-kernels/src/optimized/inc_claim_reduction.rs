@@ -119,6 +119,15 @@ struct IncKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(IncKernel, |kernel| {
+    use crate::backend::poly_heap_bytes;
+    poly_heap_bytes(&kernel.ram_inc)
+        + poly_heap_bytes(&kernel.rd_inc)
+        + poly_heap_bytes(&kernel.ram_weights)
+        + poly_heap_bytes(&kernel.rd_weights)
+});
+
 impl<F: Field> IncKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(

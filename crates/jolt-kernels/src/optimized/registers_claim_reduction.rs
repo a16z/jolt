@@ -185,6 +185,29 @@ struct ClaimReductionKernel<F: Field> {
     bound_challenges: Vec<F>,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(ClaimReductionKernel, |kernel| {
+    use crate::backend::vec_heap_bytes;
+    let phase = match &kernel.phase {
+        Phase::PrefixSuffix { p, q } => vec_heap_bytes(p) + vec_heap_bytes(q),
+        Phase::Dense {
+            eq,
+            rd_write_value,
+            rs1_value,
+            rs2_value,
+        } => {
+            vec_heap_bytes(eq)
+                + vec_heap_bytes(rd_write_value)
+                + vec_heap_bytes(rs1_value)
+                + vec_heap_bytes(rs2_value)
+        }
+    };
+    vec_heap_bytes(&kernel.tau)
+        + vec_heap_bytes(&kernel.values)
+        + phase
+        + vec_heap_bytes(&kernel.bound_challenges)
+});
+
 impl<F: Field> ClaimReductionKernel<F> {
     fn rounds_bound(&self) -> usize {
         self.bound_challenges.len()

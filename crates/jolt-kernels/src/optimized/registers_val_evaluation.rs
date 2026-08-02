@@ -196,6 +196,20 @@ struct ValEvaluationKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(ValEvaluationKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    let inc = match &kernel.inc {
+        IncSource::Deferred(_) => 0,
+        IncSource::Ready(table) => poly_heap_bytes(table),
+    };
+    let wa = match &kernel.wa {
+        WaState::Indices { rd, eq_address } => vec_heap_bytes(rd) + vec_heap_bytes(eq_address),
+        WaState::Dense(table) => vec_heap_bytes(table),
+    };
+    inc + wa + kernel.lt.heap_bytes()
+});
+
 impl<F: Field> ValEvaluationKernel<F> {
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         let remaining = self.rounds - self.rounds_bound;

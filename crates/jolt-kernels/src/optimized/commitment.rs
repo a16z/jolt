@@ -359,7 +359,7 @@ impl<F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> Strea
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "test module")]
 

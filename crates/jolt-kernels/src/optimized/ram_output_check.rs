@@ -109,6 +109,16 @@ struct OutputCheckKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OutputCheckKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    kernel.gruen.heap_bytes()
+        + poly_heap_bytes(&kernel.io_mask)
+        + poly_heap_bytes(&kernel.val_io)
+        + poly_heap_bytes(&kernel.val_final)
+        + vec_heap_bytes(&kernel.bind_scratch)
+});
+
 impl<F: Field> OutputCheckKernel<F> {
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.rounds_bound == self.ram_log_k {

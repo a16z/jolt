@@ -122,6 +122,16 @@ pub struct OptimizedInstructionInputKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedInstructionInputKernel, |kernel| {
+    use crate::backend::{polys_heap_bytes, vec_heap_bytes};
+    let state = match &kernel.state {
+        InputState::Native(rows) => vec_heap_bytes(rows),
+        InputState::Dense(polys) => polys_heap_bytes(polys),
+    };
+    state + kernel.gruen.heap_bytes() + vec_heap_bytes(&kernel.bind_scratch)
+});
+
 /// `(value at t = 0, step)` of the pair's linear extension, as exact
 /// integers.
 #[inline]

@@ -230,6 +230,43 @@ struct ShiftKernel<F: Field> {
     bound_challenges: Vec<F>,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(ShiftKernel, |kernel| {
+    use crate::backend::vec_heap_bytes;
+    let phase = match &kernel.phase {
+        Phase::PrefixSuffix { pairs } => pairs
+            .iter()
+            .flat_map(|(p, q)| [p, q])
+            .map(vec_heap_bytes)
+            .sum::<usize>(),
+        Phase::Dense {
+            eq_plus_one_outer,
+            eq_plus_one_product,
+            unexpanded_pc,
+            pc,
+            is_virtual,
+            is_first_in_sequence,
+            is_noop,
+        } => [
+            eq_plus_one_outer,
+            eq_plus_one_product,
+            unexpanded_pc,
+            pc,
+            is_virtual,
+            is_first_in_sequence,
+            is_noop,
+        ]
+        .into_iter()
+        .map(vec_heap_bytes)
+        .sum::<usize>(),
+    };
+    vec_heap_bytes(&kernel.r_outer)
+        + vec_heap_bytes(&kernel.r_product)
+        + vec_heap_bytes(&kernel.rows)
+        + phase
+        + vec_heap_bytes(&kernel.bound_challenges)
+});
+
 impl<F: Field> ShiftKernel<F> {
     fn rounds_bound(&self) -> usize {
         self.bound_challenges.len()

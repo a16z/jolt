@@ -147,6 +147,12 @@ struct SpartanProductCarry<F: Field> {
     t1_values: Vec<F>,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(SpartanProductCarry, |carry| {
+    use crate::backend::vec_heap_bytes;
+    vec_heap_bytes(&carry.tau_low) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
+});
+
 /// Extended-node evaluations of
 /// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
 fn extended_t1_values<F: Field>(
@@ -321,6 +327,18 @@ struct ProductRemainderKernel<F: Field> {
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(ProductRemainderKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    poly_heap_bytes(&kernel.left)
+        + poly_heap_bytes(&kernel.right)
+        + vec_heap_bytes(&kernel.scratch)
+        + kernel.split_eq.heap_bytes()
+        + vec_heap_bytes(&kernel.challenges)
+        + kernel.rows.heap_bytes()
+        + vec_heap_bytes(&kernel.lagrange_weights)
+});
 
 impl<F: Field> ProductRemainderKernel<F> {
     fn prepare(

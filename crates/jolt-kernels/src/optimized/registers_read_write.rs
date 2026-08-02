@@ -133,6 +133,11 @@ impl WitnessBundle for RegisterCycleRow {
 /// the trace to collect them).
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_allocative!(SharedRdIndices, |indices| {
+    crate::backend::vec_heap_bytes(&indices.0)
+});
+
 /// The row-window size of the streaming entry-collection pass (matches
 /// `support::collect_rows`: wide enough to amortize the per-chunk rayon
 /// extraction dispatch).
@@ -897,6 +902,32 @@ struct ReadWriteKernel<F: Field> {
     bound_challenges: Vec<F>,
     rounds_bound: usize,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(ReadWriteKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    let entries = match &kernel.entries {
+        SparseEntries::Indexed {
+            entries,
+            ra_lut,
+            wa_lut,
+        } => {
+            vec_heap_bytes(entries)
+                + vec_heap_bytes(&ra_lut.values)
+                + vec_heap_bytes(&wa_lut.values)
+        }
+        SparseEntries::Direct(entries) => vec_heap_bytes(entries),
+    };
+    entries
+        + kernel.gruen.heap_bytes()
+        + poly_heap_bytes(&kernel.inc)
+        + vec_heap_bytes(&kernel.ra)
+        + vec_heap_bytes(&kernel.wa)
+        + vec_heap_bytes(&kernel.val)
+        + vec_heap_bytes(&kernel.rs1_indices)
+        + vec_heap_bytes(&kernel.rs2_indices)
+        + vec_heap_bytes(&kernel.bound_challenges)
+});
 
 /// Bind one cycle variable of the sparse matrix in place: merge every
 /// adjacent row pair, exact-sized by a dry-run count pass.

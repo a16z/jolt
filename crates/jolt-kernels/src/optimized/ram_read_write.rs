@@ -84,6 +84,19 @@ pub(crate) struct RamReadWriteKernel<F: Field> {
     log_k: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(RamReadWriteKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    let phase = kernel.phase.as_ref().map_or(0, |phase| match phase {
+        Phase::Cycle { matrix, gruen } => vec_heap_bytes(&matrix.entries) + gruen.heap_bytes(),
+        Phase::Address { matrix, merged_eq } => {
+            vec_heap_bytes(&matrix.entries) + poly_heap_bytes(merged_eq)
+        }
+        Phase::Done { merged_eq, .. } => poly_heap_bytes(merged_eq),
+    });
+    phase + poly_heap_bytes(&kernel.inc) + poly_heap_bytes(&kernel.val_init)
+});
+
 fn phase_error<F: Field>() -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
         kind: "RAM read-write phase state",

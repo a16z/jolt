@@ -233,6 +233,14 @@ struct HammingWeightKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(HammingWeightKernel, |kernel| {
+    use crate::backend::{polys_heap_bytes, vec_heap_bytes};
+    polys_heap_bytes(&kernel.g_tables)
+        + polys_heap_bytes(&kernel.weight_tables)
+        + vec_heap_bytes(&kernel.output_openings)
+});
+
 impl<F: Field> HammingWeightKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(

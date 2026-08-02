@@ -115,6 +115,15 @@ pub struct OptimizedInstructionClaimReductionKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedInstructionClaimReductionKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    poly_heap_bytes(&kernel.combined)
+        + vec_heap_bytes(&kernel.rows)
+        + kernel.gruen.heap_bytes()
+        + vec_heap_bytes(&kernel.bound_challenges)
+});
+
 impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
     pub fn new(
         tau_low: &[F],

@@ -38,6 +38,25 @@ pub(crate) struct RamAccessColumns {
     pub post_values: Vec<u64>,
 }
 
+#[cfg(feature = "allocative")]
+impl RamAccessColumns {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::backend::vec_heap_bytes;
+        vec_heap_bytes(&self.addresses)
+            + vec_heap_bytes(&self.pre_values)
+            + vec_heap_bytes(&self.post_values)
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RamAccessColumns {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("heap"), self.heap_bytes());
+        visitor.exit();
+    }
+}
+
 impl RamAccessColumns {
     fn collect<F: Field>(
         witness: &dyn JoltWitnessPlane<F>,

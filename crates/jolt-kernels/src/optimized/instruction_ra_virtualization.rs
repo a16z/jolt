@@ -145,6 +145,16 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedInstructionRaVirtualizationKernel, |kernel| {
+    use crate::backend::{arc_vec_heap_bytes, vec_heap_bytes};
+    vec_heap_bytes(&kernel.gamma_powers_inv)
+        + kernel
+            .folded_ra
+            .heap_bytes(|source| arc_vec_heap_bytes(&source.rows))
+        + kernel.gruen.heap_bytes()
+});
+
 impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
     pub(crate) fn new(
