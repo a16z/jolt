@@ -11,6 +11,8 @@
 //!              | peak_memory_gib       (max over memory samples in the root span)
 //!              | total:<span-label>    (inclusive time summed over all instances, seconds)
 //!              | self:<span-label>     (exclusive time summed over all instances, seconds)
+//!              | heap:<snapshot>       (allocative snapshot total, exact bytes)
+//!              | heap:<snapshot>:<root> (one root frame's bytes; root is verbatim)
 //! ```
 //!
 //! Parsing splits on the first three `:` only — everything after the third
@@ -57,6 +59,13 @@ pub enum TelemetryMetric {
     Total(&'static str),
     /// Exclusive time of one span label summed over all instances, seconds.
     SelfTime(&'static str),
+    /// Live bytes in one allocative mid-stage snapshot (e.g.
+    /// `Stage2Batch_prepared`): the whole snapshot, or one root frame (a
+    /// kernel type name, verbatim — it may contain `:`) within it.
+    Heap {
+        snapshot: &'static str,
+        root: Option<&'static str>,
+    },
 }
 
 /// One parsed `telemetry:<workload>:<metric>` objective.
@@ -167,6 +176,20 @@ impl TelemetryObjective {
                     TelemetryMetric::Total(intern(label))
                 } else if let Some(label) = other.strip_prefix("self:") {
                     TelemetryMetric::SelfTime(intern(label))
+                } else if let Some(rest) = other.strip_prefix("heap:") {
+                    let (snapshot, root) = match rest.split_once(':') {
+                        Some((snapshot, root)) => (snapshot, Some(root)),
+                        None => (rest, None),
+                    };
+                    if snapshot.is_empty() {
+                        return Err(MeasurementError::new(format!(
+                            "empty heap snapshot label in {key}"
+                        )));
+                    }
+                    TelemetryMetric::Heap {
+                        snapshot: intern(snapshot),
+                        root: root.map(intern),
+                    }
                 } else {
                     return Err(MeasurementError::new(format!(
                         "unknown telemetry metric {other:?} in {key}"
@@ -199,7 +222,14 @@ impl TelemetryObjective {
             | TelemetryMetric::Total(_)
             | TelemetryMetric::SelfTime(_) => Some("s"),
             TelemetryMetric::PeakRssGib | TelemetryMetric::PeakMemoryGib => Some("GiB"),
+            TelemetryMetric::Heap { .. } => Some("bytes"),
         }
+    }
+
+    /// Heap metrics read the allocative lane's snapshots, so their profile
+    /// run must build with the `allocative` feature.
+    pub fn needs_allocative(&self) -> bool {
+        matches!(self.metric, TelemetryMetric::Heap { .. })
     }
 
     /// The explicit scale `measure` passes to the profile bin.
@@ -210,13 +240,24 @@ impl TelemetryObjective {
             .map_or(16, |(_, scale)| *scale)
     }
 
-    /// The summary artifact path a profile run leaves under `work_dir` —
-    /// deterministic because this objective chose the workload and scale.
-    pub fn summary_path(&self, work_dir: &Path) -> std::path::PathBuf {
-        work_dir.join(format!(
-            "benchmark-runs/perfetto_traces/modular_{}_{}.summary.json",
+    /// The trace name this objective's profile run uses (also the suffix of
+    /// its per-run directories and `latest_` link).
+    fn trace_name(&self) -> String {
+        format!(
+            "modular_{}_{}",
             self.workload.replace('-', "_"),
             self.scale()
+        )
+    }
+
+    /// The summary artifact path a profile run leaves under `work_dir` —
+    /// deterministic because this objective chose the workload and scale,
+    /// and because the harness flips the `latest_{trace_name}` link to the
+    /// run's timestamped directory only on success.
+    pub fn summary_path(&self, work_dir: &Path) -> std::path::PathBuf {
+        work_dir.join(format!(
+            "benchmark-runs/latest_{}/summary.json",
+            self.trace_name()
         ))
     }
 
@@ -225,20 +266,39 @@ impl TelemetryObjective {
     /// artifact path is cwd-relative by design). One run serves every
     /// objective sharing this workload — see [`Self::extract_from_dir`].
     ///
-    /// Any summary a previous run left at the deterministic path is removed
-    /// first, so a failed run can never expose a stale candidate's
-    /// measurements to a later [`Self::extract_from_dir`].
+    /// Any `latest_` link a previous run left is removed first, so a failed
+    /// run can never expose a previous candidate's artifacts to a later
+    /// [`Self::extract_from_dir`] (the harness re-points the link only after
+    /// a run completes).
     pub fn run_profile_in(&self, work_dir: &Path) -> Result<(), MeasurementError> {
-        let stale = self.summary_path(work_dir);
+        self.run_profile_in_with(work_dir, self.needs_allocative())
+    }
+
+    /// [`run_profile_in`](Self::run_profile_in) with the allocative lane
+    /// explicitly on or off. `optimize` shares one profile run across every
+    /// objective of a workload, so it ORs their
+    /// [`needs_allocative`](Self::needs_allocative) — a time metric's value
+    /// is unaffected by the lane beyond its (noise-level) snapshot cost.
+    pub fn run_profile_in_with(
+        &self,
+        work_dir: &Path,
+        allocative: bool,
+    ) -> Result<(), MeasurementError> {
+        let stale = work_dir.join(format!("benchmark-runs/latest_{}", self.trace_name()));
         if let Err(e) = std::fs::remove_file(&stale) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 return Err(MeasurementError::new(format!(
-                    "removing stale summary {}: {e}",
+                    "removing stale latest link {}: {e}",
                     stale.display()
                 )));
             }
         }
         let scale = self.scale().to_string();
+        let features = if allocative {
+            "profiling,allocative"
+        } else {
+            "profiling"
+        };
         let status = Command::new("cargo")
             .current_dir(work_dir)
             .args([
@@ -247,7 +307,7 @@ impl TelemetryObjective {
                 "-p",
                 "jolt-prover",
                 "--features",
-                "profiling",
+                features,
                 "--bin",
                 "jolt-prover",
                 "--",
@@ -337,6 +397,41 @@ impl TelemetryObjective {
                         ))
                     })
             }
+            TelemetryMetric::Heap { snapshot, root } => {
+                let entry = summary
+                    .get("heap")
+                    .and_then(|heap| heap.get(snapshot))
+                    .ok_or_else(|| {
+                        MeasurementError::new(format!(
+                            "heap snapshot {snapshot:?} absent from summary (key {}); the \
+                             profile run must include the allocative lane, and absent \
+                             snapshots are an error, never 0.0",
+                            self.key
+                        ))
+                    })?;
+                match root {
+                    None => entry
+                        .get("total_bytes")
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| {
+                            MeasurementError::new(format!(
+                                "heap snapshot {snapshot:?} has no total_bytes (key {})",
+                                self.key
+                            ))
+                        }),
+                    Some(root) => entry
+                        .get("roots")
+                        .and_then(|roots| roots.get(root))
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| {
+                            MeasurementError::new(format!(
+                                "root frame {root:?} absent from heap snapshot {snapshot:?} \
+                                 (key {}); absent roots are an error, never 0.0",
+                                self.key
+                            ))
+                        }),
+                }
+            }
         }
     }
 }
@@ -374,7 +469,74 @@ mod tests {
         assert!(TelemetryObjective::parse("telemetry:nope:prover_time_s").is_err());
         assert!(TelemetryObjective::parse("telemetry:fibonacci:bogus").is_err());
         assert!(TelemetryObjective::parse("telemetry:fibonacci").is_err());
+        assert!(TelemetryObjective::parse("telemetry:fibonacci:heap:").is_err());
         assert!(TelemetryObjective::parse("callgrind:x:instructions").is_err());
+    }
+
+    #[test]
+    fn parses_heap_metrics_with_verbatim_roots() {
+        let total =
+            TelemetryObjective::parse("telemetry:fibonacci:heap:Stage2Batch_prepared").unwrap();
+        assert_eq!(
+            total.metric,
+            TelemetryMetric::Heap {
+                snapshot: "Stage2Batch_prepared",
+                root: None
+            }
+        );
+        assert!(total.needs_allocative());
+        assert_eq!(total.units(), Some("bytes"));
+
+        // The root frame is verbatim after the snapshot's colon — kernel
+        // type names contain `::` and generics.
+        let root = TelemetryObjective::parse(
+            "telemetry:fibonacci:heap:Stage2Batch_prepared:NaiveSumcheckProver<Fr, RamReadWriteChecking<Fr>>",
+        )
+        .unwrap();
+        assert_eq!(
+            root.metric,
+            TelemetryMetric::Heap {
+                snapshot: "Stage2Batch_prepared",
+                root: Some("NaiveSumcheckProver<Fr, RamReadWriteChecking<Fr>>")
+            }
+        );
+
+        let time = TelemetryObjective::parse("telemetry:fibonacci:prover_time_s").unwrap();
+        assert!(!time.needs_allocative());
+    }
+
+    #[test]
+    fn heap_extraction_reads_totals_and_roots_and_errors_on_absence() {
+        let summary: Value = serde_json::json!({
+            "schema_version": 1,
+            "heap": {
+                "Stage2Batch_prepared": {
+                    "total_bytes": 8_596_875_264u64,
+                    "roots": {
+                        "KernelA": 8_594_128_896u64,
+                        "ProofSession": 48u64,
+                    }
+                }
+            }
+        });
+        let total =
+            TelemetryObjective::parse("telemetry:fibonacci:heap:Stage2Batch_prepared").unwrap();
+        assert_eq!(total.extract(&summary).unwrap(), 8_596_875_264.0);
+        let root =
+            TelemetryObjective::parse("telemetry:fibonacci:heap:Stage2Batch_prepared:KernelA")
+                .unwrap();
+        assert_eq!(root.extract(&summary).unwrap(), 8_594_128_896.0);
+
+        let absent_snapshot =
+            TelemetryObjective::parse("telemetry:fibonacci:heap:Stage9_prepared").unwrap();
+        assert!(absent_snapshot.extract(&summary).is_err());
+        let absent_root =
+            TelemetryObjective::parse("telemetry:fibonacci:heap:Stage2Batch_prepared:KernelB")
+                .unwrap();
+        assert!(absent_root.extract(&summary).is_err());
+        // An allocative-less run serializes "heap": {} — still an error.
+        let lane_off: Value = serde_json::json!({ "schema_version": 1, "heap": {} });
+        assert!(total.extract(&lane_off).is_err());
     }
 
     #[test]
@@ -438,7 +600,7 @@ mod tests {
         let obj = TelemetryObjective::parse("telemetry:sha2-chain:prover_time_s").unwrap();
         assert_eq!(
             obj.summary_path(Path::new("/work")),
-            Path::new("/work/benchmark-runs/perfetto_traces/modular_sha2_chain_22.summary.json")
+            Path::new("/work/benchmark-runs/latest_modular_sha2_chain_22/summary.json")
         );
     }
 }

@@ -79,6 +79,14 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
       - name: cargo clippy -p jolt-prover-legacy --features akita
         run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
+      # The profiling feature gates the profile harness bin and smoke test.
+      # The smoke test cannot RUN in CI yet (reference-backend memory — see
+      # the NOTE above the legacy test jobs), but everything behind the
+      # feature must keep compiling. Lint it in both flamegraph modes.
+      - name: cargo clippy -p jolt-prover --features profiling
+        run: cargo clippy -p jolt-prover --all-targets --features profiling
+      - name: cargo clippy -p jolt-prover --features profiling,allocative
+        run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.

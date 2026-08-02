@@ -3663,7 +3663,6 @@ name = "jolt-profiling"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "inferno 0.12.6",
  "libc",
  "memory-stats",
  "pprof",
@@ -3699,6 +3698,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "bincode 2.0.1",
+ "chrono",
  "clap",
  "common",
  "jolt-blindfold",

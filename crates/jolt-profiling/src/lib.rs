@@ -9,7 +9,7 @@
 //!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
 //!   rewritten into native Perfetto counter tracks at flush (`summary::finalize_trace`).
 //! - **Flush-time summary** — `summary::finalize_trace` renders the chrome trace's
-//!   span stream into a machine-queryable `{trace_name}.summary.json` (see the
+//!   span stream into a machine-queryable `summary.json` next to the trace (see the
 //!   `taxonomy` module for the normative span schema).
 //! - **CPU profiling** (`pprof` feature) — scoped `pprof` guards that write `.pb`
 //!   flamegraph files on drop.
@@ -62,6 +62,9 @@ pub mod stage_memory;
 #[cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 pub mod summary;
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
+pub mod memory_viz;
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
 pub mod monitor;
 
@@ -71,12 +74,13 @@ mod pprof_guard;
 pub mod flamegraph;
 #[cfg(feature = "allocative")]
 pub use flamegraph::{
-    flamegraph_prefix, print_data_structure_heap_usage, set_flamegraph_prefix, write_flamegraph_svg,
+    flamegraph_prefix, print_data_structure_heap_usage, set_flamegraph_prefix,
+    write_flamegraph_folded,
 };
 
 mod units;
 
-pub use setup::{setup_tracing, TracingFormat, TracingGuards};
+pub use setup::{setup_tracing, setup_tracing_with_trace_path, TracingFormat, TracingGuards};
 pub use units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
 
 #[cfg(not(target_arch = "wasm32"))]

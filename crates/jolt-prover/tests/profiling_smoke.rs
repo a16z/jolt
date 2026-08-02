@@ -35,9 +35,29 @@ fn profile_run_emits_conformant_artifacts() {
 
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");
-    assert!(trace_path.ends_with("benchmark-runs/perfetto_traces/modular_fibonacci_13.json"));
+    // Artifacts are grouped into a per-run directory
+    // (benchmark-runs/{timestamp}_modular_fibonacci_13/), with the
+    // `latest_` link pointing at this run; the directory name carries the
+    // run identity, so the files inside use fixed names.
+    assert_eq!(trace_path.file_name().unwrap(), "trace.json");
+    assert_eq!(summary_path.file_name().unwrap(), "summary.json");
+    assert_eq!(summary_path.parent(), trace_path.parent());
+    let run_dir = trace_path.parent().unwrap();
+    let dir_name = run_dir.file_name().unwrap().to_str().unwrap();
+    let (timestamp, rest) = dir_name.split_at(15);
+    assert_eq!(rest, "_modular_fibonacci_13", "run dir: {dir_name}");
     assert!(
-        summary_path.ends_with("benchmark-runs/perfetto_traces/modular_fibonacci_13.summary.json")
+        timestamp.chars().enumerate().all(|(i, c)| if i == 8 {
+            c == '-'
+        } else {
+            c.is_ascii_digit()
+        }),
+        "timestamp prefix: {timestamp}"
+    );
+    assert_eq!(
+        std::fs::canonicalize("benchmark-runs/latest_modular_fibonacci_13").unwrap(),
+        std::fs::canonicalize(run_dir).unwrap(),
+        "latest link resolves to this run"
     );
 
     // Both artifacts exist and parse; the summary parses through the strict

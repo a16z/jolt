@@ -20,14 +20,17 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 | `sha3-chain` | 2^22 |
 | `btreemap` | 2^20 |
 
-Artifacts land in `benchmark-runs/perfetto_traces/` under the current
-working directory, overwriting in place:
+Artifacts are grouped by run: each invocation writes into
+`benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =
+`modular_{workload}_{scale}`, hyphens in the workload mapped to
+underscores), and `benchmark-runs/latest_{trace_name}` is symlinked to the
+newest successful run — the stable path every example below reads. All
+paths are under the current working directory. The directory name carries
+the run identity, so the files inside use fixed names:
 
-- `modular_{workload}_{scale}.json` — chrome trace (hyphens in the workload
-  map to underscores, e.g. `modular_sha2_chain_22.json`). Open in
+- `trace.json` — chrome trace. Open in
   [Perfetto](https://ui.perfetto.dev/) or query with `trace_processor` SQL.
-- `modular_{workload}_{scale}.summary.json` — schema-versioned aggregates
-  (see below).
+- `summary.json` — schema-versioned aggregates (see below).
 
 The run also compiles and traces the guest, proves it, and **verifies the
 proof** as a correctness gate; only `prove()` is measured. The `profiling`
@@ -39,7 +42,7 @@ post-processing step.
 
 The `benchmark` subcommand sweeps workloads across scales — one `profile`
 subprocess per (workload, scale), continuing past failures, with `--resume`
-skipping runs whose result CSV already exists:
+skipping pairs whose `latest_` link already exists:
 
 ```bash
 cargo run --release -p jolt-prover --features profiling -- \
@@ -47,7 +50,8 @@ cargo run --release -p jolt-prover --features profiling -- \
 # --benchmarks fibonacci,sha2-chain limits the workload set
 ```
 
-Results accumulate in `benchmark-runs/results/modular_timings.csv`; render
+Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
+in the run directories); render
 them with:
 
 ```bash
@@ -69,7 +73,7 @@ normative source for label names, level policy, and the hot-loop rule.
 `summary.json` answers the canonical questions with `jq` alone:
 
 ```bash
-S=benchmark-runs/perfetto_traces/modular_sha2_chain_22.summary.json
+S=benchmark-runs/latest_modular_sha2_chain_22/summary.json
 
 # Total prover wallclock (seconds) and dark time (root time not covered by
 # any stage span)
@@ -105,7 +109,7 @@ uv pip install perfetto==0.57.2
 ```python
 from perfetto.trace_processor import TraceProcessor
 
-tp = TraceProcessor(trace="benchmark-runs/perfetto_traces/modular_sha2_chain_22.json")
+tp = TraceProcessor(trace="benchmark-runs/latest_modular_sha2_chain_22/trace.json")
 q = tp.query("""
     SELECT name, COUNT(*) AS n, SUM(dur)/1e9 AS total_s
     FROM slice GROUP BY name ORDER BY total_s DESC LIMIT 15
@@ -144,7 +148,7 @@ cargo run --release -p jolt-prover --features profiling -- \
 cargo run --release -p jolt-prover --features profiling -- \
     profile --name sha2-chain --format chrome
 jq '.root | {s: (.wall_time_ns/1e9), dark: .dark_time_fraction}' \
-    benchmark-runs/perfetto_traces/modular_sha2_chain_22.summary.json
+    benchmark-runs/latest_modular_sha2_chain_22/summary.json
 ```
 
 Budgets: `root.wall_time_ns` (chrome) ≤ 105% of the `--format none` Instant
@@ -152,19 +156,52 @@ measurement, and `dark_time_fraction` ≤ 0.05.
 
 ## Memory profiling (allocative)
 
-With the `allocative` feature, the same profile command additionally emits
-per-stage heap flamegraph SVGs to
-`benchmark-runs/flamegraphs/{trace_name}_stage{N}.svg`, visiting each
-stage's clear-output carrier and the proof session:
+With the `allocative` feature, the same profile command additionally
+captures per-batch heap snapshots and renders the whole memory story as a
+self-contained page:
 
 ```bash
 cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
+open benchmark-runs/latest_modular_fibonacci_13/memory.html
 ```
 
-Caveat: the proof session's cross-stage carries are `Box<dyn Any>` and are
-attributed shallowly (entry count only); the flamegraphs' deep content is
-the stage claim/point carriers.
+**`memory.html`** is the human view — one time axis carrying
+the continuous RSS envelope (the monitor's `memory_gib` counter), the stage
+spans as labeled bands, and at each snapshot instant a stacked composition
+column of the live batch kernels, colored by relation family on one shared
+byte scale, topped with the gray "unattributed" residual up to the envelope
+(allocator retention + unvisited allocations). Click a column for the
+snapshot's full-depth icicle; a table view carries every exact byte count.
+
+The machine views: each snapshot persists as exact-bytes folded-stacks text
+(`{run_dir}/{StageLabel}_prepared.folded`,
+`root;child BYTES` per line), and the per-snapshot totals land in
+`summary.json`'s `heap` section (per-root bytes, keyed by snapshot label),
+so heap attribution is one `jq` away:
+
+```bash
+jq '.heap | map_values({gib: (.total_bytes / 1073741824),
+                        top: (.roots | to_entries | max_by(.value) | .key)})' \
+    benchmark-runs/latest_modular_fibonacci_13/summary.json
+```
+
+One snapshot per driver batch, taken right after every member kernel's
+`prepare`, with all tables materialized and nothing bound yet — **the
+stage's retained-memory peak**.
+This is where the multi-GiB naive kernel tables show up. Every
+`SumcheckKernel` is `MaybeAllocative`, so the live members are visited
+directly, keyed by their concrete kernel type (which names the relation);
+the proof session rides along, its carries attributed by concrete type name
+through the per-entry visitors captured at park time. (End-of-stage
+snapshots were dropped: stage working sets free on exit, so they were
+near-empty by construction — anything genuinely carried across a boundary,
+like the 6b→7 precommitted reduction, appears inside the consuming kernel
+in the *next* stage's `_prepared` snapshot. A lingering RSS plateau after a
+large `_prepared` graph is allocator retention, not live data. Stages 0 and
+8 have no sumcheck batch and therefore no flamegraph — their memory lives
+inside the commit and joint-opening slot calls; use the counter tracks and
+the per-stage RSS table there.)
 
 ## jolt-eval telemetry objectives
 
@@ -177,6 +214,10 @@ available through the opt-in iai-callgrind lane
 ```bash
 cargo run -p jolt-eval --bin measure-objectives -- \
     --objective telemetry:fibonacci:prover_time_s
+# Heap attribution as an objective (builds the profile run with allocative;
+# exact bytes; the root frame after the snapshot label is verbatim):
+cargo run -p jolt-eval --bin measure-objectives -- \
+    --objective telemetry:fibonacci:heap:Stage2Batch_prepared
 ```
 
 ---

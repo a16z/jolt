@@ -156,13 +156,27 @@ impl OptimizeEnv for RealEnv {
         // (`run_profile_in` also clears any stale summary first), so a
         // failed run can never leave later objectives reading a previous
         // candidate's summary.
+        // The workload's single shared run must satisfy every objective that
+        // reads it: enable the allocative lane iff any of them is a heap
+        // metric (a time metric's value is unaffected beyond the lane's
+        // noise-level snapshot cost).
+        let allocative_workloads: std::collections::HashSet<&str> = objectives
+            .iter()
+            .filter_map(|obj| match obj {
+                OptimizationObjective::Telemetry(t) if t.needs_allocative() => Some(t.workload),
+                _ => None,
+            })
+            .collect();
         let mut profiled_workloads: std::collections::HashSet<&str> =
             std::collections::HashSet::new();
         for obj in objectives {
             match obj {
                 OptimizationObjective::Telemetry(t) => {
                     if !profiled_workloads.contains(t.workload) {
-                        if let Err(e) = t.run_profile_in(&self.work_dir) {
+                        if let Err(e) = t.run_profile_in_with(
+                            &self.work_dir,
+                            allocative_workloads.contains(t.workload),
+                        ) {
                             eprintln!("profile run failed for {}: {e}", t.workload);
                             continue;
                         }
@@ -181,7 +195,12 @@ impl OptimizeEnv for RealEnv {
                     }
                     Err(e) => eprintln!("measurement failed for {}: {e}", obj.name()),
                 },
-                _ => {}
+                // Measured by their own channels above (Criterion / static
+                // analysis). Spelled out rather than `_` so a future keyed
+                // objective family fails to compile here instead of being
+                // silently skipped.
+                OptimizationObjective::StaticAnalysis(_)
+                | OptimizationObjective::Performance(_) => {}
             }
         }
 

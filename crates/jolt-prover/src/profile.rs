@@ -1,9 +1,11 @@
 //! The profile harness behind the `profiling` feature: one documented
 //! command proves a named workload on the modular stack and emits both
 //! telemetry artifacts from the same span stream —
-//! `benchmark-runs/perfetto_traces/{trace_name}.json` (Perfetto UI /
-//! `trace_processor` SQL) and `{trace_name}.summary.json` (machine-queryable
-//! aggregates for `jolt-eval` and `jq`).
+//! one per-run directory `benchmark-runs/{timestamp}_{trace_name}/` (with a
+//! `latest_{trace_name}` symlink flipped to it on success) holding
+//! `trace.json` (Perfetto UI / `trace_processor` SQL) and `summary.json`
+//! (machine-queryable aggregates for `jolt-eval` and `jq`) — the directory
+//! name carries the run identity, so the files inside use fixed names.
 //!
 //! ```text
 //! cargo run --release -p jolt-prover --features profiling -- \
@@ -29,7 +31,7 @@
 
 use std::fs;
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::ValueEnum;
@@ -43,8 +45,8 @@ use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
-    format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing, TracingFormat,
-    BYTES_PER_GIB,
+    format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing_with_trace_path,
+    TracingFormat, BYTES_PER_GIB,
 };
 use jolt_program::execution::{
     ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
@@ -228,7 +230,8 @@ pub struct BenchmarkArgs {
     #[clap(long, default_value_t = 21)]
     pub max_scale: u32,
 
-    /// Skip (workload, scale) pairs whose per-run result CSV already exists.
+    /// Skip (workload, scale) pairs whose `latest_` link already exists
+    /// (i.e. some run of that pair completed).
     #[clap(long)]
     pub resume: bool,
 
@@ -312,22 +315,35 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     );
     let _run_lock = RunLock::acquire(&trace_name);
 
-    // Per-stage heap flamegraphs (allocative feature): opt in before the
+    // One directory per run — benchmark-runs/{timestamp}_{trace_name}/ —
+    // holding every artifact the run produces; `latest_{trace_name}` is
+    // flipped to it on success (the stable path consumers read, so history
+    // accumulates without breaking deterministic paths).
+    let run_dir = PathBuf::from(format!(
+        "benchmark-runs/{}_{trace_name}",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
+    fs::create_dir_all(&run_dir).expect("create run directory");
+
+    // Per-batch heap snapshots (allocative feature): opt in before the
     // prove so the cfg-gated hooks inside `prove()` see the prefix.
     #[cfg(feature = "allocative")]
-    {
-        std::fs::create_dir_all("benchmark-runs/flamegraphs")
-            .expect("create flamegraphs directory");
-        jolt_profiling::set_flamegraph_prefix(format!("benchmark-runs/flamegraphs/{trace_name}_"));
-    }
+    jolt_profiling::set_flamegraph_prefix(format!("{}/", run_dir.display()));
 
+    let trace_path = run_dir.join("trace.json");
     let guards = match args.format {
         OutputFormat::None => None,
-        OutputFormat::Default => Some(setup_tracing(&[TracingFormat::Default], &trace_name)),
-        OutputFormat::Chrome => Some(setup_tracing(&[TracingFormat::Chrome], &trace_name)),
+        OutputFormat::Default => Some(setup_tracing_with_trace_path(
+            &[TracingFormat::Default],
+            &trace_path,
+        )),
+        OutputFormat::Chrome => Some(setup_tracing_with_trace_path(
+            &[TracingFormat::Chrome],
+            &trace_path,
+        )),
     };
 
-    run_workload(args.name, scale, args.backend);
+    run_workload(args.name, scale, args.backend, &run_dir);
 
     // The workload's high-water mark, sampled before the flush-time trace
     // parse/rewrite below can inflate it with tooling allocations.
@@ -339,10 +355,10 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
 
     if args.format != OutputFormat::Chrome {
         report_stage_memory();
+        update_latest_link(&trace_name, &run_dir);
         return ProfileArtifacts::default();
     }
 
-    let trace_path = PathBuf::from(format!("benchmark-runs/perfetto_traces/{trace_name}.json"));
     let ctx = SummaryContext {
         workload: args.name.as_str().to_string(),
         scale_log2: scale,
@@ -359,6 +375,11 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
             root.dark_time_fraction * 100.0,
         );
     }
+    update_latest_link(&trace_name, &run_dir);
+    println!(
+        "Run:     {} (-> benchmark-runs/latest_{trace_name})",
+        run_dir.display()
+    );
     println!("Trace:   {}", trace_path.display());
     println!("Summary: {}", summary_file.display());
 
@@ -369,11 +390,30 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     }
 }
 
+/// Points `benchmark-runs/latest_{trace_name}` at this run's directory —
+/// the stable path `jolt-eval` and the documented `jq` queries read.
+/// Flipped only after the run's artifacts are complete; `jolt-eval` removes
+/// the link before spawning a run, so a failed candidate can never expose a
+/// previous run's artifacts.
+fn update_latest_link(trace_name: &str, run_dir: &Path) {
+    let link = PathBuf::from(format!("benchmark-runs/latest_{trace_name}"));
+    let _ = fs::remove_file(&link);
+    let target = run_dir.file_name().expect("run directory has a name");
+    #[cfg(unix)]
+    if let Err(e) = std::os::unix::fs::symlink(target, &link) {
+        eprintln!("warning: could not update {}: {e}", link.display());
+    }
+    // Non-unix: no symlink; consumers fall back to globbing the newest
+    // {timestamp}_{trace_name} directory (timestamps sort lexicographically).
+    #[cfg(not(unix))]
+    let _ = target;
+}
+
 /// Runs the multi-scale benchmark sweep: one `profile` subprocess (this same
 /// executable) per (workload, scale), continuing past failures. Returns
 /// `true` when every run succeeded.
 ///
-/// Results accumulate in `benchmark-runs/results/modular_timings.csv`;
+/// Results accumulate in `benchmark-runs/modular_timings.csv`;
 /// render them with `scripts/benchmark_summary.py`,
 /// `scripts/plot_benchmarks.py`, and `scripts/plot_memory_usage.py`.
 pub fn run_sweep(args: &BenchmarkArgs) -> bool {
@@ -398,10 +438,15 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
         for &workload in &workloads {
             let name = workload.as_str();
             let backend = args.backend.as_str();
-            let result_file =
-                format!("benchmark-runs/results/modular_{name}_{scale}_{backend}.csv");
-            if args.resume && std::path::Path::new(&result_file).exists() {
-                println!("  ⏭ Skipping {name} (found {result_file})");
+            // A completed run flips the `latest_` link, so its presence is
+            // the resume marker (dangling links read as absent).
+            let latest_link = format!(
+                "benchmark-runs/latest_modular_{}_{scale}{}",
+                name.replace('-', "_"),
+                args.backend.trace_suffix()
+            );
+            if args.resume && std::path::Path::new(&latest_link).exists() {
+                println!("  ⏭ Skipping {name} (found {latest_link})");
                 skipped += 1;
                 continue;
             }
@@ -461,12 +506,11 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     failed.is_empty()
 }
 
-fn run_workload(workload: Workload, scale: u32, backend: BackendKind) {
+fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
     let bench_name = workload.as_str();
     let max_trace_length = 1usize << scale;
     let bench_target = (max_trace_length as f64 * SAFETY_MARGIN) as usize;
     tracing::info!("Running modular {bench_name} profile at scale 2^{scale}");
-    fs::create_dir_all("benchmark-runs/results").expect("create results directory");
 
     let input = workload.input(bench_target);
 
@@ -593,14 +637,12 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind) {
         );
     }
 
-    // The legacy harness's 7 CSV fields plus a trailing backend column —
-    // reference and optimized runs at the same benchmark/scale must stay
-    // distinguishable in both the file name and the consolidated rows, or
-    // parity/performance evidence gets misattributed. Field 7
-    // (`proof_size_compressed`) duplicates the raw size exactly as legacy
-    // does — its `prove_example_with_trace` returns `proof_size` for both
-    // fields, the compressed encoding having been retired — so those
-    // columns stay directly comparable across the two harnesses.
+    // The legacy harness's 7 CSV fields plus a trailing backend column, in
+    // the backend-specific run directory. Field 7 (`proof_size_compressed`)
+    // duplicates the raw size exactly as legacy does — its
+    // `prove_example_with_trace` returns `proof_size` for both fields, the
+    // compressed encoding having been retired — so the columns stay
+    // directly comparable across the two harnesses.
     let summary_line = format!(
         "{},{},{:.2},{},{:.2},{},{},{backend_label}\n",
         bench_name,
@@ -611,13 +653,17 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind) {
         proof_size,
         proof_size,
     );
-    let individual_file =
-        format!("benchmark-runs/results/modular_{bench_name}_{scale}_{backend_label}.csv");
+    let individual_file = run_dir.join("timings.csv");
     if let Err(e) = fs::write(&individual_file, &summary_line) {
-        eprintln!("Failed to write individual result file {individual_file}: {e}");
+        eprintln!(
+            "Failed to write individual result file {}: {e}",
+            individual_file.display()
+        );
     }
     // Header on creation: the summary/plot scripts read this by column name.
-    let consolidated = "benchmark-runs/results/modular_timings.csv";
+    // Cross-run by nature, so it lives at the benchmark-runs root rather
+    // than inside any run directory.
+    let consolidated = "benchmark-runs/modular_timings.csv";
     let line = if std::path::Path::new(consolidated).exists() {
         summary_line
     } else {
@@ -670,9 +716,6 @@ fn pad_trace(
     trace_output: TraceOutput<OwnedTrace>,
     trace_length: usize,
 ) -> TraceOutput<OwnedTrace> {
-    // Exact capacity up front: `to_vec` + `resize` would grow amortized,
-    // leaving ~2x the padded length as dead capacity (8.7 GB of heap at
-    // 2^25) and paying an extra whole-trace realloc copy.
     let source = trace_output.trace.rows();
     let mut rows = Vec::with_capacity(trace_length.max(source.len()));
     rows.extend_from_slice(source);

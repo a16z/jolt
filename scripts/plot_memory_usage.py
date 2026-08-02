@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Plot peak memory usage from the modular prover's summary.json artifacts.
 
-Each `jolt-prover profile --format chrome` run leaves a
-`modular_{workload}_{scale}.summary.json` next to its trace; this script
-reads the getrusage peak (`peak_rss_gib`, falling back to the sampled
-`root.peak_memory_gib`) from each and plots peak memory vs scale.
+Each `jolt-prover profile --format chrome` run leaves a `summary.json` in
+its run directory (read through the `latest_*` links); this script reads
+the getrusage peak (`peak_rss_gib`, falling back to the sampled
+`root.peak_memory_gib`) and the run identity (`run.workload`,
+`run.scale_log2`) from each and plots peak memory vs scale.
 """
 
 import json
@@ -43,11 +44,13 @@ NICE_NAMES = {
 }
 
 
-def extract_peak_memory_from_summary(summary_path):
-    """Extract peak memory usage (in GiB) from a summary.json artifact.
+def read_summary_point(summary_path):
+    """Read (benchmark_name, scale, peak_memory_gib) from a summary.json.
 
-    Prefers the process-lifetime getrusage high-water mark (`peak_rss_gib`);
-    falls back to the sampled prove-window peak (`root.peak_memory_gib`).
+    Run identity comes from the summary's `run` metadata. Peak memory
+    prefers the process-lifetime getrusage high-water mark (`peak_rss_gib`),
+    falling back to the sampled prove-window peak (`root.peak_memory_gib`).
+    Returns None if identity or peak memory is missing.
     """
     try:
         with open(summary_path, 'r') as f:
@@ -56,33 +59,20 @@ def extract_peak_memory_from_summary(summary_path):
         print(f"Warning: Could not read {summary_path}: {e}", file=sys.stderr)
         return None
 
+    run = summary.get("run") or {}
+    benchmark_name = run.get("workload")
+    scale = run.get("scale_log2")
+    if benchmark_name is None or scale is None:
+        print(f"Warning: no run identity in {summary_path}", file=sys.stderr)
+        return None
+
     peak = summary.get("peak_rss_gib")
     if peak is None:
         peak = (summary.get("root") or {}).get("peak_memory_gib")
     if peak is None:
         print(f"Warning: no peak memory in {summary_path}", file=sys.stderr)
-    return peak
-
-
-def parse_summary_filename(filename):
-    """Parse benchmark name and scale from a summary filename.
-
-    Expected format: modular_{benchmark}_{scale}.summary.json (underscores in
-    {benchmark} map back to the hyphenated workload name).
-    Returns: (benchmark_name, scale) or None if parsing fails
-    """
-    stem = Path(filename).name
-    if not (stem.startswith("modular_") and stem.endswith(".summary.json")):
         return None
-    stem = stem[len("modular_"):-len(".summary.json")]
-    parts = stem.rsplit('_', 1)
-    if len(parts) == 2:
-        benchmark_name, scale_str = parts
-        try:
-            return benchmark_name.replace('_', '-'), int(scale_str)
-        except ValueError:
-            pass
-    return None
+    return benchmark_name, scale, peak
 
 
 def load_memory_data(traces_dir):
@@ -97,22 +87,18 @@ def load_memory_data(traces_dir):
         print(f"Error: Traces directory not found at {traces_dir}")
         return dict(data)
 
-    summary_files = sorted(traces_dir.glob("*.summary.json"))
+    # One summary per (workload, scale): read through the latest_* links
+    # so superseded runs in timestamped directories are not double-counted.
+    summary_files = sorted(traces_dir.glob("latest_*/summary.json"))
 
     if not summary_files:
         print(f"Warning: No summary files found in {traces_dir}", file=sys.stderr)
         return dict(data)
 
     for summary_file in summary_files:
-        parsed = parse_summary_filename(summary_file.name)
-        if not parsed:
-            print(f"Warning: Could not parse filename {summary_file.name}, skipping", file=sys.stderr)
-            continue
-
-        benchmark_name, scale = parsed
-        peak_memory = extract_peak_memory_from_summary(summary_file)
-
-        if peak_memory is not None:
+        point = read_summary_point(summary_file)
+        if point is not None:
+            benchmark_name, scale, peak_memory = point
             data[benchmark_name].append((scale, peak_memory))
 
     return dict(data)
@@ -171,8 +157,8 @@ def create_memory_plot(data, output_path):
 def main():
     parser = argparse.ArgumentParser(
         description='Generate memory usage plot from summary.json artifacts')
-    parser.add_argument('--traces-dir', default='benchmark-runs/perfetto_traces',
-                        help='Directory containing *.summary.json artifacts')
+    parser.add_argument('--traces-dir', default='benchmark-runs',
+                        help='Directory containing latest_*/summary.json artifacts')
     parser.add_argument('--output-dir', default='benchmark-runs',
                         help='Directory to save the output plot')
     parser.add_argument('--output-name', default='memory_usage_plot.html',

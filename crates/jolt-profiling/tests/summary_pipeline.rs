@@ -2,13 +2,13 @@
 //! conversion, aggregation semantics (self time, dark time, stage windows),
 //! trace/summary consistency, and schema drift.
 
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 #![expect(clippy::unwrap_used)]
 
 use jolt_profiling::stage_memory::StageMemoryRow;
 use jolt_profiling::summary::{
-    build_summary, convert_counter_events, summary_path, ProfileSummary, SummaryContext,
-    SUMMARY_SCHEMA_JSON,
+    build_summary, convert_counter_events, parse_folded, summary_path, ProfileSummary,
+    SummaryContext, SUMMARY_SCHEMA_JSON,
 };
 use jolt_profiling::taxonomy;
 use serde_json::Value;
@@ -44,6 +44,15 @@ fn fixture_summary(events: &[Value]) -> ProfileSummary {
         Some(4 * GIB as u64),
         1_700_000_000,
         Some("abc1234".to_string()),
+        // Exercise the heap section through the same strict-schema tests:
+        // one snapshot parsed from a folded-stacks blob, as the allocative
+        // lane would supply.
+        [(
+            "Stage2Batch_prepared".to_string(),
+            parse_folded("KernelA;opening_tables 6442450944\nKernelA;derived_tables 2147483648\nProofSession 1024\n"),
+        )]
+        .into_iter()
+        .collect(),
     )
 }
 
@@ -60,9 +69,21 @@ fn counter_events_convert_to_chrome_counter_tracks() {
         .collect();
     assert_eq!(counters.len(), 4);
     assert_eq!(converted.len(), original_len - 3 + 4);
-    assert!(converted
-        .iter()
-        .all(|e| e.get("ph").and_then(Value::as_str) != Some("i")));
+    // No raw counter instants survive; non-counter instants (the
+    // `heap_snapshot` marker) pass through untouched.
+    assert!(converted.iter().all(|e| {
+        e.get("args")
+            .and_then(Value::as_object)
+            .is_none_or(|args| !args.keys().any(|k| k.starts_with("counters.")))
+    }));
+    assert_eq!(
+        converted
+            .iter()
+            .filter(|e| e.get("ph").and_then(Value::as_str) == Some("i"))
+            .count(),
+        1,
+        "the heap_snapshot instant survives conversion"
+    );
 
     let memory: Vec<&Value> = counters
         .iter()
@@ -225,7 +246,15 @@ fn repeated_stage_labels_pair_rows_by_occurrence() {
             rss_close_bytes: 5 * GIB as u64,
         },
     ];
-    let summary = build_summary(&events, &fixture_context(), &rows, None, 0, None);
+    let summary = build_summary(
+        &events,
+        &fixture_context(),
+        &rows,
+        None,
+        0,
+        None,
+        Default::default(),
+    );
 
     assert_eq!(summary.stages.len(), 2);
     // First close (100→200µs) gets row 0, second (300→700µs) row 1.
@@ -251,7 +280,7 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let trace_path = dir.join("modular_fibonacci_16.json");
+    let trace_path = dir.join("trace.json");
     std::fs::write(&trace_path, FIXTURE).unwrap();
 
     let (out_path, summary) = jolt_profiling::summary::finalize_trace(
@@ -263,12 +292,15 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
 
     assert_eq!(out_path, summary_path(&trace_path));
     assert_eq!(summary.peak_rss_gib, Some(4.0));
-    // The rewrite converted every counter instant into a "C" event.
+    // The rewrite converted every counter instant into a "C" event
+    // (non-counter instants like `heap_snapshot` pass through).
     let rewritten: Vec<Value> =
         serde_json::from_str(&std::fs::read_to_string(&trace_path).unwrap()).unwrap();
-    assert!(rewritten
-        .iter()
-        .all(|e| e.get("ph").and_then(Value::as_str) != Some("i")));
+    assert!(rewritten.iter().all(|e| {
+        e.get("args")
+            .and_then(Value::as_object)
+            .is_none_or(|args| !args.keys().any(|k| k.starts_with("counters.")))
+    }));
     // Atomic replacement leaves no temp files behind.
     assert!(std::fs::read_dir(&dir).unwrap().all(|entry| !entry
         .unwrap()
@@ -293,6 +325,19 @@ fn summary_round_trips_through_strict_schema_structs() {
     assert_eq!(reparsed.spans.len(), summary.spans.len());
 }
 
+/// The driver's `heap_snapshot` instant events situate each snapshot on the
+/// trace clock: the fixture fires one for `Stage2Batch_prepared` at
+/// 1350 µs, and the root opens at 0 — so the joined `at_ns` is 1.35 ms.
+#[test]
+fn heap_snapshots_join_their_instant_events() {
+    let summary = fixture_summary(&fixture_events());
+    assert_eq!(
+        summary.heap["Stage2Batch_prepared"].at_ns,
+        Some(1_350_000),
+        "snapshot instant joins by label, ns since the root span opened"
+    );
+}
+
 /// Drift lock between the serde structs (normative) and the checked-in JSON
 /// Schema. Regenerate with:
 /// `JOLT_UPDATE_SUMMARY_SCHEMA=1 cargo nextest run -p jolt-profiling schema`
@@ -314,8 +359,19 @@ fn checked_in_schema_matches_structs() {
 fn summary_path_derives_from_trace_path() {
     assert_eq!(
         summary_path(std::path::Path::new(
-            "benchmark-runs/perfetto_traces/modular_fibonacci_16.json"
+            "benchmark-runs/20260801-000000_modular_fibonacci_16/trace.json"
         )),
-        std::path::Path::new("benchmark-runs/perfetto_traces/modular_fibonacci_16.summary.json")
+        std::path::Path::new("benchmark-runs/20260801-000000_modular_fibonacci_16/summary.json")
     );
+}
+
+#[test]
+fn folded_stacks_parse_into_per_root_totals() {
+    let snapshot = parse_folded(
+        "KernelA;opening_tables 100\nKernelA;derived_tables 50\nProofSession 8\nnot a folded line\n",
+    );
+    assert_eq!(snapshot.total_bytes, 158);
+    assert_eq!(snapshot.roots["KernelA"], 150);
+    assert_eq!(snapshot.roots["ProofSession"], 8);
+    assert_eq!(snapshot.roots.len(), 2);
 }

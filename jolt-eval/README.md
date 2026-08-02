@@ -57,7 +57,8 @@ telemetry pipeline (see `book/src/usage/profiling/zkvm_profiling.md`):
 measurement runs `cargo run --release -p jolt-prover --features profiling --
 profile --name <workload> --scale <scale> --format chrome` as a subprocess in
 the work dir and reads the metric from
-`benchmark-runs/perfetto_traces/modular_{workload}_{scale}.summary.json`.
+`benchmark-runs/latest_modular_{workload}_{scale}/summary.json` (through the
+symlink the profile harness flips to the newest successful run).
 Key grammar, pinned:
 
 ```text
@@ -68,6 +69,8 @@ telemetry:<workload>:<metric>
              | peak_memory_gib       (max over memory samples in the root span)
              | total:<span-label>    (inclusive time summed over all instances, seconds)
              | self:<span-label>     (exclusive time summed over all instances, seconds)
+             | heap:<snapshot>       (allocative mid-stage snapshot total, exact bytes)
+             | heap:<snapshot>:<root> (one root frame's bytes; root is verbatim, may contain ':')
 ```
 
 Everything after the third colon is the **verbatim span label and may itself
@@ -76,7 +79,12 @@ optimization agent can target any span it discovers in a trace without
 editing `jolt-eval`. Measurement uses each workload's scale from the
 normative table in `src/objective/telemetry.rs` (fibonacci 2^16, sha2-chain
 2^22, sha3-chain 2^22, btreemap 2^20). A key referencing a label absent from
-the summary is a **measurement error, never 0.0**.
+the summary is a **measurement error, never 0.0**. `heap:` metrics build the
+profile subprocess with the `allocative` feature automatically (the
+optimizer's shared per-workload run enables it when any sharer needs it) and
+report exact bytes; snapshot labels are the flamegraph names
+(`Stage2Batch_prepared`, …) and root frames are the kernel type names from
+the summary's `heap` section.
 
 ```bash
 cargo run -p jolt-eval --bin measure-objectives -- \

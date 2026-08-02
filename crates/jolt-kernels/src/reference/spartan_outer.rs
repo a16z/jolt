@@ -39,8 +39,42 @@ use crate::{
 };
 use jolt_witness::JoltWitnessPlane;
 
+// Size arithmetic rather than a derive: a derive would demand
+// `F: Allocative` of the generic `UniskipKernel` impl below that parks this
+// kernel. Field elements are flat, so the tables size exactly; the
+// constraint templates (`matrices`) are cycle-independent and tiny, counted
+// at their spine size via `enter_self_sized`.
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanOuterKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{nested_vec_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
+        visitor.visit_simple(
+            allocative::Key::new("input_tables"),
+            nested_vec_heap_bytes(&self.input_tables),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("az_rows"),
+            nested_vec_heap_bytes(&self.az_rows),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("bz_rows"),
+            nested_vec_heap_bytes(&self.bz_rows),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("eq_table"),
+            vec_heap_bytes(&self.eq_table),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
-    #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::prepare")]
+    // The backend-neutral `SpartanOuterUniskip::*` spans live at the stage-1
+    // call boundary (`crates/jolt-prover/src/stages/stage1.rs`), so every
+    // `UniskipKernel` implementation inherits them — see the taxonomy's
+    // kernel-seam contract.
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -52,7 +86,6 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::first_round_poly")]
     fn first_round_poly(
         &self,
         session: &mut ProofSession,

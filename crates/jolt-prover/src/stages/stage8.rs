@@ -211,10 +211,19 @@ where
             image_words.into_iter().map(F::from_u64).collect(),
         );
     }
-    let polynomials =
+    // Backend-neutral kernel-seam span at the call boundary, so every
+    // `JointOpeningPolynomials` implementation inherits it — see the
+    // taxonomy's kernel-seam contract.
+    let polynomials = tracing::info_span!(
+        "JointOpeningPolynomials::prepare",
+        polynomials = order.len(),
+        total_vars = grid.total_vars
+    )
+    .in_scope(|| {
         backend
             .joint_opening
-            .prepare(session, witness, &order, &precommitted_tables, grid)?;
+            .prepare(session, witness, &order, &precommitted_tables, grid)
+    })?;
     let ordered_hints: Vec<PCS::OpeningHint> = order
         .iter()
         .map(|polynomial| {

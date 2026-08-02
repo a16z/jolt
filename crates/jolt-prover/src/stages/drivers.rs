@@ -559,6 +559,37 @@ mod twin_tests {
     /// missing carry is a proof-time `KernelError`.
     struct ParkedToyGamma(DenseKernel<ToyGamma<Fr>>);
 
+    // Session-inserted test state must be `MaybeAllocative`; self-sized
+    // visitation is plenty for twin-lock scaffolding.
+    #[cfg(feature = "allocative")]
+    mod carry_visitation {
+        use super::*;
+
+        macro_rules! impl_self_sized_allocative {
+            ($($ty:ty),+ $(,)?) => {$(
+                impl allocative::Allocative for $ty {
+                    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+                        visitor.enter_self_sized::<Self>().exit();
+                    }
+                }
+            )+};
+        }
+        impl_self_sized_allocative!(PrepareCallLog, ResidueCallLog, ParkedToyGamma);
+
+        // The toy kernel is a `SumcheckKernel`, so the mid-stage snapshot's
+        // `MaybeAllocative` supertrait reaches it too.
+        impl<R> allocative::Allocative for DenseKernel<R> {
+            fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+                let mut visitor = visitor.enter_self_sized::<Self>();
+                visitor.visit_simple(
+                    allocative::Key::new("evals"),
+                    self.evals.capacity() * size_of::<Fr>(),
+                );
+                visitor.exit();
+            }
+        }
+    }
+
     struct SessionCarriedToyGamma;
 
     impl PrepareKernel<Fr, ToyGamma<Fr>> for SessionCarriedToyGamma {

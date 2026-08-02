@@ -117,8 +117,9 @@ pub const DRIVER_BATCH_SPANS: [&str; 8] = [
 pub const SUMCHECK_ENGINE_SPANS: [&str; 2] = ["prove_batch", "sumcheck_round"];
 
 /// Kernel-seam spans (`jolt-kernels` trait boundaries) that fire on every
-/// prove regardless of workload. Any optimized backend inherits these by
-/// implementing the same traits.
+/// prove regardless of workload. Emitted by the stage recipes in
+/// `jolt-prover` at the slot call boundaries — not by any backend impl — so
+/// every backend genuinely inherits them by implementing the same traits.
 pub const KERNEL_SEAM_SPANS: [&str; 6] = [
     "commit_witness",
     "SpartanOuterUniskip::prepare",
@@ -129,7 +130,8 @@ pub const KERNEL_SEAM_SPANS: [&str; 6] = [
 ];
 
 /// Kernel-seam spans that fire only on proves whose guest consumes advice.
-/// Exempt from the smoke test's presence assertion (fibonacci has no advice).
+/// Call-boundary spans like [`KERNEL_SEAM_SPANS`]; exempt from the smoke
+/// test's presence assertion (fibonacci has no advice).
 pub const ADVICE_SEAM_SPANS: [&str; 2] = ["commit_advice", "AdviceOpeningEvaluation::evaluate"];
 
 /// Kernel-seam spans that fire only with committed-program preprocessing.
