@@ -9,6 +9,7 @@
 //! profiling smoke test can drive the same entry point in-process.
 
 use clap::{Parser, Subcommand};
+use jolt_prover::compare::CompareArgs;
 use jolt_prover::profile::{BenchmarkArgs, ProfileArgs};
 
 #[derive(Parser)]
@@ -25,6 +26,7 @@ enum Command {
     /// Sweep workloads across scales (one `profile` subprocess per run),
     /// accumulating benchmark-runs/results/modular_timings.csv.
     Benchmark(BenchmarkArgs),
+    Compare(CompareArgs),
 }
 
 fn main() {
@@ -37,6 +39,9 @@ fn main() {
             if !jolt_prover::profile::run_sweep(&args) {
                 std::process::exit(1);
             }
+        }
+        Command::Compare(args) => {
+            let _comparison = jolt_prover::compare::run(&args);
         }
     }
 }

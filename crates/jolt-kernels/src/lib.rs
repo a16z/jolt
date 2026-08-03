@@ -37,6 +37,8 @@
 mod backend;
 mod commitment;
 pub mod committed_program;
+#[cfg(feature = "cuda")]
+pub mod cuda;
 mod error;
 mod kernel;
 pub mod opening;

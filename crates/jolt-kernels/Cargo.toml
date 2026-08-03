@@ -19,9 +19,11 @@ parallel = ["dep:rayon", "jolt-poly/parallel"]
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
+cuda = ["dep:cudarc"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
+cudarc = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-field.workspace = true
 jolt-kernels-derive.workspace = true

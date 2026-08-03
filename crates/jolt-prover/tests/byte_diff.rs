@@ -921,6 +921,9 @@ mod muldiv {
 
         assert_backend_matches_legacy(&JoltBackend::reference());
 
+        #[cfg(feature = "cuda")]
+        assert_backend_matches_legacy(&JoltBackend::cuda());
+
         // The full-proof ratchet: the top-level prove() runs the same stage
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.

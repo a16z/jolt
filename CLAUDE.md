@@ -33,6 +33,15 @@ cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
 # advice, committed program)
 cargo nextest run -p jolt-prover --features prover-fixtures --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk --cargo-quiet
+
+# CUDA backend (specs/cuda-prover.md). The `cuda` feature gates LINKAGE only —
+# backend choice is JoltBackend::cuda() vs ::reference(), a runtime value. Both
+# suites add a CUDA arm asserting byte-identity with legacy; device tests skip
+# (not fail) with no GPU. NVRTC compiles only at first device use, so the Rust
+# build cannot catch a kernel error — run the kernels suite after any kernel
+# rename or signature change.
+cargo nextest run -p jolt-kernels --features cuda cuda:: --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,cuda --cargo-quiet
 ```
 
 ### Building
@@ -65,6 +74,12 @@ cargo run --release -p jolt-prover --features profiling -- benchmark --min-scale
 
 # Per-batch heap snapshots (*.folded in the run directory, exact bytes; totals in summary.json's .heap; rendered by memory.html)
 cargo run --release -p jolt-prover --features profiling,allocative -- profile --name fibonacci --format chrome
+
+# Legacy comparison (the CUDA performance gate): both provers, one guest/input,
+# median of N, proof bytes asserted identical. --skip-modular records the legacy
+# target (the reference tier is ~230x slower, so it cannot run at gate scales);
+# --skip-legacy iterates on a kernel. Baselines: sha2-chain 2^20 = 9.4s, 2^22 = 19.1s.
+cargo run --release -p jolt-prover --features profiling,cuda -- compare --name sha2-chain --scale 22 --backend cuda
 
 # jolt-eval telemetry objectives over the same summary (grammar: telemetry:<workload>:<metric>)
 cargo run -p jolt-eval --bin measure-objectives -- --objective telemetry:fibonacci:prover_time_s

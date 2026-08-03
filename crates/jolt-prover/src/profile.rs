@@ -70,7 +70,7 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
-const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
+pub(crate) const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
@@ -111,7 +111,7 @@ impl Workload {
 
     /// The guest input targeting `target` trace cycles — the same mapping as
     /// the legacy harness's `master_benchmark`.
-    fn input(self, target: usize) -> Vec<u8> {
+    pub(crate) fn input(self, target: usize) -> Vec<u8> {
         match self {
             Self::Fibonacci => {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT))
@@ -167,6 +167,8 @@ impl OutputFormat {
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
 pub enum BackendKind {
     Reference,
+    #[cfg(feature = "cuda")]
+    Cuda,
 }
 
 impl BackendKind {
@@ -176,6 +178,8 @@ impl BackendKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Reference => "reference",
+            #[cfg(feature = "cuda")]
+            Self::Cuda => "cuda",
         }
     }
 }
@@ -240,7 +244,7 @@ pub struct ProfileArtifacts {
 const MAX_SCALE: u32 = 40;
 
 /// Rejects out-of-range log2 trace lengths before they wrap a shift.
-fn validate_scale(scale: u32) {
+pub(crate) fn validate_scale(scale: u32) {
     assert!(
         (1..=MAX_SCALE).contains(&scale),
         "--scale {scale} out of range: expected a log2 trace length in 1..={MAX_SCALE}"
@@ -561,6 +565,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     };
     let backend = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        #[cfg(feature = "cuda")]
+        BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
 
     // --- The measured window: the full modular prove (witness
@@ -658,7 +664,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
 
 /// Trace the guest through the modular stack (`TracerBackend`), with the
 /// memory config mirrored off the legacy layout — the byte-diff wiring.
-fn trace_modular(
+pub(crate) fn trace_modular(
     program: &JoltProgram,
     memory_layout: &common::jolt_device::MemoryLayout,
     inputs: &[u8],
@@ -686,7 +692,7 @@ fn trace_modular(
 }
 
 /// Pad to the padded trace length with no-op rows, as legacy does.
-fn pad_trace(
+pub(crate) fn pad_trace(
     trace_output: TraceOutput<OwnedTrace>,
     trace_length: usize,
 ) -> TraceOutput<OwnedTrace> {
@@ -700,7 +706,7 @@ fn pad_trace(
 }
 
 /// A word-aligned advice buffer's balanced Dory matrix variable count.
-fn advice_vars(max_advice_size_bytes: u64) -> usize {
+pub(crate) fn advice_vars(max_advice_size_bytes: u64) -> usize {
     ((max_advice_size_bytes / 8) as usize)
         .next_power_of_two()
         .max(1)

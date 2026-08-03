@@ -28,6 +28,7 @@ zk = [
   # carries the BlindFold vector-commitment setup only in its own zk mode.
   "jolt-prover-legacy/zk",
 ]
+cuda = ["jolt-kernels/cuda"]
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand): guest
 # compile/trace via the legacy host toolchain plus the jolt-profiling
 # subscriber stack (chrome trace + summary.json + monitor counters).

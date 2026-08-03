@@ -82,6 +82,10 @@ pub enum KernelError<F: FieldCore> {
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
 
+    #[cfg(feature = "cuda")]
+    #[error(transparent)]
+    Cuda(#[from] crate::cuda::CudaError),
+
     /// A contract the kernel's inputs must uphold (witness shape, point
     /// geometry, internal state) was violated — a bug, never a capability
     /// gap, so never worth retrying against another backend.
