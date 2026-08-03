@@ -755,8 +755,14 @@ fn prove_workload(
     let config = ProverConfig::derive::<AkitaField>(
         trace_output.trace.rows(),
         memory_layout,
-        legacy_preprocessing.shared.program_meta.min_bytecode_address,
-        legacy_preprocessing.shared.program.program_image_len_words(),
+        legacy_preprocessing
+            .shared
+            .program_meta
+            .min_bytecode_address,
+        legacy_preprocessing
+            .shared
+            .program
+            .program_image_len_words(),
         max_trace_length,
     )
     .expect("derive config");
@@ -773,9 +779,8 @@ fn prove_workload(
         layout_digest,
         one_hot_k,
     );
-    let (object_setup, verifier_setup) =
-        <AkitaScheme as VerifierCommitmentScheme>::setup(params)
-            .expect("the transparent packed setup must derive");
+    let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(params)
+        .expect("the transparent packed setup must derive");
     let verifier_preprocessing =
         akita_verifier_preprocessing(&legacy_preprocessing, verifier_setup, None);
     let program_preprocessing = verifier_preprocessing

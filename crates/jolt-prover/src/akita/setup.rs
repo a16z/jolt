@@ -36,10 +36,13 @@ pub fn one_hot_trace_setup_shape(
         log_t,
         log_k_chunk,
     };
-    let batch_failed = |error: jolt_openings::OpeningsError| VerifierError::FinalOpeningBatchFailed {
-        reason: error.to_string(),
-    };
-    let setup_shape = ONE_HOT_TRACE_LAYOUT.setup_shape(&shape).map_err(batch_failed)?;
+    let batch_failed =
+        |error: jolt_openings::OpeningsError| VerifierError::FinalOpeningBatchFailed {
+            reason: error.to_string(),
+        };
+    let setup_shape = ONE_HOT_TRACE_LAYOUT
+        .setup_shape(&shape)
+        .map_err(batch_failed)?;
     let digest = ONE_HOT_TRACE_LAYOUT
         .layout_digest(&shape)
         .map_err(batch_failed)?;

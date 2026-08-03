@@ -120,21 +120,19 @@ where
         .collect();
     // The packed sibling of the homomorphic path's stage-8 batch seam: one
     // native same-point opening over the whole group.
-    let one_hot_trace = tracing::info_span!(
-        "CommitmentScheme::open_batch",
-        columns = evaluations.len()
-    )
-    .in_scope(|| {
-        PCS::open_batch(
-            &shape_refs,
-            &common_point,
-            &evaluations,
-            &preprocessing.pcs_setup,
-            one_hot_trace_hint,
-            transcript,
-        )
-    })
-    .map_err(batch_failed::<F>)?;
+    let one_hot_trace =
+        tracing::info_span!("CommitmentScheme::open_batch", columns = evaluations.len())
+            .in_scope(|| {
+                PCS::open_batch(
+                    &shape_refs,
+                    &common_point,
+                    &evaluations,
+                    &preprocessing.pcs_setup,
+                    one_hot_trace_hint,
+                    transcript,
+                )
+            })
+            .map_err(batch_failed::<F>)?;
 
     // The auxiliary packed objects in canonical order: untrusted advice,
     // trusted advice, ProgramOneHot. Packings and statements are owned here;
