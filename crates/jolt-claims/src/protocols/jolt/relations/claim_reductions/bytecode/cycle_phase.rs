@@ -117,7 +117,9 @@ mod tests {
     fn cycle_phase_batches_staged_openings_by_eta() {
         let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
         let eta = fr(31);
-        let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13)];
+        let stage_claims = (0..NUM_BYTECODE_VAL_STAGES)
+            .map(|stage| fr(2 * stage as u64 + 3))
+            .collect::<Vec<_>>();
         let zero = fr(0);
 
         let cycle = CyclePhase::new((dimensions, 2));

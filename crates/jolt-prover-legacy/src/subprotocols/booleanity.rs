@@ -22,7 +22,6 @@ use allocative::FlameGraphBuilder;
 use ark_std::Zero;
 use rayon::prelude::*;
 use std::iter::zip;
-#[cfg(all(feature = "prover", feature = "akita"))]
 use std::sync::Arc;
 
 #[cfg(all(feature = "prover", feature = "akita"))]
@@ -46,7 +45,10 @@ use crate::{
             AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
-        shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
+        shared_ra_polys::{
+            compute_all_G_and_ra_indices, compute_all_G_from_ra_indices, RaIndices,
+            SharedRaPolynomials,
+        },
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -216,7 +218,16 @@ fn compute_gamma_powers<F: JoltField>(gamma: F::Challenge, count: usize) -> (Vec
 #[derive(Allocative)]
 pub struct BooleanityCycleInput<F: JoltField> {
     params: BooleanitySumcheckParams<F>,
-    ra_indices: Vec<RaIndices>,
+    ra_indices: Arc<Vec<RaIndices>>,
+}
+
+impl<F: JoltField> BooleanityCycleInput<F> {
+    /// Shared handle to the per-cycle RA indices computed in the address
+    /// phase; the stage-6b RA initializers gather their chunk columns from it
+    /// instead of re-deriving them from the trace.
+    pub fn ra_indices(&self) -> Arc<Vec<RaIndices>> {
+        Arc::clone(&self.ra_indices)
+    }
 }
 
 /// Booleanity address-phase prover.
@@ -227,7 +238,7 @@ pub struct BooleanityAddressSumcheckProver<F: JoltField> {
     /// G[i][k] = Σ_j eq(r_cycle, j) · ra_i(k, j) for all RA polynomials.
     G: Vec<Vec<F>>,
     /// RA indices computed alongside `G`, reused by the cycle phase.
-    ra_indices: Vec<RaIndices>,
+    ra_indices: Arc<Vec<RaIndices>>,
     /// F: Expanding table over address bits for phase 1.
     F: ExpandingTable<F>,
     /// Most recent round polynomial, used to cache the address-phase output claim.
@@ -239,6 +250,27 @@ pub struct BooleanityAddressSumcheckProver<F: JoltField> {
 }
 
 impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
+    fn from_g_and_ra_indices(
+        params: BooleanitySumcheckParams<F>,
+        G: Vec<Vec<F>>,
+        ra_indices: Arc<Vec<RaIndices>>,
+    ) -> Self {
+        let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
+        let k_chunk = 1 << params.log_k_chunk;
+        let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
+        F_table.reset(F::one());
+
+        Self {
+            B,
+            G,
+            ra_indices,
+            F: F_table,
+            last_round_poly: None,
+            address_claim: None,
+            params: BooleanityAddressPhaseParams::new(params),
+        }
+    }
+
     /// Initialize the address-phase prover.
     ///
     /// Heavy precomputation for this phase happens here:
@@ -258,20 +290,20 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
             &params.one_hot_params,
             &params.r_cycle,
         );
-        let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
-        let k_chunk = 1 << params.log_k_chunk;
-        let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
-        F_table.reset(F::one());
+        Self::from_g_and_ra_indices(params, G, Arc::new(ra_indices))
+    }
 
-        Self {
-            B,
-            G,
-            ra_indices,
-            F: F_table,
-            last_round_poly: None,
-            address_claim: None,
-            params: BooleanityAddressPhaseParams::new(params),
-        }
+    /// Initialize from RA indices retained by an earlier trace pass.
+    pub fn initialize_with_ra_indices(
+        params: BooleanitySumcheckParams<F>,
+        ra_indices: Arc<Vec<RaIndices>>,
+    ) -> Self {
+        let G = compute_all_G_from_ra_indices::<F>(
+            &ra_indices,
+            &params.one_hot_params,
+            &params.r_cycle,
+        );
+        Self::from_g_and_ra_indices(params, G, ra_indices)
     }
 
     pub fn into_cycle_input(self) -> BooleanityCycleInput<F> {
@@ -713,6 +745,14 @@ pub struct LatticeBooleanityCycleInput<F: JoltField> {
     one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
 }
 
+#[cfg(all(feature = "prover", feature = "akita"))]
+impl<F: JoltField> LatticeBooleanityCycleInput<F> {
+    /// See [`BooleanityCycleInput::ra_indices`].
+    pub fn ra_indices(&self) -> Arc<Vec<RaIndices>> {
+        self.base.ra_indices()
+    }
+}
+
 /// Lattice booleanity address phase: the base prover with the chunk columns'
 /// pushforward tables appended to `G` (built with the same split-eq cycle
 /// convention as `compute_all_G`). The msb column is absent by construction —
@@ -727,17 +767,10 @@ pub struct LatticeBooleanityAddressSumcheckProver<F: JoltField> {
 
 #[cfg(all(feature = "prover", feature = "akita"))]
 impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
-    #[tracing::instrument(skip_all, name = "LatticeBooleanityAddressSumcheckProver::initialize")]
-    pub fn initialize(
-        params: BooleanitySumcheckParams<F>,
-        trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
-        memory_layout: &MemoryLayout,
+    fn from_inner(
+        mut inner: BooleanityAddressSumcheckProver<F>,
         one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
     ) -> Self {
-        let mut inner =
-            BooleanityAddressSumcheckProver::initialize(params, trace, bytecode, memory_layout);
-
         // Chunk pushforwards `G_i(k) = Σ_{j: hot_lane_i(j) = k} eq(r_cycle, j)`,
         // with the same two-table split-eq as `compute_all_G`.
         let r_cycle = &inner.params.common.r_cycle;
@@ -760,6 +793,32 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
             inner,
             one_hot_columns,
         }
+    }
+
+    #[tracing::instrument(skip_all, name = "LatticeBooleanityAddressSumcheckProver::initialize")]
+    pub fn initialize(
+        params: BooleanitySumcheckParams<F>,
+        trace: &[Cycle],
+        bytecode: &BytecodePreprocessing,
+        memory_layout: &MemoryLayout,
+        one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
+    ) -> Self {
+        let inner =
+            BooleanityAddressSumcheckProver::initialize(params, trace, bytecode, memory_layout);
+        Self::from_inner(inner, one_hot_columns)
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "LatticeBooleanityAddressSumcheckProver::initialize_with_ra_indices"
+    )]
+    pub fn initialize_with_ra_indices(
+        params: BooleanitySumcheckParams<F>,
+        ra_indices: Arc<Vec<RaIndices>>,
+        one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
+    ) -> Self {
+        let inner = BooleanityAddressSumcheckProver::initialize_with_ra_indices(params, ra_indices);
+        Self::from_inner(inner, one_hot_columns)
     }
 
     pub fn into_cycle_input(self) -> LatticeBooleanityCycleInput<F> {
@@ -1297,7 +1356,7 @@ mod tests {
         let input = LatticeBooleanityCycleInput {
             base: BooleanityCycleInput {
                 params: params.clone(),
-                ra_indices,
+                ra_indices: Arc::new(ra_indices),
             },
             one_hot_columns,
         };

@@ -28,8 +28,9 @@ pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 /// opening proof at the unified point.
 #[cfg(not(feature = "akita"))]
 pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
-/// The Akita OneHotTrace opening is native and same-point. Only auxiliary packed
-/// objects retain the generic reduction proof.
+/// One Akita proof opens the prefix-packed OneHotTrace polynomial after the
+/// random-selector reduction. Only auxiliary packed objects retain the generic
+/// reduction proof.
 #[cfg(feature = "akita")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaJointOpeningProof<F, P> {

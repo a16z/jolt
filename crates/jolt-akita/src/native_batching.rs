@@ -17,6 +17,7 @@
 //! embeds the backend proof bytes wholesale.
 
 use akita_pcs::AkitaTranscript;
+use akita_prover::CpuBackend;
 use akita_prover::ProverOpeningData;
 use akita_types::{BasisMode, OpeningClaims, PointVariableSelection, PolynomialGroupClaims};
 use jolt_openings::{BatchOpeningScheme, OpeningsError, VerifierOpeningClaim};
@@ -149,7 +150,9 @@ fn validate_witness(
     }
     if matches!(
         hint.polynomials,
-        AkitaHintPolynomials::OneHot(_) | AkitaHintPolynomials::SparseUnit(_)
+        AkitaHintPolynomials::OneHot(_)
+            | AkitaHintPolynomials::TraceOneHot(_)
+            | AkitaHintPolynomials::SparseUnit(_)
     ) && !polynomials.iter().all(|polynomial| polynomial.is_one_hot())
     {
         return Err(invalid_batch(format!(
@@ -231,15 +234,20 @@ macro_rules! prove_dense_backend {
 
 /// The one-hot backend consumes the point in reversed variable order and uses
 /// the dedicated one-hot setup pair.
-fn prove_one_hot(
+fn prove_one_hot<P>(
     setup: &AkitaProverSetup,
     point: &[AkitaField],
     evaluations: &[AkitaField],
-    polynomials: &[&AkitaBackendOneHotPoly],
+    polynomials: &[&P],
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
     akita_transcript: &mut AkitaTranscript<AkitaField>,
-) -> Result<AkitaBackendProof, OpeningsError> {
+) -> Result<AkitaBackendProof, OpeningsError>
+where
+    P: akita_prover::RuntimeRootProvePoly<AkitaField>,
+    CpuBackend:
+        akita_prover::RecursiveProveBackend<AkitaField, P, crate::adapters::AkitaBackendExtField>,
+{
     let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
     let backend_point = reverse_point(point);
     let claims = single_group_batch(
@@ -335,7 +343,19 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             }
             AkitaHintPolynomials::OneHot(one_hot) => {
                 let refs = one_hot.iter().collect::<Vec<_>>();
-                prove_one_hot(
+                prove_one_hot::<AkitaBackendOneHotPoly>(
+                    setup,
+                    point,
+                    &evaluations,
+                    &refs,
+                    backend_commitment,
+                    backend_hint,
+                    &mut akita_transcript,
+                )?
+            }
+            AkitaHintPolynomials::TraceOneHot(one_hot) => {
+                let refs = one_hot.iter().collect::<Vec<_>>();
+                prove_one_hot::<crate::trace_onehot::TracePackedOneHot>(
                     setup,
                     point,
                     &evaluations,

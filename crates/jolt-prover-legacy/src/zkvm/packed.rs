@@ -1,14 +1,14 @@
 //! The packed (Akita/lattice) prove path.
 //!
 //! Mirrors [`super::prover::JoltCpuProver::prove_parts`] with the lattice
-//! stage swaps: one native Akita commitment group `OneHotTrace` replaces the
+//! stage swaps: one prefix-packed Akita polynomial `OneHotTrace` replaces the
 //! per-polynomial streaming Dory commits, the nine-stage bytecode read-raf
 //! discharges the four reduced inc claims through its fused-inc val stages
 //! (producing the `FusedInc` opening at the shared 6b cycle point), the
 //! lattice booleanity carries the fused-inc columns, stage 7 folds the
 //! increment one-hot claims into `HammingWeightClaimReduction`, the
 //! reconstruction phase settles auxiliary advice/bytecode/image columns, and
-//! stage 8 uses one native same-point Akita opening for `OneHotTrace` plus
+//! stage 8 uses one random-selector Akita opening for `OneHotTrace` plus
 //! packed openings for auxiliaries.
 //!
 //! The prover runs over the `AkitaFp128` newtype (the legacy `JoltField`
@@ -27,16 +27,15 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::geometry::{word_byte_num_vars, WORD_BYTES};
 use jolt_claims::protocols::jolt::lattice::{
-    advice_bytes_packing, precommitted_packing, OneHotTraceLayoutPlan, OneHotTraceShape,
-    PrecommittedPackingShape, ONE_HOT_TRACE_LAYOUT,
+    advice_bytes_packing, precommitted_packing, OneHotTraceColumnRanges, OneHotTraceLayoutPlan,
+    OneHotTraceShape, PrecommittedPackingShape, ONE_HOT_TRACE_LAYOUT,
 };
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_openings::{
     prove_packed_openings, CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim,
     PackedProverGroup, PackedProverObject, PrefixPackedStatement, PrefixPacking,
 };
-use jolt_poly::OneHotPolynomial;
-use jolt_transcript::append_length_prefixed;
+use jolt_transcript::{append_length_prefixed, Transcript as VerifierTranscript};
 use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
 use jolt_verifier::preprocessing::JoltVerifierPreprocessing;
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
@@ -50,12 +49,14 @@ use crate::poly::commitment::commitment_scheme::{
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::opening_proof::{OpeningAccumulator, SumcheckId};
+use crate::poly::shared_ra_polys::RaIndices;
 use crate::subprotocols::booleanity::{
     lattice_booleanity_params, FusedIncColumns, LatticeBooleanityAddressSumcheckProver,
     LatticeBooleanityCycleSumcheckProver,
 };
 use crate::transcripts::Transcript as LegacyTranscript;
 use crate::utils::math::Math;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::bytecode::read_raf_checking::{
     BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
     BytecodeReadRafSumcheckParams,
@@ -80,6 +81,7 @@ use crate::zkvm::ram::hamming_booleanity::{
 use crate::zkvm::ram::populate_memory_states;
 use crate::zkvm::ram::ra_virtual::{RamRaVirtualParams, RamRaVirtualSumcheckProver};
 use crate::zkvm::witness::CommittedPolynomial;
+use tracer::instruction::Cycle;
 
 pub type AkitaField = jolt_akita::AkitaField;
 pub type AkitaScheme = jolt_akita::AkitaScheme;
@@ -96,6 +98,116 @@ pub type AkitaPackedStatement = PrefixPackedStatement<
     JoltCommittedPolynomial,
     <AkitaScheme as jolt_crypto::Commitment>::Output,
 >;
+
+struct JoltOneHotTraceRows {
+    num_rows: usize,
+    num_columns: usize,
+    hot_lanes: Vec<u16>,
+    ra_indices: Arc<Vec<RaIndices>>,
+}
+
+fn committed_nonzero_lane(lane: usize) -> u16 {
+    if lane == 0 {
+        jolt_akita::no_hot_lane()
+    } else {
+        lane as u16
+    }
+}
+
+impl JoltOneHotTraceRows {
+    #[tracing::instrument(skip_all, name = "jolt_one_hot_trace_cache_build")]
+    fn new(
+        trace: &[Cycle],
+        fused_inc_one_hot: &[Arc<Vec<Option<u8>>>],
+        num_columns: usize,
+        ranges: &OneHotTraceColumnRanges,
+        params: &crate::zkvm::config::OneHotParams,
+        bytecode: &crate::zkvm::bytecode::BytecodePreprocessing,
+        memory_layout: &common::jolt_device::MemoryLayout,
+    ) -> Self {
+        use rayon::prelude::*;
+
+        let num_rows = trace.len();
+        let mut hot_lanes = unsafe_allocate_zero_vec(num_rows * num_columns);
+        let mut ra_indices = unsafe_allocate_zero_vec(num_rows);
+        ra_indices
+            .par_iter_mut()
+            .zip(hot_lanes.par_chunks_exact_mut(num_columns))
+            .enumerate()
+            .for_each(|(row, (ra_index, row_lanes))| {
+                *ra_index = RaIndices::from_cycle(&trace[row], bytecode, memory_layout, params);
+                Self::fill_row_from_indices(row_lanes, row, ra_index, fused_inc_one_hot, ranges);
+            });
+
+        Self {
+            num_rows,
+            num_columns,
+            hot_lanes,
+            ra_indices: Arc::new(ra_indices),
+        }
+    }
+
+    fn fill_row_from_indices(
+        hot_lanes: &mut [u16],
+        row: usize,
+        ra_indices: &RaIndices,
+        fused_inc_one_hot: &[Arc<Vec<Option<u8>>>],
+        ranges: &OneHotTraceColumnRanges,
+    ) {
+        debug_assert_eq!(hot_lanes.len(), ranges.ram.end);
+        for (index, hot_lane) in hot_lanes[ranges.instruction.clone()].iter_mut().enumerate() {
+            *hot_lane = committed_nonzero_lane(ra_indices.instruction[index] as usize);
+        }
+        for (index, hot_lane) in hot_lanes[ranges.bytecode.clone()].iter_mut().enumerate() {
+            *hot_lane = committed_nonzero_lane(ra_indices.bytecode[index] as usize);
+        }
+        for (index, hot_lane) in hot_lanes[ranges.ram.clone()].iter_mut().enumerate() {
+            *hot_lane = ra_indices.ram[index].map_or_else(jolt_akita::no_hot_lane, |lane| {
+                committed_nonzero_lane(lane as usize)
+            });
+        }
+        for (index, hot_lane) in hot_lanes[ranges.unsigned_inc.clone()]
+            .iter_mut()
+            .enumerate()
+        {
+            *hot_lane = fused_inc_one_hot[index][row]
+                .map_or_else(jolt_akita::no_hot_lane, |lane| {
+                    committed_nonzero_lane(lane as usize)
+                });
+        }
+        hot_lanes[ranges.unsigned_inc_msb] = fused_inc_one_hot
+            .last()
+            .and_then(|column| column[row])
+            .map_or_else(jolt_akita::no_hot_lane, |lane| {
+                committed_nonzero_lane(lane as usize)
+            });
+    }
+
+    fn ra_indices(&self) -> Arc<Vec<RaIndices>> {
+        Arc::clone(&self.ra_indices)
+    }
+}
+
+impl jolt_akita::TraceOneHotRows for JoltOneHotTraceRows {
+    fn num_rows(&self) -> usize {
+        self.num_rows
+    }
+
+    fn num_columns(&self) -> usize {
+        self.num_columns
+    }
+
+    fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+        let start = row * self.num_columns;
+        hot_lanes.copy_from_slice(&self.hot_lanes[start..start + self.num_columns]);
+    }
+
+    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u16]) {
+        debug_assert_eq!(hot_lanes.len() % self.num_columns, 0);
+        let start = row_start * self.num_columns;
+        hot_lanes.copy_from_slice(&self.hot_lanes[start..start + hot_lanes.len()]);
+    }
+}
 
 /// A group placeholder for the packed prover's curve parameter: the packed
 /// axis is transparent-only, so no group operation is ever performed.
@@ -248,14 +360,14 @@ impl JoltCurve for AkitaNoCurve {
 }
 
 /// A zero-sized stand-in for the legacy per-polynomial commitment machinery:
-/// the Akita path commits OneHotTrace as one native one-hot member group, so none of
+/// the Akita path commits one prefix-packed OneHotTrace polynomial, so none of
 /// these entry points is ever reached.
 #[derive(Clone, Debug, Default, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AkitaPackedScheme;
 
 macro_rules! no_per_polynomial_commitment {
     () => {
-        panic!("the Akita path commits one native OneHotTrace column group; legacy per-polynomial commitment entry points are unreachable")
+        panic!("the Akita path commits one prefix-packed OneHotTrace polynomial; legacy per-polynomial commitment entry points are unreachable")
     };
 }
 
@@ -624,8 +736,8 @@ pub type AkitaPackedProver<'a> =
     JoltCpuProver<'a, AkitaFp128, AkitaNoCurve, AkitaPackedScheme, AkitaTranscript>;
 
 impl AkitaPackedProver<'_> {
-    /// Akita setup parameters sized to the native `OneHotTrace` group of
-    /// uniform one-hot columns.
+    /// Akita setup parameters sized to the prefix-packed `OneHotTrace`
+    /// polynomial.
     pub fn one_hot_trace_setup_params(&self) -> jolt_akita::AkitaSetupParams {
         let one_hot_trace_shape = self.one_hot_trace_shape();
         let shape = ONE_HOT_TRACE_LAYOUT
@@ -659,76 +771,33 @@ impl AkitaPackedProver<'_> {
         .expect("Jolt always commits at least one RA polynomial")
     }
 
-    /// Builds the native `OneHotTrace` columns from compact per-cycle source
-    /// data. Each returned index buffer is handed to Akita by ownership, so
-    /// there is no witness clone at the PCS boundary.
-    #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
-    fn assemble_one_hot_trace(
+    fn one_hot_trace_rows(
         &self,
         plan: &OneHotTraceLayoutPlan,
-        fused_inc: &[FusedIncValue],
-    ) -> Vec<OneHotPolynomial> {
-        use crate::zkvm::instruction::LookupQuery;
-        use crate::zkvm::ram::remap_address;
-        use common::constants::XLEN;
-        use rayon::prelude::*;
-
-        let params = &self.one_hot_params;
-        let trace = &self.trace;
-        let program = self.preprocessing.materialized_program();
-        let memory_layout = &self.preprocessing.shared.memory_layout;
-        let cycle_data = trace
-            .par_iter()
-            .map(|cycle| {
-                (
-                    LookupQuery::<XLEN>::to_lookup_index(cycle),
-                    program.get_pc(cycle),
-                    remap_address(cycle.ram_access().address() as u64, memory_layout),
-                )
-            })
-            .collect::<Vec<_>>();
-        let k = 1usize << params.log_k_chunk;
-        plan.columns
-            .par_iter()
-            .map(|polynomial| {
-                let indices = cycle_data
-                    .iter()
-                    .zip(fused_inc)
-                    .map(|((lookup_index, pc, ram_address), inc)| {
-                        let hot = match polynomial {
-                            JoltCommittedPolynomial::InstructionRa(index) => {
-                                Some(params.lookup_index_chunk(*lookup_index, *index) as usize)
-                            }
-                            JoltCommittedPolynomial::BytecodeRa(index) => {
-                                Some(params.bytecode_pc_chunk(*pc, *index) as usize)
-                            }
-                            JoltCommittedPolynomial::RamRa(index) => (*ram_address)
-                                .map(|address| params.ram_address_chunk(address, *index) as usize),
-                            JoltCommittedPolynomial::UnsignedIncChunk(index) => {
-                                Some(inc.chunk_hot_lane_bits(params.log_k_chunk, *index))
-                            }
-                            JoltCommittedPolynomial::UnsignedIncMsb => Some(usize::from(inc.msb())),
-                            _ => unreachable!("OneHotTrace plan contains only canonical columns"),
-                        };
-                        hot.map(|hot| {
-                            u8::try_from(hot).expect("OneHotTrace K is at most the u8 lane domain")
-                        })
-                    })
-                    .collect();
-                OneHotPolynomial::new(k, indices)
-            })
-            .collect()
+        fused_inc_one_hot: Vec<Arc<Vec<Option<u8>>>>,
+    ) -> Arc<JoltOneHotTraceRows> {
+        Arc::new(JoltOneHotTraceRows::new(
+            &self.trace,
+            &fused_inc_one_hot,
+            plan.columns.len(),
+            &plan.ranges,
+            &self.one_hot_params,
+            &self.preprocessing.materialized_program().bytecode,
+            &self.preprocessing.shared.memory_layout,
+        ))
     }
 
     /// The per-cycle fused increments, shared by the inc-column witness
     /// build and OneHotTrace assembly.
-    fn fused_inc_values(&self) -> Vec<FusedIncValue> {
+    fn fused_inc_values(&self) -> Arc<Vec<FusedIncValue>> {
         use rayon::prelude::*;
 
-        self.trace
-            .par_iter()
-            .map(FusedIncValue::from_cycle)
-            .collect()
+        Arc::new(
+            self.trace
+                .par_iter()
+                .map(FusedIncValue::from_cycle)
+                .collect(),
+        )
     }
 
     fn fused_inc_columns(&self, fused_cycles: &[FusedIncValue]) -> FusedIncColumns {
@@ -742,14 +811,14 @@ impl AkitaPackedProver<'_> {
                 Arc::new(
                     fused_cycles
                         .par_iter()
-                        .map(|cycle| Some(cycle.chunk_hot_lane_bits(width, index) as u8))
+                        .map(|cycle| Some(cycle.balanced_chunk_hot_lane_bits(width, index) as u8))
                         .collect(),
                 )
             })
             .chain(core::iter::once(Arc::new(
                 fused_cycles
                     .par_iter()
-                    .map(|cycle| Some(u8::from(cycle.msb())))
+                    .map(|cycle| Some(cycle.balanced_carry_hot_lane_bits(width) as u8))
                     .collect(),
             )))
             .collect();
@@ -795,6 +864,7 @@ impl AkitaPackedProver<'_> {
     fn prove_stage6a_lattice(
         &mut self,
         columns: &FusedIncColumns,
+        ra_indices: Arc<Vec<RaIndices>>,
     ) -> (
         crate::subprotocols::sumcheck::SumcheckInstanceProof<
             AkitaFp128,
@@ -824,11 +894,9 @@ impl AkitaPackedProver<'_> {
             self.preprocessing.bytecode(),
             &columns.fused,
         );
-        let mut booleanity = LatticeBooleanityAddressSumcheckProver::initialize(
+        let mut booleanity = LatticeBooleanityAddressSumcheckProver::initialize_with_ra_indices(
             booleanity_params,
-            &self.trace,
-            &self.preprocessing.materialized_program().bytecode,
-            &self.program_io.memory_layout,
+            ra_indices,
             columns.one_hot.clone(),
         );
 
@@ -873,10 +941,14 @@ impl AkitaPackedProver<'_> {
             .iter()
             .map(|gammas| gammas.to_vec())
             .collect();
+        // The 6a booleanity address phase already derived every family's
+        // per-cycle chunk indices; the RA initializers gather from that shared
+        // vector instead of re-walking the trace (decode + PC lookup + address
+        // remap per chunk).
+        let ra_indices = booleanity_cycle_input.ra_indices();
         let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize(
             bytecode_read_raf_params,
-            Arc::clone(&self.trace),
-            self.preprocessing.bytecode(),
+            &ra_indices,
             &self.opening_accumulator,
             fused_inc,
         );
@@ -886,14 +958,14 @@ impl AkitaPackedProver<'_> {
         );
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
-        let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
-            ram_ra_virtual_params,
-            &self.trace,
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
-        );
+        let mut ram_ra_virtual =
+            RamRaVirtualSumcheckProver::initialize(ram_ra_virtual_params, &ra_indices);
         let mut lookups_ra_virtual =
-            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
+            LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &ra_indices);
+        // Release the handle so the indices' lifetime stays owned by the
+        // booleanity cycle prover (dropped at its RoundN materialization),
+        // exactly as before this sharing.
+        drop(ra_indices);
 
         // The advice claim-reduction cycle phases join at the bundle's
         // canonical tail, exactly as in the base 6b assembly (the lattice
@@ -1041,6 +1113,7 @@ impl AkitaPackedProver<'_> {
     fn prove_stage7_lattice(
         &mut self,
         columns: FusedIncColumns,
+        ra_indices: &[RaIndices],
     ) -> crate::subprotocols::sumcheck::SumcheckInstanceProof<
         AkitaFp128,
         AkitaNoCurve,
@@ -1053,8 +1126,7 @@ impl AkitaPackedProver<'_> {
         );
         let hw_prover = HammingWeightClaimReductionProver::initialize_lattice(
             hw_params,
-            &self.trace,
-            self.preprocessing,
+            ra_indices,
             &self.one_hot_params,
             &columns.one_hot,
         );
@@ -1436,15 +1508,22 @@ impl AkitaPackedProver<'_> {
         let plan = ONE_HOT_TRACE_LAYOUT
             .plan(&self.one_hot_trace_shape())
             .expect("canonical OneHotTrace layout must exist");
-        let one_hot_trace_witness = self.assemble_one_hot_trace(&plan, &fused_cycles);
-        let (commitment, hint) = AkitaScheme::commit_one_hot_group_owned(
+        let one_hot_trace_rows = self.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
+        drop(fused_cycles);
+        let one_hot_trace_source: Arc<dyn jolt_akita::TraceOneHotRows> = one_hot_trace_rows.clone();
+        let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
             object_setup,
             object_setup.default_layout_digest(),
-            one_hot_trace_witness,
+            plan.column_capacity,
+            one_hot_trace_source,
         )
         .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
         })?;
+
+        // The commit sweep is the last full-width NTT consumer. Stage 8 reuses
+        // the field-form setup matrix for its ring-switch relation.
+        object_setup.release_post_commit_ntt_residency();
 
         // Absorb the packed commitment objects exactly where and how the
         // verifier's `absorb_commitments` akita arm does.
@@ -1470,19 +1549,21 @@ impl AkitaPackedProver<'_> {
         let (stage3_sumcheck_proof, _r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, _r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, _r_stage5) = self.prove_stage5();
+        let ra_indices = one_hot_trace_rows.ra_indices();
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
-            self.prove_stage6a_lattice(&fused_inc_columns);
+            self.prove_stage6a_lattice(&fused_inc_columns, Arc::clone(&ra_indices));
         let stage6b_sumcheck_proof = self.prove_stage6b_lattice(
             bytecode_read_raf_params,
             booleanity_cycle_input,
             std::mem::take(&mut fused_inc_columns.fused),
         );
-        let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns);
+        let stage7_sumcheck_proof = self.prove_stage7_lattice(fused_inc_columns, &ra_indices);
         let reconstruction_proof =
             self.prove_reconstruction_phase(advice_object.as_ref(), trusted_advice);
 
-        // Stage 8: OneHotTrace opens as one native same-point batch. Advice
-        // and ProgramOneHot remain auxiliary packed objects.
+        // Stage 8: bind the semantic same-point claims, reduce their selector
+        // MLE at a fresh random prefix, and open the single physical polynomial.
+        // Advice and ProgramOneHot remain auxiliary packed objects.
         let mut common_point: Option<Vec<AkitaField>> = None;
         let mut evaluations = Vec::with_capacity(plan.columns.len());
         for polynomial in &plan.columns {
@@ -1508,9 +1589,31 @@ impl AkitaPackedProver<'_> {
         let common_point = common_point.ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
             reason: "OneHotTrace has no columns".to_string(),
         })?;
-        let one_hot_trace_opening = AkitaScheme::open_one_hot_group_from_hint(
+        VerifierTranscript::append_values(
+            &mut self.transcript,
+            b"one_hot_trace_point",
             &common_point,
+        );
+        VerifierTranscript::append_values(
+            &mut self.transcript,
+            b"one_hot_trace_evals",
             &evaluations,
+        );
+        let selector =
+            VerifierTranscript::challenge_vector(&mut self.transcript, plan.selector_bits);
+        let packed_point = plan
+            .packed_point(&selector, &common_point)
+            .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                reason: error.to_string(),
+            })?;
+        let packed_evaluation =
+            plan.packed_evaluation(&selector, &evaluations)
+                .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                    reason: error.to_string(),
+                })?;
+        let one_hot_trace_opening = AkitaScheme::open_one_hot_group_from_hint(
+            &packed_point,
+            std::slice::from_ref(&packed_evaluation),
             object_setup,
             hint,
             &mut self.transcript,
@@ -1734,10 +1837,22 @@ pub fn akita_verifier_preprocessing(
 mod tests {
     use super::*;
     use crate::host;
+    use crate::zkvm::config::OneHotConfig;
     use crate::zkvm::preprocessing::JoltSharedPreprocessing;
     use crate::zkvm::program::ProgramPreprocessing;
     use crate::zkvm::prover::JoltProverPreprocessing;
     use serial_test::serial;
+
+    fn set_test_one_hot_config(prover: &mut AkitaPackedProver<'_>, config: OneHotConfig) {
+        config
+            .validate()
+            .expect("forced one-hot config must be valid");
+        prover.one_hot_params = crate::zkvm::config::OneHotParams::from_config(
+            &config,
+            prover.preprocessing.shared.bytecode_size(),
+            prover.one_hot_params.ram_k,
+        );
+    }
 
     /// Proves and verifies muldiv end to end over the packed (Akita) stack:
     /// the full-program packed pipeline, one `OneHotTrace` commitment object, and
@@ -1790,7 +1905,7 @@ mod tests {
         verify(&proof).expect("packed verifier should accept the packed proof");
 
         // Live tampers on the fused-inc pipeline's claim wires: the fused
-        // increment's reduced claim and the hamming-reduction chunk/msb
+        // increment's reduced claim and the hamming-reduction digit/carry
         // finals each participate in a batched output fold — an offset on
         // any of them must be rejected.
         let tamper = |mutate: &dyn Fn(&mut jolt_verifier::proof::ClearProofClaims<AkitaField>)| {
@@ -1824,7 +1939,7 @@ mod tests {
                 .hamming_weight_claim_reduction
                 .unsigned_inc_msb += one))
             .is_err(),
-            "tampered unsigned-inc msb final must be rejected"
+            "tampered increment carry final must be rejected"
         );
     }
 
@@ -1886,6 +2001,126 @@ mod tests {
             None,
         )
         .expect("packed verifier should accept the forced-K256 proof");
+    }
+
+    #[test]
+    #[serial]
+    fn cached_one_hot_rows_match_cycle_derivation() {
+        use crate::zkvm::instruction::LookupQuery;
+        use crate::zkvm::ram::remap_address;
+        use common::constants::XLEN;
+
+        for config in [
+            OneHotConfig {
+                log_k_chunk: 4,
+                lookups_ra_virtual_log_k_chunk: 32,
+            },
+            OneHotConfig {
+                log_k_chunk: 8,
+                lookups_ra_virtual_log_k_chunk: 32,
+            },
+        ] {
+            crate::poly::commitment::dory::DoryGlobals::reset();
+            let mut program = host::Program::new("muldiv-guest");
+            let (bytecode, init_memory_state, _, e_entry) = program.decode();
+            let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+            let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+            let program_data =
+                ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
+            let shared: JoltSharedPreprocessing<AkitaPackedScheme> = JoltSharedPreprocessing::new(
+                program_data,
+                io_device.memory_layout.clone(),
+                1 << 16,
+            );
+            let prover_preprocessing = JoltProverPreprocessing::new(shared);
+            let elf_contents = program.get_elf_contents().expect("elf contents is None");
+            let mut prover = AkitaPackedProver::gen_from_elf(
+                &prover_preprocessing,
+                &elf_contents,
+                &inputs,
+                &[],
+                &[],
+                None,
+                None,
+                None,
+            );
+            set_test_one_hot_config(&mut prover, config.clone());
+
+            let fused_cycles = prover.fused_inc_values();
+            let fused_inc_columns = prover.fused_inc_columns(&fused_cycles);
+            let plan = ONE_HOT_TRACE_LAYOUT
+                .plan(&prover.one_hot_trace_shape())
+                .expect("canonical OneHotTrace layout must exist");
+            let cached = prover.one_hot_trace_rows(&plan, fused_inc_columns.one_hot.clone());
+            let cached_indices = cached.ra_indices();
+            assert_eq!(cached_indices.len(), prover.trace.len());
+
+            let bytecode = &prover.preprocessing.materialized_program().bytecode;
+            let memory_layout = &prover.preprocessing.shared.memory_layout;
+            let mut expected = vec![0u16; plan.columns.len()];
+            let mut actual = vec![0u16; plan.columns.len()];
+            for (row, cycle) in prover.trace.iter().enumerate() {
+                let reference_indices =
+                    RaIndices::from_cycle(cycle, bytecode, memory_layout, &prover.one_hot_params);
+                assert_eq!(
+                    cached_indices[row], reference_indices,
+                    "cached RA indices differ at row {row} for {config:?}"
+                );
+
+                let lookup_index = LookupQuery::<XLEN>::to_lookup_index(cycle);
+                for (index, hot_lane) in expected[plan.ranges.instruction.clone()]
+                    .iter_mut()
+                    .enumerate()
+                {
+                    *hot_lane = committed_nonzero_lane(
+                        prover
+                            .one_hot_params
+                            .lookup_index_chunk(lookup_index, index)
+                            as usize,
+                    );
+                }
+                let pc = crate::zkvm::bytecode::get_pc_for_cycle(bytecode, cycle);
+                for (index, hot_lane) in expected[plan.ranges.bytecode.clone()]
+                    .iter_mut()
+                    .enumerate()
+                {
+                    *hot_lane = committed_nonzero_lane(
+                        prover.one_hot_params.bytecode_pc_chunk(pc, index) as usize,
+                    );
+                }
+                let ram_address = remap_address(cycle.ram_access().address() as u64, memory_layout);
+                for (index, hot_lane) in expected[plan.ranges.ram.clone()].iter_mut().enumerate() {
+                    *hot_lane = ram_address.map_or_else(jolt_akita::no_hot_lane, |address| {
+                        committed_nonzero_lane(
+                            prover.one_hot_params.ram_address_chunk(address, index) as usize,
+                        )
+                    });
+                }
+                for (index, hot_lane) in expected[plan.ranges.unsigned_inc.clone()]
+                    .iter_mut()
+                    .enumerate()
+                {
+                    *hot_lane = fused_inc_columns.one_hot[index][row]
+                        .map_or_else(jolt_akita::no_hot_lane, |lane| {
+                            committed_nonzero_lane(lane as usize)
+                        });
+                }
+                expected[plan.ranges.unsigned_inc_msb] = fused_inc_columns
+                    .one_hot
+                    .last()
+                    .and_then(|column| column[row])
+                    .map_or_else(jolt_akita::no_hot_lane, |lane| {
+                        committed_nonzero_lane(lane as usize)
+                    });
+
+                jolt_akita::TraceOneHotRows::fill_row(cached.as_ref(), row, &mut actual);
+                assert_eq!(
+                    actual, expected,
+                    "cached one-hot lanes differ at row {row} for {config:?}"
+                );
+            }
+        }
     }
 }
 
@@ -1956,7 +2191,7 @@ mod advice_tests {
             .expect("packed prover should produce a verifier-native proof");
         assert!(proof.untrusted_advice_commitment.is_some());
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // OneHotTrace is discharged by its native same-point batch. The two advice
+        // OneHotTrace is discharged by its random-selector opening. The two advice
         // commitment objects remain in the auxiliary packed opening.
         let auxiliary = proof
             .joint_opening_proof
@@ -2139,7 +2374,7 @@ mod committed_tests {
             .prove_packed(&object_setup, None, Some(&program_one_hot))
             .expect("packed prover should produce a verifier-native proof");
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // OneHotTrace is discharged by its native same-point batch; ProgramOneHot is the
+        // OneHotTrace is discharged by its random-selector opening; ProgramOneHot is the
         // only auxiliary packed object.
         let auxiliary = proof
             .joint_opening_proof

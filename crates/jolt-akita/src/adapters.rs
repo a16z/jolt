@@ -16,8 +16,10 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
+use crate::trace_onehot::TracePackedOneHot;
+
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Dense;
+pub(crate) type AkitaConfig = crate::configs::JoltD64Dense;
 pub(crate) type AkitaOneHotK16Config = crate::configs::JoltD64OneHotK16;
 pub(crate) type AkitaOneHotK256Config = crate::configs::JoltD64OneHotK256;
 pub(crate) const AKITA_D: usize = AkitaConfig::D;
@@ -106,8 +108,8 @@ impl AkitaSetupParams {
     }
 
     /// Setup parameters for a commitment object that only ever commits and
-    /// opens through the one-hot flavor (the packed `OneHotTrace` group): skips
-    /// building the dense-flavor backend setup of the same shape.
+    /// opens through the one-hot flavor (the packed `OneHotTrace` polynomial):
+    /// skips building the dense-flavor backend setup of the same shape.
     pub fn one_hot_only(
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
@@ -172,6 +174,25 @@ impl AkitaProverSetup {
 
     pub fn one_hot_k(&self) -> usize {
         self.verifier.one_hot_k
+    }
+
+    fn prepared_backends(&self) -> impl Iterator<Item = &AkitaBackendPreparedSetup> {
+        [
+            self.prepared_backend_setup.as_deref(),
+            self.prepared_one_hot_backend_setup.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// Release the built NTT slots after the commit's last full-width read.
+    ///
+    /// The setup matrix remains resident because the opening and verifier paths
+    /// reuse it.
+    pub fn release_post_commit_ntt_residency(&self) {
+        for prepared in self.prepared_backends() {
+            let _freed = prepared.drop_built_ntt_slots();
+        }
     }
 
     pub(crate) fn dense_backend(
@@ -519,6 +540,7 @@ pub struct AkitaProverHint {
 pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
     OneHot(Arc<[AkitaBackendOneHotPoly]>),
+    TraceOneHot(Arc<[TracePackedOneHot]>),
     SparseUnit(Arc<[AkitaBackendSparsePoly]>),
 }
 
@@ -532,7 +554,7 @@ impl AkitaHintPolynomials {
     pub(crate) const fn backend_flavor(&self) -> AkitaBackendFlavor {
         match self {
             Self::Dense(_) | Self::SparseUnit(_) => AkitaBackendFlavor::Dense,
-            Self::OneHot(_) => AkitaBackendFlavor::OneHot,
+            Self::OneHot(_) | Self::TraceOneHot(_) => AkitaBackendFlavor::OneHot,
         }
     }
 
@@ -540,6 +562,7 @@ impl AkitaHintPolynomials {
         match self {
             Self::Dense(_) => "dense",
             Self::OneHot(_) => "one_hot",
+            Self::TraceOneHot(_) => "trace_one_hot",
             Self::SparseUnit(_) => "sparse_unit",
         }
     }
@@ -548,6 +571,7 @@ impl AkitaHintPolynomials {
         match self {
             Self::Dense(polys) => polys.len(),
             Self::OneHot(polys) => polys.len(),
+            Self::TraceOneHot(polys) => polys.len(),
             Self::SparseUnit(polys) => polys.len(),
         }
     }
@@ -555,6 +579,9 @@ impl AkitaHintPolynomials {
     pub(crate) fn one_hot_k(&self) -> Option<usize> {
         match self {
             Self::OneHot(polys) => polys
+                .first()
+                .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
+            Self::TraceOneHot(polys) => polys
                 .first()
                 .and_then(akita_prover::RootPolyMeta::onehot_chunk_size),
             Self::Dense(_) | Self::SparseUnit(_) => None,

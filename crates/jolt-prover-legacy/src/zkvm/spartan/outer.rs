@@ -51,7 +51,7 @@ use crate::zkvm::r1cs::{
         OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE,
     },
     evaluation::R1CSEval,
-    inputs::{R1CSCycleInputs, ALL_R1CS_INPUTS},
+    inputs::{DecodedCycle, R1CSCycleInputs, ALL_R1CS_INPUTS},
 };
 use crate::zkvm::witness::VirtualPolynomial;
 
@@ -211,43 +211,56 @@ impl<F: JoltField> OuterUniSkipProver<F> {
         );
         let outer_scale = split_eq.get_current_scalar(); // = R^2 at this stage
 
-        let num_x_in_bits = split_eq.E_in_current_len().log_2();
-        let num_x_in_prime_bits = num_x_in_bits.saturating_sub(1); // ignore last bit (group index)
+        let e_out = split_eq.E_out_current();
+        let e_in = split_eq.E_in_current();
+        let in_len = e_in.len();
+        let num_x_in_prime_bits = in_len.log_2().saturating_sub(1); // ignore last bit (group index)
 
-        split_eq
-            .par_fold_out_in(
-                || [FullAccumS::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
-                |inner, g, x_in, e_in| {
-                    // Decode (x_out, x_in') from g and choose group by the last x_in bit
-                    let x_out = g >> num_x_in_bits;
-                    let x_in_prime = x_in >> 1;
+        // Even/odd x_in share the same trace step (the low x_in bit only selects the
+        // constraint group), so decode each step once and accumulate both groups.
+        (0..e_out.len())
+            .into_par_iter()
+            .map(|x_out| {
+                let mut inner = [FullAccumS::<F>::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                // Consecutive steps share a decode: this iteration's "next"
+                // is the following iteration's "current".
+                let mut carried: Option<DecodedCycle<'_>> = None;
+                for x_in_prime in 0..(in_len / 2).max(1) {
                     let base_step_idx = (x_out << num_x_in_prime_bits) | x_in_prime;
 
-                    let row_inputs = R1CSCycleInputs::from_trace::<F>(
-                        bytecode_preprocessing,
-                        trace,
-                        base_step_idx,
-                    );
+                    let cur = carried.take().unwrap_or_else(|| {
+                        DecodedCycle::new(bytecode_preprocessing, trace, base_step_idx)
+                    });
+                    let next = (base_step_idx + 1 < trace.len()).then(|| {
+                        DecodedCycle::new(bytecode_preprocessing, trace, base_step_idx + 1)
+                    });
+                    let row_inputs = R1CSCycleInputs::from_decoded::<F>(&cur, next.as_ref());
                     let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    carried = next;
 
-                    let is_group1 = (x_in & 1) == 1;
+                    let e_in_group0 = e_in[2 * x_in_prime];
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                        let prod_s192 = if !is_group1 {
-                            eval.extended_azbz_product_first_group(j)
-                        } else {
-                            eval.extended_azbz_product_second_group(j)
-                        };
-                        inner[j].fmadd(&e_in, &prod_s192);
+                        let prod_s192 = eval.extended_azbz_product_first_group(j);
+                        inner[j].fmadd(&e_in_group0, &prod_s192);
                     }
-                },
-                |_x_out, e_out, inner| {
-                    let mut out = [F::UnreducedProductAccum::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
-                    for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
-                        let reduced = inner[j].montgomery_reduce();
-                        out[j] = e_out.mul_to_product_accum(reduced);
+                    if in_len > 1 {
+                        let e_in_group1 = e_in[2 * x_in_prime + 1];
+                        for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
+                            let prod_s192 = eval.extended_azbz_product_second_group(j);
+                            inner[j].fmadd(&e_in_group1, &prod_s192);
+                        }
                     }
-                    out
-                },
+                }
+
+                let mut out = [F::UnreducedProductAccum::zero(); OUTER_UNIVARIATE_SKIP_DEGREE];
+                for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
+                    let reduced = inner[j].montgomery_reduce();
+                    out[j] = e_out[x_out].mul_to_product_accum(reduced);
+                }
+                out
+            })
+            .reduce(
+                || [F::UnreducedProductAccum::zero(); OUTER_UNIVARIATE_SKIP_DEGREE],
                 |mut a, b| {
                     for j in 0..OUTER_UNIVARIATE_SKIP_DEGREE {
                         a[j] += b[j];
@@ -754,6 +767,9 @@ pub struct OuterSharedState<F: JoltField> {
     r_grid: ExpandingTable<F>,
     #[allocative(skip)]
     lagrange_evals_r0: [F; OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE],
+    #[cfg(feature = "akita")]
+    #[allocative(skip)]
+    r1cs_rows: Option<Vec<R1CSCycleInputs>>,
     pub params: OuterRemainingSumcheckParams<F>,
 }
 
@@ -800,6 +816,8 @@ impl<F: JoltField> OuterSharedState<F> {
             r_grid,
             params: outer_params,
             lagrange_evals_r0: lagrange_evals_r,
+            #[cfg(feature = "akita")]
+            r1cs_rows: None,
         }
     }
 
@@ -845,14 +863,35 @@ impl<F: JoltField> OuterSharedState<F> {
             .zip(acc_bz_second.par_iter_mut())
             .enumerate()
             .for_each(|(j, ((acc_az_j, acc_bz_first_j), acc_bz_second_j))| {
+                // Consecutive `full_idx` values visit each step twice (the low
+                // bit is the constraint-group selector) and steps advance by
+                // one, so cache the built row across the selector pair and
+                // carry the next-step decode into the following step.
+                let mut carried: Option<DecodedCycle<'_>> = None;
+                let mut cached: Option<(usize, R1CSCycleInputs)> = None;
                 for k in 0..klen {
                     let full_idx = offset + j * klen + k;
                     let current_step_idx = full_idx >> 1;
                     let selector = (full_idx & 1) == 1;
 
-                    let row_inputs =
-                        R1CSCycleInputs::from_trace::<F>(preprocess, trace, current_step_idx);
-                    let eval = R1CSEval::<F>::from_cycle_inputs(&row_inputs);
+                    if cached
+                        .as_ref()
+                        .is_none_or(|(step, _)| *step != current_step_idx)
+                    {
+                        let cur = carried.take().unwrap_or_else(|| {
+                            DecodedCycle::new(preprocess, trace, current_step_idx)
+                        });
+                        let next = (current_step_idx + 1 < trace.len())
+                            .then(|| DecodedCycle::new(preprocess, trace, current_step_idx + 1));
+                        cached = Some((
+                            current_step_idx,
+                            R1CSCycleInputs::from_decoded::<F>(&cur, next.as_ref()),
+                        ));
+                        carried = next;
+                    }
+                    #[expect(clippy::unwrap_used, reason = "filled by the branch above")]
+                    let row_inputs = &cached.as_ref().unwrap().1;
+                    let eval = R1CSEval::<F>::from_cycle_inputs(row_inputs);
                     let w_k = &scaled_w[k];
 
                     if !selector {
@@ -1304,6 +1343,28 @@ impl<F: JoltField> OuterLinearStage<F> {
         let num_evals_az = E_out.len() * E_in.len() * grid_size;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(num_evals_az);
+        #[cfg(feature = "akita")]
+        let mut r1cs_rows = {
+            let mut rows =
+                Vec::<core::mem::MaybeUninit<R1CSCycleInputs>>::with_capacity(shared.trace.len());
+            // SAFETY: `MaybeUninit<T>` may be uninitialized. Every element is
+            // written exactly once by `cache_row` before conversion below.
+            unsafe {
+                rows.set_len(shared.trace.len());
+            }
+            rows
+        };
+        #[cfg(feature = "akita")]
+        let r1cs_rows_ptr = r1cs_rows.as_mut_ptr() as usize;
+        #[cfg(feature = "akita")]
+        let cache_row = |index: usize, row: R1CSCycleInputs| {
+            // SAFETY: round zero visits each time-step index once, and the
+            // parallel chunks cover disjoint index ranges.
+            unsafe {
+                (*(r1cs_rows_ptr as *mut core::mem::MaybeUninit<R1CSCycleInputs>).add(index))
+                    .write(row);
+            }
+        };
 
         let ans: Vec<F> = if E_in.len() == 1 {
             az.par_chunks_exact_mut(grid_size)
@@ -1346,6 +1407,8 @@ impl<F: JoltField> OuterLinearStage<F> {
                             az_grid[j + 1] = az1;
                             bz_grid[j + 1] = bz1;
 
+                            #[cfg(feature = "akita")]
+                            cache_row(time_step_idx, row_inputs);
                             j += 2;
                         }
                     } else {
@@ -1377,6 +1440,10 @@ impl<F: JoltField> OuterLinearStage<F> {
                             bz_chunk[j] = bz_at_full_idx;
                             az_grid[j] = az_at_full_idx;
                             bz_grid[j] = bz_at_full_idx;
+                            #[cfg(feature = "akita")]
+                            if !selector {
+                                cache_row(time_step_idx, row_inputs);
+                            }
                         }
                     }
 
@@ -1459,6 +1526,8 @@ impl<F: JoltField> OuterLinearStage<F> {
                                 az_grid[j + 1] = az1;
                                 bz_grid[j + 1] = bz1;
 
+                                #[cfg(feature = "akita")]
+                                cache_row(time_step_idx, row_inputs);
                                 j += 2;
                             }
                         } else {
@@ -1491,6 +1560,10 @@ impl<F: JoltField> OuterLinearStage<F> {
                                 bz_outer_chunk[offset_in_chunk] = bz_at_full_idx;
                                 az_grid[j] = az_at_full_idx;
                                 bz_grid[j] = bz_at_full_idx;
+                                #[cfg(feature = "akita")]
+                                if !selector {
+                                    cache_row(time_step_idx, row_inputs);
+                                }
                             }
                         }
 
@@ -1526,6 +1599,17 @@ impl<F: JoltField> OuterLinearStage<F> {
                 )
         };
         shared.t_prime_poly = Some(MultiquadraticPolynomial::new(num_vars, ans));
+        #[cfg(feature = "akita")]
+        {
+            let mut rows = core::mem::ManuallyDrop::new(r1cs_rows);
+            let len = rows.len();
+            let capacity = rows.capacity();
+            let ptr = rows.as_mut_ptr().cast::<R1CSCycleInputs>();
+            // SAFETY: `cache_row` initialized every element, and
+            // `ManuallyDrop` transfers the original allocation exactly once.
+            let initialized = unsafe { Vec::from_raw_parts(ptr, len, capacity) };
+            shared.r1cs_rows = Some(initialized);
+        }
         (DensePolynomial::new(az), DensePolynomial::new(bz))
     }
 
@@ -1712,6 +1796,14 @@ impl<F: JoltField> LinearSumcheckStage<F> for OuterLinearStage<F> {
     ) {
         let r_cycle = shared.params.normalize_opening_point(sumcheck_challenges);
 
+        #[cfg(feature = "akita")]
+        let claimed_witness_evals = {
+            let Some(r1cs_rows) = shared.r1cs_rows.as_ref() else {
+                panic!("round-zero materialization must retain the R1CS rows");
+            };
+            R1CSEval::compute_claimed_inputs_from_rows(r1cs_rows, &r_cycle)
+        };
+        #[cfg(not(feature = "akita"))]
         let claimed_witness_evals = R1CSEval::compute_claimed_inputs(
             &shared.bytecode_preprocessing,
             &shared.trace,

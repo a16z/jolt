@@ -252,6 +252,35 @@ pub struct R1CSCycleInputs {
     pub next_is_first_in_sequence: bool,
 }
 
+/// One decoded trace step: the cycle view plus its bytecode PC.
+///
+/// Sequential consumers decode each step once and carry the "next" decode
+/// into the following iteration; `R1CSCycleInputs::from_trace` otherwise
+/// decodes every step twice (as itself and as its predecessor's successor),
+/// including two bytecode-PC map lookups per step.
+pub struct DecodedCycle<'a> {
+    cycle: JoltTraceCycle<'a>,
+    pc: u64,
+}
+
+impl<'a> DecodedCycle<'a> {
+    #[expect(
+        clippy::expect_used,
+        reason = "non-Jolt trace rows are a malformed-trace invariant violation"
+    )]
+    pub fn new(
+        bytecode_preprocessing: &BytecodePreprocessing,
+        trace: &'a [Cycle],
+        t: usize,
+    ) -> Self {
+        let cycle = JoltTraceCycle::try_new(&trace[t])
+            .expect("trace cycle must be backed by a final Jolt instruction row");
+        let pc =
+            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle.cycle()) as u64;
+        Self { cycle, pc }
+    }
+}
+
 impl R1CSCycleInputs {
     /// Build directly from the execution trace and preprocessing,
     /// mirroring the optimized semantics used in `compute_claimed_r1cs_input_evals`.
@@ -263,37 +292,39 @@ impl R1CSCycleInputs {
     where
         F: JoltField,
     {
-        let len = trace.len();
-        let cycle = JoltTraceCycle::try_new(&trace[t])
-            .expect("trace cycle must be backed by a final Jolt instruction row");
+        let cur = DecodedCycle::new(bytecode_preprocessing, trace, t);
+        let next =
+            (t + 1 < trace.len()).then(|| DecodedCycle::new(bytecode_preprocessing, trace, t + 1));
+        Self::from_decoded::<F>(&cur, next.as_ref())
+    }
+
+    /// Build from pre-decoded current/next steps; `from_trace` semantics.
+    pub fn from_decoded<F>(cur: &DecodedCycle<'_>, next: Option<&DecodedCycle<'_>>) -> Self
+    where
+        F: JoltField,
+    {
+        let cycle = &cur.cycle;
         let flags_view = cycle.circuit_flags();
         let instruction_flags = cycle.instruction_flags();
         let norm = cycle.instruction();
 
-        let next_cycle = if t + 1 < len {
-            Some(
-                JoltTraceCycle::try_new(&trace[t + 1])
-                    .expect("trace cycle must be backed by a final Jolt instruction row"),
-            )
-        } else {
-            None
-        };
+        let next_cycle = next.map(|decoded| &decoded.cycle);
 
         // Instruction inputs and product
-        let (left_input, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(&cycle);
+        let (left_input, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
         let left_s64: S64 = S64::from_u64(left_input);
         let right_mag = right_i128.unsigned_abs();
         debug_assert!(
             right_mag <= u64::MAX as u128,
-            "RightInstructionInput overflow at row {t}: |{right_i128}| > 2^64-1"
+            "RightInstructionInput overflow: |{right_i128}| > 2^64-1"
         );
         let right_input = S64::from_u64_with_sign(right_mag as u64, right_i128 >= 0);
         let right_s128: S128 = S128::from_i128(right_i128);
         let product: S128 = left_s64.mul_trunc::<2, 2>(&right_s128);
 
         // Lookup operands and output
-        let (left_lookup, right_lookup) = LookupQuery::<XLEN>::to_lookup_operands(&cycle);
-        let lookup_output = LookupQuery::<XLEN>::to_lookup_output(&cycle);
+        let (left_lookup, right_lookup) = LookupQuery::<XLEN>::to_lookup_operands(cycle);
+        let lookup_output = LookupQuery::<XLEN>::to_lookup_output(cycle);
 
         // Registers
         let rs1_read_value = cycle.cycle().rs1_read().unwrap_or_default().1;
@@ -309,12 +340,8 @@ impl R1CSCycleInputs {
         };
 
         // PCs
-        let pc =
-            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, cycle.cycle()) as u64;
-        let next_pc = next_cycle.as_ref().map_or(0, |next_cycle| {
-            crate::zkvm::bytecode::get_pc_for_cycle(bytecode_preprocessing, next_cycle.cycle())
-                as u64
-        });
+        let pc = cur.pc;
+        let next_pc = next.map_or(0, |decoded| decoded.pc);
         let unexpanded_pc = norm.address as u64;
         let next_unexpanded_pc = next_cycle
             .as_ref()
@@ -325,7 +352,7 @@ impl R1CSCycleInputs {
         let imm_mag = imm_i128.unsigned_abs();
         debug_assert!(
             imm_mag <= u64::MAX as u128,
-            "Imm overflow at row {t}: |{imm_i128}| > 2^64-1"
+            "Imm overflow: |{imm_i128}| > 2^64-1"
         );
         let imm = S64::from_u64_with_sign(imm_mag as u64, imm_i128 >= 0);
 

@@ -12,6 +12,22 @@
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaError;
 use akita_planner::GeneratedScheduleTable;
+
+/// Planner-DP fallback shared by runtime schedule resolution and setup
+/// sizing: both MUST plan under the same policy or envelopes drift from the
+/// schedules that later run against them.
+fn dp_planned_schedule<Cfg: akita_config::CommitmentConfig>(
+    key: &akita_types::AkitaScheduleLookupKey,
+) -> Result<akita_types::FoldSchedule, akita_pcs::AkitaError> {
+    let planned = akita_planner::find_group_batch_schedule(
+        key,
+        &akita_config::policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+    planned.schedule.validate_structure()?;
+    Ok(planned.schedule)
+}
 use akita_types::{
     setup_matrix_envelope_for_schedule, AkitaScheduleLookupKey, SetupMatrixEnvelope,
 };
@@ -56,7 +72,7 @@ fn catalog_setup_envelope<Cfg: CommitmentConfig>(
 /// multi-group layouts (never produced by Jolt's shapes) fall back to the base
 /// preset's DP planning.
 macro_rules! delegate_preset {
-    ($(#[$doc:meta])* $name:ident, $base:ty, $catalog:expr) => {
+    ($(#[$doc:meta])* $name:ident, $base:ty, $catalog:expr, $slack_permille:expr) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, Default)]
         pub struct $name;
@@ -109,7 +125,24 @@ macro_rules! delegate_preset {
                         return Ok(envelope);
                     }
                 }
-                <$base>::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
+                // Catalog miss: size from a DP-planned schedule for the
+                // exact requested shape, mirroring `runtime_schedule`'s
+                // fallback under THIS config's policy. Never consult the base
+                // preset's catalog here — its rows are planned under the base
+                // policy and can disagree with the schedule this config's
+                // runtime resolution will actually produce. Jolt setups are
+                // exactly sized (`validate_commit_shape` pins num_vars to the
+                // setup dimension), so the single-shape envelope is the one
+                // the runtime fallback schedule will need.
+                let key = akita_types::AkitaScheduleLookupKey::single(
+                    akita_types::OpeningClaimsLayout::new(
+                        max_num_vars,
+                        max_num_batched_polys,
+                    )?
+                    .root_final_group_layout()?,
+                );
+                let schedule = dp_planned_schedule::<Self>(&key)?;
+                setup_matrix_envelope_for_schedule(&schedule)
             }
 
             fn basis_range() -> (u32, u32) {
@@ -128,12 +161,38 @@ macro_rules! delegate_preset {
                 <$base>::recursive_setup_planning()
             }
 
+            fn selection_payload_slack_permille() -> u32 {
+                $slack_permille
+            }
+
             fn supports_multi_group_final_commit() -> bool {
                 <$base>::supports_multi_group_final_commit()
             }
 
             fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
                 $catalog
+            }
+
+            fn runtime_schedule(
+                key: akita_types::AkitaScheduleLookupKey,
+            ) -> Result<akita_types::FoldSchedule, akita_pcs::AkitaError> {
+                Self::validate_sis_modulus_profile()?;
+                match akita_schedules::resolve_group_batch_schedule(
+                    &key,
+                    &akita_config::policy_of::<Self>(),
+                    Self::ring_challenge_config,
+                    Self::fold_challenge_shape_at_level,
+                    Self::schedule_catalog(),
+                ) {
+                    // Catalog misses fall back to the planner DP: the
+                    // checked-in table is a performance floor, never a
+                    // correctness gate (test-scale shapes sit below the
+                    // enumerated production grid).
+                    Err(akita_pcs::AkitaError::UnsupportedSchedule(_)) => {
+                        dp_planned_schedule::<Self>(&key)
+                    }
+                    other => other,
+                }
             }
 
             fn get_params_for_prove(
@@ -156,14 +215,29 @@ delegate_preset!(
     /// `D64OneHotK16` with the Jolt-generated K=16 schedule catalog.
     JoltD64OneHotK16,
     akita_config::proof_optimized::fp128::D64OneHotK16,
-    crate::schedules::jolt_fp128_d64_onehot_k16_table()
+    crate::schedules::jolt_fp128_d64_onehot_k16_table(),
+    // Accept up to 1% larger proofs when that buys a smaller root inner rank
+    // `n_a` — the rank multiplies the whole one-hot commit kernel, the
+    // dominant prover cost at large T.
+    10
 );
 
 delegate_preset!(
     /// `D64OneHot` (K=256) with the Jolt-generated large-trace catalog.
     JoltD64OneHotK256,
     akita_config::proof_optimized::fp128::D64OneHot,
-    crate::schedules::jolt_fp128_d64_onehot_k256_table()
+    crate::schedules::jolt_fp128_d64_onehot_k256_table(),
+    10
+);
+
+delegate_preset!(
+    /// `D64Dense` with planner-resolved schedules for Jolt's small
+    /// advice/precommitted objects. Akita's upstream generated catalogs are
+    /// not part of its Git source package, so Jolt does not enable them.
+    JoltD64Dense,
+    akita_config::proof_optimized::fp128::D64Dense,
+    None,
+    0
 );
 
 #[cfg(test)]
@@ -177,13 +251,60 @@ mod tests {
     #[test]
     fn production_one_hot_trace_shapes_use_catalog_setup_sizing() {
         let k16 = crate::schedules::jolt_fp128_d64_onehot_k16_table().unwrap();
-        assert!(catalog_setup_envelope::<JoltD64OneHotK16>(k16, 28, 81)
+        assert!(catalog_setup_envelope::<JoltD64OneHotK16>(k16, 34, 1)
             .unwrap()
             .is_some());
 
         let k256 = crate::schedules::jolt_fp128_d64_onehot_k256_table().unwrap();
-        assert!(catalog_setup_envelope::<JoltD64OneHotK256>(k256, 38, 41)
+        assert!(catalog_setup_envelope::<JoltD64OneHotK256>(k256, 43, 1)
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn one_hot_policy_trades_at_most_one_percent_payload_for_root_rank() {
+        let key = AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(38, 1));
+        let rank_policy = akita_config::policy_of::<JoltD64OneHotK256>();
+        assert_eq!(
+            rank_policy.selection_policy,
+            akita_schedules::SelectionPolicyId::MinRootRankThenPayloadWithinSlack {
+                slack_permille: 10
+            }
+        );
+        let rank_plan = akita_planner::find_group_batch_schedule(
+            &key,
+            &rank_policy,
+            JoltD64OneHotK256::ring_challenge_config,
+            JoltD64OneHotK256::fold_challenge_shape_at_level,
+        )
+        .unwrap();
+        let payload_policy = akita_schedules::PlannerPolicy {
+            selection_policy: akita_schedules::SelectionPolicyId::MinEstimatedProofPayload,
+            ..rank_policy
+        };
+        let payload_plan = akita_planner::find_group_batch_schedule(
+            &key,
+            &payload_policy,
+            JoltD64OneHotK256::ring_challenge_config,
+            JoltD64OneHotK256::fold_challenge_shape_at_level,
+        )
+        .unwrap();
+        let rank_payload = rank_plan.estimate.estimated_proof_payload_bytes().unwrap() as u128;
+        let minimum_payload = payload_plan
+            .estimate
+            .estimated_proof_payload_bytes()
+            .unwrap() as u128;
+        assert!(rank_payload * 1_000 <= minimum_payload * 1_010);
+
+        let root_rank = |plan: &akita_types::PlannedFoldSchedule| {
+            plan.schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .inner_commit_matrix
+                .output_rank()
+        };
+        assert!(root_rank(&rank_plan) <= root_rank(&payload_plan));
     }
 }

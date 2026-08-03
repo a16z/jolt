@@ -1,7 +1,8 @@
 #![expect(
     unused_results,
     clippy::expect_used,
-    reason = "benchmarks should fail loudly if a setup or proof path is malformed"
+    clippy::print_stdout,
+    reason = "benchmarks report one-shot timings and fail loudly on malformed setup or proof paths"
 )]
 
 //! Microbenchmarks for the Jolt Akita adapter paths.
@@ -25,6 +26,14 @@
 //! polynomials with two fewer variables: e.g. the `nv=20` batch case opens four
 //! `nv=18` polynomials either through Akita's native grouped opening or through
 //! one prefix-packed `nv=20` polynomial.
+//!
+//! The `trace_one_hot` groups compare Akita's already-materialized packed
+//! polynomial with Jolt's trace-derived source. The streaming source computes
+//! every semantic lane from one row and retains no per-column one-hot vectors;
+//! the materialized case is therefore a lower bound that excludes the
+//! allocation and transposition Jolt avoids. Set `JOLT_AKITA_TRACE_LOG_T` to
+//! select the production trace length. The benchmark uses K=16 with 64 packed
+//! columns below `logT=25`, and K=256 with 32 packed columns thereafter.
 
 #![expect(
     clippy::unwrap_used,
@@ -32,7 +41,8 @@
 )]
 
 use std::hint::black_box;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use akita_config::{
     proof_optimized::fp128::{D64Dense as AkitaConfig, D64OneHot as AkitaOneHotConfig},
@@ -51,7 +61,7 @@ use akita_types::{
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
+    AkitaScheme, AkitaSetupParams, TraceOneHotRows, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
 use jolt_field::{Field, Fr, FromPrimitiveInt};
@@ -68,7 +78,12 @@ const NUM_POLYS: usize = 1;
 const BATCH_POLYS: usize = 4;
 const BATCH_PREFIX_BITS: usize = 2;
 const DEFAULT_NUM_VARS_CASES: [usize; 3] = [15, 20, 25];
-const DEFAULT_TRACE_NUM_VARS: usize = 20;
+const DEFAULT_TRACE_LOG_T: usize = 20;
+const ONE_HOT_CHUNK_THRESHOLD_LOG_T: usize = 25;
+const TRACE_K16_COLUMN_CAPACITY: usize = 64;
+const TRACE_K256_COLUMN_CAPACITY: usize = 32;
+const TRACE_K16_NUM_COLUMNS: usize = 57;
+const TRACE_K256_NUM_COLUMNS: usize = 29;
 
 type BackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 type OneHotBackendScheme = AkitaCommitmentScheme<AkitaOneHotConfig>;
@@ -161,11 +176,73 @@ struct AkitaBatchCase {
     packed_claims: Vec<(BatchId, EvaluationClaim<AkitaField>)>,
 }
 
+struct SyntheticTraceRows {
+    rows: usize,
+    columns: usize,
+    one_hot_k: usize,
+}
+
+impl TraceOneHotRows for SyntheticTraceRows {
+    fn num_rows(&self) -> usize {
+        self.rows
+    }
+
+    fn num_columns(&self) -> usize {
+        self.columns
+    }
+
+    fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+        for (column, lane) in hot_lanes.iter_mut().enumerate() {
+            *lane = synthetic_trace_hot(row, column, self.one_hot_k)
+                .map_or_else(jolt_akita::no_hot_lane, u16::from);
+        }
+    }
+}
+
+fn synthetic_trace_hot(row: usize, column: usize, one_hot_k: usize) -> Option<u8> {
+    (!(row + column).is_multiple_of(31))
+        .then_some(((row * (2 * column + 1) + 11 * column) % one_hot_k) as u8)
+}
+
+fn materialized_trace_one_hot(
+    rows: usize,
+    num_columns: usize,
+    column_capacity: usize,
+    one_hot_k: usize,
+) -> OneHotPolynomial {
+    let packed_indices = (0..num_columns)
+        .flat_map(|column| (0..rows).map(move |row| synthetic_trace_hot(row, column, one_hot_k)))
+        .chain(std::iter::repeat_n(
+            None,
+            (column_capacity - num_columns) * rows,
+        ))
+        .collect();
+    OneHotPolynomial::new(one_hot_k, packed_indices)
+}
+
+#[derive(Clone, Copy)]
+struct TraceBenchGeometry {
+    log_t: usize,
+    rows: usize,
+    one_hot_k: usize,
+    column_capacity: usize,
+    num_columns: usize,
+    column_num_vars: usize,
+    packed_num_vars: usize,
+}
+
 fn configure_group(
     group: &mut BenchmarkGroup<'_, criterion::measurement::WallTime>,
     num_vars: usize,
 ) {
     group.sample_size(10);
+    if let Some(seconds) = trace_env_usize("JOLT_AKITA_BENCH_SECONDS") {
+        group.warm_up_time(Duration::from_secs(1));
+        group.measurement_time(Duration::from_secs(
+            seconds.try_into().expect("benchmark duration must fit u64"),
+        ));
+        return;
+    }
     if num_vars >= 20 {
         group.warm_up_time(Duration::from_secs(1));
         group.measurement_time(Duration::from_secs(30));
@@ -210,11 +287,99 @@ fn batch_logical_num_vars_cases() -> Vec<usize> {
         .collect()
 }
 
-fn trace_num_vars() -> usize {
-    std::env::var("JOLT_AKITA_TRACE_NUM_VARS")
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(DEFAULT_TRACE_NUM_VARS)
+fn trace_env_usize(name: &str) -> Option<usize> {
+    std::env::var_os(name).map(|raw| {
+        raw.into_string()
+            .expect("trace benchmark environment variables must be valid UTF-8")
+            .parse()
+            .expect("trace benchmark environment variables must be unsigned integers")
+    })
+}
+
+fn trace_path_enabled(path: &str) -> bool {
+    std::env::var_os("JOLT_AKITA_TRACE_PATH").is_none_or(|configured| configured == path)
+}
+
+fn trace_profile_num_vars() -> usize {
+    trace_env_usize("JOLT_AKITA_TRACE_NUM_VARS").unwrap_or(DEFAULT_TRACE_LOG_T)
+}
+
+fn trace_bench_geometry() -> TraceBenchGeometry {
+    let configured_log_t = trace_env_usize("JOLT_AKITA_TRACE_LOG_T");
+    let legacy_column_num_vars = trace_env_usize("JOLT_AKITA_TRACE_NUM_VARS");
+    let configured_k = trace_env_usize("JOLT_AKITA_TRACE_ONE_HOT_K");
+    if let Some(one_hot_k) = configured_k {
+        assert!(
+            matches!(one_hot_k, AKITA_ONE_HOT_K16 | AKITA_ONE_HOT_K256),
+            "JOLT_AKITA_TRACE_ONE_HOT_K must be {AKITA_ONE_HOT_K16} or {AKITA_ONE_HOT_K256}"
+        );
+    }
+
+    let (log_t, one_hot_k) = if let Some(log_t) = configured_log_t {
+        let one_hot_k = configured_k.unwrap_or({
+            if log_t < ONE_HOT_CHUNK_THRESHOLD_LOG_T {
+                AKITA_ONE_HOT_K16
+            } else {
+                AKITA_ONE_HOT_K256
+            }
+        });
+        (log_t, one_hot_k)
+    } else if let Some(column_num_vars) = legacy_column_num_vars {
+        let one_hot_k = configured_k.unwrap_or(AKITA_ONE_HOT_K256);
+        let log_k = one_hot_k.ilog2() as usize;
+        assert!(
+            column_num_vars >= log_k,
+            "JOLT_AKITA_TRACE_NUM_VARS={column_num_vars} is smaller than log2(K)={log_k}"
+        );
+        (column_num_vars - log_k, one_hot_k)
+    } else {
+        let log_t = DEFAULT_TRACE_LOG_T;
+        (
+            log_t,
+            configured_k.unwrap_or(if log_t < ONE_HOT_CHUNK_THRESHOLD_LOG_T {
+                AKITA_ONE_HOT_K16
+            } else {
+                AKITA_ONE_HOT_K256
+            }),
+        )
+    };
+
+    let (column_capacity, default_num_columns) = if one_hot_k == AKITA_ONE_HOT_K16 {
+        (TRACE_K16_COLUMN_CAPACITY, TRACE_K16_NUM_COLUMNS)
+    } else {
+        debug_assert_eq!(one_hot_k, AKITA_ONE_HOT_K256);
+        (TRACE_K256_COLUMN_CAPACITY, TRACE_K256_NUM_COLUMNS)
+    };
+    let column_num_vars = log_t
+        .checked_add(one_hot_k.ilog2() as usize)
+        .expect("trace column arity overflow");
+    if let Some(legacy_column_num_vars) = legacy_column_num_vars {
+        assert_eq!(
+            legacy_column_num_vars, column_num_vars,
+            "JOLT_AKITA_TRACE_LOG_T and JOLT_AKITA_TRACE_NUM_VARS describe different trace geometries"
+        );
+    }
+    let packed_num_vars = column_num_vars
+        .checked_add(column_capacity.ilog2() as usize)
+        .expect("packed trace arity overflow");
+    let rows = 1usize
+        .checked_shl(log_t.try_into().expect("trace logT does not fit u32"))
+        .expect("trace row count does not fit usize");
+    let num_columns = trace_env_usize("JOLT_AKITA_TRACE_COLUMNS").unwrap_or(default_num_columns);
+    assert!(
+        (1..=column_capacity).contains(&num_columns),
+        "JOLT_AKITA_TRACE_COLUMNS must be in 1..={column_capacity}, got {num_columns}"
+    );
+
+    TraceBenchGeometry {
+        log_t,
+        rows,
+        one_hot_k,
+        column_capacity,
+        num_columns,
+        column_num_vars,
+        packed_num_vars,
+    }
 }
 
 fn criterion_filter_matches(group_name: &str) -> bool {
@@ -737,6 +902,215 @@ fn bench_jolt_akita_commit(c: &mut Criterion) {
     }
 }
 
+fn bench_trace_one_hot_commit(c: &mut Criterion) {
+    if !criterion_filter_matches("trace_one_hot/commit") {
+        return;
+    }
+    let geometry = trace_bench_geometry();
+    let packed = (trace_path_enabled("akita_pre_materialized_packed")
+        || trace_path_enabled("materialize_and_akita_commit"))
+    .then(|| {
+        materialized_trace_one_hot(
+            geometry.rows,
+            geometry.num_columns,
+            geometry.column_capacity,
+            geometry.one_hot_k,
+        )
+    });
+    let source = Arc::new(SyntheticTraceRows {
+        rows: geometry.rows,
+        columns: geometry.num_columns,
+        one_hot_k: geometry.one_hot_k,
+    });
+    let (setup, _) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+        geometry.packed_num_vars,
+        1,
+        LAYOUT_DIGEST,
+        geometry.one_hot_k,
+    ))
+    .expect("trace one-hot setup");
+    if std::env::var_os("JOLT_AKITA_TRACE_COMMIT_ONCE").is_some() {
+        let start = Instant::now();
+        let result = AkitaScheme::commit_trace_one_hot(
+            &setup,
+            LAYOUT_DIGEST,
+            geometry.column_capacity,
+            source,
+        )
+        .expect("Jolt streaming one-hot commit");
+        let elapsed = start.elapsed();
+        black_box(result);
+        println!(
+            "trace_one_hot_commit_once logT={} k={} columns={} elapsed={elapsed:?}",
+            geometry.log_t, geometry.one_hot_k, geometry.num_columns,
+        );
+        return;
+    }
+    let group_name = format!(
+        "trace_one_hot/commit/logT{}_k{}_capacity{}_column_nv{}_packed_nv{}_semantic{}",
+        geometry.log_t,
+        geometry.one_hot_k,
+        geometry.column_capacity,
+        geometry.column_num_vars,
+        geometry.packed_num_vars,
+        geometry.num_columns,
+    );
+    let mut group = c.benchmark_group(group_name);
+    configure_group(&mut group, geometry.packed_num_vars);
+    if trace_path_enabled("akita_pre_materialized_packed") {
+        group.bench_function("akita_pre_materialized_packed", |b| {
+            b.iter(|| {
+                black_box(
+                    AkitaScheme::commit_one_hot_group(
+                        &setup,
+                        LAYOUT_DIGEST,
+                        std::slice::from_ref(
+                            packed
+                                .as_ref()
+                                .expect("materialized trace path requested packed input"),
+                        ),
+                    )
+                    .expect("Akita one-hot commit"),
+                )
+            });
+        });
+    }
+    if trace_path_enabled("materialize_and_akita_commit") {
+        group.bench_function("materialize_and_akita_commit", |b| {
+            b.iter(|| {
+                let packed = materialized_trace_one_hot(
+                    geometry.rows,
+                    geometry.num_columns,
+                    geometry.column_capacity,
+                    geometry.one_hot_k,
+                );
+                black_box(
+                    AkitaScheme::commit_one_hot_group(
+                        &setup,
+                        LAYOUT_DIGEST,
+                        std::slice::from_ref(&packed),
+                    )
+                    .expect("Akita one-hot commit"),
+                )
+            });
+        });
+    }
+    if trace_path_enabled("jolt_streaming_packed") {
+        group.bench_function("jolt_streaming_packed", |b| {
+            b.iter(|| {
+                black_box(
+                    AkitaScheme::commit_trace_one_hot(
+                        &setup,
+                        LAYOUT_DIGEST,
+                        geometry.column_capacity,
+                        source.clone(),
+                    )
+                    .expect("Jolt streaming one-hot commit"),
+                )
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_trace_one_hot_open(c: &mut Criterion) {
+    if !criterion_filter_matches("trace_one_hot/open") {
+        return;
+    }
+    let geometry = trace_bench_geometry();
+    let packed = materialized_trace_one_hot(
+        geometry.rows,
+        geometry.num_columns,
+        geometry.column_capacity,
+        geometry.one_hot_k,
+    );
+    let source = Arc::new(SyntheticTraceRows {
+        rows: geometry.rows,
+        columns: geometry.num_columns,
+        one_hot_k: geometry.one_hot_k,
+    });
+    let (setup, _) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+        geometry.packed_num_vars,
+        1,
+        LAYOUT_DIGEST,
+        geometry.one_hot_k,
+    ))
+    .expect("trace one-hot setup");
+    let point = vec![AkitaField::from_u64(3); geometry.packed_num_vars];
+    let evaluations = [packed.evaluate(&point)];
+    let group_name = format!(
+        "trace_one_hot/open/logT{}_k{}_capacity{}_column_nv{}_packed_nv{}_semantic{}",
+        geometry.log_t,
+        geometry.one_hot_k,
+        geometry.column_capacity,
+        geometry.column_num_vars,
+        geometry.packed_num_vars,
+        geometry.num_columns,
+    );
+    let mut group = c.benchmark_group(group_name);
+    configure_group(&mut group, geometry.packed_num_vars);
+    if trace_path_enabled("akita_pre_materialized_packed") {
+        group.bench_function("akita_pre_materialized_packed", |b| {
+            b.iter_batched(
+                || {
+                    AkitaScheme::commit_one_hot_group(
+                        &setup,
+                        LAYOUT_DIGEST,
+                        std::slice::from_ref(&packed),
+                    )
+                    .expect("Akita one-hot commit")
+                    .1
+                },
+                |hint| {
+                    let mut transcript = Blake2bTranscript::new(b"trace-one-hot/bench");
+                    black_box(
+                        AkitaScheme::open_one_hot_group_from_hint(
+                            &point,
+                            &evaluations,
+                            &setup,
+                            hint,
+                            &mut transcript,
+                        )
+                        .expect("Akita one-hot opening"),
+                    )
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    if trace_path_enabled("jolt_streaming_packed") {
+        group.bench_function("jolt_streaming_packed", |b| {
+            b.iter_batched(
+                || {
+                    AkitaScheme::commit_trace_one_hot(
+                        &setup,
+                        LAYOUT_DIGEST,
+                        geometry.column_capacity,
+                        source.clone(),
+                    )
+                    .expect("Jolt streaming one-hot commit")
+                    .1
+                },
+                |hint| {
+                    let mut transcript = Blake2bTranscript::new(b"trace-one-hot/bench");
+                    black_box(
+                        AkitaScheme::open_one_hot_group_from_hint(
+                            &point,
+                            &evaluations,
+                            &setup,
+                            hint,
+                            &mut transcript,
+                        )
+                        .expect("Jolt streaming one-hot opening"),
+                    )
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 fn bench_jolt_akita_open(c: &mut Criterion) {
     if !criterion_filter_matches("jolt_akita/open") {
         return;
@@ -1084,6 +1458,8 @@ criterion_group!(
     config = Criterion::default();
     targets =
         bench_jolt_akita_commit,
+        bench_trace_one_hot_commit,
+        bench_trace_one_hot_open,
         bench_jolt_akita_open,
         bench_akita_prover_commit,
         bench_akita_prover_open,
@@ -1099,7 +1475,7 @@ criterion_group!(
 fn run_trace_profile() {
     use jolt_profiling::{setup_tracing, TracingFormat};
 
-    let num_vars = trace_num_vars();
+    let num_vars = trace_profile_num_vars();
     let trace_name = format!("jolt_akita_paths_n{num_vars}");
     let _guards = setup_tracing(&[TracingFormat::Chrome], &trace_name);
     let case = akita_case(num_vars);

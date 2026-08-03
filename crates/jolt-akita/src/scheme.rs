@@ -8,6 +8,7 @@ use jolt_openings::{
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
@@ -20,6 +21,7 @@ use crate::adapters::{
     AKITA_ONE_HOT_K256,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
+use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
@@ -157,6 +159,46 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::OneHot(backend_polynomials.into()),
+        )
+    }
+
+    /// Prefix-packs all trace-derived one-hot columns into one physical
+    /// polynomial and commits it from one row-major source.
+    ///
+    /// Jolt-owned kernels decode the source directly; no per-column hot-index
+    /// vectors or Akita one-hot block tables are constructed.
+    pub fn commit_trace_one_hot(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        column_capacity: usize,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let source = TracePackedOneHot::new(setup.one_hot_k(), AKITA_D, column_capacity, rows)
+            .map_err(commit_failed)?;
+        let num_vars = akita_prover::RootPolyMeta::num_vars(&source);
+        Self::validate_commit_shape(setup, num_vars, 1)?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+            ),
+            _ => unreachable!("one-hot K is validated during setup"),
+        })
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::TraceOneHot(vec![source].into()),
         )
     }
 
@@ -633,6 +675,40 @@ mod tests {
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
     use jolt_transcript::Blake2bTranscript;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct SyntheticTraceRows {
+        rows: usize,
+        columns: usize,
+        one_hot_k: usize,
+        row_reads: AtomicUsize,
+    }
+
+    impl TraceOneHotRows for SyntheticTraceRows {
+        fn num_rows(&self) -> usize {
+            self.rows
+        }
+
+        fn num_columns(&self) -> usize {
+            self.columns
+        }
+
+        fn fill_row(&self, row: usize, hot_lanes: &mut [u16]) {
+            let _ = self.row_reads.fetch_add(1, Ordering::Relaxed);
+            for (column, lane) in hot_lanes.iter_mut().enumerate() {
+                *lane = synthetic_trace_hot(row, column, self.one_hot_k)
+                    .map_or_else(crate::no_hot_lane, u16::from);
+            }
+        }
+    }
+
+    fn synthetic_trace_hot(row: usize, column: usize, one_hot_k: usize) -> Option<u8> {
+        if (row + column) % 17 == 2 {
+            None
+        } else {
+            Some(((row * (2 * column + 1) + column) % one_hot_k) as u8)
+        }
+    }
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {
@@ -684,45 +760,76 @@ mod tests {
         assert_ne!(digest_transcript.state(), k_transcript.state());
     }
 
-    fn one_hot_roundtrip(one_hot_k: usize) {
-        let num_vars = one_hot_k.ilog2() as usize + 8;
+    fn packed_trace_one_hot_roundtrip(one_hot_k: usize, column_capacity: usize, num_rows: usize) {
+        const NUM_COLUMNS: usize = 3;
+        let selector_bits = column_capacity.ilog2() as usize;
+        let num_vars = one_hot_k.ilog2() as usize + num_rows.ilog2() as usize + selector_bits;
         let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
             num_vars, 1, [4; 32], one_hot_k,
         ))
         .unwrap();
-        let indices = (0..256usize)
-            .map(|row| {
-                if row == 2 {
-                    None
-                } else {
-                    Some((row % one_hot_k) as u8)
-                }
+        let packed_indices = (0..NUM_COLUMNS)
+            .flat_map(|column| {
+                (0..num_rows).map(move |row| synthetic_trace_hot(row, column, one_hot_k))
             })
+            .chain(std::iter::repeat_n(
+                None,
+                (column_capacity - NUM_COLUMNS) * num_rows,
+            ))
             .collect::<Vec<_>>();
-        let polynomial = OneHotPolynomial::new(one_hot_k, indices);
+        let packed = OneHotPolynomial::new(one_hot_k, packed_indices);
         let (commitment, hint) = AkitaScheme::commit_one_hot_group(
             &prover_setup,
             [4; 32],
-            std::slice::from_ref(&polynomial),
+            std::slice::from_ref(&packed),
         )
         .unwrap();
         assert_eq!(commitment.one_hot_k(), one_hot_k);
+        let trace_rows = Arc::new(SyntheticTraceRows {
+            rows: num_rows,
+            columns: NUM_COLUMNS,
+            one_hot_k,
+            row_reads: AtomicUsize::new(0),
+        });
+        let (streaming_commitment, streaming_hint) = AkitaScheme::commit_trace_one_hot(
+            &prover_setup,
+            [4; 32],
+            column_capacity,
+            trace_rows.clone(),
+        )
+        .unwrap();
+        assert_eq!(streaming_commitment, commitment);
+        assert_eq!(trace_rows.row_reads.load(Ordering::Relaxed), num_rows);
 
         let point = vec![AkitaField::from_u64(3); num_vars];
-        let value = polynomial.evaluate(&point);
+        let evaluation = packed.evaluate(&point);
+        let evaluations = [evaluation];
         let statement = vec![VerifierOpeningClaim {
             commitment: commitment.clone(),
-            evaluation: EvaluationClaim::new(point, value),
+            evaluation: EvaluationClaim::new(point.clone(), evaluation),
         }];
         let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
-        let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+        let proof = AkitaScheme::open_one_hot_group_from_hint(
+            &point,
+            &evaluations,
             &prover_setup,
-            statement.clone(),
-            vec![&polynomial],
             hint,
             &mut prover_transcript,
         )
         .unwrap();
+        let mut streaming_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+        let streaming_proof = AkitaScheme::open_one_hot_group_from_hint(
+            &point,
+            &evaluations,
+            &prover_setup,
+            streaming_hint,
+            &mut streaming_transcript,
+        )
+        .unwrap();
+        assert_eq!(streaming_proof, proof);
+        assert_eq!(streaming_transcript.state(), prover_transcript.state());
+        assert_eq!(trace_rows.row_reads.load(Ordering::Relaxed), 3 * num_rows);
+
         let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
@@ -751,12 +858,14 @@ mod tests {
 
     #[test]
     fn one_hot_k16_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K16);
+        // Packed arity 23 makes one semantic segment exactly one root block,
+        // exercising the blockwise multi-accumulator path.
+        packed_trace_one_hot_roundtrip(AKITA_ONE_HOT_K16, 64, 1 << 13);
     }
 
     #[test]
     fn one_hot_k256_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K256);
+        packed_trace_one_hot_roundtrip(AKITA_ONE_HOT_K256, 32, 1 << 8);
     }
 
     /// A serde roundtrip drops the primed key cache; the transported setup

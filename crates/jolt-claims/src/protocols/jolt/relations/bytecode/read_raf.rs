@@ -234,13 +234,9 @@ mod tests {
                 + gamma_power(gamma, 6) * Fr::from_u64(109)
         );
 
-        let stage_values = [
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-            Fr::from_u64(7),
-            Fr::from_u64(11),
-        ];
+        let stage_values = (0..NUM_BYTECODE_VAL_STAGES)
+            .map(|index| Fr::from_u64(2 * index as u64 + 3))
+            .collect::<Vec<_>>();
         let spartan_outer_raf = Fr::from_u64(13);
         let spartan_shift_raf = Fr::from_u64(17);
         let entry = Fr::from_u64(19);
@@ -272,16 +268,18 @@ mod tests {
             },
         );
 
+        let staged = stage_values
+            .iter()
+            .enumerate()
+            .fold(zero, |sum, (stage, value)| {
+                sum + gamma_power(gamma, stage) * *value
+            });
         assert_eq!(
             output,
-            (stage_values[0]
-                + gamma * stage_values[1]
-                + gamma_power(gamma, 2) * stage_values[2]
-                + gamma_power(gamma, 3) * stage_values[3]
-                + gamma_power(gamma, 4) * stage_values[4]
-                + gamma_power(gamma, 5) * spartan_outer_raf
-                + gamma_power(gamma, 6) * spartan_shift_raf
-                + gamma_power(gamma, 7) * entry)
+            (staged
+                + gamma_power(gamma, NUM_BYTECODE_VAL_STAGES) * spartan_outer_raf
+                + gamma_power(gamma, NUM_BYTECODE_VAL_STAGES + 1) * spartan_shift_raf
+                + gamma_power(gamma, NUM_BYTECODE_VAL_STAGES + 2) * entry)
                 * bytecode_ra_0
                 * bytecode_ra_1
         );
