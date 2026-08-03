@@ -31,6 +31,10 @@ use crate::precommitted_reduction::{
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
 impl<F: JoltField> AdviceOpeningEvaluation<F> for ReferenceBackend {
+    // The backend-neutral `AdviceOpeningEvaluation::evaluate` span lives at
+    // the stage-4 call boundary (`crates/jolt-prover/src/stages/stage4.rs`),
+    // so every implementation inherits it — see the taxonomy's kernel-seam
+    // contract.
     fn evaluate(
         &self,
         _session: &mut ProofSession,

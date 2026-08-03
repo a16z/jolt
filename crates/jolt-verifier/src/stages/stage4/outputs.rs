@@ -95,6 +95,7 @@ impl<F: JoltField> Stage4OutputPoints<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage4ClearOutput<F: JoltField> {
     /// The produced stage-4 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.

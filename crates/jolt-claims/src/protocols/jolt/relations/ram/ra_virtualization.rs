@@ -10,6 +10,7 @@ use crate::protocols::jolt::{JoltExpr, JoltRelationId, RamRaVirtualizationPublic
 use crate::SymbolicSumcheck;
 use crate::{derived, opening, InputClaims, OutputClaims};
 
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

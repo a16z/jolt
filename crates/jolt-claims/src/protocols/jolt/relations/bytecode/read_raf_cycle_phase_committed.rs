@@ -15,6 +15,7 @@ use crate::{opening, SumcheckChallenges, SymbolicSumcheck};
 /// Fiat-Shamir challenge drawn by the committed-program cycle phase of the
 /// bytecode read-RAF sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReadRafCyclePhaseCommittedChallenges<F> {
     #[challenge(BytecodeReadRafChallenge::Gamma)]
     pub gamma: F,

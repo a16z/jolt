@@ -156,6 +156,7 @@ pub trait SumcheckChallenges<F: JoltField, C = JoltChallengeId>: Sized {
 /// `Challenges` for a relation that draws no Fiat-Shamir challenges: resolves
 /// every id to `None`. Generic over the field so it fits `type Challenges<F>`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct NoChallenges<F>(::core::marker::PhantomData<F>);
 
 impl<F: JoltField, C> SumcheckChallenges<F, C> for NoChallenges<F> {

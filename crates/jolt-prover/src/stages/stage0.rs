@@ -58,6 +58,7 @@ where
 /// (main, untrusted advice, trusted advice, then the preprocessing-held
 /// committed-program chunk/image commitments — the verifier's own absorb
 /// order).
+#[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
@@ -191,13 +192,23 @@ where
         log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         order: config.trace_polynomial_order,
     };
-    let committed = backend.commit.commit_witness(
-        session,
-        witness as &dyn RowSource,
-        &ids,
-        grid,
-        &preprocessing.pcs_setup,
-    )?;
+    // The `commit_witness` kernel-seam span sits at this call boundary, not
+    // on any one backend impl, so every `CommitWitness` backend inherits it
+    // (the taxonomy advertises it as backend-neutral).
+    let committed = tracing::info_span!(
+        "commit_witness",
+        columns = ids.len(),
+        total_vars = grid.total_vars
+    )
+    .in_scope(|| {
+        backend.commit.commit_witness(
+            session,
+            witness as &dyn RowSource,
+            &ids,
+            grid,
+            &preprocessing.pcs_setup,
+        )
+    })?;
     let (commitments, mut hints) = assemble_commitments::<PCS>(committed)?;
 
     // The untrusted advice polynomial is committed at prove time in its OWN
@@ -212,13 +223,20 @@ where
             // Advice grids always place cycle-major — see `CommitmentGrid`.
             order: TracePolynomialOrder::CycleMajor,
         };
-        let advice = backend.commit.commit_advice(
-            session,
-            witness as &dyn JoltWitnessOracle<F>,
-            JoltCommittedPolynomial::UntrustedAdvice,
-            advice_grid,
-            &preprocessing.pcs_setup,
-        )?;
+        // Backend-neutral seam span, like `commit_witness` above.
+        let advice = tracing::info_span!(
+            "commit_advice",
+            id = ?JoltCommittedPolynomial::UntrustedAdvice
+        )
+        .in_scope(|| {
+            backend.commit.commit_advice(
+                session,
+                witness as &dyn JoltWitnessOracle<F>,
+                JoltCommittedPolynomial::UntrustedAdvice,
+                advice_grid,
+                &preprocessing.pcs_setup,
+            )
+        })?;
         hints.push((advice.id, advice.hint));
         Some(advice.commitment)
     } else {

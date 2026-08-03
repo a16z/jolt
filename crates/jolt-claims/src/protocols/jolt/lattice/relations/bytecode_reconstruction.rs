@@ -56,6 +56,7 @@ pub struct BytecodeChunkReconstructionInputClaims<C> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeChunkReconstructionChallenges<F> {
     #[challenge(BytecodeChunkReconstructionChallenge::Gamma)]
     pub gamma: F,

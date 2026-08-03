@@ -76,6 +76,35 @@ pub struct BooleanityAddressKernel<F: JoltField> {
     rounds_bound: usize,
 }
 
+// Size arithmetic rather than a derive, so `F` stays unbounded; `Polynomial`
+// sizing is by `len()`, exact at the mid-stage snapshot.
+#[cfg(feature = "allocative")]
+impl<F: JoltField> allocative::Allocative for BooleanityAddressKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{
+            nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
+        };
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("gamma_weights"),
+            vec_heap_bytes(&self.gamma_weights),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("linear"),
+            polys_heap_bytes(&self.linear),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("squared"),
+            nested_vec_heap_bytes(&self.squared),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("eq_address"),
+            poly_heap_bytes(&self.eq_address),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: JoltField> BooleanityAddressKernel<F> {
     pub fn new(
         relation: &BooleanityAddressPhase<F>,

@@ -248,6 +248,7 @@ pub struct Stage6bCarriedChallenges<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage6bClearOutput<F: JoltField> {
     /// The produced opening *values* (wire form); read by later stages and the
     /// Fiat-Shamir opening-claim encoder.
@@ -314,6 +315,7 @@ impl<F: JoltField, C> Stage6bOutput<F, C> {
 /// phases: the per-chunk weights over dropped address bits, the chunk-local
 /// cycle point, and the gamma-folded lane weights.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReductionWeights<F: JoltField> {
     pub r_bc: Vec<F>,
     pub chunk_rbc_weights: Vec<F>,

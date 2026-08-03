@@ -20,6 +20,7 @@ use jolt_field::Ring;
 /// Produced instruction-input virtualization openings (the left/right operand
 /// selector flags and their operand values), all sharing the single
 /// instruction-input opening point. Generic over the cell.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -58,6 +59,7 @@ pub struct InstructionInputInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the instruction input-virtualization sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionInputChallenges<F> {
     #[challenge(InstructionInputChallenge::Gamma)]
     pub gamma: F,

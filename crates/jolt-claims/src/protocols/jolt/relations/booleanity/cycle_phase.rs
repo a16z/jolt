@@ -14,6 +14,7 @@ use crate::{SumcheckChallenges, SymbolicSumcheck};
 /// sumcheck. As in the monolith, the `gamma` is built inside
 /// `booleanity_cycle_output`, so this set is derived from `required_challenges()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BooleanityCyclePhaseChallenges<F> {
     #[challenge(BooleanityChallenge::Gamma)]
     pub gamma: F,

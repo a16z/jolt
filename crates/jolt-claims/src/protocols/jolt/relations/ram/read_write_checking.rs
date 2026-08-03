@@ -15,6 +15,7 @@ use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChal
 /// Produced RAM read-write openings (`val`, `ra`, committed `inc`), all sharing
 /// the single read-write opening point. Generic over the opening cell (`F` for the
 /// serialized wire value, `Vec<F>` for the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -44,6 +45,7 @@ pub struct RamReadWriteInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the RAM read/write-checking sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamReadWriteChallenges<F> {
     #[challenge(RamReadWriteChallenge::Gamma)]
     pub gamma: F,

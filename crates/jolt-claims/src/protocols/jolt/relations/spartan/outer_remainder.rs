@@ -27,6 +27,7 @@ pub struct OuterRemainderInputClaims<C> {
 /// order is the canonical Fiat-Shamir / append order and MUST equal
 /// [`SpartanOuterDimensions::variables`] /
 /// [`SPARTAN_OUTER_R1CS_INPUTS`](crate::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

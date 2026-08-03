@@ -17,6 +17,7 @@ use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, S
 
 /// The produced bytecode-reduction openings: the intermediate when an address
 /// phase follows, else the per-chunk final `BytecodeChunk` openings.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -40,6 +41,7 @@ pub struct BytecodeReductionCyclePhaseInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the committed-bytecode reduction cycle phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReductionCyclePhaseChallenges<F> {
     #[challenge(BytecodeClaimReductionChallenge::Eta)]
     pub eta: F,

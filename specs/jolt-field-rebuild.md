@@ -324,9 +324,10 @@ validated by the following battery, all green:
    (`benches/ext4_kernels.rs`) on x86-64 before deciding the
    `PseudoMersenne` hook overrides stay generic (checkpoint 6 caveat).
 3. **CI wiring:** a target-feature lane so SIMD is not CI-dark.
-4. **Parallel helpers:** still zero consumers after the rebind (the old
-   crate's `parallel` module also had none); delete `solinas::parallel`
-   and the `parallel` feature, or wire a consumer.
+4. **Parallel helpers: deletion withdrawn.** The checkpoint 9 audit's
+   "zero consumers" verdict was workspace-blind: Akita's cutover branch
+   consumes `jolt_field::parallel` at 32 sites. The helpers stay; the
+   Akita rebind binds them at their new path.
 5. **Akita cutover follow-ups:** delete the `akita` bootstrap edge and
    restore `JoltField`'s serde bounds (deviation 1 above).
 

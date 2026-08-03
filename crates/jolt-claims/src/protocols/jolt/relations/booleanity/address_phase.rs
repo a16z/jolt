@@ -16,6 +16,7 @@ use crate::{ChallengeDrawError, InputClaims, OutputClaims, SumcheckChallenges, S
 
 /// The staged `BooleanityAddrClaim` intermediate produced by the address phase
 /// and consumed by the cycle phase.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -66,6 +67,7 @@ impl<F: JoltField> InputClaims<F> for BooleanityAddressPhaseInputClaims<F> {
 /// would), and the struct cannot be built from a per-field scalar stream —
 /// `from_transcript_values` fails rather than fabricate a reference point.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BooleanityAddressPhaseChallenges<F> {
     pub reference_address: Vec<F>,
     pub gamma: F,

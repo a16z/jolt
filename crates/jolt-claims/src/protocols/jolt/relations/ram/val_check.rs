@@ -27,6 +27,7 @@ use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChal
 /// `ram_ra`/`ram_inc`). The stage-4 aggregate therefore hand-writes its
 /// `opening_values` rather than concatenating each instance's openings; see
 /// `Stage4OutputClaims` in `jolt-verifier`.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -87,6 +88,7 @@ pub struct RamValCheckShape {
 
 /// Fiat-Shamir challenge drawn by the RAM value-check sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamValCheckChallenges<F> {
     #[challenge(RamValCheckChallenge::Gamma)]
     pub gamma: F,

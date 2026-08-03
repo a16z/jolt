@@ -39,6 +39,10 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
+    // The backend-neutral `commit_witness` span lives at the stage-0 call
+    // boundary (`crates/jolt-prover/src/stages/stage0.rs`), so every
+    // `CommitWitness` implementation inherits it — see the taxonomy's
+    // kernel-seam contract.
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
@@ -92,6 +96,7 @@ where
             .collect()
     }
 
+    // Instrumented at the stage-0 call boundary, like `commit_witness`.
     fn commit_advice(
         &self,
         _session: &mut ProofSession,

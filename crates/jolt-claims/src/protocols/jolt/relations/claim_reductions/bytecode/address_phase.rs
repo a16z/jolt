@@ -15,6 +15,7 @@ use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// Produced per-chunk `BytecodeChunk(i)` openings, all sharing the reduction's
 /// final opening point. Generic over the cell.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

@@ -22,6 +22,7 @@ use crate::protocols::jolt::{
 use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// Produced final trusted-advice opening (scaled by `FinalScale`).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -41,6 +42,7 @@ pub struct TrustedAdviceAddressPhaseInputClaims<C> {
 }
 
 /// Produced final untrusted-advice opening (scaled by `FinalScale`).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

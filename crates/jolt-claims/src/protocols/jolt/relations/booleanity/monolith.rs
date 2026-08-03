@@ -9,6 +9,7 @@ use crate::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// The committed per-family `Ra` openings produced by the cycle phase; every
 /// opening shares the single booleanity opening point (`r_address ++ r_cycle`).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -36,6 +37,7 @@ pub struct BooleanityInputClaims<C> {
 /// helper rather than appearing as a literal `challenge(..)` here, so this set is
 /// derived from `required_challenges()`, not a textual scan of the expressions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BooleanityChallenges<F> {
     #[challenge(BooleanityChallenge::Gamma)]
     pub gamma: F,

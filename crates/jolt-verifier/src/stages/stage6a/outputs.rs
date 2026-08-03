@@ -53,6 +53,7 @@ pub struct Stage6aSumchecks<F: JoltField> {
 /// 6b's members consume them as well, so 6a carries them downstream as typed
 /// upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage6aCarriedChallenges<F: JoltField> {
     /// The bytecode read-RAF address-phase draws (the fold gamma plus the five
     /// per-stage gammas), verbatim. Consumers folding with power vectors expand
@@ -75,6 +76,7 @@ impl<F: JoltField> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage6aClearOutput<F: JoltField> {
     /// The produced address-phase opening *values* (the staged intermediates
     /// and, in committed-program mode, the `BytecodeValClaim` claims), read by

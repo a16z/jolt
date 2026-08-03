@@ -370,6 +370,7 @@ pub fn ram_val_check_init_structure<F: JoltField>(
 /// [`RamValCheckInitStructure`] and the proof's claimed opening values; consumed by
 /// the stage-4 input wiring and the downstream stage-6/7 address-phase reductions.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamValCheckInitialEvaluation<F: JoltField> {
     pub public_eval: F,
     /// The staged program-image contribution's opening point (the full RAM address
@@ -390,6 +391,7 @@ impl<F: JoltField> RamValCheckInitialEvaluation<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct VerifiedRamValCheckAdviceContribution<F: JoltField> {
     pub kind: JoltAdviceKind,
     pub selector: F,

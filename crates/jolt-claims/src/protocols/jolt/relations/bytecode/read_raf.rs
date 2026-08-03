@@ -15,6 +15,7 @@ use crate::{SumcheckChallenges, SymbolicSumcheck};
 /// Fiat-Shamir challenges drawn by the full bytecode read-RAF sumcheck: the
 /// batching `gamma` plus the five per-stage gammas folding the staged claims.
 #[derive(Clone, Copy, Debug, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReadRafChallenges<F> {
     #[challenge(BytecodeReadRafChallenge::Gamma)]
     pub gamma: F,

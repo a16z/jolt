@@ -123,6 +123,37 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     rounds_bound: usize,
 }
 
+// Size arithmetic rather than a derive, so `F` stays unbounded; `Polynomial`
+// sizing is by `len()`, exact at the mid-stage snapshot.
+#[cfg(feature = "allocative")]
+impl<F: JoltField> allocative::Allocative for BytecodeReadRafAddressKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::poly_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("pushforwards"),
+            self.pushforwards.iter().map(poly_heap_bytes).sum::<usize>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("values"),
+            self.values.iter().map(poly_heap_bytes).sum::<usize>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("int_table"),
+            poly_heap_bytes(&self.int_table),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("entry_trace"),
+            poly_heap_bytes(&self.entry_trace),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("entry_expected"),
+            poly_heap_bytes(&self.entry_expected),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
     pub fn new(
         relation: &BytecodeReadRafAddressPhase<F>,

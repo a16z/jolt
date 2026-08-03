@@ -1113,18 +1113,26 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #(#input_points_fields,)*
         }
 
+        // The `allocative` cfg_attr resolves against the EXPANDING crate's
+        // feature set: any crate deriving `SumcheckBatch` with an
+        // `allocative` feature must make its members' claim structs
+        // `Allocative` under that feature (the profile harness's per-stage
+        // heap flamegraphs visit these aggregates).
         #[derive(Clone, Debug, PartialEq, Eq, ::serde::Serialize, ::serde::Deserialize)]
+        #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
         #[serde(bound(serialize = #serialize_bound, deserialize = #deserialize_bound))]
         #vis struct #output_claims_name<#f: ::jolt_field::JoltField> {
             #(#output_claims_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
+        #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
         #vis struct #output_points_name<#f: ::jolt_field::JoltField> {
             #(#output_points_fields,)*
         }
 
         #[derive(Clone, Debug, PartialEq, Eq)]
+        #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
         #vis struct #challenges_name<#f: ::jolt_field::JoltField> {
             #(#challenge_fields,)*
         }

@@ -52,6 +52,7 @@ impl<F: JoltField> Stage5OutputPoints<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage5ClearOutput<F: JoltField> {
     pub challenges: Stage5Challenges<F>,
     /// The produced stage-5 opening *values* (wire form); read by later stages and

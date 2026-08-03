@@ -89,6 +89,7 @@ pub struct UntrustedAdviceReconstructionInputClaims<C> {
 /// and the struct cannot be built from a per-field scalar stream —
 /// `from_transcript_values` fails rather than fabricate a reference point.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct UntrustedAdviceReconstructionChallenges<F> {
     /// The fresh reference point the booleanity/hamming legs compare against,
     /// drawn over the full `(byte ‖ place ‖ word)` cell domain before the

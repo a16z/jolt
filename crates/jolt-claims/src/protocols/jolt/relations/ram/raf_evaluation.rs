@@ -13,6 +13,7 @@ use crate::{constant, derived, opening, InputClaims, OutputClaims};
 /// The produced RAM RAF `ram_ra` opening, sharing the single RAF opening point.
 /// Generic over the opening cell (`F` for the serialized wire value, `Vec<F>` for
 /// the derived opening point).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

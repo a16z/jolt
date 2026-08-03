@@ -60,6 +60,7 @@ pub struct Stage1Challenges<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage1ClearOutput<F: JoltField> {
     /// The produced remainder opening *values* (wire form). The opening point is
     /// derived from the remainder's sumcheck point; later stages read values through
