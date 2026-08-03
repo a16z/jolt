@@ -28,6 +28,11 @@ cargo nextest run -p [package_name] [test_name] --cargo-quiet
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
 
+# Modular prover acceptance suites (mirror CI): clear-mode byte-diff ratchets
+# vs the legacy prover, and the modular ZK e2e (muldiv accept, tamper reject,
+# advice, committed program)
+cargo nextest run -p jolt-prover --features prover-fixtures --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,zk --cargo-quiet
 ```
 
 ### Building
@@ -171,7 +176,7 @@ In ZK mode, `input_claim()` is never called so verifier params can use partial v
 
 ### BlindFold Zero-Knowledge Protocol (subprotocols/blindfold/)
 
-BlindFold makes all sumcheck proofs zero-knowledge without SNARK composition. Instead of revealing sumcheck round polynomial coefficients, the prover sends Pedersen commitments. Sumcheck verifier checks are encoded into a small verifier R1CS, proved via Nova folding + Spartan. (A modular port lives in `crates/jolt-blindfold`; the module map below is the legacy implementation.)
+BlindFold makes all sumcheck proofs zero-knowledge without SNARK composition. Instead of revealing sumcheck round polynomial coefficients, the prover sends Pedersen commitments. Sumcheck verifier checks are encoded into a small verifier R1CS, proved via Nova folding + Spartan. (The modular prover has full ZK support: `crates/jolt-blindfold` plus `crates/jolt-prover/src/blindfold.rs` and `recorder.rs`, behind jolt-prover's compile-time `zk` feature — see `specs/jolt-prover-blindfold.md`. The module map below is the legacy implementation.)
 
 **Module structure:**
 - `mod.rs`: `StageConfig`, `BakedPublicInputs`, `HyraxParams`, R1CS primitives (`Variable`, `LinearCombination`, `Constraint`)
