@@ -3563,6 +3563,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "proptest",
  "rayon",
  "thiserror 2.0.18",
  "tracing",

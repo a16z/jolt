@@ -2,6 +2,7 @@ typedef unsigned long long u64;
 typedef unsigned __int128 u128;
 
 #define LIMBS 4
+#define BLOCK 256
 
 __device__ __constant__ u64 MODULUS[4] = {
     0x43e1f593f0000001ULL, 0x2833e84879b97091ULL,

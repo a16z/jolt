@@ -18,6 +18,9 @@ pub enum CudaError {
 
     #[error("device buffer of {len} field elements is not {limbs}-limb aligned")]
     LimbAlignment { len: usize, limbs: usize },
+
+    #[error("CUDA kernel not implemented: {kernel}")]
+    NotImplemented { kernel: &'static str },
 }
 
 impl From<CompileError> for CudaError {

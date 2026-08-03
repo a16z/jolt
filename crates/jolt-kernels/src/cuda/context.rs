@@ -1,7 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
 use cudarc::driver::{
-    CudaContext as DriverContext, CudaFunction, CudaStream, LaunchConfig, PushKernelArg,
+    CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
 };
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 use jolt_field::Fr;
@@ -17,12 +17,33 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/prelude.cu"),
     "\n",
     include_str!("kernels/probe.cu"),
+    "\n",
+    include_str!("kernels/arith.cu"),
+    "\n",
+    include_str!("kernels/tables.cu"),
+    "\n",
+    include_str!("kernels/scan.cu"),
 );
 
 pub struct CudaKernelContext {
     stream: Arc<CudaStream>,
     staging: StagingPool,
     fr_identity_probe: CudaFunction,
+    pub(super) add: CudaFunction,
+    pub(super) sub: CudaFunction,
+    pub(super) mul: CudaFunction,
+    pub(super) mul_scalar: CudaFunction,
+    pub(super) add_scalar: CudaFunction,
+    pub(super) fma: CudaFunction,
+    pub(super) bind_low_to_high: CudaFunction,
+    pub(super) bind_high_to_low: CudaFunction,
+    pub(super) sum_reduce: CudaFunction,
+    pub(super) u64_to_mont: CudaFunction,
+    pub(super) i128_to_mont: CudaFunction,
+    pub(super) eq_double: CudaFunction,
+    pub(super) lt_double: CudaFunction,
+    pub(super) scan_u32_block: CudaFunction,
+    pub(super) scan_u32_add_offsets: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -39,6 +60,21 @@ impl CudaKernelContext {
             stream,
             staging: StagingPool::new(),
             fr_identity_probe: module.load_function("fr_identity_probe")?,
+            add: module.load_function("add_kernel")?,
+            sub: module.load_function("sub_kernel")?,
+            mul: module.load_function("mul_kernel")?,
+            mul_scalar: module.load_function("mul_scalar_kernel")?,
+            add_scalar: module.load_function("add_scalar_kernel")?,
+            fma: module.load_function("fma_kernel")?,
+            bind_low_to_high: module.load_function("bind_low_to_high_kernel")?,
+            bind_high_to_low: module.load_function("bind_high_to_low_kernel")?,
+            sum_reduce: module.load_function("sum_reduce_kernel")?,
+            u64_to_mont: module.load_function("u64_to_mont_kernel")?,
+            i128_to_mont: module.load_function("i128_to_mont_kernel")?,
+            eq_double: module.load_function("eq_double_kernel")?,
+            lt_double: module.load_function("lt_double_kernel")?,
+            scan_u32_block: module.load_function("scan_u32_block_kernel")?,
+            scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
         })
     }
 
@@ -79,6 +115,53 @@ impl CudaKernelContext {
             len,
             self.staging.clone(),
         ))
+    }
+
+    pub(super) const fn stream(&self) -> &Arc<CudaStream> {
+        &self.stream
+    }
+
+    pub(super) fn launch_config(count: u32) -> LaunchConfig {
+        LaunchConfig {
+            grid_dim: (count.div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        }
+    }
+
+    pub(super) fn count_of(len: usize) -> Result<u32, CudaError> {
+        u32::try_from(len).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: len,
+        })
+    }
+
+    pub(super) fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    pub(super) fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    pub(super) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    pub(super) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
+    }
+
+    pub(super) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u32>(len)?)
     }
 
     pub fn fr_identity(&self, input: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {

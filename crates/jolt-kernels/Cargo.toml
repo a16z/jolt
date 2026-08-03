@@ -43,3 +43,8 @@ tracing.workspace = true
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
+proptest.workspace = true
+
+[[example]]
+name = "cuda_primitive_bench"
+required-features = ["cuda"]

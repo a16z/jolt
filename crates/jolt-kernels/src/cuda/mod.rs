@@ -7,6 +7,7 @@ use crate::JoltBackend;
 mod context;
 mod device;
 mod error;
+mod primitives;
 mod staging;
 pub mod xfer_stats;
 
