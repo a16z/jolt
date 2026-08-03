@@ -22,11 +22,12 @@ use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 
 use super::super::helpers;
 use super::super::state::{
-    advice_slot_offset, reg_offset, ExitReason, OFF_EXIT, OFF_FAULT_ADDR, OFF_MEM_BASE,
-    OFF_MEM_SIZE, OFF_PC, OFF_TRACE_LEN,
+    advice_slot_offset, reg_offset, ExitReason, OBSERVATION_SIZE, OBS_RAM_ADDRESS, OBS_RAM_POST,
+    OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_EXIT,
+    OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC, OFF_TRACE_LEN,
 };
 use super::emitter::{EmitOutcome, RowEmitter};
-use super::Emitter;
+use super::{EmitMode, Emitter};
 
 /// The dynasm-template emitter: the production implementor of the
 /// [`RowEmitter`] seam, covering every final-bytecode row kind.
@@ -149,6 +150,9 @@ pub fn stubs(e: &mut Emitter) -> Stubs {
     let bad_jump = e.ops.offset();
     dynasm!(e.ops
         ; .arch x64
+        ; ->obs_overflow:
+        ; mov QWORD [r12 + OFF_EXIT], ExitReason::FaultObservationOverflow as u64 as i32
+        ; jmp ->exit
         ; ->bad_jump:
         ; mov QWORD [r12 + OFF_FAULT_ADDR], rax
         ; mov QWORD [r12 + OFF_EXIT], ExitReason::FaultBadJumpTarget as u64 as i32
@@ -262,9 +266,15 @@ fn load_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
     // EA = (x[rs1] as u64).wrapping_add(imm as i32 as u64) — exact cast chain.
     let offset = row.operands.imm as i32;
     load_reg(e, RAX, row.operands.rs1);
+    dynasm!(e.ops ; .arch x64 ; add rax, offset);
+    if e.mode == EmitMode::Record {
+        // The effective address is 8-aligned on the success path, so the
+        // reference's word-aligned floor equals it.
+        obs_reload(e);
+        dynasm!(e.ops ; .arch x64 ; mov QWORD [r10 + OBS_RAM_ADDRESS], rax);
+    }
     dynasm!(e.ops
         ; .arch x64
-        ; add rax, offset
         ; mov rcx, rax
         ; mov rdx, QWORD RAM_START as i64
         ; sub rcx, rdx
@@ -281,6 +291,12 @@ fn load_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
     );
     call_helper(e, helpers::slow_load_doubleword as *const () as usize);
     dynasm!(e.ops ; .arch x64 ; done:);
+    if e.mode == EmitMode::Record {
+        // The reference records the whole doubleword read, whichever path
+        // produced it.
+        obs_reload(e);
+        dynasm!(e.ops ; .arch x64 ; mov QWORD [r10 + OBS_RAM_PRE], rax);
+    }
     store_rd(e, RAX, row.operands.rd);
 }
 
@@ -290,9 +306,20 @@ fn store_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
     load_reg(e, RAX, row.operands.rs1);
     load_imm(e, RCX, row.operands.imm as i64);
     load_reg(e, RDX, row.operands.rs2);
+    dynasm!(e.ops ; .arch x64 ; add rax, rcx);
+    if e.mode == EmitMode::Record {
+        // The reference records the raw effective address and the stored
+        // value; the pre-value is captured on whichever path performs the
+        // write (fast path below, helper for the device region).
+        obs_reload(e);
+        dynasm!(e.ops
+            ; .arch x64
+            ; mov QWORD [r10 + OBS_RAM_ADDRESS], rax
+            ; mov QWORD [r10 + OBS_RAM_POST], rdx
+        );
+    }
     dynasm!(e.ops
         ; .arch x64
-        ; add rax, rcx
         ; mov rcx, rax
         ; mov rsi, QWORD RAM_START as i64
         ; sub rcx, rsi
@@ -302,6 +329,17 @@ fn store_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
         ; jae >slow
         ; test al, 7
         ; jnz >slow
+    );
+    if e.mode == EmitMode::Record {
+        obs_reload(e);
+        dynasm!(e.ops
+            ; .arch x64
+            ; mov r8, QWORD [r13 + rcx]
+            ; mov QWORD [r10 + OBS_RAM_PRE], r8
+        );
+    }
+    dynasm!(e.ops
+        ; .arch x64
         ; mov QWORD [r13 + rcx], rdx
         ; jmp >done
         ; slow:
@@ -368,11 +406,129 @@ pub fn advice_compute(e: &mut Emitter, job_index: usize) {
     call_helper(e, helpers::advice_compute as *const () as usize);
 }
 
+/// Record mode: load the observation cursor into r10 and bounds-check it.
+/// Kept live only within one row's emission (helper calls clobber r10).
+fn obs_open(e: &mut Emitter, row_index: usize) {
+    dynasm!(e.ops
+        ; .arch x64
+        ; mov r10, QWORD [r12 + OFF_OBS_CURSOR]
+        ; cmp r10, QWORD [r12 + OFF_OBS_END]
+        ; jae ->obs_overflow
+        ; mov rax, QWORD row_index as i64
+        ; mov QWORD [r10 + OBS_ROW_INDEX], rax
+    );
+}
+
+/// Reload the cursor into r10. Every capture site does this: a row whose
+/// template calls a helper has had r10 clobbered (caller-saved), and the
+/// cursor is only advanced by `obs_close`, so the reload always lands on the
+/// same slot.
+fn obs_reload(e: &mut Emitter) {
+    dynasm!(e.ops ; .arch x64 ; mov r10, QWORD [r12 + OFF_OBS_CURSOR]);
+}
+
+/// Record mode: advance the cursor past this row's slot.
+fn obs_close(e: &mut Emitter) {
+    dynasm!(e.ops
+        ; .arch x64
+        ; mov r10, QWORD [r12 + OFF_OBS_CURSOR]
+        ; add r10, OBSERVATION_SIZE
+        ; mov QWORD [r12 + OFF_OBS_CURSOR], r10
+    );
+}
+
+/// Record mode: capture the register values this row reads and the
+/// destination's pre-value, before the row's own template runs.
+fn obs_registers_pre(e: &mut Emitter, row: &JoltInstructionRow) {
+    obs_reload(e);
+    for (slot, register) in [
+        (OBS_RS1, row.operands.rs1),
+        (OBS_RS2, row.operands.rs2),
+        (OBS_RD_PRE, row.operands.rd),
+    ] {
+        match register {
+            // x0 reads as zero, matching normalize_register_value.
+            None | Some(0) => dynasm!(e.ops
+                ; .arch x64
+                ; xor rax, rax
+                ; mov QWORD [r10 + slot], rax
+            ),
+            Some(r) => dynasm!(e.ops
+                ; .arch x64
+                ; mov rax, QWORD [r12 + reg_offset(r)]
+                ; mov QWORD [r10 + slot], rax
+            ),
+        }
+    }
+}
+
+/// Record mode: store a statically known rd post-value (control-flow rows
+/// write their observation before transferring, so their post-value must be
+/// known without executing the template; for Jal/Jalr it is the link).
+fn obs_rd_post_static(e: &mut Emitter, row: &JoltInstructionRow, value: i64) {
+    obs_reload(e);
+    let value = match row.operands.rd {
+        None | Some(0) => 0,
+        Some(_) => value,
+    };
+    dynasm!(e.ops
+        ; .arch x64
+        ; mov rax, QWORD value
+        ; mov QWORD [r10 + OBS_RD_POST], rax
+    );
+}
+
+/// Record mode: capture the destination's post-value, after the template ran.
+fn obs_rd_post(e: &mut Emitter, row: &JoltInstructionRow) {
+    obs_reload(e);
+    match row.operands.rd {
+        None | Some(0) => dynasm!(e.ops
+            ; .arch x64
+            ; xor rax, rax
+            ; mov QWORD [r10 + OBS_RD_POST], rax
+        ),
+        Some(r) => dynasm!(e.ops
+            ; .arch x64
+            ; mov rax, QWORD [r12 + reg_offset(r)]
+            ; mov QWORD [r10 + OBS_RD_POST], rax
+        ),
+    }
+}
+
 fn emit_row_template(e: &mut Emitter, row: &JoltInstructionRow) -> Result<EmitOutcome, TraceError> {
     use JoltInstructionKind as K;
 
     // Every row is one trace row.
     dynasm!(e.ops ; .arch x64 ; inc r14);
+
+    // Record mode brackets each row's template with value capture. Rows that
+    // transfer control never reach code emitted after their template, so
+    // theirs is written up front: branches have no destination, and Jal/Jalr
+    // post-values are the statically known link.
+    let record = e.mode == EmitMode::Record;
+    let transfers_control = matches!(
+        row.instruction_kind,
+        K::Beq(_)
+            | K::Bne(_)
+            | K::Blt(_)
+            | K::Bge(_)
+            | K::BltU(_)
+            | K::BgeU(_)
+            | K::Jal(_)
+            | K::Jalr(_)
+    );
+    if record {
+        obs_open(e, e.row_index);
+        obs_registers_pre(e, row);
+        if transfers_control {
+            let link = match row.instruction_kind {
+                K::Jal(_) | K::Jalr(_) => link_value(row),
+                _ => 0,
+            };
+            obs_rd_post_static(e, row, link);
+            obs_close(e);
+        }
+    }
 
     match &row.instruction_kind {
         K::Add(_) => alu_rr(e, row, AluRR::Add),
@@ -745,6 +901,10 @@ fn emit_row_template(e: &mut Emitter, row: &JoltInstructionRow) -> Result<EmitOu
             let _ = other;
             return Ok(EmitOutcome::Unsupported);
         }
+    }
+    if record && !transfers_control {
+        obs_rd_post(e, row);
+        obs_close(e);
     }
     Ok(EmitOutcome::Emitted)
 }
