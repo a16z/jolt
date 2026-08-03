@@ -19,16 +19,29 @@ use jolt_riscv::SourceInstructionKind;
 
 use super::state::{AdviceJob, GuestState};
 use emitter::EmitterSet;
+use jolt_riscv::JoltInstructionRow;
 
-/// A compiled program: executable buffer plus the indirect-dispatch table.
-pub struct CompiledProgram {
+/// One compiled code body (fast or record) with its dispatch table.
+struct CompiledBody {
     buffer: dynasmrt::ExecutableBuffer,
     entry: AssemblyOffset,
     /// One host code address per halfword in `[text_base, text_end)`;
     /// non-group-start slots point at the bad-jump stub.
     jump_table: Vec<usize>,
+}
+
+/// A compiled program: the two code bodies the spec calls for (fast and
+/// record, emitted from the same templates) plus the shared advice-job table.
+///
+/// The bodies are separate assemblies rather than two entry points in one:
+/// branch targets are dynamic labels per guest address, and a branch in the
+/// record body must land on the record body's copy of its target.
+pub struct CompiledProgram {
+    fast: CompiledBody,
+    record: CompiledBody,
     /// Advice computations, one per group that needs them; generated code
-    /// passes indices into this table.
+    /// passes indices into this table. Identical for both bodies (same rows,
+    /// same order), so it is collected once.
     advice_jobs: Vec<AdviceJob>,
 }
 
@@ -36,25 +49,48 @@ impl CompiledProgram {
     pub fn advice_jobs_ptr(&self) -> *const AdviceJob {
         self.advice_jobs.as_ptr()
     }
-}
 
-impl CompiledProgram {
+    /// Run the fast body: execution only, no row materialization.
     pub fn run(&self, state: &mut GuestState) -> Result<(), TraceError> {
-        let entry = self.buffer.ptr(self.entry);
+        Self::run_body(&self.fast, state)
+    }
+
+    /// Run the record body, filling the observation buffer described by
+    /// `GuestState::obs_cursor`/`obs_end`.
+    pub fn run_record(&self, state: &mut GuestState) -> Result<(), TraceError> {
+        Self::run_body(&self.record, state)
+    }
+
+    fn run_body(body: &CompiledBody, state: &mut GuestState) -> Result<(), TraceError> {
+        let entry = body.buffer.ptr(body.entry);
         // SAFETY: `entry` points into the finalized (read+execute) buffer at
         // the prologue emitted by `compile`; the generated code only touches
-        // the GuestState plane, the RAM plane it carries, and the jump
-        // table, per the emitter's invariants.
+        // the GuestState plane, the RAM plane it carries, the observation
+        // buffer, and the jump table, per the emitter's invariants.
         let f: extern "sysv64" fn(*mut GuestState, *const usize) =
             unsafe { core::mem::transmute(entry) };
-        f(state, self.jump_table.as_ptr());
+        f(state, body.jump_table.as_ptr());
         Ok(())
     }
+}
+
+/// Which code body is being emitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmitMode {
+    /// No row materialization: execute only, for the fast pass.
+    Fast,
+    /// Additionally capture each row's dynamic values (see `Observation`).
+    Record,
 }
 
 /// Emission context handed to a [`RowEmitter`](emitter::RowEmitter): the
 /// assembler plus the per-group state a row template may need.
 pub struct Emitter {
+    /// Which body this emission belongs to.
+    pub mode: EmitMode,
+    /// Index of the row being emitted into `expanded_bytecode`; recorded in
+    /// each observation so the reassembly pass can recover the static half.
+    pub row_index: usize,
     pub ops: Assembler,
     /// Advice jobs collected so far (index = the job id in generated code).
     pub advice_jobs: Vec<AdviceJob>,
@@ -105,15 +141,36 @@ pub fn compile_with(
         return Err(TraceError::Backend("program has no expanded bytecode"));
     }
 
-    let text_base = rows.iter().map(|r| r.address as u64).min().unwrap_or(0);
-    let text_end = rows.iter().map(|r| r.address as u64).max().unwrap_or(0) + 4;
-    let text_span = text_end - text_base;
-
     // Source rows keyed by address: the expanded bytecode erases the source
     // kind and inline key, which the per-group advice computations need.
     let sources = source_rows(program)?;
 
+    let (fast, advice_jobs) = compile_body(rows, &sources, emitters, EmitMode::Fast)?;
+    let (record, _) = compile_body(rows, &sources, emitters, EmitMode::Record)?;
+
+    Ok(CompiledProgram {
+        fast,
+        record,
+        advice_jobs,
+    })
+}
+
+type SourceMap = BTreeMap<u64, jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>>;
+
+/// Emit one code body over every expanded row.
+fn compile_body(
+    rows: &[JoltInstructionRow],
+    sources: &SourceMap,
+    emitters: &EmitterSet,
+    mode: EmitMode,
+) -> Result<(CompiledBody, Vec<AdviceJob>), TraceError> {
+    let text_base = rows.iter().map(|r| r.address as u64).min().unwrap_or(0);
+    let text_end = rows.iter().map(|r| r.address as u64).max().unwrap_or(0) + 4;
+    let text_span = text_end - text_base;
+
     let mut emitter = Emitter {
+        mode,
+        row_index: 0,
         ops: Assembler::new().map_err(|_| TraceError::Backend("failed to create x64 assembler"))?,
         advice_jobs: Vec::new(),
         advice_slot: 0,
@@ -127,7 +184,8 @@ pub fn compile_with(
     let entry = emit::prologue(&mut emitter);
 
     let mut previous_address = None;
-    for row in rows {
+    for (row_index, row) in rows.iter().enumerate() {
+        emitter.row_index = row_index;
         let address = row.address as u64;
         if previous_address != Some(address) {
             // Group start: define the branch-target label, record the jump
@@ -173,12 +231,14 @@ pub fn compile_with(
         jump_table[slot] = buffer.ptr(offset) as usize;
     }
 
-    Ok(CompiledProgram {
-        buffer,
-        entry,
-        jump_table,
+    Ok((
+        CompiledBody {
+            buffer,
+            entry,
+            jump_table,
+        },
         advice_jobs,
-    })
+    ))
 }
 
 /// Decode the program's source instructions and key them by address.

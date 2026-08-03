@@ -101,6 +101,69 @@ fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>) {
     );
 }
 
+/// Record mode: the full `TraceRow` stream must be identical to the
+/// reference interpreter's, row for row. This is the strongest equivalence
+/// statement the backend can make (spec invariant 1) and what proof
+/// byte-equality rests on.
+fn assert_record_matches(package: &str, func: &str, input: Vec<u8>) {
+    std::env::remove_var("TRACER_PARALLEL");
+    let (program, inputs) = setup(package, func, input);
+
+    let reference = TracerBackend::new()
+        .trace(&program, inputs.clone())
+        .expect("reference trace failed");
+    let expected = reference.trace.rows();
+
+    let mut backend = X86TracerBackend::new();
+    let actual_output = backend
+        .trace(&program, inputs)
+        .expect("x86 record trace failed");
+    let actual = actual_output.trace.rows();
+
+    assert_eq!(actual.len(), expected.len(), "{package}: row count");
+    for (index, (got, want)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(
+            got, want,
+            "{package}: row {index} diverged\n  got:  {got:?}\n  want: {want:?}"
+        );
+    }
+    assert_eq!(
+        actual_output.device.outputs, reference.device.outputs,
+        "{package}: outputs"
+    );
+    assert_eq!(
+        actual_output.final_memory, reference.final_memory,
+        "{package}: final memory"
+    );
+}
+
+#[test]
+fn fibonacci_record_matches_reference() {
+    assert_record_matches(
+        "fibonacci-guest",
+        "fib",
+        postcard::to_stdvec(&50u32).unwrap(),
+    );
+}
+
+#[test]
+fn muldiv_record_matches_reference() {
+    // DIV/REM advice groups plus RAM traffic.
+    assert_record_matches("muldiv-guest", "muldiv", {
+        let mut bytes = postcard::to_stdvec(&7u32).unwrap();
+        bytes.extend(postcard::to_stdvec(&11u32).unwrap());
+        bytes.extend(postcard::to_stdvec(&3u32).unwrap());
+        bytes
+    });
+}
+
+#[test]
+fn sha2_chain_record_matches_reference() {
+    let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
+    input.append(&mut postcard::to_stdvec(&2u32).unwrap());
+    assert_record_matches("sha2-chain-guest", "sha2_chain", input);
+}
+
 #[test]
 fn fibonacci_fast_run_matches_reference() {
     assert_fast_run_matches(

@@ -21,6 +21,9 @@ pub enum ExitReason {
     FaultBadJumpTarget = 3,
     /// A host helper reported an error (e.g. device access violation).
     FaultHelper = 4,
+    /// Record mode ran out of observation slots (the record pass emitted more
+    /// rows than the fast pass counted, i.e. the two diverged).
+    FaultObservationOverflow = 5,
 }
 
 /// State shared with generated code. Field offsets are load-bearing.
@@ -50,7 +53,55 @@ pub struct GuestState {
     /// Per-program advice-job table (borrowed from the compiled artifact);
     /// generated code passes a job index, helpers dereference it.
     pub advice_jobs: *const AdviceJob,
+    /// Record mode: next observation slot, bumped per emitted row.
+    pub obs_cursor: *mut Observation,
+    /// Record mode: one past the last writable slot.
+    pub obs_end: *mut Observation,
 }
+
+/// One row's dynamic values, written by generated code in record mode.
+///
+/// Generated code cannot construct a `TraceRow` (its `Option` fields have no
+/// guaranteed layout), so it writes this fixed POD instead and a Rust pass
+/// reassembles rows afterwards, taking the static half from
+/// `expanded_bytecode[row_index]`. 64 bytes keeps the cursor bump a shift and
+/// the write pattern cache-friendly; the fields a given kind does not use are
+/// simply ignored by the reassembly pass.
+#[derive(Debug, Clone, Copy, Default)]
+#[repr(C)]
+pub struct Observation {
+    pub row_index: u64,
+    pub rs1: u64,
+    pub rs2: u64,
+    pub rd_pre: u64,
+    pub rd_post: u64,
+    pub ram_address: u64,
+    pub ram_pre: u64,
+    pub ram_post: u64,
+}
+
+pub const OBSERVATION_SIZE: i32 = core::mem::size_of::<Observation>() as i32;
+
+pub const OBS_ROW_INDEX: i32 = 0;
+pub const OBS_RS1: i32 = 8;
+pub const OBS_RS2: i32 = 16;
+pub const OBS_RD_PRE: i32 = 24;
+pub const OBS_RD_POST: i32 = 32;
+pub const OBS_RAM_ADDRESS: i32 = 40;
+pub const OBS_RAM_PRE: i32 = 48;
+pub const OBS_RAM_POST: i32 = 56;
+
+const _: () = {
+    assert!(OBSERVATION_SIZE == 64);
+    assert!(core::mem::offset_of!(Observation, row_index) == OBS_ROW_INDEX as usize);
+    assert!(core::mem::offset_of!(Observation, rs1) == OBS_RS1 as usize);
+    assert!(core::mem::offset_of!(Observation, rs2) == OBS_RS2 as usize);
+    assert!(core::mem::offset_of!(Observation, rd_pre) == OBS_RD_PRE as usize);
+    assert!(core::mem::offset_of!(Observation, rd_post) == OBS_RD_POST as usize);
+    assert!(core::mem::offset_of!(Observation, ram_address) == OBS_RAM_ADDRESS as usize);
+    assert!(core::mem::offset_of!(Observation, ram_pre) == OBS_RAM_PRE as usize);
+    assert!(core::mem::offset_of!(Observation, ram_post) == OBS_RAM_POST as usize);
+};
 
 /// Maximum runtime advice values one source-instruction group can need
 /// (largest today: the modular-division inlines at 8).
@@ -77,6 +128,9 @@ pub const OFF_MEM_BASE: i32 = OFF_FAULT_ADDR + 8;
 pub const OFF_MEM_SIZE: i32 = OFF_MEM_BASE + 8;
 pub const OFF_HOST: i32 = OFF_MEM_SIZE + 8;
 pub const OFF_ADVICE_SLOTS: i32 = OFF_HOST + 8;
+pub const OFF_ADVICE_JOBS: i32 = OFF_ADVICE_SLOTS + (ADVICE_SLOTS as i32) * 8;
+pub const OFF_OBS_CURSOR: i32 = OFF_ADVICE_JOBS + 8;
+pub const OFF_OBS_END: i32 = OFF_OBS_CURSOR + 8;
 
 const _: () = {
     assert!(core::mem::offset_of!(GuestState, x) == OFF_X as usize);
@@ -88,6 +142,9 @@ const _: () = {
     assert!(core::mem::offset_of!(GuestState, mem_size) == OFF_MEM_SIZE as usize);
     assert!(core::mem::offset_of!(GuestState, host) == OFF_HOST as usize);
     assert!(core::mem::offset_of!(GuestState, advice_slots) == OFF_ADVICE_SLOTS as usize);
+    assert!(core::mem::offset_of!(GuestState, advice_jobs) == OFF_ADVICE_JOBS as usize);
+    assert!(core::mem::offset_of!(GuestState, obs_cursor) == OFF_OBS_CURSOR as usize);
+    assert!(core::mem::offset_of!(GuestState, obs_end) == OFF_OBS_END as usize);
 };
 
 #[inline]

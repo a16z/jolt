@@ -138,6 +138,8 @@ impl Prepared {
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: self.compiled.advice_jobs_ptr(),
+            obs_cursor: core::ptr::null_mut(),
+            obs_end: core::ptr::null_mut(),
         });
         guest.x[0] = 0;
         self.compiled.run(&mut guest)?;
@@ -201,6 +203,8 @@ pub fn run_program(
         host: &raw mut host,
         advice_slots: [0; crate::native::state::ADVICE_SLOTS],
         advice_jobs: compiled.advice_jobs_ptr(),
+        obs_cursor: core::ptr::null_mut(),
+        obs_end: core::ptr::null_mut(),
     });
     guest.x[0] = 0;
 
