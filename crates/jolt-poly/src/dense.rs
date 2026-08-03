@@ -262,6 +262,30 @@ impl<F: Field> Polynomial<F> {
         self.num_vars -= 1;
     }
 
+    /// Binds the LSB variable in place — same semantics as
+    /// `bind_with_order(scalar, BindingOrder::LowToHigh)` with no swap buffer
+    /// or fresh output allocation, so a stage never keeps rotating tables or
+    /// dead half-size generations resident.
+    #[inline]
+    pub fn bind_low_to_high_in_place(&mut self, scalar: F) {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
+        bind_low_to_high_in_place(&mut self.evals, scalar);
+        self.num_vars -= 1;
+    }
+
+    /// The allocated capacity of the evaluation vector — in-place binds
+    /// truncate without releasing, so callers decide when the vacated tail
+    /// dominates and [`shrink_to_fit`](Self::shrink_to_fit) pays off.
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.evals.capacity()
+    }
+
+    /// Release the evaluation vector's vacated capacity.
+    pub fn shrink_to_fit(&mut self) {
+        self.evals.shrink_to_fit();
+    }
+
     /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
     ///
     /// This has the same semantics as `bind_with_order(scalar, BindingOrder::LowToHigh)`,
@@ -575,6 +599,49 @@ impl<F: Field> Neg for Polynomial<F> {
     }
 }
 
+/// Bind the LSB variable in place: `v[j] = v[2j] + r·(v[2j+1] − v[2j])`,
+/// written back into the input allocation — no swap buffer, no fresh output
+/// vector.
+///
+/// Safety of the aliasing: outputs are produced in ascending power-of-two
+/// levels `[e/2, e)`, each reading exactly `[e, 2e)`. Level `e` writes only
+/// below every index it reads, and all previously written outputs lie in
+/// `[0, e/2)` — strictly below its read window — so every read still sees
+/// the original value. Output 0 (reading indices 0 and 1) goes first, before
+/// level 2 overwrites index 1. Each level splits the buffer into disjoint
+/// `dst`/`src` slices, so the parallel path needs no `unsafe`.
+pub fn bind_low_to_high_in_place<F: Field>(evals: &mut Vec<F>, challenge: F) {
+    debug_assert!(evals.len().is_power_of_two());
+    let half = evals.len() / 2;
+    if half == 0 {
+        return;
+    }
+    let (lo, hi) = (evals[0], evals[1]);
+    evals[0] = lo + challenge * (hi - lo);
+    let mut e = 2;
+    while e <= half {
+        let (head, tail) = evals.split_at_mut(e);
+        let dst = &mut head[e / 2..];
+        let src = &tail[..e];
+        let write = |(k, out): (usize, &mut F)| {
+            let lo = src[2 * k];
+            *out = lo + challenge * (src[2 * k + 1] - lo);
+        };
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            dst.par_iter_mut()
+                .enumerate()
+                .with_min_len(1 << 10)
+                .for_each(write);
+        }
+        #[cfg(not(feature = "parallel"))]
+        dst.iter_mut().enumerate().for_each(write);
+        e *= 2;
+    }
+    evals.truncate(half);
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -598,6 +665,23 @@ mod tests {
         let via_bind = bound.evaluate(&point[1..]);
 
         assert_eq!(direct, via_bind);
+    }
+
+    /// `bind_low_to_high_in_place` equals the out-of-place low-to-high bind
+    /// on every size that exercises the level walk (1, 2, boundary, large).
+    #[test]
+    fn bind_low_to_high_in_place_matches_out_of_place() {
+        let mut rng = ChaCha20Rng::seed_from_u64(7);
+        for log in [1usize, 2, 3, 11, 12] {
+            let values: Vec<Fr> = (0..1usize << log).map(|_| Fr::random(&mut rng)).collect();
+            let challenge = Fr::random(&mut rng);
+            let mut expected = Polynomial::new(values.clone());
+            expected.bind_with_order(challenge, crate::BindingOrder::LowToHigh);
+            let mut in_place = Polynomial::new(values);
+            in_place.bind_low_to_high_in_place(challenge);
+            assert_eq!(in_place.evals(), expected.evals(), "log = {log}");
+            assert_eq!(in_place.num_vars(), expected.num_vars());
+        }
     }
 
     #[test]

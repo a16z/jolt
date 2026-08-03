@@ -30,7 +30,7 @@
 //!
 //! The two phases share one per-proof trace scan through the
 //! [`ProofSession`]: whichever phase prepares first parks the packed
-//! per-cycle PC rows; the other reclaims them (`state_or_insert_with` keyed
+//! per-cycle PC rows; the other reclaims them (`state` + `park`, keyed
 //! by the private [`PcRowsKey`] type — the modular equivalent of legacy's
 //! shared `Arc<Vec<Cycle>>`).
 
@@ -81,8 +81,18 @@ pub(crate) struct PcRow {
     mapped_pc: u32,
 }
 
+impl PcRow {
+    /// The committed one-hot hot PC — `None` on cold (unmapped) cycles, the
+    /// cycle-phase convention. Sourced from the same `MappedPc` witness as
+    /// every other consumer, so per-cycle hotness is identical everywhere.
+    #[inline]
+    pub(crate) fn one_hot_pc(&self) -> Option<usize> {
+        (self.mapped_pc != COLD).then_some(self.mapped_pc as usize)
+    }
+}
+
 /// The session key of the shared per-cycle PC scan.
-struct PcRowsKey(Arc<Vec<PcRow>>);
+pub(crate) struct PcRowsKey(Arc<Vec<PcRow>>);
 
 #[cfg(feature = "allocative")]
 crate::optimized::impl_allocative!(PcRowsKey, |rows| {
@@ -96,8 +106,9 @@ struct PcBundle {
 }
 
 impl PcRow {
-    /// One trace scan per proof, shared by both phases through the session.
-    fn shared<F: Field>(
+    /// One trace scan per proof, shared by both bytecode phases and the
+    /// stage-6a/6b booleanity kernels through the session.
+    pub(crate) fn shared<F: Field>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
@@ -483,10 +494,16 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
             });
         }
         let rows = PcRow::shared(session, witness, cycles)?;
-        // This is the PC scan's last consumer: remove the session's copy so
-        // the rows free at the lazy fold's materialization instead of living
-        // to the end of the proof.
-        let _ = session.take::<PcRowsKey>();
+        // NOT the PC scan's last consumer: the stage-6b booleanity kernel
+        // (a later member of the same batch) gathers its bytecode chunk
+        // family off these rows and performs the terminal take.
+        //
+        // WARNING: that terminal take is a cross-file contract. If the
+        // optimized booleanity cycle kernel is ever removed from the 6b
+        // batch (or replaced by an implementation that does not
+        // `take::<PcRowsKey>()`), the strong carry parked here survives to
+        // end-of-prove — a silent ~8 B/cycle retention regression. Move the
+        // terminal take with it.
 
         // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
         // one-hot grid, served lazily off the sparse per-cycle indices for

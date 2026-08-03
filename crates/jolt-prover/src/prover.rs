@@ -86,6 +86,24 @@ fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn Any) {
 #[cfg(not(feature = "allocative"))]
 fn stage_flamegraph(_stage: &str, _session: &ProofSession, _output: &dyn Any) {}
 
+/// Return freed-but-retained allocator pages to the OS at a stage boundary
+/// (see [`jolt_kernels::mem::release_retained_memory`]).
+///
+/// WHY every boundary: at 2^25 cycles the stage 1–5 frees otherwise sit in
+/// the allocator's large-region cache (~16 GiB of the 31.7 GiB peak RSS on
+/// macOS) and only get flushed near stage 6a; purging at each boundary clips
+/// that plateau (31.6 → 27.6 GiB peak). Every-stage beats sparser boundary
+/// sets because the stage-0/1 purges also drop ~5 GiB of trace-Vec realloc
+/// slack retained from setup, and a purge where nothing is retained costs
+/// microseconds. Boundary-only: mid-stage allocation behavior is untouched,
+/// so the total cost is ~0.7 s of vm_deallocate per 2^25 prove plus the next
+/// stage re-faulting pages the allocator would have reused (<1% wall). To
+/// tune, filter on the stage label here.
+fn stage_boundary(stage: &str) {
+    let _span = tracing::info_span!("release_retained_memory", stage).entered();
+    let _ = jolt_kernels::mem::release_retained_memory();
+}
+
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and
 /// backend session, and assemble the [`JoltProof`] in the compiled proof
 /// mode — clear claims without the `zk` feature, the BlindFold tail with it.
@@ -143,6 +161,7 @@ where
         public_io,
     )?;
     stage_flamegraph("stage0", &session, &());
+    stage_boundary("stage0");
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
     let log_t = config.trace_length.ilog2() as usize;
@@ -156,6 +175,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage1", &session, &stage1.clear_output);
+    stage_boundary("stage1");
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -167,6 +187,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage2", &session, &stage2.clear_output);
+    stage_boundary("stage2");
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -178,6 +199,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage3", &session, &stage3.clear_output);
+    stage_boundary("stage3");
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -191,6 +213,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage4", &session, &stage4.clear_output);
+    stage_boundary("stage4");
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -204,6 +227,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage5", &session, &stage5.clear_output);
+    stage_boundary("stage5");
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -220,6 +244,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage6a", &session, &stage6a.clear_output);
+    stage_boundary("stage6a");
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -237,6 +262,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage6b", &session, &stage6b.clear_output);
+    stage_boundary("stage6b");
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -250,6 +276,7 @@ where
         &mut transcript,
     )?;
     stage_flamegraph("stage7", &session, &stage7.clear_output);
+    stage_boundary("stage7");
     let stage8 = prove_stage8::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -259,13 +286,14 @@ where
         &stage0.commitments,
         stage0.untrusted_advice_commitment.as_ref(),
         trusted_advice.map(|trusted| &trusted.commitment),
-        &stage0.hints,
+        stage0.hints,
         &stage6b.clear_output,
         &stage7.clear_output,
         witness.as_ref(),
         &mut transcript,
     )?;
     stage_flamegraph("stage8", &session, &());
+    stage_boundary("stage8");
 
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

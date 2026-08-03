@@ -17,7 +17,7 @@
 use jolt_field::Field;
 use jolt_lookup_tables::JoltLookupQuery;
 use jolt_program::{execution::TraceRow, preprocess::JoltProgramPreprocessing};
-use jolt_riscv::{Flags, JoltInstruction, JoltInstructionKind};
+use jolt_riscv::JoltInstruction;
 
 use crate::WitnessError;
 use crate::JOLT_VM_LABEL;
@@ -87,11 +87,11 @@ pub trait ExtractIndexed<I>: Sized {
 }
 
 pub(crate) fn lookup_query(row: &TraceRow) -> JoltLookupQuery<&TraceRow> {
-    JoltLookupQuery::new(row.instruction.instruction_kind, row)
+    JoltLookupQuery::new(row.instruction_kind(), row)
 }
 
 pub(crate) fn decode_instruction(row: &TraceRow) -> Result<JoltInstruction, WitnessError> {
-    JoltInstruction::try_from(row.instruction).map_err(|kind| WitnessError::InvalidWitnessData {
+    JoltInstruction::try_from(row.instruction()).map_err(|kind| WitnessError::InvalidWitnessData {
         label: JOLT_VM_LABEL,
         reason: format!("unsupported Jolt instruction kind in trace row: {kind:?}"),
     })
@@ -100,11 +100,11 @@ pub(crate) fn decode_instruction(row: &TraceRow) -> Result<JoltInstruction, Witn
 pub(crate) fn row_circuit_flags(
     row: &TraceRow,
 ) -> Result<jolt_riscv::CircuitFlagSet, WitnessError> {
-    Ok(decode_instruction(row)?.circuit_flags())
+    Ok(row.circuit_flags())
 }
 
 pub(crate) fn row_is_noop(row: &TraceRow) -> bool {
-    row.instruction.instruction_kind == JoltInstructionKind::NoOp
+    row.is_noop()
 }
 
 pub(crate) fn pc_for_row(
@@ -113,16 +113,17 @@ pub(crate) fn pc_for_row(
 ) -> Result<usize, WitnessError> {
     preprocessing
         .bytecode
-        .get_pc(&row.instruction)
+        .get_pc(&row.instruction())
         .ok_or_else(|| missing_pc_mapping(row))
 }
 
 pub(crate) fn missing_pc_mapping(row: &TraceRow) -> WitnessError {
+    let instruction = row.instruction();
     WitnessError::InvalidWitnessData {
         label: JOLT_VM_LABEL,
         reason: format!(
             "bytecode preprocessing is missing PC mapping for address {:#x} with virtual_sequence_remaining {:?}",
-            row.instruction.address, row.instruction.virtual_sequence_remaining
+            instruction.address, instruction.virtual_sequence_remaining
         ),
     }
 }

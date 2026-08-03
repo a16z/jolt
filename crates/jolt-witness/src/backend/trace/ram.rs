@@ -34,7 +34,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
             let Some(row) = trace.next_row() else {
                 continue;
             };
-            match row.ram_access {
+            match row.ram_access() {
                 RamAccess::Read(read) => {
                     if let Some(address) = self.remapped_ram_address(read.address)? {
                         values[address * cycles + cycle] = F::from_u64(read.value);
@@ -63,7 +63,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
             let Some(row) = trace.next_row() else {
                 continue;
             };
-            if let Some(raw_address) = ram_access_address(row.ram_access) {
+            if let Some(raw_address) = ram_access_address(row.ram_access()) {
                 if let Some(address) = self.remapped_ram_address(raw_address)? {
                     values[address * cycles + cycle] = F::one();
                 }

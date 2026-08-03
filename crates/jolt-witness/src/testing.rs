@@ -4,8 +4,8 @@ use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId};
 use jolt_field::Fr;
 use jolt_program::{
     execution::{
-        JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
-        RegisterWrite, TraceOutput, TraceRow,
+        JoltProgram, OwnedTrace, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
+        TraceOutput, TraceRow,
     },
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
@@ -16,10 +16,10 @@ use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBacke
 use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
 
 /// Runs `f` against a small canned backend: two real cycles (an ADDI with
-/// register activity and RAM traffic, then a RAM write) padded to `2^2`.
+/// register activity, then an SD with RAM traffic) padded to `2^2`.
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
 pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
-    let instruction = JoltInstructionRow {
+    let addi = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::ADDI,
         address: 0x8000_0000,
         operands: NormalizedOperands {
@@ -32,10 +32,23 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
         is_first_in_sequence: false,
         is_compressed: false,
     };
+    let sd = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::SD,
+        address: 0x8000_0004,
+        operands: NormalizedOperands {
+            rd: None,
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 8,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    };
     let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
-            vec![instruction],
-            instruction.address as u64,
+            vec![addi, sd],
+            addi.address as u64,
             RV64IMAC_JOLT,
         )
         .unwrap(),
@@ -45,9 +58,9 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
     });
     let program = Arc::new(JoltProgram::default());
     let rows = vec![
-        TraceRow {
-            instruction,
-            registers: RegisterState {
+        TraceRow::new(
+            addi,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: 5,
@@ -59,21 +72,27 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Read(RamRead {
-                address: 0x8000_1000,
-                value: 7,
-            }),
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        },
-        TraceRow {
-            ram_access: RamAccess::Write(RamWrite {
+            RamAccess::NoOp,
+        ),
+        TraceRow::new(
+            sd,
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 0x8000_1000,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 3,
+                    value: 11,
+                }),
+                ..Default::default()
+            },
+            RamAccess::Write(RamWrite {
                 address: 0x8000_1008,
                 pre_value: 7,
                 post_value: 11,
             }),
-            ..Default::default()
-        },
+        ),
     ];
     let config = JoltVmWitnessConfig::new(
         2,

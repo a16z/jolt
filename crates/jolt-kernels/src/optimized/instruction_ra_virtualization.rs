@@ -13,9 +13,9 @@
 //!
 //! — `T` lookups per committed chunk instead of a `K × T` grid walk, and no
 //! grid materialization at all. The per-cycle lookup indices are reclaimed
-//! from the [`ProofSession`] when the stage-5 optimized kernel already
-//! collected them (see
-//! [`SharedInstructionRows`](super::instruction_read_raf::SharedInstructionRows)),
+//! from the [`ProofSession`] when a stage-5/6a/6b co-consumer already
+//! collected the column (see
+//! [`SharedLookupIndices`](super::instruction_read_raf::SharedLookupIndices)),
 //! or collected fresh otherwise.
 //!
 //! Round messages use the Gruen split-eq factorization: `eq(r_cycle, ·)` is
@@ -50,7 +50,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-use super::instruction_read_raf::InstructionCycleRow;
+use super::instruction_read_raf::{shared_lookup_indices, SharedLookupIndices};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
     accumulate_product_grid, gamma_power_pairs, map_indices, pin_derived_term, GruenRoundMessage,
@@ -77,7 +77,13 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
     {
         let relation = inputs.relation;
         let cycles = 1usize << relation.dimensions().log_t();
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+        let indices = shared_lookup_indices(session, witness, cycles)?;
+        // This is the lookup-index column's last consumer (booleanity, the
+        // only other stage-6b reader, prepares earlier in the batch and holds
+        // its own Arc): remove any strong session carry so the column frees
+        // at the lazy fold's materialization instead of living to the end of
+        // the proof.
+        let _ = session.take::<SharedLookupIndices>();
         Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
             relation.dimensions().log_t(),
             relation.dimensions().num_virtual_ra_polys(),
@@ -85,16 +91,16 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
             relation.instruction_address(),
             relation.instruction_read_raf_cycle(),
             relation.committed_chunk_bits(),
-            rows,
+            indices,
             inputs.challenges.gamma,
         )?))
     }
 }
 
 /// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
-/// hot), off the stage-5 shared rows.
+/// hot), off the shared lookup-index column.
 struct LookupIndexChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    indices: Arc<Vec<u128>>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
@@ -105,14 +111,14 @@ impl ChunkIndexSource for LookupIndexChunks {
     }
 
     fn cycles(&self) -> usize {
-        self.rows.len()
+        self.indices.len()
     }
 
     #[inline]
     fn index(&self, i: usize, j: usize) -> Option<usize> {
         let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
         let mask = (1u128 << self.committed_chunk_bits) - 1;
-        Some(((self.rows[j].lookup_index >> shift) & mask) as usize)
+        Some(((self.indices[j] >> shift) & mask) as usize)
     }
 }
 
@@ -138,7 +144,7 @@ crate::optimized::impl_field_allocative!(OptimizedInstructionRaVirtualizationKer
     vec_heap_bytes(&kernel.gamma_powers_inv)
         + kernel
             .folded_ra
-            .heap_bytes(|source| arc_vec_heap_bytes(&source.rows))
+            .heap_bytes(|source| arc_vec_heap_bytes(&source.indices))
         + kernel.gruen.heap_bytes()
 });
 
@@ -151,7 +157,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        indices: Arc<Vec<u128>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let num_committed = num_virtual * num_committed_per_virtual;
@@ -168,11 +174,11 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
                 reason: "committed RA chunk width outside the supported one-hot range",
             });
         }
-        if rows.len() != 1 << log_t {
+        if indices.len() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {
-                table: "stage-6b instruction rows".to_owned(),
+                table: "stage-6b instruction lookup indices".to_owned(),
                 expected: 1 << log_t,
-                got: rows.len(),
+                got: indices.len(),
             });
         }
         if instruction_read_raf_cycle.len() != log_t {
@@ -208,7 +214,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
             LookupIndexChunks {
-                rows,
+                indices,
                 num_committed,
                 committed_chunk_bits,
             },
@@ -352,6 +358,18 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         self.gruen.bind(challenge);
         self.folded_ra.bind(challenge);
         self.progress.advance();
+        // Mid-batch retention purges (allocator-only), placed on this
+        // always-present head-aligned member on behalf of the whole
+        // stage-6b batch: by round 3 the co-members' first binds have
+        // stranded their full-length staging (the dense Hamming table's
+        // and increment tables' first halvings); by round 6 the lazy
+        // folds' `T/16` dense materializations have been halved twice,
+        // stranding multi-GiB generations. Without these the dead pages
+        // sit in the allocator's freed-large-block cache until the stage
+        // boundary — the process-global resident peak.
+        if self.progress.bound() == 3 || self.progress.bound() == 6 {
+            crate::mem::purge_staging(self.progress.total());
+        }
     }
 }
 
@@ -449,26 +467,14 @@ mod tests {
     use crate::reference::views::{address_fold, eq_table};
     use crate::{NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-    use super::super::instruction_read_raf::{
-        InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
-    };
+    use super::super::instruction_read_raf::SharedLookupIndices;
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
     /// Packs reference-typed fixture rows into the optimized kernels' shared
-    /// row form (this kernel reads only the lookup index).
-    fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
-        rows.iter()
-            .map(|row| {
-                InstructionCycleRow::new(
-                    row.lookup_index.0,
-                    row.table_index.0,
-                    row.raf_flag.0,
-                    None,
-                    None,
-                )
-            })
-            .collect()
+    /// column form (this kernel reads only the lookup index).
+    fn pack(rows: &[InstructionReadRafWitness]) -> Vec<u128> {
+        rows.iter().map(|row| row.lookup_index.0).collect()
     }
 
     fn fr(value: u64) -> Fr {
@@ -532,8 +538,8 @@ mod tests {
     /// optimized eq-scalar passes the derived-table cross-check.
     ///
     /// `with_session` builds the optimized kernel through the `prepare` slot
-    /// with pre-parked stage-5 rows instead of direct construction,
-    /// exercising the session take/park-back carry.
+    /// with a pre-parked lookup-index column instead of direct construction,
+    /// exercising the session carry and its final-consumer take.
     fn assert_parity(
         log_t: usize,
         num_virtual: usize,
@@ -617,7 +623,7 @@ mod tests {
                 let shape = FixtureShape { log_t, ram_k: 16 };
                 with_ram_fixture(shape, Vec::new(), |witness| {
                     let mut session = ProofSession::default();
-                    session.park(SharedInstructionRows(Arc::new(pack(&rows))));
+                    session.park(SharedLookupIndices(Arc::new(pack(&rows))));
                     let kernel = OptimizedInstructionRaVirtualization
                         .prepare(
                             &mut session,
@@ -630,10 +636,12 @@ mod tests {
                             },
                         )
                         .unwrap();
+                    // This kernel is the column's LAST consumer: the strong
+                    // carry must be consumed (a weak handle may remain, alive
+                    // only through the kernel's own Arc).
                     assert!(
-                        session.state::<SharedInstructionRows>().is_some()
-                            || session.state::<SharedInstructionRowsWeak>().is_some(),
-                        "prepare must park a shared-rows carry back for later consumers"
+                        session.state::<SharedLookupIndices>().is_none(),
+                        "prepare must consume the strong lookup-index carry"
                     );
                     kernel
                 })
@@ -733,11 +741,11 @@ mod tests {
         assert_parity(6, 2, 2, 4, 7, false);
     }
 
-    /// Through the `prepare` slot with pre-parked stage-5 rows: the session
-    /// take/park-back carry serves this kernel the same rows and parks them
-    /// back for the stage-6a/6b booleanity consumers.
+    /// Through the `prepare` slot with a pre-parked lookup-index column: the
+    /// session carry serves this kernel the same indices, and the strong
+    /// carry is consumed (this kernel is the column's last consumer).
     #[test]
-    fn parity_with_carried_session_rows() {
+    fn parity_with_carried_session_indices() {
         assert_parity(4, 8, 4, 4, 42, true);
     }
 }

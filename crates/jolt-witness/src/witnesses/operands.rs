@@ -144,6 +144,6 @@ impl Extract for Imm {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.instruction.operands.imm))
+        Ok(Self(row.imm()))
     }
 }

@@ -32,20 +32,36 @@
 //!
 //! - **u16 coefficient lookup table** (legacy's `OneHotCoeffLookupTable`):
 //!   entries carry `u16` indices into small ra/wa value tables instead of two
-//!   field elements — 64 bytes per entry instead of 128 through the first
-//!   four cycle rounds, exactly where the entry count peaks (≤ 3·T). The
-//!   tables square on each bind (all `b + r·(a − b)` pairs) and the entries
-//!   combine indices, so every looked-up value equals the field element the
-//!   direct representation would hold; entries deref to field coefficients
-//!   when one more squaring would overflow the `u16` index domain.
+//!   field elements through the first four cycle rounds. The tables square on
+//!   each bind (all `b + r·(a − b)` pairs) and the entries combine indices,
+//!   so every looked-up value equals the field element the direct
+//!   representation would hold; entries deref to field coefficients when one
+//!   more squaring would overflow the `u16` index domain. The indexed
+//!   generation is stored SoA — an aligned `Vec<F>` value column plus a
+//!   packed 25-byte `IndexedMeta` column, 57 bytes per entry instead of the
+//!   64-byte AoS layout — exactly where the largest post-seed generation
+//!   lives.
+//! - **Implicit round-0 `Val`** (`SeedEntry`): before any bind the `Val`
+//!   coefficient is always `F::from_u64(prev_val)`, so the seed layout drops
+//!   the field element entirely — 24 bytes per entry exactly where the entry
+//!   count peaks (≤ 3·T, the prover-wide resident maximum). The first bind
+//!   materializes `val` with the same `F::from_u64` + bind ops the eager
+//!   layout applied, so every bound value is bit-identical.
+//! - **Fused first two cycle binds** (`SparseEntries::SeedBound`): the
+//!   first bind stores its challenge and nothing else; round 1 and the
+//!   second bind rebuild the would-be `T/2` intermediates per 4-row group in
+//!   per-thread scratch through the canonical seed bind, so the first
+//!   materialized generation is the SoA indexed layout at `T/4`. Values are
+//!   the sequential path's by construction (the same two bind levels,
+//!   composed); the cost is recomputing the level-1 binds once for the
+//!   round-1 message and once for the transition.
 //!
 //! Like the reference kernel, only the default read-write config (phase 1 =
 //! all cycle rounds, phase 2 = 0) is supported.
 
-use jolt_claims::protocols::jolt::geometry::registers::rd_inc_read_write;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
 use jolt_field::{AdditiveAccumulator, Field};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -74,7 +90,7 @@ mod tests;
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use rows::CollectRegisterEntries;
-use sparse::{CoeffLut, SparseEntries};
+use sparse::{CoeffLut, IncColumn, SparseEntries};
 
 pub struct OptimizedRegistersReadWrite;
 
@@ -113,15 +129,6 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         }
         let cycles = 1usize << log_t;
 
-        let inc_table: Vec<F> = witness.oracle_table(rd_inc_read_write().polynomial_id())?;
-        if inc_table.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{:?}", rd_inc_read_write()),
-                expected: cycles,
-                got: inc_table.len(),
-            });
-        }
-
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
@@ -133,8 +140,9 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
             rs1_indices,
             rs2_indices,
             rd_indices,
+            rd_inc,
         } = CollectRegisterEntries::collect(witness, cycles)?;
-        let entries = SparseEntries::Indexed {
+        let entries = SparseEntries::Seed {
             entries,
             ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
             wa_lut: CoeffLut::new(vec![F::zero(), F::one()]),
@@ -148,7 +156,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
             log_k,
             entries,
             gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            inc: Polynomial::new(inc_table),
+            inc: IncColumn::Raw(rd_inc),
             ra: Vec::new(),
             wa: Vec::new(),
             val: Vec::new(),
@@ -168,7 +176,7 @@ struct ReadWriteKernel<F: Field> {
     /// cycle→address transition.
     entries: SparseEntries<F>,
     gruen: GruenSplitEqPolynomial<F>,
-    inc: Polynomial<F>,
+    inc: IncColumn<F>,
     // Address-phase dense state (K-sized), materialized at the transition.
     ra: Vec<F>,
     wa: Vec<F>,
@@ -186,7 +194,7 @@ struct ReadWriteKernel<F: Field> {
 crate::optimized::impl_field_allocative!(ReadWriteKernel, |kernel| {
     use crate::backend::{poly_heap_bytes, vec_heap_bytes};
     let entries = match &kernel.entries {
-        SparseEntries::Indexed {
+        SparseEntries::Seed {
             entries,
             ra_lut,
             wa_lut,
@@ -195,11 +203,41 @@ crate::optimized::impl_field_allocative!(ReadWriteKernel, |kernel| {
                 + vec_heap_bytes(&ra_lut.values)
                 + vec_heap_bytes(&wa_lut.values)
         }
+        SparseEntries::SeedBound {
+            entries,
+            seed_ra_lut,
+            seed_wa_lut,
+            ra_lut,
+            wa_lut,
+            ..
+        } => {
+            vec_heap_bytes(entries)
+                + vec_heap_bytes(&seed_ra_lut.values)
+                + vec_heap_bytes(&seed_wa_lut.values)
+                + vec_heap_bytes(&ra_lut.values)
+                + vec_heap_bytes(&wa_lut.values)
+        }
+        SparseEntries::Indexed {
+            vals,
+            metas,
+            ra_lut,
+            wa_lut,
+        } => {
+            vec_heap_bytes(vals)
+                + vec_heap_bytes(metas)
+                + vec_heap_bytes(&ra_lut.values)
+                + vec_heap_bytes(&wa_lut.values)
+        }
         SparseEntries::Direct(entries) => vec_heap_bytes(entries),
     };
+    let inc = match &kernel.inc {
+        IncColumn::Raw(raw) => vec_heap_bytes(raw),
+        IncColumn::RawBound { raw, .. } => vec_heap_bytes(raw),
+        IncColumn::Bound(inc) => poly_heap_bytes(inc),
+    };
     entries
+        + inc
         + kernel.gruen.heap_bytes()
-        + poly_heap_bytes(&kernel.inc)
         + vec_heap_bytes(&kernel.ra)
         + vec_heap_bytes(&kernel.wa)
         + vec_heap_bytes(&kernel.val)
@@ -215,7 +253,7 @@ impl<F: Field> ReadWriteKernel<F> {
     fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let quadratic = self.entries.quadratic(e_in, e_out, self.inc.evals());
+        let quadratic = self.entries.quadratic(e_in, e_out, &self.inc);
         self.gruen
             .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
     }
@@ -262,10 +300,11 @@ impl<F: Field> ReadWriteKernel<F> {
     /// sparse rows; the final cycle bind collapses to the K-sized dense
     /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
+        let mut layout_transitioned = false;
         if self.challenges.bound() < self.log_t {
             self.gruen.bind(r);
-            self.inc.bind_with_order(r, BindingOrder::LowToHigh);
-            self.entries.bind(r);
+            self.inc.bind(r);
+            layout_transitioned = self.entries.bind(r);
         } else {
             for table in [&mut self.ra, &mut self.wa, &mut self.val] {
                 bind_pairs(table, r);
@@ -279,7 +318,17 @@ impl<F: Field> ReadWriteKernel<F> {
             let entries = std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new()));
             (self.ra, self.wa, self.val) = entries.into_dense(1usize << self.log_k);
             self.eq_scalar = self.gruen.current_scalar();
-            self.inc_scalar = self.inc.evals()[0];
+            self.inc_scalar = self.inc.final_scalar();
+        }
+
+        // The generation-freeing binds strand the previous entry generation
+        // (24-byte seed entries plus the raw rd_inc column on the fused
+        // second bind, the SoA indexed columns at LUT saturation) in the
+        // allocator's freed-large-block cache — dead multi-GiB pages that
+        // would otherwise stay resident until the stage boundary. Purge
+        // exactly there.
+        if layout_transitioned {
+            crate::mem::purge_staging(self.log_t);
         }
     }
 

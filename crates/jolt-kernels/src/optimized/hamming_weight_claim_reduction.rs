@@ -183,6 +183,13 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             .into_iter()
             .map(Polynomial::new)
             .collect();
+        // The full-walk staging — the T-sized row and eq-cycle tables — is
+        // dead once the K-sized pushforwards exist, before the batch's round
+        // loop even starts; purge here or its pages sit in the allocator's
+        // freed-large-block cache through the whole stage.
+        drop(rows);
+        drop(eq_cycle);
+        crate::mem::purge_staging(r_cycle.len());
 
         // W_i(k) = γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k).
         let gamma_powers = gamma_powers(inputs.challenges.gamma, 3 * layout.total());
