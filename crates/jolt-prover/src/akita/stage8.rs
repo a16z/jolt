@@ -41,6 +41,7 @@ fn batch_failed<F: Field>(reason: impl ToString) -> ProverError<F> {
 /// boundary): the native `OneHotTrace` same-point batch from the group hint,
 /// then the auxiliary packed openings in canonical object order.
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
+#[tracing::instrument(skip_all)]
 pub fn prove_stage8<F, PCS, VC, T>(
     checked: &CheckedInputs,
     config: &ProverConfig,
@@ -117,14 +118,22 @@ where
         .iter()
         .map(|shape| shape as &dyn MultilinearPoly<F>)
         .collect();
-    let one_hot_trace = PCS::open_batch(
-        &shape_refs,
-        &common_point,
-        &evaluations,
-        &preprocessing.pcs_setup,
-        one_hot_trace_hint,
-        transcript,
+    // The packed sibling of the homomorphic path's stage-8 batch seam: one
+    // native same-point opening over the whole group.
+    let one_hot_trace = tracing::info_span!(
+        "CommitmentScheme::open_batch",
+        columns = evaluations.len()
     )
+    .in_scope(|| {
+        PCS::open_batch(
+            &shape_refs,
+            &common_point,
+            &evaluations,
+            &preprocessing.pcs_setup,
+            one_hot_trace_hint,
+            transcript,
+        )
+    })
     .map_err(batch_failed::<F>)?;
 
     // The auxiliary packed objects in canonical order: untrusted advice,

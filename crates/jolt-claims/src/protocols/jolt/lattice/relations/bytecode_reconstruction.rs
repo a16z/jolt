@@ -75,6 +75,7 @@ pub struct BytecodeChunkReconstructionChallenges<F> {
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"
 ))]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeChunkReconstructionOutputClaims<C> {
     pub register_selectors: Vec<C>,
     pub circuit_flags: Vec<C>,

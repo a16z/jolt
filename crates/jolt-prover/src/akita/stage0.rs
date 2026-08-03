@@ -43,6 +43,7 @@ where
 /// `OneHotTrace` group, commit the untrusted-advice byte object when advice
 /// bytes are present, and absorb the packed commitment objects in canonical
 /// object order (the verifier's own absorb helper).
+#[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
@@ -166,11 +167,20 @@ where
         .iter()
         .map(|column| column as &dyn MultilinearPoly<F>)
         .collect();
-    let (commitment, hint) = PCS::commit_batch(
-        &column_refs,
-        preprocessing.pcs_setup.default_layout_digest(),
-        &preprocessing.pcs_setup,
+    // The packed sibling of the homomorphic path's `commit_witness` seam:
+    // one native group commit over every per-proof column.
+    let (commitment, hint) = tracing::info_span!(
+        "CommitmentScheme::commit_batch",
+        columns = column_refs.len(),
+        column_arity = plan.column_arity
     )
+    .in_scope(|| {
+        PCS::commit_batch(
+            &column_refs,
+            preprocessing.pcs_setup.default_layout_digest(),
+            &preprocessing.pcs_setup,
+        )
+    })
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;

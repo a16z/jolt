@@ -93,6 +93,12 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features profiling
       - name: cargo clippy -p jolt-prover --features profiling,allocative
         run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
+      # The packed profile harness: the same bin/smoke test driving
+      # akita::prove. Lint both flamegraph modes, like the Dory pair above.
+      - name: cargo clippy -p jolt-prover --features akita,profiling
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling
+      - name: cargo clippy -p jolt-prover --features akita,profiling,allocative
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,allocative
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.

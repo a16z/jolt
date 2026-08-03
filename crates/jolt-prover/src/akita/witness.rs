@@ -165,6 +165,7 @@ struct OneHotTraceSourceRow {
 /// Builds the native `OneHotTrace` columns from the witness plane's typed
 /// per-cycle rows, in the plan's canonical column order. Every hot index fits
 /// the `u8` lane domain (`K` is at most 256).
+#[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
 pub fn assemble_one_hot_trace<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     plan: &OneHotTraceLayoutPlan,
@@ -248,6 +249,7 @@ pub struct AdviceOneHot<PCS: CommitmentScheme> {
 /// the actual advice length — the same zero padding the base word polynomial
 /// carries. The setup is derived from the public advice shape with the same
 /// fixed seed on both sides (the setup is transparent).
+#[tracing::instrument(skip_all, name = "commit_advice_one_hot")]
 pub fn commit_advice_one_hot<PCS>(
     advice_bytes: &[u8],
     max_advice_bytes: usize,
@@ -310,6 +312,7 @@ pub struct ProgramOneHot<PCS: CommitmentScheme> {
 /// every bytecode sub-column plus the program image, packed per the canonical
 /// `precommitted_packing`. The imm lane uses the field's canonical byte
 /// width, so negative immediates (`p − |imm|`) reconstruct exactly.
+#[tracing::instrument(skip_all, name = "commit_program_one_hot")]
 pub fn commit_program_one_hot<PCS>(
     program: &JoltProgramPreprocessing,
     bytecode_chunk_count: usize,

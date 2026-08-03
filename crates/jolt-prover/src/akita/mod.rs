@@ -30,6 +30,8 @@ use jolt_witness::JoltWitnessPlane;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 mod prover;
+mod setup;
+pub use setup::one_hot_trace_setup_shape;
 mod reconstruction;
 mod stage0;
 mod stage8;

@@ -76,6 +76,7 @@ pub struct LatticeHammingWeightClaimReductionInputClaims<C> {
     deserialize = "C: serde::Deserialize<'de>"
 ))]
 #[relation(HammingWeightClaimReduction)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct LatticeHammingWeightClaimReductionOutputClaims<C> {
     #[opening(committed = InstructionRa)]
     pub instruction_ra: Vec<C>,

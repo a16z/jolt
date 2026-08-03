@@ -71,6 +71,7 @@ impl AdviceReconstructionDimensions {
     deserialize = "C: serde::Deserialize<'de>"
 ))]
 #[relation(UntrustedAdviceReconstruction)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct UntrustedAdviceReconstructionOutputClaims<C> {
     #[opening(committed = UntrustedAdviceBytes)]
     pub bytes: C,
@@ -180,6 +181,7 @@ pub fn untrusted_advice_bytes_opening() -> JoltOpeningId {
     deserialize = "C: serde::Deserialize<'de>"
 ))]
 #[relation(TrustedAdviceReconstruction)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct TrustedAdviceReconstructionOutputClaims<C> {
     #[opening(committed = TrustedAdviceBytes)]
     pub bytes: C,

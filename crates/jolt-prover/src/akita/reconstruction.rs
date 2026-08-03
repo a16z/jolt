@@ -81,7 +81,9 @@ pub struct ReconstructionProverOutput<F: Field, C> {
 }
 
 /// Prove the reconstruction phase on `transcript` (positioned at the stage-7
-/// boundary). Zero transcript interaction when the phase is absent.
+/// boundary). Zero transcript interaction when the phase is absent (the span
+/// still fires, so the taxonomy presence set is workload-independent).
+#[tracing::instrument(skip_all)]
 pub fn prove_reconstruction<F, PCS, C, T>(
     backend: &JoltAkitaBackend<F, PCS>,
     session: &mut ProofSession,
