@@ -50,6 +50,13 @@ impl CompiledProgram {
         self.advice_jobs.as_ptr()
     }
 
+    /// Host address of the fast body's entry point. Exposed so the safety
+    /// tests can assert the finalized mapping's permissions (AC11): code is
+    /// never writable and executable at the same time.
+    pub fn code_address(&self) -> usize {
+        self.fast.buffer.ptr(self.fast.entry) as usize
+    }
+
     /// Run the fast body: execution only, no row materialization.
     pub fn run(&self, state: &mut GuestState) -> Result<(), TraceError> {
         Self::run_body(&self.fast, state)

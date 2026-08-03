@@ -97,6 +97,12 @@ pub fn compile_only(program: &JoltProgram) -> Result<(), TraceError> {
     compile::compile(program).map(|_| ())
 }
 
+/// Compile and hand back the artifact, so callers that inspect the live code
+/// mapping (the safety tests) keep it alive while they look.
+pub fn compile_program(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
+    compile::compile(program)
+}
+
 /// A compiled synthetic program plus its memory plane, reusable across runs
 /// (for microbenchmarks: compilation stays outside the measured region).
 pub struct Prepared {
@@ -158,6 +164,8 @@ pub struct Outcome {
     pub scratch: Vec<u64>,
     pub advice_tape: Vec<u8>,
     pub exit: u64,
+    /// Faulting guest address when `exit` reports a memory fault.
+    pub fault_addr: u64,
     pub helper_error: Option<String>,
 }
 
@@ -228,6 +236,7 @@ pub fn run_program(
         scratch: scratch_out,
         advice_tape: host.advice_tape,
         exit: guest.exit,
+        fault_addr: guest.fault_addr,
         helper_error: host.helper_error,
     })
 }
