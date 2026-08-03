@@ -69,6 +69,39 @@ fn store_rd(e: &mut Emitter, gpr: u8, rd: Option<u8>) {
     }
 }
 
+/// Apply a binary op with the guest register `reg` as the second operand,
+/// reading it straight from the state plane (`op rax, [state+off]`) instead
+/// of loading it into a scratch register first. Saves one instruction and one
+/// register per ALU row, the most frequent shape in the bytecode.
+fn alu_reg_operand(e: &mut Emitter, op: AluRR, dst: u8, reg: Option<u8>) {
+    let Some(r) = reg.filter(|r| *r != 0) else {
+        // x0: fold the identity/annihilator rather than touching memory.
+        match op {
+            AluRR::Add | AluRR::Sub | AluRR::Or | AluRR::Xor => {}
+            AluRR::And | AluRR::Mul => dynasm!(e.ops ; .arch x64 ; xor Rq(dst), Rq(dst)),
+        }
+        return;
+    };
+    let offset = reg_offset(r);
+    match op {
+        AluRR::Add => dynasm!(e.ops ; .arch x64 ; add Rq(dst), QWORD [r12 + offset]),
+        AluRR::Sub => dynasm!(e.ops ; .arch x64 ; sub Rq(dst), QWORD [r12 + offset]),
+        AluRR::And => dynasm!(e.ops ; .arch x64 ; and Rq(dst), QWORD [r12 + offset]),
+        AluRR::Or => dynasm!(e.ops ; .arch x64 ; or Rq(dst), QWORD [r12 + offset]),
+        AluRR::Xor => dynasm!(e.ops ; .arch x64 ; xor Rq(dst), QWORD [r12 + offset]),
+        AluRR::Mul => dynasm!(e.ops ; .arch x64 ; imul Rq(dst), QWORD [r12 + offset]),
+    }
+}
+
+/// Compare against a guest register straight from the state plane.
+fn cmp_reg_operand(e: &mut Emitter, dst: u8, reg: Option<u8>) {
+    if let Some(r) = reg.filter(|r| *r != 0) {
+        dynasm!(e.ops ; .arch x64 ; cmp Rq(dst), QWORD [r12 + reg_offset(r)]);
+    } else {
+        dynasm!(e.ops ; .arch x64 ; cmp Rq(dst), 0);
+    }
+}
+
 fn load_imm(e: &mut Emitter, gpr: u8, value: i64) {
     if let Ok(v) = i32::try_from(value) {
         dynasm!(e.ops ; .arch x64 ; mov Rq(gpr), v);
@@ -196,15 +229,7 @@ enum AluRR {
 
 fn alu_rr(e: &mut Emitter, row: &JoltInstructionRow, op: AluRR) {
     load_reg(e, RAX, row.operands.rs1);
-    load_reg(e, RCX, row.operands.rs2);
-    match op {
-        AluRR::Add => dynasm!(e.ops ; .arch x64 ; add rax, rcx),
-        AluRR::Sub => dynasm!(e.ops ; .arch x64 ; sub rax, rcx),
-        AluRR::And => dynasm!(e.ops ; .arch x64 ; and rax, rcx),
-        AluRR::Or => dynasm!(e.ops ; .arch x64 ; or rax, rcx),
-        AluRR::Xor => dynasm!(e.ops ; .arch x64 ; xor rax, rcx),
-        AluRR::Mul => dynasm!(e.ops ; .arch x64 ; imul rax, rcx),
-    }
+    alu_reg_operand(e, op, RAX, row.operands.rs2);
     store_rd(e, RAX, row.operands.rd);
 }
 
@@ -235,8 +260,7 @@ fn branch(e: &mut Emitter, row: &JoltInstructionRow, cc: Cc) {
     let address = row.address as u64;
     let target = (row.address as i64).wrapping_add(row.operands.imm as i64) as u64;
     load_reg(e, RAX, row.operands.rs1);
-    load_reg(e, RCX, row.operands.rs2);
-    dynasm!(e.ops ; .arch x64 ; cmp rax, rcx);
+    cmp_reg_operand(e, RAX, row.operands.rs2);
     if target == address {
         // Taken branch to itself terminates (PC-stall). Invert: skip the
         // terminal sequence when not taken.
@@ -570,8 +594,7 @@ fn emit_row_template(e: &mut Emitter, row: &JoltInstructionRow) -> Result<EmitOu
 
         K::SltU(_) => {
             load_reg(e, RAX, row.operands.rs1);
-            load_reg(e, RCX, row.operands.rs2);
-            dynasm!(e.ops ; .arch x64 ; cmp rax, rcx);
+            cmp_reg_operand(e, RAX, row.operands.rs2);
             set_cc_less(e, false, row.operands.rd);
         }
         K::SltI(_) => {
@@ -698,8 +721,7 @@ fn emit_row_template(e: &mut Emitter, row: &JoltInstructionRow) -> Result<EmitOu
 
         K::Slt(_) => {
             load_reg(e, RAX, row.operands.rs1);
-            load_reg(e, RCX, row.operands.rs2);
-            dynasm!(e.ops ; .arch x64 ; cmp rax, rcx);
+            cmp_reg_operand(e, RAX, row.operands.rs2);
             set_cc_less(e, true, row.operands.rd);
         }
         K::Andn(_) => {
