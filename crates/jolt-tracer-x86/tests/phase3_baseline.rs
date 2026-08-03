@@ -109,6 +109,18 @@ fn report(guest: &str, program: &JoltProgram, inputs: &TraceInputs, x86: bool) {
     });
 
     // AOT x86 fast pass (supported guests only).
+    // One-time AOT compile cost, reported separately: the spec tracks it
+    // as an amortized number rather than a gated one, since every
+    // re-trace and chunk replay reuses the cached artifact.
+    let compile_seconds = x86.then(|| {
+        let mut backend = X86TracerBackend::new();
+        let start = Instant::now();
+        let _ = backend
+            .fast_run(program, inputs.clone())
+            .expect("fast_run failed");
+        start.elapsed().as_secs_f64()
+    });
+
     let x86_fast = x86.then(|| {
         let mut backend = X86TracerBackend::new();
         // Warm the compile cache so steady-state is measured.
@@ -127,14 +139,20 @@ fn report(guest: &str, program: &JoltProgram, inputs: &TraceInputs, x86: bool) {
 
     let mhz = |seconds: f64| rows as f64 / seconds / 1e6;
     println!(
-        "| {guest} | {rows} | {:.3} ({:.1} MHz) | {:.3} ({:.1} MHz) | {} |",
+        "| {guest} | {rows} | {:.3} ({:.1} MHz) | {:.3} ({:.1} MHz) | {} | {} |",
         serial,
         mhz(serial),
         fast,
         mhz(fast),
         match x86_fast {
             Some(t) => format!("{:.3} ({:.1} MHz)", t, mhz(t)),
-            None => "n/a (inline kinds, slice 3)".to_string(),
+            None => "n/a".to_string(),
+        },
+        match (compile_seconds, x86_fast) {
+            // The first run pays compilation; subtracting the steady-state
+            // pass leaves the one-time AOT cost.
+            (Some(first), Some(steady)) => format!("{:.3}", (first - steady).max(0.0)),
+            _ => "n/a".to_string(),
         }
     );
 }
@@ -143,9 +161,9 @@ fn report(guest: &str, program: &JoltProgram, inputs: &TraceInputs, x86: bool) {
 #[ignore = "phase-3 baseline measurement; run explicitly"]
 fn phase3_baseline() {
     println!(
-        "| guest | rows | ref serial s (MHz) | ref fast pass s (MHz) | x86 fast pass s (MHz) |"
+        "| guest | rows | ref serial s (MHz) | ref fast pass s (MHz) | x86 fast pass s (MHz) | AOT compile s |"
     );
-    println!("|---|---:|---:|---:|---:|");
+    println!("|---|---:|---:|---:|---:|---:|");
 
     let (program, inputs) = setup(
         "fibonacci-guest",

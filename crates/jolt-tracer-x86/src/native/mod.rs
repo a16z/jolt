@@ -485,7 +485,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         let spacing = chunk_size.max(MIN_SPACING_ROWS);
         loop {
             guest.row_limit = (guest.trace_len as usize + spacing) as u64;
-            compiled.run(&mut guest)?;
+            compiled.run_pausable(&mut guest)?;
             if guest.exit == ExitReason::Paused as u64 {
                 guest.exit = ExitReason::Running as u64;
                 boundaries.push((guest.trace_len as usize, snapshot(&guest, &host, &plane)));
@@ -577,7 +577,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             obs_end,
         });
 
-        checkpoint.compiled.run_record(&mut guest)?;
+        checkpoint.compiled.run_record_pausable(&mut guest)?;
         if guest.exit != ExitReason::Paused as u64 {
             check_exit(&guest, &mut host)?;
         }

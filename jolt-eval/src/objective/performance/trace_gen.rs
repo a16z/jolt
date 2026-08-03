@@ -49,6 +49,30 @@ impl<G: GuestConfig> TraceGenObjective<G> {
         Self { guest, name }
     }
 
+    /// One eager trace with the AOT x86-64 backend (record mode).
+    ///
+    /// Only present on x86_64 Linux; elsewhere `NativeBackend` is the
+    /// interpreter and this arm would duplicate `run_reference`.
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    pub fn run_x86(&self, setup: &TraceGenSetup) -> usize {
+        let mut backend = jolt_tracer_x86::X86TracerBackend::new();
+        let output = setup
+            .program
+            .trace_with(&mut backend, setup.inputs.clone())
+            .expect("x86 trace failed");
+        std::hint::black_box(output.trace.rows().len())
+    }
+
+    /// One fast (non-recording) pass with the AOT x86-64 backend.
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    pub fn run_x86_fast(&self, setup: &TraceGenSetup) -> usize {
+        let mut backend = jolt_tracer_x86::X86TracerBackend::new();
+        let output = backend
+            .fast_run(&setup.program, setup.inputs.clone())
+            .expect("x86 fast run failed");
+        std::hint::black_box(output.trace_len)
+    }
+
     /// One eager trace with the reference interpreter backend.
     pub fn run_reference(&self, setup: &TraceGenSetup) -> usize {
         let mut backend = TracerBackend::new();

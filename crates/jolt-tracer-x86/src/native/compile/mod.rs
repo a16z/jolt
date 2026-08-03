@@ -39,6 +39,9 @@ struct CompiledBody {
 pub struct CompiledProgram {
     fast: CompiledBody,
     record: CompiledBody,
+    /// Same two bodies, with the chunk-boundary pause check emitted.
+    fast_pausable: CompiledBody,
+    record_pausable: CompiledBody,
     /// Advice computations, one per group that needs them; generated code
     /// passes indices into this table. Identical for both bodies (same rows,
     /// same order), so it is collected once.
@@ -68,6 +71,17 @@ impl CompiledProgram {
         Self::run_body(&self.record, state)
     }
 
+    /// Run the pausable execute body: stops at the first group boundary at or
+    /// past `GuestState::row_limit`, publishing the resume PC.
+    pub fn run_pausable(&self, state: &mut GuestState) -> Result<(), TraceError> {
+        Self::run_body(&self.fast_pausable, state)
+    }
+
+    /// Run the pausable record body, for chunk replay.
+    pub fn run_record_pausable(&self, state: &mut GuestState) -> Result<(), TraceError> {
+        Self::run_body(&self.record_pausable, state)
+    }
+
     fn run_body(body: &CompiledBody, state: &mut GuestState) -> Result<(), TraceError> {
         let entry = body.buffer.ptr(body.entry);
         // SAFETY: `entry` points into the finalized (read+execute) buffer at
@@ -95,6 +109,9 @@ pub enum EmitMode {
 pub struct Emitter {
     /// Which body this emission belongs to.
     pub mode: EmitMode,
+    /// Whether this body can pause at group boundaries. Only the chunked
+    /// paths need that; the eager paths must not pay a per-group check.
+    pub pausable: bool,
     /// Index of the row being emitted into `expanded_bytecode`; recorded in
     /// each observation so the reassembly pass can recover the static half.
     pub row_index: usize,
@@ -152,12 +169,19 @@ pub fn compile_with(
     // kind and inline key, which the per-group advice computations need.
     let sources = source_rows(program)?;
 
-    let (fast, advice_jobs) = compile_body(rows, &sources, emitters, EmitMode::Fast)?;
-    let (record, _) = compile_body(rows, &sources, emitters, EmitMode::Record)?;
+    // Four bodies: {execute, record} x {eager, pausable}. Compilation is
+    // ~10ms per body, so keeping the eager paths free of the chunk-boundary
+    // check is worth the duplication.
+    let (fast, advice_jobs) = compile_body(rows, &sources, emitters, EmitMode::Fast, false)?;
+    let (record, _) = compile_body(rows, &sources, emitters, EmitMode::Record, false)?;
+    let (fast_pausable, _) = compile_body(rows, &sources, emitters, EmitMode::Fast, true)?;
+    let (record_pausable, _) = compile_body(rows, &sources, emitters, EmitMode::Record, true)?;
 
     Ok(CompiledProgram {
         fast,
         record,
+        fast_pausable,
+        record_pausable,
         advice_jobs,
     })
 }
@@ -170,6 +194,7 @@ fn compile_body(
     sources: &SourceMap,
     emitters: &EmitterSet,
     mode: EmitMode,
+    pausable: bool,
 ) -> Result<(CompiledBody, Vec<AdviceJob>), TraceError> {
     let text_base = rows.iter().map(|r| r.address as u64).min().unwrap_or(0);
     let text_end = rows.iter().map(|r| r.address as u64).max().unwrap_or(0) + 4;
@@ -177,6 +202,7 @@ fn compile_body(
 
     let mut emitter = Emitter {
         mode,
+        pausable,
         row_index: 0,
         ops: Assembler::new().map_err(|_| TraceError::Backend("failed to create x64 assembler"))?,
         advice_jobs: Vec::new(),
@@ -202,7 +228,9 @@ fn compile_body(
             let offset = emitter.ops.offset();
             emitter.ops.dynamic_label(label);
             emitter.group_offsets.push((address, offset));
-            emit::group_pause_check(&mut emitter, address);
+            if emitter.pausable {
+                emit::group_pause_check(&mut emitter, address);
+            }
             previous_address = Some(address);
             emitter.advice_slot = 0;
             emitter.advice_ready = false;
