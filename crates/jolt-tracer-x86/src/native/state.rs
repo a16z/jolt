@@ -24,6 +24,9 @@ pub enum ExitReason {
     /// Record mode ran out of observation slots (the record pass emitted more
     /// rows than the fast pass counted, i.e. the two diverged).
     FaultObservationOverflow = 5,
+    /// Paused at a group boundary having reached `row_limit`; `pc` holds the
+    /// resume point, so calling the body again continues the execution.
+    Paused = 6,
 }
 
 /// State shared with generated code. Field offsets are load-bearing.
@@ -53,6 +56,10 @@ pub struct GuestState {
     /// Per-program advice-job table (borrowed from the compiled artifact);
     /// generated code passes a job index, helpers dereference it.
     pub advice_jobs: *const AdviceJob,
+    /// Pause once `trace_len` reaches this, at the next group boundary (the
+    /// only place a resumable PC is statically known). `u64::MAX` disables
+    /// pausing, which is what the eager paths use.
+    pub row_limit: u64,
     /// Record mode: next observation slot, bumped per emitted row.
     pub obs_cursor: *mut Observation,
     /// Record mode: one past the last writable slot.
@@ -129,7 +136,8 @@ pub const OFF_MEM_SIZE: i32 = OFF_MEM_BASE + 8;
 pub const OFF_HOST: i32 = OFF_MEM_SIZE + 8;
 pub const OFF_ADVICE_SLOTS: i32 = OFF_HOST + 8;
 pub const OFF_ADVICE_JOBS: i32 = OFF_ADVICE_SLOTS + (ADVICE_SLOTS as i32) * 8;
-pub const OFF_OBS_CURSOR: i32 = OFF_ADVICE_JOBS + 8;
+pub const OFF_ROW_LIMIT: i32 = OFF_ADVICE_JOBS + 8;
+pub const OFF_OBS_CURSOR: i32 = OFF_ROW_LIMIT + 8;
 pub const OFF_OBS_END: i32 = OFF_OBS_CURSOR + 8;
 
 const _: () = {
@@ -143,6 +151,7 @@ const _: () = {
     assert!(core::mem::offset_of!(GuestState, host) == OFF_HOST as usize);
     assert!(core::mem::offset_of!(GuestState, advice_slots) == OFF_ADVICE_SLOTS as usize);
     assert!(core::mem::offset_of!(GuestState, advice_jobs) == OFF_ADVICE_JOBS as usize);
+    assert!(core::mem::offset_of!(GuestState, row_limit) == OFF_ROW_LIMIT as usize);
     assert!(core::mem::offset_of!(GuestState, obs_cursor) == OFF_OBS_CURSOR as usize);
     assert!(core::mem::offset_of!(GuestState, obs_end) == OFF_OBS_END as usize);
 };

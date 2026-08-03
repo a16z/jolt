@@ -66,6 +66,19 @@ impl MemoryPlane {
         self.size
     }
 
+    /// Copy the whole plane out, for a chunk checkpoint.
+    pub fn to_vec(&self) -> Vec<u8> {
+        // SAFETY: the whole range [base, base+size) is mapped and readable.
+        unsafe { core::slice::from_raw_parts(self.base, self.size) }.to_vec()
+    }
+
+    /// Restore a previously captured image (same size by construction).
+    pub fn restore(&mut self, image: &[u8]) {
+        let len = image.len().min(self.size);
+        // SAFETY: len <= self.size, and image is a distinct allocation.
+        unsafe { self.base.copy_from_nonoverlapping(image.as_ptr(), len) };
+    }
+
     /// Copy out all nonzero bytes as `(address, byte)` pairs, RAM-relative
     /// (address 0 = `RAM_START_ADDRESS`) — the convention the reference
     /// backend's `Memory::materialized_nonzero_bytes` uses for

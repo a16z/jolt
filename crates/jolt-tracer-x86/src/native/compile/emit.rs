@@ -24,7 +24,8 @@ use super::super::helpers;
 use super::super::state::{
     advice_slot_offset, reg_offset, ExitReason, OBSERVATION_SIZE, OBS_RAM_ADDRESS, OBS_RAM_POST,
     OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_EXIT,
-    OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC, OFF_TRACE_LEN,
+    OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC, OFF_ROW_LIMIT,
+    OFF_TRACE_LEN,
 };
 use super::emitter::{EmitOutcome, RowEmitter};
 use super::{EmitMode, Emitter};
@@ -135,6 +136,22 @@ pub fn prologue(e: &mut Emitter) -> AssemblyOffset {
     );
     dispatch(e);
     entry
+}
+
+/// Emitted at each group start: if the row budget is spent, publish this
+/// group's (statically known) address as the resume PC and leave. Rows are
+/// only ever emitted whole, so a resumed run repeats no row.
+pub fn group_pause_check(e: &mut Emitter, address: u64) {
+    dynasm!(e.ops
+        ; .arch x64
+        ; cmp r14, QWORD [r12 + OFF_ROW_LIMIT]
+        ; jb >go
+        ; mov rax, QWORD address as i64
+        ; mov QWORD [r12 + OFF_PC], rax
+        ; mov QWORD [r12 + OFF_EXIT], ExitReason::Paused as u64 as i32
+        ; jmp ->exit
+        ; go:
+    );
 }
 
 pub struct Stubs {
