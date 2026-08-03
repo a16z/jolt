@@ -9,7 +9,7 @@
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
@@ -786,7 +786,7 @@ fn committed_rounds_check_transcript_and_return_public_data() {
     let mut manual = Blake2bTranscript::<F>::new(b"committed-sumcheck");
     let mut expected_challenges = Vec::new();
     for round in &rounds {
-        manual.append(&Label(b"sumcheck_commitment"));
+        manual.append(&LabelWithCount(b"sumcheck_commitment", round.degree as u64));
         round.commitment.append_to_transcript(&mut manual);
         expected_challenges.push(manual.challenge());
     }
@@ -896,7 +896,7 @@ fn committed_proof_checks_rounds_then_output_claims() {
     let mut manual = Blake2bTranscript::<F>::new(b"committed-proof");
     let mut expected_challenges = Vec::new();
     for round in &proof.rounds {
-        manual.append(&Label(b"sumcheck_commitment"));
+        manual.append(&LabelWithCount(b"sumcheck_commitment", round.degree as u64));
         round.commitment.append_to_transcript(&mut manual);
         expected_challenges.push(manual.challenge());
     }
