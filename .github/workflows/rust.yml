@@ -169,9 +169,9 @@ jobs:
       - name: Run jolt-prover-legacy tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
 
-  trace-golden:
+  trace-equivalence:
     runs-on: ubuntu-latest
-    name: Golden trace gate (bit-exact tracer output)
+    name: Tracer serial/parallel equivalence
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -197,16 +197,12 @@ jobs:
           tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
-      # Serial and parallel must both match the recorded fixtures. Fixture
-      # re-records change golden_traces.json and should be treated as
-      # review-flagged events, not routine churn.
-      - name: Golden check (serial)
-        run: cargo run --profile ci -p jolt-prover-legacy --features host --example trace_golden -- check
-      - name: Golden check (parallel, 4 workers, 128-row chunks)
-        run: cargo run --profile ci -p jolt-prover-legacy --features host --example trace_golden -- check
-        env:
-          TRACER_PARALLEL: "4"
-          JOLT_TRACER_CHUNK_ROWS: "128"
+      # Every parallel configuration must produce byte-identical output to the
+      # serial interpreter. The harness runs each configuration in a child
+      # process and compares within the run, so there are no committed hashes
+      # to re-record.
+      - name: Serial/parallel trace equivalence
+        run: cargo run --profile ci -p jolt-prover-legacy --features host --example trace_equivalence
 
   test-prover-zk:
     runs-on: ubuntu-latest

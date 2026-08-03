@@ -199,7 +199,7 @@ name = "trace_bench"
 required-features = ["host"]
 
 [[example]]
-name = "trace_golden"
+name = "trace_equivalence"
 required-features = ["host"]
 
 [[example]]
