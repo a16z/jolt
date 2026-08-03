@@ -422,6 +422,11 @@ where
     type Hints = Vec<PCS::OpeningHint>;
     type Proof = PCS::Proof;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "HomomorphicBatch::prove_batch",
+        fields(claims = claims.len())
+    )]
     fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         claims: Self::Statement,
@@ -572,6 +577,11 @@ where
     type HidingCommitment = PCS::HidingCommitment;
     type Blind = PCS::Blind;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "HomomorphicBatch::prove_batch_zk",
+        fields(claims = commitments.len())
+    )]
     fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,

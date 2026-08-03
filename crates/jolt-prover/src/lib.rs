@@ -35,6 +35,9 @@
 // exclusion jolt-prover-legacy enforces).
 #[cfg(all(feature = "akita", feature = "zk"))]
 compile_error!("the `akita` and `zk` features are mutually exclusive");
+// The profile harness (and its bin target) drives the Dory pipeline.
+#[cfg(all(feature = "akita", feature = "profiling"))]
+compile_error!("the `akita` and `profiling` features are mutually exclusive");
 
 #[cfg(feature = "akita")]
 pub mod akita;
@@ -46,6 +49,8 @@ pub mod dory;
 pub mod driver;
 mod error;
 mod preprocessing;
+#[cfg(feature = "profiling")]
+pub mod profile;
 mod recorder;
 pub mod stages;
 

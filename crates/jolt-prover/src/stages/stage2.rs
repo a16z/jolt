@@ -61,6 +61,7 @@ pub struct Stage2ProverOutput<F: Field, C> {
 
 /// Prove stage 2 on `transcript` (positioned at the stage-1 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
+#[tracing::instrument(skip_all)]
 pub fn prove_stage2<F, PCS, VC, T>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
@@ -92,18 +93,26 @@ where
 
     let tau_low = product_tau_low(&stage1.remainder_point(), log_t)?;
 
-    backend
-        .spartan_product_uniskip
-        .prepare(session, log_t, &tau_low, witness)?;
+    // Backend-neutral kernel-seam spans at the call boundary, so every
+    // `UniskipKernel` implementation inherits them — see the taxonomy's
+    // kernel-seam contract.
+    tracing::info_span!("SpartanProductUniskip::prepare").in_scope(|| {
+        backend
+            .spartan_product_uniskip
+            .prepare(session, log_t, &tau_low, witness)
+    })?;
 
     let tau_high: F = draw_spartan_product_tau_high(transcript);
     let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =
         uniskip_relation.input_claim(&uniskip_inputs, &NoChallenges::default())?;
-    let uniskip_poly = backend
-        .spartan_product_uniskip
-        .first_round_poly(session, &[tau_high])?;
+    let uniskip_poly =
+        tracing::info_span!("SpartanProductUniskip::first_round_poly").in_scope(|| {
+            backend
+                .spartan_product_uniskip
+                .first_round_poly(session, &[tau_high])
+        })?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         uniskip_input_claim,

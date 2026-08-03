@@ -210,6 +210,7 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
         self.shape_of(id)
     }
 
+    #[tracing::instrument(skip_all, name = "TraceBackend::oracle_table", fields(id = ?id))]
     fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<F>, WitnessError> {
         use JoltCommittedPolynomial as C;
         use JoltVirtualPolynomial as V;

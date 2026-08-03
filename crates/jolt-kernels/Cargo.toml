@@ -13,12 +13,15 @@ workspace = true
 
 [features]
 default = ["parallel"]
+# Shallow heap visitation of the proof session (profile harness flamegraphs).
+allocative = ["dep:allocative"]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
 
 [dependencies]
+allocative = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-field.workspace = true
 jolt-kernels-derive.workspace = true
@@ -32,6 +35,7 @@ jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 jolt-claims = { workspace = true, features = ["test-utils"] }

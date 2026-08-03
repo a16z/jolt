@@ -14,6 +14,7 @@ use crate::protocols::jolt::{
 use crate::SymbolicSumcheck;
 use crate::{challenge, derived, InputClaims, OutputClaims, SumcheckChallenges};
 
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -35,6 +36,7 @@ pub struct InstructionRaVirtualizationInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the instruction RA-virtualization sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionRaVirtualizationChallenges<F> {
     #[challenge(InstructionRaVirtualizationChallenge::Gamma)]
     pub gamma: F,

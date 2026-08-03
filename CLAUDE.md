@@ -28,6 +28,11 @@ cargo nextest run -p [package_name] [test_name] --cargo-quiet
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
 
+# Modular prover acceptance suites (mirror CI): clear-mode byte-diff ratchets
+# vs the legacy prover, and the modular ZK e2e (muldiv accept, tamper reject,
+# advice, committed program)
+cargo nextest run -p jolt-prover --features prover-fixtures --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,zk --cargo-quiet
 ```
 
 ### Building
@@ -43,16 +48,34 @@ cargo install --path . --locked
 ### Profiling
 
 ```bash
-# Execution trace (viewable in Perfetto)
+# Modular prover (primary): emits benchmark-runs/{timestamp}_modular_{name}_{scale}/ containing trace.json
+# (Perfetto UI / trace_processor SQL), summary.json (machine-queryable), and memory.html,
+# with benchmark-runs/latest_modular_{name}_{scale} symlinked to the newest successful run.
+cargo run --release -p jolt-prover --features profiling -- profile --name fibonacci --format chrome
+# --name options (default scale): fibonacci (16), sha2-chain (22), sha3-chain (22), btreemap (20)
+# --scale <log2 trace length> overrides; --format none = no-subscriber Instant baseline
+
+# Canonical summary queries (no Perfetto UI needed) — see book/src/usage/profiling/zkvm_profiling.md
+jq '.stages | map({label, s: (.wall_time_ns/1e9)})' benchmark-runs/latest_modular_fibonacci_16/summary.json
+jq '.spans | to_entries | sort_by(-.value.total_ns) | .[:10]' benchmark-runs/latest_modular_fibonacci_16/summary.json
+
+# Multi-scale sweep (one profile subprocess per run; results in benchmark-runs/modular_timings.csv,
+# rendered by scripts/benchmark_summary.py, plot_benchmarks.py, plot_memory_usage.py)
+cargo run --release -p jolt-prover --features profiling -- benchmark --min-scale 18 --max-scale 21 --resume
+
+# Per-batch heap snapshots (*.folded in the run directory, exact bytes; totals in summary.json's .heap; rendered by memory.html)
+cargo run --release -p jolt-prover --features profiling,allocative -- profile --name fibonacci --format chrome
+
+# jolt-eval telemetry objectives over the same summary (grammar: telemetry:<workload>:<metric>)
+cargo run -p jolt-eval --bin measure-objectives -- --objective telemetry:fibonacci:prover_time_s
+
+# Legacy prover
 cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome
 # --name options: sha2, sha3, sha2-chain, sha3-chain, fibonacci, btreemap
-
-# With CPU/memory monitoring (adds counter tracks to Perfetto trace)
-cargo run --release --features monitor -p jolt-prover-legacy profile --name sha3 --format chrome
-
-# Memory profiling (outputs SVG flamegraphs)
 RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome
 ```
+
+The span taxonomy (versioned, normative) lives in `crates/jolt-profiling/src/taxonomy.rs` — renaming a span is a schema change (summary keys and `telemetry:*` objectives break; the profiling smoke test enforces label presence, but it is not yet CI-wired — run it explicitly after taxonomy changes, see the NOTE in `.github/workflows/rust.yml`).
 
 ## Architecture
 
@@ -153,7 +176,7 @@ In ZK mode, `input_claim()` is never called so verifier params can use partial v
 
 ### BlindFold Zero-Knowledge Protocol (subprotocols/blindfold/)
 
-BlindFold makes all sumcheck proofs zero-knowledge without SNARK composition. Instead of revealing sumcheck round polynomial coefficients, the prover sends Pedersen commitments. Sumcheck verifier checks are encoded into a small verifier R1CS, proved via Nova folding + Spartan. (A modular port lives in `crates/jolt-blindfold`; the module map below is the legacy implementation.)
+BlindFold makes all sumcheck proofs zero-knowledge without SNARK composition. Instead of revealing sumcheck round polynomial coefficients, the prover sends Pedersen commitments. Sumcheck verifier checks are encoded into a small verifier R1CS, proved via Nova folding + Spartan. (The modular prover has full ZK support: `crates/jolt-blindfold` plus `crates/jolt-prover/src/blindfold.rs` and `recorder.rs`, behind jolt-prover's compile-time `zk` feature — see `specs/jolt-prover-blindfold.md`. The module map below is the legacy implementation.)
 
 **Module structure:**
 - `mod.rs`: `StageConfig`, `BakedPublicInputs`, `HyraxParams`, R1CS primitives (`Variable`, `LinearCombination`, `Constraint`)
