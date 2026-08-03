@@ -202,6 +202,7 @@ fn compile_body(
             let offset = emitter.ops.offset();
             emitter.ops.dynamic_label(label);
             emitter.group_offsets.push((address, offset));
+            emit::group_pause_check(&mut emitter, address);
             previous_address = Some(address);
             emitter.advice_slot = 0;
             emitter.advice_ready = false;

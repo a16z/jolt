@@ -144,6 +144,7 @@ impl Prepared {
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: self.compiled.advice_jobs_ptr(),
+            row_limit: u64::MAX,
             obs_cursor: core::ptr::null_mut(),
             obs_end: core::ptr::null_mut(),
         });
@@ -211,6 +212,7 @@ pub fn run_program(
         host: &raw mut host,
         advice_slots: [0; crate::native::state::ADVICE_SLOTS],
         advice_jobs: compiled.advice_jobs_ptr(),
+        row_limit: u64::MAX,
         obs_cursor: core::ptr::null_mut(),
         obs_end: core::ptr::null_mut(),
     });
