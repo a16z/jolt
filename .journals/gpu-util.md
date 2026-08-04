@@ -333,7 +333,9 @@ soundness note before merge.
   artifact before fixes; protocol changes need GO; W3C gate amendment
   codified in its brief (surface SoC-pressure tradeoffs, defer retention to
   2^27 certification instead of self-killing). Prize ~−3.5..−5 s @2^27.
-- st3 feed (small) — folded into W3D scope as opportunistic.
+- st3 feed → W3E ACTIVE (task 4a023a76, sol-xhigh): InstrInput q0 device
+  promotion per W3D F3 map (~0.4 s @2^27 + st3 util). Time-boxed to 00:30 UTC
+  for the flagship window. Byte-identical, standard gates.
 
 ## Parked doors (inherited)
 
