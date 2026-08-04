@@ -3,13 +3,14 @@ use std::path::Path;
 use clap::Parser;
 
 use jolt_eval::objective::performance::read_criterion_estimate;
-use jolt_eval::objective::{PerformanceObjective, StaticAnalysisObjective};
+use jolt_eval::objective::{OptimizationObjective, PerformanceObjective, StaticAnalysisObjective};
 
 #[derive(Parser)]
 #[command(name = "measure-objectives")]
 #[command(about = "Measure Jolt code quality and performance objectives")]
 struct Cli {
-    /// Only measure the named objective (default: all)
+    /// Only measure the named objective (default: all). Also accepts
+    /// `callgrind:<bench-name>:instructions` (opt-in; requires Valgrind).
     #[arg(long)]
     objective: Option<String>,
 
@@ -30,6 +31,24 @@ fn print_row(name: &str, val: f64, units: &str) {
 fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+
+    if let Some(keyed) = cli
+        .objective
+        .as_ref()
+        .and_then(|key| OptimizationObjective::from_key(key))
+    {
+        let objective = keyed.map_err(|e| eyre::eyre!(e))?;
+        eprintln!("Measuring {} ...", objective.name());
+        print_header();
+        match objective.measure_keyed_in(Path::new(".")) {
+            Ok(value) => print_row(objective.name(), value, objective.units().unwrap_or("-")),
+            Err(e) => {
+                println!("{:<35} {:>15}", objective.name(), format!("ERROR: {e}"));
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
 
     // Performance objectives (from Criterion)
     if !cli.no_bench {

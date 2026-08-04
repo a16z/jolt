@@ -147,6 +147,23 @@ impl OptimizeEnv for RealEnv {
             }
         }
 
+        for objective in objectives {
+            match objective {
+                OptimizationObjective::Callgrind(callgrind) => {
+                    match callgrind.measure_in(&self.work_dir) {
+                        Ok(value) => {
+                            results.insert(*objective, value);
+                        }
+                        Err(e) => {
+                            eprintln!("measurement failed for {}: {e}", objective.name());
+                        }
+                    }
+                }
+                OptimizationObjective::StaticAnalysis(_)
+                | OptimizationObjective::Performance(_) => {}
+            }
+        }
+
         results
     }
 

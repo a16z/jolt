@@ -13,9 +13,10 @@ The motivation is twofold:
 - A `libfuzzer_sys` fuzz target (via the `fuzz_invariant!` macro)
 - A "red team" harness for AI agents to try to find a violation
 
-**Objectives** are measurable properties of the codebase. They come in two flavors:
+**Objectives** are measurable properties of the codebase. They come in three flavors:
 - **Code quality** (static analysis) — measured via `rust-code-analysis`: LLOC, cognitive complexity, Halstead bugs
 - **Performance** (benchmarks) — measured via Criterion: polynomial binding, end-to-end prover time
+- **Instruction count** (microbenchmarks) — measured via iai-callgrind: isolated deterministic kernels
 
 **Objective functions** combine one or more objectives into a single scalar that the optimizer minimizes. They are declared as `const` structs with a name, input objectives, and an evaluate function.
 
@@ -49,6 +50,37 @@ The motivation is twofold:
 | `prover_time_secp256k1_ecdsa_verify` | End-to-end prover time for secp256k1 ECDSA signature verification |
 
 Note: `prover_time_*` benchmarks are standalone Criterion bench targets (run via `cargo bench -p jolt-eval --bench <name>`). They are **not** included in `PerformanceObjective::all()` and are not tracked by the `optimize` or `measure-objectives` binaries.
+
+### Instruction-count objectives (iai-callgrind)
+
+`callgrind:<bench-name>:instructions` runs any target under
+`benches/callgrind/` and sums its Callgrind `Ir` totals. The parser is pinned
+to iai-callgrind summary schema 6; missing tooling, malformed output, and
+schema drift are errors rather than zero measurements.
+
+```bash
+cargo run -p jolt-eval --bin measure-objectives -- \
+    --objective callgrind:eq_evals:instructions
+```
+
+To add one isolated CPU kernel: copy `benches/callgrind/eq_evals.rs`, change
+the setup/bench function, then run `sync_targets.sh`. Valgrind and an
+`iai-callgrind-runner` matching the workspace `iai-callgrind` are required.
+
+### Metal single-kernel scaffold
+
+`benches/metal/metal_fr_bind.rs` is the GPU timing template: setup and buffer
+wrapping outside the timed loop; one synchronous dispatch per sample; a
+shared GPU lock. Run it on macOS with:
+
+```bash
+cargo bench -p jolt-eval --features metal --bench metal_fr_bind
+```
+
+Metal kernels use Criterion wall time because Callgrind observes host
+instructions, not device instructions. Copy the scaffold into
+`benches/metal/`, replace `KernelId`, params, buffers, and thread count, then
+run `sync_targets.sh`.
 
 ### Objective functions
 
