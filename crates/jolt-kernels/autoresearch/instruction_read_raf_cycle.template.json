@@ -62,6 +62,7 @@
     "name": "hybrid_speedup",
     "unit": "x"
   },
+  "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.json",
   "schema_version": 1,
   "scope": {
     "editable": [
@@ -73,6 +74,7 @@
       "crates/jolt-kernels/src/optimized/instruction_read_raf.rs",
       "crates/jolt-kernels/tests/metal_solinas.rs",
       "crates/jolt-field/src/akita.rs",
+      "crates/jolt-kernels/autoresearch/piop_goal.json",
       "scripts/metal_autoresearch.py"
     ]
   },

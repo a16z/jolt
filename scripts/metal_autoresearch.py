@@ -111,6 +111,7 @@ def validate_template(template: dict[str, Any]) -> None:
         "goal",
         "hypothesis",
         "metric",
+        "portfolio_contract",
         "guards",
         "evaluator",
         "scope",
@@ -142,6 +143,39 @@ def validate_template(template: dict[str, Any]) -> None:
     overlap = sorted(editable & frozen)
     if overlap:
         raise ValueError(f"paths cannot be editable and frozen: {overlap}")
+    if template["portfolio_contract"] not in frozen:
+        raise ValueError("the portfolio contract must be in the frozen path set")
+
+
+def validate_goal_contract(contract: dict[str, Any]) -> None:
+    required = {
+        "schema_version",
+        "goal",
+        "goal_prompt",
+        "primary_metric",
+        "timing_boundary",
+        "continuation",
+        "kernel_promotion",
+        "phase_budget",
+        "validation",
+    }
+    missing = sorted(required - contract.keys())
+    if missing:
+        raise ValueError(f"goal contract is missing fields: {missing}")
+    if contract["schema_version"] != SCHEMA_VERSION:
+        raise ValueError("unsupported goal contract schema")
+    metric = contract["primary_metric"]
+    if metric["direction"] != "max" or metric["timed_span"] != "jolt_prover::piop":
+        raise ValueError("the portfolio metric must maximize the PIOP span speedup")
+    floor = float(metric["minimum_accepted_speedup"])
+    if not math.isfinite(floor) or floor <= 1.0:
+        raise ValueError("the portfolio speedup floor must exceed one")
+    continuation = contract["continuation"]
+    if continuation["stop_at_minimum"] is not False:
+        raise ValueError("the portfolio must not stop solely because it reaches the floor")
+    minimum_gain = float(continuation["minimum_projected_relative_gain"])
+    if not 0.0 < minimum_gain < 1.0:
+        raise ValueError("the portfolio continuation gain must be between zero and one")
 
 
 def validate_params(config: dict[str, Any], params: dict[str, str]) -> None:
@@ -166,6 +200,7 @@ def run_evaluator(
     environment = os.environ.copy()
     environment.update({str(k): str(v) for k, v in config["evaluator"].get("env", {}).items()})
     environment.update(params)
+    environment["JOLT_AUTORESEARCH_EVAL_DIR"] = str(log_dir / f"{label}.artifacts")
     started = time.monotonic()
     try:
         result = subprocess.run(
@@ -247,6 +282,80 @@ def grouped_medians(values: list[float], group_size: int) -> list[float]:
     ]
 
 
+def goal_decision(
+    contract: dict[str, Any],
+    current_piop_speedup: float,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    floor = float(contract["primary_metric"]["minimum_accepted_speedup"])
+    minimum_gain = float(contract["continuation"]["minimum_projected_relative_gain"])
+    if not math.isfinite(current_piop_speedup) or current_piop_speedup <= 0.0:
+        raise ValueError("current PIOP speedup must be finite and positive")
+    if not math.isfinite(floor) or floor <= 1.0:
+        raise ValueError("the accepted PIOP speedup floor must exceed one")
+    if not math.isfinite(minimum_gain) or not 0.0 < minimum_gain < 1.0:
+        raise ValueError("the projected continuation gain must be between zero and one")
+
+    total_share = 0.0
+    projected_time = 1.0
+    ranked: list[dict[str, Any]] = []
+    for candidate in candidates:
+        kernel = str(candidate["kernel"])
+        share = float(candidate["current_piop_share"])
+        local_speedup = float(candidate["conservative_local_speedup"])
+        if not math.isfinite(share) or not 0.0 <= share <= 1.0:
+            raise ValueError(f"{kernel} has an invalid current PIOP share")
+        if not math.isfinite(local_speedup) or local_speedup < 1.0:
+            raise ValueError(f"{kernel} has an invalid conservative local speedup")
+        total_share += share
+        projected_time -= share * (1.0 - 1.0 / local_speedup)
+        ranked.append(
+            {
+                "kernel": kernel,
+                "current_piop_share": share,
+                "conservative_local_speedup": local_speedup,
+                "projected_time_fraction_saved": share * (1.0 - 1.0 / local_speedup),
+            }
+        )
+    if total_share > 1.0 + 1e-12:
+        raise ValueError("candidate PIOP shares overlap or sum above one")
+
+    projected_speedup = current_piop_speedup / projected_time
+    projected_gain = projected_speedup / current_piop_speedup - 1.0
+    floor_met = current_piop_speedup >= floor
+    should_continue = not floor_met or projected_gain >= minimum_gain
+    ranked.sort(key=lambda candidate: candidate["projected_time_fraction_saved"], reverse=True)
+    return {
+        "continue": should_continue,
+        "floor_met": floor_met,
+        "current_piop_speedup": current_piop_speedup,
+        "minimum_accepted_speedup": floor,
+        "projected_piop_speedup": projected_speedup,
+        "projected_relative_gain": projected_gain,
+        "minimum_projected_relative_gain": minimum_gain,
+        "next_kernel": ranked[0]["kernel"] if ranked else None,
+        "candidates": ranked,
+        "reason": (
+            "the minimum PIOP speedup has not been reached"
+            if not floor_met
+            else "conservative residual headroom clears the continuation threshold"
+            if should_continue
+            else "the floor is met and conservative residual headroom is below the threshold"
+        ),
+    }
+
+
+def parse_goal_candidate(value: str) -> dict[str, Any]:
+    parts = value.rsplit(":", 2)
+    if len(parts) != 3 or not parts[0]:
+        raise ValueError("goal candidates use KERNEL:CURRENT_PIOP_SHARE:LOCAL_SPEEDUP")
+    return {
+        "kernel": parts[0],
+        "current_piop_share": float(parts[1]),
+        "conservative_local_speedup": float(parts[2]),
+    }
+
+
 def append_event(path: Path, event: dict[str, Any]) -> None:
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND)
     try:
@@ -260,6 +369,8 @@ def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     template = read_json(Path(args.template))
     validate_template(template)
+    goal_contract = read_json(root / template["portfolio_contract"])
+    validate_goal_contract(goal_contract)
     run_dir = Path(args.run_dir).resolve()
     run_dir.mkdir(parents=True, exist_ok=False)
     logs = run_dir / "logs"
@@ -289,6 +400,7 @@ def command_init(args: argparse.Namespace) -> int:
     deviations = [abs(value - median) for value in comparison_measurements]
     relative_mad = statistics.median(deviations) / abs(median) if median else 0.0
     config = dict(template)
+    config["portfolio"] = goal_contract
     config["created_at"] = utc_now()
     config["base_revision"] = git_head(root)
     config["controller"] = {
@@ -301,6 +413,7 @@ def command_init(args: argparse.Namespace) -> int:
         "machine": platform.machine(),
         "frozen_paths_sha256": path_digest(root, config["scope"]["frozen"]),
         "editable_paths_sha256": path_digest(root, config["scope"]["editable"]),
+        "portfolio_contract_sha256": sha256(canonical_json(goal_contract)),
     }
     config["baseline"] = {
         "params": baseline_params,
@@ -451,6 +564,12 @@ def command_status(args: argparse.Namespace) -> int:
         "remaining_trials": config["budget"]["max_trials"] - len(events),
         "accepted_parent": parent_id,
         "accepted_metric": metric,
+        "portfolio_minimum_speedup": config.get("portfolio", {})
+        .get("primary_metric", {})
+        .get("minimum_accepted_speedup"),
+        "portfolio_stops_at_minimum": config.get("portfolio", {})
+        .get("continuation", {})
+        .get("stop_at_minimum"),
         "inflight": (Path(args.run_dir).resolve() / "inflight.json").exists(),
         "verdicts": {name: sum(event["verdict"] == name for event in events) for name in sorted(VERDICTS)},
     }
@@ -478,6 +597,22 @@ def command_recover(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_goal_decision(args: argparse.Namespace) -> int:
+    contract = read_json(Path(args.contract))
+    validate_goal_contract(contract)
+    candidates = [parse_goal_candidate(value) for value in args.candidate]
+    decision = goal_decision(contract, args.current_speedup, candidates)
+    print(json.dumps(decision, indent=2, sort_keys=True))
+    return 0
+
+
+def command_goal_prompt(args: argparse.Namespace) -> int:
+    contract = read_json(Path(args.contract))
+    validate_goal_contract(contract)
+    print(f"/goal {contract['goal_prompt']}")
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--root", default=Path(__file__).resolve().parents[1])
@@ -497,6 +632,14 @@ def parser() -> argparse.ArgumentParser:
     recover = commands.add_parser("recover")
     recover.add_argument("run_dir")
     recover.set_defaults(handler=command_recover)
+    goal = commands.add_parser("goal-decision")
+    goal.add_argument("contract")
+    goal.add_argument("--current-speedup", type=float, required=True)
+    goal.add_argument("--candidate", action="append", default=[])
+    goal.set_defaults(handler=command_goal_decision)
+    goal_prompt = commands.add_parser("goal-prompt")
+    goal_prompt.add_argument("contract")
+    goal_prompt.set_defaults(handler=command_goal_prompt)
     return result
 
 

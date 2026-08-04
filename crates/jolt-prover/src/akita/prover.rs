@@ -64,6 +64,7 @@ where
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
     let log_t = config.trace_length.ilog2() as usize;
+    let piop_span = tracing::info_span!("jolt_prover::piop").entered();
 
     let stage1 = prove_stage1::<F, PCS, VC, T>(
         &backend.base,
@@ -169,6 +170,7 @@ where
         witness,
         &mut transcript,
     )?;
+    drop(piop_span);
 
     // The auxiliary objects' opening material, transparently re-derived from
     // the public shapes and cross-checked against the passed precommitted

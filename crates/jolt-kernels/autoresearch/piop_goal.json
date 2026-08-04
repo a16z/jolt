@@ -1,0 +1,74 @@
+{
+  "continuation": {
+    "candidate_evidence": [
+      "current Metal PIOP profile attribution",
+      "conservative kernel traffic and arithmetic ceiling, replaced by exact local hybrid measurements once available"
+    ],
+    "minimum_projected_relative_gain": 0.05,
+    "projection": "current_speedup / (1 - sum(f_i * (1 - 1 / s_i)))",
+    "stop_at_minimum": false
+  },
+  "goal": "maximize Akita Metal-hybrid PIOP throughput while preserving the optimized CPU protocol",
+  "goal_prompt": "Maximize Akita Metal-hybrid PIOP speedup over optimized CPU at trace sizes 2^26+. Reach at least 4x, but keep optimizing while conservative profiled or analytical headroom predicts another 5% PIOP gain. Work one measured bottleneck at a time: derive its ceiling, freeze an exact hybrid evaluator, implement resident/direct-handoff Metal with a CPU cutoff, validate and checkpoint, reprofile the PIOP, then continue. Exclude trace/witness work and PCS commit/opening from the metric; preserve exact proofs and host Fiat-Shamir.",
+  "kernel_promotion": [
+    {
+      "class": "hot",
+      "minimum_hybrid_speedup": 4.0,
+      "minimum_piop_share": 0.05,
+      "target_hybrid_speedup": 5.0
+    },
+    {
+      "class": "medium",
+      "minimum_hybrid_speedup": 3.0,
+      "minimum_piop_share": 0.01,
+      "target_hybrid_speedup": 4.0
+    },
+    {
+      "class": "small",
+      "minimum_hybrid_speedup": 2.0,
+      "minimum_piop_share": 0.0,
+      "otherwise": "keep_cpu",
+      "target_hybrid_speedup": 3.0
+    }
+  ],
+  "phase_budget": {
+    "max_gpu_seconds": 600,
+    "max_seconds": 1800,
+    "max_trials": 12
+  },
+  "primary_metric": {
+    "definition": "optimized_cpu_piop_wall_ns / metal_hybrid_piop_wall_ns",
+    "direction": "max",
+    "log_trace_size": 26,
+    "minimum_accepted_speedup": 4.0,
+    "name": "piop_speedup",
+    "timed_span": "jolt_prover::piop",
+    "unit": "x",
+    "workload": "fibonacci"
+  },
+  "schema_version": 1,
+  "timing_boundary": {
+    "excludes": [
+      "guest execution and trace construction",
+      "witness generation and stage-0 commitments",
+      "PCS openings and stage 8",
+      "verification"
+    ],
+    "includes": [
+      "stages 1 through 7",
+      "Akita reconstruction sumcheck",
+      "kernel preparation and direct handoff",
+      "Metal command submission and synchronization",
+      "CPU tails and host Fiat-Shamir"
+    ]
+  },
+  "validation": {
+    "analytical_entry_margin": 1.25,
+    "interleaved_pairs": 3,
+    "primary_log_trace_size": 26,
+    "transfer_log_trace_sizes": [
+      24,
+      27
+    ]
+  }
+}

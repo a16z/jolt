@@ -23,10 +23,13 @@ changes the same kernels. Future rebases must reconcile the two PRs semantically
   shrinking factor tables and alternate as source and destination. Equality-table
   levels, reduction scratch, parameter buffers, and pipelines are allocated during
   `prepare`.
-- **Decision:** the primary benchmark is hybrid wall time. It includes the initial
-  CPU-to-Metal handoff, every command submission and host transcript step, and the
-  single Metal-to-CPU handoff when the CPU finishes the tail. Resident GPU-active
-  time is a diagnostic metric, not the speedup denominator.
+- **Decision:** portfolio acceptance compares optimized-CPU PIOP wall time with
+  Metal-hybrid PIOP wall time. The `jolt_prover::piop` span contains stages 1-7 and
+  Akita reconstruction. It excludes trace and witness generation, stage-0
+  commitments, stage-8 PCS openings, and verification.
+- **Decision:** each slot's primary microbenchmark is its complete hybrid wall time.
+  It includes direct handoff, every command submission and host transcript step, and
+  any Metal-to-CPU tail handoff. Resident GPU-active time remains diagnostic.
 - **Constraint:** Metal currently supports only
   `jolt_field::AkitaField`, whose modulus is
   `2^128 - 0xffffa7f7`. Buffers contain canonical little-endian values at a 16-byte
@@ -106,6 +109,44 @@ optimized CPU tail. The retained cutoff minimizes median hybrid wall time and mu
 beat its neighbors by more than the measured noise floor. Unsupported geometry uses
 the CPU slot from the start.
 
+## Portfolio target
+
+The primary scalar is
+
+```text
+S_piop = optimized CPU jolt_prover::piop wall time
+         / Metal hybrid jolt_prover::piop wall time.
+```
+
+The minimum accepted result is `S_piop >= 4` at a padded `2^26` trace. Four is a
+floor, not an optimization cap. After reaching it, the goal loop continues whenever
+the remaining independently attributed kernel shares and conservative local
+speedups predict at least another 5% PIOP improvement. With current-Metal PIOP shares
+`f_i` and conservative speedups `s_i` over the currently selected paths, the
+projection is
+
+```text
+S_projected = S_current / (1 - sum_i f_i * (1 - 1 / s_i)).
+```
+
+Only disjoint shares may be combined. Before implementation, a candidate may use a
+current Metal profile and a conservative traffic/arithmetic ceiling. Once a working
+kernel exists, measured complete-hybrid speedup replaces that estimate. This keeps
+the stretch policy uncapped without treating an unsupported peak-ALU number as
+attainable throughput.
+
+The local bars are promotion minimums, not targets:
+
+| CPU PIOP share before the port | Promotion minimum | Working target |
+|---:|---:|---:|
+| at least 5% | 4x complete-hybrid speedup | 5x or the measured ceiling |
+| 1-5% | 3x | 4x or the measured ceiling |
+| below 1% | 2x, or reuse already-resident state | 3x; otherwise retain CPU |
+
+Before shader work, the conservative analytical ceiling must exceed the promotion
+minimum by 25%. A kernel that misses its bar stays on CPU unless it removes a handoff
+or supplies residency reused by a later hot kernel.
+
 ## Port ledger
 
 The 31 ordinary sumcheck slots and two uni-skip fronts are tracked below. `analyze`
@@ -170,6 +211,38 @@ The initial foreground budget is 12 parameter trials or 30 minutes, whichever co
 first. This covers threadgroup and cutoff selection; shader edits start a new phase
 with a new contract. No unattended loop starts until a valid baseline and noise floor
 have been recorded.
+
+### Goal-mode controller
+
+`autoresearch/piop_goal.json` freezes the PIOP boundary, 4x floor, uncapped stretch
+policy, local promotion bars, and phase budget. Goal mode uses the repository as its
+memory: recover any interrupted kernel transaction, finish its fixed phase, validate
+the retained candidate, integrate it, emit a fresh `2^26` PIOP profile, then select
+the largest remaining conservative time saving. Reaching 4x alone is not a stopping
+condition.
+
+The portfolio evaluator runs identical Akita workloads with the optimized and Metal
+backends in alternating order. Both runs must verify, and each trace must contain one
+complete PIOP span:
+
+```bash
+python3 scripts/metal_piop_eval.py --log-n 26 --repeats 3
+```
+
+After profiling residual kernels, the deterministic continuation check is:
+
+```bash
+python3 scripts/metal_autoresearch.py goal-decision \
+  crates/jolt-kernels/autoresearch/piop_goal.json \
+  --current-speedup <S> \
+  --candidate '<kernel>:<current-PIOP-share>:<conservative-local-speedup>'
+```
+
+Below 4x it always returns `continue: true`. At or above 4x, it still returns true
+when the conservative aggregate projection clears the 5% continuation threshold.
+Each kernel phase retains its own immutable evaluator, snapshots, and JSONL lineage;
+changing the kernel, algorithm, or evaluator starts a new phase rather than mutating
+the previous run.
 
 ### Retained first-slot experiment
 
@@ -247,7 +320,8 @@ CPU's `T/16` dense materialization instead.
 |---|---|---|
 | Exact protocol output | Existing kernel traits; host transcript | optimized/Metal round and proof byte parity |
 | No round allocation | proof-scoped ping-pong and scratch buffers | allocation counter plus code review |
-| Honest speedup | hybrid-total primary metric | order-inverted CPU/Metal runs |
+| Honest portfolio speedup | PIOP-span wall time | interleaved optimized/Metal runs at `2^26` |
+| Honest local speedup | complete hybrid wall time | order-inverted per-kernel runs |
 | Useful work per read | fused bind, evaluate, reduce | worksheet counts and roof utilization |
 | Safe small-size behavior | measured complete-tail cutoff | cutoff-neighbor validation |
 | Recoverable tuning | immutable contract and JSONL lineage | controller recovery audit |

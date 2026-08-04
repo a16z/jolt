@@ -81,6 +81,10 @@ pub const TAXONOMY_VERSION: u32 = 1;
 /// peak-memory summary metrics are computed over its interval.
 pub const ROOT_SPAN: &str = "jolt_prover::prove";
 
+/// Akita's polynomial-IOP window: stage 1 through the packed reconstruction
+/// sumcheck, excluding witness commitment and all polynomial openings.
+pub const AKITA_PIOP_SPAN: &str = "jolt_prover::piop";
+
 /// The per-stage recipe spans, in pipeline order — depth-1 children of
 /// [`ROOT_SPAN`], sequential on the root thread. The per-stage summary
 /// rollup (wallclock, boundary RSS, windowed peak memory) keys on these.
