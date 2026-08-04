@@ -24,8 +24,10 @@
 
 use jolt_field as two;
 
+#[cfg(any(feature = "bn254", feature = "solinas"))]
 use two::CanonicalEncoding;
 
+#[cfg(any(feature = "bn254", feature = "solinas"))]
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len())
         .step_by(2)
@@ -35,6 +37,7 @@ fn unhex(s: &str) -> Vec<u8> {
 
 /// Element from the reducing decode; canonical bytes and bincode wire must
 /// equal the fixture, and the checked decode must round-trip.
+#[cfg(any(feature = "bn254", feature = "solinas"))]
 fn check_prime_rows<F>(rows: &[(&str, &str)])
 where
     F: CanonicalEncoding
@@ -61,6 +64,7 @@ where
     }
 }
 
+#[cfg(feature = "bn254")]
 const FIX_BN254_FR: &[(&str, &str)] = &[
     (
         "0000000000000000000000000000000000000000000000000000000000000000",
@@ -119,6 +123,7 @@ const FIX_BN254_FR: &[(&str, &str)] = &[
         "25ebe18ad76cbb25cc7e978dea211621cab09f6b34135a653ef1654596ea1006",
     ),
 ];
+#[cfg(feature = "bn254")]
 const FIX_BN254_FQ: &[(&str, &str)] = &[
     (
         "0000000000000000000000000000000000000000000000000000000000000000",
@@ -177,6 +182,7 @@ const FIX_BN254_FQ: &[(&str, &str)] = &[
         "dfed64a254d67c2dd024df9ea19fc8b1c9b09f6b34135a653ef1654596ea1006",
     ),
 ];
+#[cfg(feature = "bn254")]
 const FIX_BN254_FR_CHALLENGE: &[(&str, &str)] = &[
     (
         "00000000000000000000000000000000",
@@ -211,6 +217,7 @@ const FIX_BN254_FR_CHALLENGE: &[(&str, &str)] = &[
         "f8c2174ea5e97eb646b7b0fd9a6a047dca24236aa1a61e02e964d8aaa051c926",
     ),
 ];
+#[cfg(feature = "bn254")]
 const FIX_BN254_FR_SCALAR_CHALLENGE: &[(&str, &str)] = &[
     (
         "0000000000000000000000000000000000000000000000000000000000000000",
@@ -245,6 +252,7 @@ const FIX_BN254_FR_SCALAR_CHALLENGE: &[(&str, &str)] = &[
         "cb2d1d9856e14f1fef75479b49d2286e727e157be85dbcfabeaa9221a0822413",
     ),
 ];
+#[cfg(feature = "bn254")]
 const FIX_BN254_FQ_CHALLENGE: &[(&str, &str)] = &[
     (
         "00000000000000000000000000000000",
@@ -279,6 +287,7 @@ const FIX_BN254_FQ_CHALLENGE: &[(&str, &str)] = &[
         "00000000000000000000000000000000004ed4e1b8a4ad0fda75893f75f9e30b",
     ),
 ];
+#[cfg(feature = "bn254")]
 const FIX_BN254_FQ_SCALAR_CHALLENGE: &[(&str, &str)] = &[
     (
         "0000000000000000000000000000000000000000000000000000000000000000",
