@@ -64,6 +64,13 @@ where
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
     let log_t = config.trace_length.ilog2() as usize;
+    {
+        let _span = tracing::info_span!("jolt_prover::backend_witness_prepare").entered();
+        backend
+            .base
+            .spartan_outer_uniskip
+            .prepare_witness(&mut session, log_t, witness)?;
+    }
     let piop_span = tracing::info_span!("jolt_prover::piop").entered();
 
     let stage1 = prove_stage1::<F, PCS, VC, T>(

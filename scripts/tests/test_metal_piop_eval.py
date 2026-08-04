@@ -46,10 +46,25 @@ class MetalPiopEvalTests(unittest.TestCase):
 
     def test_speedup_is_median_of_interleaved_pairs(self) -> None:
         metrics = metal_piop_eval.summarize_pairs(
-            [{"cpu_us": 100.0, "metal_us": 20.0}, {"cpu_us": 120.0, "metal_us": 30.0}]
+            [
+                {
+                    "cpu_us": 100.0,
+                    "metal_us": 20.0,
+                    "cpu_prepare_us": 0.0,
+                    "metal_prepare_us": 5.0,
+                },
+                {
+                    "cpu_us": 120.0,
+                    "metal_us": 30.0,
+                    "cpu_prepare_us": 0.0,
+                    "metal_prepare_us": 10.0,
+                },
+            ]
         )
         self.assertEqual(metrics["paired_speedups"], [5.0, 4.0])
         self.assertEqual(metrics["piop_speedup"], 4.5)
+        self.assertEqual(metrics["paired_speedups_with_backend_witness_prepare"], [4.0, 3.0])
+        self.assertEqual(metrics["piop_plus_backend_witness_prepare_speedup"], 3.5)
 
     def test_attribution_sums_kernel_seams_inside_piop_only(self) -> None:
         events = [

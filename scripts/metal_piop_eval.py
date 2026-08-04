@@ -18,8 +18,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 PIOP_SPAN = "jolt_prover::piop"
+BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
 
 
 def span_intervals_us(
@@ -49,12 +50,16 @@ def span_intervals_us(
     return intervals
 
 
-def unique_span_duration_us(events: list[dict[str, Any]]) -> float:
-    intervals = span_intervals_us(events, PIOP_SPAN)
+def unique_named_span_duration_us(events: list[dict[str, Any]], name: str) -> float:
+    intervals = span_intervals_us(events, name)
     durations = [end - start for _, start, end in intervals]
     if len(durations) != 1 or not math.isfinite(durations[0]) or durations[0] <= 0.0:
-        raise ValueError("trace must contain exactly one positive PIOP span")
+        raise ValueError(f"trace must contain exactly one positive {name} span")
     return durations[0]
+
+
+def unique_span_duration_us(events: list[dict[str, Any]]) -> float:
+    return unique_named_span_duration_us(events, PIOP_SPAN)
 
 
 def load_trace_events(path: Path) -> list[dict[str, Any]]:
@@ -138,16 +143,32 @@ def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:
         raise ValueError("at least one CPU/Metal pair is required")
     cpu = [float(pair["cpu_us"]) for pair in pairs]
     metal = [float(pair["metal_us"]) for pair in pairs]
+    cpu_prepare = [float(pair["cpu_prepare_us"]) for pair in pairs]
+    metal_prepare = [float(pair["metal_prepare_us"]) for pair in pairs]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
+    if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
+        raise ValueError("backend witness preparation durations must be finite and non-negative")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
+    paired_with_prepare = [
+        (cpu_us + cpu_prepare_us) / (metal_us + metal_prepare_us)
+        for cpu_us, metal_us, cpu_prepare_us, metal_prepare_us in zip(
+            cpu, metal, cpu_prepare, metal_prepare
+        )
+    ]
     return {
         "piop_speedup": statistics.median(paired_speedups),
+        "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
+        "cpu_backend_witness_prepare_ms": statistics.median(cpu_prepare) / 1000.0,
+        "metal_backend_witness_prepare_ms": statistics.median(metal_prepare) / 1000.0,
         "paired_speedups": paired_speedups,
+        "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
+        "cpu_backend_witness_prepare_ms_samples": [value / 1000.0 for value in cpu_prepare],
+        "metal_backend_witness_prepare_ms_samples": [value / 1000.0 for value in metal_prepare],
     }
 
 
@@ -205,7 +226,13 @@ def run_backend(
     destination = artifact_dir / f"{label}.trace.json"
     shutil.copy2(source, destination)
     events = load_trace_events(destination)
-    return {"piop_us": unique_span_duration_us(events), "attribution": trace_attribution(events)}
+    return {
+        "piop_us": unique_span_duration_us(events),
+        "backend_witness_prepare_us": unique_named_span_duration_us(
+            events, BACKEND_WITNESS_PREP_SPAN
+        ),
+        "attribution": trace_attribution(events),
+    }
 
 
 def default_artifact_dir(root: Path) -> Path:
@@ -279,6 +306,8 @@ def main() -> int:
                 {
                     "cpu_us": results["optimized"]["piop_us"],
                     "metal_us": results["metal"]["piop_us"],
+                    "cpu_prepare_us": results["optimized"]["backend_witness_prepare_us"],
+                    "metal_prepare_us": results["metal"]["backend_witness_prepare_us"],
                 }
             )
             attributions.append(
@@ -297,6 +326,7 @@ def main() -> int:
                 "cpu_proofs_verified": True,
                 "metal_proofs_verified": True,
                 "unique_piop_span": True,
+                "unique_backend_witness_prepare_span": True,
                 "target_scale": args.log_n >= 26,
             },
             "resources": {

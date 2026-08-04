@@ -52,16 +52,18 @@
     "excludes": [
       "guest execution and trace construction",
       "witness generation and stage-0 commitments",
+      "transcript-independent backend witness representation materialization",
       "PCS openings and stage 8",
       "verification"
     ],
     "includes": [
       "stages 1 through 7",
       "Akita reconstruction sumcheck",
-      "kernel preparation and direct handoff",
+      "transcript-dependent kernel preparation and direct handoff",
       "Metal command submission and synchronization",
       "CPU tails and host Fiat-Shamir"
-    ]
+    ],
+    "diagnostic_control": "also report PIOP plus transcript-independent backend witness representation materialization"
   },
   "validation": {
     "analytical_entry_margin": 1.25,

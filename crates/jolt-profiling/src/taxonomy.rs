@@ -85,6 +85,10 @@ pub const ROOT_SPAN: &str = "jolt_prover::prove";
 /// sumcheck, excluding witness commitment and all polynomial openings.
 pub const AKITA_PIOP_SPAN: &str = "jolt_prover::piop";
 
+/// Transcript-independent preparation of a backend-specific witness
+/// representation immediately before the Akita PIOP window.
+pub const AKITA_BACKEND_WITNESS_PREP_SPAN: &str = "jolt_prover::backend_witness_prepare";
+
 /// The per-stage recipe spans, in pipeline order — depth-1 children of
 /// [`ROOT_SPAN`], sequential on the root thread. The per-stage summary
 /// rollup (wallclock, boundary RSS, windowed peak memory) keys on these.

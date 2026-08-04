@@ -33,6 +33,17 @@ where
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
+    /// Materialize transcript-independent witness state that the uni-skip
+    /// front can consume after its challenges are drawn.
+    fn prepare_witness(
+        &self,
+        _session: &mut ProofSession,
+        _log_t: usize,
+        _witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<(), KernelError<F>> {
+        Ok(())
+    }
+
     /// Compute the uni-skip first-round state and park it in the session
     /// under a backend-private key.
     fn prepare(

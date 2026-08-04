@@ -83,6 +83,7 @@ use super::support::collect_rows;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
     MetalError, SolinasMetal, SpartanOuterUniskipConfig, SpartanOuterUniskipRow,
+    SpartanOuterUniskipRows,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -520,41 +521,12 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
     let e_out = EqPolynomial::<AkitaField>::evals(out_point, None);
     let e_in = EqPolynomial::<AkitaField>::evals(in_point, None);
     let extended = {
-        let access = rows.access();
         let resident = {
             let _span = tracing::info_span!("MetalSpartanOuterUniskip::row_handoff").entered();
-            context
-                .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |destination| {
-                    #[cfg(feature = "parallel")]
-                    {
-                        destination.par_iter_mut().enumerate().try_for_each(
-                            |(row_index, destination)| -> Result<(), MetalError> {
-                                let row = access.row(row_index).map_err(|error| {
-                                    MetalError::SpartanOuterRowExtraction {
-                                        row: row_index,
-                                        message: error.to_string(),
-                                    }
-                                })?;
-                                *destination = SpartanOuterUniskipRow::from_spartan_outer(&row);
-                                Ok(())
-                            },
-                        )?;
-                    }
-                    #[cfg(not(feature = "parallel"))]
-                    {
-                        for (row_index, destination) in destination.iter_mut().enumerate() {
-                            let row = access.row(row_index).map_err(|error| {
-                                MetalError::SpartanOuterRowExtraction {
-                                    row: row_index,
-                                    message: error.to_string(),
-                                }
-                            })?;
-                            *destination = SpartanOuterUniskipRow::from_spartan_outer(&row);
-                        }
-                    }
-                    Ok(())
-                })
-                .map_err(metal_outer_error)?
+            match session.take::<SpartanOuterUniskipRows>() {
+                Some(resident) if resident.len() == cycles => resident,
+                _ => prepare_metal_spartan_outer_rows(context, &rows, cycles)?,
+            }
         };
         let invocation = context
             .prepare_spartan_outer_uniskip_with_rows(&resident, &e_in, &e_out, config)
@@ -576,6 +548,57 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
         t1_values,
     });
     Ok(())
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_spartan_outer_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
+    let rows = RowsStore::resolve(witness, cycles)?;
+    prepare_metal_spartan_outer_rows(context, &rows, cycles)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn prepare_metal_spartan_outer_rows(
+    context: &SolinasMetal,
+    rows: &RowsStore,
+    cycles: usize,
+) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
+    let access = rows.access();
+    context
+        .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |destination| {
+            #[cfg(feature = "parallel")]
+            {
+                destination.par_iter_mut().enumerate().try_for_each(
+                    |(row_index, destination)| -> Result<(), MetalError> {
+                        let row = access.row(row_index).map_err(|error| {
+                            MetalError::SpartanOuterRowExtraction {
+                                row: row_index,
+                                message: error.to_string(),
+                            }
+                        })?;
+                        *destination = SpartanOuterUniskipRow::from_spartan_outer(&row);
+                        Ok(())
+                    },
+                )?;
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                for (row_index, destination) in destination.iter_mut().enumerate() {
+                    let row = access.row(row_index).map_err(|error| {
+                        MetalError::SpartanOuterRowExtraction {
+                            row: row_index,
+                            message: error.to_string(),
+                        }
+                    })?;
+                    *destination = SpartanOuterUniskipRow::from_spartan_outer(&row);
+                }
+            }
+            Ok(())
+        })
+        .map_err(metal_outer_error)
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]

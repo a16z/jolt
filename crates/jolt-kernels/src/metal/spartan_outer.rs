@@ -5,7 +5,10 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::instruction_read_raf::MetalBackend;
 use super::solinas::SpartanOuterUniskipConfig;
-use crate::optimized::spartan_outer::{prepare_metal_spartan_outer_uniskip, OptimizedOuterUniskip};
+use crate::optimized::spartan_outer::{
+    prepare_metal_spartan_outer_uniskip, prepare_metal_spartan_outer_witness_rows,
+    OptimizedOuterUniskip,
+};
 use crate::uniskip::UniskipKernel;
 use crate::{KernelError, ProofSession};
 
@@ -25,6 +28,20 @@ impl Default for SpartanOuterUniskipMetalConfig {
 }
 
 impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
+    fn prepare_witness(
+        &self,
+        session: &mut ProofSession,
+        log_t: usize,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+    ) -> Result<(), KernelError<AkitaField>> {
+        let cycles = 1usize << log_t;
+        if cycles >= self.config.spartan_outer_uniskip.trace_cutoff_elements {
+            let rows = prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?;
+            session.park(rows);
+        }
+        Ok(())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,

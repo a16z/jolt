@@ -27,6 +27,11 @@ changes the same kernels. Future rebases must reconcile the two PRs semantically
   Metal-hybrid PIOP wall time. The `jolt_prover::piop` span contains stages 1-7 and
   Akita reconstruction. It excludes trace and witness generation, stage-0
   commitments, stage-8 PCS openings, and verification.
+- **Decision:** a transcript-independent backend witness representation is prepared
+  before the PIOP span. The primary metric starts with that representation ready,
+  matching the backend-ready CPU witness boundary. The evaluator also reports PIOP
+  plus this preparation as a diagnostic control, so moving work across the boundary
+  cannot be mistaken for an end-to-end improvement.
 - **Decision:** each slot's primary microbenchmark is its complete hybrid wall time.
   It includes direct handoff, every command submission and host transcript step, and
   any Metal-to-CPU tail handoff. Resident GPU-active time remains diagnostic.
@@ -729,6 +734,17 @@ ms to dispatch. Removing only that redundant repack projects 6.98x locally,
 so the next retained design must make the packed rows a reusable witness
 representation while continuing to charge the actual buffer attachment inside
 the PIOP boundary.
+
+The resident-witness checkpoint is
+`benchmark-runs/metal-piop-eval/20260804-143610`. Exact proofs verified at `2^26`;
+optimized CPU PIOP was 19.886 s and Metal-hybrid PIOP was 12.529 s, a 1.587x paired
+speedup. `SpartanOuterUniskip` measured 2.265 s on CPU and 332.378 ms on Metal, or
+6.82x; its in-PIOP row attachment was 0.0004 ms and dispatch was 307.586 ms. The
+transcript-independent Metal row materialization immediately before PIOP took
+254.658 ms. Charging it back gives 12.784 s and 1.556x for the diagnostic control,
+essentially the same aggregate result as the prior 1.557x profile. This checkpoint
+therefore validates the backend-ready PIOP architecture and local port, but makes no
+end-to-end speedup claim from relocating the row conversion.
 
 ## Requirement map and open points
 

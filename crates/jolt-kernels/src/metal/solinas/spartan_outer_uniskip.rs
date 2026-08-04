@@ -85,6 +85,18 @@ impl SpartanOuterUniskipRows {
     }
 }
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for SpartanOuterUniskipRows {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_rows"),
+            self.len * size_of::<SpartanOuterUniskipRow>(),
+        );
+        visitor.exit();
+    }
+}
+
 impl SpartanOuterUniskipRow {
     pub const fn from_words(words: [u64; ROW_WORDS]) -> Self {
         Self { words }
