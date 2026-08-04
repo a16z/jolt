@@ -97,9 +97,23 @@ pub fn metal_gate(kind: &str, work_items: usize) -> bool {
     work_items >= min_terms(kind)
 }
 
-fn min_terms(kind: &str) -> usize {
-    let suffix: String = kind
-        .chars()
+/// [`metal_gate`] with an upper bound: declines when `work_items` exceeds
+/// `default_max_terms` (overridable via `JOLT_METAL_MAX_TERMS_<SLOT>`).
+///
+/// WARNING: for slots whose device path degrades at large working sets —
+/// measured for `bytecode_read_raf_cycle` at T = 2^27, where the device
+/// rounds run 2.6× slower than the optimized CPU twin AND stall the other
+/// device members of the same batch via bandwidth contention (2026-08-04
+/// certification, campaign journal). Falling back is byte-identical: the
+/// optimized twin is the parity-tested reference.
+pub fn metal_gate_capped(kind: &str, work_items: usize, default_max_terms: usize) -> bool {
+    let max = parse_env(&format!("JOLT_METAL_MAX_TERMS_{}", env_suffix(kind)))
+        .unwrap_or(default_max_terms);
+    metal_gate(kind, work_items) && work_items <= max
+}
+
+fn env_suffix(kind: &str) -> String {
+    kind.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() {
                 c.to_ascii_uppercase()
@@ -107,8 +121,11 @@ fn min_terms(kind: &str) -> usize {
                 '_'
             }
         })
-        .collect();
-    parse_env(&format!("JOLT_METAL_MIN_TERMS_{suffix}"))
+        .collect()
+}
+
+fn min_terms(kind: &str) -> usize {
+    parse_env(&format!("JOLT_METAL_MIN_TERMS_{}", env_suffix(kind)))
         .or_else(|| parse_env("JOLT_METAL_MIN_TERMS"))
         .unwrap_or(DEFAULT_MIN_TERMS)
 }
