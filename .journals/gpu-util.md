@@ -168,4 +168,5 @@ soundness note before merge.
 - 2026-08-04 04:25 UTC: USER DIRECTIVE logged — byte-parity gate lifted, replaced
   by e2e verify + full tests + journaled soundness notes for protocol changes.
   Wave-1 lanes finish as scoped (unaffected: exact-math ports). Lever board
-  published; round-pairing scoping lane dispatched (read-only, no bench lock).
+  published; round-pairing scoping lane dispatched (read-only, no bench lock):
+  task 5068310d, gpt-5.6-sol-xhigh, report → lane-reports/w15-roundpair-scope.md.
