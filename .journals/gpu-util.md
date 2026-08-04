@@ -127,6 +127,24 @@ Honest wave-1 projection if all three lanes hit: 2^27 ≈ 63-67 s (2.0-2.1 MHz),
 2^25 ≈ 17.5-18.5 s (1.81-1.90 MHz). Above 2 MHz @2^27 requires D to land, not
 just A+B.
 
+## Wave-1 gate results
+
+- **W1A (task 2bbe078e): KILLED at the 2^24 gate, cleanly.** Exact-math device
+  prepares for st6a+st7 regressed the targeted span +26.2% (needed ≥−35%).
+  Diagnosis: SIMD bucket shape leaves lanes inactive scanning every inner-eq
+  row (work inflation scales with T, not fixed overhead — kill is scale-honest);
+  bytecode counting-sort adds two full trace passes. Forced-device parity was
+  3/3 green — correctness fine, shape wrong. Prototype reverted; only report
+  retained (lane-reports/w1a.md in gpuutil-w1a, commits 2dd709f38+80f69a3e0).
+  Artifacts /tmp/w1a-*.{log,json}. CONSEQUENCE: priority-1 target (st6a/st7 0%
+  GPU) does NOT fall to a like-for-like port → new-freedom rethink lane W2A.
+- **W1B (task 83cf4e87): checkpoint-2 kill gate PASSED.** BytecodeReadRafCycle
+  full port: st6b −42.9% @2^24 (2.102→1.200 s), member −53.3%, whole prove
+  −8.7% (11.94→10.90 s). Parity: forced-device lockstep green; byte_diff 11/11
+  in both prover-fixtures and prover-fixtures,metal (brief's "19/19" count was
+  stale — current tree discovers 11 fixtures). Continues: IncClaimReduction
+  prepare device path + 2^25 cool ABBA + full gate matrix.
+
 ## Post-directive lever board (sound-but-not-byte-identical, wave-1.5+)
 
 Ranked candidates unlocked by the 2026-08-04 directive; each needs a journal
@@ -184,6 +202,14 @@ soundness note before merge.
   forwarded to lane D (task 5c8623e5) for its st4 root-cause artifact. W1A/W1B
   checkpoint-1 decomposition reports read (w1a.md, w1b.md — both sound, byte
   parity retained as their retention gate, stricter than required = fine).
-  Lane task IDs (recorded late, lesson): A=2bbe078e?, B=83cf4e87? (codex pair,
-  A/B assignment inferred from spawn order — confirm at next checkpoint),
-  D=5c8623e5, scope=5068310d (done).
+  Lane task IDs (recorded late, lesson): A=2bbe078e, B=83cf4e87 (confirmed:
+  sole surviving codex process = 83cf4e87 = B, still implementing after A's
+  kill-gate exit), D=5c8623e5, scope=5068310d (done).
+- 2026-08-04 05:0x UTC: wave-1 gate results journaled (A killed / B passed —
+  see §Wave-1 gate results). W2A dispatched: task 0eb25fd2, fable-max,
+  worktree gpuutil-w2a (branch gpu/util-w2a off trunk @2fc5e877f) — st6a+st7
+  rethink under protocol freedom (hypothesis menu H1 address-major bind order,
+  H2 device pushforward shape, H3 r_cycle-independent hoisting, H4 HWCR
+  restructure). Design-before-code hard gate: W2A must get orchestrator GO on
+  its design artifact before implementing. D notified of scope findings +
+  directive earlier (04:45); D currently holds bench lock for 2^27 diagnosis.
