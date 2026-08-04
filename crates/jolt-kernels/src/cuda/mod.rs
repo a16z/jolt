@@ -9,6 +9,7 @@ mod context;
 mod dense_product;
 mod device;
 mod error;
+mod instruction_read_raf;
 mod lt_poly;
 mod prefix_suffix;
 mod prefixes;
@@ -54,6 +55,7 @@ where
         if !device_available() {
             return backend;
         }
+        backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
         backend

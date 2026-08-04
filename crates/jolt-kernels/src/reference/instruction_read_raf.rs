@@ -96,11 +96,11 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for ReferenceBackend {
 /// address identity): `poly(k) = P(chunk) · Q_shift + Q_value` over the
 /// current phase's chunk domain, with the fully bound `P` becoming the next
 /// phase's checkpoint.
-struct RafDecomposition<F: Field> {
-    prefix: Polynomial<F>,
-    q_shift: Polynomial<F>,
-    q_value: Polynomial<F>,
-    checkpoint: F,
+pub(crate) struct RafDecomposition<F: Field> {
+    pub(crate) prefix: Polynomial<F>,
+    pub(crate) q_shift: Polynomial<F>,
+    pub(crate) q_value: Polynomial<F>,
+    pub(crate) checkpoint: F,
 }
 
 impl<F: Field> RafDecomposition<F> {
@@ -165,37 +165,37 @@ struct CycleTables<F: Field> {
 
 pub struct InstructionReadRafKernel<F: Field> {
     dimensions: InstructionReadRafDimensions,
-    gamma: F,
+    pub(crate) gamma: F,
     r_reduction: Vec<F>,
     rows: Vec<InstructionReadRafWitness>,
     /// Per-table cycle buckets, indexed by `LookupTableKind::index()`.
     buckets: Vec<Vec<usize>>,
     /// Condensed per-cycle eq weights: after phase `p` starts,
     /// `u[j] = eq(r_reduction, j) · Π_{q<p} eq(phase-q challenges, chunk_q(k_j))`.
-    u_evals: Vec<F>,
+    pub(crate) u_evals: Vec<F>,
     /// The 46 table-prefix checkpoints (fully bound values of completed
     /// phases' prefix chunk polynomials).
-    prefix_checkpoints: Vec<PrefixEval<F>>,
+    pub(crate) prefix_checkpoints: Vec<PrefixEval<F>>,
     /// The 46 materialized prefix chunk polynomials for the current phase,
     /// in `ALL_PREFIXES` order.
-    prefix_tables: Vec<Polynomial<F>>,
+    pub(crate) prefix_tables: Vec<Polynomial<F>>,
     /// Per present table (enum index, suffix `Q` polynomials in
     /// `table.suffixes()` order) for the current phase.
-    suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
-    raf_left: RafDecomposition<F>,
-    raf_right: RafDecomposition<F>,
-    raf_identity: RafDecomposition<F>,
+    pub(crate) suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
+    pub(crate) raf_left: RafDecomposition<F>,
+    pub(crate) raf_right: RafDecomposition<F>,
+    pub(crate) raf_identity: RafDecomposition<F>,
     /// `U(k) = ∏_{i < address_bits/2} k_i`, accumulated over identity-RAF rows
     /// only so that it carries the `raf_flag` mask. Inert unless
     /// [`CANONICAL_INSTRUCTION_ADDRESS`].
-    raf_upper_all_ones: RafDecomposition<F>,
+    pub(crate) raf_upper_all_ones: RafDecomposition<F>,
     /// Completed phases' bound-challenge eq tables (`v[p][x] =
     /// eq(phase-p challenges, x)`, MSB-first).
     v_tables: Vec<Vec<F>>,
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
     cycle_tables: Option<CycleTables<F>>,
-    rounds_bound: usize,
+    pub(crate) rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -356,11 +356,11 @@ impl<F: Field> InstructionReadRafKernel<F> {
         Ok(kernel)
     }
 
-    fn address_bits(&self) -> usize {
+    pub(crate) fn address_bits(&self) -> usize {
         self.dimensions.instruction_address_bits()
     }
 
-    fn phases(&self) -> usize {
+    pub(crate) fn phases(&self) -> usize {
         self.address_bits() / CHUNK_LEN
     }
 
@@ -545,7 +545,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
     }
 
     /// The true quadratic for an address round, sampled at `c ∈ {0,1,2}`.
-    fn address_message(&self) -> [F; 3] {
+    pub(crate) fn address_message(&self) -> [F; 3] {
         let gamma_sqr = self.gamma * self.gamma;
         let half = self.prefix_tables[0].evals().len() / 2;
         let mut evals = [F::zero(); 3];
@@ -585,7 +585,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
 
     /// The true degree-`(ra_count + 2)` polynomial for a cycle round, sampled
     /// at `degree + 1` integer points.
-    fn cycle_message(&self) -> Result<Vec<F>, SumcheckError<F>> {
+    pub(crate) fn cycle_message(&self) -> Result<Vec<F>, SumcheckError<F>> {
         let tables = self
             .cycle_tables
             .as_ref()
@@ -733,7 +733,7 @@ impl<F: Field> ProveRounds<F> for InstructionReadRafKernel<F> {
 }
 
 impl<F: Field> InstructionReadRafKernel<F> {
-    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+    pub(crate) fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         if self.rounds_bound < self.address_bits() {
             for table in &mut self.prefix_tables {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);

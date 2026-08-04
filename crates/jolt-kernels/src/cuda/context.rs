@@ -40,6 +40,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/prefixes.cu"),
     "\n",
     include_str!("kernels/combine.cu"),
+    "\n",
+    include_str!("kernels/read_raf_address.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -77,6 +79,7 @@ pub struct CudaKernelContext {
     pfx_eval_batch: CudaFunction,
     pfx_default_checkpoints: CudaFunction,
     cmb_combine: CudaFunction,
+    irr_address_message: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -124,6 +127,7 @@ impl CudaKernelContext {
             pfx_eval_batch: module.load_function("pfx_eval_batch_kernel")?,
             pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
             cmb_combine: module.load_function("cmb_combine_kernel")?,
+            irr_address_message: module.load_function("irr_address_message_kernel")?,
         })
     }
 
@@ -275,6 +279,10 @@ impl CudaKernelContext {
 
     pub(super) const fn cmb_combine(&self) -> &CudaFunction {
         &self.cmb_combine
+    }
+
+    pub(super) const fn irr_address_message(&self) -> &CudaFunction {
+        &self.irr_address_message
     }
 
     pub(super) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
