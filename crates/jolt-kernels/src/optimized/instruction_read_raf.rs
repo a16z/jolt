@@ -41,6 +41,8 @@ use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_field::AkitaField;
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::{SuffixEval, Suffixes};
@@ -61,6 +63,10 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use super::support::accumulate_product;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::{
+    Product5Sequence, Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
+};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -344,19 +350,29 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
-        let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
-            witness,
-            1 << dimensions.log_t(),
-        )?);
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
-        Ok(Box::new(OptimizedInstructionReadRafKernel::new(
-            dimensions,
-            &inputs.points.lookup_output,
-            rows,
-            inputs.challenges.gamma,
+        Ok(Box::new(prepare_optimized_instruction_read_raf(
+            session, witness, inputs,
         )?))
     }
+}
+
+pub(crate) fn prepare_optimized_instruction_read_raf<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
+) -> Result<OptimizedInstructionReadRafKernel<F>, KernelError<F>> {
+    let dimensions = inputs.relation.dimensions();
+    let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
+        witness,
+        1 << dimensions.log_t(),
+    )?);
+    session.park(SharedInstructionRows(Arc::clone(&rows)));
+    OptimizedInstructionReadRafKernel::new(
+        dimensions,
+        &inputs.points.lookup_output,
+        rows,
+        inputs.challenges.gamma,
+    )
 }
 
 // --- parallel shims -------------------------------------------------------
@@ -519,6 +535,8 @@ impl<F: Field> CycleState<F> {
             CycleTables::Dense { combined_val, ra } => {
                 poly_heap_bytes(combined_val) + polys_heap_bytes(ra)
             }
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            CycleTables::Offloaded => 0,
         };
         gruen_heap_bytes(&self.gruen) + tables + vec_heap_bytes(&self.bind_scratch)
     }
@@ -538,6 +556,8 @@ enum CycleTables<F: Field> {
         combined_val: Polynomial<F>,
         ra: Vec<Polynomial<F>>,
     },
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Offloaded,
 }
 
 /// Everything the pending-base evaluations need beyond the kernel's own
@@ -1232,6 +1252,13 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             .cycle
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if matches!(cycle.tables, CycleTables::Offloaded) {
+            return Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "CPU cycle message requested while tables are device-resident".to_owned(),
+            });
+        }
         let factors = 1 + self.dimensions.num_virtual_ra_polys();
 
         struct Scratch<F: Field> {
@@ -1287,6 +1314,8 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                             scratch.steps[1 + i] = hi - lo;
                         }
                     }
+                    #[cfg(all(feature = "metal", target_os = "macos"))]
+                    CycleTables::Offloaded => return,
                 }
                 accumulate_product(&scratch.evals, &mut scratch.lanes[0]);
                 for lane in 1..factors - 1 {
@@ -1487,6 +1516,14 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                         }
                         None
                     }
+                    #[cfg(all(feature = "metal", target_os = "macos"))]
+                    CycleTables::Offloaded => {
+                        return Err(SumcheckError::ComputeBackend {
+                            backend: "metal",
+                            message: "CPU bind requested while cycle tables are device-resident"
+                                .to_owned(),
+                        });
+                    }
                 }
             };
             if let Some(pending) = pending {
@@ -1524,6 +1561,155 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         }
         self.rounds_bound += 1;
         Ok(())
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl OptimizedInstructionReadRafKernel<AkitaField> {
+    pub(crate) fn metal_handoff_available(&self, cutoff: usize) -> bool {
+        self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
+            && self.claim_columns.len() / 2 > cutoff
+            && self
+                .cycle
+                .as_ref()
+                .is_some_and(|cycle| matches!(cycle.tables, CycleTables::Pending(_)))
+    }
+
+    pub(crate) fn metal_offload_pending_bind(
+        &mut self,
+        challenge: AkitaField,
+        context: &SolinasMetal,
+        config: Product5SequenceConfig,
+    ) -> Result<Product5Sequence, SumcheckError<AkitaField>> {
+        let (pending, e_in, e_out) = {
+            let cycle = self
+                .cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+            cycle.gruen.bind(challenge);
+            let tables = core::mem::replace(&mut cycle.tables, CycleTables::Offloaded);
+            let CycleTables::Pending(pending) = tables else {
+                return Err(SumcheckError::ComputeBackend {
+                    backend: "metal",
+                    message: "dense-cycle handoff requires pending CPU tables".to_owned(),
+                });
+            };
+            (
+                pending,
+                cycle.gruen.e_in_current().to_vec(),
+                cycle.gruen.e_out_current().to_vec(),
+            )
+        };
+
+        let elements = self.claim_columns.len() / 2;
+        let sequence = context
+            .prepare_product5_sequence_from_fn(elements, &e_in, &e_out, config, |index| {
+                let factor = index / elements;
+                let position = index % elements;
+                let source = 2 * position;
+                let (lo, hi) = if factor == 0 {
+                    (
+                        self.pending_combined_base(&pending, source),
+                        self.pending_combined_base(&pending, source + 1),
+                    )
+                } else {
+                    (
+                        self.pending_ra_base(factor - 1, source),
+                        self.pending_ra_base(factor - 1, source + 1),
+                    )
+                };
+                lo + challenge * (hi - lo)
+            })
+            .map_err(metal_sumcheck_error)?;
+
+        self.rows = Arc::new(Vec::new());
+        self.v_tables = Vec::new();
+        self.cycle_challenges.push(challenge);
+        self.rounds_bound += 1;
+        Ok(sequence)
+    }
+
+    pub(crate) fn metal_bind_offloaded(
+        &mut self,
+        challenge: AkitaField,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        if !matches!(cycle.tables, CycleTables::Offloaded) {
+            return Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "device bind requires offloaded cycle tables".to_owned(),
+            });
+        }
+        cycle.gruen.bind(challenge);
+        self.cycle_challenges.push(challenge);
+        self.rounds_bound += 1;
+        Ok(())
+    }
+
+    pub(crate) fn metal_cycle_weights(
+        &self,
+    ) -> Result<(&[AkitaField], &[AkitaField]), SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        Ok((cycle.gruen.e_in_current(), cycle.gruen.e_out_current()))
+    }
+
+    pub(crate) fn metal_cycle_message(
+        &self,
+        q_evals: &[AkitaField; PRODUCT5_FACTORS],
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        if !matches!(cycle.tables, CycleTables::Offloaded) {
+            return Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "device message requires offloaded cycle tables".to_owned(),
+            });
+        }
+        Ok(cycle.gruen.gruen_poly_from_evals(q_evals, previous_claim))
+    }
+
+    pub(crate) fn metal_restore_dense(
+        &mut self,
+        tables: [Vec<AkitaField>; PRODUCT5_FACTORS],
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        if !matches!(cycle.tables, CycleTables::Offloaded) {
+            return Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "device readback requires offloaded cycle tables".to_owned(),
+            });
+        }
+        let [combined_val, ra_0, ra_1, ra_2, ra_3] = tables;
+        cycle.tables = CycleTables::Dense {
+            combined_val: Polynomial::new(combined_val),
+            ra: vec![
+                Polynomial::new(ra_0),
+                Polynomial::new(ra_1),
+                Polynomial::new(ra_2),
+                Polynomial::new(ra_3),
+            ],
+        };
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn metal_sumcheck_error(error: crate::metal::solinas::MetalError) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
     }
 }
 
@@ -1630,7 +1816,7 @@ mod tests {
         InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
     };
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
+    use jolt_field::{Field, Fr, FromPrimitiveInt};
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
@@ -1640,6 +1826,11 @@ mod tests {
     };
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    use crate::metal::solinas::{Product5SequenceConfig, SolinasMetal};
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    use crate::metal::{InstructionReadRafMetalConfig, MetalInstructionReadRafKernel};
 
     use super::{build_cycle_buckets, InstructionCycleRow, OptimizedInstructionReadRafKernel};
 
@@ -1747,7 +1938,7 @@ mod tests {
     /// point-mass `ra` collapsed at each cycle's lookup index. Pins both
     /// kernels to the protocol, not merely to each other (each kernel's own
     /// `s(0) + s(1) = claim` self-check would reject a drifted round 0).
-    fn input_claim(rows: &[InstructionReadRafWitness], r_reduction: &[Fr], gamma: Fr) -> Fr {
+    fn input_claim<F: Field>(rows: &[InstructionReadRafWitness], r_reduction: &[F], gamma: F) -> F {
         let tables: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::iter().collect();
         let gamma_sqr = gamma * gamma;
         let address_bits = 2 * RISCV_XLEN;
@@ -1756,15 +1947,15 @@ mod tests {
             .zip(rows)
             .map(|(&u, row)| {
                 let k = row.lookup_index.0;
-                let value = row
-                    .table_index
-                    .0
-                    .map_or_else(|| fr(0), |index| fr(tables[index].materialize_entry(k)));
+                let value = row.table_index.0.map_or_else(F::zero, |index| {
+                    F::from_u64(tables[index].materialize_entry(k))
+                });
                 let raf = if !row.raf_flag.0 {
                     let (left, right) = LookupBits::new(k, address_bits).uninterleave();
-                    gamma * fr(u64::from(left)) + gamma_sqr * fr(u64::from(right))
+                    gamma * F::from_u64(u64::from(left)) + gamma_sqr * F::from_u64(u64::from(right))
                 } else {
-                    let mut raf = gamma_sqr * (fr(k as u64) + fr((k >> 64) as u64).mul_pow_2(64));
+                    let mut raf = gamma_sqr
+                        * (F::from_u64(k as u64) + F::from_u64((k >> 64) as u64).mul_pow_2(64));
                     if CANONICAL_INSTRUCTION_ADDRESS
                         && (k >> (address_bits / 2)) == (1u128 << (address_bits / 2)) - 1
                     {
@@ -1887,5 +2078,85 @@ mod tests {
             );
             claim = reference_poly.evaluate(challenge(round));
         }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_cycle_tail_matches_optimized_cpu() {
+        use jolt_field::AkitaField;
+
+        let log_t = 7;
+        let dimensions =
+            InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(4).unwrap());
+        let rows = fixture_rows(log_t, 0xA11A_5EED);
+        let r_reduction: Vec<AkitaField> = (0..log_t)
+            .map(|i| AkitaField::from_u64(1000 + 37 * i as u64))
+            .collect();
+        let gamma = AkitaField::from_u64(0xACE1_57EF);
+        let cpu = OptimizedInstructionReadRafKernel::new(
+            dimensions,
+            &r_reduction,
+            Arc::new(pack(&rows)),
+            gamma,
+        )
+        .unwrap();
+        let mut expected = OptimizedInstructionReadRafKernel::new(
+            dimensions,
+            &r_reduction,
+            Arc::new(pack(&rows)),
+            gamma,
+        )
+        .unwrap();
+        let context = Arc::new(SolinasMetal::for_akita().unwrap());
+        let mut actual = MetalInstructionReadRafKernel::new(
+            cpu,
+            context,
+            InstructionReadRafMetalConfig {
+                cutoff_elements: 8,
+                dispatch: Product5SequenceConfig::default(),
+            },
+        );
+        let challenge = |round: usize| {
+            AkitaField::from_u64(
+                0x9E37_79B9_7F4A_7C15 ^ (round as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ 0x11,
+            )
+        };
+
+        let rounds = expected.num_rounds();
+        let mut claim = input_claim(&rows, &r_reduction, gamma);
+        for round in 0..rounds {
+            let bind = round.checked_sub(1).map(challenge);
+            let expected_poly = expected.prove_round(bind, round, claim).unwrap();
+            let actual_poly = actual.prove_round(bind, round, claim).unwrap();
+            assert_eq!(
+                expected_poly.coefficients(),
+                actual_poly.coefficients(),
+                "round {round}"
+            );
+            claim = expected_poly.evaluate(challenge(round));
+        }
+        expected.finish_rounds(challenge(rounds - 1)).unwrap();
+        actual.finish_rounds(challenge(rounds - 1)).unwrap();
+        assert!(actual.metal_rounds() > 0);
+
+        let inputs = InstructionReadRafInputClaims {
+            lookup_output: AkitaField::zero(),
+            left_lookup_operand: AkitaField::zero(),
+            right_lookup_operand: AkitaField::zero(),
+        };
+        let expected_outputs = expected.output_claims(&inputs).unwrap();
+        let actual_outputs = actual.output_claims(&inputs).unwrap();
+        assert_eq!(
+            expected_outputs.lookup_table_flags,
+            actual_outputs.lookup_table_flags
+        );
+        assert_eq!(
+            expected_outputs.instruction_ra,
+            actual_outputs.instruction_ra
+        );
+        assert_eq!(
+            expected_outputs.instruction_raf_flag,
+            actual_outputs.instruction_raf_flag
+        );
     }
 }

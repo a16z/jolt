@@ -13,6 +13,10 @@
 mod cpu;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/cycle.rs"]
+mod cycle;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/product5.rs"]
 mod product5;
 
@@ -28,12 +32,12 @@ mod macos {
         criterion_group, measurement::WallTime, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
     };
     use jolt_kernels::metal::solinas::{
-        DispatchConfig, Fp128, Invocation, Probe, SolinasMetal, OFFSET_275,
+        DispatchConfig, Fp128, Invocation, Probe, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
     };
     use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
     use super::{
-        cpu, product5,
+        cpu, cycle, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
     };
 
@@ -47,7 +51,7 @@ mod macos {
     const VALIDATION_ELEMENTS: usize = 256;
 
     fn metal_solinas(c: &mut Criterion) {
-        let context = SolinasMetal::for_offset_275().expect("Solinas Metal library should compile");
+        let context = SolinasMetal::for_akita().expect("Solinas Metal library should compile");
         report_environment(&context);
 
         let (validation_lhs, validation_rhs) = inputs(VALIDATION_ELEMENTS);
@@ -74,6 +78,7 @@ mod macos {
                 "product5-message" => product5::bench_message(c, &context),
                 "product5-transition" => product5::bench_transition(c, &context),
                 "product5-threadgroups" => product5::bench_threadgroups(c, &context),
+                "instruction-read-raf-cycle" => cycle::bench(c, &context),
                 "product5" => {
                     product5::bench_message(c, &context);
                     product5::bench_transition(c, &context);
@@ -336,7 +341,7 @@ mod macos {
         output: &mut [Fp128],
     ) {
         let _ = group.bench_function(
-            BenchmarkId::new("cpu_portable_seq", format!("n{}", lhs.len())),
+            BenchmarkId::new("cpu_jolt_field_seq", format!("n{}", lhs.len())),
             |bench| {
                 bench.iter(|| {
                     let lhs = black_box(lhs);
@@ -361,7 +366,7 @@ mod macos {
     ) {
         let _ = group.bench_function(
             BenchmarkId::new(
-                "cpu_portable_rayon",
+                "cpu_jolt_field_rayon",
                 format!("n{}_t{threads}_chunk{chunk}", lhs.len()),
             ),
             |bench| {
@@ -394,10 +399,15 @@ mod macos {
         let expected = lhs
             .iter()
             .zip(rhs)
-            .map(|(&lhs, &rhs)| expected_field_for_offset(Probe::MulWide, lhs, rhs, 1, OFFSET_275))
+            .map(|(&lhs, &rhs)| {
+                expected_field_for_offset(Probe::MulWide, lhs, rhs, 1, AKITA_OFFSET_FFFFA7F7)
+            })
             .collect::<Result<Vec<_>, _>>()
             .expect("CPU comparison should have an oracle");
-        assert_eq!(actual, expected, "portable CPU comparison failed preflight");
+        assert_eq!(
+            actual, expected,
+            "jolt-field CPU comparison failed preflight"
+        );
     }
 
     fn bench_copy_bandwidth(
@@ -620,7 +630,13 @@ mod macos {
                 .iter()
                 .zip(validation_rhs)
                 .map(|(&lhs, &rhs)| {
-                    expected_field_for_offset(probe, lhs, rhs, config.iterations, OFFSET_275)
+                    expected_field_for_offset(
+                        probe,
+                        lhs,
+                        rhs,
+                        config.iterations,
+                        AKITA_OFFSET_FFFFA7F7,
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .expect("timed field probe should have an oracle")

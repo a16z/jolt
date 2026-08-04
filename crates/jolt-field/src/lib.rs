@@ -86,6 +86,8 @@ pub use with_accumulator::WithAccumulator;
 pub use akita_accumulators::{
     AkitaAccumulator, AkitaSignedProductAccumulator, AkitaSmallScalarAccumulator,
 };
+#[cfg(feature = "akita")]
+pub use akita_config::proof_optimized::fp128::Field as AkitaField;
 
 pub mod limbs;
 pub use limbs::Limbs;

@@ -2,7 +2,8 @@ use std::{env, hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_kernels::metal::solinas::{
-    Fp128, Product5Config, Product5Invocation, SolinasMetal, PRODUCT5_FACTORS,
+    Fp128, Product5Config, Product5Invocation, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
+    PRODUCT5_FACTORS,
 };
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
@@ -44,7 +45,7 @@ pub fn bench_message(c: &mut Criterion, context: &SolinasMetal) {
         VALIDATION_ELEMENTS,
         &validation_e_in,
         &validation_e_out,
-        jolt_kernels::metal::solinas::OFFSET_275,
+        AKITA_OFFSET_FFFFA7F7,
     );
     assert_eq!(
         cpu_message(
@@ -72,7 +73,7 @@ pub fn bench_message(c: &mut Criterion, context: &SolinasMetal) {
             criterion::measurement::WallTime,
         >| {
             let _ = group.bench_function(
-                BenchmarkId::new("cpu_portable_fused", format!("n{elements}_t{threads}")),
+                BenchmarkId::new("cpu_jolt_field_fused", format!("n{elements}_t{threads}")),
                 |bench| {
                     bench.iter(|| black_box(cpu_message(&pool, &tables, elements, &e_in, &e_out)));
                 },
@@ -141,7 +142,7 @@ pub fn bench_transition(c: &mut Criterion, context: &SolinasMetal) {
         challenge,
         &validation_e_in,
         &validation_e_out,
-        jolt_kernels::metal::solinas::OFFSET_275,
+        AKITA_OFFSET_FFFFA7F7,
     );
     let mut validation_output = vec![Fp128::ZERO; PRODUCT5_FACTORS * VALIDATION_ELEMENTS / 2];
     assert_eq!(
@@ -179,7 +180,7 @@ pub fn bench_transition(c: &mut Criterion, context: &SolinasMetal) {
         let mut add_cpu =
             |group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>| {
                 let _ = group.bench_function(
-                    BenchmarkId::new("cpu_portable_fused", format!("n{elements}_t{threads}")),
+                    BenchmarkId::new("cpu_jolt_field_fused", format!("n{elements}_t{threads}")),
                     |bench| {
                         bench.iter(|| {
                             black_box(cpu_transition(
@@ -289,7 +290,7 @@ fn validate_threadgroup_widths(context: &SolinasMetal) {
         VALIDATION_ELEMENTS,
         &e_in,
         &e_out,
-        jolt_kernels::metal::solinas::OFFSET_275,
+        AKITA_OFFSET_FFFFA7F7,
     );
     let limits = context
         .prepare_product5_message(
@@ -339,7 +340,7 @@ fn validate_message(
         invocation.source_elements(),
         e_in,
         e_out,
-        jolt_kernels::metal::solinas::OFFSET_275,
+        AKITA_OFFSET_FFFFA7F7,
     );
     assert_eq!(
         invocation
@@ -365,7 +366,7 @@ fn validate_transition(
         challenge,
         e_in,
         e_out,
-        jolt_kernels::metal::solinas::OFFSET_275,
+        AKITA_OFFSET_FFFFA7F7,
     );
     assert_eq!(
         invocation

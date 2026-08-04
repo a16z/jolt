@@ -1,4 +1,4 @@
-use jolt_kernels::metal::solinas::{Fp128, Probe, OFFSET_275};
+use jolt_kernels::metal::solinas::{Fp128, Probe, AKITA_OFFSET_FFFFA7F7};
 use num_bigint::BigUint;
 
 pub const PRODUCT5_FACTORS: usize = 5;
@@ -128,11 +128,11 @@ pub fn product5_fused_transition(
 }
 
 pub fn inputs(count: usize) -> (Vec<Fp128>, Vec<Fp128>) {
-    inputs_for_offset(count, OFFSET_275)
+    inputs_for_offset(count, AKITA_OFFSET_FFFFA7F7)
 }
 
 pub fn values(count: usize) -> Vec<Fp128> {
-    let modulus = modulus(OFFSET_275);
+    let modulus = modulus(AKITA_OFFSET_FFFFA7F7);
     let mut state = 0x243f_6a88_85a3_08d3_1319_8a2e_0370_7344u128;
     (0..count)
         .map(|_| Fp128::from_u128(next_value(&mut state, modulus)))

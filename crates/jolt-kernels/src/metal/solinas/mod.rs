@@ -6,6 +6,7 @@
 
 use std::{cell::Cell, ffi::c_void, slice, time::Duration};
 
+use jolt_field::FixedBytes;
 use metal::{
     objc::{rc::autoreleasepool, runtime::Sel, Message},
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, Library,
@@ -19,9 +20,12 @@ const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 
 mod product5;
 
-pub use product5::{Product5Config, Product5Invocation, PRODUCT5_FACTORS};
+pub use product5::{
+    Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
+};
 
 pub const OFFSET_275: u32 = 275;
+pub const AKITA_OFFSET_FFFFA7F7: u32 = 0xffff_a7f7;
 
 /// Little-endian limbs shared by Rust and Metal buffers.
 ///
@@ -64,6 +68,14 @@ impl Fp128 {
 
     pub const fn is_canonical(self, offset: u32) -> bool {
         offset != 0 && self.to_u128() <= u128::MAX - offset as u128
+    }
+
+    pub fn from_jolt_field<F: FixedBytes<16>>(value: &F) -> Self {
+        Self::from_u128(u128::from_le_bytes(value.to_bytes_array()))
+    }
+
+    pub fn into_jolt_field<F: FixedBytes<16>>(self) -> F {
+        F::from_bytes_array(&self.to_u128().to_le_bytes())
     }
 }
 
@@ -176,6 +188,8 @@ pub enum MetalError {
     MisalignedElementCount { probe: &'static str, ilp: usize },
     #[error("iteration count must be nonzero")]
     ZeroIterations,
+    #[error("hybrid cutoff must be a power of two of at least two, got {0}")]
+    InvalidHybridCutoff(usize),
     #[error(
         "five-factor kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
@@ -212,6 +226,7 @@ pub enum MetalError {
     NotExecuted,
 }
 
+#[derive(Clone)]
 pub struct SolinasMetal {
     device: Device,
     queue: CommandQueue,
@@ -220,6 +235,10 @@ pub struct SolinasMetal {
 }
 
 impl SolinasMetal {
+    pub fn for_akita() -> Result<Self, MetalError> {
+        Self::new(AKITA_OFFSET_FFFFA7F7)
+    }
+
     pub fn for_offset_275() -> Result<Self, MetalError> {
         Self::new(OFFSET_275)
     }

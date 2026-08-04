@@ -36,11 +36,9 @@ mod stage8;
 pub mod witness;
 
 /// The packed slot registry: the akita analog of a bare [`JoltBackend`]. A
-/// parallel struct rather than cfg-gated [`JoltBackend`] fields —
-/// `jolt-kernels` deliberately has no `akita` feature (a local `cfg!` there
-/// would silently read `false` and desynchronize the prover from the
-/// verifier; see `jolt_claims`'s `CANONICAL_INSTRUCTION_ADDRESS`), so the
-/// packed-only pieces live on this crate's akita-only side of the fence.
+/// parallel struct rather than cfg-gated [`JoltBackend`] fields. The
+/// packed-only commitment and reconstruction pieces live on this crate's
+/// Akita side of the fence; shared sumcheck slots remain in `jolt-kernels`.
 ///
 /// The packed PIOP shares its stage 1–7 members with the base protocol, so
 /// they resolve through the embedded [`JoltBackend`] registry (whose commit
@@ -177,6 +175,23 @@ where
     /// contract as [`JoltBackend::begin_proof`].
     pub fn begin_proof(&self) -> ProofSession {
         ProofSession::default()
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<PCS> JoltAkitaBackend<jolt_field::AkitaField, PCS>
+where
+    PCS: CommitmentScheme<Field = jolt_field::AkitaField>,
+{
+    /// Builds the optimized Akita backend and replaces available slots with
+    /// their hybrid Metal implementations.
+    pub fn metal(
+        config: jolt_kernels::metal::MetalConfig,
+    ) -> Result<Self, jolt_kernels::metal::solinas::MetalError> {
+        let metal = jolt_kernels::metal::MetalBackend::new(config)?;
+        let mut backend = Self::optimized();
+        backend.base = backend.base.with_metal_compute(&metal);
+        Ok(backend)
     }
 }
 

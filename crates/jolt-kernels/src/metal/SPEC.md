@@ -3,21 +3,22 @@
 | Field | Value |
 |---|---|
 | Created | 2026-08-03 |
-| Status | arithmetic and five-factor ceiling probes implemented; 2^28 results measured; occupancy capture pending |
+| Status | Akita arithmetic, resident five-factor sequence, and first hybrid sumcheck slot implemented; occupancy capture pending |
 | Scope | `jolt-kernels::metal` and its Criterion benchmarks |
 
-This backend first establishes the arithmetic and hardware limits of canonical
-128-bit Solinas-prime kernels on Apple GPUs. It contains reusable field operations, a
-small Rust dispatch layer, correctness tests, controlled arithmetic probes, and one
-relation-shaped five-factor ceiling benchmark. It will not grow a Jolt sumcheck slot
-until the representation, multiplication schedule, occupancy, latency, and throughput
-are measured.
+This backend establishes the arithmetic and hardware limits of canonical 128-bit
+Solinas-prime kernels on Apple GPUs, then applies those results to Jolt one sumcheck
+slot at a time. It contains reusable field operations, a Rust dispatch layer,
+correctness tests, controlled arithmetic probes, a resident five-factor round
+sequence, and a hybrid `InstructionReadRaf` implementation. The stage driver and
+Fiat-Shamir transcript remain on the host.
 
 ## Scope
 
-The initial field is `p = 2^128 - 275`. The development machine is an Apple M4 Max
-with 40 GPU cores and unified memory. Device and compiled-pipeline limits are queried
-at runtime rather than inferred from the model name.
+The implemented field is `jolt_field::AkitaField`,
+`p = 2^128 - 0xffffa7f7`. The development machine is an Apple M4 Max with 40 GPU
+cores and unified memory. Device and compiled-pipeline limits are queried at runtime
+rather than inferred from the model name.
 
 Requirements:
 
@@ -36,8 +37,8 @@ Requirements:
 
 Non-goals:
 
-- No sumcheck integration, transcript code, PCS operations, or prover backend
-  selection. The five-factor kernel is a ceiling probe, not a prover slot.
+- No device transcript, PCS operations, commitment kernels, or opening kernels. The
+  first prover slot covers only the dense cycle tail of `InstructionReadRaf`.
 - No attempt to preserve the structure of the previous experimental Metal branch.
 - No claim that high occupancy alone means high field throughput.
 - No stable public prover API. The current Rust surface exists to test and measure the
@@ -51,11 +52,9 @@ canonicality checks. Runtime compilation specializes the MSL for `C`; dispatch c
 all inputs against `2^128 - C` before copying them into shared Metal buffers. Output
 is checked for canonicality before it reaches Rust.
 
-This boundary remains independent of the pending Solinas work in `jolt-field`. Once
-that lands, integration adds conversions and uses the shared field as another oracle.
-Directly casting a `jolt-field` slice is allowed only if size, alignment, canonical
-form, and limb order are explicit public invariants. Otherwise conversion to and from
-`Fp128` is the correct boundary.
+The Rust boundary converts between `AkitaField` and `Fp128` explicitly. Directly
+casting an `AkitaField` slice remains disallowed until size, alignment, canonical
+form, limb order, and aliasing are public invariants of the field type.
 
 ## Arithmetic
 
@@ -83,8 +82,8 @@ Write a product `x < 2^256` as `x0 + 2^128*x1`. The first fold is
 `x0 + C*x1 < (C + 1)2^128`, so its high word is at most `C`. The second fold adds at
 most `C^2`. If it overflows 128 bits, adding one more `C` folds that carry. Otherwise
 a trial addition of `C` detects values at least `p`. The condition `C(C + 1) < p`
-makes one final correction sufficient; it holds for `C = 275` and for every nonzero
-32-bit offset supported by this implementation.
+makes one final correction sufficient; it holds for `C = 0xffffa7f7`. The reusable
+implementation accepts any nonzero 32-bit offset satisfying that bound.
 
 ## Limit model
 
@@ -210,13 +209,11 @@ fixed pre-sweep selected 2,048-, 8,192-, and 16,384-element chunks for the defau
 sizes, so the small case does not activate only four workers. The candidate order is
 reversed by setting `JOLT_SOLINAS_BENCH_ORDER=cpu-first` on the second run.
 
-Until the field PR lands, the in-tree CPU case is explicitly named `cpu_portable` and
-implements the pending field's portable two-fold reduction. It is a matched control,
-not the claimed optimized CPU baseline. The report's primary CPU denominator is the
-actual `Prime128Offset275` benchmark at commit `58785fa1c`, run from the local
-`feat/solinas-field-stack` branch with the same element count, chunk size, thread
-count, Criterion settings, and machine. This distinction prevents a portable control
-from overstating Metal's advantage over the incoming AArch64 assembly.
+The in-tree CPU comparison uses the same `jolt_field::AkitaField` as the shader and
+the optimized CPU dataflow, including `AkitaAccumulator` deferred reduction for the
+five-factor message. The standalone pointwise controls still answer only the cost of
+one streaming operation; the sumcheck comparison uses the complete resident round
+sequence and the actual optimized CPU kernel shape.
 
 ### Five-factor ceiling contract
 
@@ -264,18 +261,16 @@ reported factor-byte rate is therefore a lower bound on logical traffic, not a c
 about physical DRAM transactions.
 
 The full-sequence formula corresponds to one initial message, fused transitions at
-source lengths `N, N/2, ..., 4`, and the final five binds. The benchmark times the two
-dominant primitives separately; it does not yet launch a transcript-driven round
-sequence. Full-sequence time is consequently an asymptotic projection from their
-large-size rates, with the short tail and transcript work omitted.
+source lengths `N, N/2, ..., 4`, and the final five binds. Criterion and the fixed
+evaluator now run this sequence with the real Blake2b transcript on the host, a
+measured GPU/CPU cutoff, one readback, and an optimized CPU tail. Primitive message
+and transition groups remain useful ceiling diagnostics.
 
 The CPU control uses the same five structure-of-arrays tables, split-equality shape,
-sample points, fused writes, and Rayon partition by outer block. Its buffers are also
-allocated before timing. It currently uses the portable local field implementation
-and reduces each multiplication eagerly. It does not model the pending
-`Prime128Offset275` assembly or the optimized prover's deferred accumulators, so its
-speedup ratio is diagnostic only. Promotion requires replacing that control with the
-landed `jolt-field` type without changing the DAG, data, thread count, or evaluator.
+sample points, and Rayon partition by outer block as the optimized cycle kernel. Its
+buffers are allocated before timing, and its products accumulate through
+`AkitaAccumulator`. Correctness compares every round message, transcript challenge,
+final table, final claim, and transcript state exactly.
 
 ## Correctness and measurement procedure
 
@@ -327,6 +322,12 @@ JOLT_SOLINAS_BENCH_ELEMENTS=4194304 JOLT_SOLINAS_PRODUCT5_THREADS=128 \
   JOLT_SOLINAS_BENCH_FAMILY=product5-message \
   cargo bench -p jolt-kernels --features metal --bench metal_solinas -- --noplot
 
+# Complete transcript-driven dense cycle sequence against optimized Akita CPU.
+JOLT_SOLINAS_BENCH_ELEMENTS=16777216 \
+  JOLT_SOLINAS_BENCH_FAMILY=instruction-read-raf-cycle \
+  JOLT_METAL_CUTOFF_LOG2=16 \
+  cargo bench -p jolt-kernels --features metal --bench metal_solinas -- --noplot
+
 # Exact-size GPU-only stress cases; each command initializes only that family.
 JOLT_SOLINAS_BENCH_ELEMENTS=268435456 JOLT_SOLINAS_BENCH_FAMILY=gpu-active-copy \
   cargo bench -p jolt-kernels --features metal --bench metal_solinas -- --noplot
@@ -346,12 +347,41 @@ The benchmark prints the Metal device, macOS version, offset, maximum buffer len
 maximum threadgroup memory, and each pipeline's execution width, maximum threads, and
 static and dynamically selected threadgroup memory before timing.
 
-## Exploratory CPU/GPU baseline
+## Current Akita cycle-sequence result
 
-These measurements were collected on the 40-GPU-core, 16-CPU-core M4 Max described
-above. The CPU numbers use the actual AArch64-assembly
-`jolt_field::Prime128Offset275` from local commit `58785fa1c`, not the temporary
-portable benchmark control. Rates are decimal field multiplications per second.
+The complete Criterion workload uses five `AkitaField` tables, the optimized CPU
+deferred-accumulation message, host Blake2b Fiat-Shamir, resident Metal ping-pong
+tables, a `2^16` CPU cutoff at the retained large size, and one final readback. Setup,
+pipeline compilation, and allocation are outside all cases. `metal_copied_handoff`
+includes resetting the initial five tables into the shared Metal buffer;
+`metal_direct_handoff` excludes that copy and represents a producer materializing
+directly into the resident allocation, as the real stage-5 integration does.
+
+| Elements per factor | Optimized CPU | Metal direct handoff | Direct speedup | Metal copied handoff | Copied speedup |
+|---:|---:|---:|---:|---:|---:|
+| `2^16` | 4.6745 ms | 4.1793 ms | 1.12x | 4.2382 ms | 1.10x |
+| `2^24` | 130.85 ms | 26.898 ms | 4.87x | 50.277 ms | 2.60x |
+
+At `2^24`, the same logical `27(N-1)` useful multiplication count gives 3.462
+Gmul/s for CPU, 16.841 Gmul/s for the direct-handoff hybrid, and 9.010 Gmul/s when
+the 1.25-GiB copied handoff is included. The fixed evaluator's retained run measured
+about 5.4x CPU/GPU-active separation and 3.92x direct-handoff wall speedup; the fresh
+Criterion process above measured 4.87x. The range is process-level wall variation,
+not a correctness difference.
+
+The production `PrepareKernel` path does not first build a dense host table and copy
+it. Its first cycle bind computes each pending table value directly into the shared
+Metal allocation. That materialization is common work with the CPU implementation,
+but the full stage-level performance still needs a representative prover profile;
+the direct-handoff number is therefore a cycle-tail result, not an end-to-end prover
+claim.
+
+## Historical pre-Akita reconnaissance
+
+The tables below were collected earlier on the same M4 Max for the experimental
+field `p = 2^128 - 275`. They document why pointwise maps were rejected as the main
+architecture and why fusion was selected. They are not performance evidence for the
+current Akita modulus or CPU field implementation.
 
 | Elements | Optimized CPU, 1 thread | Optimized CPU, 16 threads | GPU wall, two process runs | GPU / 1 thread | GPU / 16 threads |
 |---:|---:|---:|---:|---:|---:|
@@ -513,16 +543,15 @@ capture; runtime properties cannot substitute for it.
 - [x] Criterion reports the device and compiled pipeline limits.
 - [x] Criterion distinguishes host wall time from Metal command-buffer GPU-active
       time.
-- [x] The pointwise workload has been compared with the optimized pending
-      `jolt-field` type at its source commit.
-- [x] The five-factor GPU and portable CPU paths agree with the same independent
-      `BigUint` oracle before timing.
+- [x] Pointwise and five-factor workloads use `jolt_field::AkitaField` on the CPU.
+- [x] The five-factor GPU and CPU paths agree with the same independent `BigUint`
+      oracle before timing.
 - [x] Product5 scratch is dynamically sized and remains below 1% of the legal
       per-threadgroup limit at each retained default.
-- [ ] The five-factor control uses the optimized pending `jolt-field` type and its
-      deferred-accumulation path with the same dataflow.
-- [ ] Results are cross-checked against the shared `jolt-field` Solinas type after that
-      work lands.
+- [x] The complete cycle evaluator uses the optimized Akita deferred-accumulation CPU
+      dataflow and checks exact host-transcript parity.
+- [x] The real `PrepareKernel` path matches the optimized CPU kernel round by round
+      and passes the modular Akita end-to-end prover/verifier test.
 - [ ] The retained widening multiplication has an Instruments capture explaining its
       occupancy and limiting resource.
 - [ ] The compute-dense winner reaches the pipeline's theoretical occupancy, or the
@@ -530,8 +559,9 @@ capture; runtime properties cannot substitute for it.
 - [ ] A retained run explains and controls the observed process-level wall-time and
       cache-state variance.
 
-Only after these checks pass should a follow-up spec define how actual Jolt data
-layouts, transcript flow, and round scheduling consume the backend.
+`SUMCHECKS.md` defines how actual Jolt layouts, transcript flow, and round scheduling
+consume the backend. Occupancy capture remains a hardware-analysis task; it does not
+block exactness testing of additional slots.
 
 ## References
 

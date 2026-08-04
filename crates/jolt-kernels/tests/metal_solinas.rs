@@ -1,9 +1,12 @@
 #![cfg(all(feature = "metal", target_os = "macos"))]
 #![expect(clippy::expect_used, reason = "integration test")]
 
+use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
-    DispatchConfig, Fp128, MetalError, Probe, Product5Config, SolinasMetal, OFFSET_275,
+    DispatchConfig, Fp128, MetalError, Probe, Product5Config, Product5SequenceConfig, SolinasMetal,
+    AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
 mod support;
 
@@ -11,6 +14,169 @@ use support::{
     expected_field_for_offset, expected_u32_mad, inputs, inputs_for_offset,
     product5_fused_transition, product5_message, values, PRODUCT5_FACTORS,
 };
+
+#[test]
+fn akita_field_uses_the_metal_abi() {
+    for value in [
+        0,
+        1,
+        u64::MAX as u128,
+        (u64::MAX as u128) << 64,
+        u128::MAX - AKITA_OFFSET_FFFFA7F7 as u128,
+    ] {
+        let field = AkitaField::from_u128(value);
+        let encoded = Fp128::from_jolt_field(&field);
+        assert_eq!(encoded.to_u128(), value);
+        assert_eq!(encoded.into_jolt_field::<AkitaField>(), field);
+    }
+}
+
+#[test]
+fn akita_shader_matches_jolt_field() {
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    assert_eq!(context.device_info().offset, AKITA_OFFSET_FFFFA7F7);
+    let (lhs, rhs) = inputs_for_offset(4099, AKITA_OFFSET_FFFFA7F7);
+
+    for probe in [Probe::Copy, Probe::Add, Probe::Sub, Probe::MulWide] {
+        let invocation = context
+            .prepare(probe, &lhs, &rhs, DispatchConfig::default())
+            .expect("Akita probe should compile");
+        invocation.execute().expect("Akita probe should execute");
+        let actual = invocation.read_output().expect("Akita output should read");
+        let expected = lhs
+            .iter()
+            .zip(&rhs)
+            .map(|(&lhs, &rhs)| {
+                let lhs = lhs.into_jolt_field::<AkitaField>();
+                let rhs = rhs.into_jolt_field::<AkitaField>();
+                let value = match probe {
+                    Probe::Copy => lhs,
+                    Probe::Add => lhs + rhs,
+                    Probe::Sub => lhs - rhs,
+                    Probe::MulWide => lhs * rhs,
+                    _ => unreachable!("probe list contains only pointwise operations"),
+                };
+                Fp128::from_jolt_field(&value)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{}", probe.name());
+    }
+}
+
+#[test]
+fn product5_sequence_reuses_resident_buffers_across_rounds() {
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let elements = 256;
+    let tables = values(PRODUCT5_FACTORS * elements);
+    let point = values(elements.trailing_zeros() as usize)
+        .into_iter()
+        .map(Fp128::into_jolt_field::<AkitaField>)
+        .collect::<Vec<_>>();
+    let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let mut sequence = context
+        .prepare_product5_sequence(
+            &tables
+                .iter()
+                .copied()
+                .map(Fp128::into_jolt_field::<AkitaField>)
+                .collect::<Vec<_>>(),
+            elements,
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+            Product5SequenceConfig::default(),
+        )
+        .expect("product5 sequence should compile");
+    let allocations = sequence.resident_buffer_count();
+
+    let message = sequence
+        .message(gruen.e_in_current(), gruen.e_out_current())
+        .expect("initial sequence message should execute");
+    let expected = product5_message(
+        &tables,
+        elements,
+        &gruen
+            .e_in_current()
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>(),
+        &gruen
+            .e_out_current()
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>(),
+        AKITA_OFFSET_FFFFA7F7,
+    );
+    assert_eq!(
+        message.map(|value| Fp128::from_jolt_field(&value)),
+        expected
+    );
+
+    let challenge_1 = AkitaField::from_u64(17);
+    gruen.bind(challenge_1);
+    let message = sequence
+        .bind_and_message(challenge_1, gruen.e_in_current(), gruen.e_out_current())
+        .expect("first sequence transition should execute");
+    let (bound, expected) = product5_fused_transition(
+        &tables,
+        elements,
+        Fp128::from_jolt_field(&challenge_1),
+        &gruen
+            .e_in_current()
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>(),
+        &gruen
+            .e_out_current()
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>(),
+        AKITA_OFFSET_FFFFA7F7,
+    );
+    assert_eq!(
+        message.map(|value| Fp128::from_jolt_field(&value)),
+        expected
+    );
+
+    let challenge_2 = AkitaField::from_u64(29);
+    gruen.bind(challenge_2);
+    let message = sequence
+        .bind_and_message(challenge_2, gruen.e_in_current(), gruen.e_out_current())
+        .expect("second sequence transition should execute");
+    let (bound, expected) = product5_fused_transition(
+        &bound,
+        elements / 2,
+        Fp128::from_jolt_field(&challenge_2),
+        &gruen
+            .e_in_current()
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>(),
+        &gruen
+            .e_out_current()
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>(),
+        AKITA_OFFSET_FFFFA7F7,
+    );
+    assert_eq!(
+        message.map(|value| Fp128::from_jolt_field(&value)),
+        expected
+    );
+
+    let mut resident = vec![AkitaField::from_u64(0); bound.len()];
+    sequence
+        .read_current_tables(&mut resident)
+        .expect("resident sequence state should read");
+    assert_eq!(
+        resident
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>(),
+        bound
+    );
+    assert_eq!(sequence.resident_buffer_count(), allocations);
+    assert_eq!(sequence.round_device_buffer_allocations(), 0);
+}
 
 #[test]
 fn product5_message_matches_biguint() {

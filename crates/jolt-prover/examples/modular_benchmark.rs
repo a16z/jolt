@@ -512,6 +512,8 @@ mod akita_benchmark {
         Reference,
         #[default]
         Optimized,
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        Metal,
     }
 
     #[derive(Parser, Debug)]
@@ -554,6 +556,8 @@ mod akita_benchmark {
         let backend_suffix = match cli.backend {
             Backend::Reference => "",
             Backend::Optimized => "_optimized",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Backend::Metal => "_metal",
         };
         let trace_name = format!(
             "akita_{}_{}{backend_suffix}",
@@ -663,6 +667,9 @@ mod akita_benchmark {
         let backend = match backend_choice {
             Backend::Reference => akita::JoltAkitaBackend::reference(),
             Backend::Optimized => akita::JoltAkitaBackend::optimized(),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Backend::Metal => akita::JoltAkitaBackend::metal(Default::default())
+                .expect("Metal backend should initialize"),
         };
 
         let now = Instant::now();
@@ -695,6 +702,8 @@ mod akita_benchmark {
         let backend_label = match backend_choice {
             Backend::Reference => "reference",
             Backend::Optimized => "optimized",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Backend::Metal => "metal",
         };
         let proving_hz = trace_length as f64 / duration.as_secs_f64();
         let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
@@ -730,6 +739,8 @@ mod akita_benchmark {
         let backend_suffix = match backend_choice {
             Backend::Reference => "",
             Backend::Optimized => "_optimized",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Backend::Metal => "_metal",
         };
         let individual_file =
             format!("benchmark-runs/results/akita_{bench_name}_{scale}{backend_suffix}.csv");
