@@ -19,7 +19,7 @@ use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
 use crate::metal::field::FR_U32_LIMBS;
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
-use crate::metal::{metal_gate_capped, testing, MetalError};
+use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::bytecode_read_raf::{
     prepare_bytecode_read_raf_cycle, BytecodeCycleDevice, BytecodeCycleDeviceInputs, PcRow, PcRows,
 };
@@ -29,8 +29,6 @@ use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKern
 
 const KIND: &str = "bytecode_read_raf_cycle";
 const MAX_FACTORS: usize = 16;
-/// Decline the device path above this row count (2^26): measured 2^27 cliff.
-const MAX_DEVICE_ROWS: usize = 1 << 26;
 
 const _: () = assert!(size_of::<PcRow>() == 2 * size_of::<u32>());
 
@@ -49,10 +47,10 @@ impl PrepareKernel<Fr, BytecodeReadRafCycle<Fr>> for MetalBytecodeReadRafCycle {
 }
 
 fn build_driver(inputs: BytecodeCycleDeviceInputs<'_, Fr>) -> Option<BytecodeCycleDevice<Fr>> {
-    // Device wins up to 2^25 (−53% member @2^25) but loses 2.6× at 2^27 and
-    // drags the batch's other device members with it (see metal_gate_capped
-    // docs). 2^26 stays on device on the sub-linear-scaling evidence.
-    if !metal_gate_capped(KIND, inputs.rows.len(), MAX_DEVICE_ROWS) {
+    // With W3A's lean-memory regime, two 2^27 A/Bs reduced st6b
+    // 19.131→16.937 s and 18.476→15.826 s; CB timestamps showed no
+    // regression in the other members' device execution.
+    if !metal_gate(KIND, inputs.rows.len()) {
         return None;
     }
     let context = match MetalContext::global() {
