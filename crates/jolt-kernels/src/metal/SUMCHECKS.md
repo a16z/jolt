@@ -169,13 +169,13 @@ order after the first slot establishes the harness.
 | 3 | `registers_claim_reduction` | dense fused product | analyze |
 | 4 | `registers_read_write` | sparse CPU front, dense cycle tail | analyze |
 | 4 | `ram_val_check` | dense fused product | analyze |
-| 5 | `instruction_read_raf` | CPU address, five-factor Metal cycle | integrated; exact e2e |
+| 5 | `instruction_read_raf` | resident address scans, five-factor Metal cycle | cycle integrated; address reopened |
 | 5 | `ram_ra_claim_reduction` | dense fused product | analyze |
 | 5 | `registers_val_evaluation` | dense fused product | analyze |
 | 6a | `bytecode_read_raf_address` | address pushforward | analyze |
 | 6a | `booleanity_address` | address pushforward | analyze |
 | 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | analyze |
-| 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | worksheet complete; evaluator next |
+| 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | worksheet complete; queued after stage 5 |
 | 6b | `ram_hamming_booleanity` | dense cubic | analyze |
 | 6b | `ram_ra_virtualization` | one-hot virtualization | analyze |
 | 6b | `instruction_ra_virtualization` | one-hot virtualization | analyze |
@@ -259,25 +259,69 @@ materialization into shared memory. Round-polynomial parity, final-claim parity,
 the modular Akita proof/verifier path all pass with Metal forced above a cutoff of
 eight elements.
 
-### Measured port order
+### Target-scale profile and port order
 
-An optimized Akita Fibonacci proof at `2^20` took 1.411 s. Inclusive round time from
-the retained Perfetto trace ranks the unported cycle kernels as follows:
+The first exact evaluator run at a padded `2^26` Fibonacci trace produced a 20.418 s
+optimized-CPU PIOP and a 20.500 s Metal-hybrid PIOP, or 0.996x. Both proofs verified
+and each trace contained one complete PIOP span. This is one CPU-first pair, so it is
+baseline evidence rather than a promoted comparison. Its purpose is to establish the
+target-scale attribution before further shader work.
 
-| Kernel | Inclusive round time |
-|---|---:|
-| `Booleanity` | 132.28 ms |
-| `InstructionRaVirtualization` | 83.12 ms |
-| `BytecodeReadRafCycle` | 41.33 ms |
-| `RegistersReadWriteChecking` | 20.41 ms |
-| `InstructionInput` | 20.57 ms |
-| `RamRaVirtualization` | 18.96 ms |
+The optimized trace's largest disjoint kernel seams were:
 
-`InstructionReadRaf` itself used 110.84 ms across 128 address and 20 cycle rounds.
-The current Metal backend changed the full `2^20` proof from 1.411 s to 1.384 s in
-one matched process pair, but stage 5 remained about 130 ms: this size is close to the
-cycle cutoff and the CPU address prefix dominates. This is directionally useful, not
-a promoted end-to-end speedup result.
+| Kernel | PIOP wall time | PIOP share |
+|---|---:|---:|
+| `Booleanity` | 3.929 s | 19.24% |
+| `InstructionReadRaf` | 3.583 s | 17.55% |
+| `SpartanOuterUniskip` | 2.355 s | 11.53% |
+| `InstructionRaVirtualization` | 2.227 s | 10.90% |
+| `BytecodeReadRafCycle` | 1.273 s | 6.24% |
+| `RegistersReadWriteChecking` | 1.053 s | 5.16% |
+| `BooleanityAddressPhase` | 1.011 s | 4.95% |
+| `InstructionInput` | 0.777 s | 3.80% |
+
+The current full `InstructionReadRaf` path measured 3.429 s under Metal, only 1.04x
+faster than its 3.583 s optimized-CPU oracle. The retained cycle-only result remains
+4.87x at `2^24`; it did not satisfy the complete-hybrid bar because the 128 CPU
+address rounds dominate. Stage 5 is therefore reopened before moving to Booleanity.
+
+Applying the working targets (5x for shares above 5%, 4x for 1-5%, 3x below 1%) to
+the target profile gives an Amdahl projection of about 4.19x from the current path.
+That calculation is not a forecast: it shows that the 4x portfolio floor requires
+broad coverage and cannot be obtained from the cycle tail alone. Exact hybrid
+measurements replace each local target as ports land.
+
+### Instruction-read address worksheet
+
+There are 16 eight-variable address phases. In every phase the RAF scan reads one
+40-byte packed row and one 16-byte condensed equality weight. Phases 1-15 also write
+the updated 16-byte weight after multiplying by the previous phase's 256-entry
+equality table. In the conservative all-rows-have-a-table case, the suffix scan reads
+one 4-byte bucket index, the same 40-byte row, and the same 16-byte weight. Ignoring
+cache reuse and reduction scratch, the complete address prefix therefore moves
+
+```text
+B_raf    = T * (56 + 15 * 72) = 1,136 T bytes
+B_suffix = T * (16 * 60)      =   960 T bytes
+B_total  = 2,096 T bytes.
+```
+
+At `T = 2^26`, this is 131 GiB. The measured copy roof of roughly 420 GiB/s gives an
+optimistic traffic floor near 0.31 s, compared with 3.583 s for the complete CPU
+kernel. A 5x complete-kernel result permits about 0.717 s, or 45 ms per address phase
+before crediting the already-fast cycle tail. The ceiling has enough margin over the
+4x promotion bar to enter implementation.
+
+The first probe is deliberately narrower than the final port. It executes one exact
+RAF phase scan: optional equality-weight condensation followed by the six 256-bin
+reductions (`shift_half`, `left`, `right`, `shift_full`, `identity`, and
+`upper_all_ones`). Packed rows and weights remain device-resident. Each threadgroup
+uses 24 KiB for field bins plus 1 KiB of bin locks, emits one partial table, and a
+second reduction produces the 1,536 field outputs. The phase loses if its complete
+wall time at `2^26` cannot stay below 45 ms after tuning rows per threadgroup and
+threadgroup width. Passing that gate admits the table-suffix scan and the full
+16-phase sequence; failing it forces a different keyed-reduction design before more
+of the relation is ported.
 
 ### Booleanity cycle worksheet
 

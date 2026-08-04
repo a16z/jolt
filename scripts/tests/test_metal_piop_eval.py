@@ -51,6 +51,27 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(metrics["paired_speedups"], [5.0, 4.0])
         self.assertEqual(metrics["piop_speedup"], 4.5)
 
+    def test_attribution_sums_kernel_seams_inside_piop_only(self) -> None:
+        events = [
+            {"name": "outside::prepare", "ph": "B", "pid": 1, "tid": 0, "ts": 0.0},
+            {"name": "outside::prepare", "ph": "E", "pid": 1, "tid": 0, "ts": 1.0},
+            {"name": "jolt_prover::piop", "ph": "B", "pid": 1, "tid": 0, "ts": 10.0},
+            {"name": "prove_stage1", "ph": "B", "pid": 1, "tid": 0, "ts": 11.0},
+            {"name": "Booleanity::prepare", "ph": "B", "pid": 1, "tid": 0, "ts": 12.0},
+            {"name": "Booleanity::prepare", "ph": "B", "pid": 1, "tid": 0, "ts": 12.2},
+            {"name": "Booleanity::prepare", "ph": "E", "pid": 1, "tid": 0, "ts": 12.8},
+            {"name": "Booleanity::prepare", "ph": "E", "pid": 1, "tid": 0, "ts": 13.0},
+            {"name": "Booleanity::prove_round", "ph": "B", "pid": 1, "tid": 0, "ts": 14.0},
+            {"name": "Booleanity::prove_round", "ph": "E", "pid": 1, "tid": 0, "ts": 16.0},
+            {"name": "prove_stage1", "ph": "E", "pid": 1, "tid": 0, "ts": 17.0},
+            {"name": "jolt_prover::piop", "ph": "E", "pid": 1, "tid": 0, "ts": 20.0},
+        ]
+        attribution = metal_piop_eval.trace_attribution(events)
+        self.assertEqual(attribution["stage_ms"], {"prove_stage1": 0.006})
+        self.assertEqual(attribution["kernels"][0]["kernel"], "Booleanity")
+        self.assertEqual(attribution["kernels"][0]["wall_ms"], 0.003)
+        self.assertEqual(attribution["kernels"][0]["piop_share"], 0.3)
+
 
 if __name__ == "__main__":
     unittest.main()
