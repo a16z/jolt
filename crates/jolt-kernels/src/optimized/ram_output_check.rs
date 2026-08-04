@@ -34,13 +34,12 @@ use jolt_field::Field;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::ram_output_check::{RamOutputCheck, RamOutputCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
 
-use super::support::{GruenRoundMessage, RoundProgress};
+use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::dense_view;
 use crate::{
@@ -227,12 +226,14 @@ impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
             (RamOutputCheckPublic::IoMask, self.io_mask.evals()[0]),
             (RamOutputCheckPublic::ValIo, self.val_io.evals()[0]),
         ] {
-            let id = JoltDerivedId::from(public);
-            let expected =
-                relation.derive_output_term(&id, input_points, output_points, challenges)?;
-            if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-            }
+            pin_derived_term(
+                relation,
+                JoltDerivedId::from(public),
+                input_points,
+                output_points,
+                challenges,
+                got,
+            )?;
         }
         Ok(())
     }

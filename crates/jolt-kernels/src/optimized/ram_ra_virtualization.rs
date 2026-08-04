@@ -29,15 +29,14 @@ use std::sync::Arc;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::{GruenRoundMessage, RoundProgress};
+use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -270,13 +269,14 @@ impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle),
+            input_points,
+            output_points,
+            challenges,
+            self.gruen.current_scalar(),
+        )
     }
 }
 
@@ -289,6 +289,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationInputClaims;
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_verifier::stages::relations::ConcreteSumcheck;
 
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,

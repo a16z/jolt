@@ -36,17 +36,17 @@ use jolt_field::Field;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputClaims, SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::ram_read_write_checking::{
     RamReadWriteChecking, RamReadWriteOutputClaims,
 };
-use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::rw_matrix::{AddressMajorMatrix, CycleMajorEntry, CycleMajorMatrix};
+use super::support::pin_derived_term_if_derived;
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -252,18 +252,14 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
                 remaining: self.num_rounds(),
             });
         };
-        let id = JoltDerivedId::from(RamReadWritePublic::EqCycle);
-        let expected =
-            match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                Ok(value) => value,
-                Err(VerifierError::MissingStageClaimDerived { .. }) => return Ok(()),
-                Err(error) => return Err(error.into()),
-            };
-        let got = merged_eq.evals()[0];
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term_if_derived(
+            relation,
+            JoltDerivedId::from(RamReadWritePublic::EqCycle),
+            input_points,
+            output_points,
+            challenges,
+            merged_eq.evals()[0],
+        )
     }
 }
 

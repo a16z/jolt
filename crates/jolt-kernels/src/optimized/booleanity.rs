@@ -74,7 +74,6 @@ use jolt_verifier::stages::stage6a::booleanity::{
     BooleanityAddressPhase, BooleanityAddressPhaseChallenges, BooleanityAddressPhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
-use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
@@ -82,7 +81,7 @@ use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::{gamma_power_pairs, gamma_powers, RoundProgress};
+use super::support::{gamma_power_pairs, gamma_powers, pin_derived_term_if_derived, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -671,18 +670,14 @@ impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(BooleanityPublic::EqAddressCycle);
-        let expected =
-            match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                Ok(value) => value,
-                Err(VerifierError::MissingStageClaimDerived { .. }) => return Ok(()),
-                Err(error) => return Err(error.into()),
-            };
-        let got = self.eq.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term_if_derived(
+            relation,
+            JoltDerivedId::from(BooleanityPublic::EqAddressCycle),
+            input_points,
+            output_points,
+            challenges,
+            self.eq.current_scalar(),
+        )
     }
 }
 

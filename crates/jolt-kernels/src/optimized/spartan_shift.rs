@@ -45,7 +45,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, fmadd_u64_split, gamma_powers_array, RoundProgress};
+use super::support::{
+    collect_rows, fmadd_u64_split, gamma_powers_array, pin_derived_term, RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -504,12 +506,14 @@ impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
             (SpartanShiftPublic::EqPlusOneOuter, eq_plus_one_outer[0]),
             (SpartanShiftPublic::EqPlusOneProduct, eq_plus_one_product[0]),
         ] {
-            let id = JoltDerivedId::from(public);
-            let expected =
-                relation.derive_output_term(&id, input_points, output_points, challenges)?;
-            if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-            }
+            pin_derived_term(
+                relation,
+                JoltDerivedId::from(public),
+                input_points,
+                output_points,
+                challenges,
+                got,
+            )?;
         }
         Ok(())
     }

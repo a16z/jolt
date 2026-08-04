@@ -28,8 +28,7 @@ use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::{
     RamRaClaimReduction, RamRaClaimReductionOutputClaims,
@@ -39,7 +38,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::{bind_pairs, RoundProgress};
+use super::support::{bind_pairs, pin_derived_term, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -460,13 +459,14 @@ impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
             RamRaClaimReductionPublic::EqCycleValCheck,
         ];
         for (x, public_id) in ids.into_iter().enumerate() {
-            let id = JoltDerivedId::from(public_id);
-            let expected =
-                relation.derive_output_term(&id, input_points, output_points, challenges)?;
-            let got = scales[x] * eq_hi[x][0];
-            if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-            }
+            pin_derived_term(
+                relation,
+                JoltDerivedId::from(public_id),
+                input_points,
+                output_points,
+                challenges,
+                scales[x] * eq_hi[x][0],
+            )?;
         }
         Ok(())
     }

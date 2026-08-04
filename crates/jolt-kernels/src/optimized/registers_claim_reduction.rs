@@ -42,7 +42,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, fmadd_u64_split, RoundProgress};
+use super::support::{collect_rows, fmadd_u64_split, pin_derived_term, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -377,16 +377,14 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
                 reason: "claim reduction must finish in the dense phase",
             });
         };
-        let id = JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        if eq[0] != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift {
-                id,
-                expected,
-                got: eq[0],
-            });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan),
+            input_points,
+            output_points,
+            challenges,
+            eq[0],
+        )
     }
 }
 

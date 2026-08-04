@@ -32,8 +32,7 @@ use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly
 use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, ToField, UnexpandedPc};
@@ -41,7 +40,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, GruenRoundMessage, RoundProgress};
+use super::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -390,13 +389,14 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(InstructionInputPublic::EqProduct);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            JoltDerivedId::from(InstructionInputPublic::EqProduct),
+            input_points,
+            output_points,
+            challenges,
+            self.gruen.current_scalar(),
+        )
     }
 }
 

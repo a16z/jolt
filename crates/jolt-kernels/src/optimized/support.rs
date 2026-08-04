@@ -2,11 +2,16 @@
 
 use std::ops::Range;
 
+use jolt_claims::protocols::jolt::JoltDerivedId;
 use jolt_field::{Field, RingAccumulator, SignedScalarAccumulator};
 use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
+use jolt_verifier::stages::relations::{
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
+};
+use jolt_verifier::VerifierError;
 use jolt_witness::{
     collect_bundles_par, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
 };
@@ -208,6 +213,44 @@ pub(crate) fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
         table[y] = even + r * (table[2 * y + 1] - even);
     }
     table.truncate(half);
+}
+
+/// Pin a kernel-maintained derived value (typically its fully bound split-eq
+/// scalar) against the verifier's own `derive_output_term` — the optimized
+/// tier's drift detector for tables it never materializes, mirroring the
+/// naive tier's check on its hand-materialized derived tables.
+pub(crate) fn pin_derived_term<F: Field, R: ConcreteSumcheck<F>>(
+    relation: &R,
+    id: JoltDerivedId,
+    input_points: &SumcheckInputPoints<F, R>,
+    output_points: &SumcheckOutputPoints<F, R>,
+    challenges: &ConcreteSumcheckChallenges<F, R>,
+    got: F,
+) -> Result<(), SumcheckKernelError<F>> {
+    let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
+    if got != expected {
+        return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+    }
+    Ok(())
+}
+
+/// [`pin_derived_term`], passing vacuously when the relation does not derive
+/// the term under this proof shape (`MissingStageClaimDerived`).
+pub(crate) fn pin_derived_term_if_derived<F: Field, R: ConcreteSumcheck<F>>(
+    relation: &R,
+    id: JoltDerivedId,
+    input_points: &SumcheckInputPoints<F, R>,
+    output_points: &SumcheckOutputPoints<F, R>,
+    challenges: &ConcreteSumcheckChallenges<F, R>,
+    got: F,
+) -> Result<(), SumcheckKernelError<F>> {
+    match relation.derive_output_term(&id, input_points, output_points, challenges) {
+        Ok(expected) if got != expected => {
+            Err(SumcheckKernelError::DerivedTableDrift { id, expected, got })
+        }
+        Ok(_) | Err(VerifierError::MissingStageClaimDerived { .. }) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Kernel-side extension of [`GruenSplitEqPolynomial`]: assemble a round

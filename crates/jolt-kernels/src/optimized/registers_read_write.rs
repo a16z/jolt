@@ -49,8 +49,7 @@ use jolt_field::{AdditiveAccumulator, Field, OptimizedMul, RingAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
@@ -64,7 +63,7 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::RoundProgress;
+use super::support::{pin_derived_term, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -1445,16 +1444,14 @@ impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(RegistersReadWritePublic::EqCycle);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        if self.eq_scalar != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift {
-                id,
-                expected,
-                got: self.eq_scalar,
-            });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            JoltDerivedId::from(RegistersReadWritePublic::EqCycle),
+            input_points,
+            output_points,
+            challenges,
+            self.eq_scalar,
+        )
     }
 }
 

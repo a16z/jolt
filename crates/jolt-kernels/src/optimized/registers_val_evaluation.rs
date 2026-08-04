@@ -29,8 +29,7 @@ use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage5::registers_val_evaluation::{
     RegistersValEvaluation, RegistersValEvaluationOutputClaims,
@@ -41,7 +40,7 @@ use jolt_witness::{collect_par_map, JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
-use super::support::{collect_rows, RoundProgress, SplitLt};
+use super::support::{collect_rows, pin_derived_term, RoundProgress, SplitLt};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -332,13 +331,14 @@ impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.lt.final_value();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle),
+            input_points,
+            output_points,
+            challenges,
+            self.lt.final_value(),
+        )
     }
 }
 

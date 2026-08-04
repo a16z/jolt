@@ -40,7 +40,6 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::{
     InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, RightInstructionInput,
 };
@@ -48,7 +47,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{BundleAccess, BundleStore};
+use super::support::{pin_derived_term_if_derived, BundleAccess, BundleStore};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -654,13 +653,6 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
         let ids = std::iter::once(SpartanProductVirtualizationPublic::TauKernel)
             .chain((0..DOMAIN).map(SpartanProductVirtualizationPublic::LagrangeWeight));
         for public_id in ids {
-            let id = JoltDerivedId::from(public_id);
-            let expected =
-                match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                    Ok(value) => value,
-                    Err(VerifierError::MissingStageClaimDerived { .. }) => continue,
-                    Err(error) => return Err(error.into()),
-                };
             let got = match public_id {
                 SpartanProductVirtualizationPublic::TauKernel => self.split_eq.current_scalar(),
                 SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
@@ -668,9 +660,14 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
                 }
                 SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => continue,
             };
-            if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-            }
+            pin_derived_term_if_derived(
+                relation,
+                JoltDerivedId::from(public_id),
+                input_points,
+                output_points,
+                challenges,
+                got,
+            )?;
         }
         Ok(())
     }

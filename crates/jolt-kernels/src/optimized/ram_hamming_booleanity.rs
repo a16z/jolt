@@ -30,10 +30,9 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::{
     RamHammingBooleanity, RamHammingBooleanityOutputClaims,
 };
-use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
-use super::support::RoundProgress;
+use super::support::{pin_derived_term_if_derived, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -162,18 +161,14 @@ impl<F: Field> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> {
         challenges: &jolt_claims::NoChallenges<F>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle);
-        let expected =
-            match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                Ok(value) => value,
-                Err(VerifierError::MissingStageClaimDerived { .. }) => return Ok(()),
-                Err(error) => return Err(error.into()),
-            };
-        let got = self.eq.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term_if_derived(
+            relation,
+            JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle),
+            input_points,
+            output_points,
+            challenges,
+            self.eq.current_scalar(),
+        )
     }
 }
 

@@ -44,7 +44,6 @@ use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerive
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -54,7 +53,8 @@ use jolt_witness::JoltWitnessPlane;
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
-    accumulate_product, gamma_power_pairs, map_indices, GruenRoundMessage, RoundProgress,
+    accumulate_product, gamma_power_pairs, map_indices, pin_derived_term, GruenRoundMessage,
+    RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -413,13 +413,14 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle),
+            input_points,
+            output_points,
+            challenges,
+            self.gruen.current_scalar(),
+        )
     }
 }
 

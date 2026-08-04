@@ -21,8 +21,7 @@ use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
@@ -32,7 +31,7 @@ use std::sync::Arc;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::{RoundProgress, SplitLt};
+use super::support::{pin_derived_term, RoundProgress, SplitLt};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -214,13 +213,14 @@ impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.lt.final_value();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term(
+            relation,
+            JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma),
+            input_points,
+            output_points,
+            challenges,
+            self.lt.final_value(),
+        )
     }
 }
 
