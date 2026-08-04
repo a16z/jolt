@@ -9,6 +9,10 @@
 )]
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/address_raf.rs"]
+mod address_raf;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/cpu.rs"]
 mod cpu;
 
@@ -37,7 +41,7 @@ mod macos {
     use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
     use super::{
-        cpu, cycle, product5,
+        address_raf, cpu, cycle, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
     };
 
@@ -79,6 +83,7 @@ mod macos {
                 "product5-transition" => product5::bench_transition(c, &context),
                 "product5-threadgroups" => product5::bench_threadgroups(c, &context),
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
+                "instruction-read-raf-address" => address_raf::bench(c, &context),
                 "product5" => {
                     product5::bench_message(c, &context);
                     product5::bench_transition(c, &context);

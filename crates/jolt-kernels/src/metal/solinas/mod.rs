@@ -15,11 +15,17 @@ use metal::{
 use thiserror::Error;
 
 const FIELD_SOURCE: &str = include_str!("fp128.metal");
+const ADDRESS_RAF_SOURCE: &str = include_str!("address_raf.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 
+mod address_raf;
 mod product5;
 
+pub use address_raf::{
+    AddressRafScanConfig, AddressRafScanInvocation, AddressRafScanRow, AddressRafSums,
+    ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
+};
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
 };
@@ -188,6 +194,20 @@ pub enum MetalError {
     MisalignedElementCount { probe: &'static str, ilp: usize },
     #[error("iteration count must be nonzero")]
     ZeroIterations,
+    #[error("address RAF row and weight lengths differ: rows={rows}, weights={weights}")]
+    AddressRafLengthMismatch { rows: usize, weights: usize },
+    #[error("address RAF suffix length must be a multiple of eight in 0..=120, got {0}")]
+    InvalidAddressRafSuffixLength(u32),
+    #[error("address RAF rows per SIMD group must be a nonzero multiple of 32, got {0}")]
+    InvalidAddressRafRowsPerSimdgroup(usize),
+    #[error(
+        "address RAF pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedAddressRafExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
     #[error("hybrid cutoff must be a power of two of at least two, got {0}")]
     InvalidHybridCutoff(usize),
     #[error(
@@ -250,7 +270,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)
@@ -604,10 +624,11 @@ fn command_buffer_timestamp(
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test module")]
 mod tests {
     use std::mem::{align_of, size_of};
 
-    use super::{Fp128, OFFSET_275};
+    use super::{AddressRafScanConfig, AddressRafScanRow, Fp128, SolinasMetal, OFFSET_275};
 
     #[test]
     fn fp128_has_the_metal_buffer_layout() {
@@ -635,5 +656,36 @@ mod tests {
         assert!(largest.is_canonical(OFFSET_275));
         assert!(!modulus.is_canonical(OFFSET_275));
         assert!(!Fp128::ZERO.is_canonical(0));
+    }
+
+    #[test]
+    fn address_raf_scan_reduces_exact_field_bins() {
+        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+        let rows = vec![AddressRafScanRow::new(0, false); 64];
+        let weights: Vec<Fp128> = (1..=64).map(Fp128::from_u128).collect();
+        let invocation = context
+            .prepare_address_raf_scan(
+                &rows,
+                &weights,
+                AddressRafScanConfig {
+                    suffix_len: 120,
+                    ..AddressRafScanConfig::default()
+                },
+            )
+            .expect("address RAF scan should prepare");
+
+        invocation
+            .execute()
+            .expect("address RAF scan should execute");
+        let sums = invocation
+            .read_output()
+            .expect("address RAF output should be readable");
+        let expected = (1u128..=64).sum();
+        assert_eq!(sums.shift_half()[0], Fp128::from_u128(expected));
+        assert!(sums
+            .as_flat_slice()
+            .iter()
+            .enumerate()
+            .all(|(index, value)| index == 0 || *value == Fp128::ZERO));
     }
 }

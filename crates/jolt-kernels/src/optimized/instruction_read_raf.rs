@@ -86,6 +86,7 @@ const _: () = assert!(
 /// packed fused-inc sources used by later one-hot kernels. The lookup index
 /// is split into native limbs and the PC/table/flags share one word, keeping
 /// the retained row at 40 bytes in Akita mode.
+#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct InstructionCycleRow {
     lookup_index_lo: u64,
@@ -1931,6 +1932,20 @@ mod tests {
         assert!(row.raf_flag());
         #[cfg(feature = "akita")]
         assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn packed_instruction_row_has_the_shader_layout() {
+        use std::mem::{align_of, offset_of, size_of};
+
+        assert_eq!(size_of::<InstructionCycleRow>(), 40);
+        assert_eq!(align_of::<InstructionCycleRow>(), 8);
+        assert_eq!(offset_of!(InstructionCycleRow, lookup_index_lo), 0);
+        assert_eq!(offset_of!(InstructionCycleRow, lookup_index_hi), 8);
+        assert_eq!(offset_of!(InstructionCycleRow, ram_address_plus_one), 16);
+        assert_eq!(offset_of!(InstructionCycleRow, fused_inc_magnitude), 24);
+        assert_eq!(offset_of!(InstructionCycleRow, packed_pc_and_flags), 32);
     }
 
     /// The sumcheck input claim from first principles:

@@ -313,15 +313,34 @@ before crediting the already-fast cycle tail. The ceiling has enough margin over
 4x promotion bar to enter implementation.
 
 The first probe is deliberately narrower than the final port. It executes one exact
-RAF phase scan: optional equality-weight condensation followed by the six 256-bin
-reductions (`shift_half`, `left`, `right`, `shift_full`, `identity`, and
-`upper_all_ones`). Packed rows and weights remain device-resident. Each threadgroup
-uses 24 KiB for field bins plus 1 KiB of bin locks, emits one partial table, and a
-second reduction produces the 1,536 field outputs. The phase loses if its complete
-wall time at `2^26` cannot stay below 45 ms after tuning rows per threadgroup and
-threadgroup width. Passing that gate admits the table-suffix scan and the full
-16-phase sequence; failing it forces a different keyed-reduction design before more
-of the relation is ported.
+RAF phase scan and produces the six 256-bin reductions (`shift_half`, `left`,
+`right`, `shift_full`, `identity`, and `upper_all_ones`). Packed rows and weights
+remain device-resident. The phase loses if its complete wall time at `2^26` cannot
+stay below 45 ms after tuning its occupancy controls. Passing that gate admits the
+table-suffix scan and the full 16-phase sequence; failing it forces a different keyed
+reduction design before more of the relation is ported.
+
+The first keyed-reduction candidate gave each SIMD group a private 1,536-field device
+table, bitonic-sorted each 32-row batch by `(chunk, RAF flag)`, performed segmented
+field sums in registers, and reduced the group tables in a second kernel. It used
+zero static threadgroup memory, so occupancy was not limited by the 32 KiB
+threadgroup-memory ceiling. Exact Akita-field tests passed for all phase shapes. The
+candidate was nevertheless discarded:
+
+| Rows | Optimized CPU | Metal wall | Metal active | Speedup |
+|---:|---:|---:|---:|---:|
+| `2^16` | 0.233 ms | 4.499 ms | 4.691 ms | 0.052x |
+| `2^22` | 3.432 ms | 4.799 ms | 4.596 ms | 0.715x |
+
+At `2^22` the GPU had 64 independent SIMD groups, and the projected `2^26` wall time
+was roughly 77 ms. The in-register sort, not input traffic or static occupancy, was
+the limiting work.
+
+The next candidate is a byte-radix schedule: form per-group 256-bin histograms,
+prefix them on device, scatter 32-bit row indices, then assign one dense reduction
+threadgroup to each chunk. This rereads the row key during scatter and adds an index
+stream, but removes every per-row sort and gives the field reduction coalesced bucket
+ranges with only a few KiB of dynamic threadgroup memory.
 
 ### Booleanity cycle worksheet
 
