@@ -150,6 +150,7 @@ pub fn host_bind_eval_sums(a: &[Fr], points: &[Fr]) -> Vec<Fr> {
 )]
 mod tests {
     use jolt_dory::DoryScheme;
+    use jolt_poly::UnivariatePoly;
 
     use super::super::field::{fr_as_u32s, fr_to_u32_limbs, FR_U32_LIMBS};
     use super::super::runtime::{KernelId, MetalContext, MAX_EVAL_POINTS, THREADGROUP_SIZE};
@@ -301,6 +302,32 @@ mod tests {
         params
     }
 
+    fn bind4_weights(z: Fr) -> [Fr; 4] {
+        std::array::from_fn(|index| UnivariatePoly::evaluate_basis(4, index, z))
+    }
+
+    fn bind4_params(n_out: usize, weights: [Fr; 4]) -> Vec<u32> {
+        let mut params = vec![n_out as u32];
+        for weight in &weights[1..] {
+            params.extend_from_slice(&fr_to_u32_limbs(*weight));
+        }
+        params
+    }
+
+    fn run_bind4(ctx: &MetalContext, values: &[Fr], z: Fr) -> Vec<Fr> {
+        let n_out = values.len() / 4;
+        let values_buf = ctx.wrap_slice(fr_as_u32s(values)).unwrap();
+        let out_buf = ctx.alloc_u32s(n_out * FR_U32_LIMBS).unwrap();
+        ctx.run_once(
+            KernelId::FrBind4,
+            &bind4_params(n_out, bind4_weights(z)),
+            &[&values_buf, &out_buf],
+            n_out,
+        )
+        .unwrap();
+        read_frs(&out_buf, n_out)
+    }
+
     #[test]
     fn device_bind_matches_host() {
         let _lock = gpu_lock();
@@ -326,6 +353,116 @@ mod tests {
 
             assert_eq!(device, host_bind(&a, r), "bind mismatch at n_in={n_in}");
         }
+    }
+
+    #[test]
+    fn device_bind4_matches_quaternary_lagrange_host() {
+        let _lock = gpu_lock();
+        let ctx = MetalContext::global().expect("metal context");
+        for n_in in [1usize << 16, 4 * 5] {
+            let mut a = edge_frs();
+            a.extend(seeded_frs(0x44, n_in - a.len().min(n_in)));
+            a.truncate(n_in);
+            let n_out = n_in / 4;
+            let z = seeded_frs(0x45, 1)[0];
+            let weights = bind4_weights(z);
+
+            let a_buf = ctx.wrap_slice(fr_as_u32s(&a)).unwrap();
+            let out_buf = ctx.alloc_u32s(n_out * FR_U32_LIMBS).unwrap();
+            ctx.run_once(
+                KernelId::FrBind4,
+                &bind4_params(n_out, weights),
+                &[&a_buf, &out_buf],
+                n_out,
+            )
+            .unwrap();
+            let device = read_frs(&out_buf, n_out);
+            let host: Vec<Fr> = a
+                .chunks_exact(4)
+                .map(|values| {
+                    values
+                        .iter()
+                        .zip(weights)
+                        .fold(Fr::from_u64(0), |acc, (&value, weight)| {
+                            acc + value * weight
+                        })
+                })
+                .collect();
+
+            assert_eq!(device, host, "bind4 mismatch at n_in={n_in}");
+        }
+    }
+
+    #[test]
+    fn radix4_degree_two_sumcheck_shape_accepts_and_rejects_tampering() {
+        let _lock = gpu_lock();
+        let ctx = MetalContext::global().expect("metal context");
+        let n_in = 1usize << 14;
+        let left = seeded_frs(0x4a, n_in);
+        let right = seeded_frs(0x4b, n_in);
+
+        let q_evals: Vec<Fr> = (0..=6)
+            .map(|point| {
+                let weights = bind4_weights(Fr::from_u64(point));
+                left.chunks_exact(4)
+                    .zip(right.chunks_exact(4))
+                    .map(|(left_values, right_values)| {
+                        let left_eval = left_values
+                            .iter()
+                            .zip(weights)
+                            .fold(Fr::from_u64(0), |acc, (&value, weight)| {
+                                acc + value * weight
+                            });
+                        let right_eval = right_values
+                            .iter()
+                            .zip(weights)
+                            .fold(Fr::from_u64(0), |acc, (&value, weight)| {
+                                acc + value * weight
+                            });
+                        left_eval * right_eval
+                    })
+                    .fold(Fr::from_u64(0), |acc, value| acc + value)
+            })
+            .collect();
+        let q = UnivariatePoly::from_evals(&q_evals);
+        assert!(q.coefficients().len() <= 7, "degree exceeds 3d=6");
+
+        let current_claim = left
+            .iter()
+            .zip(&right)
+            .fold(Fr::from_u64(0), |acc, (&l, &r)| acc + l * r);
+        let four_point_sum = (0..4)
+            .map(|point| q.evaluate(Fr::from_u64(point)))
+            .fold(Fr::from_u64(0), |acc, value| acc + value);
+        assert_eq!(four_point_sum, current_claim);
+
+        let z = seeded_frs(0x4c, 1)[0];
+        let left_bound = run_bind4(ctx, &left, z);
+        let right_bound = run_bind4(ctx, &right, z);
+        let terminal_claim = left_bound
+            .iter()
+            .zip(&right_bound)
+            .fold(Fr::from_u64(0), |acc, (&l, &r)| acc + l * r);
+        assert_eq!(q.evaluate(z), terminal_claim);
+
+        // This degree-4 perturbation vanishes at all four digit nodes, so the
+        // claim check still passes; the random-point terminal check must bind it.
+        let c = seeded_frs(0x4d, 1)[0];
+        let mut tampered_coefficients = q.coefficients().to_vec();
+        tampered_coefficients.resize(7, Fr::from_u64(0));
+        for (coefficient, delta) in tampered_coefficients.iter_mut().zip([0i64, -6, 11, -6, 1]) {
+            *coefficient += if delta < 0 {
+                -c * Fr::from_u64(delta.unsigned_abs())
+            } else {
+                c * Fr::from_u64(delta as u64)
+            };
+        }
+        let tampered = UnivariatePoly::new(tampered_coefficients);
+        let tampered_sum = (0..4)
+            .map(|point| tampered.evaluate(Fr::from_u64(point)))
+            .fold(Fr::from_u64(0), |acc, value| acc + value);
+        assert_eq!(tampered_sum, current_claim);
+        assert_ne!(tampered.evaluate(z), terminal_claim);
     }
 
     #[test]

@@ -12,6 +12,8 @@
 //!   command buffer (separates commit overhead from encode/dispatch cost).
 //! - **D2** streaming bind throughput (GB/s) at 2^20/2^22/2^24 input
 //!   elements, device vs CPU rayon, both zero-copy on the device side.
+//! - **D2r4** one radix-4 Lagrange bind vs two binary binds in one command
+//!   buffer, isolating the intermediate-table traffic removed by fusion.
 //! - **D2b** device-vs-CPU bind cutover sweep — the evidence behind
 //!   `JOLT_METAL_MIN_TERMS`.
 //! - **D3** compute-bound Montgomery throughput: chained squarings
@@ -47,6 +49,7 @@ mod bench {
     use jolt_kernels::metal::{
         fr_to_u32_limbs, DeviceBuffer, KernelId, MetalContext, PageAlignedVec, FR_U32_LIMBS,
     };
+    use jolt_poly::UnivariatePoly;
     use rayon::prelude::*;
 
     const FR_BYTES: usize = FR_U32_LIMBS * 4;
@@ -81,6 +84,16 @@ mod bench {
         params
     }
 
+    fn bind4_params(n_out: usize, z: Fr) -> Vec<u32> {
+        let mut params = vec![n_out as u32];
+        for index in 1..4 {
+            params.extend_from_slice(&fr_to_u32_limbs(UnivariatePoly::evaluate_basis(
+                4, index, z,
+            )));
+        }
+        params
+    }
+
     fn cpu_bind(a: &[Fr], out: &mut [Fr], r: Fr) {
         out.par_iter_mut()
             .zip(a.par_chunks_exact(2))
@@ -110,6 +123,7 @@ mod bench {
 
         d1_dispatch_latency(ctx);
         let bind_rows = d2_streaming_bind(ctx);
+        d2r4_radix4_bind(ctx);
         let cutover = d2b_cutover_sweep(ctx);
         d3_compute_bound(ctx);
         d4_bus_contention(ctx);
@@ -201,6 +215,63 @@ mod bench {
         }
         println!();
         rows
+    }
+
+    fn d2r4_radix4_bind(ctx: &MetalContext) {
+        println!("== D2r4: radix-4 direct bind vs two binary binds / one CB ==");
+        let [r0, r1, z] = seeded_frs(0x4ad1, 3).try_into().unwrap();
+
+        for log_n in [20usize, 22, 24] {
+            let n_in = 1usize << log_n;
+            let n_half = n_in / 2;
+            let n_out = n_in / 4;
+            let input = PageAlignedVec::from_slice(&fill_frs(n_in));
+            let input_buf = input.device_buffer(ctx).unwrap();
+            let intermediate = ctx.alloc_u32s(n_half * FR_U32_LIMBS).unwrap();
+            let binary_out = ctx.alloc_u32s(n_out * FR_U32_LIMBS).unwrap();
+            let radix4_out = ctx.alloc_u32s(n_out * FR_U32_LIMBS).unwrap();
+            let first_params = bind_params(n_half, r0);
+            let second_params = bind_params(n_out, r1);
+            let radix4_params = bind4_params(n_out, z);
+
+            let binary = min_secs(5, || {
+                let mut pass = ctx.begin_pass().unwrap();
+                pass.dispatch(
+                    KernelId::FrBind,
+                    &first_params,
+                    &[&input_buf, &intermediate],
+                    n_half,
+                );
+                pass.dispatch(
+                    KernelId::FrBind,
+                    &second_params,
+                    &[&intermediate, &binary_out],
+                    n_out,
+                );
+                pass.run().unwrap();
+            });
+            let radix4 = min_secs(5, || {
+                ctx.run_once(
+                    KernelId::FrBind4,
+                    &radix4_params,
+                    &[&input_buf, &radix4_out],
+                    n_out,
+                )
+                .unwrap();
+            });
+            let binary_bytes = (n_in + 2 * n_half + n_out) * FR_BYTES;
+            let radix4_bytes = (n_in + n_out) * FR_BYTES;
+
+            println!(
+                "2^{log_n}: binary×2 {:.2} ms ({:.1} GB/s) | radix-4 {:.2} ms ({:.1} GB/s) | speedup {:.2}×",
+                binary * 1e3,
+                binary_bytes as f64 / binary / 1e9,
+                radix4 * 1e3,
+                radix4_bytes as f64 / radix4 / 1e9,
+                binary / radix4,
+            );
+        }
+        println!();
     }
 
     /// Sweep small sizes for the device-vs-CPU cutover that motivates the

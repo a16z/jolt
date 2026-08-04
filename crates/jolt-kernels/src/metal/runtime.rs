@@ -54,6 +54,7 @@ pub enum KernelId {
     FrSub,
     FrPow2k,
     FrBind,
+    FrBind4,
     FrBindEval,
     IncRound,
     TablePairsRound,
@@ -117,13 +118,14 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 66] = [
+    pub const ALL: [Self; 67] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
         Self::FrSub,
         Self::FrPow2k,
         Self::FrBind,
+        Self::FrBind4,
         Self::FrBindEval,
         Self::IncRound,
         Self::TablePairsRound,
@@ -194,6 +196,7 @@ impl KernelId {
             Self::FrSub => "jk_fr_sub",
             Self::FrPow2k => "jk_fr_pow2k",
             Self::FrBind => "jk_fr_bind",
+            Self::FrBind4 => "jk_fr_bind4",
             Self::FrBindEval => "jk_fr_bind_eval",
             Self::IncRound => "jk_inc_round",
             Self::TablePairsRound => "jk_table_pairs_round",

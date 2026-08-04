@@ -20,6 +20,13 @@ struct BindParams {
     uint r[FR_LIMBS];
 };
 
+struct Bind4Params {
+    uint n_out;
+    uint l1[FR_LIMBS];
+    uint l2[FR_LIMBS];
+    uint l3[FR_LIMBS];
+};
+
 struct BindEvalParams {
     uint n_out;
     uint num_points;
@@ -102,6 +109,28 @@ kernel void jk_fr_bind(
     Fr256 diff = fr_sub(fr_load(a, 2 * gid + 1), lo);
     Fr256 r = fr_load_const(p.r, 0);
     fr_store(out, gid, fr_add(lo, fr_mont_mul(r, diff)));
+}
+
+// Lagrange weights sum to one, so an affine a[4i] base matches two binary
+// binds' three Montgomery products without their intermediate table pass.
+kernel void jk_fr_bind4(
+    device const uint* a [[buffer(0)]],
+    device uint* out [[buffer(1)]],
+    constant Bind4Params& p [[buffer(2)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= p.n_out) {
+        return;
+    }
+    Fr256 a0 = fr_load(a, 4 * gid);
+    Fr256 result = a0;
+    result = fr_add(result, fr_mont_mul(fr_load_const(p.l1, 0),
+                                       fr_sub(fr_load(a, 4 * gid + 1), a0)));
+    result = fr_add(result, fr_mont_mul(fr_load_const(p.l2, 0),
+                                       fr_sub(fr_load(a, 4 * gid + 2), a0)));
+    result = fr_add(result, fr_mont_mul(fr_load_const(p.l3, 0),
+                                       fr_sub(fr_load(a, 4 * gid + 3), a0)));
+    fr_store(out, gid, result);
 }
 
 // --- Slot-round machinery -------------------------------------------------

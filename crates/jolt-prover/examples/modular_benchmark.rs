@@ -30,6 +30,7 @@ use std::time::Instant;
 
 use clap::{Parser, ValueEnum};
 use common::jolt_device::MemoryConfig;
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
@@ -260,6 +261,9 @@ fn run_benchmark(
     // stage-5 anchor so both arms run from one binary.
     if std::env::var("JOLT_BOOLEANITY_ANCHOR").as_deref() == Ok("legacy") {
         config.booleanity_anchor = jolt_verifier::config::BooleanityAnchor::Stage5Instruction;
+    }
+    if std::env::var("JOLT_TRACE_ORDER").as_deref() == Ok("address") {
+        config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
     }
     let public_io = trace_output.device.clone();
     let padded_output = pad_trace(trace_output, config.trace_length);
