@@ -46,7 +46,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::support::{
-    collect_rows, fmadd_u64_split, gamma_powers_array, pin_derived_term, RoundProgress,
+    bind_pairs, collect_rows, fmadd_u64_split, gamma_powers_array, pin_derived_term, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -330,19 +330,11 @@ impl<F: Field> ShiftKernel<F> {
             self.transition_to_dense();
             return;
         }
-        let bind_table = |table: &mut Vec<F>| {
-            let half = table.len() / 2;
-            for y in 0..half {
-                let lo = table[2 * y];
-                table[y] = lo + r * (table[2 * y + 1] - lo);
-            }
-            table.truncate(half);
-        };
         match &mut self.phase {
             Phase::PrefixSuffix { pairs } => {
                 for (p, q) in pairs {
-                    bind_table(p);
-                    bind_table(q);
+                    bind_pairs(p, r);
+                    bind_pairs(q, r);
                 }
             }
             Phase::Dense {
@@ -363,7 +355,7 @@ impl<F: Field> ShiftKernel<F> {
                     is_first_in_sequence,
                     is_noop,
                 ] {
-                    bind_table(table);
+                    bind_pairs(table, r);
                 }
             }
         }

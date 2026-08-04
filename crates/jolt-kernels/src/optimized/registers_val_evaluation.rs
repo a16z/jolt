@@ -41,7 +41,7 @@ use rayon::prelude::*;
 
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
 use super::support::{
-    collect_rows, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
+    bind_pairs, collect_rows, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -84,14 +84,7 @@ impl<F: Field> WaState<F> {
                 let dense: Vec<F> = (0..half).map(bind_pair).collect();
                 *self = Self::Dense(dense);
             }
-            Self::Dense(table) => {
-                let half = table.len() / 2;
-                for y in 0..half {
-                    let lo = table[2 * y];
-                    table[y] = lo + r * (table[2 * y + 1] - lo);
-                }
-                table.truncate(half);
-            }
+            Self::Dense(table) => bind_pairs(table, r),
         }
     }
 

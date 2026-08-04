@@ -42,7 +42,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, fmadd_u64_split, pin_derived_term, RoundProgress};
+use super::support::{bind_pairs, collect_rows, fmadd_u64_split, pin_derived_term, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -248,12 +248,7 @@ impl<F: Field> ClaimReductionKernel<F> {
         match &mut self.phase {
             Phase::PrefixSuffix { p, q } => {
                 for table in [p, q] {
-                    let half = table.len() / 2;
-                    for y in 0..half {
-                        let lo = table[2 * y];
-                        table[y] = lo + r * (table[2 * y + 1] - lo);
-                    }
-                    table.truncate(half);
+                    bind_pairs(table, r);
                 }
             }
             Phase::Dense {
@@ -263,12 +258,7 @@ impl<F: Field> ClaimReductionKernel<F> {
                 rs2_value,
             } => {
                 for table in [eq, rd_write_value, rs1_value, rs2_value] {
-                    let half = table.len() / 2;
-                    for y in 0..half {
-                        let lo = table[2 * y];
-                        table[y] = lo + r * (table[2 * y + 1] - lo);
-                    }
-                    table.truncate(half);
+                    bind_pairs(table, r);
                 }
             }
         }

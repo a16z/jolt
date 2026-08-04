@@ -63,7 +63,7 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{pin_derived_term, RoundProgress};
+use super::support::{bind_pairs, pin_derived_term, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -1294,12 +1294,7 @@ impl<F: Field> ReadWriteKernel<F> {
             self.entries.bind(r);
         } else {
             for table in [&mut self.ra, &mut self.wa, &mut self.val] {
-                let half = table.len() / 2;
-                for y in 0..half {
-                    let lo = table[2 * y];
-                    table[y] = lo + r * (table[2 * y + 1] - lo);
-                }
-                table.truncate(half);
+                bind_pairs(table, r);
             }
         }
         self.bound_challenges.push(r);

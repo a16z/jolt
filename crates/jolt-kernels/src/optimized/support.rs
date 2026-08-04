@@ -674,13 +674,8 @@ impl<F: Field> SplitLt<F> {
                 lt_hi,
                 eq_hi,
             } => {
-                let half = lt_lo.len() / 2;
-                for y in 0..half {
-                    let lo = lt_lo[2 * y];
-                    lt_lo[y] = lo + r * (lt_lo[2 * y + 1] - lo);
-                }
-                lt_lo.truncate(half);
-                if half == 1 {
+                bind_pairs(lt_lo, r);
+                if lt_lo.len() == 1 {
                     // Lo variables exhausted: fold the lo scalar into the hi
                     // table and continue densely.
                     let lo_scalar = lt_lo[0];
@@ -692,14 +687,7 @@ impl<F: Field> SplitLt<F> {
                     *self = Self::Dense(dense);
                 }
             }
-            Self::Dense(table) => {
-                let half = table.len() / 2;
-                for y in 0..half {
-                    let lo = table[2 * y];
-                    table[y] = lo + r * (table[2 * y + 1] - lo);
-                }
-                table.truncate(half);
-            }
+            Self::Dense(table) => bind_pairs(table, r),
         }
     }
 
