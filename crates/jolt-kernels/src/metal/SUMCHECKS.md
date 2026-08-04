@@ -252,6 +252,23 @@ Each kernel phase retains its own immutable evaluator, snapshots, and JSONL line
 changing the kernel, algorithm, or evaluator starts a new phase rather than mutating
 the previous run.
 
+### Parallel analysis, serialized experiments
+
+Each new hot kernel starts with three independent read-only analyses: its arithmetic
+and traffic ceiling, its resident-state/backend seam, and its portfolio priority plus
+shared-primitive reuse. The root agent reconciles those reports and freezes one
+experiment contract before implementation. After that freeze, subagents may draft
+non-overlapping shader, host-integration, or evaluator patches as isolated artifacts;
+the root reviews and applies them serially. Subagents do not edit the shared worktree,
+run builds, mutate evaluator lineage, launch Metal work, or commit.
+
+The root agent is the single writer and the only benchmark coordinator. Metal
+evaluators and their target-scale optimized-CPU controls run serially; candidate
+parameters never run concurrently on the same GPU. Correctness checks and commits
+also pass through the root so every retained result has one source revision and one
+unambiguous artifact lineage. Parallelism is used to search the design space, not to
+share a noisy machine measurement.
+
 ### Retained first-slot experiment
 
 The robust `2^22` search used three fresh evaluator processes per candidate. Its
@@ -745,6 +762,110 @@ transcript-independent Metal row materialization immediately before PIOP took
 essentially the same aggregate result as the prior 1.557x profile. This checkpoint
 therefore validates the backend-ready PIOP architecture and local port, but makes no
 end-to-end speedup claim from relocating the row conversion.
+
+## Instruction RA virtualization ceiling
+
+The resident-witness profile makes `InstructionRaVirtualization` the next port. Its
+complete Metal-profile seam is 2.242 s, or 17.90% of the 12.529-s PIOP. At `T =
+2^26`, the protocol uses four virtual products, four committed factors per product,
+and 256-entry committed-chunk tables. The optimized CPU stays sparse through branch
+width eight, materializes 16 dense factor tables at width 16, and then uses dense
+binds.
+
+For a round with current table length `S`, there are `R = S/2` row pairs. Directly
+evaluating each four-factor product at `1, 2, 3, infinity` costs 12 field
+multiplications, so the message costs
+
+```text
+M_direct = 52 R + 4 E_out.
+```
+
+The 48 products are four groups times four samples times three products; the other
+four multiply the grouped values by `E_in`. The `E_out` term is the split-equality
+block fold. Exact quadratic reuse reduces the four-factor work without changing the
+sample grid. For each pair of linear factors compute
+
+```text
+A0   = lo0 * lo1
+A1   = hi0 * hi1
+Ainf = (hi0 - lo0) * (hi1 - lo1)
+A2   = 2 A1 - A0 + 2 Ainf
+A3   = 3 A1 - 2 A0 + 6 Ainf.
+```
+
+Repeating that for factors two and three and multiplying the two quadratics at the
+four samples costs ten products per virtual group instead of twelve. Later messages
+therefore cost `44 R + 4 E_out`.
+
+Round zero admits one more exact specialization. Eight endpoint-pair tables -- two
+factor pairs for each of four virtual groups -- contain 524,288 field values and
+occupy 8 MiB. They replace four endpoint products per virtual group; round zero then
+uses six products per group and costs `28 R + 4 E_out`. The table refresh itself is
+524,288 products and 24 MiB of logical traffic, small enough that command submission
+should dominate it.
+
+With width-16 materialization and a CPU tail at 1,024 elements, the proposed GPU
+prefix performs 2.484 billion useful field multiplications. At the retained
+16.42-Gmul/s field roof, its arithmetic floor is 151 ms. It has about 10.25 GiB of
+optimistic non-cache traffic when it reuses the existing 20-byte/cycle lookup plane,
+plus roughly 89 GiB of cache-logical branch and endpoint-table reads. Treating every
+logical byte as DRAM gives a deliberately pessimistic 251-ms traffic term. The
+optimistic complete roof is about 259 ms after dispatches and the measured CPU tail;
+charging only one third of the arithmetic roof and serializing traffic gives about
+501 ms.
+
+The strict control is the faster 2.176-s CPU round trace rather than the older
+2.242-s complete attribution. It fixes the local budgets at 544 ms for 4x, 435 ms
+for 5x, 348 ms for the 6.25x shader-entry margin, and 311 ms for the initial 7x
+working target. Four times is the architecture falsification bar, not the stopping
+point: the modeled roof is about 8.4x and the search continues past 7x while a
+noise-qualified candidate has material headroom.
+
+### Resident seam and frozen first experiment
+
+Stage 5 already owns the needed lookup index as a 16-byte table-major Metal buffer
+and a 4-byte cycle-to-table-major inverse permutation. At `2^26` those buffers occupy
+1.25 GiB. Retaining their Metal handles is zero-copy and avoids both a new compact
+plane and the 2.5-GiB, 40-byte-stride `BooleanityRows` representation. The existing
+address-cycle shader reaches its compute roof through the same inverse gather, so
+the access pattern has already passed a target-scale feasibility probe.
+
+The first implementation uses a specialized grouped-product4 sequence rather than
+generalizing Product5. Its baseline maps one cycle pair to one thread, applies the
+quadratic identities above, materializes at width 16, fuses later bind-and-message
+dispatches, and reads back the 16 factor tables once at the tuned CPU cutoff. A
+SIMD-cohort schedule remains an ablation: it can reduce live state per lane, but a
+similar mapping regressed Product5 and therefore does not displace the simpler
+row-thread control without measurement.
+
+The host keeps Gruen interpolation, the degree-five round polynomial, and
+Fiat-Shamir. Every round returns only four canonical `q` evaluations. The device
+plane is released after width-16 materialization; after the single cutoff readback,
+the optimized CPU resumes from `LazyFoldedRa::Dense`, completes the tail, unscales
+all 16 final claims by the existing inverse gamma powers, and performs the normal
+derived-`EqCycle` validation. Once a device command or transcript step succeeds, an
+error aborts the proof; there is no mid-proof retry from mutated state.
+
+At `T = 2^28`, this M4 Max reports an 80.64-GiB per-buffer limit, so the
+unsegmented width-16 design is API-legal: lookup indices use 4 GiB, the inverse map
+1 GiB, and the two dense factor buffers 4 GiB and 2 GiB. Aggregate stage-6b
+residency, rather than `maxBufferLength`, is the practical risk because Booleanity
+state can still be live. The `2^28` validation is therefore resource-gated and the
+portable layout uses four `2^26`-row shards plus one dense source/destination pair
+per virtual product. At width 16 that holds row shards to 1 GiB, inverse shards to
+256 MiB, and dense buffers to 1 GiB/512 MiB. All shards for one round remain in one
+command buffer and reduce into the same four outputs, so the arithmetic, host
+Fiat-Shamir, and 256-KiB cutoff readback are unchanged from `2^26`.
+
+`autoresearch/instruction_ra_virtualization.template.json` freezes the first search.
+It compares the complete resident hybrid against both the current optimized CPU and
+a portable quadratic-reuse CPU control. If the portable algebra wins beyond noise,
+that faster CPU becomes the fair oracle. The evaluator compares all four `q` values,
+the degree-five round polynomial and host challenge after every round, the cutoff
+tables, all final claims, transcript state, stable resident-buffer identities, and
+zero per-round allocations. It reports endpoint refresh, GPU active and wall time by
+round, readback, CPU tail, useful multiplication rate, logical traffic, and peak
+resident bytes separately.
 
 ## Requirement map and open points
 

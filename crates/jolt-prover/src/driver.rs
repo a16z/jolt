@@ -416,14 +416,24 @@ macro_rules! __stage_member {
             $challenges.$member.as_ref(),
         )?;
     };
-    (extract required $member:ident, $inputs:expr) => {
-        $member.inner.output_claims(&$inputs.$member)?
+    (extract required $member:ident, $inputs:expr, $relation:ident) => {
+        {
+            let __span =
+                ::tracing::info_span!(concat!(stringify!($relation), "::output_claims"));
+            let __guard = __span.enter();
+            $member.inner.output_claims(&$inputs.$member)?
+        }
     };
-    (extract optional $member:ident, $inputs:expr) => {
-        $crate::driver::extract_optional(
-            $member.as_mut().map(|__kernel| &mut *__kernel.inner),
-            $inputs.$member.as_ref(),
-        )?
+    (extract optional $member:ident, $inputs:expr, $relation:ident) => {
+        {
+            let __span =
+                ::tracing::info_span!(concat!(stringify!($relation), "::output_claims"));
+            let __guard = __span.enter();
+            $crate::driver::extract_optional(
+                $member.as_mut().map(|__kernel| &mut *__kernel.inner),
+                $inputs.$member.as_ref(),
+            )?
+        }
     };
     (park required $member:ident, $session:expr) => {
         ::jolt_kernels::SumcheckKernel::park_residue($member.inner, $session);
@@ -560,7 +570,9 @@ macro_rules! impl_stage_prover {
                 );)+
 
                 let __output_claims = $output_claims {
-                    $($member: $crate::driver::__stage_member!(extract $presence $member, inputs),)+
+                    $($member: $crate::driver::__stage_member!(
+                        extract $presence $member, inputs, $relation
+                    ),)+
                 };
                 $($crate::driver::__stage_member!(park $presence $member, session);)+
 

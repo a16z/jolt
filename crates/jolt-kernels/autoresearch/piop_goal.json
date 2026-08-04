@@ -32,6 +32,19 @@
       "target_hybrid_speedup": 3.0
     }
   ],
+  "orchestration": {
+    "analysis_fanout": [
+      "arithmetic and traffic ceiling",
+      "resident-state and backend integration",
+      "portfolio priority and shared primitive reuse"
+    ],
+    "build_and_test_owner": "root agent",
+    "candidate_reconciliation": "root agent freezes one experiment only after reconciling the independent analyses",
+    "implementation_fanout": "after the contract is frozen, subagents may draft non-overlapping shader, host-integration, or evaluator patches as isolated artifacts; the root agent reviews and applies them serially",
+    "gpu_execution": "serialized by the root agent; never overlap GPU evaluators or target-scale CPU controls",
+    "subagent_mode": "read-only analysis by default; isolated patch artifacts only after the experiment freezes; no shared-worktree edits, builds, GPU runs, evaluator mutation, or commits",
+    "worktree_writer": "root agent only"
+  },
   "phase_budget": {
     "max_gpu_seconds": 600,
     "max_seconds": 1800,

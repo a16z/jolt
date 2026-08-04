@@ -104,7 +104,13 @@ def trace_attribution(events: list[dict[str, Any]]) -> dict[str, Any]:
         if name.startswith("prove_stage")
     }
     kernel_durations: dict[str, float] = {}
-    suffixes = ("::prepare", "::first_round_poly", "::prove_round", "::finish_rounds")
+    suffixes = (
+        "::prepare",
+        "::first_round_poly",
+        "::prove_round",
+        "::finish_rounds",
+        "::output_claims",
+    )
     for name, duration in durations.items():
         suffix = next((suffix for suffix in suffixes if name.endswith(suffix)), None)
         if suffix is not None:

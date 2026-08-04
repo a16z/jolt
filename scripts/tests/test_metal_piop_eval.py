@@ -92,14 +92,16 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "ts": 15.5,
             },
             {"name": "Booleanity::prove_round", "ph": "E", "pid": 1, "tid": 0, "ts": 16.0},
+            {"name": "Booleanity::output_claims", "ph": "B", "pid": 1, "tid": 0, "ts": 16.0},
+            {"name": "Booleanity::output_claims", "ph": "E", "pid": 1, "tid": 0, "ts": 16.5},
             {"name": "prove_stage1", "ph": "E", "pid": 1, "tid": 0, "ts": 17.0},
             {"name": "jolt_prover::piop", "ph": "E", "pid": 1, "tid": 0, "ts": 20.0},
         ]
         attribution = metal_piop_eval.trace_attribution(events)
         self.assertEqual(attribution["stage_ms"], {"prove_stage1": 0.006})
         self.assertEqual(attribution["kernels"][0]["kernel"], "Booleanity")
-        self.assertEqual(attribution["kernels"][0]["wall_ms"], 0.003)
-        self.assertEqual(attribution["kernels"][0]["piop_share"], 0.3)
+        self.assertEqual(attribution["kernels"][0]["wall_ms"], 0.0035)
+        self.assertEqual(attribution["kernels"][0]["piop_share"], 0.35)
         self.assertEqual(
             attribution["backend_spans"],
             [

@@ -18,7 +18,8 @@
 //!   (`EqPolynomial::evals`, `SpartanOuterUniskip::prepare`),
 //! - `prove_stage{N}` for the stage recipes,
 //! - `<StageLabel>::prove` / `<Relation>::prepare` / `<Relation>::prove_round`
-//!   / `<Relation>::finish_rounds` for the generated stage drivers, where
+//!   / `<Relation>::finish_rounds` / `<Relation>::output_claims` for the
+//!   generated stage drivers, where
 //!   `<StageLabel>` is the batch struct's name minus the `Sumchecks` suffix
 //!   and `<Relation>` is the member's relation type name (`finish_rounds` is
 //!   the terminal bind delivery, a direct child of `prove_batch` rather than
@@ -176,9 +177,9 @@ pub enum ProverMode {
 /// emitted trace.
 ///
 /// Deliberately excludes the per-member driver spans (`<Relation>::prepare`,
-/// `<Relation>::prove_round`, `<Relation>::finish_rounds`) whose names vary
-/// with the batch composition, plus the advice- and committed-program-only
-/// seams.
+/// `<Relation>::prove_round`, `<Relation>::finish_rounds`,
+/// `<Relation>::output_claims`) whose names vary with the batch composition,
+/// plus the advice- and committed-program-only seams.
 pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
     let mut labels = vec![ROOT_SPAN];
     labels.extend(STAGE_SPANS);

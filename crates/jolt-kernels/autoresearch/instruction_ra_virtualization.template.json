@@ -1,0 +1,113 @@
+{
+  "algorithm_contract": {
+    "arithmetic": "exact quadratic reuse for two factor pairs, with optional round-zero endpoint-pair tables",
+    "cpu_tail": "single dense readback followed by the optimized CPU kernel",
+    "fiat_shamir": "host",
+    "initial_schedule": "one cycle pair per thread",
+    "resident_input": "stage-5 table-major u128 lookup indices plus u32 cycle-to-table-major inverse",
+    "sample_grid": [1, 2, 3, "infinity"]
+  },
+  "baseline_params": {
+    "JOLT_METAL_INSTRUCTION_RA_CUTOFF_LOG2": "10",
+    "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_WIDTH": "16",
+    "JOLT_METAL_INSTRUCTION_RA_PAIR_TABLES": "1",
+    "JOLT_METAL_INSTRUCTION_RA_THREADS": "128"
+  },
+  "baseline_repeats": 3,
+  "candidate_repeats": 3,
+  "budget": {
+    "max_gpu_seconds": 600,
+    "max_seconds": 1800,
+    "max_trials": 12,
+    "monetary_usd": 0,
+    "token_budget": 0
+  },
+  "evaluator": {
+    "command": [
+      "cargo",
+      "run",
+      "--release",
+      "-q",
+      "-p",
+      "jolt-kernels",
+      "--features",
+      "metal",
+      "--example",
+      "metal-instruction-ra-eval"
+    ],
+    "env": {
+      "JOLT_METAL_EVAL_LOG_N": "26",
+      "JOLT_METAL_EVAL_REPEATS": "3",
+      "JOLT_METAL_EVAL_SEED": "1"
+    },
+    "parser": "last schema-version 1 JSON object on stdout",
+    "timeout_seconds": 600
+  },
+  "final_validation": {
+    "cutoff_neighbors": true,
+    "fresh_processes": 2,
+    "log_n": [18, 22, 24, 26],
+    "required_path": "PrepareKernel<AkitaField, InstructionRaVirtualization>",
+    "resource_gated_log_n": 28
+  },
+  "goal": "maximize exact Instruction RA complete-hybrid speedup over the fastest optimized CPU control; 4x is a floor and 7x is the initial target",
+  "guards": {
+    "required_true": [
+      "exact_q_evals",
+      "exact_round_polys",
+      "exact_challenges",
+      "exact_cutoff_tables",
+      "exact_final_claims",
+      "exact_derived_eq_cycle",
+      "host_fiat_shamir",
+      "resident_plane_zero_copy",
+      "stable_buffer_identities",
+      "no_round_allocations"
+    ]
+  },
+  "hypothesis": "zero-copy lookup-plane residency, exact quadratic reuse, and fused width-16 dense transitions can complete the relation in at most 311 ms at 2^26",
+  "kernel": "instruction_ra_virtualization",
+  "metric": {
+    "direction": "max",
+    "minimum_relative_improvement": 0.03,
+    "name": "hybrid_speedup",
+    "target": 7.0,
+    "unit": "x"
+  },
+  "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.json",
+  "schema_version": 1,
+  "scope": {
+    "editable": [
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.metal",
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.rs"
+    ],
+    "frozen": [
+      "crates/jolt-kernels/examples/metal-instruction-ra-eval.rs",
+      "crates/jolt-kernels/src/metal/instruction_ra_virtualization.rs",
+      "crates/jolt-kernels/src/optimized/instruction_ra_virtualization.rs",
+      "crates/jolt-kernels/src/metal/solinas/address_sequence.rs",
+      "crates/jolt-field/src/akita.rs",
+      "crates/jolt-kernels/autoresearch/piop_goal.json",
+      "scripts/metal_autoresearch.py"
+    ]
+  },
+  "search_space": {
+    "JOLT_METAL_INSTRUCTION_RA_CUTOFF_LOG2": [8, 10, 12, 14, 16],
+    "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_WIDTH": [4, 8, 16],
+    "JOLT_METAL_INSTRUCTION_RA_PAIR_TABLES": [0, 1],
+    "JOLT_METAL_INSTRUCTION_RA_THREADS": [64, 128, 256]
+  },
+  "stopping_conditions": [
+    "trial or wall-clock budget is exhausted",
+    "no candidate clears the noise-qualified 3 percent promotion threshold",
+    "a correctness or resident-state guard fails",
+    "every legal row-thread candidate exceeds the 544-ms 4x falsification bar",
+    "the measured bottleneck requires a different schedule and therefore a new phase"
+  ],
+  "working_targets": {
+    "conservative_4x_wall_ms": 544,
+    "initial_7x_wall_ms": 311,
+    "optimistic_roof_wall_ms": 259,
+    "shader_entry_6_25x_wall_ms": 348
+  }
+}
