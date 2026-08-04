@@ -517,6 +517,8 @@ fn parallel_chunk_coeffs<F: Field>(
     reason = "test module"
 )]
 mod tests {
+    use core::fmt::Debug;
+
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -568,7 +570,7 @@ mod tests {
 
     fn with_fixture<R>(
         trace_order: TracePolynomialOrder,
-        f: impl FnOnce(&TraceBackend<'_, OwnedTrace>, &PrecommittedSchedule) -> R,
+        f: impl FnOnce(&TraceBackend<OwnedTrace>, &PrecommittedSchedule) -> R,
     ) -> R {
         let instructions: Vec<JoltInstructionRow> = (0..3u64)
             .map(|index| JoltInstructionRow {
@@ -605,7 +607,7 @@ mod tests {
             memory_layout: memory_layout.clone(),
             max_padded_trace_length: 1 << LOG_T,
         });
-        let program = JoltProgram::default();
+        let program = Arc::new(JoltProgram::default());
         let rows = vec![TraceRow::default(), TraceRow::default()];
         let device = JoltDevice {
             trusted_advice: (1..=24).collect(),
@@ -667,7 +669,7 @@ mod tests {
         SumcheckOutputClaims<Fr, RA>: OutputClaims<Fr>,
         ConcreteSumcheckChallenges<Fr, RA>: SumcheckChallenges<Fr, JoltChallengeId>,
     {
-        backend: &'a TraceBackend<'a, OwnedTrace>,
+        backend: &'a TraceBackend<OwnedTrace>,
         cycle_relation: &'a RC,
         cycle_claims: &'a SumcheckInputClaims<Fr, RC>,
         cycle_points: &'a SumcheckInputPoints<Fr, RC>,
@@ -684,10 +686,10 @@ mod tests {
         RC: ConcreteSumcheck<Fr>,
         RA: ConcreteSumcheck<Fr> + 'static,
         SumcheckInputClaims<Fr, RC>: InputClaims<Fr>,
-        SumcheckOutputClaims<Fr, RC>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
+        SumcheckOutputClaims<Fr, RC>: OutputClaims<Fr> + PartialEq + Debug,
         ConcreteSumcheckChallenges<Fr, RC>: SumcheckChallenges<Fr, JoltChallengeId>,
         SumcheckInputClaims<Fr, RA>: InputClaims<Fr>,
-        SumcheckOutputClaims<Fr, RA>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
+        SumcheckOutputClaims<Fr, RA>: OutputClaims<Fr> + PartialEq + Debug,
         ConcreteSumcheckChallenges<Fr, RA>: SumcheckChallenges<Fr, JoltChallengeId>,
         ReferenceBackend: PrepareKernel<Fr, RC>,
         OptimizedPrecommittedCycle: PrepareKernel<Fr, RC>,

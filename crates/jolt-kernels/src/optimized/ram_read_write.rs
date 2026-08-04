@@ -343,6 +343,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,
     };
@@ -363,7 +364,7 @@ mod tests {
         ram_k: usize,
     ) -> Fr {
         let cycles = 1usize << tau_low.len();
-        let eq = jolt_poly::EqPolynomial::new(tau_low.to_vec()).evaluations();
+        let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
         let ra: Vec<Fr> = witness.oracle_table(ram_ra().polynomial_id()).unwrap();
         let val: Vec<Fr> = witness.oracle_table(ram_val().polynomial_id()).unwrap();
         let inc: Vec<Fr> = witness.oracle_table(ram_inc().polynomial_id()).unwrap();

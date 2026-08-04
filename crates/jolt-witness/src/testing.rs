@@ -18,7 +18,7 @@ use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
 /// Runs `f` against a small canned backend: two real cycles (an ADDI with
 /// register activity and RAM traffic, then a RAM write) padded to `2^2`.
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
-pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R) -> R {
+pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
     let instruction = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::ADDI,
         address: 0x8000_0000,
@@ -43,7 +43,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
         memory_layout: Default::default(),
         max_padded_trace_length: 4,
     });
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let rows = vec![
         TraceRow {
             instruction,

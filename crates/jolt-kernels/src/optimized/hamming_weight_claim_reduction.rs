@@ -21,6 +21,8 @@
 //!   [`crate::optimized`]).
 
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
+use std::ops::Range;
+
 use jolt_claims::OutputClaims;
 use jolt_field::Field;
 use jolt_poly::{Polynomial, UnivariatePoly};
@@ -87,7 +89,7 @@ impl FamilySelectors {
         k_chunk: usize,
     ) -> Vec<Vec<F>> {
         let total = self.instruction.len() + self.bytecode.len() + self.ram.len();
-        let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
+        let accumulate = |range: Range<usize>| -> Vec<Vec<F>> {
             let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
             for j in range {
                 let row = &rows[j];

@@ -560,7 +560,7 @@ mod tests {
     /// sequence (exercising the `is_virtual` / `is_first_in_sequence`
     /// columns), an explicit mid-trace no-op, and no-op padding to `2^log_t`
     /// (exercising `is_noop`).
-    fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R) -> R {
+    fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
         let plain_a = instruction(0x8000_0000, None, false);
         let virtual_first = instruction(0x8000_0004, Some(1), true);
         let virtual_last = instruction(0x8000_0004, Some(0), false);
@@ -597,7 +597,7 @@ mod tests {
             memory_layout: Default::default(),
             max_padded_trace_length: 1 << log_t,
         });
-        let program = JoltProgram::default();
+        let program = Arc::new(JoltProgram::default());
         let config = JoltVmWitnessConfig::new(
             log_t,
             64,

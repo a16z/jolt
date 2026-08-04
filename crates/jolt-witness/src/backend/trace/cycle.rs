@@ -5,11 +5,10 @@ use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
 use std::ops::Range;
-use std::sync::Arc;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
 
-impl<T: TraceSource + Clone> TraceBackend<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<T> {
     /// Materializes one cycle-domain witness column by walking the trace
     /// once; all per-witness logic lives on `W`.
     pub(crate) fn materialize_cycle<F: Field, W: Extract + ToField>(
@@ -89,7 +88,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     ) -> Result<Vec<V>, WitnessError> {
         let rows = checked_pow2(self.config.log_t)?;
         let env = WitnessEnv {
-            preprocessing: self.preprocessing,
+            preprocessing: &self.preprocessing,
         };
         if let Some(physical) = self.trace.trace.rows() {
             let padding = TraceRow::default();
@@ -117,17 +116,9 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     }
 }
 
-impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
-    fn shared_rows(&self) -> Option<crate::SharedTraceRows> {
-        let cycles = checked_pow2(self.config.log_t).ok()?;
-        self.trace
-            .trace
-            .shared_rows()
-            .map(|rows| crate::SharedTraceRows {
-                rows,
-                cycles,
-                preprocessing: Arc::clone(self.preprocessing),
-            })
+impl<T: TraceSource + Clone> RowSource for TraceBackend<T> {
+    fn rows(&self) -> Option<&[TraceRow]> {
+        self.trace.trace.rows()
     }
 
     fn visit_chunks(
@@ -147,7 +138,7 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
             });
         }
         let env = WitnessEnv {
-            preprocessing: self.preprocessing,
+            preprocessing: &self.preprocessing,
         };
         // Slice-backed traces visit borrowed subslices directly — no per-row
         // copies; only a buffer overlapping the padding tail materializes.
@@ -197,7 +188,7 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
     }
 }
 
-impl<T: TraceSource + Clone> BundleSource for TraceBackend<'_, T> {
+impl<T: TraceSource + Clone> BundleSource for TraceBackend<T> {
     fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
         crate::collect_bundles(self, checked_pow2(self.config.log_t)?)
     }

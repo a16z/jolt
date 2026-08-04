@@ -1,6 +1,5 @@
-//! Access shapes over a slice-backed witness source, derived from the
-//! plane's one escape hatch ([`jolt_witness::RowSource::shared_rows`]): the
-//! borrowed random-access view and the index-parallel collectors the
+//! Access shapes over a slice-backed witness source: the borrowed
+//! random-access view and the index-parallel collectors the
 //! optimized kernels use in place of the sequential chunk walk. Extraction
 //! is pure per cycle window, so collected values are identical to the
 //! walk's — the padding and lookahead semantics are pinned against
@@ -9,11 +8,12 @@
 #[cfg(feature = "parallel")]
 use core::ops::Range;
 
+use jolt_field::Field;
 use jolt_program::execution::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 #[cfg(feature = "parallel")]
 use jolt_witness::{par_collect_windows, FirstErrorLatch};
-use jolt_witness::{SharedTraceRows, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -33,7 +33,31 @@ pub(crate) struct RandomAccessRows<'a> {
     padding: TraceRow,
 }
 
-impl RandomAccessRows<'_> {
+impl<'a> RandomAccessRows<'a> {
+    pub(crate) fn new<F: Field>(
+        witness: &'a dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Option<Self>, WitnessError> {
+        let Some(rows) = witness.rows() else {
+            return Ok(None);
+        };
+        if rows.len() > cycles {
+            return Err(WitnessError::InvalidWitnessData {
+                label: "random-access rows",
+                reason: format!(
+                    "physical trace has {} rows but the cycle domain has {cycles}",
+                    rows.len()
+                ),
+            });
+        }
+        Ok(Some(Self {
+            rows,
+            cycles,
+            env: WitnessEnv::new(witness.program_preprocessing()),
+            padding: TraceRow::default(),
+        }))
+    }
+
     /// Extracts the bundle at `index` with the sequential walk's one-row
     /// lookahead window (padding rows at and beyond the physical trace, no
     /// lookahead at the end of the cycle domain). Pure per index — callers
@@ -44,22 +68,6 @@ impl RandomAccessRows<'_> {
         let next =
             (index + 1 < self.cycles).then(|| self.rows.get(index + 1).unwrap_or(&self.padding));
         B::from_row(current, next, &self.env)
-    }
-}
-
-/// The borrowed random-access view over a shared-rows handle.
-pub(crate) trait SharedRowsExt {
-    fn view(&self) -> RandomAccessRows<'_>;
-}
-
-impl SharedRowsExt for SharedTraceRows {
-    fn view(&self) -> RandomAccessRows<'_> {
-        RandomAccessRows {
-            rows: &self.rows,
-            cycles: self.cycles,
-            env: self.env(),
-            padding: TraceRow::default(),
-        }
     }
 }
 
@@ -145,9 +153,10 @@ pub(crate) fn collect_range_into<B: WitnessBundle + Copy + Send>(
 #[expect(clippy::unwrap_used, reason = "test-only module")]
 mod tests {
     use super::*;
+    use jolt_field::Fr;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::{NextUnexpandedPc, UnexpandedPc};
-    use jolt_witness::{collect_bundles, RowSource, WitnessBundle};
+    use jolt_witness::{collect_bundles, WitnessBundle};
 
     /// A two-column window bundle: `NextUnexpandedPc` reads the lookahead
     /// row, so padding and end-of-domain semantics are both exercised.
@@ -163,19 +172,21 @@ mod tests {
     #[test]
     fn view_collection_matches_the_chunked_walk() {
         with_sample_backend(|backend| {
-            let shared = backend.shared_rows().unwrap();
-            let sequential: Vec<WindowBundle> = collect_bundles(backend, shared.cycles).unwrap();
-            let view = shared.view();
-            let parallel: Vec<WindowBundle> = collect_bundles_par(&view, shared.cycles).unwrap();
+            let cycles = 4;
+            let sequential: Vec<WindowBundle> = collect_bundles(backend, cycles).unwrap();
+            let view = RandomAccessRows::new::<Fr>(backend, cycles)
+                .unwrap()
+                .unwrap();
+            let parallel: Vec<WindowBundle> = collect_bundles_par(&view, cycles).unwrap();
             assert_eq!(sequential, parallel);
 
             #[cfg(feature = "parallel")]
             {
                 let mut ranged: Vec<WindowBundle> = Vec::new();
-                let split = shared.cycles / 2;
+                let split = cycles / 2;
                 collect_range_into(&view, 0..split, &mut ranged).unwrap();
                 assert_eq!(sequential[..split], ranged);
-                collect_range_into(&view, split..shared.cycles, &mut ranged).unwrap();
+                collect_range_into(&view, split..cycles, &mut ranged).unwrap();
                 assert_eq!(sequential[split..], ranged);
             }
         });

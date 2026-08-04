@@ -20,6 +20,7 @@
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
+use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -87,18 +88,17 @@ impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduc
             gamma_squared * gamma,
         );
 
-        let dense =
-            |id: jolt_claims::protocols::jolt::JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
-                let table = witness.oracle_table(id.polynomial_id())?;
-                if table.len() != cycles {
-                    return Err(KernelError::TableSizeMismatch {
-                        table: format!("{id:?}"),
-                        expected: cycles,
-                        got: table.len(),
-                    });
-                }
-                Ok(table)
-            };
+        let dense = |id: JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
+            let table = witness.oracle_table(id.polynomial_id())?;
+            if table.len() != cycles {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("{id:?}"),
+                    expected: cycles,
+                    got: table.len(),
+                });
+            }
+            Ok(table)
+        };
 
         Ok(Box::new(IncKernel {
             progress: RoundProgress::new(relation.rounds()),

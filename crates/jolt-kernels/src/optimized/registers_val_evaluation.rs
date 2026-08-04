@@ -22,6 +22,9 @@
 //! The per-cycle `rd` indices are reclaimed from the proof session when the
 //! stage-4 optimized kernel parked them, avoiding a second trace walk.
 
+use std::ptr;
+use std::sync::Arc;
+
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
@@ -40,7 +43,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
-use super::rows::{collect_par_map, SharedRowsExt};
+use super::rows::{collect_par_map, RandomAccessRows};
 use super::support::{
     bind_pairs, collect_rows, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
 };
@@ -131,27 +134,36 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
         // prover's peak moment (the instruction kernel's address/cycle
         // handoff) doing nothing. Values are identical either way — the
         // same extractor over the same rows.
-        let inc = match witness.shared_rows() {
-            Some(owned) if owned.cycles == cycles => IncSource::Deferred(owned),
-            _ => {
-                let inc_table: Vec<F> =
-                    witness.oracle_table(rd_inc_val_evaluation().polynomial_id())?;
-                if inc_table.len() != cycles {
-                    return Err(KernelError::TableSizeMismatch {
-                        table: format!("{:?}", rd_inc_val_evaluation()),
-                        expected: cycles,
-                        got: inc_table.len(),
-                    });
-                }
-                IncSource::Ready(Polynomial::new(inc_table))
+        let deferred = if RandomAccessRows::new(witness, cycles)?.is_some() {
+            session
+                .witness::<F>()
+                .filter(|owned| ptr::eq(owned.as_ref(), witness))
+        } else {
+            None
+        };
+        let inc = if let Some(owned) = deferred {
+            IncSource::Deferred {
+                witness: Arc::clone(owned),
+                cycles,
             }
+        } else {
+            let inc_table: Vec<F> =
+                witness.oracle_table(rd_inc_val_evaluation().polynomial_id())?;
+            if inc_table.len() != cycles {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("{:?}", rd_inc_val_evaluation()),
+                    expected: cycles,
+                    got: inc_table.len(),
+                });
+            }
+            IncSource::Ready(Polynomial::new(inc_table))
         };
 
         // Reclaim the rd hot indices the stage-4 kernel parked; collect them
         // from the row source otherwise (reference-only stage 4, tests).
         let rd = match session.take::<SharedRdIndices>() {
             Some(SharedRdIndices(rd)) if rd.len() == cycles => rd,
-            _ => collect_rows::<RegisterCycleRow>(witness, cycles)?
+            _ => collect_rows::<F, RegisterCycleRow>(witness, cycles)?
                 .iter()
                 .map(|row| row.rd.map(|(k, ..)| k))
                 .collect(),
@@ -172,7 +184,10 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
 /// The increment table's lifecycle: deferred to the member's first active
 /// round on slice-backed sources, dense from prepare otherwise.
 enum IncSource<F: Field> {
-    Deferred(jolt_witness::SharedTraceRows),
+    Deferred {
+        witness: Arc<dyn JoltWitnessPlane<F>>,
+        cycles: usize,
+    },
     Ready(Polynomial<F>),
 }
 
@@ -193,7 +208,7 @@ struct ValEvaluationKernel<F: Field> {
 crate::optimized::impl_field_allocative!(ValEvaluationKernel, |kernel| {
     use crate::backend::{poly_heap_bytes, vec_heap_bytes};
     let inc = match &kernel.inc {
-        IncSource::Deferred(_) => 0,
+        IncSource::Deferred { .. } => 0,
         IncSource::Ready(table) => poly_heap_bytes(table),
     };
     let wa = match &kernel.wa {
@@ -206,13 +221,20 @@ crate::optimized::impl_field_allocative!(ValEvaluationKernel, |kernel| {
 impl<F: Field> ValEvaluationKernel<F> {
     /// Materialize the deferred increment table; a no-op once ready.
     fn ensure_inc(&mut self) -> Result<(), SumcheckError<F>> {
-        if let IncSource::Deferred(owned) = &self.inc {
-            let table: Vec<F> = collect_par_map(&owned.view(), owned.cycles, |row: RdIncRow| {
-                row.rd_inc.to_field()
-            })
-            .map_err(|_| SumcheckError::MissingEvaluationSource {
-                kind: "deferred registers increment table",
-            })?;
+        if let IncSource::Deferred { witness, cycles } = &self.inc {
+            let access = RandomAccessRows::new(witness.as_ref(), *cycles)
+                .map_err(|_| SumcheckError::MissingEvaluationSource {
+                    kind: "deferred registers increment rows",
+                })?
+                .ok_or(SumcheckError::MissingEvaluationSource {
+                    kind: "deferred registers increment rows",
+                })?;
+            let table: Vec<F> =
+                collect_par_map(&access, *cycles, |row: RdIncRow| row.rd_inc.to_field()).map_err(
+                    |_| SumcheckError::MissingEvaluationSource {
+                        kind: "deferred registers increment table",
+                    },
+                )?;
             self.inc = IncSource::Ready(Polynomial::new(table));
         }
         Ok(())

@@ -21,12 +21,4 @@ pub trait TraceSource {
     fn rows(&self) -> Option<&[TraceRow]> {
         None
     }
-
-    /// A shared owning handle to the same rows [`Self::rows`] serves
-    /// (`None` whenever `rows` is) — long-lived consumers re-derive
-    /// per-cycle data from the handle instead of retaining materialized
-    /// copies past their borrow of the source.
-    fn shared_rows(&self) -> Option<std::sync::Arc<Vec<TraceRow>>> {
-        None
-    }
 }

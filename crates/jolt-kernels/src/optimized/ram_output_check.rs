@@ -321,7 +321,7 @@ mod tests {
             ],
         };
 
-        let program = JoltProgram::default();
+        let program = Arc::new(JoltProgram::default());
         let config = JoltVmWitnessConfig::new(
             log_t,
             ram_k,

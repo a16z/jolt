@@ -2,6 +2,8 @@
 //! of consumers.
 
 use std::ops::Range;
+#[cfg(feature = "parallel")]
+use std::sync::Mutex;
 
 use jolt_program::execution::TraceRow;
 #[cfg(feature = "parallel")]
@@ -124,11 +126,8 @@ pub type ChunkVisitor<'a> =
     dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
 /// Sequential row access for the pass: trace-backed today, segment-backed
-/// later. Random access is deliberately inexpressible — except through
-/// [`RowSource::shared_rows`], the measured escape hatch for
-/// order-insensitive whole-range collection: the chunked walk serializes on
-/// per-chunk staging and consume copies, and at 2^25 cycles on a 64-thread
-/// host the collection walks alone were most of the prover's wall time.
+/// later. Slice-backed sources may also expose their rows for
+/// order-insensitive whole-range collection.
 pub trait RowSource {
     /// Visits the half-open cycle `range` in order as buffers of at most
     /// `chunk_size` rows; `[0, T)` today, segments later.
@@ -139,35 +138,9 @@ pub trait RowSource {
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
 
-    /// A shared owning handle to a slice-backed source's rows and extraction
-    /// context — `None` (the default, and every re-emulating source) keeps
-    /// the sequential chunk walk as the only access shape. The handle is
-    /// plain data: consumers derive their own access shapes from it
-    /// (index-parallel collection, cross-round `'static` state).
-    fn shared_rows(&self) -> Option<SharedTraceRows> {
+    /// The full physical row sequence, when borrowing it is supported.
+    fn rows(&self) -> Option<&[TraceRow]> {
         None
-    }
-}
-
-/// A shared owning handle to a slice-backed source's rows and extraction
-/// context. Cycles at and beyond `rows.len()` (up to `cycles`) are padding
-/// rows, exactly as the sequential walk serves them.
-#[derive(Clone)]
-pub struct SharedTraceRows {
-    /// The physical trace rows.
-    pub rows: std::sync::Arc<Vec<TraceRow>>,
-    /// The padded cycle-domain size (`2^log_t`).
-    pub cycles: usize,
-    /// The program preprocessing behind [`Self::env`].
-    pub preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
-}
-
-impl SharedTraceRows {
-    /// The extraction environment every window over the rows shares.
-    pub fn env(&self) -> WitnessEnv<'_> {
-        WitnessEnv {
-            preprocessing: &self.preprocessing,
-        }
     }
 }
 
@@ -186,7 +159,7 @@ const COLLECT_PAR_CHUNK: usize = 1 << 12;
 /// failure).
 #[cfg(feature = "parallel")]
 pub struct FirstErrorLatch {
-    slot: std::sync::Mutex<Option<(usize, WitnessError)>>,
+    slot: Mutex<Option<(usize, WitnessError)>>,
 }
 
 #[cfg(feature = "parallel")]
@@ -197,7 +170,7 @@ pub struct FirstErrorLatch {
 impl FirstErrorLatch {
     pub fn new() -> Self {
         Self {
-            slot: std::sync::Mutex::new(None),
+            slot: Mutex::new(None),
         }
     }
 
@@ -229,7 +202,7 @@ impl Default for FirstErrorLatch {
 /// (deterministic across runs); on error the partially-written buffer is
 /// abandoned without drops — sound because `V: Copy` rules out drop
 /// obligations by construction. Public for the kernels' index-parallel
-/// collectors over [`SharedTraceRows`].
+/// collectors over borrowed trace rows.
 #[cfg(feature = "parallel")]
 pub fn par_collect_windows<V: Copy + Send>(
     count: usize,
@@ -413,17 +386,6 @@ mod tests {
             let expected = whole.get(index + 1).map_or(0, |next| next.pc.0);
             assert_eq!(bundle.next_pc.0, expected);
         }
-    }
-
-    #[test]
-    fn shared_rows_serve_the_walked_domain() {
-        with_sample_backend(|backend| {
-            let collected: Vec<WindowBundle> = collect_bundles(backend, 4).unwrap();
-            let shared = backend.shared_rows().unwrap();
-            assert_eq!(shared.cycles, 4);
-            assert!(shared.rows.len() <= shared.cycles);
-            assert_eq!(collected.len(), shared.cycles);
-        });
     }
 
     #[test]

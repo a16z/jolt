@@ -6,6 +6,8 @@
 //! strategy as `jolt_poly::thread::unsafe_allocate_zero_vec`, duplicated here
 //! because jolt-witness does not depend on jolt-poly).
 
+use std::alloc::Layout;
+
 use jolt_field::Field;
 
 /// Allocates `vec![F::zero(); len]` through `alloc_zeroed`.
@@ -48,7 +50,7 @@ pub(crate) fn zero_table<F: Field>(len: usize) -> Vec<F> {
     // assertion above guarantees all-zero bytes are a valid `F` (the zero
     // element).
     unsafe {
-        let layout = std::alloc::Layout::array::<F>(len).unwrap();
+        let layout = Layout::array::<F>(len).unwrap();
         let ptr = std::alloc::alloc_zeroed(layout).cast::<F>();
         if ptr.is_null() {
             std::alloc::handle_alloc_error(layout);

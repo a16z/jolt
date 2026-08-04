@@ -32,6 +32,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use clap::ValueEnum;
@@ -544,7 +545,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         .program
         .as_full_arc()
         .expect("full program preprocessing");
-    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
 
     // --- Modular trace (unmeasured, like legacy's `gen_from_elf` emulation).
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
@@ -561,14 +562,14 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     let public_io = trace_output.device.clone();
     let padded_output = pad_trace(trace_output, config.trace_length);
 
-    let witness = TraceBackend::new(
+    let witness = Arc::new(TraceBackend::new(
         JoltVmWitnessConfig::new(
             config.trace_length.ilog2() as usize,
             config.ram_K,
             config.one_hot_config,
         ),
         JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-    );
+    ));
 
     // PCS setup sized like the byte-diff harness: the main one-hot matrix
     // maxed with both advice candidates (always included in setup sizing,
@@ -598,7 +599,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         &prover_preprocessing,
         &config,
         None,
-        &witness,
+        Arc::clone(&witness),
         &public_io,
     )
     .expect("modular prove");

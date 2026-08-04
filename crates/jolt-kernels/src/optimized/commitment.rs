@@ -24,12 +24,14 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 
 use crate::commitment::{finish_streamed, finish_streamed_one_hot, ModeStreamingCommitment};
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
+use jolt_witness::{
+    stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, RowSource, StreamConsumer,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 #[cfg(feature = "parallel")]
-use super::rows::SharedRowsExt;
+use super::rows::RandomAccessRows;
 use crate::commitment::{
     CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
 };
@@ -81,7 +83,7 @@ where
     fn commit_witness(
         &self,
         session: &mut ProofSession,
-        source: &dyn RowSource,
+        source: &dyn JoltWitnessPlane<F>,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
@@ -116,7 +118,7 @@ where
 /// it to force multi-delivery sequencing; production uses
 /// [`superchunk_cycles`]).
 fn commit_streaming<F, PCS>(
-    source: &dyn RowSource,
+    source: &dyn JoltWitnessPlane<F>,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
@@ -136,10 +138,8 @@ where
     // against the commit grid of the current one; re-emulating sources
     // alternate the two phases through the sequential walk.
     #[cfg(feature = "parallel")]
-    if let Some(shared) = source.shared_rows() {
-        if cycles <= shared.cycles {
-            return commit_pipelined(&shared.view(), ids, grid, setup, superchunk);
-        }
+    if let Some(access) = RandomAccessRows::new(source, cycles)? {
+        return commit_pipelined(&access, ids, grid, setup, superchunk);
     }
     commit_streamed(source, ids, grid, setup, superchunk)
 }
@@ -178,7 +178,7 @@ where
 /// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
 fn commit_pipelined<F, PCS>(
-    access: &super::rows::RandomAccessRows<'_>,
+    access: &RandomAccessRows<'_>,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
@@ -368,9 +368,9 @@ mod tests {
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_witness::RowSource;
+    use jolt_witness::JoltWitnessPlane;
 
-    use super::{commit_streamed, commit_streaming};
+    use super::{commit_streamed, commit_streaming, RandomAccessRows};
     use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
     use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
     use crate::{OptimizedBackend, ProofSession, ReferenceBackend};
@@ -438,7 +438,7 @@ mod tests {
                 "fixture must exercise the streaming path with multiple windows"
             );
             let setup = DoryScheme::setup_prover(grid.total_vars);
-            let source: &dyn RowSource = witness;
+            let source: &dyn JoltWitnessPlane<Fr> = witness;
 
             let reference = <ReferenceBackend as CommitWitness<Fr, DoryScheme>>::commit_witness(
                 &ReferenceBackend,
@@ -475,10 +475,11 @@ mod tests {
             assert_same_commitments(&reference, &streamed);
             #[cfg(feature = "parallel")]
             {
-                use crate::optimized::rows::SharedRowsExt;
-                let shared = source.shared_rows().unwrap();
+                let access = RandomAccessRows::new(source, 1usize << shape.log_t)
+                    .unwrap()
+                    .unwrap();
                 let pipelined = super::commit_pipelined::<Fr, DoryScheme>(
-                    &shared.view(),
+                    &access,
                     &ids,
                     grid,
                     &setup,

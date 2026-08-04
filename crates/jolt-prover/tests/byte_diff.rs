@@ -293,7 +293,7 @@ mod support {
     /// legacy's dedicated-context commitment bytes exactly.
     pub fn modular_trusted_advice_commitment(
         backend: &JoltBackend<Fr, DoryScheme>,
-        witness: &TraceBackend<'_, OwnedTrace>,
+        witness: &TraceBackend<OwnedTrace>,
         memory_layout: &MemoryLayout,
         setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
         expected: &DoryCommitment,
@@ -464,6 +464,8 @@ mod support {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
@@ -531,7 +533,7 @@ mod muldiv {
         .expect("legacy proof must verify through stage 0");
 
         // --- New-prover side: trace independently through the modular stack.
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
 
@@ -552,10 +554,10 @@ mod muldiv {
             support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-        );
+        ));
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
@@ -587,7 +589,7 @@ mod muldiv {
                 &prover_preprocessing,
                 &config,
                 None,
-                &witness,
+                witness.as_ref(),
                 &public_io,
             )
             .expect("stage 0 proves");
@@ -615,7 +617,7 @@ mod muldiv {
                 &mut session,
                 &mode,
                 config.trace_length.ilog2() as usize,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 1 proves");
@@ -652,7 +654,7 @@ mod muldiv {
                 &config,
                 &public_io,
                 &stage1.clear_output,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 2 proves");
@@ -689,7 +691,7 @@ mod muldiv {
                 &config,
                 &stage1.clear_output,
                 &stage2.clear_output,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 3 proves");
@@ -725,7 +727,7 @@ mod muldiv {
                 &prover_preprocessing,
                 &stage2.clear_output,
                 &stage3.clear_output,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 4 proves");
@@ -762,7 +764,7 @@ mod muldiv {
                 &prover_preprocessing,
                 &stage2.clear_output,
                 &stage4.clear_output,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 5 proves");
@@ -810,7 +812,7 @@ mod muldiv {
                 &stage3.clear_output,
                 &stage4.clear_output,
                 &stage5.clear_output,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 6a proves");
@@ -855,7 +857,7 @@ mod muldiv {
                 &stage4.clear_output,
                 &stage5.clear_output,
                 &stage6a.clear_output,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 6b proves");
@@ -897,7 +899,7 @@ mod muldiv {
                 &prover_preprocessing,
                 &stage4.clear_output,
                 &stage6b.clear_output,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 7 proves");
@@ -937,7 +939,7 @@ mod muldiv {
                 &stage0.hints,
                 &stage6b.clear_output,
                 &stage7.clear_output,
-                &witness,
+                witness.as_ref(),
                 &mut new_transcript,
             )
             .expect("stage 8 proves");
@@ -980,7 +982,7 @@ mod muldiv {
                     &prover_preprocessing,
                     &config,
                     None,
-                    &witness,
+                    Arc::clone(&witness),
                     &public_io,
                 )
                 .expect("top-level prove");
@@ -993,6 +995,8 @@ mod muldiv {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
@@ -1062,7 +1066,7 @@ mod advice_consumer {
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
 
         // --- New-prover side: trace independently with the advice inputs.
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(
             &jolt_program,
@@ -1085,12 +1089,12 @@ mod advice_consumer {
             support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config)
                 .include_trusted_advice(true)
                 .include_untrusted_advice(true),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-        );
+        ));
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
@@ -1116,7 +1120,7 @@ mod advice_consumer {
             &prover_preprocessing,
             &config,
             Some(&trusted_advice_commitment),
-            &witness,
+            Arc::clone(&witness),
             &public_io,
         )
         .expect("top-level prove");
@@ -1171,7 +1175,7 @@ mod advice_consumer {
             &prover_preprocessing,
             &config,
             Some(&trusted_advice_commitment),
-            &witness,
+            Arc::clone(&witness),
             &public_io,
         )
         .expect("optimized-backend prove");
@@ -1185,6 +1189,8 @@ mod advice_consumer {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod committed_muldiv {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
@@ -1272,7 +1278,7 @@ mod committed_muldiv {
         // commitments).
         let memory_layout = &public_io.memory_layout;
         let full_program = support::rebuild_full_program(&legacy_preprocessing, memory_layout);
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let config = support::derive_config_pinned(
             &trace_output,
@@ -1284,13 +1290,13 @@ mod committed_muldiv {
             support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        // The witness borrows its own copy: `full_program` itself moves into
+        // The witness owns its own copy: `full_program` itself moves into
         // the prover preprocessing below.
-        let witness_program = std::sync::Arc::new(full_program.clone());
-        let witness = TraceBackend::new(
+        let witness_program = Arc::new(full_program.clone());
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &witness_program, padded_output),
-        );
+        ));
 
         // Setup sizing: the committed candidates can exceed the main grid.
         let (bytecode_candidate, image_candidate) =
@@ -1333,7 +1339,7 @@ mod committed_muldiv {
                     &prover_preprocessing,
                     &config,
                     None,
-                    &witness,
+                    Arc::clone(&witness),
                     &public_io,
                 )
                 .expect("top-level prove");
@@ -1368,6 +1374,8 @@ mod committed_muldiv {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod address_major {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
@@ -1422,7 +1430,7 @@ mod address_major {
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
 
         // --- New-prover side: trace independently through the modular stack.
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
@@ -1439,10 +1447,10 @@ mod address_major {
             support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-        );
+        ));
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
@@ -1467,7 +1475,7 @@ mod address_major {
                     &prover_preprocessing,
                     &config,
                     None,
-                    &witness,
+                    Arc::clone(&witness),
                     &public_io,
                 )
                 .expect("top-level prove");
@@ -1505,6 +1513,8 @@ mod address_major {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod advice_committed {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
@@ -1580,7 +1590,7 @@ mod advice_committed {
         // --- New-prover side.
         let memory_layout = &public_io.memory_layout;
         let full_program = support::rebuild_full_program(&legacy_preprocessing, memory_layout);
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let trace_output = support::trace_modular(
             &jolt_program,
             memory_layout,
@@ -1598,15 +1608,15 @@ mod advice_committed {
             support::MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        // The witness borrows its own copy: `full_program` itself moves into
+        // The witness owns its own copy: `full_program` itself moves into
         // the prover preprocessing below.
-        let witness_program = std::sync::Arc::new(full_program.clone());
-        let witness = TraceBackend::new(
+        let witness_program = Arc::new(full_program.clone());
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config)
                 .include_trusted_advice(true)
                 .include_untrusted_advice(true),
             JoltVmWitnessInputs::new(&jolt_program, &witness_program, padded_output),
-        );
+        ));
 
         let (bytecode_candidate, image_candidate) =
             support::precommitted_candidates(&verifier_preprocessing, BYTECODE_CHUNK_COUNT);
@@ -1657,7 +1667,7 @@ mod advice_committed {
                     &prover_preprocessing,
                     &config,
                     Some(&trusted_advice_commitment),
-                    &witness,
+                    Arc::clone(&witness),
                     &public_io,
                 )
                 .expect("top-level prove");
@@ -1712,6 +1722,8 @@ mod chunk_boundary {
     // Anchor the sha2 inline's inventory registration into this test binary;
     // without it the guest's inline instructions fail bytecode expansion.
     extern crate jolt_inlines_sha2;
+
+    use std::sync::Arc;
 
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_crypto::{Bn254G1, Pedersen};
@@ -1769,7 +1781,7 @@ mod chunk_boundary {
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
 
         // --- New-prover side: trace independently through the modular stack.
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
@@ -1806,10 +1818,10 @@ mod chunk_boundary {
             padded_output.device.clone(),
             padded_output.final_memory.clone(),
         );
-        let witness = TraceBackend::new(
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-        );
+        ));
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
@@ -1832,7 +1844,7 @@ mod chunk_boundary {
             &prover_preprocessing,
             &config,
             None,
-            &witness,
+            Arc::clone(&witness),
             &public_io,
         )
         .expect("top-level prove");
@@ -1880,17 +1892,17 @@ mod chunk_boundary {
         // The forced-walk arm: the same trace behind a re-emulating source,
         // so the sequential chunked walk (and its 2^16-row boundary carry)
         // is what actually produces these bytes.
-        let hidden_witness = TraceBackend::new(
+        let hidden_witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, hidden_output),
-        );
+        ));
         let hidden_proof =
             jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                 &backend,
                 &prover_preprocessing,
                 &config,
                 None,
-                &hidden_witness,
+                Arc::clone(&hidden_witness),
                 &public_io,
             )
             .expect("top-level prove over the re-emulating source");
@@ -1918,6 +1930,8 @@ mod chunk_boundary {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[expect(clippy::expect_used)]
 mod wide_one_hot {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
@@ -1987,7 +2001,7 @@ mod wide_one_hot {
         let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
 
         // --- New-prover side: trace independently, inject the same config.
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
@@ -2007,10 +2021,10 @@ mod wide_one_hot {
             MAX_PADDED_TRACE_LENGTH,
         );
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-        );
+        ));
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
@@ -2035,7 +2049,7 @@ mod wide_one_hot {
                     &prover_preprocessing,
                     &config,
                     None,
-                    &witness,
+                    Arc::clone(&witness),
                     &public_io,
                 )
                 .expect("top-level prove");

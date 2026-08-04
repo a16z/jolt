@@ -9,6 +9,8 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
 use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{JoltWitnessPlane, WitnessBundle};
@@ -49,10 +51,10 @@ impl RamAccessColumns {
 }
 
 #[cfg(feature = "allocative")]
-impl allocative::Allocative for RamAccessColumns {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl Allocative for RamAccessColumns {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("heap"), self.heap_bytes());
+        visitor.visit_simple(Key::new("heap"), self.heap_bytes());
         visitor.exit();
     }
 }

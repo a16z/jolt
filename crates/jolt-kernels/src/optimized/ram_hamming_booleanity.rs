@@ -20,6 +20,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
+use jolt_claims::NoChallenges;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -158,7 +159,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> {
         relation: &Self::Relation,
         input_points: &SumcheckInputPoints<F, Self::Relation>,
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
-        challenges: &jolt_claims::NoChallenges<F>,
+        challenges: &NoChallenges<F>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
         pin_derived_term_if_derived(
@@ -197,7 +198,7 @@ mod tests {
                 RamHammingBooleanity::new(TraceDimensions::new(log_t), stage1_cycle_binding);
             let claims = RamHammingBooleanityInputClaims::default();
             let points = RamHammingBooleanityInputClaims::default();
-            let challenges = jolt_claims::NoChallenges::default();
+            let challenges = NoChallenges::default();
 
             let mut reference = ReferenceBackend
                 .prepare(

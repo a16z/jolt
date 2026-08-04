@@ -1,5 +1,6 @@
 //! Streaming (chunked) commitment for the Dory scheme.
 
+use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use dory::backends::arkworks::ArkG1;
 use dory::primitives::arithmetic::DoryRoutines;
@@ -83,7 +84,7 @@ impl StreamingCommitment for crate::DoryScheme {
     }
 
     type OneHotChunkCommitment = Vec<Bn254G1>;
-    type OneHotStreamContext = Vec<ark_bn254::G1Affine>;
+    type OneHotStreamContext = Vec<G1Affine>;
 
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_feed_zeros")]
     fn feed_zeros(
@@ -124,7 +125,7 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
 
-        let row_commitment = ark_ec::scalar_mul::variable_base::msm_u64::<ark_bn254::G1Projective>(
+        let row_commitment = ark_ec::scalar_mul::variable_base::msm_u64::<G1Projective>(
             scalar_affine_bases(&mut partial.scalar_affine_bases, chunk.len(), setup),
             chunk,
             true,
@@ -148,7 +149,7 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
 
-        let row_commitment = ark_ec::scalar_mul::variable_base::msm_i128::<ark_bn254::G1Projective>(
+        let row_commitment = ark_ec::scalar_mul::variable_base::msm_i128::<G1Projective>(
             scalar_affine_bases(&mut partial.scalar_affine_bases, chunk.len(), setup),
             chunk,
             true,
@@ -198,7 +199,7 @@ impl StreamingCommitment for crate::DoryScheme {
                 let base = window * row_width;
                 let chunk: Vec<i128> = (base..base + row_width).map(&value).collect();
                 ark_to_jolt_g1(ArkG1(ark_ec::scalar_mul::variable_base::msm_i128::<
-                    ark_bn254::G1Projective,
+                    G1Projective,
                 >(bases, &chunk, true)))
             })
             .collect();
@@ -358,7 +359,7 @@ fn finish_one_hot_column_major_chunks<M: dory::Mode>(
 /// One column-major one-hot chunk's `one_hot_k` partial row commitments —
 /// the shared body behind the single and batch streaming entry points.
 fn one_hot_chunk_commitments(
-    bases: &[ark_bn254::G1Affine],
+    bases: &[G1Affine],
     setup: &DoryProverSetup,
     one_hot_k: usize,
     chunk: &[Option<usize>],
@@ -425,10 +426,10 @@ fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
 /// cache field (not the whole partial) so callers can hold the bases while
 /// appending to the sibling `row_commitments` field.
 fn scalar_affine_bases<'a>(
-    cache: &'a mut Option<Vec<ark_bn254::G1Affine>>,
+    cache: &'a mut Option<Vec<G1Affine>>,
     row_width: usize,
     setup: &DoryProverSetup,
-) -> &'a [ark_bn254::G1Affine] {
+) -> &'a [G1Affine] {
     let bases = cache.get_or_insert_with(|| {
         setup.0.g1_vec[..row_width]
             .iter()

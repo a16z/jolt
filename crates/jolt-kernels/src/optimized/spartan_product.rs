@@ -147,7 +147,7 @@ impl SpartanProductRow {
 struct SpartanProductCarry<F: Field> {
     log_t: usize,
     tau_low: Vec<F>,
-    rows: BundleStore<SpartanProductRow>,
+    rows: BundleStore<F, SpartanProductRow>,
     t1_values: Vec<F>,
 }
 
@@ -184,14 +184,14 @@ impl OptimizedProductUniskip {
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
-        rows: BundleStore<SpartanProductRow>,
+        rows: BundleStore<F, SpartanProductRow>,
     ) -> Result<(), KernelError<F>> {
         if tau_low.len() != log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "Spartan product tau_low must carry log_t challenges",
             });
         }
-        let t1_values = Self::extended_t1_values(&rows.access(), tau_low)?;
+        let t1_values = Self::extended_t1_values(&rows.access()?, tau_low)?;
         session.park(SpartanProductCarry {
             log_t,
             tau_low: tau_low.to_vec(),
@@ -242,7 +242,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
         tau_low: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
+        let rows = BundleStore::resolve(session, witness, 1usize << log_t)?;
         Self::prepare_from_store(session, log_t, tau_low, rows)
     }
 
@@ -305,7 +305,7 @@ struct ProductRemainderKernel<F: Field> {
     split_eq: GruenSplitEqPolynomial<F>,
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
-    rows: BundleStore<SpartanProductRow>,
+    rows: BundleStore<F, SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
 }
@@ -362,7 +362,7 @@ impl<F: Field> ProductRemainderKernel<F> {
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
         let width = 2 * in_len;
-        let access = rows.access();
+        let access = rows.access()?;
         let weights_ref = &weights;
         let cell = |row: &SpartanProductRow| -> (F, F) {
             let mut left_acc = <F as WithSmallScalarAccumulator>::SmallScalarAccumulator::default();
@@ -458,7 +458,7 @@ impl<F: Field> ProductRemainderKernel<F> {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
         let cycles = weights.len();
-        let access = self.rows.access();
+        let access = self.rows.access()?;
 
         let block_size = 1usize << 12;
         let blocks = cycles.div_ceil(block_size);

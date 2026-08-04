@@ -290,6 +290,7 @@ mod tests {
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
+    use jolt_verifier::VerifierError;
 
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,
@@ -480,7 +481,7 @@ mod tests {
                         matches!(
                             &error,
                             SumcheckKernelError::Verifier(
-                                jolt_verifier::VerifierError::StageClaimPublicInputFailed { .. }
+                                VerifierError::StageClaimPublicInputFailed { .. }
                             )
                         ),
                         "expected the fail-closed public-input error, got {error:?}"

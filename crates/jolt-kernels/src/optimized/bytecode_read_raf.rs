@@ -34,6 +34,7 @@
 //! by the private [`PcRowsKey`] type — the modular equivalent of legacy's
 //! shared `Arc<Vec<Cycle>>`).
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::bytecode::{
@@ -167,7 +168,7 @@ fn stage_pushforwards<F: Field>(
     let e_hi: [Vec<F>; 5] = std::array::from_fn(|s| eq_table(&stage_cycle_points[s][..hi_bits]));
     let e_lo: [Vec<F>; 5] = std::array::from_fn(|s| eq_table(&stage_cycle_points[s][hi_bits..]));
 
-    let block = |range: std::ops::Range<usize>| -> [Vec<F>; 5] {
+    let block = |range: Range<usize>| -> [Vec<F>; 5] {
         let mut partial: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
         let mut inner: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
         let mut touched: Vec<usize> = Vec::with_capacity(in_len);

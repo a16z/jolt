@@ -17,8 +17,10 @@
 //! prover; summation order differs from legacy where convenient (field
 //! addition is exact, so the values are identical).
 
+use core::cmp::Ordering;
+
 use jolt_field::Field;
-use jolt_poly::Polynomial;
+use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -147,16 +149,16 @@ impl<F: Field> CycleMajorEntry<F> {
         let mut j = 0;
         while i < even.len() && j < odd.len() {
             match even[i].col.cmp(&odd[j].col) {
-                core::cmp::Ordering::Equal => {
+                Ordering::Equal => {
                     out.push(CycleMajorEntry::bind(Some(&even[i]), Some(&odd[j]), r));
                     i += 1;
                     j += 1;
                 }
-                core::cmp::Ordering::Less => {
+                Ordering::Less => {
                     out.push(CycleMajorEntry::bind(Some(&even[i]), None, r));
                     i += 1;
                 }
-                core::cmp::Ordering::Greater => {
+                Ordering::Greater => {
                     out.push(CycleMajorEntry::bind(None, Some(&odd[j]), r));
                     j += 1;
                 }
@@ -182,7 +184,7 @@ impl<F: Field> CycleMajorEntry<F> {
         let mut j = 0;
         while i < even.len() && j < odd.len() {
             match even[i].col.cmp(&odd[j].col) {
-                core::cmp::Ordering::Equal => {
+                Ordering::Equal => {
                     add(CycleMajorEntry::quadratic_evals(
                         Some(&even[i]),
                         Some(&odd[j]),
@@ -192,7 +194,7 @@ impl<F: Field> CycleMajorEntry<F> {
                     i += 1;
                     j += 1;
                 }
-                core::cmp::Ordering::Less => {
+                Ordering::Less => {
                     add(CycleMajorEntry::quadratic_evals(
                         Some(&even[i]),
                         None,
@@ -201,7 +203,7 @@ impl<F: Field> CycleMajorEntry<F> {
                     ));
                     i += 1;
                 }
-                core::cmp::Ordering::Greater => {
+                Ordering::Greater => {
                     add(CycleMajorEntry::quadratic_evals(
                         None,
                         Some(&odd[j]),
@@ -437,7 +439,7 @@ impl<F: Field> AddressMajorEntry<F> {
         let mut j = 0;
         while i < even.len() && j < odd.len() {
             match even[i].row.cmp(&odd[j].row) {
-                core::cmp::Ordering::Equal => {
+                Ordering::Equal => {
                     out.push(AddressMajorEntry::bind(
                         Some(&even[i]),
                         Some(&odd[j]),
@@ -450,7 +452,7 @@ impl<F: Field> AddressMajorEntry<F> {
                     i += 1;
                     j += 1;
                 }
-                core::cmp::Ordering::Less => {
+                Ordering::Less => {
                     out.push(AddressMajorEntry::bind(
                         Some(&even[i]),
                         None,
@@ -461,7 +463,7 @@ impl<F: Field> AddressMajorEntry<F> {
                     even_checkpoint = even[i].next_val;
                     i += 1;
                 }
-                core::cmp::Ordering::Greater => {
+                Ordering::Greater => {
                     out.push(AddressMajorEntry::bind(
                         None,
                         Some(&odd[j]),
@@ -516,7 +518,7 @@ impl<F: Field> AddressMajorEntry<F> {
         let mut j = 0;
         while i < even.len() && j < odd.len() {
             match even[i].row.cmp(&odd[j].row) {
-                core::cmp::Ordering::Equal => {
+                Ordering::Equal => {
                     add(AddressMajorEntry::address_round_evals(
                         Some(&even[i]),
                         Some(&odd[j]),
@@ -531,7 +533,7 @@ impl<F: Field> AddressMajorEntry<F> {
                     i += 1;
                     j += 1;
                 }
-                core::cmp::Ordering::Less => {
+                Ordering::Less => {
                     add(AddressMajorEntry::address_round_evals(
                         Some(&even[i]),
                         None,
@@ -544,7 +546,7 @@ impl<F: Field> AddressMajorEntry<F> {
                     even_checkpoint = even[i].next_val;
                     i += 1;
                 }
-                core::cmp::Ordering::Greater => {
+                Ordering::Greater => {
                     add(AddressMajorEntry::address_round_evals(
                         None,
                         Some(&odd[j]),
@@ -633,7 +635,7 @@ impl<F: Field> AddressMajorMatrix<F> {
             out
         };
         self.entries = bound;
-        val_init.bind_with_order(r, jolt_poly::BindingOrder::LowToHigh);
+        val_init.bind_with_order(r, BindingOrder::LowToHigh);
     }
 
     /// The `[s(0), s(2)]` evaluations of the phase-2 round message over all

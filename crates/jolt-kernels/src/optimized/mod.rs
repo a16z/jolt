@@ -37,6 +37,19 @@ use crate::commitment::ModeStreamingCommitment;
 
 use crate::JoltBackend;
 
+use self::booleanity::{OptimizedBooleanityAddress, OptimizedBooleanityCycle};
+use self::instruction_claim_reduction::OptimizedInstructionClaimReduction;
+use self::instruction_input::OptimizedInstructionInput;
+use self::instruction_ra_virtualization::OptimizedInstructionRaVirtualization;
+use self::instruction_read_raf::OptimizedInstructionReadRaf;
+use self::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
+use self::registers_claim_reduction::OptimizedRegistersClaimReduction;
+use self::registers_read_write::OptimizedRegistersReadWrite;
+use self::registers_val_evaluation::OptimizedRegistersValEvaluation;
+use self::spartan_outer::{OptimizedOuterRemainder, OptimizedOuterUniskip};
+use self::spartan_product::{OptimizedProductRemainder, OptimizedProductUniskip};
+use self::spartan_shift::OptimizedSpartanShift;
+
 #[cfg(feature = "allocative")]
 macro_rules! impl_field_allocative {
     ($type:ident, |$value:ident| $heap:block) => {
@@ -128,11 +141,11 @@ where
 
         backend.commit = Box::new(OptimizedBackend);
 
-        backend.spartan_outer_uniskip = Box::new(spartan_outer::OptimizedOuterUniskip);
-        backend.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);
-        backend.spartan_product_uniskip = Box::new(spartan_product::OptimizedProductUniskip);
-        backend.spartan_product_remainder = Box::new(spartan_product::OptimizedProductRemainder);
-        backend.spartan_shift = Box::new(spartan_shift::OptimizedSpartanShift);
+        backend.spartan_outer_uniskip = Box::new(OptimizedOuterUniskip);
+        backend.spartan_outer_remainder = Box::new(OptimizedOuterRemainder);
+        backend.spartan_product_uniskip = Box::new(OptimizedProductUniskip);
+        backend.spartan_product_remainder = Box::new(OptimizedProductRemainder);
+        backend.spartan_shift = Box::new(OptimizedSpartanShift);
 
         backend.ram_read_write = Box::new(OptimizedBackend);
         backend.ram_val_check = Box::new(OptimizedBackend);
@@ -141,23 +154,18 @@ where
         backend.ram_output_check = Box::new(OptimizedBackend);
         backend.ram_ra_virtualization = Box::new(OptimizedBackend);
 
-        backend.instruction_read_raf = Box::new(instruction_read_raf::OptimizedInstructionReadRaf);
-        backend.instruction_ra_virtualization =
-            Box::new(instruction_ra_virtualization::OptimizedInstructionRaVirtualization);
-        backend.instruction_claim_reduction =
-            Box::new(instruction_claim_reduction::OptimizedInstructionClaimReduction);
-        backend.instruction_input = Box::new(instruction_input::OptimizedInstructionInput);
+        backend.instruction_read_raf = Box::new(OptimizedInstructionReadRaf);
+        backend.instruction_ra_virtualization = Box::new(OptimizedInstructionRaVirtualization);
+        backend.instruction_claim_reduction = Box::new(OptimizedInstructionClaimReduction);
+        backend.instruction_input = Box::new(OptimizedInstructionInput);
 
-        backend.registers_read_write = Box::new(registers_read_write::OptimizedRegistersReadWrite);
-        backend.registers_val_evaluation =
-            Box::new(registers_val_evaluation::OptimizedRegistersValEvaluation);
-        backend.registers_claim_reduction =
-            Box::new(registers_claim_reduction::OptimizedRegistersClaimReduction);
+        backend.registers_read_write = Box::new(OptimizedRegistersReadWrite);
+        backend.registers_val_evaluation = Box::new(OptimizedRegistersValEvaluation);
+        backend.registers_claim_reduction = Box::new(OptimizedRegistersClaimReduction);
 
-        backend.booleanity_address = Box::new(booleanity::OptimizedBooleanityAddress);
-        backend.booleanity_cycle = Box::new(booleanity::OptimizedBooleanityCycle);
-        backend.ram_hamming_booleanity =
-            Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
+        backend.booleanity_address = Box::new(OptimizedBooleanityAddress);
+        backend.booleanity_cycle = Box::new(OptimizedBooleanityCycle);
+        backend.ram_hamming_booleanity = Box::new(OptimizedRamHammingBooleanity);
 
         backend.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
         backend.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);

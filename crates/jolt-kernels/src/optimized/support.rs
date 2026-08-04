@@ -4,6 +4,8 @@
 //! hold the summand math, this module holds the plumbing they all repeat.
 
 use std::ops::Range;
+use std::ptr;
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltDerivedId;
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, SignedScalarAccumulator};
@@ -15,12 +17,14 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
-use jolt_witness::{stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError};
+use jolt_witness::{
+    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::rows::SharedRowsExt;
-use crate::{KernelError, SumcheckKernelError};
+use super::rows::RandomAccessRows;
+use crate::{KernelError, ProofSession, SumcheckKernelError};
 
 /// A kernel's bound-round count against its total — the one home of the
 /// "claims only after every round is bound" invariant.
@@ -72,17 +76,15 @@ const COLLECT_ROWS_CHUNK: usize = 1 << 16;
 /// realloc). Chunk size never changes the collected bundles — the pass
 /// carries the lookahead row across chunk boundaries — so this is walk-shape
 /// only.
-pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
-    source: &(impl RowSource + ?Sized),
+pub(crate) fn collect_rows<F: Field, B: WitnessBundle + Copy + Send + Sync>(
+    source: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
     // Slice-backed sources collect index-parallel — no chunk staging, no
     // serial consume copy (out-of-range requests fall through for the
     // walk's validation).
-    if let Some(shared) = source.shared_rows() {
-        if cycles <= shared.cycles {
-            return super::rows::collect_bundles_par(&shared.view(), cycles);
-        }
+    if let Some(access) = RandomAccessRows::new(source, cycles)? {
+        return super::rows::collect_bundles_par(&access, cycles);
     }
     struct Presized<B> {
         rows: Vec<B>,
@@ -762,46 +764,62 @@ impl<F: Field> SplitLt<F> {
 /// materialized row vector never exists; re-emulating sources retain the
 /// collected rows. The generic twin of the spartan-outer kernel's store,
 /// for every carry-style typed-row consumer.
-pub(crate) enum BundleStore<B> {
-    Owned(jolt_witness::SharedTraceRows),
+pub(crate) enum BundleStore<F: Field, B> {
+    Owned {
+        witness: Arc<dyn JoltWitnessPlane<F>>,
+        cycles: usize,
+    },
     Retained(Vec<B>),
 }
 
 #[cfg(feature = "allocative")]
-impl<B> BundleStore<B> {
+impl<F: Field, B> BundleStore<F, B> {
     pub(crate) fn heap_bytes(&self) -> usize {
         match self {
-            Self::Owned(_) => 0,
+            Self::Owned { .. } => 0,
             Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
         }
     }
 }
 
-impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
+impl<F: Field, B: WitnessBundle + Copy + Send + Sync> BundleStore<F, B> {
     /// Resolve for a witness plane: the owning handle when the source is
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.
-    pub(crate) fn resolve<F: Field>(
-        witness: &dyn jolt_witness::JoltWitnessPlane<F>,
+    pub(crate) fn resolve(
+        session: &ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
-    ) -> Result<Self, crate::KernelError<F>> {
-        match witness.shared_rows() {
-            Some(owned) if cycles <= owned.cycles => Ok(Self::Owned(owned)),
-            _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
+    ) -> Result<Self, KernelError<F>> {
+        if RandomAccessRows::new(witness, cycles)?.is_some() {
+            if let Some(owned) = session
+                .witness::<F>()
+                .filter(|owned| ptr::eq(owned.as_ref(), witness))
+            {
+                return Ok(Self::Owned {
+                    witness: Arc::clone(owned),
+                    cycles,
+                });
+            }
         }
+        Ok(Self::Retained(collect_rows(witness, cycles)?))
     }
 
-    pub(crate) fn access(&self) -> BundleAccess<'_, B> {
+    pub(crate) fn access(&self) -> Result<BundleAccess<'_, B>, WitnessError> {
         match self {
-            Self::Owned(owned) => BundleAccess::View(owned.view()),
-            Self::Retained(rows) => BundleAccess::Retained(rows),
+            Self::Owned { witness, cycles } => RandomAccessRows::new(witness.as_ref(), *cycles)?
+                .map(BundleAccess::View)
+                .ok_or(WitnessError::UnavailableView {
+                    label: "random-access rows",
+                }),
+            Self::Retained(rows) => Ok(BundleAccess::Retained(rows)),
         }
     }
 }
 
 /// One pass's borrowed row provider over a [`BundleStore`].
 pub(crate) enum BundleAccess<'a, B> {
-    View(super::rows::RandomAccessRows<'a>),
+    View(RandomAccessRows<'a>),
     Retained(&'a [B]),
 }
 

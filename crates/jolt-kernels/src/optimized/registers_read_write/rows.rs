@@ -5,9 +5,11 @@ use crate::optimized::rows::RandomAccessRows;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::Field;
+use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
+    stream_witnesses, FirstErrorLatch, JoltWitnessPlane, StreamConsumer, WitnessBundle,
+    WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -34,8 +36,8 @@ impl WitnessBundle for RegisterCycleRow {
     // re-export the bundle derive uses; jolt-kernels deliberately has no
     // jolt-program dependency.
     fn from_row(
-        row: &jolt_witness::__private::TraceRow,
-        _next: Option<&jolt_witness::__private::TraceRow>,
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let cycle = Self {
@@ -125,11 +127,8 @@ impl<F: Field> CollectRegisterEntries<F> {
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         #[cfg(feature = "parallel")]
-        if let Some(shared) = witness.shared_rows() {
-            if cycles <= shared.cycles {
-                use crate::optimized::rows::SharedRowsExt;
-                return Self::collect_par(&shared.view(), cycles);
-            }
+        if let Some(access) = RandomAccessRows::new(witness, cycles)? {
+            return Self::collect_par(&access, cycles);
         }
         let mut consumers = (CollectRegisterEntries::<F> {
             entries: Vec::with_capacity(cycles * 3),
@@ -157,7 +156,7 @@ impl<F: Field> CollectRegisterEntries<F> {
         let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-        let error = jolt_witness::FirstErrorLatch::new();
+        let error = FirstErrorLatch::new();
         let chunk_count = cycles.div_ceil(CHUNK);
         // Pass 1: count entries per chunk and fill the index columns.
         let mut counts: Vec<usize> = Vec::new();
@@ -218,7 +217,7 @@ impl<F: Field> CollectRegisterEntries<F> {
                 windows.push(head);
                 rest = tail;
             }
-            let error = jolt_witness::FirstErrorLatch::new();
+            let error = FirstErrorLatch::new();
             windows
                 .into_par_iter()
                 .enumerate()

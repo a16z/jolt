@@ -382,7 +382,7 @@ struct SpartanOuterCarry<F: Field> {
     tau: Vec<F>,
     /// Typed-row store: slice-backed witnesses stay unmaterialized (the
     /// ~176 B × T row vector is the prover's peak allocation at large scale).
-    rows: BundleStore<SpartanOuterRow>,
+    rows: BundleStore<F, SpartanOuterRow>,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
     t1_values: Vec<F>,
@@ -421,7 +421,7 @@ impl OptimizedOuterUniskip {
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
-        rows: BundleStore<SpartanOuterRow>,
+        rows: BundleStore<F, SpartanOuterRow>,
     ) -> Result<(), KernelError<F>> {
         if tau.len() != log_t + 2 {
             return Err(KernelError::InvariantViolation {
@@ -429,7 +429,7 @@ impl OptimizedOuterUniskip {
             });
         }
         let (tau_low, _) = tau.split_at(log_t + 1);
-        let t1_values = Self::extended_t1_values(&rows.access(), tau_low)?;
+        let t1_values = Self::extended_t1_values(&rows.access()?, tau_low)?;
         session.park(SpartanOuterCarry {
             log_t,
             tau: tau.to_vec(),
@@ -493,7 +493,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
         tau: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
+        let rows = BundleStore::resolve(session, witness, 1usize << log_t)?;
         Self::prepare_from_store(session, log_t, tau, rows)
     }
 
@@ -563,7 +563,7 @@ struct OuterRemainderKernel<F: Field> {
     /// Round-0 endpoints, fused into the materialization pass.
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
-    rows: BundleStore<SpartanOuterRow>,
+    rows: BundleStore<F, SpartanOuterRow>,
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
@@ -630,7 +630,7 @@ impl<F: Field> OuterRemainderKernel<F> {
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
         let width = 2 * in_len;
-        let access = rows.access();
+        let access = rows.access()?;
         let lagrange = &lagrange_r0;
         let block = |x_out: usize,
                      az_chunk: &mut [F],
@@ -739,7 +739,7 @@ impl<F: Field> OuterRemainderKernel<F> {
             .collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
         let cycles = weights.len();
-        let access = self.rows.access();
+        let access = self.rows.access()?;
 
         let block_size = 1usize << 12;
         let blocks = cycles.div_ceil(block_size);

@@ -4,6 +4,8 @@
 )]
 //! Native proof construction for prover outputs accepted by `jolt-verifier`.
 
+use std::sync::Arc;
+
 #[cfg(not(any(feature = "zk", feature = "akita")))]
 use crate::zkvm::clear_claims::build_clear_claims;
 pub use jolt_verifier::VerifierError;
@@ -203,7 +205,7 @@ where
 {
     match &shared.program {
         ProverProgramPreprocessing::Full(full) => {
-            ProgramPreprocessing::Full(std::sync::Arc::new(JoltProgramPreprocessing {
+            ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
                 bytecode: full.bytecode.as_ref().clone(),
                 ram: full.ram.clone(),
                 memory_layout: shared.memory_layout.clone(),

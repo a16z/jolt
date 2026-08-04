@@ -2,6 +2,9 @@
 //! construction/merging, and the bind/quadratic walks. Representation and
 //! algorithm contracts live on the items themselves.
 
+use core::cmp::Ordering;
+use core::mem::MaybeUninit;
+
 use jolt_field::{AdditiveAccumulator, Field, OptimizedMul, RingAccumulator};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -274,12 +277,12 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
         let mut produced = 0;
         while i < evens.len() && j < odds.len() {
             match evens[i].col.cmp(&odds[j].col) {
-                core::cmp::Ordering::Equal => {
+                Ordering::Equal => {
                     i += 1;
                     j += 1;
                 }
-                core::cmp::Ordering::Less => i += 1,
-                core::cmp::Ordering::Greater => j += 1,
+                Ordering::Less => i += 1,
+                Ordering::Greater => j += 1,
             }
             produced += 1;
         }
@@ -294,42 +297,40 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
         r: F,
         ra_lut: &CoeffLut<F>,
         wa_lut: &CoeffLut<F>,
-        out: &mut [core::mem::MaybeUninit<SparseEntry<F, C>>],
+        out: &mut [MaybeUninit<SparseEntry<F, C>>],
     ) {
         let mut i = 0;
         let mut j = 0;
         let mut k = 0;
         while i < evens.len() && j < odds.len() {
             let bound = match evens[i].col.cmp(&odds[j].col) {
-                core::cmp::Ordering::Equal => {
+                Ordering::Equal => {
                     let entry =
                         SparseEntry::bind(Some(&evens[i]), Some(&odds[j]), r, ra_lut, wa_lut);
                     i += 1;
                     j += 1;
                     entry
                 }
-                core::cmp::Ordering::Less => {
+                Ordering::Less => {
                     let entry = SparseEntry::bind(Some(&evens[i]), None, r, ra_lut, wa_lut);
                     i += 1;
                     entry
                 }
-                core::cmp::Ordering::Greater => {
+                Ordering::Greater => {
                     let entry = SparseEntry::bind(None, Some(&odds[j]), r, ra_lut, wa_lut);
                     j += 1;
                     entry
                 }
             };
-            out[k] = core::mem::MaybeUninit::new(bound);
+            out[k] = MaybeUninit::new(bound);
             k += 1;
         }
         for even in &evens[i..] {
-            out[k] =
-                core::mem::MaybeUninit::new(SparseEntry::bind(Some(even), None, r, ra_lut, wa_lut));
+            out[k] = MaybeUninit::new(SparseEntry::bind(Some(even), None, r, ra_lut, wa_lut));
             k += 1;
         }
         for odd in &odds[j..] {
-            out[k] =
-                core::mem::MaybeUninit::new(SparseEntry::bind(None, Some(odd), r, ra_lut, wa_lut));
+            out[k] = MaybeUninit::new(SparseEntry::bind(None, Some(odd), r, ra_lut, wa_lut));
             k += 1;
         }
         debug_assert_eq!(k, out.len());
@@ -638,7 +639,7 @@ fn bind_sparse_entries<F, C>(
     }
 
     let entries_ref: &[SparseEntry<F, C>] = entries;
-    let fill_block = |(block, out): (usize, &mut [core::mem::MaybeUninit<SparseEntry<F, C>>])| {
+    let fill_block = |(block, out): (usize, &mut [MaybeUninit<SparseEntry<F, C>>])| {
         let mut written = 0usize;
         for group in entries_ref[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
             let (evens, odds) = SparseEntry::split_pair_group(group);
@@ -713,7 +714,7 @@ where
             let mut j = 0;
             while i < evens.len() && j < odds.len() {
                 match evens[i].col.cmp(&odds[j].col) {
-                    core::cmp::Ordering::Equal => {
+                    Ordering::Equal => {
                         SparseEntry::accumulate_pair_evals(
                             Some(&evens[i]),
                             Some(&odds[j]),
@@ -725,7 +726,7 @@ where
                         i += 1;
                         j += 1;
                     }
-                    core::cmp::Ordering::Less => {
+                    Ordering::Less => {
                         SparseEntry::accumulate_pair_evals(
                             Some(&evens[i]),
                             None,
@@ -736,7 +737,7 @@ where
                         );
                         i += 1;
                     }
-                    core::cmp::Ordering::Greater => {
+                    Ordering::Greater => {
                         SparseEntry::accumulate_pair_evals(
                             None,
                             Some(&odds[j]),

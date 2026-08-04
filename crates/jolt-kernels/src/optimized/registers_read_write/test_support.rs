@@ -3,6 +3,8 @@
 //! plane, deterministic challenge sequences, and the engine-mirroring parity
 //! driver (bind-then-compute, running claim via `poly.evaluate(challenge)`).
 
+use core::fmt::Debug;
+
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -185,7 +187,7 @@ impl TraceFixture {
     pub(crate) fn with_plane<R>(
         self,
         log_t: usize,
-        f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+        f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
     ) -> R {
         assert!(self.rows.len() <= 1 << log_t, "fixture overflows 2^log_t");
         use std::sync::Arc;
@@ -200,7 +202,7 @@ impl TraceFixture {
             memory_layout: Default::default(),
             max_padded_trace_length: 1 << log_t,
         });
-        let program = JoltProgram::default();
+        let program = Arc::new(JoltProgram::default());
         let config = JoltVmWitnessConfig::new(
             log_t,
             64,
@@ -260,7 +262,7 @@ pub(crate) fn assert_kernel_parity<R>(
     R: ConcreteSumcheck<Fr>,
     ReferenceBackend: PrepareKernel<Fr, R>,
     SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + Debug,
     ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
 {
     assert_kernel_parity_with_session(
@@ -296,7 +298,7 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
     R: ConcreteSumcheck<Fr>,
     ReferenceBackend: PrepareKernel<Fr, R>,
     SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + Debug,
     ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
 {
     let mut reference_session = ProofSession::default();

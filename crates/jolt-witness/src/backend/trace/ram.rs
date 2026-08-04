@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackend<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<T> {
     pub(crate) fn materialize_ram_read_write_virtual<F: Field>(
         &self,
         id: JoltVirtualPolynomial,

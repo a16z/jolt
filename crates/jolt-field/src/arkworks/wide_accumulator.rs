@@ -98,6 +98,7 @@ impl WideAccumulator {
 mod tests {
     use super::*;
     use crate::{AdditiveAccumulator, FromPrimitiveInt};
+    use num_traits::One;
 
     #[test]
     fn single_fmadd() {
@@ -160,7 +161,7 @@ mod tests {
 
             let mut via_fmadd = WideAccumulator::default();
             via_fmadd.fmadd(a, b);
-            via_fmadd.fmadd(value, <Fr as num_traits::One>::one());
+            via_fmadd.fmadd(value, <Fr as One>::one());
 
             assert_eq!(via_add.reduce(), via_fmadd.reduce());
             assert_eq!(via_add.reduce(), a * b + value);

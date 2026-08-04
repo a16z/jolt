@@ -235,6 +235,7 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 ### Code Style
 
 - Codebase uses `non_snake_case` convention for math variables: `log_T`, `ram_K`, `log_K`, etc.
+- Import types and structs, then reference them by short names; use fully qualified paths only to resolve ambiguity.
 
 ### Lint Policy
 

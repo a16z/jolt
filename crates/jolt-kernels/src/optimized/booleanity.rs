@@ -713,7 +713,7 @@ pub(crate) mod testing {
     pub(crate) fn with_booleanity_backend<R>(
         log_t: usize,
         log_k_chunk: u8,
-        f: impl FnOnce(&TraceBackend<'_, OwnedTrace>, BooleanityDimensions) -> R,
+        f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
     ) -> R {
         let instruction_a = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
@@ -750,7 +750,7 @@ pub(crate) mod testing {
             memory_layout: Default::default(),
             max_padded_trace_length: 4.max(1 << log_t),
         });
-        let program = JoltProgram::default();
+        let program = Arc::new(JoltProgram::default());
         // Field mutation instead of struct literals: `TraceRow` grows a
         // cfg-gated field under the `field-inline` feature, which a literal
         // cannot spell portably from this crate.
@@ -1087,7 +1087,7 @@ mod tests {
             let mut session = ProofSession::default();
             if carried_indices {
                 let rows = InstructionCycleRow::collect::<Fr>(backend, 1usize << log_t).unwrap();
-                session.park(SharedInstructionRows(std::sync::Arc::new(rows)));
+                session.park(SharedInstructionRows(Arc::new(rows)));
             }
             let optimized = OptimizedBooleanityCycle
                 .prepare(
