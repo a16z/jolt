@@ -3374,6 +3374,7 @@ dependencies = [
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-riscv",
+ "jolt-tracer-x86",
  "jolt-transcript",
  "jolt-verifier",
  "libc",
