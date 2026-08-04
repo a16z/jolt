@@ -34,6 +34,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/ram_ra_reduction.cu"),
     "\n",
     include_str!("kernels/suffixes.cu"),
+    "\n",
+    include_str!("kernels/prefixes.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -66,6 +68,8 @@ pub struct CudaKernelContext {
     ram_ra_fold_prefix: CudaFunction,
     ram_ra_phase1_round: CudaFunction,
     sfx_eval_batch: CudaFunction,
+    pfx_eval_batch: CudaFunction,
+    pfx_default_checkpoints: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -108,6 +112,8 @@ impl CudaKernelContext {
             ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
+            pfx_eval_batch: module.load_function("pfx_eval_batch_kernel")?,
+            pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
         })
     }
 
@@ -239,6 +245,14 @@ impl CudaKernelContext {
 
     pub(super) const fn sfx_eval_batch(&self) -> &CudaFunction {
         &self.sfx_eval_batch
+    }
+
+    pub(super) const fn pfx_eval_batch(&self) -> &CudaFunction {
+        &self.pfx_eval_batch
+    }
+
+    pub(super) const fn pfx_default_checkpoints(&self) -> &CudaFunction {
+        &self.pfx_default_checkpoints
     }
 
     pub(super) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {

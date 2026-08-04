@@ -9,6 +9,7 @@ mod dense_product;
 mod device;
 mod error;
 mod lt_poly;
+mod prefixes;
 mod primitives;
 mod ra_poly;
 mod ram_ra_claim_reduction;
