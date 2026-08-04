@@ -213,6 +213,24 @@ soundness note before merge.
    optional round-pairing step 3 gated on orchestrator GO. Memory-viability
    gate added (peak-storage projection @2^27 before 2^25 confirm).
 
+## Wave 3
+
+- **W3A (task 743016e4, fable-max, worktree gpuutil-w3a) — ACTIVE:** record-
+  family lifetime determinism @2^27. Phase 1 root-cause (owner chain; drop-site
+  vs kernel-reclaim discrimination for the day-flip; why fat entry costs st6b
+  wall; why trunk is +8 s robust), phase 2 fix (deterministic early death; gate:
+  3× consecutive 2^27 with st6b entry ≤45 GiB, st6b ≤15.5 s, total ≤74 s).
+  Task 0: fix monitor gpu_percent emission (zero counters this session).
+- **W3B — PARKED pending W3A:** BRRC device 2^27 root-cause (why 2.6× vs CPU
+  twin + batch contention; measured only under fat st6b entry — re-baseline
+  under lean entry after W3A; candidates: 5×T×32B flat ping-pong streaming,
+  64-bit MSL addressing, width-8 materialization). Cap stays until fixed.
+- **W3C — PARKED:** st4 prepare salvage — parallel build of the EXISTING
+  representation (W2B proved −65% prepare in isolation; old rounds untouched;
+  byte-identical; no footprint delta). ~−3 s @2^27 prize. U3 lesson applies.
+- st1/st2 zero-holes (4.2 + 4.3 s @2^27 instrumented) — untouched, wave-3+.
+- st3 feed (1.97 s @2^27) — smallest, parked.
+
 ## Parked doors (inherited)
 
 - Co-issue probe (M5: is a wide mul dual-slot? add32 only 1.83× mul32) — ALU-roof
