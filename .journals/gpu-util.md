@@ -333,7 +333,7 @@ soundness note before merge.
   artifact before fixes; protocol changes need GO; W3C gate amendment
   codified in its brief (surface SoC-pressure tradeoffs, defer retention to
   2^27 certification instead of self-killing). Prize ~−3.5..−5 s @2^27.
-- st3 feed → W3E ACTIVE (task 4a023a76, sol-xhigh): InstrInput q0 device
+- st3 feed → **W3E CLOSED — NO-GO with mechanism** (task 4a023a76): InstrInput q0 device
   promotion per W3D F3 map (~0.4 s @2^27 + st3 util). Time-boxed to 00:30 UTC
   for the flagship window. Byte-identical, standard gates.
 
@@ -498,3 +498,15 @@ soundness note before merge.
   restructure). Design-before-code hard gate: W2A must get orchestrator GO on
   its design artifact before implementing. D notified of scope findings +
   directive earlier (04:45); D currently holds bench lock for 2^27 diagnosis.
+
+## Utilization-surface status after W3E (2026-08-04 20:2x UTC)
+
+W3E's no-go (best device shape — coefficient form via boolean-endpoint finite
+differences, 6 Montgomery products/pair — only TIES the 18-core host
+exact-integer pipeline at 2^24; host is not a field-arithmetic twin, W1A's
+lesson in miniature) closes the last mapped door. Remaining parked-with-reason:
+SpartanShift γ-split (≤0.3 s, plumbing-deep), st1 claimed_inputs device port
+(~0.6 s, W1A-shaped risk), round-pairing (dead twice over). No stage retains a
+>1 s GPU-idle host mass; residual low-util is bandwidth-bound device work
+(InstrInput r1 17 GiB write, st6b member streams) and small stages. The
+mandate's surface is EXHAUSTED pending flagship certification numbers.
