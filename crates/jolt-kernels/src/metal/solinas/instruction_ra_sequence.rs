@@ -55,6 +55,15 @@ impl Default for InstructionRaSequenceConfig {
     }
 }
 
+pub(crate) fn instruction_ra_weight_capacities(rows: usize) -> Result<(usize, usize), MetalError> {
+    if rows < 2 * MATERIALIZE_WIDTH || !rows.is_power_of_two() {
+        return Err(MetalError::InvalidInstructionRaRows(rows));
+    }
+    let e_out_capacity = 1usize << (rows.ilog2() / 2);
+    let e_in_capacity = (rows / 2) / e_out_capacity;
+    Ok((e_in_capacity, e_out_capacity))
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct MessageParams {
@@ -111,6 +120,7 @@ struct Buffers {
 
 pub(crate) struct InstructionRaSequenceStorage {
     context: SolinasMetal,
+    config: InstructionRaSequenceConfig,
     pipelines: Pipelines,
     message_limits: PipelineLimits,
     materialize_limits: PipelineLimits,
@@ -130,7 +140,7 @@ impl allocative::Allocative for InstructionRaSequenceStorage {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("device_storage"),
-            self.device_storage_bytes(),
+            device_storage_bytes(&self.buffers),
         );
         visitor.exit();
     }
@@ -156,6 +166,21 @@ pub struct InstructionRaSequence {
     dense_in_a: bool,
     dense_elements: usize,
     gpu_active_time: Duration,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for InstructionRaSequence {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_storage"),
+            device_storage_bytes(&self.buffers),
+        );
+        if let Some(plane) = &self.lookup_plane {
+            visitor.visit_field(allocative::Key::new("lookup_plane"), plane);
+        }
+        visitor.exit();
+    }
 }
 
 impl SolinasMetal {
@@ -251,6 +276,7 @@ impl SolinasMetal {
             .ok_or(MetalError::InputTooLong(e_out_capacity))?;
         Ok(InstructionRaSequenceStorage {
             context: self.clone(),
+            config,
             pipelines,
             message_limits,
             materialize_limits,
@@ -276,13 +302,17 @@ impl SolinasMetal {
 }
 
 impl InstructionRaSequenceStorage {
-    pub(crate) const fn matches(
+    pub(crate) fn matches(
         &self,
+        context: &SolinasMetal,
         rows: usize,
         e_in_capacity: usize,
         e_out_capacity: usize,
+        config: InstructionRaSequenceConfig,
     ) -> bool {
-        self.rows == rows
+        self.context.device_registry_id() == context.device_registry_id()
+            && self.config == config
+            && self.rows == rows
             && self.e_in_capacity == e_in_capacity
             && self.e_out_capacity == e_out_capacity
     }
@@ -292,7 +322,7 @@ impl InstructionRaSequenceStorage {
         plane: ResidentLookupIndexPlane,
         chunk_tables: &[AkitaField],
     ) -> Result<InstructionRaSequence, MetalError> {
-        if !self.matches(plane.len(), self.e_in_capacity, self.e_out_capacity) {
+        if self.rows != plane.len() {
             return Err(MetalError::InvalidInstructionRaState(
                 "resident lookup plane does not match the preallocated sequence",
             ));
@@ -328,23 +358,24 @@ impl InstructionRaSequenceStorage {
             gpu_active_time: Duration::ZERO,
         })
     }
+}
 
-    #[cfg(feature = "allocative")]
-    fn device_storage_bytes(&self) -> usize {
-        [
-            &self.buffers.branches_a,
-            &self.buffers.branches_b,
-            &self.buffers.dense_a,
-            &self.buffers.dense_b,
-            &self.buffers.e_in,
-            &self.buffers.e_out,
-            &self.buffers.partial_a,
-            &self.buffers.partial_b,
-        ]
-        .into_iter()
-        .map(|buffer| buffer.length() as usize)
-        .sum()
-    }
+#[cfg(feature = "allocative")]
+fn device_storage_bytes(buffers: &Buffers) -> usize {
+    [
+        &buffers.branches_a,
+        &buffers.branches_b,
+        &buffers.dense_a,
+        &buffers.dense_b,
+        &buffers.e_in,
+        &buffers.e_out,
+        &buffers.partial_a,
+        &buffers.partial_b,
+    ]
+    .into_iter()
+    .fold(0usize, |bytes, buffer| {
+        bytes.saturating_add(buffer.length() as usize)
+    })
 }
 
 impl InstructionRaSequence {
@@ -856,3 +887,29 @@ const _: () = assert!(size_of::<MessageParams>() == 16);
 const _: () = assert!(size_of::<BranchParams>() == 16);
 const _: () = assert!(size_of::<MaterializeParams>() == 16);
 const _: () = assert!(size_of::<ReductionParams>() == 16);
+
+#[cfg(test)]
+mod tests {
+    use jolt_field::AkitaField;
+    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+    use super::{instruction_ra_weight_capacities, MetalError};
+
+    #[test]
+    fn weight_capacities_match_the_low_to_high_gruen_split() {
+        for log_t in 5..=30 {
+            let gruen = GruenSplitEqPolynomial::<AkitaField>::new(
+                &vec![AkitaField::zero(); log_t],
+                BindingOrder::LowToHigh,
+            );
+            assert_eq!(
+                instruction_ra_weight_capacities(1 << log_t).ok(),
+                Some((gruen.e_in_current_len(), gruen.e_out_current_len()))
+            );
+        }
+        assert!(matches!(
+            instruction_ra_weight_capacities(31),
+            Err(MetalError::InvalidInstructionRaRows(31))
+        ));
+    }
+}

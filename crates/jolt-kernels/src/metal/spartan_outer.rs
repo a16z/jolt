@@ -5,7 +5,10 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessPlane;
 
 use super::instruction_read_raf::MetalBackend;
-use super::solinas::{InstructionRaSequenceStorage, SpartanOuterUniskipConfig};
+use super::solinas::{
+    instruction_ra_weight_capacities, InstructionRaSequenceStorage, MetalError,
+    SpartanOuterUniskipConfig,
+};
 use crate::optimized::spartan_outer::{
     prepare_metal_spartan_outer_uniskip, prepare_metal_spartan_outer_witness_rows,
     OptimizedOuterUniskip,
@@ -47,9 +50,8 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 .trace_cutoff_elements
             && cycles >= 32
         {
-            let split = log_t / 2;
-            let e_out_capacity = 1usize << split;
-            let e_in_capacity = 1usize << (log_t - 1 - split);
+            let (e_in_capacity, e_out_capacity) =
+                instruction_ra_weight_capacities(cycles).map_err(metal_prepare_error)?;
             let storage = {
                 let _span =
                     tracing::info_span!("MetalInstructionRaVirtualization::storage_prepare")
@@ -61,12 +63,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         e_out_capacity,
                         self.config.instruction_ra_virtualization.dispatch,
                     )
-                    .map_err(|error| {
-                        KernelError::from(SumcheckError::ComputeBackend {
-                            backend: "metal",
-                            message: error.to_string(),
-                        })
-                    })?
+                    .map_err(metal_prepare_error)?
             };
             session.park::<InstructionRaSequenceStorage>(storage);
         }
@@ -106,4 +103,12 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             OuterRemainder<AkitaField>,
         >>::first_round_poly(&OptimizedOuterUniskip, session, late_tau)
     }
+}
+
+fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    }
+    .into()
 }

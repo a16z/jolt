@@ -58,6 +58,7 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
             || !initialization.supports_metal_sequence()
         {
             let _ = session.take::<InstructionRaSequenceStorage>();
+            let _ = session.take::<ResidentLookupIndexPlane>();
             return Ok(Box::new(prepare_instruction_ra_from_initialization(
                 session,
                 witness,
@@ -90,18 +91,31 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
             (e_in.len(), e_out.len())
         };
         let sequence = {
-            let _span =
-                tracing::info_span!("MetalInstructionRaVirtualization::sequence_prepare").entered();
-            match session.take::<InstructionRaSequenceStorage>() {
-                Some(storage) if storage.matches(trace_elements, e_in_capacity, e_out_capacity) => {
-                    storage.attach(plane, &chunk_tables)
-                }
+            let dispatch = self.config.instruction_ra_virtualization.dispatch;
+            let storage = session
+                .take::<InstructionRaSequenceStorage>()
+                .filter(|storage| {
+                    storage.matches(
+                        &self.context,
+                        trace_elements,
+                        e_in_capacity,
+                        e_out_capacity,
+                        dispatch,
+                    )
+                });
+            let _span = tracing::info_span!(
+                "MetalInstructionRaVirtualization::sequence_prepare",
+                preallocated = storage.is_some()
+            )
+            .entered();
+            match storage {
+                Some(storage) => storage.attach(plane, &chunk_tables),
                 _ => self.context.prepare_instruction_ra_sequence_with_plane(
                     plane,
                     &chunk_tables,
                     e_in_capacity,
                     e_out_capacity,
-                    self.config.instruction_ra_virtualization.dispatch,
+                    dispatch,
                 ),
             }
             .map_err(|error| metal_error(error.to_string()))?
@@ -119,6 +133,22 @@ struct MetalInstructionRaVirtualizationKernel {
     sequence: Option<InstructionRaSequence>,
     host_tail: Vec<AkitaField>,
     cutoff_elements: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalInstructionRaVirtualizationKernel {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("cpu"), &self.cpu);
+        if let Some(sequence) = &self.sequence {
+            visitor.visit_field(allocative::Key::new("sequence"), sequence);
+        }
+        visitor.visit_simple(
+            allocative::Key::new("host_tail"),
+            crate::backend::vec_heap_bytes(&self.host_tail),
+        );
+        visitor.exit();
+    }
 }
 
 impl MetalInstructionRaVirtualizationKernel {

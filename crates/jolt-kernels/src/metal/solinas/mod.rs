@@ -55,7 +55,9 @@ pub(crate) use booleanity::BooleanityRows;
 pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
 };
-pub(crate) use instruction_ra_sequence::InstructionRaSequenceStorage;
+pub(crate) use instruction_ra_sequence::{
+    instruction_ra_weight_capacities, InstructionRaSequenceStorage,
+};
 pub use instruction_ra_sequence::{InstructionRaSequence, InstructionRaSequenceConfig};
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
