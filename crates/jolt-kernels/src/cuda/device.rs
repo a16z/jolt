@@ -91,6 +91,26 @@ impl DeviceFrVec {
         })
     }
 
+    pub(super) fn slice_elements(&self, offset: usize, len: usize) -> Result<Self, CudaError> {
+        if offset + len > self.len {
+            return Err(CudaError::LengthMismatch {
+                expected: self.len,
+                got: offset + len,
+            });
+        }
+        let start = offset * LIMBS;
+        let buffer = xfer_stats::timed(Phase::D2d, len * LIMBS * size_of::<u64>(), || {
+            self.stream
+                .clone_dtod(&self.buffer.slice(start..start + len * LIMBS))
+        })?;
+        Ok(Self {
+            stream: self.stream.clone(),
+            buffer,
+            len,
+            staging: self.staging.clone(),
+        })
+    }
+
     pub fn try_clone(&self) -> Result<Self, CudaError> {
         let buffer = xfer_stats::timed(Phase::D2d, self.len * LIMBS * size_of::<u64>(), || {
             self.stream.clone_dtod(&self.buffer)

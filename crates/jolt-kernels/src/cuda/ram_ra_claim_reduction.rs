@@ -4,16 +4,26 @@ use jolt_claims::protocols::jolt::relations::ram::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use super::dense_product::{DenseProductKernel, DeviceDenseProduct};
+use super::context::CudaKernelContext;
+use super::device::fr_into;
+use super::ram_ra_reduction::{CyclePoints, DeviceRamRaReduction};
 use super::{require_context, CudaBackend};
-use crate::reference::views::{address_fold, eq_table};
+use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+pub struct RamRaReductionKernel<F: Field> {
+    state: DeviceRamRaReduction,
+    relation: RamRaClaimReduction<F>,
+    context: &'static CudaKernelContext,
+}
 
 impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
     fn prepare(
@@ -36,38 +46,68 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
             }
         }
         let r_address = &points.read_write()[..ram_log_k];
-        let gamma = inputs.challenges.gamma;
-
-        let weights = [
-            (F::one(), eq_table(&points.raf()[ram_log_k..])),
-            (gamma, eq_table(&points.read_write()[ram_log_k..])),
-            (gamma * gamma, eq_table(&points.val_check()[ram_log_k..])),
-        ];
-        let factors = [address_fold(
-            witness,
-            ram_ra_claim_reduction(),
-            log_t,
-            r_address,
-        )?];
-        let state = DeviceDenseProduct::new(
+        let cycle_points = CyclePoints {
+            raf: &points.raf()[ram_log_k..],
+            read_write: &points.read_write()[ram_log_k..],
+            val_check: &points.val_check()[ram_log_k..],
+        };
+        let ra_id = ram_ra_claim_reduction().polynomial_id();
+        let state = DeviceRamRaReduction::new(
             context,
-            &weights,
-            &factors,
-            None,
-            None,
+            &witness.hot_indices(ra_id)?,
+            &eq_table(r_address),
+            &cycle_points,
+            inputs.challenges.gamma,
             log_t,
-            relation.degree(),
         )?;
-        Ok(Box::new(DenseProductKernel {
+        Ok(Box::new(RamRaReductionKernel {
             state,
             relation: relation.clone(),
             context,
-            field: core::marker::PhantomData,
         }))
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamRaClaimReduction<F>> {
+impl<F: Field> ProveRounds<F> for RamRaReductionKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.relation.symbolic().rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.state
+                .bind(self.context, challenge)
+                .map_err(|_| SumcheckError::MissingEvaluationSource { kind: "cuda bind" })?;
+        }
+        let evals: Vec<F> = self.state.round_evals(self.context).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
+                kind: "cuda round_evals",
+            }
+        })?;
+        let round_sum = evals[0] + evals[1];
+        if round_sum != previous_claim {
+            return Err(SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual: round_sum,
+            });
+        }
+        Ok(UnivariatePoly::from_evals(&evals))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.state
+            .bind(self.context, bind)
+            .map_err(|_| SumcheckError::MissingEvaluationSource { kind: "cuda bind" })
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for RamRaReductionKernel<F> {
     type Relation = RamRaClaimReduction<F>;
 
     fn output_claims(
@@ -78,17 +118,15 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamRaClaimReduction<F
         if remaining != 0 {
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
-        let finals: Vec<F> =
-            self.finals()
-                .map_err(|_| SumcheckKernelError::InvariantViolation {
-                    reason: "CUDA dense-product factor readback failed",
-                })?;
-        let [ram_ra] = finals.as_slice() else {
-            return Err(SumcheckKernelError::InvariantViolation {
-                reason: "RAM RA claim-reduction expects exactly one bound factor",
-            });
-        };
-        Ok(RamRaClaimReductionOutputClaims { ram_ra: *ram_ra })
+        let claim = self.state.final_claim(self.context).map_err(|_| {
+            SumcheckKernelError::InvariantViolation {
+                reason: "CUDA RAM RA reduction claim readback failed",
+            }
+        })?;
+        let ram_ra = fr_into(claim).ok_or(SumcheckKernelError::InvariantViolation {
+            reason: "CUDA kernels support only the BN254 scalar field",
+        })?;
+        Ok(RamRaClaimReductionOutputClaims { ram_ra })
     }
 }
 
@@ -114,7 +152,7 @@ mod tests {
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 
-    const LOG_T: usize = 5;
+    const LOG_T: usize = 6;
     const RAM_LOG_K: usize = 3;
 
     fn witness(seed: u64) -> FixedPlane {

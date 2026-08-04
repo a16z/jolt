@@ -30,6 +30,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/dense_product.cu"),
     "\n",
     include_str!("kernels/ra_poly.cu"),
+    "\n",
+    include_str!("kernels/ram_ra_reduction.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -57,6 +59,10 @@ pub struct CudaKernelContext {
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
     lt_reconstruct: CudaFunction,
+    ram_ra_gather_h: CudaFunction,
+    ram_ra_fold_suffix: CudaFunction,
+    ram_ra_fold_prefix: CudaFunction,
+    ram_ra_phase1_round: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -94,6 +100,10 @@ impl CudaKernelContext {
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
             lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
+            ram_ra_gather_h: module.load_function("ram_ra_gather_h_kernel")?,
+            ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
+            ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
+            ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
         })
     }
 
@@ -205,6 +215,22 @@ impl CudaKernelContext {
 
     pub(super) const fn lt_reconstruct(&self) -> &CudaFunction {
         &self.lt_reconstruct
+    }
+
+    pub(super) const fn ram_ra_gather_h(&self) -> &CudaFunction {
+        &self.ram_ra_gather_h
+    }
+
+    pub(super) const fn ram_ra_fold_suffix(&self) -> &CudaFunction {
+        &self.ram_ra_fold_suffix
+    }
+
+    pub(super) const fn ram_ra_fold_prefix(&self) -> &CudaFunction {
+        &self.ram_ra_fold_prefix
+    }
+
+    pub(super) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
+        &self.ram_ra_phase1_round
     }
 
     pub(super) fn device_pointers(

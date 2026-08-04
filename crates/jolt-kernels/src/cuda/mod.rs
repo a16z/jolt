@@ -12,6 +12,7 @@ mod lt_poly;
 mod primitives;
 mod ra_poly;
 mod ram_ra_claim_reduction;
+mod ram_ra_reduction;
 mod registers_val_evaluation;
 mod staging;
 #[cfg(test)]
