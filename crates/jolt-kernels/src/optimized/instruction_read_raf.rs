@@ -65,6 +65,7 @@ use rayon::prelude::*;
 use super::support::accumulate_product;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
+    AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, AddressRafScanRow, Fp128,
     Product5Sequence, Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::reference::views::eq_table;
@@ -376,6 +377,28 @@ pub(crate) fn prepare_optimized_instruction_read_raf<F: Field>(
     )
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_instruction_read_raf(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    inputs: ProverInputs<'_, AkitaField, InstructionReadRaf<AkitaField>>,
+    external_address_phases: bool,
+) -> Result<OptimizedInstructionReadRafKernel<AkitaField>, KernelError<AkitaField>> {
+    let dimensions = inputs.relation.dimensions();
+    let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
+        witness,
+        1 << dimensions.log_t(),
+    )?);
+    session.park(SharedInstructionRows(Arc::clone(&rows)));
+    OptimizedInstructionReadRafKernel::new_inner(
+        dimensions,
+        &inputs.points.lookup_output,
+        rows,
+        inputs.challenges.gamma,
+        external_address_phases,
+    )
+}
+
 // --- parallel shims -------------------------------------------------------
 //
 // The kernel's custom scans need chunked map-reduce and indexed maps; the
@@ -683,6 +706,7 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     /// only this byte per cycle.
     claim_columns: Vec<u8>,
     rounds_bound: usize,
+    external_address_phases: bool,
 }
 
 #[cfg(feature = "allocative")]
@@ -860,6 +884,16 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
+        Self::new_inner(dimensions, r_reduction, rows, gamma, false)
+    }
+
+    fn new_inner(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[F],
+        rows: Arc<Vec<InstructionCycleRow>>,
+        gamma: F,
+        external_address_phases: bool,
+    ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
         let log_t = dimensions.log_t();
         if address_bits != 2 * RISCV_XLEN {
@@ -921,8 +955,11 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             cycle: None,
             claim_columns: Vec::new(),
             rounds_bound: 0,
+            external_address_phases,
         };
-        kernel.init_phase(0);
+        if !external_address_phases {
+            kernel.init_phase(0);
+        }
         Ok(kernel)
     }
 
@@ -1005,6 +1042,17 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             RafSums::zero,
         );
 
+        let suffix_tables = self.build_suffix_tables(suffix_len, suffix_mask);
+        self.install_address_phase(phase, raf, suffix_tables);
+    }
+
+    fn install_address_phase(
+        &mut self,
+        phase: usize,
+        raf: RafSums<F>,
+        suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
+    ) {
+        let suffix_len = self.suffix_len(phase);
         let q_shift_half: Vec<F> = raf
             .shift_half
             .iter()
@@ -1063,7 +1111,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             self.raf_upper_all_ones.q_value = Polynomial::new(vec![F::zero(); CHUNK_SIZE]);
         }
 
-        self.init_suffix_tables(suffix_len, suffix_mask);
+        self.suffix_tables = suffix_tables;
 
         // Table-prefix chunk polynomials from the checkpoints, one prefix per
         // parallel task.
@@ -1092,7 +1140,11 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     /// tables in parallel, each over parallel bucket chunks, suffixes
     /// classified once (`One` adds, {0,1}-valued adds conditionally, general
     /// ones use the primitive-scalar multiply).
-    fn init_suffix_tables(&mut self, suffix_len: usize, suffix_mask: u128) {
+    fn build_suffix_tables(
+        &self,
+        suffix_len: usize,
+        suffix_mask: u128,
+    ) -> Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)> {
         let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
         let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
@@ -1100,7 +1152,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             .collect();
         let buckets = self.buckets.as_slice();
         let suffix_shift = suffix_len;
-        let new_tables = map_indices(present.len(), |table_position| {
+        map_indices(present.len(), |table_position| {
             let table = present[table_position];
             let suffixes = table.suffixes();
             let num_suffixes = suffixes.len();
@@ -1156,8 +1208,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 .map(|coefficients| Polynomial::new(coefficients.to_vec()))
                 .collect();
             (table, polynomials)
-        });
-        self.suffix_tables = new_tables;
+        })
     }
 
     /// The address-round quadratic, evaluated at `c ∈ {0, 2}` with
@@ -1488,7 +1539,9 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 }
 
                 if phase + 1 < self.phases() {
-                    self.init_phase(phase + 1);
+                    if !self.external_address_phases {
+                        self.init_phase(phase + 1);
+                    }
                 } else {
                     self.init_cycle_rounds();
                 }
@@ -1567,6 +1620,144 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl OptimizedInstructionReadRafKernel<AkitaField> {
+    pub(crate) fn metal_prepare_address_sequence(
+        &mut self,
+        context: &SolinasMetal,
+        config: AddressPhaseSequenceConfig,
+    ) -> Result<AddressPhaseSequence, SumcheckError<AkitaField>> {
+        if !self.external_address_phases || self.rounds_bound != 0 {
+            return Err(metal_state_error(
+                "resident address handoff requires an unbound external address state",
+            ));
+        }
+        let sequence = context
+            .prepare_address_phase_sequence_from_buckets(
+                self.rows.len(),
+                &self.buckets,
+                config,
+                |index| {
+                    let row = &self.rows[index];
+                    (
+                        AddressRafScanRow::new_with_table(
+                            row.lookup_index(),
+                            row.table_index(),
+                            row.raf_flag(),
+                        ),
+                        Fp128::from_jolt_field(&self.u_evals[index]),
+                    )
+                },
+            )
+            .map_err(metal_sumcheck_error)?;
+        self.u_evals = Vec::new();
+        self.buckets = Vec::new();
+        Ok(sequence)
+    }
+
+    pub(crate) fn metal_address_phase_request(
+        &self,
+    ) -> Result<(u32, Option<[Fp128; CHUNK_SIZE]>), SumcheckError<AkitaField>> {
+        if !self.external_address_phases
+            || self.rounds_bound >= self.address_bits()
+            || !self.rounds_bound.is_multiple_of(CHUNK_LEN)
+        {
+            return Err(metal_state_error(
+                "resident address phase requested outside a phase boundary",
+            ));
+        }
+        let phase = self.rounds_bound / CHUNK_LEN;
+        let previous = if phase == 0 {
+            None
+        } else {
+            let table = self.v_tables.get(phase - 1).ok_or_else(|| {
+                metal_state_error("resident address condensation table is absent")
+            })?;
+            if table.len() != CHUNK_SIZE {
+                return Err(metal_state_error(
+                    "resident address condensation table has the wrong length",
+                ));
+            }
+            Some(std::array::from_fn(|index| {
+                Fp128::from_jolt_field(&table[index])
+            }))
+        };
+        Ok((self.suffix_len(phase) as u32, previous))
+    }
+
+    pub(crate) fn metal_install_address_phase(
+        &mut self,
+        sums: AddressPhaseSums,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        if !self.external_address_phases
+            || self.rounds_bound >= self.address_bits()
+            || !self.rounds_bound.is_multiple_of(CHUNK_LEN)
+        {
+            return Err(metal_state_error(
+                "resident address output arrived outside a phase boundary",
+            ));
+        }
+        let convert = |values: &[Fp128]| {
+            values
+                .iter()
+                .copied()
+                .map(Fp128::into_jolt_field::<AkitaField>)
+                .collect::<Vec<_>>()
+        };
+        let raf = RafSums {
+            shift_half: convert(sums.raf().shift_half()),
+            left: convert(sums.raf().left()),
+            right: convert(sums.raf().right()),
+            shift_full: convert(sums.raf().shift_full()),
+            identity: convert(sums.raf().identity()),
+            upper_all_ones: convert(sums.raf().upper_all_ones()),
+        };
+        let mut suffix_tables = Vec::with_capacity(LookupTableKind::<RISCV_XLEN>::COUNT);
+        for table in LookupTableKind::<RISCV_XLEN>::iter() {
+            let flat = sums
+                .suffix()
+                .table(table.index())
+                .ok_or_else(|| metal_state_error("resident address suffix table is absent"))?;
+            let polynomials = flat
+                .chunks_exact(CHUNK_SIZE)
+                .map(|coefficients| Polynomial::new(convert(coefficients)))
+                .collect();
+            suffix_tables.push((table, polynomials));
+        }
+        self.install_address_phase(self.rounds_bound / CHUNK_LEN, raf, suffix_tables);
+        Ok(())
+    }
+
+    pub(crate) fn metal_address_active(&self) -> bool {
+        self.external_address_phases && self.rounds_bound < self.address_bits()
+    }
+
+    pub(crate) fn metal_address_phase_pending(&self) -> bool {
+        self.metal_address_active() && self.rounds_bound.is_multiple_of(CHUNK_LEN)
+    }
+
+    pub(crate) fn metal_bind_address(
+        &mut self,
+        challenge: AkitaField,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        if !self.metal_address_active() {
+            return Err(metal_state_error(
+                "resident address bind requested after the address rounds",
+            ));
+        }
+        self.bind(challenge)
+    }
+
+    pub(crate) fn metal_address_message(
+        &self,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        if !self.metal_address_active() {
+            return Err(metal_state_error(
+                "resident address message requested after the address rounds",
+            ));
+        }
+        Ok(self.address_message(previous_claim))
+    }
+
     pub(crate) fn metal_handoff_available(&self, cutoff: usize) -> bool {
         self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
             && self.claim_columns.len() / 2 > cutoff
@@ -1714,6 +1905,14 @@ fn metal_sumcheck_error(error: crate::metal::solinas::MetalError) -> SumcheckErr
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn metal_state_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: message.into(),
+    }
+}
+
 impl<F: Field> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
     fn num_rounds(&self) -> usize {
         self.dimensions.sumcheck_rounds()
@@ -1829,7 +2028,7 @@ mod tests {
     use crate::SumcheckKernel;
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    use crate::metal::solinas::{Product5SequenceConfig, SolinasMetal};
+    use crate::metal::solinas::SolinasMetal;
     #[cfg(all(feature = "metal", target_os = "macos"))]
     use crate::metal::{InstructionReadRafMetalConfig, MetalInstructionReadRafKernel};
 
@@ -2098,6 +2297,17 @@ mod tests {
     #[cfg(all(feature = "metal", target_os = "macos"))]
     #[test]
     fn metal_cycle_tail_matches_optimized_cpu() {
+        metal_matches_optimized_cpu(false);
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_address_and_cycle_match_optimized_cpu() {
+        metal_matches_optimized_cpu(true);
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn metal_matches_optimized_cpu(use_metal_address: bool) {
         use jolt_field::AkitaField;
 
         let log_t = 7;
@@ -2108,11 +2318,12 @@ mod tests {
             .map(|i| AkitaField::from_u64(1000 + 37 * i as u64))
             .collect();
         let gamma = AkitaField::from_u64(0xACE1_57EF);
-        let cpu = OptimizedInstructionReadRafKernel::new(
+        let cpu = OptimizedInstructionReadRafKernel::new_inner(
             dimensions,
             &r_reduction,
             Arc::new(pack(&rows)),
             gamma,
+            use_metal_address,
         )
         .unwrap();
         let mut expected = OptimizedInstructionReadRafKernel::new(
@@ -2128,9 +2339,11 @@ mod tests {
             context,
             InstructionReadRafMetalConfig {
                 cutoff_elements: 8,
-                dispatch: Product5SequenceConfig::default(),
+                ..Default::default()
             },
-        );
+            use_metal_address,
+        )
+        .unwrap();
         let challenge = |round: usize| {
             AkitaField::from_u64(
                 0x9E37_79B9_7F4A_7C15 ^ (round as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ 0x11,
@@ -2153,6 +2366,10 @@ mod tests {
         expected.finish_rounds(challenge(rounds - 1)).unwrap();
         actual.finish_rounds(challenge(rounds - 1)).unwrap();
         assert!(actual.metal_rounds() > 0);
+        assert_eq!(
+            actual.metal_address_phases(),
+            if use_metal_address { 16 } else { 0 }
+        );
 
         let inputs = InstructionReadRafInputClaims {
             lookup_output: AkitaField::zero(),

@@ -8,10 +8,11 @@ use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
 use super::solinas::{
-    MetalError, Product5Sequence, Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
+    AddressPhaseSequence, AddressPhaseSequenceConfig, MetalError, Product5Sequence,
+    Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::optimized::instruction_read_raf::{
-    prepare_optimized_instruction_read_raf, OptimizedInstructionReadRafKernel,
+    prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
 };
 use crate::{
     JoltBackend, KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
@@ -21,6 +22,10 @@ use crate::{
 /// Dispatch and crossover settings for the stage-5 dense cycle tail.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionReadRafMetalConfig {
+    /// First trace length whose address phases run on Metal.
+    pub address_cutoff_elements: usize,
+    /// Dispatch geometry for the resident address sequence.
+    pub address_dispatch: AddressPhaseSequenceConfig,
     /// First table length whose next round runs on the CPU.
     pub cutoff_elements: usize,
     /// Threadgroup widths for the initial message and fused transitions.
@@ -30,6 +35,8 @@ pub struct InstructionReadRafMetalConfig {
 impl Default for InstructionReadRafMetalConfig {
     fn default() -> Self {
         Self {
+            address_cutoff_elements: 1 << 18,
+            address_dispatch: AddressPhaseSequenceConfig::default(),
             cutoff_elements: 1 << 16,
             dispatch: Product5SequenceConfig::default(),
         }
@@ -56,6 +63,10 @@ impl MetalBackend {
         let cutoff = config.instruction_read_raf.cutoff_elements;
         if cutoff < 2 || !cutoff.is_power_of_two() {
             return Err(MetalError::InvalidHybridCutoff(cutoff));
+        }
+        let address_cutoff = config.instruction_read_raf.address_cutoff_elements;
+        if address_cutoff < 2 || !address_cutoff.is_power_of_two() {
+            return Err(MetalError::InvalidHybridCutoff(address_cutoff));
         }
         Ok(Self {
             context: Arc::new(SolinasMetal::for_akita()?),
@@ -85,12 +96,15 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         Box<dyn SumcheckKernel<AkitaField, Relation = InstructionReadRaf<AkitaField>>>,
         KernelError<AkitaField>,
     > {
-        let cpu = prepare_optimized_instruction_read_raf(session, witness, inputs)?;
+        let use_metal_address = (1usize << inputs.relation.dimensions().log_t())
+            >= self.config.instruction_read_raf.address_cutoff_elements;
+        let cpu = prepare_metal_instruction_read_raf(session, witness, inputs, use_metal_address)?;
         Ok(Box::new(MetalInstructionReadRafKernel::new(
             cpu,
             Arc::clone(&self.context),
             self.config.instruction_read_raf,
-        )))
+            use_metal_address,
+        )?))
     }
 }
 
@@ -98,9 +112,11 @@ pub(crate) struct MetalInstructionReadRafKernel {
     cpu: OptimizedInstructionReadRafKernel<AkitaField>,
     context: Arc<SolinasMetal>,
     config: InstructionReadRafMetalConfig,
+    address_sequence: Option<AddressPhaseSequence>,
     sequence: Option<Product5Sequence>,
     host_tail: Option<[Vec<AkitaField>; PRODUCT5_FACTORS]>,
     metal_rounds: usize,
+    metal_address_phases: usize,
 }
 
 impl MetalInstructionReadRafKernel {
@@ -108,22 +124,57 @@ impl MetalInstructionReadRafKernel {
         cpu: OptimizedInstructionReadRafKernel<AkitaField>,
         context: Arc<SolinasMetal>,
         config: InstructionReadRafMetalConfig,
-    ) -> Self {
-        Self {
+        use_metal_address: bool,
+    ) -> Result<Self, SumcheckError<AkitaField>> {
+        let mut kernel = Self {
             cpu,
             context,
             config,
+            address_sequence: None,
             sequence: None,
             host_tail: Some(std::array::from_fn(|_| {
                 vec![AkitaField::zero(); config.cutoff_elements]
             })),
             metal_rounds: 0,
+            metal_address_phases: 0,
+        };
+        if use_metal_address {
+            let mut sequence = kernel
+                .cpu
+                .metal_prepare_address_sequence(&kernel.context, config.address_dispatch)?;
+            let (suffix_len, previous) = kernel.cpu.metal_address_phase_request()?;
+            let sums = sequence
+                .phase(suffix_len, previous.as_ref())
+                .map_err(|error| backend_error(error.to_string()))?;
+            kernel.cpu.metal_install_address_phase(sums)?;
+            kernel.metal_address_phases = 1;
+            kernel.address_sequence = Some(sequence);
         }
+        Ok(kernel)
     }
 
     #[cfg(test)]
     pub(crate) const fn metal_rounds(&self) -> usize {
         self.metal_rounds
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn metal_address_phases(&self) -> usize {
+        self.metal_address_phases
+    }
+
+    fn install_next_address_phase(&mut self) -> Result<(), SumcheckError<AkitaField>> {
+        let (suffix_len, previous) = self.cpu.metal_address_phase_request()?;
+        let sequence = self
+            .address_sequence
+            .as_mut()
+            .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
+        let sums = sequence
+            .phase(suffix_len, previous.as_ref())
+            .map_err(|error| backend_error(error.to_string()))?;
+        self.cpu.metal_install_address_phase(sums)?;
+        self.metal_address_phases += 1;
+        Ok(())
     }
 
     fn restore_cpu_tail(&mut self) -> Result<(), SumcheckError<AkitaField>> {
@@ -154,6 +205,21 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
         round: usize,
         previous_claim: AkitaField,
     ) -> Result<jolt_poly::UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        let mut bind = bind;
+        if self.address_sequence.is_some() && self.cpu.metal_address_active() {
+            let _span = tracing::info_span!("MetalInstructionReadRaf::address_round").entered();
+            if let Some(challenge) = bind.take() {
+                self.cpu.metal_bind_address(challenge)?;
+                if self.cpu.metal_address_phase_pending() {
+                    self.install_next_address_phase()?;
+                }
+            }
+            if self.cpu.metal_address_active() {
+                return self.cpu.metal_address_message(previous_claim);
+            }
+            self.address_sequence = None;
+        }
+
         if self
             .sequence
             .as_ref()

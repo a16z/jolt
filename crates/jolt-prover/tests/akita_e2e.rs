@@ -240,6 +240,7 @@ mod muldiv {
         #[cfg(all(feature = "metal", target_os = "macos"))]
         let backend = akita::JoltAkitaBackend::metal(jolt_kernels::metal::MetalConfig {
             instruction_read_raf: jolt_kernels::metal::InstructionReadRafMetalConfig {
+                address_cutoff_elements: 8,
                 cutoff_elements: 8,
                 ..Default::default()
             },
