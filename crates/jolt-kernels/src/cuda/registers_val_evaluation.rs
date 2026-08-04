@@ -7,16 +7,18 @@ use jolt_claims::protocols::jolt::relations::registers::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_poly::LtPolynomial;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
 use super::dense_product::{DenseProductKernel, DeviceDenseProduct};
+use super::lt_poly::DeviceLtPolynomial;
+use super::ra_poly::DeviceRaPolynomial;
 use super::{require_context, CudaBackend};
-use crate::reference::views::{address_fold, dense_view};
+use crate::reference::views::{dense_view, eq_table};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+use jolt_poly::BindingOrder;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 
 impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
@@ -38,12 +40,25 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
         }
         let (r_address, r_cycle) = point.split_at(REGISTER_ADDRESS_BITS);
 
-        let weights = [(F::one(), LtPolynomial::evaluations(r_cycle))];
-        let factors = [
-            dense_view(witness, rd_inc_val_evaluation())?,
-            address_fold(witness, rd_wa_val_evaluation(), log_t, r_address)?,
-        ];
-        let state = DeviceDenseProduct::new(context, &weights, &factors, log_t, relation.degree())?;
+        let weights: [(F, Vec<F>); 0] = [];
+        let factors = [dense_view(witness, rd_inc_val_evaluation())?];
+        let wa_id = rd_wa_val_evaluation().polynomial_id();
+        let wa = DeviceRaPolynomial::new(
+            context,
+            &witness.hot_indices(wa_id)?,
+            &eq_table(r_address),
+            BindingOrder::LowToHigh,
+        )?;
+        let lt = DeviceLtPolynomial::new(context, r_cycle, BindingOrder::LowToHigh)?;
+        let state = DeviceDenseProduct::new(
+            context,
+            &weights,
+            &factors,
+            Some(wa),
+            Some(lt),
+            log_t,
+            relation.degree(),
+        )?;
         Ok(Box::new(DenseProductKernel {
             state,
             relation: relation.clone(),
@@ -65,8 +80,7 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RegistersValEvaluatio
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
         let finals: Vec<F> =
-            self.state
-                .factor_finals()
+            self.finals()
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
                     reason: "CUDA dense-product factor readback failed",
                 })?;

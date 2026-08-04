@@ -25,6 +25,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("kernels/scan.cu"),
     "\n",
+    include_str!("kernels/lt_poly.cu"),
+    "\n",
     include_str!("kernels/dense_product.cu"),
     "\n",
     include_str!("kernels/ra_poly.cu"),
@@ -54,6 +56,7 @@ pub struct CudaKernelContext {
     weighted_combine: CudaFunction,
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
+    lt_reconstruct: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -90,6 +93,7 @@ impl CudaKernelContext {
             weighted_combine: module.load_function("weighted_combine_kernel")?,
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
+            lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
         })
     }
 
@@ -197,6 +201,10 @@ impl CudaKernelContext {
 
     pub(super) const fn ra_gather(&self) -> &CudaFunction {
         &self.ra_gather
+    }
+
+    pub(super) const fn lt_reconstruct(&self) -> &CudaFunction {
+        &self.lt_reconstruct
     }
 
     pub(super) fn device_pointers(

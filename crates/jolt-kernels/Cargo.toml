@@ -50,3 +50,7 @@ proptest.workspace = true
 [[example]]
 name = "cuda_primitive_bench"
 required-features = ["cuda"]
+
+[[example]]
+name = "cuda_lt_bench"
+required-features = ["cuda"]

@@ -95,6 +95,10 @@ impl DeviceRaPolynomial {
         self.dense.is_some()
     }
 
+    pub const fn dense(&self) -> Option<&DeviceFrVec> {
+        self.dense.as_ref()
+    }
+
     pub fn coefficients(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         if let Some(dense) = &self.dense {
             return dense.try_clone();
@@ -139,16 +143,12 @@ impl DeviceRaPolynomial {
         let _ = builder.arg(&stride);
         let _ = builder.arg(output.limbs_mut());
         let _ = builder.arg(&count);
-        // SAFETY: thread `j < len` writes only `out[j]` of `len * LIMBS` u64s and
-        // reads `indices[j * stride + bases[slot]]` for each of `slots` slots.
-        // Every such offset is a distinct cycle position below `cycles`
-        // (`stride * len == cycles` for LowToHigh, and for HighToLow the bases are
-        // `reverse_bits(slot) * len < cycles` added to `j < len`), so all reads sit
-        // inside the `cycles`-element `indices` buffer. A non-`COLD` entry is
+        // SAFETY: thread `j < len` writes only `out[j]`, and reads
+        // `indices[j * stride + bases[slot]]` for `slots` slots — every offset is
+        // below `cycles` (`stride * len == cycles` for LowToHigh; for HighToLow
+        // `reverse_bits(slot) * len + j < cycles`), and a non-`COLD` entry is
         // `< addresses` by the check in `new`, so the table read is inside
-        // `tables`'s `slots * addresses * LIMBS` u64s. `bases` holds exactly
-        // `slots` u32s. `out` is a fresh allocation distinct from every input, and
-        // threads with `j >= len` return before any access.
+        // `tables`'s `slots * addresses`. `out` is a distinct allocation.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
         context.stream().synchronize()?;
         Ok(output)
@@ -171,12 +171,10 @@ impl DeviceRaPolynomial {
         let _ = builder.arg(eq_one.limbs());
         let _ = builder.arg(doubled.limbs_mut());
         let _ = builder.arg(&count);
-        // SAFETY: thread `i < len` reads only `in[i]` plus the two single-element
-        // challenge buffers, and writes exactly `out[i]` and `out[len + i]` —
-        // index sets that are pairwise disjoint across threads. `in` holds
-        // `len * LIMBS` u64s and `out` holds `2 * len * LIMBS`; `out` is a fresh
-        // allocation distinct from `in`, so no thread reads a location another
-        // writes. Threads with `i >= len` return before any access.
+        // SAFETY: thread `i < len` reads `in[i]` plus the two single-element
+        // challenges and writes exactly `out[i]` and `out[len + i]` — disjoint
+        // across threads. `in` holds `len`, `out` holds `2 * len`, and `out` is a
+        // distinct allocation, so no thread reads another's write.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
         context.stream().synchronize()?;
         self.tables = doubled;
@@ -210,17 +208,17 @@ impl DeviceRaPolynomial {
         Ok(())
     }
 
-    pub fn final_claim(&self) -> Result<Fr, CudaError> {
-        let dense = self.dense.as_ref().ok_or(CudaError::InvariantViolation {
-            reason: "a one-hot polynomial is not fully bound before it collapses",
-        })?;
-        if dense.len() != 1 {
+    pub fn final_claim(&self, context: &CudaKernelContext) -> Result<Fr, CudaError> {
+        if self.len() != 1 {
             return Err(CudaError::LengthMismatch {
                 expected: 1,
-                got: dense.len(),
+                got: self.len(),
             });
         }
-        dense.first()
+        match &self.dense {
+            Some(dense) => dense.first(),
+            None => self.gather(context, self.rounds_bound)?.first(),
+        }
     }
 }
 
@@ -339,7 +337,7 @@ mod tests {
     proptest! {
         #[test]
         fn ra_poly_matches_legacy_model(
-            log_t in 4usize..=6,
+            log_t in 1usize..=6,
             log_k in 1usize..=4,
             seed in any::<u64>(),
             challenges in arb_point(6),
@@ -371,7 +369,7 @@ mod tests {
                     expected.bind(challenge);
                 }
                 prop_assert_eq!(
-                    got.final_claim().expect("final claim"),
+                    got.final_claim(context).expect("final claim"),
                     expected.coefficients()[0]
                 );
             }

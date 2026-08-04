@@ -8,6 +8,7 @@ mod context;
 mod dense_product;
 mod device;
 mod error;
+mod lt_poly;
 mod primitives;
 mod ra_poly;
 mod ram_ra_claim_reduction;
@@ -20,6 +21,7 @@ pub mod xfer_stats;
 pub use context::{shared_context, CudaKernelContext};
 pub use device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
 pub use error::CudaError;
+pub use lt_poly::DeviceLtPolynomial;
 
 pub struct CudaBackend;
 

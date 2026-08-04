@@ -49,7 +49,15 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
             log_t,
             r_address,
         )?];
-        let state = DeviceDenseProduct::new(context, &weights, &factors, log_t, relation.degree())?;
+        let state = DeviceDenseProduct::new(
+            context,
+            &weights,
+            &factors,
+            None,
+            None,
+            log_t,
+            relation.degree(),
+        )?;
         Ok(Box::new(DenseProductKernel {
             state,
             relation: relation.clone(),
@@ -71,8 +79,7 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamRaClaimReduction<F
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
         let finals: Vec<F> =
-            self.state
-                .factor_finals()
+            self.finals()
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
                     reason: "CUDA dense-product factor readback failed",
                 })?;
