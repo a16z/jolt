@@ -521,3 +521,74 @@ mandate's surface is EXHAUSTED pending flagship certification numbers.
    runs + conditional third.
 3. **Small scales (2^22-24) for iteration; big scales for gates/certification
    only.**
+
+## CAMPAIGN CLOSE — flagship certification (2026-08-04 night, quiet box, user-idle 16 h, uptime 22 d)
+
+Trunk @ec9db38f6 (+velocity-rules docs), binary ca653254…. Bench-locked, 4-min
+gaps unless noted. Per velocity rule: pair + conditional third (+1 F1-audit).
+
+| run | conditions | total | note |
+|---|---|---:|---|
+| r1 | after ~30 min idle | **71.46 s = 1.878 MHz** | good st0 mode (walk 9.3 s) |
+| r2 | 4-min gap | 78.63 | bad st0 mode (walk 13.2 s) |
+| r3 | 4-min gap | 78.47 | bad mode — central tendency back-to-back |
+| r4 | JOLT_RECORD_HOIST=off, same window | 79.73 | F1 HOLDS in bad mode too (st1 reverts to 11.7) |
+| 2^25 pair | warm, post-marathon | 19.71 / 19.89 | cool reference = W3D ABBA ≈18.0 summed |
+
+**Final attribution (monitor run, walls-invalid): zero-GPU windows >1.0 s:
+NONE.** GPU ratio-to-healthy: st1 0.97 (was 0.49), st2 0.65, st5 0.95,
+st6a n/a (0.26 s), remaining sub-healthy = bandwidth-bound or small: st3
+0.28 (2.9 s stage), st4 0.39, st6b 0.40, st7 0.15 (1.9 s). Trace:
+/tmp/gpu-util-trace-2to27-final-20260804.json.gz.
+
+### Campaign ledger vs open (2^27 canonical 77.168 / 1.69 MHz; 2^25 19.822)
+
+Best certified: **71.43-71.46 s = 1.88 MHz @2^27** (−7.4%); 2^25 ≈18.0-19.2
+(−3..−9% by regime). More important than the mean: the tails. Campaign open
+had a hidden ±9 s ambient lottery (77 lucky / 85-90 unlucky, mechanism:
+corpse-pile compressor storms). Closing trunk: worst observed back-to-back
+mode 78.6 ≈ the OLD LUCKY case; old unlucky case eliminated (storm
+structurally impossible). Same-window controls: pre-W3D trunk 87.2 (afternoon
+adverse), F1-off 79.7 (tonight).
+
+Stage walls, campaign open → close (canonical-ish best): st0 10.8→12.3-12.6
+(hosts the hoisted walk), st1 8.0→4.5, st2 4.3→2.7, st3 2.0→2.1, st4
+10.4→8.3, st5 14.7→12.9-13.7, st6a 2.3→0.13-0.18, st6b 13.9(lucky)→15.4-16.5
+(storm-proof), st7 2.1→1.2-1.8, st8 8.8→9.0.
+
+Waves: W1A killed / W1B retained (+uncap after W3A) / W1D null+arena-deletion
+/ W2A retained (protocol: BooleanityAnchor V1) / W2B rejected / W3A retained
+(mmap lifetimes) / W3B uncap / W3C retained-at-certification / W3D retained /
+W3E no-go. One protocol change total, fail-closed, load-bearing-tested;
+everything else byte-identical.
+
+### Negative-results index (durable)
+
+1. MADV_FREE_REUSABLE: silent no-op on any range ever wrapped by a no-copy
+   MTLBuffer (probe-pinned; munmap works, incl. live-wrapped — ordering!).
+2. malloc_zone_pressure_relief: no-op on freed huge Vecs.
+3. libmalloc never returns multi-GiB frees mid-proof; drop-site ≠ reclaim.
+4. Round-pairing: dead — slots already fuse; the one unfused slot's fix was
+   fusion, and after fusion the residual sync is noise.
+5. Cycle-major booleanity sumcheck: mathematically vacuous (ra²=ra).
+6. Per-round stateless gather for one-hot address phases: 10× ALU.
+7. Device pushforward scatter (all shapes tried): loses to 12-core CPU.
+8. Device q0 for InstrInput: best shape TIES host exact-integer pipeline.
+9. Device IncCR prepare: no better than parallel CPU (DRAM-bound).
+10. "The 2^27 pressure tier" as OS pressure: false on trunk — it was
+    working-set shape + (pre-W3A) the corpse-pile storm.
+
+### Parked doors (future waves)
+
+1. **st0 walk↔commit contention** — the new dominant variance (±5 s @2^27,
+   bimodal, idle-time-correlated). Mitigations untried: spawn stagger, walk
+   chunking with commit-aware yielding, QoS on the METAL side instead.
+2. st4 round-loop fusion under a memory-viable representation (W2B's two
+   variants bracketed it: fast+fat vs lean+slow; the middle is unexplored).
+3. st6b bandwidth tier (members are device but DRAM-bound; SLC tiling).
+4. SpartanShift γ-split (≤0.3 s), st1 claimed_inputs device port (~0.6 s).
+5. Co-issue probe, NTZ small-space (inherited, still parked).
+
+Campaign mandate status: **utilization surface exhausted — no zero-GPU
+windows >1 s remain; every >1 s GPU-idle host mass eliminated or
+evidence-closed.**
