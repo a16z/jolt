@@ -673,7 +673,10 @@ mod tests {
                 },
             )
             .expect("address RAF scan should prepare");
-        assert_eq!(invocation.intermediate_index_bytes(), rows.len() as u64 * 4);
+        assert_eq!(
+            invocation.intermediate_contribution_bytes(),
+            rows.len() as u64 * 32
+        );
 
         invocation
             .execute()

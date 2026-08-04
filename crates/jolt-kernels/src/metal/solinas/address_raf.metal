@@ -1,16 +1,22 @@
 #define ADDRESS_RAF_BINS 256u
+#define ADDRESS_RAF_KEYS (2u * ADDRESS_RAF_BINS)
 #define ADDRESS_RAF_LANES 6u
-#define ADDRESS_RAF_FLAG_SHIFT 62u
-
-struct AddressRafScanRow {
-    ulong words[5];
-};
+#define ADDRESS_RAF_PARTIAL_LANES 3u
 
 struct AddressRafParams {
     uint rows;
     uint suffix_len;
     uint rows_per_threadgroup;
     uint threadgroup_count;
+};
+
+struct AddressRafLookup {
+    ulong2 limbs;
+};
+
+struct AddressRafContribution {
+    SolinasFp128 weight;
+    ulong2 scalars;
 };
 
 inline ulong address_compact_even_bits(ulong value) {
@@ -39,7 +45,7 @@ inline SolinasFp128 address_simd_sum(SolinasFp128 value) {
 }
 
 kernel void solinas_address_raf_histogram(
-    device const uchar* keys [[buffer(0)]],
+    device const ushort* keys [[buffer(0)]],
     device uint* group_counts [[buffer(1)]],
     constant AddressRafParams& params [[buffer(2)]],
     threadgroup atomic_uint* histogram [[threadgroup(0)]],
@@ -47,7 +53,7 @@ kernel void solinas_address_raf_histogram(
     uint tid [[thread_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]])
 {
-    for (uint bin = tid; bin < ADDRESS_RAF_BINS; bin += threads) {
+    for (uint bin = tid; bin < ADDRESS_RAF_KEYS; bin += threads) {
         atomic_store_explicit(&histogram[bin], 0u, memory_order_relaxed);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -60,8 +66,8 @@ kernel void solinas_address_raf_histogram(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint bin = tid; bin < ADDRESS_RAF_BINS; bin += threads) {
-        group_counts[group * ADDRESS_RAF_BINS + bin] =
+    for (uint bin = tid; bin < ADDRESS_RAF_KEYS; bin += threads) {
+        group_counts[group * ADDRESS_RAF_KEYS + bin] =
             atomic_load_explicit(&histogram[bin], memory_order_relaxed);
     }
 }
@@ -76,40 +82,42 @@ kernel void solinas_address_raf_offsets(
 {
     uint total = 0;
     for (uint group = 0; group < params.threadgroup_count; group++) {
-        total += group_counts[group * ADDRESS_RAF_BINS + bin];
+        total += group_counts[group * ADDRESS_RAF_KEYS + bin];
     }
     totals[bin] = total;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (bin == 0) {
         uint running = 0;
-        for (uint current = 0; current < ADDRESS_RAF_BINS; current++) {
+        for (uint current = 0; current < ADDRESS_RAF_KEYS; current++) {
             bin_offsets[current] = running;
             running += totals[current];
         }
-        bin_offsets[ADDRESS_RAF_BINS] = running;
+        bin_offsets[ADDRESS_RAF_KEYS] = running;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
 
     uint running = bin_offsets[bin];
     for (uint group = 0; group < params.threadgroup_count; group++) {
-        uint index = group * ADDRESS_RAF_BINS + bin;
+        uint index = group * ADDRESS_RAF_KEYS + bin;
         group_offsets[index] = running;
         running += group_counts[index];
     }
 }
 
 kernel void solinas_address_raf_scatter(
-    device const uchar* keys [[buffer(0)]],
-    device const uint* group_offsets [[buffer(1)]],
-    device uint* bucketed_indices [[buffer(2)]],
-    constant AddressRafParams& params [[buffer(3)]],
+    device const ushort* keys [[buffer(0)]],
+    device const AddressRafLookup* lookups [[buffer(1)]],
+    device const SolinasFp128* weights [[buffer(2)]],
+    device const uint* group_offsets [[buffer(3)]],
+    device AddressRafContribution* contributions [[buffer(4)]],
+    constant AddressRafParams& params [[buffer(5)]],
     threadgroup atomic_uint* positions [[threadgroup(0)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]])
 {
-    for (uint bin = tid; bin < ADDRESS_RAF_BINS; bin += threads) {
+    for (uint bin = tid; bin < ADDRESS_RAF_KEYS; bin += threads) {
         atomic_store_explicit(&positions[bin], 0u, memory_order_relaxed);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -117,41 +125,11 @@ kernel void solinas_address_raf_scatter(
     uint start = group * params.rows_per_threadgroup;
     uint end = min(start + params.rows_per_threadgroup, params.rows);
     for (uint row = start + tid; row < end; row += threads) {
-        uint bin = keys[row];
-        uint local = atomic_fetch_add_explicit(&positions[bin], 1u, memory_order_relaxed);
-        uint destination = group_offsets[group * ADDRESS_RAF_BINS + bin] + local;
-        bucketed_indices[destination] = row;
-    }
-}
-
-kernel void solinas_address_raf_reduce(
-    device const AddressRafScanRow* rows [[buffer(0)]],
-    device const SolinasFp128* weights [[buffer(1)]],
-    device const uint* bucketed_indices [[buffer(2)]],
-    device const uint* bin_offsets [[buffer(3)]],
-    device SolinasFp128* output [[buffer(4)]],
-    constant AddressRafParams& params [[buffer(5)]],
-    threadgroup SolinasFp128* shared [[threadgroup(0)]],
-    uint bin [[threadgroup_position_in_grid]],
-    uint tid [[thread_index_in_threadgroup]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simdgroup [[simdgroup_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
-{
-    SolinasFp128 sums[ADDRESS_RAF_LANES];
-    for (uint output_lane = 0; output_lane < ADDRESS_RAF_LANES; output_lane++) {
-        sums[output_lane] = solinas_zero();
-    }
-
-    uint start = bin_offsets[bin];
-    uint end = bin_offsets[bin + 1];
-    for (uint position = start + tid; position < end; position += threads) {
-        uint row_index = bucketed_indices[position];
-        AddressRafScanRow row = rows[row_index];
-        ulong lookup_lo = row.words[0];
-        ulong lookup_hi = row.words[1];
-        bool raf = ((row.words[4] >> ADDRESS_RAF_FLAG_SHIFT) & 1ul) != 0;
-
+        uint key = keys[row];
+        uint local = atomic_fetch_add_explicit(&positions[key], 1u, memory_order_relaxed);
+        uint destination = group_offsets[group * ADDRESS_RAF_KEYS + key] + local;
+        ulong lookup_lo = lookups[row].limbs[0];
+        ulong lookup_hi = lookups[row].limbs[1];
         ulong suffix_lo = 0;
         ulong suffix_hi = 0;
         if (params.suffix_len == 64) {
@@ -164,27 +142,63 @@ kernel void solinas_address_raf_reduce(
             suffix_lo = lookup_lo & ((1ul << params.suffix_len) - 1ul);
         }
 
-        SolinasFp128 weight = weights[row_index];
+        AddressRafContribution contribution;
+        contribution.weight = weights[row];
+        if (key < ADDRESS_RAF_BINS) {
+            contribution.scalars[0] = address_compact_even_bits(suffix_lo >> 1)
+                | (address_compact_even_bits(suffix_hi >> 1) << 32);
+            contribution.scalars[1] = address_compact_even_bits(suffix_lo)
+                | (address_compact_even_bits(suffix_hi) << 32);
+        } else {
+            contribution.scalars = ulong2(suffix_lo, suffix_hi);
+        }
+        contributions[destination] = contribution;
+    }
+}
+
+kernel void solinas_address_raf_reduce(
+    device const AddressRafContribution* contributions [[buffer(0)]],
+    device const uint* bin_offsets [[buffer(1)]],
+    device SolinasFp128* output [[buffer(2)]],
+    constant AddressRafParams& params [[buffer(3)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint key [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    SolinasFp128 sums[ADDRESS_RAF_PARTIAL_LANES];
+    for (uint output_lane = 0; output_lane < ADDRESS_RAF_PARTIAL_LANES; output_lane++) {
+        sums[output_lane] = solinas_zero();
+    }
+
+    bool raf = key >= ADDRESS_RAF_BINS;
+    uint start = bin_offsets[key];
+    uint end = bin_offsets[key + 1];
+    for (uint position = start + tid; position < end; position += threads) {
+        AddressRafContribution contribution = contributions[position];
+        SolinasFp128 weight = contribution.weight;
         if (raf) {
-            sums[3] = solinas_add(sums[3], weight);
+            sums[0] = solinas_add(sums[0], weight);
+            ulong suffix_lo = contribution.scalars[0];
+            ulong suffix_hi = contribution.scalars[1];
             if (suffix_lo != 0 || suffix_hi != 0) {
                 SolinasFp128 identity = solinas_mul_wide(
                     weight,
                     address_field_from_u128(suffix_lo, suffix_hi));
-                sums[4] = solinas_add(sums[4], identity);
+                sums[1] = solinas_add(sums[1], identity);
             }
             uint upper_bits = params.suffix_len > 64 ? params.suffix_len - 64 : 0;
             bool upper_all_ones = upper_bits == 0
                 || suffix_hi == ((1ul << upper_bits) - 1ul);
             if (upper_all_ones) {
-                sums[5] = solinas_add(sums[5], weight);
+                sums[2] = solinas_add(sums[2], weight);
             }
         } else {
             sums[0] = solinas_add(sums[0], weight);
-            ulong left = address_compact_even_bits(suffix_lo >> 1)
-                | (address_compact_even_bits(suffix_hi >> 1) << 32);
-            ulong right = address_compact_even_bits(suffix_lo)
-                | (address_compact_even_bits(suffix_hi) << 32);
+            ulong left = contribution.scalars[0];
+            ulong right = contribution.scalars[1];
             if (left != 0) {
                 SolinasFp128 product = solinas_mul_wide(
                     weight,
@@ -201,7 +215,7 @@ kernel void solinas_address_raf_reduce(
     }
 
     uint simdgroups = threads / 32;
-    for (uint output_lane = 0; output_lane < ADDRESS_RAF_LANES; output_lane++) {
+    for (uint output_lane = 0; output_lane < ADDRESS_RAF_PARTIAL_LANES; output_lane++) {
         SolinasFp128 sum = address_simd_sum(sums[output_lane]);
         if (lane == 0) {
             shared[output_lane * simdgroups + simdgroup] = sum;
@@ -210,13 +224,15 @@ kernel void solinas_address_raf_reduce(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (simdgroup == 0) {
-        for (uint output_lane = 0; output_lane < ADDRESS_RAF_LANES; output_lane++) {
+        for (uint output_lane = 0; output_lane < ADDRESS_RAF_PARTIAL_LANES; output_lane++) {
             SolinasFp128 sum = lane < simdgroups
                 ? shared[output_lane * simdgroups + lane]
                 : solinas_zero();
             sum = address_simd_sum(sum);
             if (lane == 0) {
-                output[output_lane * ADDRESS_RAF_BINS + bin] = sum;
+                uint chunk = key & (ADDRESS_RAF_BINS - 1);
+                uint first_lane = raf ? 3 : 0;
+                output[(first_lane + output_lane) * ADDRESS_RAF_BINS + chunk] = sum;
             }
         }
     }

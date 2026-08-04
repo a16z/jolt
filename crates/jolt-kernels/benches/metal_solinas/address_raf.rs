@@ -175,7 +175,7 @@ fn config() -> AddressRafScanConfig {
                 .parse::<usize>()
                 .expect("rows per threadgroup should be an integer")
         });
-    let threads_per_threadgroup = env::var("JOLT_METAL_ADDRESS_THREADS").map_or(128, |value| {
+    let threads_per_threadgroup = env::var("JOLT_METAL_ADDRESS_THREADS").map_or(1024, |value| {
         value
             .parse::<usize>()
             .expect("threadgroup width should be an integer")

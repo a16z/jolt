@@ -356,6 +356,14 @@ contiguously, performs the exact scalar field products, and writes three disjoin
 lanes per key. Its optimistic phase traffic is about 98 bytes per row, all sequential
 except the contribution scatter.
 
+This layout restored locality at the target scale. At `2^26`, 64K-row groups with
+128 threads measured 23.65 ms wall versus 47.88 ms for the CPU scan. Increasing the
+threadgroup width reduced Metal wall time to 18.27 ms at 256 threads, 17.46 ms at
+512, and 17.01 ms at the device maximum of 1024. Halving the row group to 32K was
+flat at 16.98 ms; increasing it to 128K regressed to 21.72 ms with high variance.
+The retained candidate therefore uses 64K-row, 1024-thread groups pending an
+order-inverted validation of the complete phase with condensation and suffix work.
+
 ### Booleanity cycle worksheet
 
 The next slot is `Booleanity`, selected by the profile. Let `T` be the cycle count,
