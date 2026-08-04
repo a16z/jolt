@@ -2,8 +2,23 @@
 
 Mandate (2026-08-03): the 2^27 trace shows literal 0% GPU on big portions of the
 sumcheck stages. Get GPU utilization high and the GPU utilized EVERYWHERE on the
-Metal backend. Hard gate: proof bytes identical (byte_diff / sha A/B) — pure
-engineering, no protocol changes.
+Metal backend. ~~Hard gate: proof bytes identical (byte_diff / sha A/B) — pure
+engineering, no protocol changes.~~
+
+**DIRECTIVE UPDATE (2026-08-04 00:20 EDT, supersedes byte-parity):** byte-identical
+proof compatibility NO LONGER required. Anything SOUND may be tried — layout
+changes (address-major), two sumcheck rounds at once (extra compute for fewer
+challenge round-trips), protocol restructuring. Remaining constraints:
+1. Proof must verify end-to-end (prover+verifier may change together).
+2. Soundness preserved — journal a short soundness argument for any
+   protocol-touching change.
+3. Full test matrix stays green (protocol-touching changes update fixtures/tests
+   rather than delete them; byte-diff fixture tests are superseded by e2e
+   prove+verify equivalents where the format legitimately changed).
+Gate shifts from byte-identical → **e2e verify + full tests**. In-flight wave-1
+lanes finish as scoped (their ports are exact-math; byte parity is not a perf
+constraint for pure ports since field arithmetic is associative — the freedom
+matters for restructuring, i.e. follow-on lanes).
 
 Predecessor: M5 Max campaign (closed) — `.metal-m5-box-journal.md`. Retained
 ceiling there: **2^25 = 19.822 s / 1.693 MHz** (two-run mean), **2^27 = 77.168 s
@@ -112,6 +127,32 @@ Honest wave-1 projection if all three lanes hit: 2^27 ≈ 63-67 s (2.0-2.1 MHz),
 2^25 ≈ 17.5-18.5 s (1.81-1.90 MHz). Above 2 MHz @2^27 requires D to land, not
 just A+B.
 
+## Post-directive lever board (sound-but-not-byte-identical, wave-1.5+)
+
+Ranked candidates unlocked by the 2026-08-04 directive; each needs a journal
+soundness note before merge.
+
+1. **Round-pairing (two sumcheck rounds per GPU round-trip).** Per pair: one
+   eval pass producing a bivariate g(X,Y) on a (d+1)² grid + one bind-by-2 pass,
+   vs two eval + two bind passes today → ~2× fewer big-array traversals and ~2×
+   fewer host↔GPU sync/transcript round-trips on round loops. Cost: (d+1)²
+   coeffs vs 2(d+1) per pair in the proof (d=3: 16 vs 8 Fr) and more ALU per
+   pass. Soundness sketch: verifier checks Σ_{x,y∈{0,1}} g(x,y) = prev claim,
+   samples (r_i, r_{i+1}), next claim g(r_i,r_{i+1}); Schwartz-Zippel gives
+   2d/|F| per pair = identical total to two single rounds. Best on the mid-util
+   stages (st1/2/3/4/6b, 18-31% @2^27) where round-boundary stalls dominate.
+   SCOPING LANE dispatched (read-only) before any implementation.
+2. **Address-major layout / materialization** for address-phase sumchecks
+   (booleanity_address, bytecode_read_raf_address — the st6a pair). Only if
+   lane A's exact-math port is gather-bound; wait for A's root-cause report.
+3. **Stage-boundary restructuring on the st5→st6b seam**: hoist st6a/st6b
+   prepares to overlap st5 GPU rounds if challenge deps allow (scheduling =
+   sound trivially); with the directive, reordering transcript absorptions
+   across the seam is also legal if FS ordering keeps every challenge derived
+   after everything it must bind (journal the argument per change).
+4. **st4 RegistersRWC restructure** — if D's root-cause shows the prepare hole
+   is inherent to the current formulation rather than allocator pressure.
+
 ## Parked doors (inherited)
 
 - Co-issue probe (M5: is a wide mul dual-slot? add32 only 1.83× mul32) — ALU-roof
@@ -124,3 +165,7 @@ just A+B.
 
 - 2026-08-04 04:0x UTC: campaign opened; nosleep on; traces analyzed; wave-1 cut
   published; lanes A/B/D dispatched.
+- 2026-08-04 04:25 UTC: USER DIRECTIVE logged — byte-parity gate lifted, replaced
+  by e2e verify + full tests + journaled soundness notes for protocol changes.
+  Wave-1 lanes finish as scoped (unaffected: exact-math ports). Lever board
+  published; round-pairing scoping lane dispatched (read-only, no bench lock).
