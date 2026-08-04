@@ -24,9 +24,19 @@
 - Device threshold controls prepare and rounds; forced-device parity asserts a positive dispatch count. CPU and Metal proof-byte matrices remain the retention gate.
 - Reuse existing Metal buffer/runtime utilities only. No allocator, arena, madvise, parking-lifetime, or stage-driver ownership changes.
 
-## Checkpoint 2 — pending
+## Checkpoint 2 — parity green; `2^24` kill gate passed
 
-Parity and first `2^24` A/B.
+- Forced-device slot lockstep: optimized and Metal round coefficients/output claims match; combined init plus every fixture round dispatched. Synthetic `2^27` flat-offset device parity remains green (`factor=4`, `len=2^27` => word `2^32`).
+- Proof bytes: `byte_diff` 11/11 with `prover-fixtures`; 11/11 with `prover-fixtures,metal` (the current revision discovers 11 fixtures; the campaign brief's 19 count is stale).
+- Same-binary `2^24` A/B, wall mode without monitor, bench lock held, pre-run load 4.35/3.47:
+
+| metric | slot disabled | slot enabled | delta |
+|---|---:|---:|---:|
+| stage 6b | 2.102 s | 1.200 s | **-0.901 s (-42.9%)** |
+| BytecodeReadRafCycle prepare + rounds | 1.278 s | 0.596 s | **-0.682 s (-53.3%)** |
+| total prove | 11.94 s | 10.90 s | -1.04 s (-8.7%) |
+
+Kill gate required stage 6b `-15%` or member `-40%`; both pass. Logs/traces: `/tmp/w1b-bytecode-s24-{A,B}.{log,json}`.
 
 ## Final — pending
 
