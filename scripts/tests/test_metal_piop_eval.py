@@ -62,6 +62,20 @@ class MetalPiopEvalTests(unittest.TestCase):
             {"name": "Booleanity::prepare", "ph": "E", "pid": 1, "tid": 0, "ts": 12.8},
             {"name": "Booleanity::prepare", "ph": "E", "pid": 1, "tid": 0, "ts": 13.0},
             {"name": "Booleanity::prove_round", "ph": "B", "pid": 1, "tid": 0, "ts": 14.0},
+            {
+                "name": "MetalBooleanity::resident_round",
+                "ph": "B",
+                "pid": 1,
+                "tid": 0,
+                "ts": 14.5,
+            },
+            {
+                "name": "MetalBooleanity::resident_round",
+                "ph": "E",
+                "pid": 1,
+                "tid": 0,
+                "ts": 15.5,
+            },
             {"name": "Booleanity::prove_round", "ph": "E", "pid": 1, "tid": 0, "ts": 16.0},
             {"name": "prove_stage1", "ph": "E", "pid": 1, "tid": 0, "ts": 17.0},
             {"name": "jolt_prover::piop", "ph": "E", "pid": 1, "tid": 0, "ts": 20.0},
@@ -71,6 +85,17 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(attribution["kernels"][0]["kernel"], "Booleanity")
         self.assertEqual(attribution["kernels"][0]["wall_ms"], 0.003)
         self.assertEqual(attribution["kernels"][0]["piop_share"], 0.3)
+        self.assertEqual(
+            attribution["backend_spans"],
+            [
+                {
+                    "span": "MetalBooleanity::resident_round",
+                    "wall_ms": 0.001,
+                    "piop_share": 0.1,
+                    "occurrences": 1,
+                }
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PIOP_SPAN = "jolt_prover::piop"
 
 
@@ -114,7 +114,23 @@ def trace_attribution(events: list[dict[str, Any]]) -> dict[str, Any]:
         for kernel, duration in kernel_durations.items()
     ]
     kernels.sort(key=lambda item: item["wall_ms"], reverse=True)
-    return {"piop_ms": piop_us / 1000.0, "stage_ms": stages, "kernels": kernels}
+    backend_spans = [
+        {
+            "span": name,
+            "wall_ms": union_duration_us(intervals) / 1000.0,
+            "piop_share": union_duration_us(intervals) / piop_us,
+            "occurrences": len(intervals),
+        }
+        for name, intervals in intervals_by_name.items()
+        if name.startswith("Metal")
+    ]
+    backend_spans.sort(key=lambda item: item["wall_ms"], reverse=True)
+    return {
+        "piop_ms": piop_us / 1000.0,
+        "stage_ms": stages,
+        "kernels": kernels,
+        "backend_spans": backend_spans,
+    }
 
 
 def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:

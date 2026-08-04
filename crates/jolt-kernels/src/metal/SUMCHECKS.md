@@ -67,12 +67,14 @@ optimized CPU prepare / irregular prefix rounds
        one canonical readback, optimized CPU tail
 ```
 
-The first slot is `InstructionReadRaf`. Its sparse 128-bit address phases and first
-cycle message remain on the CPU. When the first cycle challenge arrives, the CPU
-computes the five half-domain tables directly into one shared Metal buffer; no
-full-domain dense table or intermediate host `Vec` exists. Metal then uses the
-resident five-factor fused bind-and-message schedule until the measured cutoff and
-the optimized CPU finishes the short tail.
+The first slot is `InstructionReadRaf`. Its 16 sparse 128-bit address phases use a
+resident table-major Metal layout, while the small address round tables and
+Fiat-Shamir challenges return to the host. The current cycle path derives the first
+message on the CPU, then writes five half-domain tables directly into one shared
+Metal buffer. Metal uses a resident five-factor fused bind-and-message schedule
+until the measured cutoff and the optimized CPU finishes the short tail. The open
+iteration removes that CPU cycle seam by deriving the factors from the resident
+compact rows on device.
 
 A command failure before a message is absorbed may retry on the CPU only while an
 equivalent host state still exists. After the host state is released, or after the
@@ -169,7 +171,7 @@ order after the first slot establishes the harness.
 | 3 | `registers_claim_reduction` | dense fused product | analyze |
 | 4 | `registers_read_write` | sparse CPU front, dense cycle tail | analyze |
 | 4 | `ram_val_check` | dense fused product | analyze |
-| 5 | `instruction_read_raf` | resident address scans, five-factor Metal cycle | cycle integrated; address reopened |
+| 5 | `instruction_read_raf` | resident address scans, five-factor Metal cycle | address + cycle integrated; cycle seam optimizing |
 | 5 | `ram_ra_claim_reduction` | dense fused product | analyze |
 | 5 | `registers_val_evaluation` | dense fused product | analyze |
 | 6a | `bytecode_read_raf_address` | address pushforward | analyze |
@@ -284,6 +286,13 @@ The current full `InstructionReadRaf` path measured 3.429 s under Metal, only 1.
 faster than its 3.583 s optimized-CPU oracle. The retained cycle-only result remains
 4.87x at `2^24`; it did not satisfy the complete-hybrid bar because the 128 CPU
 address rounds dominate. Stage 5 is therefore reopened before moving to Booleanity.
+
+After integrating all 16 resident address phases, a fresh exact `2^26` pair at
+`c44c6e368` measured 20.642 s optimized CPU and 19.500 s Metal-hybrid PIOP, or
+1.059x. `InstructionReadRaf` fell from 3.697 s to 2.181 s (1.69x), and stage 5 fell
+from 4.089 s to 2.561 s. Both proofs verified. This is a retained correctness and
+directional-performance checkpoint, not a completed port: the complete kernel still
+misses its 4x promotion floor.
 
 Applying the working targets (5x for shares above 5%, 4x for 1-5%, 3x below 1%) to
 the target profile gives an Amdahl projection of about 4.19x from the current path.
@@ -453,6 +462,30 @@ measured copy roof. The empirical traffic floor is about 12.2 ms, leaving only
 1.33x local headroom. The next evaluator therefore measures all 16 real address
 phases, their one-time table-major handoff, CPU message construction, and the cycle
 tail rather than further tuning this isolated dispatch.
+
+That evaluator attributes 718.2 ms to preparation and 1,463.2 ms to round proving.
+Within the rounds, all address work takes 296.6 ms and the resident dense cycle
+sequence takes 56.7 ms, but the first compact-row cycle message takes 650.7 ms and
+the following CPU-derived dense handoff takes 462.0 ms. The raw address shaders are
+therefore no longer the limiter; the CPU/device representation boundary is.
+
+The next candidate keeps an inverse cycle-to-table-major index beside the resident
+compact rows. Its first cycle-message shader reads the two compact rows for each
+cycle pair, derives the four RA factors from the 16 cache-sized phase tables, and
+reduces the five Gruen evaluations without materializing dense inputs. After host
+Fiat-Shamir, a second shader fuses the first cycle bind, half-domain materialization,
+and the following message into the resident product buffers.
+
+For `T` rows, the two dispatches derive `12T` RA multiplications each. Including
+the five-factor message and bind work gives an optimistic total near `43T` useful
+field multiplications. At `T = 2^26`, the measured 16.4-Gmul/s direct-handoff rate
+places a conservative compute floor near 0.18 s, versus 1.11 s for the two CPU seams.
+The compact-row reads plus the one required half-domain write are below that compute
+floor at the measured copy roof. Direct parallel population of shared Metal buffers
+must then reduce the 718-ms preparation cost; a 0.20-s preparation budget, the
+measured 0.30-s address work, and a 0.18-s cycle seam put a roughly 5x complete-slot
+result within the empirical roofs. Because this is clearly above the 4x floor, the
+goal controller keeps the slot open.
 
 ### Booleanity cycle worksheet
 
