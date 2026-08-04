@@ -27,6 +27,7 @@ const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity.metal");
 const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization.metal");
 const INSTRUCTION_RA_SEQUENCE_SOURCE: &str = include_str!("instruction_ra_sequence.metal");
+const BYTECODE_CYCLE_SOURCE: &str = include_str!("bytecode_cycle.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
 
 mod address_raf;
@@ -35,6 +36,7 @@ mod address_sequence;
 mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
+mod bytecode_cycle;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
 mod product5;
@@ -54,6 +56,10 @@ pub use address_suffix_full::{AddressSuffixFullInvocation, AddressSuffixFullSums
 pub(crate) use booleanity::BooleanityRows;
 pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
+};
+pub use bytecode_cycle::{
+    BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables,
+    BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 pub(crate) use instruction_ra_sequence::{
     instruction_ra_weight_capacities, InstructionRaSequenceStorage,
@@ -209,6 +215,8 @@ pub enum MetalError {
     DeviceUnavailable,
     #[error("Solinas offset must be nonzero")]
     InvalidOffset,
+    #[error("kernel requires Solinas offset {expected:#x}, but the context uses {got:#x}")]
+    UnexpectedSolinasOffset { expected: u32, got: u32 },
     #[error("failed to compile the Solinas Metal library: {0}")]
     LibraryCompilation(String),
     #[error("Metal entry point `{name}` was not found: {message}")]
@@ -351,6 +359,28 @@ pub enum MetalError {
     #[error("invalid resident Instruction RA state: {0}")]
     InvalidInstructionRaState(&'static str),
     #[error(
+        "bytecode cycle kernels require a power-of-two table length of at least {minimum}, got {got}"
+    )]
+    InvalidBytecodeCycleTableLength { minimum: usize, got: usize },
+    #[error("bytecode cycle plane `{plane}` has length {got}, expected {expected}")]
+    BytecodeCyclePlaneLength {
+        plane: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error("bytecode cycle maximum threadgroup count must be nonzero, got {0}")]
+    InvalidBytecodeCycleThreadgroups(usize),
+    #[error("invalid resident bytecode cycle state: {0}")]
+    InvalidBytecodeCycleState(&'static str),
+    #[error(
+        "bytecode cycle pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedBytecodeCycleExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
         "five-factor kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
     InvalidProduct5TableLength { minimum: usize, got: usize },
@@ -442,7 +472,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)

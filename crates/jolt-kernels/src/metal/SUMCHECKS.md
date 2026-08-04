@@ -181,7 +181,7 @@ order after the first slot establishes the harness.
 | 5 | `registers_val_evaluation` | dense fused product | analyze |
 | 6a | `bytecode_read_raf_address` | address pushforward | analyze |
 | 6a | `booleanity_address` | address pushforward | analyze |
-| 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | Q10 CPU denominator revalidated; dense Metal control next |
+| 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | Q10 CPU denominator revalidated; dense A0 observed and exact, row-derived A1 next |
 | 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | integrated; 4.85x real kernel seam at `2^26`, further ceiling work open |
 | 6b | `ram_hamming_booleanity` | dense cubic | analyze |
 | 6b | `ram_ra_virtualization` | one-hot virtualization | analyze |
@@ -872,6 +872,99 @@ both arms. Because `log_K=13` is leading-zero padded into two eight-bit chunks,
 neither bound Bytecode RA point equals Booleanity's eight-round tail point. A later
 joint stage-6b dispatcher may share row scans or command submission, but not bound
 RA state in the primary geometry.
+
+### Dense Q10 control
+
+The A0 control starts with five dense resident planes ordered as
+`[C, D, I, R0, R1]`. It implements the exact Q10 four-sample message, then fuses
+each bind with the next message. It does not derive those planes from packed rows,
+expand the split equality polynomials, gather the two RA chunks, run Fiat--Shamir,
+or enter the production sumcheck trait. Its measurements are dense-arithmetic
+controls, not Bytecode member or PIOP speedups.
+
+The sequence allocates five separate source buffers of `N` fields and five separate
+destination buffers of `N/2` fields. This avoids requiring one monolithic `5N`
+allocation while retaining the same `120N` persistent bytes. Peak table storage is
+7.50 GiB at `2^26` and 30.0 GiB at `2^28` for the sequence-owned Metal table
+buffers. Two four-lane reduction buffers add at most `128G` bytes for `G`
+threadgroups, or 1 MiB at the retained cap of 8,192. All persistent table and
+reduction buffers are allocated during preparation. A round creates, encodes, and
+submits a command buffer, but allocates no device buffer. The Rust API borrows five
+named planes rather than one flat slice, so production callers neither concatenate
+them nor depend on an implicit factor order.
+
+For a source length `N`, the first message performs `5N` useful field products and
+reads `80N` logical bytes. A fused transition performs `2.5N` bind products and
+`2.5N` Q10 products, reads `80N` bytes, and writes `40N` bytes. Its optimistic
+arithmetic intensities are therefore `1/16` and `1/24` useful products per byte:
+
+| A0 operation | Useful products | Logical table bytes | Intensity |
+|---|---:|---:|---:|
+| first message | `5N` | `80N` | `0.0625` product/B |
+| bind + next message | `5N` | `120N` | `0.0417` product/B |
+
+The final `2^22` Criterion control used 256 message threads, 128 transition threads,
+and at most 8,192 threadgroups on the Apple M4 Max. The CPU arm was the local Rayon
+Q10 mirror. Metal wall time includes submission, completion, timestamp validation,
+and four-field readback; GPU-active time comes from command-buffer timestamps. The
+initial source was already resident on both sides. Repeated transition samples use
+a checked metadata rewind after one transition: buffer A remains read-only while
+buffer B is overwritten, so no upload, allocation, or unmeasured shared-memory copy
+occurs between samples.
+
+| Operation at `N = 2^22` | CPU wall | Metal wall | Metal active | CPU / Metal wall |
+|---|---:|---:|---:|---:|
+| Q10 message | 6.949 ms | 1.390 ms | 1.224 ms | 5.00x |
+| bind + Q10 message | 8.079 ms | 1.541 ms | 1.402 ms | 5.24x |
+
+These are observed fixed-order dense-primitive results. They are not paired
+revalidation or Bytecode member/backend speedups.
+
+The active measurements correspond to about 17.1 and 15.0 billion useful field
+products per second. Their logical table rates are about 255 and 334 GiB/s. The
+separate-arm wall-minus-active gaps were 0.1665 and 0.1398 ms; they are diagnostic,
+not paired latency estimates. A transition-width sweep at 64, 128, and 256 threads
+measured 1.417, 1.417, and 1.408 ms in isolated runs. The values were within 0.7%,
+which did not justify changing the 128-thread default.
+
+The exact `2^26` grid-stride validation used the same geometry. Each work item
+processed 16 pairs. The first-message arms measured 13.472 ms wall and 14.455 ms in
+a separate active run. The fused transition measured 18.660 ms wall and 18.530 ms
+active. The transition therefore sustained 18.1 billion useful products per second
+and about 405 GiB/s of logical table traffic, 96% of the measured copy roof. Wall
+and active are separate Criterion arms, so their difference is not used as a latency
+estimate.
+
+Exact tests cover asymmetric message/transition widths, capped grid-stride
+dispatch, two- and three-pass reduction parity, challenges `0`, `1`, `-1`, positive
+and negative challenges, resident rewind, full table readback, and rejection of a
+non-Akita Solinas context. The Criterion harness also checks the four message values
+and every bound table element at the target size before timing.
+
+The optimistic large-round active model is
+`14.455 + 2 * 18.530 = 51.515 ms`. It assumes the `2^26` active throughput scales
+linearly over the geometric tail. Charging command latency and slower small rounds
+puts the useful planning range around 55--60 ms. The terminal bind is not implemented
+or measured; its arithmetic is small, but it may add another command floor. This is
+a ceiling model, not a measured complete sequence: A0 does not pay for row-derived
+factor construction, the CPU tail, or production host control. It supports the
+100-ms A1 stretch budget, but A1 must include those costs and reproduce the optimized
+CPU member before any 4x promotion claim.
+
+The `2^22` control command is:
+
+```bash
+JOLT_SOLINAS_BENCH_FAMILY=bytecode-cycle-dense \
+JOLT_SOLINAS_BENCH_ELEMENTS=4194304 \
+JOLT_METAL_BYTECODE_MESSAGE_THREADS=256 \
+JOLT_METAL_BYTECODE_TRANSITION_THREADS=128 \
+JOLT_METAL_BYTECODE_MAX_THREADGROUPS=8192 \
+cargo bench -p jolt-kernels --bench metal_solinas \
+  --features metal,parallel -- --noplot
+```
+
+The target-depth Metal arms replace the element count with `67108864` and use the
+Criterion filters `metal_(wall|active)_message` and `metal_.*bind_message`.
 
 ## Instruction RA virtualization ceiling
 

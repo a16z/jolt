@@ -21,6 +21,10 @@ mod address_suffix;
 mod booleanity;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/bytecode_cycle.rs"]
+mod bytecode_cycle;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/cpu.rs"]
 mod cpu;
 
@@ -61,7 +65,7 @@ mod macos {
     use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
     use super::{
-        address_raf, address_suffix, booleanity, cpu, cycle, instruction_ra,
+        address_raf, address_suffix, booleanity, bytecode_cycle, cpu, cycle, instruction_ra,
         instruction_ra_sequence, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         spartan_outer_uniskip,
@@ -127,6 +131,7 @@ mod macos {
                     address_suffix::eval_resident_phase(&context);
                 }
                 "booleanity-message" => booleanity::bench_message(c, &context),
+                "bytecode-cycle-dense" => bytecode_cycle::bench(c, &context),
                 "spartan-outer-uniskip" => spartan_outer_uniskip::bench(c, &context),
                 "product5" => {
                     product5::bench_message(c, &context);
@@ -149,6 +154,7 @@ mod macos {
         product5::bench_message(c, &context);
         product5::bench_transition(c, &context);
         booleanity::bench_message(c, &context);
+        bytecode_cycle::bench(c, &context);
     }
 
     fn bench_gpu_wall_multiply(
