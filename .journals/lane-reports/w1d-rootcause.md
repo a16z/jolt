@@ -195,6 +195,52 @@ st6b is the opposite: sub-linear into 2^26, then ×4.33 — all of its excess
 (~+7.4 s canonical vs 2×2^26) appears at the last doubling, where the
 parked window and the 90 GiB footprint peak also appear.
 
-## 7. Ablation result (run #2) and fix decision
+## 7. Ablation result (runs #2/#3) and fix decision
 
-(appended after the run)
+Back-to-back same-binary 2^27 pair (chrome format, no monitor, quiet box,
+one lock window; knob verified live by a census 2^23 run showing the pair
+freeing mid-st5 at 4.745 s vs st6b-end when parked):
+
+| stage | park (control) | free-at-retire | delta |
+|---|---:|---:|---:|
+| st4 | 11.658 | 11.404 | −0.254 |
+| st5 | 15.072 | 14.957 | −0.115 |
+| st6a | 3.772 | 3.555 | −0.217 |
+| st6b | 14.330 | 14.161 | −0.169 |
+| st7 | 1.712 | 1.993 | +0.281 |
+| st8 | 7.954 | 8.703 | +0.749 |
+| **total** | **88.249** | **88.369** | **+0.120 (+0.14%)** |
+
+Peak footprint identical (89.40 vs 89.39 GiB — `free()` of the Vec backing
+routes through malloc's large cache as `MADV_FREE`, so the ledger doesn't
+move either way; the pages recycle warm into st6b's fresh allocations in
+both arms).
+
+**Verdict: H-shape. The parked 30 GiB is performance-neutral at the 2^27
+tier on this tree.** The W4 U1 door — "structurally end or decommit stage-5
+ownership before the stage-6b adoptions" — is now closed with a measured
+null: ending stage-5 ownership at retire moves st6b by −0.17 s (noise), not
+the hoped ~−7 s. The 2^26→2^27 st6b excess (~+7.4 s canonical vs 2×2^26) is
+intrinsic working-set shape in the CPU members and eq/oracle feeds
+(parallel-busy at 11.5 cores, zero-GPU), which is exactly the surface lane
+W1B's ports remove. The W3-era T2-vs-T6 ±8 s variance correlated with the
+*record family's* death timing (pre-U2 trees carried ~28 GiB more into
+st6b), not with the arena pair; U2's lifetime restructuring already banked
+that win on trunk.
+
+**Fix decision:** land free-at-retire as the structural default by deleting
+the retired-buffer arena outright (`RETIRED` pool, `ArenaSlab`/`ArenaLease`,
+`RetiredPoolGuard`, `own_uninit_frs`'s carve path, the IRR session guard).
+Rationale: its premise (fresh-page zero-fill worth avoiding) is disproven
+end-to-end at 2^27 (+0.12 s total when every adoption goes fresh), malloc's
+large cache provides the same warm-page recycling with zero bespoke code,
+and the machinery is the proven attractor of failed fixes (U1's madvise,
+the poisoning logic) plus a latent reintroduction path for the T2-mode
+footprint stack-up if lifetimes shift again. Gate: 2^25/2^26 neutral ±1%,
+full matrix, byte-identical proofs.
+
+**Accept-gate honesty:** the lane's −4 s @2^27 target is not reachable
+through the allocator/lifetime door — the door was already worth ~0 on
+trunk. D's deliverables are the mechanism verdict (this artifact), the
+REUSABLE failure pin (§5), the st4 shape hand-off (§6), and the arena
+deletion (risk removal + simplification, perf-neutral by construction).
