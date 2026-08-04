@@ -1,11 +1,11 @@
 //! Typed per-cycle register rows and the one-pass sparse-entry collection.
 
+#[cfg(feature = "parallel")]
+use crate::optimized::rows::RandomAccessRows;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::Field;
 use jolt_witness::witnesses::WitnessEnv;
-#[cfg(feature = "parallel")]
-use jolt_witness::RandomAccessRows;
 use jolt_witness::{
     stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
 };
@@ -125,9 +125,10 @@ impl<F: Field> CollectRegisterEntries<F> {
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         #[cfg(feature = "parallel")]
-        if let Some(access) = witness.random_access() {
-            if cycles <= access.cycles() {
-                return Self::collect_par(&access, cycles);
+        if let Some(shared) = witness.shared_rows() {
+            if cycles <= shared.cycles {
+                use crate::optimized::rows::SharedRowsExt;
+                return Self::collect_par(&shared.view(), cycles);
             }
         }
         let mut consumers = (CollectRegisterEntries::<F> {

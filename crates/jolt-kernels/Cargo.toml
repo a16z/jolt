@@ -28,6 +28,7 @@ jolt-kernels-derive.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
+jolt-program.workspace = true
 jolt-riscv.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck.workspace = true
@@ -41,7 +42,6 @@ tracing.workspace = true
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true
-jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
 rand_chacha.workspace = true

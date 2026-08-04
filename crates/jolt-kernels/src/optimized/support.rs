@@ -15,12 +15,11 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
-use jolt_witness::{
-    collect_bundles_par, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
-};
+use jolt_witness::{stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::rows::SharedRowsExt;
 use crate::{KernelError, SumcheckKernelError};
 
 /// A kernel's bound-round count against its total — the one home of the
@@ -80,9 +79,9 @@ pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
     // Slice-backed sources collect index-parallel — no chunk staging, no
     // serial consume copy (out-of-range requests fall through for the
     // walk's validation).
-    if let Some(access) = source.random_access() {
-        if cycles <= access.cycles() {
-            return collect_bundles_par(&access, cycles);
+    if let Some(shared) = source.shared_rows() {
+        if cycles <= shared.cycles {
+            return super::rows::collect_bundles_par(&shared.view(), cycles);
         }
     }
     struct Presized<B> {
@@ -764,7 +763,7 @@ impl<F: Field> SplitLt<F> {
 /// collected rows. The generic twin of the spartan-outer kernel's store,
 /// for every carry-style typed-row consumer.
 pub(crate) enum BundleStore<B> {
-    Owned(jolt_witness::OwnedRows),
+    Owned(jolt_witness::SharedTraceRows),
     Retained(Vec<B>),
 }
 
@@ -786,8 +785,8 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
         witness: &dyn jolt_witness::JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, crate::KernelError<F>> {
-        match witness.owned_rows() {
-            Some(owned) if cycles <= owned.cycles() => Ok(Self::Owned(owned)),
+        match witness.shared_rows() {
+            Some(owned) if cycles <= owned.cycles => Ok(Self::Owned(owned)),
             _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
         }
     }
@@ -802,7 +801,7 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
 
 /// One pass's borrowed row provider over a [`BundleStore`].
 pub(crate) enum BundleAccess<'a, B> {
-    View(jolt_witness::RandomAccessRows<'a>),
+    View(super::rows::RandomAccessRows<'a>),
     Retained(&'a [B]),
 }
 

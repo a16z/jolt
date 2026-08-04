@@ -35,11 +35,12 @@ use jolt_verifier::stages::stage5::registers_val_evaluation::{
     RegistersValEvaluation, RegistersValEvaluationOutputClaims,
 };
 use jolt_witness::witnesses::{RdInc, ToField};
-use jolt_witness::{collect_par_map, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
+use super::rows::{collect_par_map, SharedRowsExt};
 use super::support::{
     bind_pairs, collect_rows, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
 };
@@ -130,8 +131,8 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
         // prover's peak moment (the instruction kernel's address/cycle
         // handoff) doing nothing. Values are identical either way — the
         // same extractor over the same rows.
-        let inc = match witness.owned_rows() {
-            Some(owned) if owned.cycles() == cycles => IncSource::Deferred(owned),
+        let inc = match witness.shared_rows() {
+            Some(owned) if owned.cycles == cycles => IncSource::Deferred(owned),
             _ => {
                 let inc_table: Vec<F> =
                     witness.oracle_table(rd_inc_val_evaluation().polynomial_id())?;
@@ -171,7 +172,7 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
 /// The increment table's lifecycle: deferred to the member's first active
 /// round on slice-backed sources, dense from prepare otherwise.
 enum IncSource<F: Field> {
-    Deferred(jolt_witness::OwnedRows),
+    Deferred(jolt_witness::SharedTraceRows),
     Ready(Polynomial<F>),
 }
 
@@ -206,7 +207,7 @@ impl<F: Field> ValEvaluationKernel<F> {
     /// Materialize the deferred increment table; a no-op once ready.
     fn ensure_inc(&mut self) -> Result<(), SumcheckError<F>> {
         if let IncSource::Deferred(owned) = &self.inc {
-            let table: Vec<F> = collect_par_map(&owned.view(), owned.cycles(), |row: RdIncRow| {
+            let table: Vec<F> = collect_par_map(&owned.view(), owned.cycles, |row: RdIncRow| {
                 row.rd_inc.to_field()
             })
             .map_err(|_| SumcheckError::MissingEvaluationSource {

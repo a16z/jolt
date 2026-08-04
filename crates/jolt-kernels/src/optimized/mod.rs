@@ -190,5 +190,6 @@ where
 
 #[cfg(test)]
 pub(crate) mod parity;
+pub(crate) mod rows;
 #[cfg(test)]
 pub(crate) mod testing;

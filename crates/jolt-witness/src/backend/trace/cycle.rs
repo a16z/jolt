@@ -118,25 +118,16 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
 }
 
 impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
-    fn random_access(&self) -> Option<crate::RandomAccessRows<'_>> {
-        let cycles = checked_pow2(self.config.log_t).ok()?;
-        self.trace.trace.rows().map(|rows| {
-            crate::RandomAccessRows::new(
-                rows,
-                cycles,
-                WitnessEnv {
-                    preprocessing: self.preprocessing,
-                },
-            )
-        })
-    }
-
-    fn owned_rows(&self) -> Option<crate::OwnedRows> {
+    fn shared_rows(&self) -> Option<crate::SharedTraceRows> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
         self.trace
             .trace
             .shared_rows()
-            .map(|rows| crate::OwnedRows::new(rows, cycles, Arc::clone(self.preprocessing)))
+            .map(|rows| crate::SharedTraceRows {
+                rows,
+                cycles,
+                preprocessing: Arc::clone(self.preprocessing),
+            })
     }
 
     fn visit_chunks(
@@ -207,7 +198,7 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
 }
 
 impl<T: TraceSource + Clone> BundleSource for TraceBackend<'_, T> {
-    fn bundles<B: WitnessBundle + Copy + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
+    fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
         crate::collect_bundles(self, checked_pow2(self.config.log_t)?)
     }
 }

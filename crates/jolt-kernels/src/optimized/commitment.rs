@@ -24,12 +24,12 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 
 use crate::commitment::{finish_streamed, finish_streamed_one_hot, ModeStreamingCommitment};
-#[cfg(feature = "parallel")]
-use jolt_witness::collect_range_into;
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "parallel")]
+use super::rows::SharedRowsExt;
 use crate::commitment::{
     CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
 };
@@ -136,9 +136,9 @@ where
     // against the commit grid of the current one; re-emulating sources
     // alternate the two phases through the sequential walk.
     #[cfg(feature = "parallel")]
-    if let Some(access) = source.random_access() {
-        if cycles <= access.cycles() {
-            return commit_pipelined(&access, ids, grid, setup, superchunk);
+    if let Some(shared) = source.shared_rows() {
+        if cycles <= shared.cycles {
+            return commit_pipelined(&shared.view(), ids, grid, setup, superchunk);
         }
     }
     commit_streamed(source, ids, grid, setup, superchunk)
@@ -178,7 +178,7 @@ where
 /// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
 fn commit_pipelined<F, PCS>(
-    access: &jolt_witness::RandomAccessRows<'_>,
+    access: &super::rows::RandomAccessRows<'_>,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
@@ -196,13 +196,13 @@ where
     let mut front: Vec<CommittedColumnsWitness> = Vec::new();
     let mut back: Vec<CommittedColumnsWitness> = Vec::new();
     let mut end = superchunk.min(cycles);
-    collect_range_into(access, 0..end, &mut front)?;
+    super::rows::collect_range_into(access, 0..end, &mut front)?;
     loop {
         let next_end = (end + superchunk).min(cycles);
         let (fill, ()) = rayon::join(
             || {
                 if end < next_end {
-                    collect_range_into(access, end..next_end, &mut back).map(|()| true)
+                    super::rows::collect_range_into(access, end..next_end, &mut back).map(|()| true)
                 } else {
                     Ok(false)
                 }
@@ -475,9 +475,10 @@ mod tests {
             assert_same_commitments(&reference, &streamed);
             #[cfg(feature = "parallel")]
             {
-                let access = source.random_access().unwrap();
+                use crate::optimized::rows::SharedRowsExt;
+                let shared = source.shared_rows().unwrap();
                 let pipelined = super::commit_pipelined::<Fr, DoryScheme>(
-                    &access,
+                    &shared.view(),
                     &ids,
                     grid,
                     &setup,

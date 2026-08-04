@@ -51,12 +51,11 @@ use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::witnesses::{
     InstructionRafFlag, LookupIndex, MappedPc, RemappedRamAddress, TableIndex,
 };
-use jolt_witness::{
-    collect_par_map, stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle,
-};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::rows::SharedRowsExt;
 use super::support::{
     accumulate_product_grid, for_each_index_mut, map_indices, map_reduce_chunks, scan_chunk_size,
     RoundProgress,
@@ -187,17 +186,21 @@ impl InstructionCycleRow {
     ) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
         // Slice-backed sources pack index-parallel (the wide bundle row still
         // never exists beyond a register); re-emulating sources stream.
-        if let Some(access) = witness.random_access() {
-            if cycles <= access.cycles() {
-                let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
-                    InstructionCycleRow::new(
-                        row.lookup_index.0,
-                        row.table_index.0,
-                        row.raf_flag.0,
-                        row.mapped_pc.0,
-                        row.remapped_ram_address.0,
-                    )
-                })?;
+        if let Some(shared) = witness.shared_rows() {
+            if cycles <= shared.cycles {
+                let rows = super::rows::collect_par_map(
+                    &shared.view(),
+                    cycles,
+                    |row: WideInstructionRow| {
+                        InstructionCycleRow::new(
+                            row.lookup_index.0,
+                            row.table_index.0,
+                            row.raf_flag.0,
+                            row.mapped_pc.0,
+                            row.remapped_ram_address.0,
+                        )
+                    },
+                )?;
                 return Ok(rows);
             }
         }
@@ -222,7 +225,7 @@ impl InstructionCycleRow {
             Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
             _ => None,
         };
-        if witness.random_access().is_some() {
+        if witness.shared_rows().is_some() {
             // Slice-backed: consumers share within a stage through a weak
             // handle; once the stage's kernels drop, the rows free, and later
             // stages re-derive them index-parallel.
@@ -270,7 +273,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
         // 48 B × T rows resident through the stage-5 staging peak — later
         // stages re-derive index-parallel instead. Re-emulating sources keep
         // the strong carry (re-deriving means a full re-emulation walk).
-        if witness.random_access().is_some() {
+        if witness.shared_rows().is_some() {
             session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
         } else {
             session.park(SharedInstructionRows(Arc::clone(&rows)));

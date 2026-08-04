@@ -42,13 +42,12 @@ pub use backend::{
     validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, ProgramSource,
 };
 pub use bundle::WitnessBundle;
-#[cfg(feature = "parallel")]
-pub use consumer::FirstErrorLatch;
 pub use consumer::{
-    collect_bundles, collect_bundles_par, collect_par_map, collect_range_into, stream_witnesses,
-    ChunkVisitor, CollectBundles, ConsumerSet, OwnedRows, RandomAccessRows, RowSource,
-    StreamConsumer,
+    collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RowSource,
+    SharedTraceRows, StreamConsumer,
 };
+#[cfg(feature = "parallel")]
+pub use consumer::{par_collect_windows, FirstErrorLatch};
 pub use error::WitnessError;
 pub use shape::{PolynomialEncoding, Shape};
 
