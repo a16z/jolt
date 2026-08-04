@@ -33,6 +33,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("kernels/ram_ra_reduction.cu"),
     "\n",
+    include_str!("kernels/prefix_suffix.cu"),
+    "\n",
     include_str!("kernels/suffixes.cu"),
     "\n",
     include_str!("kernels/prefixes.cu"),
@@ -67,6 +69,8 @@ pub struct CudaKernelContext {
     ram_ra_fold_suffix: CudaFunction,
     ram_ra_fold_prefix: CudaFunction,
     ram_ra_phase1_round: CudaFunction,
+    ps_init_q_raf: CudaFunction,
+    ps_scale_shift: CudaFunction,
     sfx_eval_batch: CudaFunction,
     pfx_eval_batch: CudaFunction,
     pfx_default_checkpoints: CudaFunction,
@@ -111,6 +115,8 @@ impl CudaKernelContext {
             ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
             ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
+            ps_init_q_raf: module.load_function("ps_init_q_raf_kernel")?,
+            ps_scale_shift: module.load_function("ps_scale_shift_kernel")?,
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
             pfx_eval_batch: module.load_function("pfx_eval_batch_kernel")?,
             pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
@@ -241,6 +247,14 @@ impl CudaKernelContext {
 
     pub(super) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
         &self.ram_ra_phase1_round
+    }
+
+    pub(super) const fn ps_init_q_raf(&self) -> &CudaFunction {
+        &self.ps_init_q_raf
+    }
+
+    pub(super) const fn ps_scale_shift(&self) -> &CudaFunction {
+        &self.ps_scale_shift
     }
 
     pub(super) const fn sfx_eval_batch(&self) -> &CudaFunction {
