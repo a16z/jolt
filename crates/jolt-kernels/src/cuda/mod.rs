@@ -9,6 +9,7 @@ mod dense_product;
 mod device;
 mod error;
 mod primitives;
+mod ra_poly;
 mod ram_ra_claim_reduction;
 mod registers_val_evaluation;
 mod staging;

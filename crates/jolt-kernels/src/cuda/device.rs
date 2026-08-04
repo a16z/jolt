@@ -110,6 +110,22 @@ pub(super) fn fill_staging(staging: &mut [u64], values: &[Fr]) {
     }
 }
 
+pub(super) fn require_fr_slice<F: jolt_field::Field>(values: &[F]) -> Result<&[Fr], CudaError> {
+    as_fr_slice(values).ok_or(CudaError::NotImplemented {
+        kernel: "CUDA kernels support only the BN254 scalar field",
+    })
+}
+
+pub(super) fn require_fr<F: jolt_field::Field>(value: F) -> Result<Fr, CudaError> {
+    require_fr_slice(std::slice::from_ref(&value))?
+        .first()
+        .copied()
+        .ok_or(CudaError::LengthMismatch {
+            expected: 1,
+            got: 0,
+        })
+}
+
 pub fn as_fr_slice<F: jolt_field::Field>(values: &[F]) -> Option<&[Fr]> {
     if std::any::TypeId::of::<F>() != std::any::TypeId::of::<Fr>() {
         return None;
