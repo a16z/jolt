@@ -343,7 +343,7 @@ impl SolinasMetal {
         })
     }
 
-    fn validate_buffer_length(&self, requested: u64) -> Result<(), MetalError> {
+    pub(super) fn validate_buffer_length(&self, requested: u64) -> Result<(), MetalError> {
         let maximum = self.device.max_buffer_length();
         if requested > maximum {
             return Err(MetalError::BufferTooLong { requested, maximum });

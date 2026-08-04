@@ -63,3 +63,7 @@ required-features = ["metal", "parallel"]
 [[example]]
 name = "metal-kernel-eval"
 required-features = ["metal", "parallel"]
+
+[[example]]
+name = "metal-booleanity-eval"
+required-features = ["metal", "parallel"]

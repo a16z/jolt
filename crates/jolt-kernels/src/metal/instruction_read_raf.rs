@@ -7,8 +7,9 @@ use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
+use super::booleanity::BooleanityMetalConfig;
 use super::solinas::{
-    AddressPhaseSequence, AddressPhaseSequenceConfig, MetalError, Product5Sequence,
+    AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows, MetalError, Product5Sequence,
     Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::optimized::instruction_read_raf::{
@@ -48,13 +49,15 @@ impl Default for InstructionReadRafMetalConfig {
 pub struct MetalConfig {
     /// Stage-5 instruction read-RAF settings.
     pub instruction_read_raf: InstructionReadRafMetalConfig,
+    /// Stage-6b Booleanity cycle settings.
+    pub booleanity_cycle: BooleanityMetalConfig,
 }
 
 /// Shared Metal device state used by the installed sumcheck slots.
 #[derive(Clone)]
 pub struct MetalBackend {
-    context: Arc<SolinasMetal>,
-    config: MetalConfig,
+    pub(super) context: Arc<SolinasMetal>,
+    pub(super) config: MetalConfig,
 }
 
 impl MetalBackend {
@@ -67,6 +70,14 @@ impl MetalBackend {
         let address_cutoff = config.instruction_read_raf.address_cutoff_elements;
         if address_cutoff < 2 || !address_cutoff.is_power_of_two() {
             return Err(MetalError::InvalidHybridCutoff(address_cutoff));
+        }
+        for cutoff in [
+            config.booleanity_cycle.trace_cutoff_elements,
+            config.booleanity_cycle.cutoff_elements,
+        ] {
+            if cutoff < 2 || !cutoff.is_power_of_two() {
+                return Err(MetalError::InvalidHybridCutoff(cutoff));
+            }
         }
         Ok(Self {
             context: Arc::new(SolinasMetal::for_akita()?),
@@ -82,6 +93,7 @@ where
     /// Replaces implemented optimized slots with their Metal counterparts.
     pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Self {
         self.instruction_read_raf = Box::new(metal.clone());
+        self.booleanity_cycle = Box::new(metal.clone());
         self
     }
 }
@@ -96,9 +108,18 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         Box<dyn SumcheckKernel<AkitaField, Relation = InstructionReadRaf<AkitaField>>>,
         KernelError<AkitaField>,
     > {
-        let use_metal_address = (1usize << inputs.relation.dimensions().log_t())
-            >= self.config.instruction_read_raf.address_cutoff_elements;
+        let trace_elements = 1usize << inputs.relation.dimensions().log_t();
+        let use_metal_address =
+            trace_elements >= self.config.instruction_read_raf.address_cutoff_elements;
         let cpu = prepare_metal_instruction_read_raf(session, witness, inputs, use_metal_address)?;
+        if trace_elements >= self.config.booleanity_cycle.trace_cutoff_elements
+            && session.state::<BooleanityRows>().is_none()
+        {
+            let rows = cpu
+                .metal_prepare_booleanity_rows(&self.context)
+                .map_err(KernelError::from)?;
+            session.park(rows);
+        }
         Ok(Box::new(MetalInstructionReadRafKernel::new(
             cpu,
             Arc::clone(&self.context),

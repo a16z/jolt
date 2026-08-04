@@ -3,14 +3,14 @@
 | Field | Value |
 |---|---|
 | Created | 2026-08-03 |
-| Status | Akita arithmetic, resident five-factor sequence, and first hybrid sumcheck slot implemented; occupancy capture pending |
+| Status | Akita arithmetic plus resident InstructionReadRaf and Booleanity hybrid slots implemented; occupancy capture and further ceiling work pending |
 | Scope | `jolt-kernels::metal` and its Criterion benchmarks |
 
 This backend establishes the arithmetic and hardware limits of canonical 128-bit
 Solinas-prime kernels on Apple GPUs, then applies those results to Jolt one sumcheck
 slot at a time. It contains reusable field operations, a Rust dispatch layer,
-correctness tests, controlled arithmetic probes, a resident five-factor round
-sequence, and a hybrid `InstructionReadRaf` implementation. The stage driver and
+correctness tests, controlled arithmetic probes, resident sumcheck sequences, and
+hybrid `InstructionReadRaf` and `Booleanity` implementations. The stage driver and
 Fiat-Shamir transcript remain on the host.
 
 ## Scope
@@ -37,8 +37,7 @@ Requirements:
 
 Non-goals:
 
-- No device transcript, PCS operations, commitment kernels, or opening kernels. The
-  first prover slot covers only the dense cycle tail of `InstructionReadRaf`.
+- No device transcript, PCS operations, commitment kernels, or opening kernels.
 - No attempt to preserve the structure of the previous experimental Metal branch.
 - No claim that high occupancy alone means high field throughput.
 - No stable public prover API. The current Rust surface exists to test and measure the
@@ -170,6 +169,7 @@ Instruments occupancy reports.
 | product5 message | What rate can a five-factor relation reach with resident equality weights? | Five dense tables to five reduced message values |
 | product5 transition | What does binding cost when the next message consumes bound values in registers? | Bind five tables, persist them, and emit the next message |
 | product5 threadgroups | Which legal width best balances live state, reduction cost, and residency? | GPU-active sweep from 32 through 1024 threads |
+| Booleanity message | How quickly can 29 sparse one-hot columns produce the exact two-lane Gruen message? | Packed resident rows, cache-sized address tables, and one complete message |
 
 Threadgroup widths are swept over every power-of-two multiple of
 `threadExecutionWidth` through the pipeline maximum. A width loses if it lowers
@@ -185,7 +185,8 @@ The fixed default workloads are:
 - one SIMD group over 8 through 512 dependent iterations for the latency slope;
 - 262,144 elements times 128 iterations for the raw-integer reference.
 - 65,536, 1,048,576, and 4,194,304 elements per factor for product5 comparisons;
-- 4,194,304 elements per factor for the product5 threadgroup sweep.
+- 4,194,304 elements per factor for the product5 threadgroup sweep;
+- 65,536, 1,048,576, and 4,194,304 cycles for the Booleanity message comparison.
 
 These values may change only before a comparison series begins. Within a series,
 input generation, correctness checks, Criterion configuration, and metric calculation
@@ -328,6 +329,15 @@ JOLT_SOLINAS_BENCH_ELEMENTS=16777216 \
   JOLT_METAL_CUTOFF_LOG2=16 \
   cargo bench -p jolt-kernels --features metal --bench metal_solinas -- --noplot
 
+# Sparse-to-dense Booleanity message against the optimized CPU shape.
+JOLT_SOLINAS_BENCH_FAMILY=booleanity-message \
+  cargo bench -p jolt-kernels --features metal --bench metal_solinas -- --noplot
+
+# Exact transcript-driven Booleanity cycle evaluator.
+JOLT_METAL_EVAL_LOG_N=26 JOLT_METAL_EVAL_REPEATS=3 \
+  cargo run --release -q -p jolt-kernels --features metal \
+  --example metal-booleanity-eval
+
 # Exact-size GPU-only stress cases; each command initializes only that family.
 JOLT_SOLINAS_BENCH_ELEMENTS=268435456 JOLT_SOLINAS_BENCH_FAMILY=gpu-active-copy \
   cargo bench -p jolt-kernels --features metal --bench metal_solinas -- --noplot
@@ -375,6 +385,30 @@ Metal allocation. That materialization is common work with the CPU implementatio
 but the full stage-level performance still needs a representative prover profile;
 the direct-handoff number is therefore a cycle-tail result, not an end-to-end prover
 claim.
+
+## Current Akita Booleanity result
+
+The Booleanity cycle sequence keeps 40-byte selector rows and cache-sized address
+tables resident, materializes at width 8, then runs fused dense bind-and-message
+rounds down to a `2^10` CPU tail. Every command returns only the exact two-value
+Gruen message to host Fiat-Shamir. The evaluator checks every round polynomial,
+challenge, final table, claim, and transcript state against the optimized Akita CPU
+kernel and asserts zero per-round device allocations.
+
+At `2^26` cycles on the M4 Max, the retained configuration measured 3.095 s CPU and
+640.4 ms hybrid cycle wall time, or 4.83x. Its one-time 40-byte-row bulk handoff took
+125.6 ms; charging that entirely to Booleanity gives 4.04x. A real verified PIOP
+profile measured the `Booleanity` kernel seam at 3.986 s CPU versus 821.1 ms Metal,
+or 4.85x, and improved the complete PIOP from 21.308 s to 15.515 s in one CPU-first
+pair. The aggregate ratio, 1.373x, is a directional checkpoint until interleaved
+repetitions are complete.
+
+The target geometry performs 4.270 billion useful field multiplications. Its
+260-ms floor at the 16.4-Gmul/s empirical arithmetic roof dominates the 58-ms floor
+for 26.31 GB of optimistic non-cache traffic at 420 GiB/s. Current throughput is
+6.67 Gmul/s, so the local result clears 4x but does not exhaust the measured ceiling.
+The active next candidate removes one multiplication per polynomial pair from the
+dominant initial message by loading a precomputed cache-sized quadratic table.
 
 ## Historical pre-Akita reconnaissance
 
@@ -552,6 +586,9 @@ capture; runtime properties cannot substitute for it.
       dataflow and checks exact host-transcript parity.
 - [x] The real `PrepareKernel` path matches the optimized CPU kernel round by round
       and passes the modular Akita end-to-end prover/verifier test.
+- [x] The Booleanity sequence preserves sparse rows through its measured
+      materialization width, performs no round allocation, and passes a verified
+      `2^26` PIOP transfer run.
 - [ ] The retained widening multiplication has an Instruments capture explaining its
       occupancy and limiting resource.
 - [ ] The compute-dense winner reaches the pipeline's theoretical occupancy, or the

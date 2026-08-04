@@ -1,0 +1,122 @@
+{
+  "baseline_params": {
+    "JOLT_METAL_BOOLEANITY_DENSE_THREADS": "128",
+    "JOLT_METAL_BOOLEANITY_MATERIALIZE_WIDTH": "8",
+    "JOLT_METAL_BOOLEANITY_THREADS": "256",
+    "JOLT_METAL_CUTOFF_LOG2": "10"
+  },
+  "baseline_repeats": 9,
+  "candidate_repeats": 3,
+  "budget": {
+    "max_gpu_seconds": 600,
+    "max_seconds": 1800,
+    "max_trials": 12,
+    "monetary_usd": 0,
+    "token_budget": 0
+  },
+  "evaluator": {
+    "command": [
+      "cargo",
+      "run",
+      "--release",
+      "-q",
+      "-p",
+      "jolt-kernels",
+      "--features",
+      "metal",
+      "--example",
+      "metal-booleanity-eval"
+    ],
+    "env": {
+      "JOLT_METAL_EVAL_LOG_N": "26",
+      "JOLT_METAL_EVAL_REPEATS": "7",
+      "JOLT_METAL_EVAL_SEED": "1"
+    },
+    "parser": "last schema-version 1 JSON object on stdout",
+    "timeout_seconds": 300
+  },
+  "final_validation": {
+    "cutoff_neighbors": true,
+    "fresh_processes": 2,
+    "log_n": [
+      16,
+      22,
+      24,
+      26
+    ],
+    "required_path": "PrepareKernel<AkitaField, Booleanity>"
+  },
+  "goal": "maximize exact Booleanity cycle-phase hybrid speedup over the optimized CPU kernel",
+  "guards": {
+    "required_true": [
+      "exact_messages",
+      "exact_challenges",
+      "exact_final_state",
+      "no_round_allocations"
+    ]
+  },
+  "hypothesis": "SIMD-broadcast compact rows and an early resident dense handoff beat repeated optimized-CPU sparse gathers while host Fiat-Shamir fixes the round dependency",
+  "kernel": "booleanity_cycle",
+  "metric": {
+    "direction": "max",
+    "minimum_relative_improvement": 0.03,
+    "name": "hybrid_speedup",
+    "unit": "x"
+  },
+  "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.json",
+  "schema_version": 1,
+  "scope": {
+    "editable": [
+      "crates/jolt-kernels/src/metal/solinas/booleanity.metal",
+      "crates/jolt-kernels/src/metal/solinas/booleanity.rs"
+    ],
+    "frozen": [
+      "crates/jolt-kernels/examples/metal-booleanity-eval.rs",
+      "crates/jolt-kernels/src/optimized/booleanity.rs",
+      "crates/jolt-kernels/tests/metal_solinas.rs",
+      "crates/jolt-field/src/akita.rs",
+      "crates/jolt-kernels/autoresearch/piop_goal.json",
+      "scripts/metal_autoresearch.py"
+    ]
+  },
+  "search_space": {
+    "JOLT_METAL_BOOLEANITY_DENSE_THREADS": [
+      32,
+      64,
+      128,
+      256,
+      512
+    ],
+    "JOLT_METAL_BOOLEANITY_MATERIALIZE_WIDTH": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32
+    ],
+    "JOLT_METAL_BOOLEANITY_THREADS": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024
+    ],
+    "JOLT_METAL_CUTOFF_LOG2": [
+      8,
+      9,
+      10,
+      11,
+      12,
+      14,
+      16
+    ]
+  },
+  "stopping_conditions": [
+    "trial or wall-clock budget is exhausted",
+    "no candidate clears the fixed promotion threshold",
+    "a correctness guard fails",
+    "the measured bottleneck requires a different algorithm and therefore a new phase"
+  ]
+}

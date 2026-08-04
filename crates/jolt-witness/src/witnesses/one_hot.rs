@@ -46,6 +46,10 @@ impl RaChunkSelector {
         self.chunk_u128(value as u128)
     }
 
+    pub const fn shift(self) -> usize {
+        self.shift
+    }
+
     pub const fn chunk_u128(self, value: u128) -> usize {
         ((value >> self.shift) & self.mask) as usize
     }

@@ -17,6 +17,10 @@ mod address_raf;
 mod address_suffix;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/booleanity.rs"]
+mod booleanity;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/cpu.rs"]
 mod cpu;
 
@@ -45,7 +49,7 @@ mod macos {
     use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
     use super::{
-        address_raf, address_suffix, cpu, cycle, product5,
+        address_raf, address_suffix, booleanity, cpu, cycle, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
     };
 
@@ -106,6 +110,7 @@ mod macos {
                 "instruction-read-raf-address-resident-eval" => {
                     address_suffix::eval_resident_phase(&context);
                 }
+                "booleanity-message" => booleanity::bench_message(c, &context),
                 "product5" => {
                     product5::bench_message(c, &context);
                     product5::bench_transition(c, &context);
@@ -126,6 +131,7 @@ mod macos {
         bench_raw_integer(c, &context, &validation_lhs, &validation_rhs);
         product5::bench_message(c, &context);
         product5::bench_transition(c, &context);
+        booleanity::bench_message(c, &context);
     }
 
     fn bench_gpu_wall_multiply(

@@ -61,6 +61,8 @@ use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningId};
 use jolt_claims::OutputClaims;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_field::AkitaField;
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{
     try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
@@ -84,6 +86,10 @@ use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::{
+    BooleanityRows, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig, SolinasMetal,
+};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -114,6 +120,27 @@ impl ColumnSelector {
                 .map(|address| selector.chunk_usize(address as usize)),
             #[cfg(feature = "akita")]
             Self::UnsignedInc(lane) => Some(row.fused_inc_hot_lane(*lane)),
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn metal_selector(&self) -> BooleanitySelector {
+        match self {
+            Self::Instruction(selector) => BooleanitySelector::Lookup {
+                shift: selector.shift() as u32,
+            },
+            Self::Bytecode(selector) => BooleanitySelector::Bytecode {
+                shift: selector.shift() as u32,
+            },
+            Self::Ram(selector) => BooleanitySelector::Ram {
+                shift: selector.shift() as u32,
+            },
+            Self::UnsignedInc(UnsignedIncLane::Chunk { width, index }) => {
+                BooleanitySelector::FusedInc {
+                    shift: (width * index) as u32,
+                }
+            }
+            Self::UnsignedInc(UnsignedIncLane::Msb { .. }) => BooleanitySelector::FusedIncMsb,
         }
     }
 }
@@ -527,55 +554,63 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let r_address = relation.r_address();
-        let reference_address = relation.reference_address();
-        let reference_cycle = relation.reference_cycle();
-        if r_address.len() != dimensions.log_k_chunk || reference_cycle.len() != dimensions.log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "booleanity cycle-phase point lengths disagree with the dimensions",
-            });
-        }
-        let columns = column_selectors(witness, dimensions)?;
-        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
-
-        // The fixed address eq factor of the `EqAddressCycle` public; rides
-        // in the split-eq scaling so round messages and the bound scalar
-        // carry it exactly like the reference's derived table.
-        let address_scalar = try_eq_mle(r_address, reference_address).map_err(|_| {
-            KernelError::InvariantViolation {
-                reason: "booleanity address point and reference length mismatch",
-            }
-        })?;
-        let eq_address = eq_table(r_address);
-        let (gamma_powers, gamma_powers_inv) =
-            gamma_power_pairs(inputs.challenges.gamma, columns.selectors.len())?;
-        let tables: Vec<Vec<F>> = gamma_powers
-            .iter()
-            .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
-            .collect();
-
-        Ok(Box::new(OptimizedBooleanityCycleKernel {
-            rounds: relation.rounds(),
-            eq: GruenSplitEqPolynomial::new_with_scaling(
-                reference_cycle,
-                BindingOrder::LowToHigh,
-                Some(address_scalar),
-            ),
-            tables: LazyFoldedRa::new(
-                tables,
-                BooleanityChunks {
-                    rows,
-                    selectors: columns.selectors,
-                },
-            ),
-            gamma_powers,
-            gamma_powers_inv,
-            openings: columns.openings,
-            rounds_bound: 0,
-        }))
+        Ok(Box::new(prepare_optimized_booleanity_cycle(
+            session, witness, inputs,
+        )?))
     }
+}
+
+pub(crate) fn prepare_optimized_booleanity_cycle<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, Booleanity<F>>,
+) -> Result<OptimizedBooleanityCycleKernel<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let r_address = relation.r_address();
+    let reference_address = relation.reference_address();
+    let reference_cycle = relation.reference_cycle();
+    if r_address.len() != dimensions.log_k_chunk || reference_cycle.len() != dimensions.log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "booleanity cycle-phase point lengths disagree with the dimensions",
+        });
+    }
+    let columns = column_selectors(witness, dimensions)?;
+    let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+
+    let address_scalar =
+        try_eq_mle(r_address, reference_address).map_err(|_| KernelError::InvariantViolation {
+            reason: "booleanity address point and reference length mismatch",
+        })?;
+    let eq_address = eq_table(r_address);
+    let (gamma_powers, gamma_powers_inv) =
+        gamma_power_pairs(inputs.challenges.gamma, columns.selectors.len())?;
+    let tables: Vec<Vec<F>> = gamma_powers
+        .iter()
+        .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
+        .collect();
+
+    Ok(OptimizedBooleanityCycleKernel {
+        rounds: relation.rounds(),
+        eq: GruenSplitEqPolynomial::new_with_scaling(
+            reference_cycle,
+            BindingOrder::LowToHigh,
+            Some(address_scalar),
+        ),
+        tables: LazyFoldedRa::new(
+            tables,
+            BooleanityChunks {
+                rows,
+                selectors: columns.selectors,
+            },
+        ),
+        gamma_powers,
+        gamma_powers_inv,
+        openings: columns.openings,
+        rounds_bound: 0,
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        metal_offloaded: false,
+    })
 }
 
 /// `(γ^i, γ^{-i})` pairs for the pre-scaled shared tables. The inverse
@@ -625,7 +660,7 @@ impl ChunkIndexSource for BooleanityChunks {
     }
 }
 
-struct OptimizedBooleanityCycleKernel<F: Field> {
+pub(crate) struct OptimizedBooleanityCycleKernel<F: Field> {
     rounds: usize,
     /// Split-eq over the reference cycle, scaled by
     /// `eq(r_address, reference_address)` — together the reference's
@@ -638,6 +673,8 @@ struct OptimizedBooleanityCycleKernel<F: Field> {
     gamma_powers_inv: Vec<F>,
     openings: Vec<JoltOpeningId>,
     rounds_bound: usize,
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    metal_offloaded: bool,
 }
 
 #[cfg(feature = "allocative")]
@@ -668,6 +705,160 @@ impl<F: Field> OptimizedBooleanityCycleKernel<F> {
         self.eq.bind(challenge);
         self.tables.bind(challenge);
         self.rounds_bound += 1;
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl OptimizedBooleanityCycleKernel<AkitaField> {
+    pub(crate) fn metal_prepare_rows(
+        &self,
+        context: &SolinasMetal,
+    ) -> Result<BooleanityRows, SumcheckError<AkitaField>> {
+        let LazyFoldedRa::Lazy { width, source, .. } = &self.tables else {
+            return Err(booleanity_metal_state_error(
+                "resident row preparation requires lazy Booleanity tables",
+            ));
+        };
+        if *width != 1 || self.rounds_bound != 0 || self.metal_offloaded {
+            return Err(booleanity_metal_state_error(
+                "resident row preparation requires the initial unbound state",
+            ));
+        }
+        context
+            .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&source.rows))
+            .map_err(booleanity_metal_error)
+    }
+
+    pub(crate) fn metal_offload(
+        &mut self,
+        context: &SolinasMetal,
+        resident_rows: BooleanityRows,
+        config: BooleanitySequenceConfig,
+    ) -> Result<BooleanitySequence, SumcheckError<AkitaField>> {
+        let LazyFoldedRa::Lazy {
+            tables,
+            width,
+            source,
+        } = &self.tables
+        else {
+            return Err(booleanity_metal_state_error(
+                "Booleanity offload requires lazy source tables",
+            ));
+        };
+        if *width != 1 || self.rounds_bound != 0 || self.metal_offloaded {
+            return Err(booleanity_metal_state_error(
+                "Booleanity offload requires the initial unbound state",
+            ));
+        }
+        if resident_rows.len() != source.rows.len() {
+            return Err(booleanity_metal_state_error(
+                "resident Booleanity row count disagrees with the CPU source",
+            ));
+        }
+        let k = tables.first().map_or(0, Vec::len);
+        if k == 0 || tables.iter().any(|table| table.len() != k) {
+            return Err(booleanity_metal_state_error(
+                "Booleanity base tables have inconsistent lengths",
+            ));
+        }
+        let selectors = source
+            .selectors
+            .iter()
+            .map(ColumnSelector::metal_selector)
+            .collect::<Vec<_>>();
+        let base_tables = tables.iter().flatten().copied().collect::<Vec<_>>();
+        let sequence = context
+            .prepare_booleanity_sequence_with_rows(
+                resident_rows,
+                &selectors,
+                &base_tables,
+                &self.gamma_powers,
+                k,
+                self.eq.e_in_current_len(),
+                self.eq.e_out_current_len(),
+                config,
+            )
+            .map_err(booleanity_metal_error)?;
+        self.tables = LazyFoldedRa::Dense(Vec::new());
+        self.metal_offloaded = true;
+        Ok(sequence)
+    }
+
+    pub(crate) fn metal_bind_offloaded(
+        &mut self,
+        challenge: AkitaField,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        if !self.metal_offloaded {
+            return Err(booleanity_metal_state_error(
+                "device bind requires offloaded Booleanity tables",
+            ));
+        }
+        self.eq.bind(challenge);
+        self.rounds_bound += 1;
+        Ok(())
+    }
+
+    pub(crate) fn metal_weights(
+        &self,
+    ) -> Result<(&[AkitaField], &[AkitaField]), SumcheckError<AkitaField>> {
+        if !self.metal_offloaded {
+            return Err(booleanity_metal_state_error(
+                "device weights require offloaded Booleanity tables",
+            ));
+        }
+        Ok((self.eq.e_in_current(), self.eq.e_out_current()))
+    }
+
+    pub(crate) fn metal_message(
+        &self,
+        q_coefficients: [AkitaField; 2],
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        if !self.metal_offloaded {
+            return Err(booleanity_metal_state_error(
+                "device message requires offloaded Booleanity tables",
+            ));
+        }
+        Ok(self
+            .eq
+            .gruen_poly_deg_3(q_coefficients[0], q_coefficients[1], previous_claim))
+    }
+
+    pub(crate) fn metal_restore_dense(
+        &mut self,
+        flat: &[AkitaField],
+        elements: usize,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        let expected = self.gamma_powers.len() * elements;
+        if !self.metal_offloaded || elements == 0 || flat.len() != expected {
+            return Err(booleanity_metal_state_error(
+                "Booleanity readback shape disagrees with the offloaded state",
+            ));
+        }
+        self.tables = LazyFoldedRa::Dense(
+            flat.chunks_exact(elements)
+                .map(|evals| Polynomial::new(evals.to_vec()))
+                .collect(),
+        );
+        self.metal_offloaded = false;
+        Ok(())
+    }
+
+    pub(crate) fn metal_polys(&self) -> usize {
+        self.gamma_powers.len()
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn booleanity_metal_error(error: crate::metal::solinas::MetalError) -> SumcheckError<AkitaField> {
+    booleanity_metal_state_error(error.to_string())
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn booleanity_metal_state_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: message.into(),
     }
 }
 

@@ -65,8 +65,9 @@ use rayon::prelude::*;
 use super::support::accumulate_product;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
-    AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, AddressRafScanRow, Fp128,
-    Product5Sequence, Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
+    AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, AddressRafScanRow,
+    BooleanityRow, BooleanityRows, Fp128, Product5Sequence, Product5SequenceConfig, SolinasMetal,
+    PRODUCT5_FACTORS,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -148,6 +149,13 @@ impl InstructionCycleRow {
         u128::from(self.lookup_index_lo) | (u128::from(self.lookup_index_hi) << 64)
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn metal_booleanity_rows(rows: &[Self]) -> &[BooleanityRow] {
+        // SAFETY: both repr(C) row types are five aligned u64 words in the
+        // same order. Booleanity masks the stage-5-only flag bits.
+        unsafe { std::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) }
+    }
+
     #[inline]
     pub(crate) fn table_index(&self) -> Option<usize> {
         let table_plus_one =
@@ -198,6 +206,11 @@ impl InstructionCycleRow {
 
 #[cfg(feature = "akita")]
 const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 40);
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+const _: () = assert!(
+    std::mem::size_of::<InstructionCycleRow>() == std::mem::size_of::<BooleanityRow>()
+        && std::mem::align_of::<InstructionCycleRow>() == std::mem::align_of::<BooleanityRow>()
+);
 #[cfg(not(feature = "akita"))]
 const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 32);
 
@@ -1620,6 +1633,15 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl OptimizedInstructionReadRafKernel<AkitaField> {
+    pub(crate) fn metal_prepare_booleanity_rows(
+        &self,
+        context: &SolinasMetal,
+    ) -> Result<BooleanityRows, SumcheckError<AkitaField>> {
+        context
+            .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&self.rows))
+            .map_err(metal_sumcheck_error)
+    }
+
     pub(crate) fn metal_prepare_address_sequence(
         &mut self,
         context: &SolinasMetal,

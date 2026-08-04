@@ -244,6 +244,11 @@ mod muldiv {
                 cutoff_elements: 8,
                 ..Default::default()
             },
+            booleanity_cycle: jolt_kernels::metal::BooleanityMetalConfig {
+                trace_cutoff_elements: 2,
+                cutoff_elements: 2,
+                ..Default::default()
+            },
         })
         .expect("Metal backend should initialize");
         #[cfg(not(all(feature = "metal", target_os = "macos")))]

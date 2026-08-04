@@ -177,7 +177,7 @@ order after the first slot establishes the harness.
 | 6a | `bytecode_read_raf_address` | address pushforward | analyze |
 | 6a | `booleanity_address` | address pushforward | analyze |
 | 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | analyze |
-| 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | worksheet complete; queued after stage 5 |
+| 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | integrated; 4.85x real kernel seam at `2^26`, further ceiling work open |
 | 6b | `ram_hamming_booleanity` | dense cubic | analyze |
 | 6b | `ram_ra_virtualization` | one-hot virtualization | analyze |
 | 6b | `instruction_ra_virtualization` | one-hot virtualization | analyze |
@@ -300,6 +300,15 @@ the target profile gives an Amdahl projection of about 4.19x from the current pa
 That calculation is not a forecast: it shows that the 4x portfolio floor requires
 broad coverage and cannot be obtained from the cycle tail alone. Exact hybrid
 measurements replace each local target as ports land.
+
+After the Booleanity cycle port, the exact CPU-first `2^26` pair in
+`benchmark-runs/metal-piop-eval/20260804-105011` measured 21.308 s optimized CPU and
+15.515 s Metal-hybrid PIOP, or 1.373x. `Booleanity` fell from 3.986 s to 821.1 ms
+(4.85x at its real kernel seam), while `InstructionReadRaf` measured 3.715 s versus
+1.030 s because its stage-5 prepare now also creates the shared Booleanity row
+buffer. Both proofs verified and each trace contained exactly one PIOP span. One
+pair is directional evidence; promotion of the aggregate result still requires the
+contract's interleaved repetitions.
 
 ### Instruction-read address worksheet
 
@@ -534,38 +543,87 @@ paying to transform stage-5 rows for this slot alone does not clear the evaluato
 
 ### Booleanity cycle worksheet
 
-The next slot is `Booleanity`, selected by the profile. Let `T` be the cycle count,
-`P` the number of checked one-hot columns, `K = 2^w` the chunk domain, and `b < 4`
-the number of bound cycle bits. A dense-from-start implementation moves roughly
-`64PT` factor bytes over the full sequence and discards the CPU kernel's most useful
-optimization. The retained design mirrors the mathematical sparsity instead:
+`Booleanity` was the next profiled slot. At the Akita `K = 256` geometry it checks
+`P = 29` one-hot columns over `T` cycles. The CPU keeps the columns index-encoded for
+four binds and materializes at width 16. A dense-from-start Metal implementation
+would discard that optimization, so the retained sequence has two states:
 
-- upload each packed 40-byte instruction/cycle row once and reuse it across the
-  Booleanity, instruction-virtualization, bytecode, and RAM consumers;
-- keep `P * 2^b * K` pre-scaled address tables resident for the first four rounds;
-- in a lazy message, read each packed row once, derive every selector index from that
-  row in registers, gather the small address tables, and accumulate the two quadratic
-  lanes;
-- fuse the fourth bind, `T/16` dense materialization, and following message, writing
-  each dense field value once; then use resident dense bind-and-message transitions.
+- A 40-byte row contains the instruction index, mapped PC, RAM address, and signed
+  fused increment. One SIMD group handles a cycle pair; its first five lanes load
+  the row words and broadcast them, and one lane per polynomial derives its hot
+  chunk and gathers the resident `K`-entry branch table.
+- The initial message and lazy binds double the branch width. The dispatch that
+  reaches width `W` also materializes `P * T/W` dense values directly into the first
+  ping-pong buffer and computes that round's message from the same registers.
+- Dense dispatches fuse one bind, the next two-lane Booleanity message, and the
+  bound-table write. The two field message values return to host Fiat-Shamir after
+  each command. One readback hands a short dense tail to the optimized CPU.
 
-Each of the first four lazy messages reads `40T` row bytes, independent of `P` and
-`b`; its small address tables are cache-sized. At `b = 0`, it performs about `PT`
-useful quadratic field multiplications, for optimistic intensity `P/40` useful
-multiplications per byte. At `b = 3`, the relation work is about `PT/8`, while the
-row traffic stays `40T`. Materialization reads another `40T` row bytes and writes
-`PT` bytes. The dense tail adds approximately `3PT` factor bytes, giving an optimistic
-full-sequence floor of
+There are no per-round device allocations. The proof-scoped row buffer is prepared
+during stage 5, parked in `ProofSession`, and consumed by stage 6b. The stage-5 and
+Booleanity row structs are both five `u64` words; a compile-time size/alignment check
+allows one bulk Metal-buffer copy instead of reconstructing 67 million rows in a
+Rust loop. Unsupported shapes and traces below the configured cutoff retain the CPU
+kernel.
+
+For materialization width `W`, the evaluator's optimistic non-cache traffic and
+useful field-multiplication counts are
 
 ```text
-B_booleanity ~= T * (200 + 4P) bytes,
+L                 = log2(W) + 1
+B_device          = 40 T L + 64 P T / W - 48 P
+B_cache_logical   = 16 P T L
+M_metal           = P(2T + T/W - 3) + 2T - 2 + 2PK(W - 1).
 ```
 
-versus `64PT` bytes for eager dense tables. For a representative `P = 50`, this is
-about an 8x reduction in factor/row traffic before cache and reduction scratch. The
-falsifying benchmark is the complete hybrid sequence: if selector decoding and
-irregular gathers erase that traffic advantage, the fallback handoff starts at the
-CPU's `T/16` dense materialization instead.
+`B_device` counts the repeated packed-row scans and geometric dense read/write
+traffic. `B_cache_logical` is reported separately because the branch tables occupy
+only `P * W * K * 16` bytes and are intended to remain cache-resident. Actual peak
+resident storage is one row buffer plus dense buffers of `P*T/W` and `P*T/(2W)`
+field elements, not the full-sequence traffic sum.
+
+At `T = 2^26`, `P = 29`, `K = 256`, and retained `W = 8`, the model gives 4.270
+billion useful Metal multiplications, 26.31 GB optimistic non-cache traffic, and
+124.55 GB of logical cache-table loads. The measured 16.4-Gmul/s arithmetic roof
+gives a 260 ms compute floor; the 420-GiB/s copy roof gives a 58 ms traffic floor.
+Peak row-plus-dense storage is about 7.94 GiB. The kernel is therefore compute-side
+limited in this model; reducing only dense traffic cannot reach the ceiling.
+
+The target-size materialization sweep used exact messages, host challenges, final
+tables, and transcript state in every run:
+
+| Width | Hybrid cycle wall | Modeled non-cache traffic | Peak row+dense storage |
+|---:|---:|---:|---:|
+| 2 | 868.9 ms | 67.65 GB | 24.25 GiB |
+| 4 | 681.8 ms | 39.19 GB | 13.37 GiB |
+| 8 | 640.4 ms | 26.31 GB | 7.94 GiB |
+| 16 | 659.3 ms | 21.21 GB | 5.22 GiB |
+| 32 | 700.6 ms | 20.00 GB | 3.86 GiB |
+
+Width 8 is retained: later widths save dense traffic but add another full lazy row
+and cache-table scan. Lazy threadgroup widths 64, 128, and 256 were within about 1%
+at `2^26`; 512 regressed, so the stable 256-thread setting remains. Dense rounds use
+128 threads and the CPU cutoff is `2^10` elements.
+
+The exact local evaluator measured 3.095 s optimized CPU versus 640.4 ms hybrid at
+`2^26`, or 4.83x cycle-only. The bulk row handoff took 125.6 ms, so charging it
+entirely to this slot gives 4.04x. At `2^22`, width 8 measured 202.5 ms CPU, 40.0 ms
+hybrid, and 8.5 ms preparation: 5.06x cycle-only and 4.17x all-in. The real PIOP
+profile measured a 4.85x Booleanity seam because preparation is performed and
+attributed in stage 5.
+
+Seven shader schedules were rejected against the earlier fixed evaluator: pair
+unrolling, selected-word shuffles, raw wide limbs, pair-major first-round work,
+half-limb SIMD reduction, specialized Comba squaring, and selector-grouped SIMD.
+None cleared the 6.44% noise-qualified promotion threshold. The target-scale result
+still reaches only about 6.67 Gmul/s against the 16.4-Gmul/s empirical roof. The next
+candidate specializes the dominant initial message: precompute
+`H(k) * (H(k) - rho)` for each cache-sized base table so the shader loads the
+constant term and performs only the `(H_1 - H_0)^2` multiplication. This removes
+about `PT/2` field multiplications from the 290-ms first round without changing the
+protocol or dense state. Because the conservative local result is already above 4x
+and the compute floor permits materially more, the uncapped controller keeps this
+kernel phase active.
 
 ## Requirement map and open points
 

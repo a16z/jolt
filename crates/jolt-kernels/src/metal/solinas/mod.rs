@@ -24,12 +24,14 @@ const ADDRESS_SUFFIX_FULL_SOURCE: &str = include_str!("address_suffix_full.metal
 const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_cycle.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
+const BOOLEANITY_SOURCE: &str = include_str!("booleanity.metal");
 
 mod address_raf;
 mod address_raf_direct;
 mod address_sequence;
 mod address_suffix;
 mod address_suffix_full;
+mod booleanity;
 mod product5;
 
 pub use address_raf::{
@@ -42,6 +44,10 @@ pub use address_suffix::{
     AddressSuffixOneInvocation, AddressSuffixOneSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
 };
 pub use address_suffix_full::{AddressSuffixFullInvocation, AddressSuffixFullSums};
+pub(crate) use booleanity::BooleanityRows;
+pub use booleanity::{
+    BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
+};
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
 };
@@ -288,6 +294,34 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
+    #[error("booleanity row cannot be represented by the packed Metal ABI")]
+    InvalidBooleanityRow,
+    #[error("booleanity needs a power-of-two row count of at least four, got {0}")]
+    InvalidBooleanityRows(usize),
+    #[error("booleanity chunk size must be a power of two in 2..=256, got {0}")]
+    InvalidBooleanityK(usize),
+    #[error("booleanity materialization width must be a power of two in 1..=32, got {0}")]
+    InvalidBooleanityMaterializeWidth(usize),
+    #[error("booleanity selector is outside its packed source")]
+    InvalidBooleanitySelector,
+    #[error("booleanity {name} storage has length {got}, expected {expected}")]
+    BooleanityStorageLength {
+        name: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error("booleanity split weights cover {covered} pairs, expected {expected}")]
+    BooleanityWeightShape { expected: usize, covered: usize },
+    #[error(
+        "booleanity pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedBooleanityExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error("invalid booleanity sequence state: {0}")]
+    InvalidBooleanityState(&'static str),
     #[error(
         "threadgroup width {requested} must be a multiple of {execution_width} and at most {maximum}"
     )]
@@ -330,7 +364,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)

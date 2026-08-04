@@ -3,8 +3,8 @@
 
 use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
-    DispatchConfig, Fp128, MetalError, Probe, Product5Config, Product5SequenceConfig, SolinasMetal,
-    AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+    BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128, MetalError,
+    Probe, Product5Config, Product5SequenceConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
@@ -379,6 +379,239 @@ fn raw_integer_probe_matches_wrapping_u32_arithmetic() {
         .map(|(&lhs, &rhs)| expected_u32_mad(lhs, rhs, 7))
         .collect::<Vec<_>>();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn booleanity_sequence_matches_dense_cpu_at_every_round() {
+    const LOG_T: usize = 10;
+    const K: usize = 256;
+
+    let rows = booleanity_rows(1 << LOG_T);
+    let selectors = booleanity_selectors();
+    assert_eq!(selectors.len(), 29);
+
+    let gamma = AkitaField::from_u64(7);
+    let mut gamma_power = AkitaField::from_u64(1);
+    let mut rho = Vec::with_capacity(selectors.len());
+    for _ in &selectors {
+        rho.push(gamma_power);
+        gamma_power *= gamma;
+    }
+    let eq_address = (0..K)
+        .map(|index| AkitaField::from_u64((17 * index + 3) as u64))
+        .collect::<Vec<_>>();
+    let base_tables = rho
+        .iter()
+        .flat_map(|rho| eq_address.iter().map(|value| *rho * *value))
+        .collect::<Vec<_>>();
+    let point = (0..LOG_T)
+        .map(|round| AkitaField::from_u64((19 * round + 11) as u64))
+        .collect::<Vec<_>>();
+    let mut eq = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let mut cpu_tables = dense_booleanity_tables(&rows, &selectors, &base_tables, K);
+
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let mut sequence = context
+        .prepare_booleanity_sequence(
+            &rows,
+            &selectors,
+            &base_tables,
+            &rho,
+            K,
+            eq.e_in_current().len(),
+            eq.e_out_current().len(),
+            BooleanitySequenceConfig::default(),
+        )
+        .expect("booleanity pipelines should compile");
+    assert_eq!(sequence.round_device_buffer_allocations(), 0);
+
+    let expected =
+        dense_booleanity_message(&cpu_tables, &rho, eq.e_in_current(), eq.e_out_current());
+    let actual = sequence
+        .message(eq.e_in_current(), eq.e_out_current())
+        .expect("initial Booleanity message should execute");
+    assert_eq!(actual, expected, "round 0");
+
+    for round in 1..LOG_T {
+        let challenge = AkitaField::from_u64((31 * round + 5) as u64);
+        bind_dense_tables(&mut cpu_tables, challenge);
+        eq.bind(challenge);
+        let expected =
+            dense_booleanity_message(&cpu_tables, &rho, eq.e_in_current(), eq.e_out_current());
+        let actual = sequence
+            .bind_and_message(challenge, eq.e_in_current(), eq.e_out_current())
+            .expect("bound Booleanity message should execute");
+        assert_eq!(actual, expected, "round {round}");
+
+        if sequence.is_dense() {
+            let mut resident = vec![AkitaField::from_u64(0); selectors.len() * cpu_tables[0].len()];
+            sequence
+                .read_current_tables(&mut resident)
+                .expect("resident dense tables should read");
+            assert_eq!(
+                resident,
+                flatten_tables(&cpu_tables),
+                "round {round} tables"
+            );
+        }
+    }
+
+    assert!(sequence.is_dense());
+    assert_eq!(sequence.current_elements(), 2);
+    let final_challenge = AkitaField::from_u64(101);
+    bind_dense_tables(&mut cpu_tables, final_challenge);
+    assert_eq!(
+        cpu_tables.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![1; 29]
+    );
+}
+
+fn booleanity_selectors() -> Vec<BooleanitySelector> {
+    let mut selectors = (0..16)
+        .map(|index| BooleanitySelector::Lookup { shift: 8 * index })
+        .collect::<Vec<_>>();
+    selectors.push(BooleanitySelector::Bytecode { shift: 0 });
+    selectors.extend([0, 8, 56].map(|shift| BooleanitySelector::Ram { shift }));
+    selectors.extend((0..8).map(|index| BooleanitySelector::FusedInc { shift: 8 * index }));
+    selectors.push(BooleanitySelector::FusedIncMsb);
+    selectors
+}
+
+fn booleanity_rows(rows: usize) -> Vec<BooleanityRow> {
+    let mut state = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128;
+    (0..rows)
+        .map(|row| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 43;
+            let mapped_pc = (row % 7 != 0).then_some(((state >> 49) as u64) & ((1 << 55) - 2));
+            let ram_address = (row % 11 != 0).then_some((state as u64) & (u64::MAX - 1));
+            let fused_inc = match row % 6 {
+                0 => -(u64::MAX as i128),
+                1 => -((1i128 << 63) + row as i128),
+                2 => u64::MAX as i128 - row as i128,
+                3 => (1i128 << 63) + row as i128,
+                4 => row as i128,
+                _ => -(row as i128),
+            };
+            BooleanityRow::new(state, mapped_pc, ram_address, fused_inc)
+                .expect("synthetic row should fit the Metal ABI")
+        })
+        .collect()
+}
+
+fn dense_booleanity_tables(
+    rows: &[BooleanityRow],
+    selectors: &[BooleanitySelector],
+    base_tables: &[AkitaField],
+    k: usize,
+) -> Vec<Vec<AkitaField>> {
+    selectors
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(poly, selector)| {
+            rows.iter()
+                .copied()
+                .map(|row| {
+                    booleanity_hot_index(row, selector, k).map_or_else(
+                        || AkitaField::from_u64(0),
+                        |hot| base_tables[poly * k + hot],
+                    )
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn booleanity_hot_index(
+    row: BooleanityRow,
+    selector: BooleanitySelector,
+    k: usize,
+) -> Option<usize> {
+    let words = row.words();
+    let width = k.ilog2() as usize;
+    let mask = k - 1;
+    match selector {
+        BooleanitySelector::Lookup { shift } => {
+            let lookup = u128::from(words[0]) | (u128::from(words[1]) << 64);
+            Some(((lookup >> shift) as usize) & mask)
+        }
+        BooleanitySelector::Bytecode { shift } => {
+            let pc_plus_one = words[4] & ((1 << 56) - 1);
+            pc_plus_one
+                .checked_sub(1)
+                .map(|pc| ((pc >> shift) as usize) & mask)
+        }
+        BooleanitySelector::Ram { shift } => words[2]
+            .checked_sub(1)
+            .map(|address| ((address >> shift) as usize) & mask),
+        BooleanitySelector::FusedInc { shift } => {
+            let biased = biased_fused_inc(words, width);
+            let standard = ((biased >> shift) as usize) & mask;
+            Some((standard + k / 2) & mask)
+        }
+        BooleanitySelector::FusedIncMsb => {
+            let carry = biased_fused_inc(words, width) >> 64;
+            Some(carry.rem_euclid(k as i128) as usize)
+        }
+    }
+}
+
+fn biased_fused_inc(words: [u64; 5], width: usize) -> i128 {
+    let magnitude = i128::from(words[3]);
+    let value = if words[4] >> 63 == 0 {
+        magnitude
+    } else {
+        -magnitude
+    };
+    let radix = 1i128 << width;
+    let bias = (radix / 2) * (((1i128 << 64) - 1) / (radix - 1));
+    value + bias
+}
+
+fn dense_booleanity_message(
+    tables: &[Vec<AkitaField>],
+    rho: &[AkitaField],
+    e_in: &[AkitaField],
+    e_out: &[AkitaField],
+) -> [AkitaField; 2] {
+    let pairs = tables[0].len() / 2;
+    assert_eq!(pairs, e_in.len() * e_out.len());
+    let mut message = [AkitaField::from_u64(0); 2];
+    for (x_out, outer_weight) in e_out.iter().copied().enumerate() {
+        for (x_in, inner_weight) in e_in.iter().copied().enumerate() {
+            let pair = x_out * e_in.len() + x_in;
+            let mut relation = [AkitaField::from_u64(0); 2];
+            for (table, rho) in tables.iter().zip(rho) {
+                let h_0 = table[2 * pair];
+                let h_1 = table[2 * pair + 1];
+                let delta = h_1 - h_0;
+                relation[0] += h_0 * (h_0 - *rho);
+                relation[1] += delta * delta;
+            }
+            let weight = outer_weight * inner_weight;
+            message[0] += weight * relation[0];
+            message[1] += weight * relation[1];
+        }
+    }
+    message
+}
+
+fn bind_dense_tables(tables: &mut [Vec<AkitaField>], challenge: AkitaField) {
+    for table in tables {
+        let bound_len = table.len() / 2;
+        for index in 0..bound_len {
+            let lo = table[2 * index];
+            let hi = table[2 * index + 1];
+            table[index] = lo + challenge * (hi - lo);
+        }
+        table.truncate(bound_len);
+    }
+}
+
+fn flatten_tables(tables: &[Vec<AkitaField>]) -> Vec<AkitaField> {
+    tables.iter().flatten().copied().collect()
 }
 
 fn assert_probe(
