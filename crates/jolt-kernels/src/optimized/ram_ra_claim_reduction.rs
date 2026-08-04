@@ -39,7 +39,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::bind_pairs;
+use super::support::{bind_pairs, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -112,7 +112,7 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
 
         Ok(Box::new(RaReductionKernel {
             rounds: log_t,
-            rounds_bound: 0,
+            progress: RoundProgress::new(log_t),
             prefix_bits,
             gamma_powers,
             phase,
@@ -260,7 +260,7 @@ enum Phase<F: Field> {
 
 struct RaReductionKernel<F: Field> {
     rounds: usize,
-    rounds_bound: usize,
+    progress: RoundProgress,
     prefix_bits: usize,
     /// `[1, γ, γ²]` — the consumed-claim batching coefficients.
     gamma_powers: [F; TERMS],
@@ -298,7 +298,7 @@ crate::optimized::impl_field_allocative!(RaReductionKernel, |kernel| {
 
 impl<F: Field> RaReductionKernel<F> {
     fn bind(&mut self, r: F) {
-        self.rounds_bound += 1;
+        self.progress.advance();
         match &mut self.phase {
             Phase::Prefix {
                 p, q, challenges, ..
@@ -394,15 +394,6 @@ impl<F: Field> RaReductionKernel<F> {
             }
         }
     }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.rounds_bound;
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
-        }
-    }
 }
 
 impl<F: Field> ProveRounds<F> for RaReductionKernel<F> {
@@ -438,7 +429,7 @@ impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamRaClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let Phase::Suffix { h, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "RAM RA claim-reduction fully bound but still in the prefix phase",
@@ -457,7 +448,7 @@ impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let Phase::Suffix { eq_hi, scales, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "RAM RA claim-reduction fully bound but still in the prefix phase",

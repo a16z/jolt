@@ -64,7 +64,7 @@ use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::merge_evals;
 use super::support::{
     bind_all, collect_rows, eq_table, gamma_powers_array, pair, round_poly_from_skipped_evals,
-    scaled_eq_table,
+    scaled_eq_table, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -307,7 +307,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         };
 
         Ok(Box::new(AddressKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             committed_program: relation.committed_program(),
             stage_weights: std::array::from_fn(|s| gamma_powers[s]),
             entry_weight: gamma_powers[7],
@@ -323,13 +323,12 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             int_table,
             entry_trace: one_hot(rows[0].push_pc as usize),
             entry_expected: one_hot(entry_bytecode_index),
-            rounds_bound: 0,
         }))
     }
 }
 
 struct AddressKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     committed_program: bool,
     stage_weights: [F; 5],
     entry_weight: F,
@@ -343,7 +342,6 @@ struct AddressKernel<F: Field> {
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -373,7 +371,7 @@ impl<F: Field> AddressKernel<F> {
                 ]),
             challenge,
         );
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
@@ -402,7 +400,7 @@ impl<F: Field> AddressKernel<F> {
 
 impl<F: Field> ProveRounds<F> for AddressKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -453,11 +451,7 @@ impl<F: Field> SumcheckKernel<F> for AddressKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let mut intermediate =
             self.entry_weight * self.entry_trace.evals()[0] * self.entry_expected.evals()[0];
         let bound_int = self.int_table.evals()[0];
@@ -562,12 +556,11 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
         }
 
         Ok(Box::new(CycleKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             degree: relation.degree(),
             ra,
             combined: Polynomial::new(combined),
             output_openings,
-            rounds_bound: 0,
         }))
     }
 }
@@ -599,14 +592,13 @@ impl ChunkIndexSource for BytecodePcChunks {
 }
 
 struct CycleKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     degree: usize,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
     combined: Polynomial<F>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
     output_openings: Vec<JoltOpeningId>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -623,7 +615,7 @@ impl<F: Field> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all([&mut self.combined], challenge);
         self.ra.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
@@ -651,7 +643,7 @@ impl<F: Field> CycleKernel<F> {
 
 impl<F: Field> ProveRounds<F> for CycleKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -704,11 +696,7 @@ impl<F: Field> SumcheckKernel<F> for CycleKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let ra = &self.ra;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {

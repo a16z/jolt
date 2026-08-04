@@ -64,6 +64,7 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::RoundProgress;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -831,7 +832,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
             rs1_indices,
             rs2_indices,
             bound_challenges: Vec::with_capacity(log_t + log_k),
-            rounds_bound: 0,
+            progress: RoundProgress::new(log_t + log_k),
         }))
     }
 }
@@ -900,7 +901,7 @@ struct ReadWriteKernel<F: Field> {
     rs1_indices: Vec<Option<u8>>,
     rs2_indices: Vec<Option<u8>>,
     bound_challenges: Vec<F>,
-    rounds_bound: usize,
+    progress: RoundProgress,
 }
 
 #[cfg(feature = "allocative")]
@@ -1255,7 +1256,7 @@ impl<F: Field> ReadWriteKernel<F> {
     /// sparse rows; the final cycle bind collapses to the K-sized dense
     /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
-        if self.rounds_bound < self.log_t {
+        if self.progress.bound() < self.log_t {
             self.gruen.bind(r);
             self.inc.bind_with_order(r, BindingOrder::LowToHigh);
             self.bind_sparse(r);
@@ -1270,9 +1271,9 @@ impl<F: Field> ReadWriteKernel<F> {
             }
         }
         self.bound_challenges.push(r);
-        self.rounds_bound += 1;
+        self.progress.advance();
 
-        if self.rounds_bound == self.log_t {
+        if self.progress.bound() == self.log_t {
             let k = 1usize << self.log_k;
             let mut ra = vec![F::zero(); k];
             let mut wa = vec![F::zero(); k];
@@ -1306,15 +1307,6 @@ impl<F: Field> ReadWriteKernel<F> {
             self.val = val;
             self.eq_scalar = self.gruen.current_scalar();
             self.inc_scalar = self.inc.evals()[0];
-        }
-    }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = (self.log_t + self.log_k) - self.rounds_bound;
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
         }
     }
 
@@ -1410,7 +1402,7 @@ impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        if self.rounds_bound < self.log_t {
+        if self.progress.bound() < self.log_t {
             Ok(self.cycle_round_message(previous_claim))
         } else {
             self.address_round_message(round, previous_claim)
@@ -1430,7 +1422,7 @@ impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RegistersReadWriteOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let (r_address, r_cycle) = self.bound_point();
         let (rs1_ra, rs2_ra) =
             one_hot_operand_claims(&self.rs1_indices, &self.rs2_indices, &r_address, &r_cycle);
@@ -1452,7 +1444,7 @@ impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(RegistersReadWritePublic::EqCycle);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         if self.eq_scalar != expected {

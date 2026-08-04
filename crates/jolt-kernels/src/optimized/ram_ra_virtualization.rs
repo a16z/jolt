@@ -37,7 +37,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::GruenRoundMessage;
+use super::support::{GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -98,10 +98,9 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
         );
 
         Ok(Box::new(RamRaVirtualizationKernel {
-            log_t,
+            progress: RoundProgress::new(log_t),
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(ram_reduced_cycle, BindingOrder::LowToHigh),
-            rounds_bound: 0,
         }))
     }
 }
@@ -136,14 +135,13 @@ impl ChunkIndexSource for RamAddressChunks {
 }
 
 struct RamRaVirtualizationKernel<F: Field> {
-    log_t: usize,
+    progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
     /// cycles, served lazily off the shared columns for the first four
     /// binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -155,16 +153,6 @@ crate::optimized::impl_field_allocative!(RamRaVirtualizationKernel, |kernel| {
 });
 
 impl<F: Field> RamRaVirtualizationKernel<F> {
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound == self.log_t {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            })
-        }
-    }
-
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
     /// `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`.
     fn message(
@@ -231,13 +219,13 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
         self.folded_ra.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -265,7 +253,7 @@ impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         Ok(RamRaVirtualizationOutputClaims {
             ram_ra: self.folded_ra.final_values(),
         })
@@ -281,7 +269,7 @@ impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         let got = self.gruen.current_scalar();

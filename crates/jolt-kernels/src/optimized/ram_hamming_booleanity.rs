@@ -33,6 +33,7 @@ use jolt_verifier::stages::stage6b::ram_hamming_booleanity::{
 use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
+use super::support::RoundProgress;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -75,19 +76,17 @@ impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHamming
         let eq_point: Vec<F> = stage1_cycle_binding.iter().rev().copied().collect();
 
         Ok(Box::new(OptimizedRamHammingBooleanityKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             eq: GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh),
             hamming: Polynomial::new(hamming),
-            rounds_bound: 0,
         }))
     }
 }
 
 struct OptimizedRamHammingBooleanityKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     eq: GruenSplitEqPolynomial<F>,
     hamming: Polynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -100,13 +99,13 @@ impl<F: Field> OptimizedRamHammingBooleanityKernel<F> {
         self.eq.bind(challenge);
         self.hamming
             .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -146,11 +145,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamHammingBooleanityOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         Ok(RamHammingBooleanityOutputClaims {
             ram_hamming_weight: self.hamming.evals()[0],
         })
@@ -166,11 +161,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &jolt_claims::NoChallenges<F>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle);
         let expected =
             match relation.derive_output_term(&id, input_points, output_points, challenges) {

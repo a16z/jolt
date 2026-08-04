@@ -43,7 +43,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, GruenRoundMessage};
+use super::support::{collect_rows, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -103,7 +103,7 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>>
 }
 
 pub struct OptimizedInstructionClaimReductionKernel<F: Field> {
-    log_t: usize,
+    progress: RoundProgress,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
     /// table (the summand is linear in the five operands).
     combined: Polynomial<F>,
@@ -112,7 +112,6 @@ pub struct OptimizedInstructionClaimReductionKernel<F: Field> {
     rows: Vec<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
     bound_challenges: Vec<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -183,12 +182,11 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
         let combined: Vec<F> = rows.iter().map(combine).collect();
 
         Ok(Self {
-            log_t,
+            progress: RoundProgress::new(log_t),
             combined: Polynomial::new(combined),
             rows,
             gruen: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
             bound_challenges: Vec::with_capacity(log_t),
-            rounds_bound: 0,
         })
     }
 
@@ -280,13 +278,13 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
         self.combined
             .bind_with_order(challenge, BindingOrder::LowToHigh);
         self.bound_challenges.push(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for OptimizedInstructionClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -314,11 +312,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionClaimReductionKernel<F>
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let [lookup_output, left_lookup_operand, right_lookup_operand, left_instruction_input, right_instruction_input] =
             self.operand_claims();
         Ok(InstructionClaimReductionOutputClaims {
@@ -340,11 +334,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionClaimReductionKernel<F>
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(InstructionClaimReductionPublic::EqSpartan);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         let got = self.gruen.current_scalar();

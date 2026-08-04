@@ -42,7 +42,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, fmadd_u64_split};
+use super::support::{collect_rows, fmadd_u64_split, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -140,6 +140,7 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegiste
             values,
             phase: Phase::PrefixSuffix { p, q },
             bound_challenges: Vec::with_capacity(log_t),
+            progress: RoundProgress::new(log_t),
         }))
     }
 }
@@ -166,6 +167,7 @@ struct ClaimReductionKernel<F: Field> {
     values: Vec<RegisterValuesRow>,
     phase: Phase<F>,
     bound_challenges: Vec<F>,
+    progress: RoundProgress,
 }
 
 #[cfg(feature = "allocative")]
@@ -192,24 +194,11 @@ crate::optimized::impl_field_allocative!(ClaimReductionKernel, |kernel| {
 });
 
 impl<F: Field> ClaimReductionKernel<F> {
-    fn rounds_bound(&self) -> usize {
-        self.bound_challenges.len()
-    }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.log_t - self.rounds_bound();
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
-        }
-    }
-
     /// Regenerate the dense phase from the raw values: the three columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix
     /// eq table scaled by the bound-prefix eq factor.
     fn transition_to_dense(&mut self) {
-        let bound = self.rounds_bound();
+        let bound = self.progress.bound();
         let r_prefix: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
         let eq_prefix = EqPolynomial::<F>::evals(&r_prefix, None);
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
@@ -249,6 +238,7 @@ impl<F: Field> ClaimReductionKernel<F> {
 
     fn bind(&mut self, r: F) {
         self.bound_challenges.push(r);
+        self.progress.advance();
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q.
         if matches!(&self.phase, Phase::PrefixSuffix { p, .. } if p.len() == 2) {
@@ -353,7 +343,7 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RegistersClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let Phase::Dense {
             rd_write_value,
             rs1_value,
@@ -381,7 +371,7 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let Phase::Dense { eq, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "claim reduction must finish in the dense phase",

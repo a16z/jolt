@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::SplitLt;
+use super::support::{RoundProgress, SplitLt};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -92,8 +92,7 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         }
 
         Ok(Box::new(RamValCheckKernel {
-            rounds: log_t,
-            rounds_bound: 0,
+            progress: RoundProgress::new(log_t),
             inc: Polynomial::new(inc_table),
             ra: LazyFoldedRa::new(vec![eq_table(r_address)], RamAddressIndices { columns }),
             lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
@@ -102,8 +101,7 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
 }
 
 struct RamValCheckKernel<F: Field> {
-    rounds: usize,
-    rounds_bound: usize,
+    progress: RoundProgress,
     inc: Polynomial<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,
     lt: SplitLt<F>,
@@ -121,22 +119,13 @@ impl<F: Field> RamValCheckKernel<F> {
         self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);
         self.ra.bind(challenge);
         self.lt.bind(challenge);
-        self.rounds_bound += 1;
-    }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.rounds_bound;
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
-        }
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -203,7 +192,7 @@ impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamValCheckOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         // The advice cells are dual-role: never bound here, their wire output
         // value is the consumed input claim read back (the naive tier's echo).
         Ok(RamValCheckOutputClaims {
@@ -224,7 +213,7 @@ impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         let got = self.lt.final_value();

@@ -38,6 +38,7 @@ use rayon::prelude::*;
 use super::support::merge_evals;
 use super::support::{
     bind_all, collect_rows, eq_table, gamma_powers, pair, round_poly_from_skipped_evals,
+    RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -212,23 +213,21 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             .collect();
 
         Ok(Box::new(HammingWeightKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             g_tables,
             weight_tables,
             output_openings,
-            rounds_bound: 0,
         }))
     }
 }
 
 struct HammingWeightKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
     /// Combined claim weights `W_i`, index-aligned with `g_tables`.
     weight_tables: Vec<Polynomial<F>>,
     output_openings: Vec<JoltOpeningId>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -247,7 +246,7 @@ impl<F: Field> HammingWeightKernel<F> {
                 .chain(self.weight_tables.iter_mut()),
             challenge,
         );
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
@@ -266,7 +265,7 @@ impl<F: Field> HammingWeightKernel<F> {
 
 impl<F: Field> ProveRounds<F> for HammingWeightKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -317,11 +316,7 @@ impl<F: Field> SumcheckKernel<F> for HammingWeightKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let g_tables = &self.g_tables;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {

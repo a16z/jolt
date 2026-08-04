@@ -41,7 +41,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, GruenRoundMessage};
+use super::support::{collect_rows, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -114,12 +114,11 @@ enum InputState<F: Field> {
 }
 
 pub struct OptimizedInstructionInputKernel<F: Field> {
-    log_t: usize,
+    progress: RoundProgress,
     gamma: F,
     state: InputState<F>,
     gruen: GruenSplitEqPolynomial<F>,
     bind_scratch: Vec<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -159,12 +158,11 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
             });
         }
         Ok(Self {
-            log_t,
+            progress: RoundProgress::new(log_t),
             gamma,
             state: InputState::Native(rows),
             gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
             bind_scratch: Vec::new(),
-            rounds_bound: 0,
         })
     }
 
@@ -323,7 +321,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
                 }
             }
         }
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The eight fully bound table values, table order.
@@ -338,7 +336,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
 
 impl<F: Field> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -366,11 +364,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionInputOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let [left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm] =
             self.final_values();
         Ok(InstructionInputOutputClaims {
@@ -395,11 +389,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(InstructionInputPublic::EqProduct);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         let got = self.gruen.current_scalar();

@@ -82,7 +82,7 @@ use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::{gamma_power_pairs, gamma_powers};
+use super::support::{gamma_power_pairs, gamma_powers, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -288,7 +288,7 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleani
 /// with squared weights, because binding squares the one-hot's accumulated
 /// eq factor. The initial `A = B` makes the input claim exactly zero.
 struct OptimizedBooleanityAddressKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
     gamma_weights: Vec<F>,
@@ -296,7 +296,6 @@ struct OptimizedBooleanityAddressKernel<F: Field> {
     /// Raw vectors because the squared-weight bind is not a multilinear bind.
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -316,12 +315,11 @@ impl<F: Field> OptimizedBooleanityAddressKernel<F> {
         let squared: Vec<Vec<F>> = linear.iter().map(|table| table.evals().to_vec()).collect();
         let gamma_weights = gamma_powers(gamma * gamma, linear.len());
         Self {
-            rounds,
+            progress: RoundProgress::new(rounds),
             gamma_weights,
             linear,
             squared,
             eq_address: Polynomial::new(eq_table(reference_address)),
-            rounds_bound: 0,
         }
     }
 
@@ -340,13 +338,13 @@ impl<F: Field> OptimizedBooleanityAddressKernel<F> {
         }
         self.eq_address
             .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for OptimizedBooleanityAddressKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -412,11 +410,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityAddressKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BooleanityAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let mut inner = F::zero();
         for ((weight, linear), squared) in self
             .gamma_weights
@@ -504,7 +498,7 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
             .collect();
 
         Ok(Box::new(OptimizedBooleanityCycleKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             eq: GruenSplitEqPolynomial::new_with_scaling(
                 reference_cycle,
                 BindingOrder::LowToHigh,
@@ -514,7 +508,6 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
             gamma_powers,
             gamma_powers_inv,
             layout,
-            rounds_bound: 0,
         }))
     }
 }
@@ -542,7 +535,7 @@ impl ChunkIndexSource for BooleanityChunks {
 }
 
 struct OptimizedBooleanityCycleKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     /// Split-eq over the reference cycle, scaled by
     /// `eq(r_address, reference_address)` — together the reference's
     /// `EqAddressCycle` derived table.
@@ -553,7 +546,6 @@ struct OptimizedBooleanityCycleKernel<F: Field> {
     gamma_powers: Vec<F>,
     gamma_powers_inv: Vec<F>,
     layout: JoltRaPolynomialLayout,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -571,13 +563,13 @@ impl<F: Field> OptimizedBooleanityCycleKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.eq.bind(challenge);
         self.tables.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -654,11 +646,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         // Unscale the pre-scaled tables back to the committed polynomials'
         // claims; resolve by id so the output struct shape stays the
         // relation's business.
@@ -682,11 +670,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(BooleanityPublic::EqAddressCycle);
         let expected =
             match relation.derive_output_term(&id, input_points, output_points, challenges) {

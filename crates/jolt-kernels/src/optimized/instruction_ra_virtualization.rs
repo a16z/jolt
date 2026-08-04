@@ -53,7 +53,9 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::{accumulate_product, gamma_power_pairs, map_indices, GruenRoundMessage};
+use super::support::{
+    accumulate_product, gamma_power_pairs, map_indices, GruenRoundMessage, RoundProgress,
+};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -115,7 +117,7 @@ impl ChunkIndexSource for LookupIndexChunks {
 }
 
 pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
-    log_t: usize,
+    progress: RoundProgress,
     num_committed_per_virtual: usize,
     /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
     /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
@@ -128,7 +130,6 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
     /// first four binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -214,12 +215,11 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         );
 
         Ok(Self {
-            log_t,
+            progress: RoundProgress::new(log_t),
             num_committed_per_virtual,
             gamma_powers_inv,
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
-            rounds_bound: 0,
         })
     }
 
@@ -354,13 +354,13 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
         self.folded_ra.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -388,11 +388,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
         let mut committed_instruction_ra = self.folded_ra.final_values();
@@ -416,11 +412,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         let got = self.gruen.current_scalar();

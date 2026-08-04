@@ -59,6 +59,7 @@ use rayon::prelude::*;
 
 use super::support::{
     accumulate_product, for_each_index_mut, map_indices, map_reduce_chunks, scan_chunk_size,
+    RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -510,7 +511,7 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     /// handoff so the full 48 B rows can free — the final flag walk needs
     /// only this byte per cycle.
     claim_columns: Vec<u8>,
-    rounds_bound: usize,
+    progress: RoundProgress,
 }
 
 #[cfg(feature = "allocative")]
@@ -619,7 +620,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             cycle_challenges: Vec::new(),
             cycle: None,
             claim_columns: Vec::new(),
-            rounds_bound: 0,
+            progress: RoundProgress::new(dimensions.sumcheck_rounds()),
         };
         kernel.init_phase(0);
         Ok(kernel)
@@ -1134,7 +1135,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        if self.rounds_bound < self.address_bits() {
+        if self.progress.bound() < self.address_bits() {
             let bind_dense = |table: &mut Polynomial<F>| {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);
             };
@@ -1163,7 +1164,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             self.phase_challenges.push(challenge);
 
             if self.phase_challenges.len() == CHUNK_LEN {
-                let phase = self.rounds_bound / CHUNK_LEN;
+                let phase = self.progress.bound() / CHUNK_LEN;
                 self.v_tables.push(eq_table(&self.phase_challenges));
                 for (checkpoint, table) in
                     self.prefix_checkpoints.iter_mut().zip(&self.prefix_tables)
@@ -1242,7 +1243,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             }
             self.cycle_challenges.push(challenge);
         }
-        self.rounds_bound += 1;
+        self.progress.advance();
         Ok(())
     }
 }
@@ -1261,7 +1262,7 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        if self.rounds_bound < self.address_bits() {
+        if self.progress.bound() < self.address_bits() {
             Ok(self.address_message(previous_claim))
         } else {
             self.cycle_message(round, previous_claim)
@@ -1280,11 +1281,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.num_rounds() {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.num_rounds() - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let cycle = self
             .cycle
             .as_ref()

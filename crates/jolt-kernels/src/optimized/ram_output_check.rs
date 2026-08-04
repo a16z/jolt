@@ -40,7 +40,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage2::ram_output_check::{RamOutputCheck, RamOutputCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
 
-use super::support::GruenRoundMessage;
+use super::support::{GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::dense_view;
 use crate::{
@@ -89,25 +89,23 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             .collect();
 
         Ok(Box::new(OutputCheckKernel {
-            ram_log_k,
+            progress: RoundProgress::new(ram_log_k),
             gruen: GruenSplitEqPolynomial::new(output_address_challenges, BindingOrder::LowToHigh),
             io_mask: Polynomial::new(io_mask),
             val_io: Polynomial::new(val_io),
             val_final: Polynomial::new(dense_view(witness, ram_val_final())?),
             bind_scratch: Vec::new(),
-            rounds_bound: 0,
         }))
     }
 }
 
 struct OutputCheckKernel<F: Field> {
-    ram_log_k: usize,
+    progress: RoundProgress,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
     val_io: Polynomial<F>,
     val_final: Polynomial<F>,
     bind_scratch: Vec<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -121,16 +119,6 @@ crate::optimized::impl_field_allocative!(OutputCheckKernel, |kernel| {
 });
 
 impl<F: Field> OutputCheckKernel<F> {
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound == self.ram_log_k {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.ram_log_k - self.rounds_bound,
-            })
-        }
-    }
-
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
     /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
     fn message(
@@ -183,13 +171,13 @@ impl<F: Field> OutputCheckKernel<F> {
         for table in [&mut self.io_mask, &mut self.val_io, &mut self.val_final] {
             table.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
         }
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.ram_log_k
+        self.progress.total()
     }
 
     fn prove_round(
@@ -217,7 +205,7 @@ impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamOutputCheckOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         Ok(RamOutputCheckOutputClaims {
             val_final: self.val_final.evals()[0],
         })
@@ -233,7 +221,7 @@ impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         for (public, got) in [
             (RamOutputCheckPublic::EqAddress, self.gruen.current_scalar()),
             (RamOutputCheckPublic::IoMask, self.io_mask.evals()[0]),

@@ -41,7 +41,7 @@ use jolt_witness::{collect_par_map, JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
-use super::support::{collect_rows, SplitLt};
+use super::support::{collect_rows, RoundProgress, SplitLt};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -163,14 +163,13 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
         };
 
         Ok(Box::new(ValEvaluationKernel {
-            rounds: log_t,
+            progress: RoundProgress::new(log_t),
             inc,
             wa: WaState::Indices {
                 rd,
                 eq_address: EqPolynomial::<F>::evals(r_address, None),
             },
             lt: SplitLt::new(r_cycle),
-            rounds_bound: 0,
         }))
     }
 }
@@ -189,11 +188,10 @@ struct RdIncRow {
 }
 
 struct ValEvaluationKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     inc: IncSource<F>,
     wa: WaState<F>,
     lt: SplitLt<F>,
-    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -211,15 +209,6 @@ crate::optimized::impl_field_allocative!(ValEvaluationKernel, |kernel| {
 });
 
 impl<F: Field> ValEvaluationKernel<F> {
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.rounds_bound;
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
-        }
-    }
-
     /// Materialize the deferred increment table; a no-op once ready.
     fn ensure_inc(&mut self) -> Result<(), SumcheckError<F>> {
         if let IncSource::Deferred(owned) = &self.inc {
@@ -237,7 +226,7 @@ impl<F: Field> ValEvaluationKernel<F> {
 
 impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -253,7 +242,7 @@ impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
             }
             self.wa.bind(challenge);
             self.lt.bind(challenge);
-            self.rounds_bound += 1;
+            self.progress.advance();
         }
 
         let IncSource::Ready(inc_poly) = &self.inc else {
@@ -309,7 +298,7 @@ impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
         }
         self.wa.bind(bind);
         self.lt.bind(bind);
-        self.rounds_bound += 1;
+        self.progress.advance();
         Ok(())
     }
 }
@@ -321,7 +310,7 @@ impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RegistersValEvaluationOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let IncSource::Ready(inc) = &self.inc else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "increment table absent after full binding",
@@ -342,7 +331,7 @@ impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.progress.require_complete()?;
         let id = JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle);
         let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
         let got = self.lt.final_value();

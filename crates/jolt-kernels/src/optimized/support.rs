@@ -13,7 +13,46 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::KernelError;
+use crate::{KernelError, SumcheckKernelError};
+
+/// A kernel's bound-round count against its total — the one home of the
+/// "claims only after every round is bound" invariant.
+pub(crate) struct RoundProgress {
+    bound: usize,
+    total: usize,
+}
+
+impl RoundProgress {
+    pub(crate) fn new(total: usize) -> Self {
+        Self { bound: 0, total }
+    }
+
+    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
+    pub(crate) fn total(&self) -> usize {
+        self.total
+    }
+
+    /// Rounds bound so far (multi-phase kernels key their transitions on it).
+    pub(crate) fn bound(&self) -> usize {
+        self.bound
+    }
+
+    /// Record one bound round.
+    pub(crate) fn advance(&mut self) {
+        self.bound += 1;
+    }
+
+    /// Gate for every output-claim / derived-table entry point.
+    pub(crate) fn require_complete<F: Field>(&self) -> Result<(), SumcheckKernelError<F>> {
+        if self.bound == self.total {
+            Ok(())
+        } else {
+            Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.total - self.bound,
+            })
+        }
+    }
+}
 
 /// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
 /// rayon extraction dispatch amortizes (the stock bundle pass uses 2^12-row
