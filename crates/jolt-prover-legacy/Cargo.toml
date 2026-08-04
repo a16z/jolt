@@ -33,7 +33,6 @@ akita = [
   "dep:akita-field",
   "dep:jolt-akita",
   "jolt-claims?/akita",
-  "jolt-field/akita",
   "jolt-verifier/akita",
 ]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
