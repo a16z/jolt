@@ -257,10 +257,10 @@ soundness note before merge.
   broke — a manual postprocess step converts monitor events; now automated
   (eef0f088e). Also: capped-BRRC re-hosting adds +6 GiB at peak (96.9 vs 91.0)
   — W3B input.
-- **W3B — PARKED pending W3A:** BRRC device 2^27 root-cause (why 2.6× vs CPU
-  twin + batch contention; measured only under fat st6b entry — re-baseline
-  under lean entry after W3A; candidates: 5×T×32B flat ping-pong streaming,
-  64-bit MSL addressing, width-8 materialization). Cap stays until fixed.
+- **W3B (task 2fbf1cf5, gpt-5.6-sol-xhigh, worktree gpuutil-w3b) — ACTIVE:**
+  BRRC device 2^27 re-baseline under the lean regime → root-cause → bounded
+  fix or evidence-backed no-go. Gate: device-on beats capped arm ≥1.5 s st6b
+  with IncCR as contention canary; else cap stays with mechanism named.
 - **W3C — PARKED:** st4 prepare salvage — parallel build of the EXISTING
   representation (W2B proved −65% prepare in isolation; old rounds untouched;
   byte-identical; no footprint delta). ~−3 s @2^27 prize. U3 lesson applies.
