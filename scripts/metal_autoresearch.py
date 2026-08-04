@@ -176,6 +176,9 @@ def validate_goal_contract(contract: dict[str, Any]) -> None:
     minimum_gain = float(continuation["minimum_projected_relative_gain"])
     if not 0.0 < minimum_gain < 1.0:
         raise ValueError("the portfolio continuation gain must be between zero and one")
+    local_stretch_floor = float(continuation.get("clear_local_speedup_to_pursue", floor))
+    if not math.isfinite(local_stretch_floor) or local_stretch_floor < floor:
+        raise ValueError("the clear local stretch floor must be at least the portfolio floor")
 
 
 def validate_params(config: dict[str, Any], params: dict[str, str]) -> None:
@@ -289,12 +292,17 @@ def goal_decision(
 ) -> dict[str, Any]:
     floor = float(contract["primary_metric"]["minimum_accepted_speedup"])
     minimum_gain = float(contract["continuation"]["minimum_projected_relative_gain"])
+    local_stretch_floor = float(
+        contract["continuation"].get("clear_local_speedup_to_pursue", floor)
+    )
     if not math.isfinite(current_piop_speedup) or current_piop_speedup <= 0.0:
         raise ValueError("current PIOP speedup must be finite and positive")
     if not math.isfinite(floor) or floor <= 1.0:
         raise ValueError("the accepted PIOP speedup floor must exceed one")
     if not math.isfinite(minimum_gain) or not 0.0 < minimum_gain < 1.0:
         raise ValueError("the projected continuation gain must be between zero and one")
+    if not math.isfinite(local_stretch_floor) or local_stretch_floor < floor:
+        raise ValueError("the clear local stretch floor must be at least the portfolio floor")
 
     total_share = 0.0
     projected_time = 1.0
@@ -323,7 +331,10 @@ def goal_decision(
     projected_speedup = current_piop_speedup / projected_time
     projected_gain = projected_speedup / current_piop_speedup - 1.0
     floor_met = current_piop_speedup >= floor
-    should_continue = not floor_met or projected_gain >= minimum_gain
+    clear_local_stretch = any(
+        candidate["conservative_local_speedup"] > local_stretch_floor for candidate in ranked
+    )
+    should_continue = not floor_met or projected_gain >= minimum_gain or clear_local_stretch
     ranked.sort(key=lambda candidate: candidate["projected_time_fraction_saved"], reverse=True)
     return {
         "continue": should_continue,
@@ -333,13 +344,17 @@ def goal_decision(
         "projected_piop_speedup": projected_speedup,
         "projected_relative_gain": projected_gain,
         "minimum_projected_relative_gain": minimum_gain,
+        "clear_local_speedup_to_pursue": local_stretch_floor,
+        "clear_local_stretch": clear_local_stretch,
         "next_kernel": ranked[0]["kernel"] if ranked else None,
         "candidates": ranked,
         "reason": (
             "the minimum PIOP speedup has not been reached"
             if not floor_met
             else "conservative residual headroom clears the continuation threshold"
-            if should_continue
+            if projected_gain >= minimum_gain
+            else "a conservative local speedup exceeds the uncapped stretch floor"
+            if clear_local_stretch
             else "the floor is met and conservative residual headroom is below the threshold"
         ),
     }

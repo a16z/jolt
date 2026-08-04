@@ -4,12 +4,13 @@
       "current Metal PIOP profile attribution",
       "conservative kernel traffic and arithmetic ceiling, replaced by exact local hybrid measurements once available"
     ],
+    "clear_local_speedup_to_pursue": 4.0,
     "minimum_projected_relative_gain": 0.05,
     "projection": "current_speedup / (1 - sum(f_i * (1 - 1 / s_i)))",
     "stop_at_minimum": false
   },
   "goal": "maximize Akita Metal-hybrid PIOP throughput while preserving the optimized CPU protocol",
-  "goal_prompt": "Maximize Akita Metal-hybrid PIOP speedup over optimized CPU at trace sizes 2^26+. Reach at least 4x, but keep optimizing while conservative profiled or analytical headroom predicts another 5% PIOP gain. Work one measured bottleneck at a time: derive its ceiling, freeze an exact hybrid evaluator, implement resident/direct-handoff Metal with a CPU cutoff, validate and checkpoint, reprofile the PIOP, then continue. Exclude trace/witness work and PCS commit/opening from the metric; preserve exact proofs and host Fiat-Shamir.",
+  "goal_prompt": "Maximize Akita Metal-hybrid PIOP speedup over optimized CPU at trace sizes 2^26+. Reach at least 4x; 4x is a floor, never a cap. Continue when conservative profiled or analytical headroom predicts another 5% PIOP gain, and always pursue an active kernel when a conservative estimate clearly exceeds 4x. Work one measured bottleneck at a time: derive its ceiling, freeze an exact hybrid evaluator, implement resident/direct-handoff Metal with a CPU cutoff, validate and checkpoint, reprofile the PIOP, then continue. Exclude trace/witness work and PCS commit/opening from the metric; preserve exact proofs and host Fiat-Shamir.",
   "kernel_promotion": [
     {
       "class": "hot",

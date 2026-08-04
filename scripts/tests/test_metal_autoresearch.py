@@ -96,6 +96,25 @@ class MetalAutoresearchTests(unittest.TestCase):
         self.assertFalse(decision["continue"])
         self.assertTrue(decision["floor_met"])
 
+    def test_goal_pursues_clear_local_stretch_past_portfolio_floor(self) -> None:
+        contract = {
+            "primary_metric": {"minimum_accepted_speedup": 4.0},
+            "continuation": {
+                "minimum_projected_relative_gain": 0.05,
+                "clear_local_speedup_to_pursue": 4.0,
+            },
+        }
+        candidates = [
+            {
+                "kernel": "small_but_fast",
+                "current_piop_share": 0.01,
+                "conservative_local_speedup": 4.1,
+            }
+        ]
+        decision = metal_autoresearch.goal_decision(contract, 4.2, candidates)
+        self.assertTrue(decision["continue"])
+        self.assertTrue(decision["clear_local_stretch"])
+
     def test_repository_goal_contract_is_valid_and_uncapped(self) -> None:
         contract = metal_autoresearch.read_json(
             ROOT / "crates/jolt-kernels/autoresearch/piop_goal.json"
@@ -103,6 +122,7 @@ class MetalAutoresearchTests(unittest.TestCase):
         metal_autoresearch.validate_goal_contract(contract)
         self.assertEqual(contract["primary_metric"]["minimum_accepted_speedup"], 4.0)
         self.assertFalse(contract["continuation"]["stop_at_minimum"])
+        self.assertEqual(contract["continuation"]["clear_local_speedup_to_pursue"], 4.0)
 
 
 if __name__ == "__main__":
