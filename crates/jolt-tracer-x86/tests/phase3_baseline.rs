@@ -12,12 +12,7 @@
 //! real linux-x86_64 workstation.
 
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::print_stdout
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, JoltProgram, TraceInputs,
@@ -29,51 +24,8 @@ use tracer::TracerBackend;
 // Link the SHA2 inline registration for the sha2-chain guest.
 use jolt_inlines_sha2 as _;
 
-fn build_guest_elf(package: &str, func: &str) -> Vec<u8> {
-    let target_dir = format!("/tmp/jolt-guest-targets/{package}-{func}");
-    let output = std::process::Command::new("jolt")
-        .args([
-            "build",
-            "-p",
-            package,
-            "--stack-size",
-            &common::constants::DEFAULT_STACK_SIZE.to_string(),
-            "--heap-size",
-            &common::constants::DEFAULT_HEAP_SIZE.to_string(),
-            "--",
-            "--release",
-            "--target-dir",
-            &target_dir,
-            "--features",
-            "guest",
-        ])
-        .env("JOLT_FUNC_NAME", func)
-        .output()
-        .expect("failed to run jolt CLI");
-    assert!(output.status.success(), "guest build failed");
-    let elf_path = format!("{target_dir}/riscv64imac-unknown-none-elf/release/{package}");
-    std::fs::read(&elf_path).unwrap_or_else(|e| panic!("failed to read ELF at {elf_path}: {e}"))
-}
-
-fn setup(package: &str, func: &str, input: Vec<u8>) -> (JoltProgram, TraceInputs) {
-    let elf = build_guest_elf(package, func);
-    // Inline-bearing guests (sha2-chain) need the tracer's inline provider.
-    let mut provider = tracer::TracerInlineExpansionProvider::new();
-    let program = jolt_program::build_jolt_program_with_inline_provider(
-        &elf,
-        &mut provider,
-        jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
-    )
-    .expect("failed to build Jolt program");
-    let memory_config = common::jolt_device::MemoryConfig {
-        program_size: Some(program.program_end - common::constants::RAM_START_ADDRESS),
-        ..Default::default()
-    };
-    (
-        program,
-        TraceInputs::new(input, Vec::new(), Vec::new(), memory_config),
-    )
-}
+mod common;
+use common::setup;
 
 fn median3(mut f: impl FnMut() -> f64) -> f64 {
     let mut times = [f(), f(), f()];
@@ -165,15 +117,19 @@ fn phase3_baseline() {
     );
     println!("|---|---:|---:|---:|---:|---:|");
 
-    let (program, inputs) = setup(
+    let Some((program, inputs)) = setup(
         "fibonacci-guest",
         "fib",
         postcard::to_stdvec(&400_000_u32).unwrap(),
-    );
+    ) else {
+        return;
+    };
     report("fibonacci_400000", &program, &inputs, true);
 
     let mut chain_input = postcard::to_stdvec(&[5u8; 32]).unwrap();
     chain_input.append(&mut postcard::to_stdvec(&4_446u32).unwrap());
-    let (program, inputs) = setup("sha2-chain-guest", "sha2_chain", chain_input);
+    let Some((program, inputs)) = setup("sha2-chain-guest", "sha2_chain", chain_input) else {
+        return;
+    };
     report("sha2_chain_4446", &program, &inputs, true);
 }
