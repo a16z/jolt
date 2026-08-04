@@ -213,7 +213,26 @@ soundness note before merge.
    optional round-pairing step 3 gated on orchestrator GO. Memory-viability
    gate added (peak-storage projection @2^27 before 2^25 confirm).
 
-## Wave 3
+## Wave 3 — W3A certified
+
+- **W3A CLOSED — merged to trunk @91c4d5700** (kernels 239/239, prover 20/20).
+  Fix: `MmapVec` (anonymous mmap, munmap on drop) backs TraceRecord lanes,
+  RegisterLanes, RamAccessColumns, SharedInstructionRows, PcRows, and the IRR
+  device ping-pong (`OwnedBacking::Mmap`) — every corpse leaves RSS+footprint
+  at its designed drop site; compressor storm structurally avoided (peak
+  96.9→79.3 GiB). Matched-pair @2^27: −10.5 s (−11.6%). Third negative result
+  pinned: `malloc_zone_pressure_relief` is a measured no-op on freed huge
+  Vecs (why corpses ride forward). Post-merge certification (locked, deep
+  afternoon ambient, 22-day-uptime box): **76.92 / 73.66 s — best 73.66 s =
+  1.822 MHz** (vector [10.73, 8.10, 4.32, 1.97, 10.83, 12.88, 0.131, 15.45,
+  1.24, 7.95]); st5 12.88 = all-time best (mmap zero-fill elides st1-walk
+  memsets); st6b 15.4 lean. Campaign standing vs pre-campaign canonical
+  77.168: **−3.5 s at equal luck, −11..−13 s same-day, and the ±9 s ambient
+  lottery is dead.** 2^25: 19.24 s (1.744 MHz). Expect ~72-73 in a clean
+  ambient window (3 banked 2^27 runs remain for a flagship number after the
+  box gets a natural reboot/quiet day — do NOT reboot while lanes live).
+
+## Wave 3 (continued)
 
 - **W3A (task 743016e4, fable-max, worktree gpuutil-w3a) — PHASE 2 (fix).**
   Phase-1 artifact (w3a-rootcause.md, ACCEPTED 2026-08-04 17:0x UTC) overturns
