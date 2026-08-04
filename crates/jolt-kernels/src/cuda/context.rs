@@ -32,6 +32,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/ra_poly.cu"),
     "\n",
     include_str!("kernels/ram_ra_reduction.cu"),
+    "\n",
+    include_str!("kernels/suffixes.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -63,6 +65,7 @@ pub struct CudaKernelContext {
     ram_ra_fold_suffix: CudaFunction,
     ram_ra_fold_prefix: CudaFunction,
     ram_ra_phase1_round: CudaFunction,
+    sfx_eval_batch: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -104,6 +107,7 @@ impl CudaKernelContext {
             ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
             ram_ra_fold_prefix: module.load_function("ram_ra_fold_prefix_kernel")?,
             ram_ra_phase1_round: module.load_function("ram_ra_phase1_round_kernel")?,
+            sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
         })
     }
 
@@ -231,6 +235,20 @@ impl CudaKernelContext {
 
     pub(super) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
         &self.ram_ra_phase1_round
+    }
+
+    pub(super) const fn sfx_eval_batch(&self) -> &CudaFunction {
+        &self.sfx_eval_batch
+    }
+
+    pub(super) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
+        Ok(self.stream.alloc_zeros::<u64>(len)?)
+    }
+
+    pub(super) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
+        })
     }
 
     pub(super) fn device_pointers(

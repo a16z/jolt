@@ -15,6 +15,7 @@ mod ram_ra_claim_reduction;
 mod ram_ra_reduction;
 mod registers_val_evaluation;
 mod staging;
+mod suffixes;
 #[cfg(test)]
 mod testing;
 pub mod xfer_stats;
