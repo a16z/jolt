@@ -414,6 +414,8 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
+    #[error("Booleanity rows belong to Metal device {got}, but the kernel uses {expected}")]
+    BooleanityRowsDevice { expected: u64, got: u64 },
     #[error("booleanity split weights cover {covered} pairs, expected {expected}")]
     BooleanityWeightShape { expected: usize, covered: usize },
     #[error(

@@ -275,10 +275,19 @@ mod tests {
                 .context
                 .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
                 .unwrap();
+            let retained = resident.clone();
             let mut session = ProofSession::default();
             session.park(resident);
+            let bytecode_rows = session.state::<BooleanityRows>().cloned().unwrap();
+            assert!(retained.shares_allocation(&bytecode_rows));
             let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
             assert!(session.state::<BooleanityRows>().is_none());
+            assert_eq!(bytecode_rows.len(), 1 << log_t);
+            assert_eq!(
+                bytecode_rows.device_registry_id(),
+                metal.context.device_registry_id()
+            );
+            assert!(retained.shares_allocation(&bytecode_rows));
 
             let mut claim = claims.address_phase;
             let mut bind = None;

@@ -1,4 +1,4 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{mem::size_of, slice, sync::Arc, time::Duration};
 
 use jolt_field::AkitaField;
 use metal::{
@@ -31,14 +31,31 @@ pub struct BooleanityRow {
     packed_pc_and_flags: u64,
 }
 
-pub(crate) struct BooleanityRows {
+struct BooleanityRowsInner {
     buffer: Buffer,
     len: usize,
+    device_registry_id: u64,
 }
 
+#[derive(Clone)]
+pub(crate) struct BooleanityRows(Arc<BooleanityRowsInner>);
+
 impl BooleanityRows {
-    pub(crate) const fn len(&self) -> usize {
-        self.len
+    pub(crate) fn buffer(&self) -> &Buffer {
+        &self.0.buffer
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.len
+    }
+
+    pub(crate) fn device_registry_id(&self) -> u64 {
+        self.0.device_registry_id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_allocation(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -46,10 +63,21 @@ impl BooleanityRows {
 impl allocative::Allocative for BooleanityRows {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("device_rows"),
-            self.len * size_of::<BooleanityRow>(),
-        );
+        if let Some(mut shared) = visitor.enter_shared(
+            allocative::Key::new("rows"),
+            size_of::<*const BooleanityRowsInner>(),
+            Arc::as_ptr(&self.0).cast(),
+        ) {
+            shared.visit_simple(
+                allocative::Key::new("ArcInner"),
+                2 * size_of::<usize>() + size_of::<BooleanityRowsInner>(),
+            );
+            shared.visit_simple(
+                allocative::Key::new("device_rows"),
+                self.len() * size_of::<BooleanityRow>(),
+            );
+            shared.exit();
+        }
         visitor.exit();
     }
 }
@@ -173,7 +201,7 @@ struct ReductionParams {
 }
 
 struct Buffers {
-    rows: Buffer,
+    rows: BooleanityRows,
     selectors: Buffer,
     rho: Buffer,
     initial_constant: Buffer,
@@ -255,10 +283,20 @@ impl SolinasMetal {
         let len = rows.len();
         let bytes = byte_length::<BooleanityRow>(len)?;
         self.validate_buffer_length(bytes)?;
-        Ok(BooleanityRows {
+        Ok(BooleanityRows(Arc::new(BooleanityRowsInner {
             buffer: buffer_from_slice(&self.device, rows),
             len,
-        })
+            device_registry_id: self.device.registry_id(),
+        })))
+    }
+
+    pub(crate) fn validate_booleanity_rows(&self, rows: &BooleanityRows) -> Result<(), MetalError> {
+        let expected = self.device.registry_id();
+        let got = rows.device_registry_id();
+        if got != expected {
+            return Err(MetalError::BooleanityRowsDevice { expected, got });
+        }
+        Ok(())
     }
 
     #[expect(
@@ -276,7 +314,8 @@ impl SolinasMetal {
         e_out_capacity: usize,
         config: BooleanitySequenceConfig,
     ) -> Result<BooleanitySequence, MetalError> {
-        let rows_len = resident_rows.len;
+        self.validate_booleanity_rows(&resident_rows)?;
+        let rows_len = resident_rows.len();
         if rows_len < 4 || !rows_len.is_power_of_two() {
             return Err(MetalError::InvalidBooleanityRows(rows_len));
         }
@@ -399,7 +438,6 @@ impl SolinasMetal {
             self.validate_buffer_length(bytes)?;
         }
 
-        let rows_buffer = resident_rows.buffer;
         let selectors_buffer = self.device.new_buffer_with_data(
             selector_abi.as_ptr().cast(),
             byte_length::<SelectorAbi>(selector_abi.len())?,
@@ -421,7 +459,7 @@ impl SolinasMetal {
             reduction_pipeline,
             reduction_limits,
             buffers: Buffers {
-                rows: rows_buffer,
+                rows: resident_rows,
                 selectors: selectors_buffer,
                 rho: rho_buffer,
                 initial_constant,
@@ -635,7 +673,7 @@ impl BooleanitySequence {
             }
 
             encoder.set_compute_pipeline_state(&self.lazy_pipeline);
-            encoder.set_buffer(0, Some(&self.buffers.rows), 0);
+            encoder.set_buffer(0, Some(self.buffers.rows.buffer()), 0);
             encoder.set_buffer(1, Some(&self.buffers.selectors), 0);
             encoder.set_buffer(2, Some(self.branch_buffer(message_branches_in_a)), 0);
             encoder.set_buffer(3, Some(&self.buffers.rho), 0);
@@ -1005,3 +1043,41 @@ const _: () = assert!(size_of::<SelectorAbi>() == 8);
 const _: () = assert!(size_of::<Params>() == 48);
 const _: () = assert!(size_of::<BranchParams>() == 16);
 const _: () = assert!(size_of::<ReductionParams>() == 16);
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "Metal resident-row validation setup")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resident_rows_reject_a_different_device_registry() {
+        let context = SolinasMetal::for_akita().unwrap();
+        let rows = context
+            .prepare_booleanity_rows(&[BooleanityRow::default(); 4])
+            .unwrap();
+        let expected = rows.device_registry_id();
+        let got = expected.wrapping_add(1);
+        let wrong_device_rows = BooleanityRows(Arc::new(BooleanityRowsInner {
+            buffer: rows.buffer().clone(),
+            len: rows.len(),
+            device_registry_id: got,
+        }));
+
+        assert!(matches!(
+            context.prepare_booleanity_sequence_with_rows(
+                wrong_device_rows,
+                &[],
+                &[],
+                &[],
+                2,
+                1,
+                2,
+                BooleanitySequenceConfig::default(),
+            ),
+            Err(MetalError::BooleanityRowsDevice {
+                expected: error_expected,
+                got: error_got,
+            }) if error_expected == expected && error_got == got
+        ));
+    }
+}
