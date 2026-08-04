@@ -240,6 +240,8 @@ pub enum MetalError {
         "Spartan outer uni-skip needs {requested} bytes of threadgroup memory, device limit is {maximum}"
     )]
     SpartanOuterThreadgroupMemory { requested: u64, maximum: u64 },
+    #[error("Spartan outer row {row} could not be extracted: {message}")]
+    SpartanOuterRowExtraction { row: usize, message: String },
     #[error("address RAF row and weight lengths differ: rows={rows}, weights={weights}")]
     AddressRafLengthMismatch { rows: usize, weights: usize },
     #[error("address RAF suffix length must be a multiple of eight in 0..=120, got {0}")]

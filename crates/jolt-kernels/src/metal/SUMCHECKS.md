@@ -719,6 +719,17 @@ copy is charged. Against the optimized CPU PIOP seam, 307.757 ms corresponds to
 promotion question has moved to the real `UniskipKernel` path and whether witness
 residency avoids repacking 160 bytes per row inside the PIOP boundary.
 
+The first real backend profile is
+`benchmark-runs/metal-piop-eval/20260804-133730`. Exact proofs verified at
+`2^26`; optimized CPU PIOP was 21.134 s and Metal-hybrid PIOP was 13.572 s, a
+1.557x paired speedup. `SpartanOuterUniskip` fell from 2.485 s on CPU to
+667.445 ms on Metal (3.72x complete). Its child spans attribute 310.897 ms to
+extracting and packing rows directly into the shared Metal buffer and 329.303
+ms to dispatch. Removing only that redundant repack projects 6.98x locally,
+so the next retained design must make the packed rows a reusable witness
+representation while continuing to charge the actual buffer attachment inside
+the PIOP boundary.
+
 ## Requirement map and open points
 
 | Requirement | Planned mechanism | Acceptance evidence |

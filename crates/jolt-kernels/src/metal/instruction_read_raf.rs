@@ -12,6 +12,7 @@ use super::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows, MetalError, Product5Sequence,
     Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
 };
+use super::spartan_outer::SpartanOuterUniskipMetalConfig;
 use crate::optimized::instruction_read_raf::{
     prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
 };
@@ -47,6 +48,8 @@ impl Default for InstructionReadRafMetalConfig {
 /// Tuning values for all currently implemented Metal slots.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MetalConfig {
+    /// Stage-1 Spartan outer uni-skip settings.
+    pub spartan_outer_uniskip: SpartanOuterUniskipMetalConfig,
     /// Stage-5 instruction read-RAF settings.
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-6b Booleanity cycle settings.
@@ -72,6 +75,7 @@ impl MetalBackend {
             return Err(MetalError::InvalidHybridCutoff(address_cutoff));
         }
         for cutoff in [
+            config.spartan_outer_uniskip.trace_cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
         ] {
@@ -92,6 +96,7 @@ where
 {
     /// Replaces implemented optimized slots with their Metal counterparts.
     pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Self {
+        self.spartan_outer_uniskip = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());
         self

@@ -48,6 +48,8 @@ use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOute
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::signed::{S192, S256, S64};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_field::AkitaField;
 use jolt_field::{
     Field, SignedProductAccumulator as _, SignedScalarAccumulator as _,
     WithSignedProductAccumulator, WithSmallScalarAccumulator,
@@ -78,6 +80,10 @@ use jolt_witness::{JoltWitnessPlane, WitnessError};
 use rayon::prelude::*;
 
 use super::support::collect_rows;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::{
+    MetalError, SolinasMetal, SpartanOuterUniskipConfig, SpartanOuterUniskipRow,
+};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -490,6 +496,95 @@ impl OptimizedOuterUniskip {
         });
         Ok(())
     }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_spartan_outer_uniskip(
+    context: &SolinasMetal,
+    config: SpartanOuterUniskipConfig,
+    session: &mut ProofSession,
+    log_t: usize,
+    tau: &[AkitaField],
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+) -> Result<(), KernelError<AkitaField>> {
+    if tau.len() != log_t + 2 {
+        return Err(KernelError::InvariantViolation {
+            reason: "Spartan outer tau must carry log_t + 2 challenges",
+        });
+    }
+    let cycles = 1usize << log_t;
+    let rows = RowsStore::resolve(witness, cycles)?;
+    let (tau_low, _) = tau.split_at(log_t + 1);
+    let split = tau_low.len() / 2;
+    let (out_point, in_point) = tau_low.split_at(split);
+    let e_out = EqPolynomial::<AkitaField>::evals(out_point, None);
+    let e_in = EqPolynomial::<AkitaField>::evals(in_point, None);
+    let extended = {
+        let access = rows.access();
+        let resident = {
+            let _span = tracing::info_span!("MetalSpartanOuterUniskip::row_handoff").entered();
+            context
+                .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |destination| {
+                    #[cfg(feature = "parallel")]
+                    {
+                        destination.par_iter_mut().enumerate().try_for_each(
+                            |(row_index, destination)| -> Result<(), MetalError> {
+                                let row = access.row(row_index).map_err(|error| {
+                                    MetalError::SpartanOuterRowExtraction {
+                                        row: row_index,
+                                        message: error.to_string(),
+                                    }
+                                })?;
+                                *destination = SpartanOuterUniskipRow::from_spartan_outer(&row);
+                                Ok(())
+                            },
+                        )?;
+                    }
+                    #[cfg(not(feature = "parallel"))]
+                    {
+                        for (row_index, destination) in destination.iter_mut().enumerate() {
+                            let row = access.row(row_index).map_err(|error| {
+                                MetalError::SpartanOuterRowExtraction {
+                                    row: row_index,
+                                    message: error.to_string(),
+                                }
+                            })?;
+                            *destination = SpartanOuterUniskipRow::from_spartan_outer(&row);
+                        }
+                    }
+                    Ok(())
+                })
+                .map_err(metal_outer_error)?
+        };
+        let invocation = context
+            .prepare_spartan_outer_uniskip_with_rows(&resident, &e_in, &e_out, config)
+            .map_err(metal_outer_error)?;
+        {
+            let _span = tracing::info_span!("MetalSpartanOuterUniskip::dispatch").entered();
+            invocation.execute().map_err(metal_outer_error)?;
+        }
+        invocation.read_output().map_err(metal_outer_error)?
+    };
+    let mut t1_values = vec![AkitaField::zero(); EXTENDED_SIZE];
+    for ((position, _), value) in extension_coefficients().iter().zip(extended) {
+        t1_values[*position] = value;
+    }
+    session.park(SpartanOuterCarry {
+        log_t,
+        tau: tau.to_vec(),
+        rows,
+        t1_values,
+    });
+    Ok(())
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn metal_outer_error(error: MetalError) -> KernelError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    }
+    .into()
 }
 
 impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
