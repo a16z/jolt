@@ -31,6 +31,7 @@
 //! ([`DeviceRound::failed`]). `finish_rounds` (a single fold to one element)
 //! is always host-side.
 
+mod bytecode_read_raf;
 mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
 mod instruction_claim_reduction;
