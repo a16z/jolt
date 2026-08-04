@@ -215,12 +215,29 @@ soundness note before merge.
 
 ## Wave 3
 
-- **W3A (task 743016e4, fable-max, worktree gpuutil-w3a) — ACTIVE:** record-
-  family lifetime determinism @2^27. Phase 1 root-cause (owner chain; drop-site
-  vs kernel-reclaim discrimination for the day-flip; why fat entry costs st6b
-  wall; why trunk is +8 s robust), phase 2 fix (deterministic early death; gate:
-  3× consecutive 2^27 with st6b entry ≤45 GiB, st6b ≤15.5 s, total ≤74 s).
-  Task 0: fix monitor gpu_percent emission (zero counters this session).
+- **W3A (task 743016e4, fable-max, worktree gpuutil-w3a) — PHASE 2 (fix).**
+  Phase-1 artifact (w3a-rootcause.md, ACCEPTED 2026-08-04 17:0x UTC) overturns
+  the parity theory: (1) Rust drop sites are at design points in every mode
+  (TraceRecord dies at st4-OPEN; SharedInstructionRows pinned to proof end by
+  construction) — D's "family dies at st6a/st8" was a ledger artifact, the
+  ledger tracks RECLAIM not drops; (2) libmalloc keeps freed huge entries
+  resident until proof end even at calm tiers; (3) the day-flip = ambient
+  occupancy (33 GiB today) → prover peak 90-97 GiB touches the ceiling →
+  compressor storm inside st6b (free pages→0, 4.5-10 GiB/s compression +
+  decompression thrash, monitor thread starved 8-10 s) — yesterday cleared the
+  ceiling, allocator vm_deallocated before st6b; (4) trunk's +8 s robustness =
+  page-demand composition (device buffers + emptied st6a fault less mid-storm);
+  (5) NEW PROBE: munmap removes Metal-wrapped pages from footprint in every
+  leg (madvise = silent no-op, munmap works). Fix in flight: munmap-backed
+  MmapVec for corpse-pile members (TR lanes, RegisterLanes, IRR ping-pong,
+  RAC/PcRows/SIR/SOI) → peak ~60 GiB, storm structurally impossible, expected
+  st6b 14-15.5 / total 72-73 s, byte-identical. Orchestrator cautions issued:
+  munmap strictly after buffer release + completed waits (live-wrapped probe
+  leg is the DANGEROUS case, not a green light), Metal never owns the
+  deallocator, st1 walk swap stays mechanical. Task 0 resolved: counters never
+  broke — a manual postprocess step converts monitor events; now automated
+  (eef0f088e). Also: capped-BRRC re-hosting adds +6 GiB at peak (96.9 vs 91.0)
+  — W3B input.
 - **W3B — PARKED pending W3A:** BRRC device 2^27 root-cause (why 2.6× vs CPU
   twin + batch contention; measured only under fat st6b entry — re-baseline
   under lean entry after W3A; candidates: 5×T×32B flat ping-pong streaming,
