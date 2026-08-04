@@ -2416,10 +2416,10 @@ body.doc {
       <li>Metal direct bind-by-two: 1.51–1.98× faster than two binary binds at 2²⁴.</li>
     </ul>
 
-    <div class="verdict card verdict--green reveal">
+    <div class="verdict card verdict--yellow reveal">
       <span class="vlabel">Radix-4 decision</span>
-      <blockquote>Retain the isolated Metal kernel and soundness tests. Generic packed coordinates remain parked at Dory; one narrow production candidate survives: the virtual-only stage-4 register-address prefix, now under independent soundness audit.</blockquote>
-      <div class="vwho">Narrow modeled upside: 1.2–2.2 s at 2²⁷ · no Dory change · high integration cost · moderate-high protocol risk</div>
+      <blockquote>Retain the isolated Metal kernel and soundness tests; kill the scoped production mapping. The measured stage-4 Metal prefix binds committed cycle coordinates, while legal virtual address coordinates require a new state representation and an unpriced protocol rewrite.</blockquote>
+      <div class="vwho">Hard blocker: wrong variable order · unchanged-CSR 1.2–2.2 s estimate withdrawn · no active prover change</div>
     </div>
 
     <h3>Address-major</h3>
@@ -2447,8 +2447,9 @@ body.doc {
             <tr class="hl"><td class="k">1</td><td>Stage-0 trace-walk / commit scheduling; eliminate bad-mode overlap contention</td><td class="r hi">0–7%</td><td>Medium</td><td>Medium</td><td class="sub">Target variance first: save the occasional ≈5 s tail without hurting good mode.</td></tr>
             <tr><td class="k">2</td><td>Stage-6b cross-member fusion, wait removal, gather/tail occupancy</td><td class="r hi">2–5%</td><td>Medium–high</td><td>Medium</td><td class="sub">Avoid address relayout: no address axis remains and dense streams are ≈2% of stage wall.</td></tr>
             <tr><td class="k">3</td><td>Stage-4 bounded device scan / remove host phase boundary</td><td class="r hi">1–3%</td><td>Medium</td><td>Medium</td><td class="sub">Delete a measured zero-GPU window; preserve tamper/e2e gates.</td></tr>
-            <tr><td class="k">4</td><td>Stage-4 virtual-address radix-4 prefix</td><td class="r hi">1.7–3.1%</td><td>High</td><td>Medium–high</td><td class="sub">No Dory factor; pro-model GO, full accept/tamper suite, and ≥1.2 s stage win required.</td></tr>
-            <tr><td class="k">5</td><td>Stage-4 address-first bind-order probe</td><td class="r">2–3.5%</td><td>Low probe / high build</td><td>Medium–high</td><td class="sub">Kill if seven address passes exceed 0.15 s at 2²⁴; protocol axis required only after a win.</td></tr>
+            <tr><td class="k">4</td><td>Stage-7 sparse reuse / device preparation</td><td class="r">1–2%</td><td>Medium</td><td>Low–medium</td><td class="sub">Small ceiling; pursue only after larger roofs.</td></tr>
+            <tr><td class="k">5</td><td>Address-first register-state algorithm</td><td class="r">Unpriced</td><td>Very high</td><td>High</td><td class="sub">Research only: prove a sparse Val-state construction before protocol or Metal work.</td></tr>
+            <tr><td class="k">Kill</td><td>Stage-4 unchanged-CSR radix-4 prefix</td><td class="r neg">Estimate withdrawn</td><td>—</td><td>—</td><td class="sub">Measured prefix is cycle-domain; legal address-domain work needs a different representation.</td></tr>
             <tr><td class="k">Kill</td><td>More fixed command-buffer batching</td><td class="r neg">&lt;0.5%</td><td>Low</td><td>Low</td><td class="sub">646 fresh launches cap the global prize near 86 ms.</td></tr>
             <tr><td class="k">Kill</td><td>Global address-major flip</td><td class="r neg">&gt;68× regression</td><td>Very high</td><td>High</td><td class="sub">Requires a new Metal commitment/opening backend before reconsideration.</td></tr>
           </tbody>

@@ -225,33 +225,40 @@ check but is rejected at the terminal random point. Targeted device/algebra
 tests pass. This establishes a sound single fused-round Metal prototype; it
 does not yet alter production transcripts or Dory.
 
-### Narrow production candidate: stage-4 virtual register address prefix
+### Stage-4 production mapping: killed by variable order
 
-The fusion scope found one place where the quaternary extension never has to
-be translated into a binary-separable Dory point: `RegistersRW`'s seven
-register-address variables. Register ra/wa/Val claims are virtual; committed
-`RdInc` is cycle-indexed. The legal schedule is three radix-4 pairs over vars
-`(0,1)`, `(2,3)`, `(4,5)`, then one legacy binary round for var 6, stopping
-before `RamVal` joins the batch.
+The virtual register-address coordinates are the only plausible radix-4 site
+that can disappear before Dory, but the first scope mapped them to the wrong
+rounds. In the current 34-variable `RegistersRW` schedule the leading seven
+batch-only variables are **cycle bits**, not address bits. The Metal CSR is
+rowed by cycle and its two-wait prefix halves adjacent cycle rows. Packing
+that measured prefix would therefore create non-binary factors on committed
+`RdInc` cycle coordinates—the exact Dory incompatibility the design sought to
+avoid.
 
-For the degree-3 relation, each packed message has degree at most 9 and ten
-coefficients. Downstream virtual equality tables must carry the four Lagrange
-weights as one tensor factor; they must never manufacture two ordinary MLE
-coordinates. The current CSR representation stays intact. Three packed pairs
-replace six binary rounds, reducing the address-prefix pass/wait count from
-13 to 7 and host scan/allocation boundaries from 6 to 3. Modeled whole-proof
-prize: **1.2–2.2 s at `2^27`** with no persistent-buffer growth.
+The real address variables are the seven-variable tail, overlapping active
+`RamVal` and currently handled after all cycle folds. Moving them first is a
+different protocol and state algorithm: group `col >> 2` inside each of T
+cycle rows, preserve T rows, and construct the bound `Val` contribution for
+registers absent from the sparse access row. The existing CSR lacks that
+dense register-state information, so the claimed unchanged-representation
+pass cut and **1.2–2.2 s** estimate are invalid.
 
-This corrects prior negative-result #4 only for trunk stage 4: its alleged
-pairing test measured a rejected W2B representation rewrite whose round loop
-was already fused. Trunk's two-wait CSR loop never received that fusion.
-Generic cycle/address pairing remains closed because those coordinates reach
-committed binary-tensor openings or already-fused slots with negligible gaps.
+The exact address-round degree is at most 6, not 9: address-constant
+`EqCycle/RdInc` leave products of two cubic quaternary extensions. Algebraic
+batch padding is sound (`128 / 4 / 4 / 4 / 2 = 1` before `RamVal` joins), and
+the address factor can be eliminated before PCS, but current proof/derive
+APIs also conflate semantic variables, messages, and scalar challenges. A
+production cut would require a 34-variable/31-message mixed-round engine,
+typed four-weight factors through stages 4–6b, a new address-first `Val` state
+algorithm, fail-closed transparent-only config, and full backend/e2e/tamper
+coverage.
 
-Status: implementation blocked on pro-model job `20b0ff781369`, which is
-auditing the concrete degree-9 polynomial, the virtual-only Dory invariant,
-batch padding, transcript schedule, downstream equality semantics, and tamper
-suite. No production code before a GO verdict.
+Decision: **NO-GO for `[P4,P4,P4,S,S×27]` on the unchanged CSR.** Keep the
+sound isolated bind prototype. Address-first state construction is unpriced
+research, not a campaign win. Pro-model job `20b0ff781369` remains useful as
+the final mathematical audit of the corrected virtual-coordinate shape, but
+cannot overturn this code/performance blocker.
 
 ## Wave-1 close certification
 
