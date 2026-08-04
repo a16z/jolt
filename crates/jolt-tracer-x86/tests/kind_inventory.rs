@@ -6,7 +6,7 @@
 //! cargo nextest run -p jolt-tracer-x86 kind_inventory --cargo-quiet --run-ignored all --no-capture
 //! ```
 
-#![expect(clippy::expect_used, clippy::print_stdout, clippy::panic)]
+#![expect(clippy::print_stdout)]
 
 use std::collections::BTreeMap;
 
@@ -14,45 +14,13 @@ use std::collections::BTreeMap;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 
-fn build_guest_elf(package: &str, func: &str) -> Vec<u8> {
-    let target_dir = format!("/tmp/jolt-guest-targets/{package}-{func}");
-    let output = std::process::Command::new("jolt")
-        .args([
-            "build",
-            "-p",
-            package,
-            "--stack-size",
-            &common::constants::DEFAULT_STACK_SIZE.to_string(),
-            "--heap-size",
-            &common::constants::DEFAULT_HEAP_SIZE.to_string(),
-            "--",
-            "--release",
-            "--target-dir",
-            &target_dir,
-            "--features",
-            "guest",
-        ])
-        .env("JOLT_FUNC_NAME", func)
-        .output()
-        .expect("failed to run jolt CLI — install with: cargo install --path .");
-    assert!(
-        output.status.success(),
-        "failed to build {package}:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let elf_path = format!("{target_dir}/riscv64imac-unknown-none-elf/release/{package}");
-    std::fs::read(&elf_path).unwrap_or_else(|e| panic!("failed to read ELF at {elf_path}: {e}"))
-}
+mod common;
+use common::setup;
 
 fn kind_histogram(package: &str, func: &str) -> BTreeMap<String, usize> {
-    let elf = build_guest_elf(package, func);
-    let mut provider = tracer::TracerInlineExpansionProvider::new();
-    let program = jolt_program::build_jolt_program_with_inline_provider(
-        &elf,
-        &mut provider,
-        jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,
-    )
-    .expect("failed to build Jolt program");
+    let Some((program, _)) = setup(package, func, Vec::new()) else {
+        return BTreeMap::new();
+    };
     let mut histogram = BTreeMap::new();
     for row in &program.expanded_bytecode {
         *histogram
