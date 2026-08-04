@@ -244,14 +244,14 @@ pub(crate) fn park_opening_increments(
         registers
             .rd_post_value
             .iter()
-            .zip(&registers.rd_pre_value)
+            .zip(&registers.rd_pre_value[..])
             .map(|(&post, &pre)| i128::from(post) - i128::from(pre))
             .collect()
     };
     let ram_inc = || {
         ram.post_values
             .iter()
-            .zip(&ram.pre_values)
+            .zip(&ram.pre_values[..])
             .map(|(&post, &pre)| i128::from(post) - i128::from(pre))
             .collect()
     };

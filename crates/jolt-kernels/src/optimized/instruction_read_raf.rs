@@ -58,6 +58,7 @@ use rayon::prelude::*;
 
 use super::lifetime_trace::LifetimeTag;
 use super::support::accumulate_product;
+use crate::mmap_vec::MmapVec;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -146,7 +147,7 @@ struct WideInstructionRow {
 }
 
 struct PackRows {
-    rows: Vec<InstructionCycleRow>,
+    rows: MmapVec<InstructionCycleRow>,
 }
 
 impl StreamConsumer for PackRows {
@@ -170,9 +171,9 @@ impl StreamConsumer for PackRows {
 pub(crate) fn collect_instruction_cycle_rows<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
-) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
+) -> Result<MmapVec<InstructionCycleRow>, KernelError<F>> {
     let mut consumers = (PackRows {
-        rows: Vec::with_capacity(cycles),
+        rows: MmapVec::with_capacity(cycles),
     },);
     stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
     Ok(consumers.0.rows)
@@ -191,12 +192,16 @@ pub(crate) struct SharedInstructionRows(pub(crate) Arc<InstructionRows>);
 /// The rows behind [`SharedInstructionRows`] — a `Vec` plus the lifetime
 /// tag that logs the last-`Arc`-drop site under `JOLT_LIFETIME_TRACE=1`.
 pub(crate) struct InstructionRows {
-    rows: Vec<InstructionCycleRow>,
+    rows: MmapVec<InstructionCycleRow>,
     _lifetime: LifetimeTag,
 }
 
 impl InstructionRows {
-    pub(crate) fn new(rows: Vec<InstructionCycleRow>) -> Self {
+    pub(crate) fn as_slice(&self) -> &[InstructionCycleRow] {
+        &self.rows
+    }
+
+    pub(crate) fn new(rows: MmapVec<InstructionCycleRow>) -> Self {
         let bytes = rows.len() * size_of::<InstructionCycleRow>();
         Self {
             rows,
@@ -206,7 +211,7 @@ impl InstructionRows {
 }
 
 impl std::ops::Deref for InstructionRows {
-    type Target = Vec<InstructionCycleRow>;
+    type Target = [InstructionCycleRow];
 
     fn deref(&self) -> &Self::Target {
         &self.rows
@@ -1825,7 +1830,7 @@ mod tests {
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(InstructionRows::new(pack(&rows))),
+            Arc::new(InstructionRows::new(pack(&rows).into_iter().collect())),
             gamma,
         )
         .unwrap();
@@ -1900,7 +1905,7 @@ mod tests {
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(InstructionRows::new(pack(&rows))),
+            Arc::new(InstructionRows::new(pack(&rows).into_iter().collect())),
             gamma,
         )
         .unwrap();

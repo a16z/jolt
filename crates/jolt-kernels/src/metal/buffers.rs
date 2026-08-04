@@ -48,6 +48,7 @@ use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
 
 use super::error::MetalError;
 use super::runtime::MetalContext;
+use crate::mmap_vec::MmapVec;
 
 /// Apple Silicon page size. Asserted against `sysconf` at first use in
 /// [`PageAlignedVec`] construction (defensive: this crate hard-codes it in
@@ -341,6 +342,10 @@ impl<T: Copy> Drop for OwnedDeviceBuffer<T> {
 enum OwnedBacking<T: Copy> {
     Vec(Vec<T>),
     Page(PageAlignedVec<T>),
+    /// munmaps on drop — the backing for giant transient buffers whose
+    /// pages must leave phys_footprint at the drop site (W3A: freed-but-
+    /// malloc-cached corpses fed the stage-6b compressor storm).
+    Mmap(MmapVec<T>),
 }
 
 impl<T: Copy> OwnedDeviceBuffer<T> {
@@ -348,6 +353,7 @@ impl<T: Copy> OwnedDeviceBuffer<T> {
         match &self.backing {
             OwnedBacking::Vec(v) => v,
             OwnedBacking::Page(v) => v,
+            OwnedBacking::Mmap(v) => v,
         }
     }
 
@@ -357,6 +363,7 @@ impl<T: Copy> OwnedDeviceBuffer<T> {
         match &mut self.backing {
             OwnedBacking::Vec(v) => v,
             OwnedBacking::Page(v) => v,
+            OwnedBacking::Mmap(v) => v,
         }
     }
 
@@ -432,6 +439,27 @@ impl MetalContext {
             raw,
             copied: false,
             trace_id: 0,
+        })
+    }
+
+    /// Take ownership of an [`MmapVec`] as a device-visible buffer — no-copy
+    /// at any length (mmap backings are page-aligned and page-granular by
+    /// construction), and the pages munmap out of the footprint ledger the
+    /// moment the buffer drops.
+    pub fn own_mmap<T: Copy>(&self, vec: MmapVec<T>) -> Result<OwnedDeviceBuffer<T>, MetalError> {
+        let len_bytes = vec.len() * size_of::<T>();
+        let base = NonNull::new(vec.as_slice().as_ptr().cast_mut())
+            .ok_or(MetalError::Alloc { bytes: len_bytes })?;
+        // SAFETY: the mapping is PAGE_SIZE-aligned with page-granular
+        // capacity (MmapVec construction invariant); the vec moves into the
+        // returned struct, so the mapping outlives the wrap.
+        let raw = unsafe { self.wrap_raw_nocopy_untracked(base.cast::<c_void>(), len_bytes) }
+            .ok_or(MetalError::Alloc { bytes: len_bytes })?;
+        Ok(OwnedDeviceBuffer {
+            backing: OwnedBacking::Mmap(vec),
+            raw,
+            copied: false,
+            trace_id: alloc_trace::allocated(len_bytes, "mmap_adopt"),
         })
     }
 
@@ -735,7 +763,7 @@ mod madvise_probe {
     impl Drop for MmapRegion {
         fn drop(&mut self) {
             // SAFETY: the mmap'd range, unmapped once (unmap() forgets self).
-            unsafe { libc::munmap(self.base.as_ptr().cast(), self.bytes) };
+            let _ = unsafe { libc::munmap(self.base.as_ptr().cast(), self.bytes) };
         }
     }
 

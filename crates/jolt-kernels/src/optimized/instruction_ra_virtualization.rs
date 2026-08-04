@@ -742,9 +742,9 @@ mod tests {
                 let shape = FixtureShape { log_t, ram_k: 16 };
                 with_ram_fixture(shape, Vec::new(), |witness| {
                     let mut session = ProofSession::default();
-                    session.park(SharedInstructionRows(Arc::new(InstructionRows::new(pack(
-                        &rows,
-                    )))));
+                    session.park(SharedInstructionRows(Arc::new(InstructionRows::new(
+                        pack(&rows).into_iter().collect(),
+                    ))));
                     let kernel = OptimizedInstructionRaVirtualization
                         .prepare(
                             &mut session,
@@ -772,7 +772,7 @@ mod tests {
                         &instruction_address,
                         &r_cycle,
                         chunk_bits,
-                        Arc::new(InstructionRows::new(pack(&rows))),
+                        Arc::new(InstructionRows::new(pack(&rows).into_iter().collect())),
                         gamma,
                     )
                     .unwrap(),

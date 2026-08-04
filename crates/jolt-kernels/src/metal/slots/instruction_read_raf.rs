@@ -1055,7 +1055,9 @@ mod tests {
         std::env::set_var("JOLT_METAL_MIN_TERMS", min_terms.to_string());
         let dimensions =
             InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
-        let rows = Arc::new(InstructionRows::new(fixture_rows(log_t, seed, skewed)));
+        let rows = Arc::new(InstructionRows::new(
+            fixture_rows(log_t, seed, skewed).into_iter().collect(),
+        ));
         let r_reduction: Vec<Fr> = (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect();
         let gamma = fr(0xACE1_57EF);
 

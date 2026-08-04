@@ -65,11 +65,12 @@ pub use spartan_product::{MetalProductRemainder, MetalProductUniskip};
 
 use jolt_field::{Fr, FromPrimitiveInt};
 
-use super::buffers::{OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE};
+use super::buffers::{OwnedDeviceBuffer, PageAlignedVec};
 use super::error::MetalError;
 use super::field::fr_to_u32_limbs;
 use super::runtime::{MetalContext, THREADGROUP_SIZE};
 use super::testing;
+use crate::mmap_vec::MmapVec;
 
 /// A slot table's ping-pong buffer pair. `cur` holds the live table (logical
 /// length tracked by the owning kernel — buffers never shrink); `nxt` is the
@@ -197,14 +198,15 @@ pub(super) fn own_uninit_frs(
     context: &'static MetalContext,
     len: usize,
 ) -> Result<Option<OwnedDeviceBuffer<Fr>>, MetalError> {
-    let vec = uninit_frs(len);
-    let len_bytes = std::mem::size_of_val(vec.as_slice());
-    let aligned = (vec.as_ptr() as usize).is_multiple_of(PAGE_SIZE);
-    let page_granular = len_bytes.is_multiple_of(PAGE_SIZE) || len_bytes >= MALLOC_LARGE_THRESHOLD;
-    if len_bytes == 0 || !aligned || !page_granular {
+    if len == 0 {
         return Ok(None);
     }
-    let buffer = context.own_vec(vec)?;
+    // mmap-backed: page-aligned by construction (always no-copy eligible),
+    // kernel-zeroed instead of uninit (device fills before any read either
+    // way), and — the point — munmapped out of phys_footprint the moment
+    // the buffer drops, instead of lingering in libmalloc as the corpse
+    // pile that feeds the stage-6b compressor storm (W3A root-cause).
+    let buffer = context.own_mmap(MmapVec::zeroed(len))?;
     debug_assert!(!buffer.was_copied());
     Ok(Some(buffer))
 }

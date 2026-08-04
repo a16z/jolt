@@ -66,6 +66,7 @@ use super::support::merge_evals;
 use super::support::{
     bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals, scaled_eq_table,
 };
+use crate::mmap_vec::MmapVec;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -117,12 +118,20 @@ struct PcRowsKey(Arc<PcRows>);
 /// The scan behind [`PcRowsKey`] — a `Vec` plus the lifetime tag that logs
 /// the last-`Arc`-drop site under `JOLT_LIFETIME_TRACE=1`.
 pub(crate) struct PcRows {
-    rows: Vec<PcRow>,
+    rows: MmapVec<PcRow>,
     _lifetime: LifetimeTag,
 }
 
 impl PcRows {
-    fn new(rows: Vec<PcRow>) -> Self {
+    #[cfg_attr(
+        not(all(feature = "metal", target_os = "macos")),
+        expect(dead_code, reason = "used by the metal bytecode slot")
+    )]
+    pub(crate) fn as_slice(&self) -> &[PcRow] {
+        &self.rows
+    }
+
+    fn new(rows: MmapVec<PcRow>) -> Self {
         let bytes = rows.len() * size_of::<PcRow>();
         Self {
             rows,
@@ -132,7 +141,7 @@ impl PcRows {
 }
 
 impl std::ops::Deref for PcRows {
-    type Target = Vec<PcRow>;
+    type Target = [PcRow];
 
     fn deref(&self) -> &Self::Target {
         &self.rows
@@ -141,7 +150,7 @@ impl std::ops::Deref for PcRows {
 
 /// Park a lane-packed PC scan (the trace record's walk co-produces it), so
 /// [`pc_rows`] serves it without a second trace pass.
-pub(crate) fn park_pc_rows(session: &mut ProofSession, rows: Vec<PcRow>) {
+pub(crate) fn park_pc_rows(session: &mut ProofSession, rows: MmapVec<PcRow>) {
     session.park(PcRowsKey(Arc::new(PcRows::new(rows))));
 }
 
@@ -179,13 +188,21 @@ pub(crate) fn pc_rows<F: Field>(
                 mapped_pc: mapped,
             })
         };
+        let mut rows = MmapVec::zeroed(bundles.len());
         #[cfg(feature = "parallel")]
-        let rows = bundles
-            .par_iter()
-            .map(pack)
-            .collect::<Result<Vec<_>, _>>()?;
+        rows.par_iter_mut()
+            .zip(&bundles[..])
+            .try_for_each(|(row, bundle)| {
+                *row = pack(bundle)?;
+                Ok::<(), KernelError<F>>(())
+            })?;
         #[cfg(not(feature = "parallel"))]
-        let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
+        rows.iter_mut()
+            .zip(&bundles[..])
+            .try_for_each(|(row, bundle)| {
+                *row = pack(bundle)?;
+                Ok::<(), KernelError<F>>(())
+            })?;
         session.park(PcRowsKey(Arc::new(PcRows::new(rows))));
     }
     let rows = session
