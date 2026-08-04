@@ -239,6 +239,30 @@ soundness note before merge.
   Lane task IDs (recorded late, lesson): A=2bbe078e, B=83cf4e87 (confirmed:
   sole surviving codex process = 83cf4e87 = B, still implementing after A's
   kill-gate exit), D=5c8623e5, scope=5068310d (done).
+- 2026-08-04 14:3x UTC: **CERTIFICATION FOUND A 2^27 CLIFF IN W1B'S PORT —
+  root-caused and capped same-session.** First trunk 2^27: 89.12 s (st6b
+  DOUBLED 13.87→27.73; BRRC device rounds 9.89 s vs 4.82 CPU before; IncCR
+  rounds 6.37 s = contention victim). Discriminator: rerun with
+  JOLT_METAL_MIN_TERMS_BYTECODE_READ_RAF_CYCLE=huge → **74.91 s / 1.792 MHz**
+  (st6b 16.82: BRRC CPU 3.81, IncCR back to 3.17). Verdict: BRRC device path
+  wins ≤2^25 (−53% member) but at 2^27 runs 2.6× slower than its CPU twin AND
+  stalls the batch's other five device members (bandwidth/queue contention).
+  W1B never ran 2^27 (correctly, per lane rules) — the tier cliff is exactly
+  the class D diagnosed for CPU members, now observed device-side. FIX:
+  metal_gate_capped + MAX_DEVICE_ROWS = 2^26 on the slot (byte-identical
+  fallback; env-overridable; 2^26 kept on device per sub-linear-scaling bet).
+  Kernels 236/236 green. WAVE-2 CERTIFICATION (hot-box, 22-day uptime — cool
+  finals pending): 2^25 = 19.233/19.248 s (~1.744 MHz, vs canonical 19.822);
+  2^27 capped = 74.9-77.1 s across thermal states (vs canonical 77.168 —
+  cool run pending). FREE WINS CONFIRMED @2^27: st5 13.59-13.70 vs 14.653
+  canonical (≈−1 s — record-family dies mid-st5 via W2A's background
+  consumption); st7 1.13-1.49 vs 2.072 (R3-lite's 4.3 GiB alloc kill worth
+  more at the pressure tier, as predicted). WAVE-3 DOORS from the new trace:
+  st6b residual vs canonical (+2.9 s in matched hot runs — IncCR/RamHB/
+  InstrRA device rounds at tier; needs cool confirm first), BRRC device
+  2^27 root-cause (why 2.6×: 5×T×32B flat ping-pong streaming? 64-bit MSL
+  addressing? width-8 materialization?), st4 prepare salvage (W2B's −65%
+  prepare onto old rounds), st1/st2 holes untouched (4.2+4.3 s @2^27).
 - 2026-08-04 13:0x UTC: **W2B CLOSED — REJECTED at 2^25, not merged.** Two
   variants, both fail retention: two-buffer fixed segments (st4 −33.4% @2^24)
   = footprint-dead @2^27 (+52 GiB projected); one-buffer scale-safe variant =
