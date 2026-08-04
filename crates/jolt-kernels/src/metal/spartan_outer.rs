@@ -1,10 +1,11 @@
 use jolt_field::AkitaField;
 use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessPlane;
 
 use super::instruction_read_raf::MetalBackend;
-use super::solinas::SpartanOuterUniskipConfig;
+use super::solinas::{InstructionRaSequenceStorage, SpartanOuterUniskipConfig};
 use crate::optimized::spartan_outer::{
     prepare_metal_spartan_outer_uniskip, prepare_metal_spartan_outer_witness_rows,
     OptimizedOuterUniskip,
@@ -38,6 +39,36 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         if cycles >= self.config.spartan_outer_uniskip.trace_cutoff_elements {
             let rows = prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?;
             session.park(rows);
+        }
+        if cycles
+            >= self
+                .config
+                .instruction_ra_virtualization
+                .trace_cutoff_elements
+            && cycles >= 32
+        {
+            let split = log_t / 2;
+            let e_out_capacity = 1usize << split;
+            let e_in_capacity = 1usize << (log_t - 1 - split);
+            let storage = {
+                let _span =
+                    tracing::info_span!("MetalInstructionRaVirtualization::storage_prepare")
+                        .entered();
+                self.context
+                    .prepare_instruction_ra_sequence_storage(
+                        cycles,
+                        e_in_capacity,
+                        e_out_capacity,
+                        self.config.instruction_ra_virtualization.dispatch,
+                    )
+                    .map_err(|error| {
+                        KernelError::from(SumcheckError::ComputeBackend {
+                            backend: "metal",
+                            message: error.to_string(),
+                        })
+                    })?
+            };
+            session.park::<InstructionRaSequenceStorage>(storage);
         }
         Ok(())
     }

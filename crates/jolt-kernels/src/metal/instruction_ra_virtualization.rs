@@ -9,7 +9,8 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::instruction_read_raf::MetalBackend;
 use super::solinas::{
-    InstructionRaSequence, InstructionRaSequenceConfig, ResidentLookupIndexPlane,
+    InstructionRaSequence, InstructionRaSequenceConfig, InstructionRaSequenceStorage,
+    ResidentLookupIndexPlane,
 };
 use crate::optimized::instruction_ra_virtualization::{
     prepare_instruction_ra_from_initialization, prepare_instruction_ra_initialization,
@@ -53,8 +54,10 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
                 .config
                 .instruction_ra_virtualization
                 .trace_cutoff_elements
+            || trace_elements < 32
             || !initialization.supports_metal_sequence()
         {
+            let _ = session.take::<InstructionRaSequenceStorage>();
             return Ok(Box::new(prepare_instruction_ra_from_initialization(
                 session,
                 witness,
@@ -89,15 +92,19 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
         let sequence = {
             let _span =
                 tracing::info_span!("MetalInstructionRaVirtualization::sequence_prepare").entered();
-            self.context
-                .prepare_instruction_ra_sequence_with_plane(
+            match session.take::<InstructionRaSequenceStorage>() {
+                Some(storage) if storage.matches(trace_elements, e_in_capacity, e_out_capacity) => {
+                    storage.attach(plane, &chunk_tables)
+                }
+                _ => self.context.prepare_instruction_ra_sequence_with_plane(
                     plane,
                     &chunk_tables,
                     e_in_capacity,
                     e_out_capacity,
                     self.config.instruction_ra_virtualization.dispatch,
-                )
-                .map_err(|error| metal_error(error.to_string()))?
+                ),
+            }
+            .map_err(|error| metal_error(error.to_string()))?
         };
         Ok(Box::new(MetalInstructionRaVirtualizationKernel::new(
             cpu,

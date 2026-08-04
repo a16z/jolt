@@ -109,6 +109,33 @@ struct Buffers {
     partial_b: Buffer,
 }
 
+pub(crate) struct InstructionRaSequenceStorage {
+    context: SolinasMetal,
+    pipelines: Pipelines,
+    message_limits: PipelineLimits,
+    materialize_limits: PipelineLimits,
+    reduction_limits: PipelineLimits,
+    buffers: Buffers,
+    rows: usize,
+    e_in_capacity: usize,
+    e_out_capacity: usize,
+    message_threads_per_threadgroup: usize,
+    materialize_threads_per_threadgroup: usize,
+    branch_threads_per_threadgroup: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for InstructionRaSequenceStorage {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_storage"),
+            self.device_storage_bytes(),
+        );
+        visitor.exit();
+    }
+}
+
 pub struct InstructionRaSequence {
     context: SolinasMetal,
     lookup_plane: Option<ResidentLookupIndexPlane>,
@@ -141,14 +168,24 @@ impl SolinasMetal {
         config: InstructionRaSequenceConfig,
     ) -> Result<InstructionRaSequence, MetalError> {
         let rows = plane.len();
+        let storage = self.prepare_instruction_ra_sequence_storage(
+            rows,
+            e_in_capacity,
+            e_out_capacity,
+            config,
+        )?;
+        storage.attach(plane, chunk_tables)
+    }
+
+    pub(crate) fn prepare_instruction_ra_sequence_storage(
+        &self,
+        rows: usize,
+        e_in_capacity: usize,
+        e_out_capacity: usize,
+        config: InstructionRaSequenceConfig,
+    ) -> Result<InstructionRaSequenceStorage, MetalError> {
         if rows < 2 * MATERIALIZE_WIDTH || !rows.is_power_of_two() {
             return Err(MetalError::InvalidInstructionRaRows(rows));
-        }
-        if chunk_tables.len() != FACTORS * BINS {
-            return Err(MetalError::InstructionRaStorageLength {
-                expected: FACTORS * BINS,
-                got: chunk_tables.len(),
-            });
         }
         let covered = e_in_capacity
             .checked_mul(e_out_capacity)
@@ -159,7 +196,6 @@ impl SolinasMetal {
                 covered,
             });
         }
-        validate_plane(self, &plane)?;
 
         let pipelines = Pipelines {
             width_1: self.compile_named_pipeline(MESSAGE_WIDTH_1_PIPELINE)?,
@@ -213,18 +249,14 @@ impl SolinasMetal {
         let partial_capacity = SAMPLES
             .checked_mul(e_out_capacity)
             .ok_or(MetalError::InputTooLong(e_out_capacity))?;
-        let branches_a = new_buffer(self, branch_capacity)?;
-        write_fields(&branches_a, branch_capacity, chunk_tables)?;
-
-        Ok(InstructionRaSequence {
+        Ok(InstructionRaSequenceStorage {
             context: self.clone(),
-            lookup_plane: Some(plane),
             pipelines,
             message_limits,
             materialize_limits,
             reduction_limits,
             buffers: Buffers {
-                branches_a,
+                branches_a: new_buffer(self, branch_capacity)?,
                 branches_b: new_buffer(self, branch_capacity)?,
                 dense_a: new_buffer(self, dense_capacity)?,
                 dense_b: new_buffer(self, dense_capacity / 2)?,
@@ -239,6 +271,55 @@ impl SolinasMetal {
             message_threads_per_threadgroup,
             materialize_threads_per_threadgroup,
             branch_threads_per_threadgroup,
+        })
+    }
+}
+
+impl InstructionRaSequenceStorage {
+    pub(crate) const fn matches(
+        &self,
+        rows: usize,
+        e_in_capacity: usize,
+        e_out_capacity: usize,
+    ) -> bool {
+        self.rows == rows
+            && self.e_in_capacity == e_in_capacity
+            && self.e_out_capacity == e_out_capacity
+    }
+
+    pub(crate) fn attach(
+        self,
+        plane: ResidentLookupIndexPlane,
+        chunk_tables: &[AkitaField],
+    ) -> Result<InstructionRaSequence, MetalError> {
+        if !self.matches(plane.len(), self.e_in_capacity, self.e_out_capacity) {
+            return Err(MetalError::InvalidInstructionRaState(
+                "resident lookup plane does not match the preallocated sequence",
+            ));
+        }
+        if chunk_tables.len() != FACTORS * BINS {
+            return Err(MetalError::InstructionRaStorageLength {
+                expected: FACTORS * BINS,
+                got: chunk_tables.len(),
+            });
+        }
+        validate_plane(&self.context, &plane)?;
+        write_fields(&self.buffers.branches_a, FACTORS * BINS, chunk_tables)?;
+
+        Ok(InstructionRaSequence {
+            context: self.context,
+            lookup_plane: Some(plane),
+            pipelines: self.pipelines,
+            message_limits: self.message_limits,
+            materialize_limits: self.materialize_limits,
+            reduction_limits: self.reduction_limits,
+            buffers: self.buffers,
+            rows: self.rows,
+            e_in_capacity: self.e_in_capacity,
+            e_out_capacity: self.e_out_capacity,
+            message_threads_per_threadgroup: self.message_threads_per_threadgroup,
+            materialize_threads_per_threadgroup: self.materialize_threads_per_threadgroup,
+            branch_threads_per_threadgroup: self.branch_threads_per_threadgroup,
             branch_width: 1,
             branches_in_a: true,
             dense: false,
@@ -246,6 +327,23 @@ impl SolinasMetal {
             dense_elements: 0,
             gpu_active_time: Duration::ZERO,
         })
+    }
+
+    #[cfg(feature = "allocative")]
+    fn device_storage_bytes(&self) -> usize {
+        [
+            &self.buffers.branches_a,
+            &self.buffers.branches_b,
+            &self.buffers.dense_a,
+            &self.buffers.dense_b,
+            &self.buffers.e_in,
+            &self.buffers.e_out,
+            &self.buffers.partial_a,
+            &self.buffers.partial_b,
+        ]
+        .into_iter()
+        .map(|buffer| buffer.length() as usize)
+        .sum()
     }
 }
 
