@@ -239,6 +239,20 @@ soundness note before merge.
   Lane task IDs (recorded late, lesson): A=2bbe078e, B=83cf4e87 (confirmed:
   sole surviving codex process = 83cf4e87 = B, still implementing after A's
   kill-gate exit), D=5c8623e5, scope=5068310d (done).
+- 2026-08-04 13:0x UTC: **W2B CLOSED — REJECTED at 2^25, not merged.** Two
+  variants, both fail retention: two-buffer fixed segments (st4 −33.4% @2^24)
+  = footprint-dead @2^27 (+52 GiB projected); one-buffer scale-safe variant =
+  memory OK (+~5 GiB @2^25) but in-place device rounds +46.8% cancel the
+  prepare win → st4 −3.0% cool @2^25 (gate −15%) + cross-stage violations.
+  Honest self-rejection; branch gpu/util-w2b kept as experimental handoff
+  (binary 116ac881…, artifacts /tmp/w2b-*). DURABLE FINDINGS: (1) the prepare
+  parallelization works in isolation — device build −64.6% cool @2^25; (2) the
+  round-loop rewrite is where both variants die (memory or speed); (3) pairing
+  confirmed dead for st4 (fused-vs-unfused = noise). WAVE-3 SALVAGE CANDIDATE:
+  bounded parallel prepare onto the EXISTING representation (old rounds
+  untouched, byte-identical, no footprint delta) — D's original ~3-4 s @2^27
+  prize; U3 lesson: parallelize the whole build (count+scan+scatter), not just
+  the scan. Wave-2 net trunk state: W1B + W1D + W2A. Certification next.
 - 2026-08-04 12:0x UTC: **W2A CLOSED — merged to trunk @cc7a5c5d5** (validated:
   kernels 236/236, jolt-prover 20/20 metal arm). Final: combined st6a+st7
   −51.6% @2^24 / −67.3% @2^25 cool (st6a −85.7% → −90.7% [0.53→0.05 s];
