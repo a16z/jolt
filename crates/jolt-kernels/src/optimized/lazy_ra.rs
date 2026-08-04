@@ -58,6 +58,10 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
 /// unchanged state; the dense fused round writes only its ping-pong target
 /// and partials, never the live table.
 pub(crate) trait LazyRaDevice<F: Field>: Send + Sync {
+    /// Notify a device whose lazy-round auxiliary state follows the same
+    /// low-to-high bind schedule. Most consumers have no auxiliary table.
+    fn bind_lazy(&mut self, _challenge: F) {}
+
     /// Lazy-phase message lanes against the CURRENT branch tables
     /// (offset-major, per-poly `width · 2^w` entries) and gruen levels.
     fn lazy_lanes(
@@ -255,6 +259,9 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 source,
                 mut driver,
             } => {
+                if let Some(driver) = driver.as_mut() {
+                    driver.bind_lazy(challenge);
+                }
                 let tables = double_branches(tables, challenge);
                 if width < 4 {
                     Self::Lazy {
@@ -415,6 +422,17 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             }
         }
         *self = Self::Dense(polys);
+    }
+
+    /// Permanently remove the device tier while preserving the current RA
+    /// state. Lazy tables already live on the host; dense tables are
+    /// reclaimed through the ordinary recovery path.
+    pub(crate) fn disable_device(&mut self) {
+        if let Self::Lazy { driver, .. } = self {
+            *driver = None;
+        } else {
+            self.ensure_host();
+        }
     }
 }
 

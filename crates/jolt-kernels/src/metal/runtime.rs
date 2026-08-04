@@ -85,6 +85,10 @@ pub enum KernelId {
     BoolDenseRound,
     RavLazyRound,
     RavDenseRound,
+    BytecodeInit,
+    BytecodeLazyRound,
+    BytecodeAdopt,
+    BytecodeDenseRound,
     BytecodeOffsetProbe,
     InstrInputBindNative,
     InstrInputRound,
@@ -113,7 +117,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 62] = [
+    pub const ALL: [Self; 66] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -151,6 +155,10 @@ impl KernelId {
         Self::BoolDenseRound,
         Self::RavLazyRound,
         Self::RavDenseRound,
+        Self::BytecodeInit,
+        Self::BytecodeLazyRound,
+        Self::BytecodeAdopt,
+        Self::BytecodeDenseRound,
         Self::BytecodeOffsetProbe,
         Self::InstrInputBindNative,
         Self::InstrInputRound,
@@ -217,6 +225,10 @@ impl KernelId {
             Self::BoolDenseRound => "jk_bool_dense_round",
             Self::RavLazyRound => "jk_rav_lazy_round",
             Self::RavDenseRound => "jk_rav_dense_round",
+            Self::BytecodeInit => "jk_bytecode_init",
+            Self::BytecodeLazyRound => "jk_bytecode_lazy_round",
+            Self::BytecodeAdopt => "jk_bytecode_adopt",
+            Self::BytecodeDenseRound => "jk_bytecode_dense_round",
             Self::BytecodeOffsetProbe => "jk_bytecode_offset_probe",
             Self::InstrInputBindNative => "jk_instr_input_bind_native",
             Self::InstrInputRound => "jk_instr_input_round",

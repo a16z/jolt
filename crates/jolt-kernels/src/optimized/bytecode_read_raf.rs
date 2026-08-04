@@ -34,7 +34,7 @@
 //! by the private [`PcRowsKey`] type — the modular equivalent of legacy's
 //! shared `Arc<Vec<Cycle>>`).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     self, read_raf_stage_values, BytecodeReadRafStageValueInputs,
@@ -75,10 +75,11 @@ const COLD: u32 = u32::MAX;
 /// One cycle's packed bytecode PC facts: the pushforward slot (no-ops and
 /// unmapped rows land on 0 — the address-phase convention) and the committed
 /// one-hot hot index (unmapped rows are cold — the cycle-phase convention).
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PcRow {
-    push_pc: u32,
-    mapped_pc: u32,
+    pub(crate) push_pc: u32,
+    pub(crate) mapped_pc: u32,
 }
 
 impl PcRow {
@@ -498,60 +499,99 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
         inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
     {
-        let relation = inputs.relation;
-        let dimensions = relation.dimensions();
-        let r_address = relation.r_address();
-        let stage_cycle_points = relation.stage_cycle_points();
-        let cycles = 1usize << dimensions.log_t();
-        let num_ra = dimensions.num_committed_ra_polys();
+        prepare_bytecode_read_raf_cycle(session, witness, inputs, |_| None)
+    }
+}
 
-        let chunks = committed_address_chunks(r_address, relation.committed_chunk_bits());
-        if chunks.len() != num_ra {
+/// Device factory inputs for the stage-6b cycle member. The factory copies
+/// what it retains; every borrow is prepare-scoped.
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(dead_code, reason = "read only by the Metal driver factory")
+)]
+pub(crate) struct BytecodeCycleDeviceInputs<'a, F> {
+    pub(crate) rows: &'a Arc<Vec<PcRow>>,
+    pub(crate) stage_cycle_points: &'a [Vec<F>; 5],
+    pub(crate) stage_weights: [F; 5],
+    pub(crate) entry_term: F,
+    pub(crate) selector_shifts: Vec<u32>,
+    pub(crate) committed_chunk_bits: usize,
+    pub(crate) degree: usize,
+}
+
+/// A device driver plus its fail-closed combined-table recovery channel.
+pub(crate) struct BytecodeCycleDevice<F: Field> {
+    pub(crate) driver: Box<dyn super::lazy_ra::LazyRaDevice<F>>,
+    pub(crate) combined_recovery: Arc<Mutex<Option<Vec<F>>>>,
+}
+
+pub(crate) fn prepare_bytecode_read_raf_cycle<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
+    driver_factory: impl FnOnce(BytecodeCycleDeviceInputs<'_, F>) -> Option<BytecodeCycleDevice<F>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let r_address = relation.r_address();
+    let stage_cycle_points = relation.stage_cycle_points();
+    let cycles = 1usize << dimensions.log_t();
+    let num_ra = dimensions.num_committed_ra_polys();
+
+    let chunks = committed_address_chunks(r_address, relation.committed_chunk_bits());
+    if chunks.len() != num_ra {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode address chunk count disagrees with the committed RA count",
+        });
+    }
+    let rows = pc_rows(session, witness, cycles)?;
+    let _ = session.take::<PcRowsKey>();
+
+    let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
+    let selectors = (0..num_ra)
+        .map(|index| {
+            RaChunkSelector::new(index, num_ra, relation.committed_chunk_bits())
+                .map_err(KernelError::from)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let stage_values = relation.stage_values_at_r_address()?;
+    let gamma = inputs.challenges.gamma;
+    let mut gamma_powers = [F::one(); 8];
+    for i in 1..8 {
+        gamma_powers[i] = gamma_powers[i - 1] * gamma;
+    }
+    let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
+    let mut stage_weights: [F; 5] = std::array::from_fn(|s| gamma_powers[s] * stage_values[s]);
+    stage_weights[0] += gamma_powers[5] * int_at_r_address;
+    stage_weights[2] += gamma_powers[6] * int_at_r_address;
+    for point in stage_cycle_points {
+        if point.len() != dimensions.log_t() {
             return Err(KernelError::InvariantViolation {
-                reason: "bytecode address chunk count disagrees with the committed RA count",
+                reason: "bytecode stage cycle point has the wrong variable count",
             });
         }
-        let rows = pc_rows(session, witness, cycles)?;
-        // This is the PC scan's last consumer: remove the session's copy so
-        // the rows free at the lazy fold's materialization instead of living
-        // to the end of the proof.
-        let _ = session.take::<PcRowsKey>();
+    }
+    let entry_term = gamma_powers[7] * eq_table(r_address)[relation.entry_bytecode_index()];
 
-        // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
-        // one-hot grid, served lazily off the sparse per-cycle indices for
-        // the first three binds instead of `d × T` dense.
-        let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
-        let selectors = (0..num_ra)
-            .map(|index| {
-                RaChunkSelector::new(index, num_ra, relation.committed_chunk_bits())
-                    .map_err(KernelError::from)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let ra = LazyFoldedRa::new(chunk_eqs, BytecodePcChunks { rows, selectors });
+    let device = driver_factory(BytecodeCycleDeviceInputs {
+        rows: &rows,
+        stage_cycle_points,
+        stage_weights,
+        entry_term,
+        selector_shifts: selectors
+            .iter()
+            .map(|selector| selector.shift() as u32)
+            .collect(),
+        committed_chunk_bits: relation.committed_chunk_bits(),
+        degree: relation.degree(),
+    });
 
-        // The combined coefficient table: every non-RA factor of the summand
-        // is linear in one cycle table, so
-        //   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) + γ⁷·entry·[j = 0]
-        // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
-        // stage-1 cycle point, SpartanShiftRaf the stage-3 one).
-        let stage_values = relation.stage_values_at_r_address()?;
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = [F::one(); 8];
-        for i in 1..8 {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
-        let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
-        let mut stage_weights: [F; 5] = std::array::from_fn(|s| gamma_powers[s] * stage_values[s]);
-        stage_weights[0] += gamma_powers[5] * int_at_r_address;
-        stage_weights[2] += gamma_powers[6] * int_at_r_address;
-
+    let (driver, combined_recovery, combined) = if let Some(device) = device {
+        (Some(device.driver), Some(device.combined_recovery), None)
+    } else {
         let mut combined = vec![F::zero(); cycles];
         for (point, weight) in stage_cycle_points.iter().zip(stage_weights) {
-            if point.len() != dimensions.log_t() {
-                return Err(KernelError::InvariantViolation {
-                    reason: "bytecode stage cycle point has the wrong variable count",
-                });
-            }
             let scaled = scaled_eq_table(point, weight);
             #[cfg(feature = "parallel")]
             combined
@@ -564,25 +604,27 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
                 .zip(scaled.iter())
                 .for_each(|(acc, term)| *acc += *term);
         }
-        let entry_scalar = eq_table(r_address)[relation.entry_bytecode_index()];
-        combined[0] += gamma_powers[7] * entry_scalar;
+        combined[0] += entry_term;
+        (None, None, Some(Polynomial::new(combined)))
+    };
+    let ra = LazyFoldedRa::new_with_driver(chunk_eqs, BytecodePcChunks { rows, selectors }, driver);
 
-        let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
-        if output_openings.len() != num_ra {
-            return Err(KernelError::InvariantViolation {
-                reason: "bytecode RA output opening count disagrees with the committed RA count",
-            });
-        }
-
-        Ok(Box::new(CycleKernel {
-            rounds: relation.rounds(),
-            degree: relation.degree(),
-            ra,
-            combined: Polynomial::new(combined),
-            output_openings,
-            rounds_bound: 0,
-        }))
+    let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
+    if output_openings.len() != num_ra {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode RA output opening count disagrees with the committed RA count",
+        });
     }
+
+    Ok(Box::new(CycleKernel {
+        rounds: relation.rounds(),
+        degree: relation.degree(),
+        ra,
+        combined,
+        combined_recovery,
+        output_openings,
+        rounds_bound: 0,
+    }))
 }
 
 /// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
@@ -615,7 +657,8 @@ struct CycleKernel<F: Field> {
     rounds: usize,
     degree: usize,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
-    combined: Polynomial<F>,
+    combined: Option<Polynomial<F>>,
+    combined_recovery: Option<Arc<Mutex<Option<Vec<F>>>>>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
     output_openings: Vec<JoltOpeningId>,
@@ -624,9 +667,28 @@ struct CycleKernel<F: Field> {
 
 impl<F: Field> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {
-        bind_all([&mut self.combined], challenge);
+        if let Some(combined) = &mut self.combined {
+            bind_all([combined], challenge);
+        }
         self.ra.bind(challenge);
+        self.recover_combined();
         self.rounds_bound += 1;
+    }
+
+    fn recover_combined(&mut self) {
+        if self.combined.is_some() {
+            return;
+        }
+        let Some(recovery) = &self.combined_recovery else {
+            return;
+        };
+        let mut recovery = recovery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(table) = recovery.take() {
+            self.combined = Some(Polynomial::new(table));
+            self.ra.disable_device();
+        }
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
@@ -634,8 +696,17 @@ impl<F: Field> CycleKernel<F> {
     /// caller's per-group `(lo, hi)` scratch (each RA pair is gathered once
     /// per group, not once per sample point).
     #[inline]
+    #[expect(
+        clippy::expect_used,
+        reason = "device decline must publish the combined recovery table"
+    )]
     fn accumulate_group(&self, y: usize, acc: &mut [F], ra_pairs: &mut [(F, F)]) {
-        let (c_lo, c_hi) = pair(&self.combined, y);
+        let (c_lo, c_hi) = pair(
+            self.combined
+                .as_ref()
+                .expect("combined table unavailable after device recovery"),
+            y,
+        );
         let c_delta = c_hi - c_lo;
         for (i, slot) in ra_pairs.iter_mut().enumerate() {
             *slot = self.ra.lo_hi(i, y);
@@ -666,7 +737,19 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        let half = self.combined.len() / 2;
+        if self.combined.is_none() {
+            if let Some(evals) = self.ra.device_lanes(&[], &[]) {
+                debug_assert_eq!(evals.len(), self.degree);
+                return Ok(round_poly_from_skipped_evals(&evals, previous_claim));
+            }
+            self.recover_combined();
+        }
+        let half = self
+            .combined
+            .as_ref()
+            .map(|combined| combined.len())
+            .unwrap_or_default()
+            / 2;
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
@@ -712,6 +795,7 @@ impl<F: Field> SumcheckKernel<F> for CycleKernel<F> {
                 remaining: self.rounds - self.rounds_bound,
             });
         }
+        self.ra.ensure_host();
         let ra = &self.ra;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {

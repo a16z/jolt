@@ -57,12 +57,12 @@ pub use runtime::{
     ComputePass, KernelId, MetalContext, PendingPass, MAX_EVAL_POINTS, THREADGROUP_SIZE,
 };
 pub use slots::{
-    MetalBooleanityCycle, MetalHammingWeightClaimReduction, MetalIncClaimReduction,
-    MetalInstructionClaimReduction, MetalInstructionInput, MetalInstructionRaVirtualization,
-    MetalInstructionReadRaf, MetalJointOpening, MetalOuterRemainder, MetalOuterUniskip,
-    MetalProductRemainder, MetalProductUniskip, MetalRamHammingBooleanity,
-    MetalRamRaVirtualization, MetalRamRafEvaluation, MetalRamReadWriteChecking,
-    MetalRegistersReadWriteChecking,
+    MetalBooleanityCycle, MetalBytecodeReadRafCycle, MetalHammingWeightClaimReduction,
+    MetalIncClaimReduction, MetalInstructionClaimReduction, MetalInstructionInput,
+    MetalInstructionRaVirtualization, MetalInstructionReadRaf, MetalJointOpening,
+    MetalOuterRemainder, MetalOuterUniskip, MetalProductRemainder, MetalProductUniskip,
+    MetalRamHammingBooleanity, MetalRamRaVirtualization, MetalRamRafEvaluation,
+    MetalRamReadWriteChecking, MetalRegistersReadWriteChecking,
 };
 
 use jolt_field::Fr;
@@ -170,6 +170,7 @@ where
             fallback: OptimizedBackend,
         });
         backend.instruction_read_raf = Box::new(MetalInstructionReadRaf);
+        backend.bytecode_read_raf_cycle = Box::new(MetalBytecodeReadRafCycle);
         backend.booleanity_cycle = Box::new(MetalBooleanityCycle);
         backend.instruction_ra_virtualization = Box::new(MetalInstructionRaVirtualization);
         backend.ram_ra_virtualization = Box::new(MetalRamRaVirtualization);
