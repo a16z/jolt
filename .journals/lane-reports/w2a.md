@@ -1,4 +1,10 @@
-# W2A — st6a + st7 restructure design (DESIGN GATE — no implementation yet)
+# W2A — st6a + st7 restructure (R1 early-anchor + R2 bytecode split + R3-lite)
+
+**Status: IMPLEMENTED — kill gate cleared @2^24 (combined st6a+st7 −50.6% vs
+trunk, gate −30%). §8b has results; §§1-7 below are the reviewed design (GO
+2026-08-04 ~06:45 UTC with five amendments, all honored: trunk merged before
+work — twice, W1B then W1D; 11-fixture byte-diff count confirmed; config axis
+additive; st2–st5 walls reported explicitly; §3 kept current).**
 
 Lane: gpu/util-w2a. Targets: BooleanityAddressPhase::prepare 2.88 s,
 BytecodeReadRafAddressPhase::prepare 0.89 s (st6a, 0% GPU),
@@ -125,7 +131,7 @@ opening's cycle part, stage7/verify.rs:181–196; its input claims live there)
   and N — the per-block K×N clear/reduce/fmadd machinery isn't free on CPU.
   Only the eq-materialization elimination (R3-lite) is unambiguous.
 
-## 3. Soundness argument (R1 — the only protocol change)
+## 3. Soundness argument (R1 — the only protocol change; CURRENT as implemented)
 
 Statement: every one-hot `ra_i(k,j)` is boolean on the cube. Check:
 `0 = Σ_{k,j} eq(r_a,k)·eq(r_c,j)·Σ_i γ^{2i}(ra~_i(k,j)² − ra~_i(k,j))` — a
@@ -227,3 +233,136 @@ spawn later or shrink the pool).
 
 R1 core (1–1.5 d) → A/B checkpoint → R3-lite (2–3 h) → R2 (0.5 d, lane-B
 collision-gated) → 2^25 confirm + final report. Total ~2–2.5 days.
+
+## 8b. Implementation results (2026-08-04)
+
+### What landed (commits on gpu/util-w2a)
+
+- `3c8b96680` R1 — `BooleanityAnchor` axis in `JoltProtocolConfig`
+  (additive, appended field; `for_zk()` and legacy pin `Stage5Instruction`;
+  `validate_proof_config` admits `Stage1CycleV1` only when both the proof and
+  the build are transparent — fail-closed before stage work). Anchor source
+  single-sourced in `booleanity_reference_cycle_source` (6a batch) + the 6b
+  builder match; prover spawns `cycle_pushforward` at the reversed stage-1
+  binding on a dedicated 4-thread pool between stages 4 and 5; the 6a prepare
+  joins a validated session carry or rebuilds inline (identical values).
+  `ProverConfig::derive` defaults to V1; byte-diff pins legacy.
+- `71272d8d3` R3-lite — HWCR pushforward computes `eq(r,j) =
+  eq(r[..hi],j_hi)·eq(r[hi..],j_lo)` on the fly; the T-sized eq_table
+  materialization (4.3 GiB @2^27) is gone. Byte-identical.
+- `82024b418` R2 — `stage_pushforwards_for` generalized over point subsets;
+  stages 1–4 (all pre-stage-5 points, via the new single-sourced
+  `bytecode_early_stage_points`) build on a background pool at the same spawn
+  site; only stage 5's single-point walk stays on the 6a path. Byte-identical
+  (per-stage lanes regroup exactly). Bench ablation knob
+  `JOLT_BOOLEANITY_ANCHOR=legacy` added to modular_benchmark.
+- Trunk merges: `3abf99069` (W1B) before work, `b3eb2e893` (W1D) before the
+  final A/B — the gate comparison is against trunk `9b7a111ce`.
+
+### Gate matrix (post-W1D merge, all green)
+
+jolt-kernels 155/155 default + 236/236 metal (3 new tests:
+background-vs-inline ×2 relations, stale-carry fallback ×2 arms inside them);
+jolt-dory 46/46; jolt-prover 20/20 in `prover-fixtures` AND
+`prover-fixtures,metal` (11 byte-diff fixtures wire-equal with legacy —
+R2/R3-lite byte-exactness proven there with the carries live — plus the new
+`anchor_v1` e2e: V1 proves+verifies on both CPU backends and a re-tagged
+anchor fails verification = the axis is load-bearing); legacy muldiv 3/3
+`host` + 3/3 `host,zk`; clippy `-D warnings` host / host,zk / metal; fmt.
+Known flakes, both pre-existing and logged: (i) 1–3 nondeterministic nextest
+"leaky" flags on byte-diff tests (legacy-anchored arms — no spawn runs there);
+(ii) a guest-ELF race on `/tmp/jolt-guest-targets/muldiv-guest-/` when narrow
+filters start several muldiv-guest tests simultaneously ("could not open elf
+file" at ~0.55 s) — full-suite invocations passed 3/3.
+
+### A/B @2^24 (bench lock, ABBA T-W-W-T, trunk binary `ffdd71ad4079…` vs
+W2A binary `277ae5aa14ee…`, sha2-chain, metal)
+
+| stage | trunk mean | W2A mean | Δ |
+|---|---:|---:|---:|
+| st0 | 2.623 | 2.626 | +0.1% |
+| st1 | 1.073 | 1.052 | −2.0% |
+| st2 | 0.604 | 0.589 | −2.4% |
+| st3 | 0.288 | 0.290 | +0.6% |
+| st4 | 1.459 | 1.452 | −0.5% |
+| **st5** | **1.726** | **1.803** | **+4.5%** |
+| **st6a** | **0.207** | **0.038** | **−81.6%** |
+| st6b | 1.203 | 1.173 | −2.5% |
+| **st7** | **0.219** | **0.173** | **−21.2%** |
+| st8 | 1.205 | 1.165 | −3.3% |
+| **prove** | **11.627** | **11.325** | **−2.6%** |
+
+**Combined st6a+st7: 0.426 → 0.211 = −50.6% (kill gate −30%: PASS).**
+Decomposition (earlier same-tree R1-only ABBA): R1 alone took st6a
+0.199→0.114 (−42.5%); R2 takes it to 0.038; R3-lite accounts for the st7 drop
+(trunk st7 runs varied 0.180–0.258, W2A's 0.171–0.174 are tight — honest st7
+read: −10…−30%).
+
+**st5 watch (amendment 4) → root-caused and FIXED (`fc3b87367`):** the first
+A/B showed st5 +4.5% at 2^24 AND 2^25 — two concurrent 4-thread background
+pools (R1's booleanity + R2's bytecode; the R1-only ABBA had measured +2.4%
+with one). A process-wide token now serializes the background builds (at most
+one capped pool competes with the foreground stage; prepares only join
+handles, never lock — no deadlock; poisoned token → inline rebuild).
+
+### FINAL A/B @2^24 (tokened, W-T-W-T, cool, cross-run variance ≤ ±2%;
+trunk `9b7a111ce` binary `ffdd71ad…` vs W2A binary `f5b7ad7c75ce…`)
+
+| stage | trunk mean | W2A mean | Δ |
+|---|---:|---:|---:|
+| st0 | 2.618 | 2.630 | +0.4% |
+| st1 | 0.895 | 0.887 | −0.9% |
+| st2 | 0.515 | 0.509 | −1.2% |
+| st3 | 0.210 | 0.212 | +0.9% |
+| st4 | 1.218 | 1.200 | −1.4% |
+| **st5** | **1.712** | **1.730** | **+1.1%** ✓ (≤2% gate) |
+| **st6a** | **0.228** | **0.033** | **−85.7%** |
+| st6b | 1.230 | 1.131 | **−8.1%** (consistent bonus: guaranteed-parked shared scans) |
+| **st7** | **0.190** | **0.170** | **−10.7%** |
+| st8 | 1.123 | 1.122 | −0.1% |
+| **prove** | **10.895** | **10.562** | **−3.1%** |
+
+**Combined st6a+st7: 0.418 → 0.203 = −51.6%. Kill gate −30%: PASS. No stage
+above +2%: PASS.**
+
+### 2^25 confirm (tokened, W-T-T-W, ≥3 min cool + AC; second pair thermally
+inflated ~8–10% — the box ramps ~2 s/run at this scale, cool pair is the
+signal)
+
+- st6a: T 0.530/0.723 → W 0.052/0.064 (**−90.7%** on means; canonical anchor
+  for context: 0.493)
+- st7: T 0.229/0.275 → W 0.208/0.250 (−9.1%)
+- combined: 0.879 → 0.287 = **−67.3%**
+- st5: cool pair +1.4% ✓; all-runs mean +3.3% is thermally confounded (the
+  hot-slot W2 run inflates st0 +0.8% and st8 +14% alike)
+- st6b: −4.8% (bonus holds); prove: cool pair −0.8%
+- 2^24/2^25 absolute walls this session run ~15–20% above the campaign's
+  canonical anchors (22-day-uptime box after a full bench day) — the A/B is
+  same-session interleaved, so the relative numbers stand.
+
+### Handoff notes for wave-close certification (2^27, orchestrator-run)
+
+- Expected @2^27 canonical: st6a 2.265 → ~0.3–0.5 (booleanity 2.88-instr
+  build fully off-path; bytecode's stage-5-only walk + join residual remain);
+  st7 2.072 → the R3-lite question mark — the 4.3 GiB eq_table alloc is gone,
+  which the 2^24/2^25 scales price at only −9…−11% but the 90-GiB pressure
+  tier may reward much harder (W4 U1 mechanism). Watch the 9.16 s seam:
+  the st6a chunk of it should collapse.
+- The background builds hold the token for ~8–9 s (booleanity, 4 threads)
+  + ~2–3 s (bytecode) inside st5's ~14.6 s window at 2^27 — fits serially;
+  if st5 shows contention at 2^27, the lever is pool width (constants
+  `BOOLEANITY_BACKGROUND_THREADS` / `BYTECODE_BACKGROUND_THREADS`).
+- Flakes (pre-existing, worth an infra lane eventually): the
+  `/tmp/jolt-guest-targets/muldiv-guest-/` ELF race fails ~1 in 6 full-suite
+  runs at ~0.5–1.0 s ("could not open elf file") — always passes isolated
+  and on retry; nondeterministic nextest "leaky" flags on byte-diff tests.
+- zk stays entirely on the legacy anchor/path: `for_zk()` pins it, the
+  verifier rejects V1+BlindFold fail-closed, BlindFold code untouched.
+
+### Retained state
+
+Commits: `3c8b96680` (R1) → `71272d8d3` (R3-lite) → `82024b418` (R2) →
+`b3eb2e893` (trunk/W1D merge) → `fc3b87367` (token). Binary sha-256
+`f5b7ad7c75ce1ffba3748a186140e5738d8b49c17a6309114ae60915bc6c17de`
+(`prover-fixtures,metal` release, modular_benchmark). Artifacts:
+`/tmp/w2a-{s24,final,tok,s25,tok25}-*.{log,json}` + `/tmp/w2a-stages.py`.
