@@ -60,11 +60,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-#[cfg(feature = "parallel")]
-use super::support::merge_evals;
 use super::support::{
-    bind_all, collect_rows, eq_table, gamma_powers_array, pair, round_poly_from_skipped_evals,
-    scaled_eq_table, RoundProgress,
+    bind_all, collect_rows, eq_table, gamma_powers_array, pair, par_sum_pair_groups,
+    par_sum_pair_groups_reusing, round_poly_from_skipped_evals, scaled_eq_table, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -414,25 +412,10 @@ impl<F: Field> ProveRounds<F> for AddressKernel<F> {
         }
         let half = self.entry_trace.len() / 2;
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || vec![F::zero(); 2],
-                |mut acc, y| {
-                    let group = self.group_evals(y);
-                    acc[0] += group[0];
-                    acc[1] += group[1];
-                    acc
-                },
-            )
-            .reduce(|| vec![F::zero(); 2], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = (0..half).fold(vec![F::zero(); 2], |mut acc, y| {
+        let evals = par_sum_pair_groups(half, 2, |acc, y| {
             let group = self.group_evals(y);
             acc[0] += group[0];
             acc[1] += group[1];
-            acc
         });
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
@@ -659,26 +642,12 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || (vec![F::zero(); slots], vec![(F::zero(), F::zero()); num_ra]),
-                |(mut acc, mut ra_pairs), y| {
-                    self.accumulate_group(y, &mut acc, &mut ra_pairs);
-                    (acc, ra_pairs)
-                },
-            )
-            .map(|(acc, _)| acc)
-            .reduce(|| vec![F::zero(); slots], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = {
-            let mut ra_pairs = vec![(F::zero(), F::zero()); num_ra];
-            (0..half).fold(vec![F::zero(); slots], |mut acc, y| {
-                self.accumulate_group(y, &mut acc, &mut ra_pairs);
-                acc
-            })
-        };
+        let evals = par_sum_pair_groups_reusing(
+            half,
+            slots,
+            || vec![(F::zero(), F::zero()); num_ra],
+            |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
+        );
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
     }

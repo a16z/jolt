@@ -34,11 +34,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "parallel")]
-use super::support::merge_evals;
 use super::support::{
-    bind_all, collect_rows, eq_table, gamma_powers, pair, round_poly_from_skipped_evals,
-    RoundProgress,
+    bind_all, collect_rows, eq_table, gamma_powers, pair, par_sum_pair_groups,
+    round_poly_from_skipped_evals, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -279,25 +277,10 @@ impl<F: Field> ProveRounds<F> for HammingWeightKernel<F> {
         }
         let half = self.weight_tables[0].len() / 2;
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || vec![F::zero(); 2],
-                |mut acc, y| {
-                    let group = self.group_evals(y);
-                    acc[0] += group[0];
-                    acc[1] += group[1];
-                    acc
-                },
-            )
-            .reduce(|| vec![F::zero(); 2], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = (0..half).fold(vec![F::zero(); 2], |mut acc, y| {
+        let evals = par_sum_pair_groups(half, 2, |acc, y| {
             let group = self.group_evals(y);
             acc[0] += group[0];
             acc[1] += group[1];
-            acc
         });
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
