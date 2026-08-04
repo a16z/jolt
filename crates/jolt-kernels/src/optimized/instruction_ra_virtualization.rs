@@ -50,7 +50,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
     accumulate_product, gamma_power_pairs, map_indices, pin_derived_term, GruenRoundMessage,
@@ -77,7 +77,7 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
     {
         let relation = inputs.relation;
         let cycles = 1usize << relation.dimensions().log_t();
-        let rows = shared_instruction_rows(session, witness, cycles)?;
+        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
         Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
             relation.dimensions().log_t(),
             relation.dimensions().num_virtual_ra_polys(),

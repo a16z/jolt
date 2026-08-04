@@ -79,7 +79,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{gamma_power_pairs, gamma_powers, pin_derived_term_if_derived, RoundProgress};
 use crate::reference::views::eq_table;
@@ -96,6 +96,44 @@ enum ColumnSelector {
 }
 
 impl ColumnSelector {
+    /// The layout's chunk selectors, in canonical polynomial order, with the
+    /// witness shapes validated up front (mirroring the reference kernel's
+    /// size checks).
+    fn for_layout<F: Field>(
+        witness: &dyn JoltWitnessPlane<F>,
+        dimensions: BooleanityDimensions,
+    ) -> Result<Vec<ColumnSelector>, KernelError<F>> {
+        let log_t = dimensions.log_t;
+        let log_k_chunk = dimensions.log_k_chunk;
+        let layout = dimensions.layout;
+        for opening in layout.openings(JoltRelationId::Booleanity) {
+            let shape = witness.shape(opening.polynomial_id())?;
+            if shape.log_rows != log_k_chunk + log_t {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("{opening:?}"),
+                    expected: 1usize << (log_k_chunk + log_t),
+                    got: shape.rows(),
+                });
+            }
+        }
+        layout
+            .polynomials()
+            .map(|polynomial| {
+                Ok(match polynomial {
+                    JoltRaPolynomial::Instruction(index) => ColumnSelector::Instruction(
+                        RaChunkSelector::new(index, layout.instruction(), log_k_chunk)?,
+                    ),
+                    JoltRaPolynomial::Bytecode(index) => ColumnSelector::Bytecode(
+                        RaChunkSelector::new(index, layout.bytecode(), log_k_chunk)?,
+                    ),
+                    JoltRaPolynomial::Ram(index) => {
+                        ColumnSelector::Ram(RaChunkSelector::new(index, layout.ram(), log_k_chunk)?)
+                    }
+                })
+            })
+            .collect()
+    }
+
     /// The hot chunk index at `row`; `None` is a cold cycle. Mirrors the
     /// trace oracle's grid materializers (`materialize_one_hot`), so
     /// gathered indices and the reference tier's dense grids describe the
@@ -110,44 +148,6 @@ impl ColumnSelector {
                 .map(|address| selector.chunk_usize(address as usize)),
         }
     }
-}
-
-/// The layout's chunk selectors, in canonical polynomial order, with the
-/// witness shapes validated up front (mirroring the reference kernel's size
-/// checks).
-fn column_selectors<F: Field>(
-    witness: &dyn JoltWitnessPlane<F>,
-    dimensions: BooleanityDimensions,
-) -> Result<Vec<ColumnSelector>, KernelError<F>> {
-    let log_t = dimensions.log_t;
-    let log_k_chunk = dimensions.log_k_chunk;
-    let layout = dimensions.layout;
-    for opening in layout.openings(JoltRelationId::Booleanity) {
-        let shape = witness.shape(opening.polynomial_id())?;
-        if shape.log_rows != log_k_chunk + log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{opening:?}"),
-                expected: 1usize << (log_k_chunk + log_t),
-                got: shape.rows(),
-            });
-        }
-    }
-    layout
-        .polynomials()
-        .map(|polynomial| {
-            Ok(match polynomial {
-                JoltRaPolynomial::Instruction(index) => ColumnSelector::Instruction(
-                    RaChunkSelector::new(index, layout.instruction(), log_k_chunk)?,
-                ),
-                JoltRaPolynomial::Bytecode(index) => ColumnSelector::Bytecode(
-                    RaChunkSelector::new(index, layout.bytecode(), log_k_chunk)?,
-                ),
-                JoltRaPolynomial::Ram(index) => {
-                    ColumnSelector::Ram(RaChunkSelector::new(index, layout.ram(), log_k_chunk)?)
-                }
-            })
-        })
-        .collect()
 }
 
 /// The one-hot pushforward `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`
@@ -263,8 +263,8 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleani
             });
         }
 
-        let selectors = column_selectors(witness, dimensions)?;
-        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+        let selectors = ColumnSelector::for_layout(witness, dimensions)?;
+        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
         let masses = cycle_pushforward(
             &rows,
             &selectors,
@@ -474,8 +474,8 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
             });
         }
 
-        let selectors = column_selectors(witness, dimensions)?;
-        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+        let selectors = ColumnSelector::for_layout(witness, dimensions)?;
+        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
 
         // The fixed address eq factor of the `EqAddressCycle` public; rides
         // in the split-eq scaling so round messages and the bound scalar
@@ -890,9 +890,7 @@ mod tests {
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
     use jolt_witness::JoltWitnessOracle;
 
-    use super::super::instruction_read_raf::{
-        collect_instruction_cycle_rows, SharedInstructionRows, SharedInstructionRowsWeak,
-    };
+    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
     use crate::ReferenceBackend;
@@ -1087,7 +1085,7 @@ mod tests {
                 .unwrap();
             let mut session = ProofSession::default();
             if carried_indices {
-                let rows = collect_instruction_cycle_rows::<Fr>(backend, 1usize << log_t).unwrap();
+                let rows = InstructionCycleRow::collect::<Fr>(backend, 1usize << log_t).unwrap();
                 session.park(SharedInstructionRows(std::sync::Arc::new(rows)));
             }
             let optimized = OptimizedBooleanityCycle

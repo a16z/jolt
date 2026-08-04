@@ -163,7 +163,10 @@ where
         &kinds, row_width, grid, setup,
     ),);
     stream_witnesses(source, 0..cycles, superchunk, &mut consumers)?;
-    Ok(package::<F, PCS>(consumers.0.finish(setup), ids))
+    Ok(WitnessCommitment::<PCS>::package(
+        consumers.0.finish(setup),
+        ids,
+    ))
 }
 
 /// The pipelined commit pass over a slice-backed source: while the column
@@ -211,27 +214,25 @@ where
         core::mem::swap(&mut front, &mut back);
         end = next_end;
     }
-    Ok(package::<F, PCS>(state.finish(setup), ids))
+    Ok(WitnessCommitment::<PCS>::package(state.finish(setup), ids))
 }
 
-/// Zips finished per-column outputs back to their polynomial ids.
-fn package<F, PCS>(
-    outputs: Vec<(PCS::Output, PCS::OpeningHint)>,
-    ids: &[JoltCommittedPolynomial],
-) -> Vec<WitnessCommitment<PCS>>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
-{
-    outputs
-        .into_iter()
-        .zip(ids)
-        .map(|((commitment, hint), &id)| WitnessCommitment {
-            id,
-            commitment,
-            hint,
-        })
-        .collect()
+impl<PCS: CommitmentScheme + ModeStreamingCommitment> WitnessCommitment<PCS> {
+    /// Zips finished per-column outputs back to their polynomial ids.
+    fn package(
+        outputs: Vec<(PCS::Output, PCS::OpeningHint)>,
+        ids: &[JoltCommittedPolynomial],
+    ) -> Vec<WitnessCommitment<PCS>> {
+        outputs
+            .into_iter()
+            .zip(ids)
+            .map(|((commitment, hint), &id)| WitnessCommitment {
+                id,
+                commitment,
+                hint,
+            })
+            .collect()
+    }
 }
 
 /// One column's in-progress commitment — the reference kernel's states,

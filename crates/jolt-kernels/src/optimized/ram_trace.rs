@@ -102,7 +102,7 @@ impl RamAccessColumns {
         // Five kernels across stages 2–6b reclaim these columns by type
         // alone; a wrong-domain reclaim means OOB indexing or a silently
         // wrong RA claim from a prefix-covering table, so hard-error like
-        // the `pc_rows` twin instead of a release-compiled-out assert.
+        // the `PcRow::shared` twin instead of a release-compiled-out assert.
         if columns.addresses.len() != 1usize << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: "session-shared RAM access columns".to_owned(),

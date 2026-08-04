@@ -77,66 +77,66 @@ impl FamilySelectors {
             ram: family(counts.2)?,
         })
     }
-}
 
-/// All `N` pushforwards from one bundle walk against the shared cycle-eq
-/// table, in canonical (instruction, bytecode, RAM) order.
-fn pushforwards<F: Field>(
-    rows: &[RaIndexBundle],
-    eq_cycle: &[F],
-    selectors: &FamilySelectors,
-    k_chunk: usize,
-) -> Vec<Vec<F>> {
-    let total = selectors.instruction.len() + selectors.bytecode.len() + selectors.ram.len();
-    let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
-        let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
-        for j in range {
-            let row = &rows[j];
-            let eq = eq_cycle[j];
-            let mut slot = 0;
-            for selector in &selectors.instruction {
-                partial[slot][selector.chunk_u128(row.lookup_index.0)] += eq;
-                slot += 1;
-            }
-            for selector in &selectors.bytecode {
-                if let Some(pc) = row.mapped_pc.0 {
-                    partial[slot][selector.chunk_usize(pc)] += eq;
+    /// All `N` pushforwards from one bundle walk against the shared cycle-eq
+    /// table, in canonical (instruction, bytecode, RAM) order.
+    fn pushforwards<F: Field>(
+        &self,
+        rows: &[RaIndexBundle],
+        eq_cycle: &[F],
+        k_chunk: usize,
+    ) -> Vec<Vec<F>> {
+        let total = self.instruction.len() + self.bytecode.len() + self.ram.len();
+        let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
+            let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
+            for j in range {
+                let row = &rows[j];
+                let eq = eq_cycle[j];
+                let mut slot = 0;
+                for selector in &self.instruction {
+                    partial[slot][selector.chunk_u128(row.lookup_index.0)] += eq;
+                    slot += 1;
                 }
-                slot += 1;
-            }
-            for selector in &selectors.ram {
-                if let Some(address) = row.ram_address.0 {
-                    partial[slot][selector.chunk_usize(address as usize)] += eq;
-                }
-                slot += 1;
-            }
-        }
-        partial
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        let num_threads = rayon::current_num_threads();
-        let chunk = rows.len().div_ceil(num_threads).max(1);
-        (0..rows.len())
-            .into_par_iter()
-            .step_by(chunk)
-            .map(|start| accumulate(start..(start + chunk).min(rows.len())))
-            .reduce(
-                || (0..total).map(|_| vec![F::zero(); k_chunk]).collect(),
-                |mut left, right| {
-                    for (left, right) in left.iter_mut().zip(right) {
-                        for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
-                        }
+                for selector in &self.bytecode {
+                    if let Some(pc) = row.mapped_pc.0 {
+                        partial[slot][selector.chunk_usize(pc)] += eq;
                     }
-                    left
-                },
-            )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        accumulate(0..rows.len())
+                    slot += 1;
+                }
+                for selector in &self.ram {
+                    if let Some(address) = row.ram_address.0 {
+                        partial[slot][selector.chunk_usize(address as usize)] += eq;
+                    }
+                    slot += 1;
+                }
+            }
+            partial
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            let num_threads = rayon::current_num_threads();
+            let chunk = rows.len().div_ceil(num_threads).max(1);
+            (0..rows.len())
+                .into_par_iter()
+                .step_by(chunk)
+                .map(|start| accumulate(start..(start + chunk).min(rows.len())))
+                .reduce(
+                    || (0..total).map(|_| vec![F::zero(); k_chunk]).collect(),
+                    |mut left, right| {
+                        for (left, right) in left.iter_mut().zip(right) {
+                            for (left, right) in left.iter_mut().zip(right) {
+                                *left += right;
+                            }
+                        }
+                        left
+                    },
+                )
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            accumulate(0..rows.len())
+        }
     }
 }
 
@@ -176,7 +176,8 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             (layout.instruction(), layout.bytecode(), layout.ram()),
             dimensions.log_k_chunk,
         )?;
-        let g_tables: Vec<Polynomial<F>> = pushforwards(&rows, &eq_cycle, &selectors, k_chunk)
+        let g_tables: Vec<Polynomial<F>> = selectors
+            .pushforwards(&rows, &eq_cycle, k_chunk)
             .into_iter()
             .map(Polynomial::new)
             .collect();

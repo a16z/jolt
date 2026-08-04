@@ -106,37 +106,39 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     out
 }
 
-/// `left(node) · right(node)` for one cycle at every extended node, as exact
-/// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
-/// (the i128 lane), product `< 2^196` — inside `S256`.
-/// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
-/// loop (its integer Lagrange build is not free at `2^23` calls).
-fn extended_products(
-    row: &SpartanProductRow,
-    coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
-) -> [S256; EXTENDED_SIZE] {
-    let mut out = [S256::zero(); EXTENDED_SIZE];
-    let left_lanes = [
-        i128::from(row.left_instruction_input.0),
-        i128::from(row.lookup_output.0),
-        i128::from(row.jump_flag.0),
-    ];
-    let right_wide = S192::from_i128(row.right_instruction_input.0);
-    let right_flags = [
-        i64::from(row.branch_flag.0),
-        1 - i64::from(row.next_is_noop.0),
-    ];
-    for (slot, coefficients) in out.iter_mut().zip(coefficients) {
-        let mut left: i128 = 0;
-        for (lane, &c) in left_lanes.iter().zip(coefficients) {
-            left += i128::from(c) * lane;
+impl SpartanProductRow {
+    /// `left(node) · right(node)` for one cycle at every extended node, as exact
+    /// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
+    /// (the i128 lane), product `< 2^196` — inside `S256`.
+    /// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
+    /// loop (its integer Lagrange build is not free at `2^23` calls).
+    fn extended_products(
+        &self,
+        coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
+    ) -> [S256; EXTENDED_SIZE] {
+        let mut out = [S256::zero(); EXTENDED_SIZE];
+        let left_lanes = [
+            i128::from(self.left_instruction_input.0),
+            i128::from(self.lookup_output.0),
+            i128::from(self.jump_flag.0),
+        ];
+        let right_wide = S192::from_i128(self.right_instruction_input.0);
+        let right_flags = [
+            i64::from(self.branch_flag.0),
+            1 - i64::from(self.next_is_noop.0),
+        ];
+        for (slot, coefficients) in out.iter_mut().zip(coefficients) {
+            let mut left: i128 = 0;
+            for (lane, &c) in left_lanes.iter().zip(coefficients) {
+                left += i128::from(c) * lane;
+            }
+            let mut right = S192::from_i64(coefficients[0]).mul_trunc::<3, 3>(&right_wide);
+            right +=
+                S192::from_i64(coefficients[1] * right_flags[0] + coefficients[2] * right_flags[1]);
+            *slot = S128::from_i128(left).mul_trunc::<3, 4>(&right);
         }
-        let mut right = S192::from_i64(coefficients[0]).mul_trunc::<3, 3>(&right_wide);
-        right +=
-            S192::from_i64(coefficients[1] * right_flags[0] + coefficients[2] * right_flags[1]);
-        *slot = S128::from_i128(left).mul_trunc::<3, 4>(&right);
+        out
     }
-    out
 }
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
@@ -153,36 +155,6 @@ crate::optimized::impl_field_allocative!(SpartanProductCarry, |carry| {
     use crate::backend::vec_heap_bytes;
     vec_heap_bytes(&carry.tau_low) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
 });
-
-/// Extended-node evaluations of
-/// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
-fn extended_t1_values<F: Field>(
-    rows: &BundleAccess<'_, SpartanProductRow>,
-    tau_low: &[F],
-) -> Result<Vec<F>, WitnessError> {
-    let split = tau_low.len() / 2;
-    let (out_point, in_point) = tau_low.split_at(split);
-    let e_out = EqPolynomial::<F>::evals(out_point, None);
-    let e_in = EqPolynomial::<F>::evals(in_point, None);
-    let in_len = e_in.len();
-    let coefficients = extension_coefficients();
-
-    try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, |x_out| {
-        let mut accumulators: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator> =
-            vec![Default::default(); EXTENDED_SIZE];
-        for (x_in, &e) in e_in.iter().enumerate() {
-            let row = rows.row(x_out * in_len + x_in)?;
-            let products = extended_products(&row, &coefficients);
-            for (accumulator, product) in accumulators.iter_mut().zip(&products) {
-                accumulator.fmadd_s256(e, product);
-            }
-        }
-        Ok(accumulators
-            .into_iter()
-            .map(|accumulator| e_out[x_out] * accumulator.reduce())
-            .collect())
-    })
-}
 
 /// The stage-2 product uni-skip front. `prepare` runs on `τ_low` only;
 /// `τ_high` arrives as the single late challenge of `first_round_poly`.
@@ -218,7 +190,7 @@ impl OptimizedProductUniskip {
                 reason: "Spartan product tau_low must carry log_t challenges",
             });
         }
-        let t1_values = extended_t1_values(&rows.access(), tau_low)?;
+        let t1_values = Self::extended_t1_values(&rows.access(), tau_low)?;
         session.park(SpartanProductCarry {
             log_t,
             tau_low: tau_low.to_vec(),
@@ -226,6 +198,37 @@ impl OptimizedProductUniskip {
             t1_values,
         });
         Ok(())
+    }
+
+    /// Extended-node evaluations of
+    /// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
+    fn extended_t1_values<F: Field>(
+        rows: &BundleAccess<'_, SpartanProductRow>,
+        tau_low: &[F],
+    ) -> Result<Vec<F>, WitnessError> {
+        let split = tau_low.len() / 2;
+        let (out_point, in_point) = tau_low.split_at(split);
+        let e_out = EqPolynomial::<F>::evals(out_point, None);
+        let e_in = EqPolynomial::<F>::evals(in_point, None);
+        let in_len = e_in.len();
+        let coefficients = extension_coefficients();
+
+        try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, |x_out| {
+            let mut accumulators: Vec<
+                <F as WithSignedProductAccumulator>::SignedProductAccumulator,
+            > = vec![Default::default(); EXTENDED_SIZE];
+            for (x_in, &e) in e_in.iter().enumerate() {
+                let row = rows.row(x_out * in_len + x_in)?;
+                let products = row.extended_products(&coefficients);
+                for (accumulator, product) in accumulators.iter_mut().zip(&products) {
+                    accumulator.fmadd_s256(e, product);
+                }
+            }
+            Ok(accumulators
+                .into_iter()
+                .map(|accumulator| e_out[x_out] * accumulator.reduce())
+                .collect())
+        })
     }
 }
 

@@ -158,7 +158,7 @@ impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
     fn consume(&mut self, chunk: &[RegisterCycleRow]) {
         for cycle in chunk {
             let row = self.rs1_indices.len();
-            let (cells, len) = cycle_entries(row, cycle);
+            let (cells, len) = cycle.entries(row);
             self.entries.extend_from_slice(&cells[..len]);
             self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
             self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
@@ -167,173 +167,149 @@ impl<F: Field> StreamConsumer for CollectRegisterEntries<F> {
     }
 }
 
-/// Builds the sparse entries and the operand index columns in one trace
-/// pass. Slice-backed sources build index-parallel; re-emulating sources
-/// stream sequentially. Entry values and order are identical either way —
-/// [`cycle_entries`] is pure per cycle, and runs concatenate in cycle order.
-fn collect_register_entries<F: Field>(
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
-    #[cfg(feature = "parallel")]
-    if let Some(access) = witness.random_access() {
-        if cycles <= access.cycles() {
-            return collect_register_entries_par(&access, cycles);
-        }
-    }
-    let mut consumers = (CollectRegisterEntries::<F> {
-        entries: Vec::with_capacity(cycles * 3),
-        rs1_indices: Vec::with_capacity(cycles),
-        rs2_indices: Vec::with_capacity(cycles),
-        rd_indices: Vec::with_capacity(cycles),
-    },);
-    stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
-    Ok(consumers.0)
-}
-
-/// The index-parallel entry build: a first pass counts each chunk's
-/// entries (extraction-only, no staging), so entries scatter straight into
-/// their exclusive-scan offsets on the second pass — no per-chunk runs, no
-/// co-resident copy (the entry vector is the stage's largest allocation;
-/// briefly doubling it moves the prover's peak). The three operand index
-/// columns fill on the counting pass. Entry values and order are identical
-/// to the streaming pass: cycle_entries is pure per cycle.
-#[cfg(feature = "parallel")]
-fn collect_register_entries_par<F: Field>(
-    access: &RandomAccessRows<'_>,
-    cycles: usize,
-) -> Result<CollectRegisterEntries<F>, KernelError<F>> {
-    use core::mem::MaybeUninit;
-    /// The scatter grain (matches the whole-range collectors' load-balance
-    /// tradeoff at ~3 entries per cycle).
-    const CHUNK: usize = 1 << 14;
-    let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-    let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-    let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-    let error = jolt_witness::FirstErrorLatch::new();
-    let chunk_count = cycles.div_ceil(CHUNK);
-    // Pass 1: count entries per chunk and fill the index columns.
-    let mut counts: Vec<usize> = Vec::new();
-    (
-        rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-        rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-        rd_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
-    )
-        .into_par_iter()
-        .enumerate()
-        .map(|(chunk_index, (rs1, rs2, rd))| {
-            let base = chunk_index * CHUNK;
-            let mut count = 0usize;
-            for offset in 0..rs1.len() {
-                match access.window::<RegisterCycleRow>(base + offset) {
-                    Ok(cycle) => {
-                        count += cycle_entry_count(&cycle);
-                        let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
-                        let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
-                        let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
-                    }
-                    Err(failure) => {
-                        error.record(base + offset, failure);
-                        return count;
-                    }
-                }
+impl<F: Field> CollectRegisterEntries<F> {
+    /// Builds the sparse entries and the operand index columns in one trace
+    /// pass. Slice-backed sources build index-parallel; re-emulating sources
+    /// stream sequentially. Entry values and order are identical either way —
+    /// [`RegisterCycleRow::entries`] is pure per cycle, and runs concatenate
+    /// in cycle order.
+    fn collect(witness: &dyn JoltWitnessPlane<F>, cycles: usize) -> Result<Self, KernelError<F>> {
+        #[cfg(feature = "parallel")]
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, cycles);
             }
-            count
-        })
-        .collect_into_vec(&mut counts);
-    if let Some(failure) = error.take() {
-        return Err(failure.into());
-    }
-    // SAFETY: the error latch is empty, so every chunk ran to completion and
-    // initialized its whole span of all three index columns.
-    unsafe {
-        rs1_indices.set_len(cycles);
-        rs2_indices.set_len(cycles);
-        rd_indices.set_len(cycles);
+        }
+        let mut consumers = (CollectRegisterEntries::<F> {
+            entries: Vec::with_capacity(cycles * 3),
+            rs1_indices: Vec::with_capacity(cycles),
+            rs2_indices: Vec::with_capacity(cycles),
+            rd_indices: Vec::with_capacity(cycles),
+        },);
+        stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
+        Ok(consumers.0)
     }
 
-    // Exclusive scan of the per-chunk counts, then pass 2: re-extract and
-    // scatter entries straight to their offsets.
-    let mut offsets: Vec<usize> = Vec::with_capacity(chunk_count);
-    let mut total = 0usize;
-    for &count in &counts {
-        offsets.push(total);
-        total += count;
-    }
-    let mut entries: Vec<SparseEntry<F, LutIndex>> = Vec::with_capacity(total);
-    {
-        let mut rest: &mut [MaybeUninit<SparseEntry<F, LutIndex>>] =
-            &mut entries.spare_capacity_mut()[..total];
-        let mut windows: Vec<&mut [MaybeUninit<SparseEntry<F, LutIndex>>]> =
-            Vec::with_capacity(chunk_count);
-        for &count in &counts {
-            let (head, tail) = rest.split_at_mut(count);
-            windows.push(head);
-            rest = tail;
-        }
+    /// The index-parallel entry build: a first pass counts each chunk's
+    /// entries (extraction-only, no staging), so entries scatter straight into
+    /// their exclusive-scan offsets on the second pass — no per-chunk runs, no
+    /// co-resident copy (the entry vector is the stage's largest allocation;
+    /// briefly doubling it moves the prover's peak). The three operand index
+    /// columns fill on the counting pass. Entry values and order are identical
+    /// to the streaming pass: [`RegisterCycleRow::entries`] is pure per cycle.
+    #[cfg(feature = "parallel")]
+    fn collect_par(access: &RandomAccessRows<'_>, cycles: usize) -> Result<Self, KernelError<F>> {
+        use core::mem::MaybeUninit;
+        /// The scatter grain (matches the whole-range collectors' load-balance
+        /// tradeoff at ~3 entries per cycle).
+        const CHUNK: usize = 1 << 14;
+        let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+        let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+        let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let error = jolt_witness::FirstErrorLatch::new();
-        windows
+        let chunk_count = cycles.div_ceil(CHUNK);
+        // Pass 1: count entries per chunk and fill the index columns.
+        let mut counts: Vec<usize> = Vec::new();
+        (
+            rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            rd_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+        )
             .into_par_iter()
             .enumerate()
-            .for_each(|(chunk_index, window)| {
+            .map(|(chunk_index, (rs1, rs2, rd))| {
                 let base = chunk_index * CHUNK;
-                let top = ((chunk_index + 1) * CHUNK).min(cycles);
-                let mut written = 0usize;
-                for row in base..top {
-                    // Pass 1 latched any extraction error; a second window
-                    // over the same immutable rows cannot fail differently,
-                    // but stay conservative and latch again.
-                    match access.window::<RegisterCycleRow>(row) {
+                let mut count = 0usize;
+                for offset in 0..rs1.len() {
+                    match access.window::<RegisterCycleRow>(base + offset) {
                         Ok(cycle) => {
-                            let (cells, len) = cycle_entries(row, &cycle);
-                            for cell in &cells[..len] {
-                                let _ = window[written].write(*cell);
-                                written += 1;
-                            }
+                            count += cycle.entry_count();
+                            let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
+                            let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
+                            let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
                         }
                         Err(failure) => {
-                            error.record(row, failure);
-                            return;
+                            error.record(base + offset, failure);
+                            return count;
                         }
                     }
                 }
-                debug_assert_eq!(written, window.len());
-            });
+                count
+            })
+            .collect_into_vec(&mut counts);
         if let Some(failure) = error.take() {
             return Err(failure.into());
         }
-    }
-    // SAFETY: the windows partition exactly `total` slots (the exclusive
-    // scan of the same counts pass 2 reproduces), and every window was
-    // fully written above.
-    unsafe { entries.set_len(total) };
-    Ok(CollectRegisterEntries {
-        entries,
-        rs1_indices,
-        rs2_indices,
-        rd_indices,
-    })
-}
+        // SAFETY: the error latch is empty, so every chunk ran to completion
+        // and initialized its whole span of all three index columns.
+        unsafe {
+            rs1_indices.set_len(cycles);
+            rs2_indices.set_len(cycles);
+            rd_indices.set_len(cycles);
+        }
 
-/// The entry count [`cycle_entries`] will produce for one cycle — the
-/// counting pass's cheap twin (kept adjacent so the merge rules stay in
-/// sync: rs2 folds into rs1's entry, rd into either read's). Option-typed
-/// comparisons mirror the write twin's scan of emitted columns exactly, so
-/// no sentinel value can collide with a raw index (`rd == rs2` with a folded
-/// rs2 implies `rs2 == rs1`, which the `rd == rs1` test already catches).
-#[cfg(feature = "parallel")]
-fn cycle_entry_count(cycle: &RegisterCycleRow) -> usize {
-    let rs1 = cycle.rs1.map(|(register, _)| register);
-    let rs2 = cycle.rs2.map(|(register, _)| register);
-    let rd = cycle.rd.map(|(register, ..)| register);
-    let mut count = usize::from(rs1.is_some());
-    if rs2.is_some() && rs2 != rs1 {
-        count += 1;
+        // Exclusive scan of the per-chunk counts, then pass 2: re-extract and
+        // scatter entries straight to their offsets.
+        let mut offsets: Vec<usize> = Vec::with_capacity(chunk_count);
+        let mut total = 0usize;
+        for &count in &counts {
+            offsets.push(total);
+            total += count;
+        }
+        let mut entries: Vec<SparseEntry<F, LutIndex>> = Vec::with_capacity(total);
+        {
+            let mut rest: &mut [MaybeUninit<SparseEntry<F, LutIndex>>] =
+                &mut entries.spare_capacity_mut()[..total];
+            let mut windows: Vec<&mut [MaybeUninit<SparseEntry<F, LutIndex>>]> =
+                Vec::with_capacity(chunk_count);
+            for &count in &counts {
+                let (head, tail) = rest.split_at_mut(count);
+                windows.push(head);
+                rest = tail;
+            }
+            let error = jolt_witness::FirstErrorLatch::new();
+            windows
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(chunk_index, window)| {
+                    let base = chunk_index * CHUNK;
+                    let top = ((chunk_index + 1) * CHUNK).min(cycles);
+                    let mut written = 0usize;
+                    for row in base..top {
+                        // Pass 1 latched any extraction error; a second window
+                        // over the same immutable rows cannot fail differently,
+                        // but stay conservative and latch again.
+                        match access.window::<RegisterCycleRow>(row) {
+                            Ok(cycle) => {
+                                let (cells, len) = cycle.entries(row);
+                                for cell in &cells[..len] {
+                                    let _ = window[written].write(*cell);
+                                    written += 1;
+                                }
+                            }
+                            Err(failure) => {
+                                error.record(row, failure);
+                                return;
+                            }
+                        }
+                    }
+                    debug_assert_eq!(written, window.len());
+                });
+            if let Some(failure) = error.take() {
+                return Err(failure.into());
+            }
+        }
+        // SAFETY: the windows partition exactly `total` slots (the exclusive
+        // scan of the same counts pass 2 reproduces), and every window was
+        // fully written above.
+        unsafe { entries.set_len(total) };
+        Ok(CollectRegisterEntries {
+            entries,
+            rs1_indices,
+            rs2_indices,
+            rd_indices,
+        })
     }
-    if rd.is_some() && rd != rs1 && rd != rs2 {
-        count += 1;
-    }
-    count
 }
 
 /// Growing lookup table of the possible values of one one-hot coefficient
@@ -593,6 +569,88 @@ impl<F: Field, C: OneHotCoeff<F>> SparseEntry<F, C> {
             (None, None) => unreachable!("merge visits only represented cells"),
         }
     }
+
+    /// Merged length of two adjacent sorted-by-column rows (a bind dry run —
+    /// the count is value-independent).
+    fn merge_count(evens: &[SparseEntry<F, C>], odds: &[SparseEntry<F, C>]) -> usize {
+        let mut i = 0;
+        let mut j = 0;
+        let mut produced = 0;
+        while i < evens.len() && j < odds.len() {
+            match evens[i].col.cmp(&odds[j].col) {
+                core::cmp::Ordering::Equal => {
+                    i += 1;
+                    j += 1;
+                }
+                core::cmp::Ordering::Less => i += 1,
+                core::cmp::Ordering::Greater => j += 1,
+            }
+            produced += 1;
+        }
+        produced + (evens.len() - i) + (odds.len() - j)
+    }
+
+    /// Merge-bind two adjacent sorted-by-column rows into `out` (sized by
+    /// [`Self::merge_count`]), keeping column order.
+    fn merge_fill(
+        evens: &[SparseEntry<F, C>],
+        odds: &[SparseEntry<F, C>],
+        r: F,
+        ra_lut: &CoeffLut<F>,
+        wa_lut: &CoeffLut<F>,
+        out: &mut [core::mem::MaybeUninit<SparseEntry<F, C>>],
+    ) {
+        let mut i = 0;
+        let mut j = 0;
+        let mut k = 0;
+        while i < evens.len() && j < odds.len() {
+            let bound = match evens[i].col.cmp(&odds[j].col) {
+                core::cmp::Ordering::Equal => {
+                    let entry =
+                        SparseEntry::bind(Some(&evens[i]), Some(&odds[j]), r, ra_lut, wa_lut);
+                    i += 1;
+                    j += 1;
+                    entry
+                }
+                core::cmp::Ordering::Less => {
+                    let entry = SparseEntry::bind(Some(&evens[i]), None, r, ra_lut, wa_lut);
+                    i += 1;
+                    entry
+                }
+                core::cmp::Ordering::Greater => {
+                    let entry = SparseEntry::bind(None, Some(&odds[j]), r, ra_lut, wa_lut);
+                    j += 1;
+                    entry
+                }
+            };
+            out[k] = core::mem::MaybeUninit::new(bound);
+            k += 1;
+        }
+        for even in &evens[i..] {
+            out[k] =
+                core::mem::MaybeUninit::new(SparseEntry::bind(Some(even), None, r, ra_lut, wa_lut));
+            k += 1;
+        }
+        for odd in &odds[j..] {
+            out[k] =
+                core::mem::MaybeUninit::new(SparseEntry::bind(None, Some(odd), r, ra_lut, wa_lut));
+            k += 1;
+        }
+        debug_assert_eq!(k, out.len());
+    }
+
+    /// Split a row-pair group (entries sharing `row / 2`) into its even and odd
+    /// rows. Entries are sorted by `(row, col)`, so the evens form the prefix.
+    #[expect(
+        clippy::type_complexity,
+        reason = "the (evens, odds) slice pair, spelled in full"
+    )]
+    fn split_pair_group(
+        group: &[SparseEntry<F, C>],
+    ) -> (&[SparseEntry<F, C>], &[SparseEntry<F, C>]) {
+        let odd_start = group.partition_point(|entry| entry.row % 2 == 0);
+        group.split_at(odd_start)
+    }
 }
 
 /// ra seed indices: `[0, γ, γ², γ + γ²]` — rs1 hot, rs2 hot, both.
@@ -604,150 +662,90 @@ const RA_BOTH: LutIndex = LutIndex(3);
 const WA_ZERO: LutIndex = LutIndex(0);
 const WA_HOT: LutIndex = LutIndex(1);
 
-/// Build the (sorted-by-column) sparse entries of one cycle as seed-table
-/// indices. Returns the filled prefix length (0–3).
-fn cycle_entries<F: Field>(
-    row: usize,
-    cycle: &RegisterCycleRow,
-) -> ([SparseEntry<F, LutIndex>; 3], usize) {
-    let empty = SparseEntry {
-        val: F::zero(),
-        ra: RA_ZERO,
-        wa: WA_ZERO,
-        prev_val: 0,
-        next_val: 0,
-        row,
-        col: 0,
-    };
-    let mut out = [empty; 3];
-    let mut len = 0usize;
-
-    if let Some((rs1, rs1_val)) = cycle.rs1 {
-        out[len] = SparseEntry {
-            col: rs1,
-            prev_val: rs1_val,
-            next_val: rs1_val,
-            val: F::from_u64(rs1_val),
-            ra: RA_RS1,
-            ..empty
-        };
-        len += 1;
+impl RegisterCycleRow {
+    /// The entry count [`Self::entries`] will produce for one cycle — the
+    /// counting pass's cheap twin (kept adjacent so the merge rules stay in
+    /// sync: rs2 folds into rs1's entry, rd into either read's). Option-typed
+    /// comparisons mirror the write twin's scan of emitted columns exactly, so
+    /// no sentinel value can collide with a raw index (`rd == rs2` with a folded
+    /// rs2 implies `rs2 == rs1`, which the `rd == rs1` test already catches).
+    #[cfg(feature = "parallel")]
+    fn entry_count(&self) -> usize {
+        let rs1 = self.rs1.map(|(register, _)| register);
+        let rs2 = self.rs2.map(|(register, _)| register);
+        let rd = self.rd.map(|(register, ..)| register);
+        let mut count = usize::from(rs1.is_some());
+        if rs2.is_some() && rs2 != rs1 {
+            count += 1;
+        }
+        if rd.is_some() && rd != rs1 && rd != rs2 {
+            count += 1;
+        }
+        count
     }
-    if let Some((rs2, rs2_val)) = cycle.rs2 {
-        if let Some(entry) = out[..len].iter_mut().find(|entry| entry.col == rs2) {
-            entry.ra = RA_BOTH;
-        } else {
+
+    /// Build the (sorted-by-column) sparse entries of one cycle as seed-table
+    /// indices. Returns the filled prefix length (0–3).
+    fn entries<F: Field>(&self, row: usize) -> ([SparseEntry<F, LutIndex>; 3], usize) {
+        let empty = SparseEntry {
+            val: F::zero(),
+            ra: RA_ZERO,
+            wa: WA_ZERO,
+            prev_val: 0,
+            next_val: 0,
+            row,
+            col: 0,
+        };
+        let mut out = [empty; 3];
+        let mut len = 0usize;
+
+        if let Some((rs1, rs1_val)) = self.rs1 {
             out[len] = SparseEntry {
-                col: rs2,
-                prev_val: rs2_val,
-                next_val: rs2_val,
-                val: F::from_u64(rs2_val),
-                ra: RA_RS2,
+                col: rs1,
+                prev_val: rs1_val,
+                next_val: rs1_val,
+                val: F::from_u64(rs1_val),
+                ra: RA_RS1,
                 ..empty
             };
             len += 1;
         }
-    }
-    if let Some((rd, rd_pre, rd_post)) = cycle.rd {
-        if let Some(entry) = out[..len].iter_mut().find(|entry| entry.col == rd) {
-            entry.wa = WA_HOT;
-            entry.next_val = rd_post;
-        } else {
-            out[len] = SparseEntry {
-                col: rd,
-                prev_val: rd_pre,
-                next_val: rd_post,
-                val: F::from_u64(rd_pre),
-                wa: WA_HOT,
-                ..empty
-            };
-            len += 1;
+        if let Some((rs2, rs2_val)) = self.rs2 {
+            if let Some(entry) = out[..len].iter_mut().find(|entry| entry.col == rs2) {
+                entry.ra = RA_BOTH;
+            } else {
+                out[len] = SparseEntry {
+                    col: rs2,
+                    prev_val: rs2_val,
+                    next_val: rs2_val,
+                    val: F::from_u64(rs2_val),
+                    ra: RA_RS2,
+                    ..empty
+                };
+                len += 1;
+            }
         }
-    }
-
-    // Sort by column; len ≤ 3.
-    out[..len].sort_unstable_by_key(|entry| entry.col);
-    (out, len)
-}
-
-/// Merged length of two adjacent sorted-by-column rows (a bind dry run —
-/// the count is value-independent).
-fn merge_count<F, C>(evens: &[SparseEntry<F, C>], odds: &[SparseEntry<F, C>]) -> usize {
-    let mut i = 0;
-    let mut j = 0;
-    let mut produced = 0;
-    while i < evens.len() && j < odds.len() {
-        match evens[i].col.cmp(&odds[j].col) {
-            core::cmp::Ordering::Equal => {
-                i += 1;
-                j += 1;
+        if let Some((rd, rd_pre, rd_post)) = self.rd {
+            if let Some(entry) = out[..len].iter_mut().find(|entry| entry.col == rd) {
+                entry.wa = WA_HOT;
+                entry.next_val = rd_post;
+            } else {
+                out[len] = SparseEntry {
+                    col: rd,
+                    prev_val: rd_pre,
+                    next_val: rd_post,
+                    val: F::from_u64(rd_pre),
+                    wa: WA_HOT,
+                    ..empty
+                };
+                len += 1;
             }
-            core::cmp::Ordering::Less => i += 1,
-            core::cmp::Ordering::Greater => j += 1,
         }
-        produced += 1;
-    }
-    produced + (evens.len() - i) + (odds.len() - j)
-}
 
-/// Merge-bind two adjacent sorted-by-column rows into `out` (sized by
-/// [`merge_count`]), keeping column order.
-fn merge_fill<F: Field, C: OneHotCoeff<F>>(
-    evens: &[SparseEntry<F, C>],
-    odds: &[SparseEntry<F, C>],
-    r: F,
-    ra_lut: &CoeffLut<F>,
-    wa_lut: &CoeffLut<F>,
-    out: &mut [core::mem::MaybeUninit<SparseEntry<F, C>>],
-) {
-    let mut i = 0;
-    let mut j = 0;
-    let mut k = 0;
-    while i < evens.len() && j < odds.len() {
-        let bound = match evens[i].col.cmp(&odds[j].col) {
-            core::cmp::Ordering::Equal => {
-                let entry = SparseEntry::bind(Some(&evens[i]), Some(&odds[j]), r, ra_lut, wa_lut);
-                i += 1;
-                j += 1;
-                entry
-            }
-            core::cmp::Ordering::Less => {
-                let entry = SparseEntry::bind(Some(&evens[i]), None, r, ra_lut, wa_lut);
-                i += 1;
-                entry
-            }
-            core::cmp::Ordering::Greater => {
-                let entry = SparseEntry::bind(None, Some(&odds[j]), r, ra_lut, wa_lut);
-                j += 1;
-                entry
-            }
-        };
-        out[k] = core::mem::MaybeUninit::new(bound);
-        k += 1;
+        // Sort by column; len ≤ 3.
+        out[..len].sort_unstable_by_key(|entry| entry.col);
+        (out, len)
     }
-    for even in &evens[i..] {
-        out[k] =
-            core::mem::MaybeUninit::new(SparseEntry::bind(Some(even), None, r, ra_lut, wa_lut));
-        k += 1;
-    }
-    for odd in &odds[j..] {
-        out[k] = core::mem::MaybeUninit::new(SparseEntry::bind(None, Some(odd), r, ra_lut, wa_lut));
-        k += 1;
-    }
-    debug_assert_eq!(k, out.len());
-}
-
-/// Split a row-pair group (entries sharing `row / 2`) into its even and odd
-/// rows. Entries are sorted by `(row, col)`, so the evens form the prefix.
-#[expect(
-    clippy::type_complexity,
-    reason = "the (evens, odds) slice pair, spelled in full"
-)]
-fn split_pair_group<F, C>(
-    group: &[SparseEntry<F, C>],
-) -> (&[SparseEntry<F, C>], &[SparseEntry<F, C>]) {
-    let odd_start = group.partition_point(|entry| entry.row % 2 == 0);
-    group.split_at(odd_start)
 }
 
 pub struct OptimizedRegistersReadWrite;
@@ -807,7 +805,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
             rs1_indices,
             rs2_indices,
             rd_indices,
-        } = collect_register_entries(witness, cycles)?;
+        } = CollectRegisterEntries::collect(witness, cycles)?;
         let entries = SparseEntries::Indexed {
             entries,
             ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
@@ -878,6 +876,94 @@ impl<F: Field> SparseEntries<F> {
         {
             entries.iter().map(deref_entry).collect()
         }
+    }
+
+    /// The cycle-round quadratic inner factor `[q(0), leading coefficient]`
+    /// over the remaining sparse rows.
+    fn quadratic(&self, e_in: &[F], e_out: &[F], inc: &[F]) -> [F; 2] {
+        match self {
+            Self::Indexed {
+                entries,
+                ra_lut,
+                wa_lut,
+            } => sparse_quadratic(entries, ra_lut, wa_lut, e_in, e_out, inc),
+            Self::Direct(entries) => {
+                let unused = Self::unused_lut();
+                sparse_quadratic(entries, &unused, &unused, e_in, e_out, inc)
+            }
+        }
+    }
+
+    /// Bind one cycle variable in place.
+    fn bind(&mut self, r: F) {
+        // Dereference to direct field coefficients when one more table
+        // squaring would overflow the u16 index domain (after the third
+        // cycle bind under the seed sizes) — by then the entry count has
+        // started merging down, so the wider entries no longer set the peak.
+        let saturated = matches!(
+            self,
+            Self::Indexed { ra_lut, wa_lut, .. }
+                if ra_lut.saturated() || wa_lut.saturated()
+        );
+        if saturated {
+            if let Self::Indexed {
+                entries,
+                ra_lut,
+                wa_lut,
+            } = std::mem::replace(self, Self::Direct(Vec::new()))
+            {
+                *self = Self::Direct(Self::deref(entries, &ra_lut, &wa_lut));
+            }
+        }
+        match self {
+            Self::Indexed {
+                entries,
+                ra_lut,
+                wa_lut,
+            } => {
+                // Entries combine indices against the CURRENT table widths;
+                // the tables then square so the combined indices address the
+                // bound values.
+                bind_sparse_entries(entries, r, ra_lut, wa_lut);
+                ra_lut.bind(r);
+                wa_lut.bind(r);
+            }
+            Self::Direct(entries) => {
+                let unused = Self::unused_lut();
+                bind_sparse_entries(entries, r, &unused, &unused);
+            }
+        }
+    }
+
+    /// Scatter the fully cycle-bound single row into K-sized dense
+    /// `(ra, wa, val)` arrays — the cycle→address transition state.
+    fn into_dense(self, k: usize) -> (Vec<F>, Vec<F>, Vec<F>) {
+        let mut ra = vec![F::zero(); k];
+        let mut wa = vec![F::zero(); k];
+        let mut val = vec![F::zero(); k];
+        match self {
+            Self::Indexed {
+                entries,
+                ra_lut,
+                wa_lut,
+            } => {
+                for entry in entries {
+                    debug_assert_eq!(entry.row, 0);
+                    ra[entry.col as usize] = entry.ra.value(&ra_lut);
+                    wa[entry.col as usize] = entry.wa.value(&wa_lut);
+                    val[entry.col as usize] = entry.val;
+                }
+            }
+            Self::Direct(entries) => {
+                for entry in entries {
+                    debug_assert_eq!(entry.row, 0);
+                    ra[entry.col as usize] = entry.ra;
+                    wa[entry.col as usize] = entry.wa;
+                    val[entry.col as usize] = entry.val;
+                }
+            }
+        }
+        (ra, wa, val)
     }
 }
 
@@ -969,8 +1055,8 @@ fn bind_sparse_entries<F, C>(
         entries[bounds[block]..bounds[block + 1]]
             .chunk_by(pair_predicate)
             .map(|group| {
-                let (evens, odds) = split_pair_group(group);
-                merge_count(evens, odds)
+                let (evens, odds) = SparseEntry::split_pair_group(group);
+                SparseEntry::merge_count(evens, odds)
             })
             .sum()
     };
@@ -993,9 +1079,9 @@ fn bind_sparse_entries<F, C>(
     let fill_block = |(block, out): (usize, &mut [core::mem::MaybeUninit<SparseEntry<F, C>>])| {
         let mut written = 0usize;
         for group in entries_ref[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
-            let (evens, odds) = split_pair_group(group);
-            let take = merge_count(evens, odds);
-            merge_fill(
+            let (evens, odds) = SparseEntry::split_pair_group(group);
+            let take = SparseEntry::merge_count(evens, odds);
+            SparseEntry::merge_fill(
                 evens,
                 odds,
                 r,
@@ -1060,7 +1146,7 @@ where
             let inc_evals = [inc_0, inc[j_prime + 1] - inc_0];
 
             let mut inner = [F::Accumulator::default(), F::Accumulator::default()];
-            let (evens, odds) = split_pair_group(pair_group);
+            let (evens, odds) = SparseEntry::split_pair_group(pair_group);
             let mut i = 0;
             let mut j = 0;
             while i < evens.len() && j < odds.len() {
@@ -1155,19 +1241,7 @@ impl<F: Field> ReadWriteKernel<F> {
     fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let inc = self.inc.evals();
-        let quadratic = match &self.entries {
-            SparseEntries::Indexed {
-                entries,
-                ra_lut,
-                wa_lut,
-            } => sparse_quadratic(entries, ra_lut, wa_lut, e_in, e_out, inc),
-            SparseEntries::Direct(entries) => {
-                let unused = SparseEntries::unused_lut();
-                sparse_quadratic(entries, &unused, &unused, e_in, e_out, inc)
-            }
-        };
-
+        let quadratic = self.entries.quadratic(e_in, e_out, self.inc.evals());
         self.gruen
             .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
     }
@@ -1210,47 +1284,6 @@ impl<F: Field> ReadWriteKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn bind_sparse(&mut self, r: F) {
-        // Dereference to direct field coefficients when one more table
-        // squaring would overflow the u16 index domain (after the third
-        // cycle bind under the seed sizes) — by then the entry count has
-        // started merging down, so the wider entries no longer set the peak.
-        let saturated = matches!(
-            &self.entries,
-            SparseEntries::Indexed { ra_lut, wa_lut, .. }
-                if ra_lut.saturated() || wa_lut.saturated()
-        );
-        if saturated {
-            if let SparseEntries::Indexed {
-                entries,
-                ra_lut,
-                wa_lut,
-            } = std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new()))
-            {
-                self.entries =
-                    SparseEntries::Direct(SparseEntries::deref(entries, &ra_lut, &wa_lut));
-            }
-        }
-        match &mut self.entries {
-            SparseEntries::Indexed {
-                entries,
-                ra_lut,
-                wa_lut,
-            } => {
-                // Entries combine indices against the CURRENT table widths;
-                // the tables then square so the combined indices address the
-                // bound values.
-                bind_sparse_entries(entries, r, ra_lut, wa_lut);
-                ra_lut.bind(r);
-                wa_lut.bind(r);
-            }
-            SparseEntries::Direct(entries) => {
-                let unused = SparseEntries::unused_lut();
-                bind_sparse_entries(entries, r, &unused, &unused);
-            }
-        }
-    }
-
     /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
     /// sparse rows; the final cycle bind collapses to the K-sized dense
     /// address state; address rounds bind the three dense arrays.
@@ -1258,7 +1291,7 @@ impl<F: Field> ReadWriteKernel<F> {
         if self.progress.bound() < self.log_t {
             self.gruen.bind(r);
             self.inc.bind_with_order(r, BindingOrder::LowToHigh);
-            self.bind_sparse(r);
+            self.entries.bind(r);
         } else {
             for table in [&mut self.ra, &mut self.wa, &mut self.val] {
                 let half = table.len() / 2;
@@ -1273,37 +1306,10 @@ impl<F: Field> ReadWriteKernel<F> {
         self.progress.advance();
 
         if self.progress.bound() == self.log_t {
-            let k = 1usize << self.log_k;
-            let mut ra = vec![F::zero(); k];
-            let mut wa = vec![F::zero(); k];
-            let mut val = vec![F::zero(); k];
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
-            match std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new())) {
-                SparseEntries::Indexed {
-                    entries,
-                    ra_lut,
-                    wa_lut,
-                } => {
-                    for entry in entries {
-                        debug_assert_eq!(entry.row, 0);
-                        ra[entry.col as usize] = entry.ra.value(&ra_lut);
-                        wa[entry.col as usize] = entry.wa.value(&wa_lut);
-                        val[entry.col as usize] = entry.val;
-                    }
-                }
-                SparseEntries::Direct(entries) => {
-                    for entry in entries {
-                        debug_assert_eq!(entry.row, 0);
-                        ra[entry.col as usize] = entry.ra;
-                        wa[entry.col as usize] = entry.wa;
-                        val[entry.col as usize] = entry.val;
-                    }
-                }
-            }
-            self.ra = ra;
-            self.wa = wa;
-            self.val = val;
+            let entries = std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new()));
+            (self.ra, self.wa, self.val) = entries.into_dense(1usize << self.log_k);
             self.eq_scalar = self.gruen.current_scalar();
             self.inc_scalar = self.inc.evals()[0];
         }
@@ -1325,66 +1331,63 @@ impl<F: Field> ReadWriteKernel<F> {
             .collect();
         (r_address, r_cycle)
     }
-}
 
-/// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the two
-/// read operands in one walk — the direct MLE of a one-hot `(K × T)` grid at
-/// the bound point.
-///
-/// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
-/// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
-/// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
-fn one_hot_operand_claims<F: Field>(
-    rs1_indices: &[Option<u8>],
-    rs2_indices: &[Option<u8>],
-    r_address: &[F],
-    r_cycle: &[F],
-) -> (F, F) {
-    let log_t = r_cycle.len();
-    let addr_bits = r_address.len();
-    let n = log_t + addr_bits;
-    let hi_bits = core::cmp::min(log_t, n.div_ceil(2));
+    /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the
+    /// two read operands in one walk — the direct MLE of a one-hot `(K × T)`
+    /// grid at the bound point.
+    ///
+    /// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
+    /// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
+    /// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
+    fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
+        let rs1_indices = &self.rs1_indices;
+        let rs2_indices = &self.rs2_indices;
+        let log_t = r_cycle.len();
+        let addr_bits = r_address.len();
+        let n = log_t + addr_bits;
+        let hi_bits = core::cmp::min(log_t, n.div_ceil(2));
 
-    let r_joint: Vec<F> = r_cycle.iter().chain(r_address.iter()).copied().collect();
-    let (r_hi, r_lo) = r_joint.split_at(hi_bits);
-    let e_hi = EqPolynomial::<F>::evals(r_hi, None);
-    let e_lo = EqPolynomial::<F>::evals(r_lo, None);
+        let r_joint: Vec<F> = r_cycle.iter().chain(r_address.iter()).copied().collect();
+        let (r_hi, r_lo) = r_joint.split_at(hi_bits);
+        let e_hi = EqPolynomial::<F>::evals(r_hi, None);
+        let e_lo = EqPolynomial::<F>::evals(r_lo, None);
 
-    let cycle_bits_in_lo = (n - hi_bits) - addr_bits;
-    let cycles_per_block = 1usize << cycle_bits_in_lo;
-    let cycle_lo_mask = cycles_per_block - 1;
+        let cycle_bits_in_lo = (n - hi_bits) - addr_bits;
+        let cycles_per_block = 1usize << cycle_bits_in_lo;
+        let cycle_lo_mask = cycles_per_block - 1;
 
-    let block_contribution = |idx_hi: usize| -> [F; 2] {
-        let block_start = idx_hi << cycle_bits_in_lo;
-        let block_end = core::cmp::min(block_start + cycles_per_block, rs1_indices.len());
-        if block_start >= rs1_indices.len() {
-            return [F::zero(); 2];
-        }
-        let mut sums = [F::Accumulator::default(), F::Accumulator::default()];
-        for j in block_start..block_end {
-            let j_in_block = (j & cycle_lo_mask) << addr_bits;
-            if let Some(rs1) = rs1_indices[j] {
-                sums[0].add(e_lo[j_in_block | rs1 as usize]);
+        let block_contribution = |idx_hi: usize| -> [F; 2] {
+            let block_start = idx_hi << cycle_bits_in_lo;
+            let block_end = core::cmp::min(block_start + cycles_per_block, rs1_indices.len());
+            if block_start >= rs1_indices.len() {
+                return [F::zero(); 2];
             }
-            if let Some(rs2) = rs2_indices[j] {
-                sums[1].add(e_lo[j_in_block | rs2 as usize]);
+            let mut sums = [F::Accumulator::default(), F::Accumulator::default()];
+            for j in block_start..block_end {
+                let j_in_block = (j & cycle_lo_mask) << addr_bits;
+                if let Some(rs1) = rs1_indices[j] {
+                    sums[0].add(e_lo[j_in_block | rs1 as usize]);
+                }
+                if let Some(rs2) = rs2_indices[j] {
+                    sums[1].add(e_lo[j_in_block | rs2 as usize]);
+                }
             }
-        }
-        let e_hi_eval = e_hi[idx_hi];
-        [e_hi_eval * sums[0].reduce(), e_hi_eval * sums[1].reduce()]
-    };
+            let e_hi_eval = e_hi[idx_hi];
+            [e_hi_eval * sums[0].reduce(), e_hi_eval * sums[1].reduce()]
+        };
 
-    #[cfg(feature = "parallel")]
-    let claims = (0..e_hi.len())
-        .into_par_iter()
-        .map(block_contribution)
-        .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
-    #[cfg(not(feature = "parallel"))]
-    let claims = (0..e_hi.len())
-        .map(block_contribution)
-        .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
+        #[cfg(feature = "parallel")]
+        let claims = (0..e_hi.len())
+            .into_par_iter()
+            .map(block_contribution)
+            .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
+        #[cfg(not(feature = "parallel"))]
+        let claims = (0..e_hi.len())
+            .map(block_contribution)
+            .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
 
-    (claims[0], claims[1])
+        (claims[0], claims[1])
+    }
 }
 
 impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
@@ -1423,8 +1426,7 @@ impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
     ) -> Result<RegistersReadWriteOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
         let (r_address, r_cycle) = self.bound_point();
-        let (rs1_ra, rs2_ra) =
-            one_hot_operand_claims(&self.rs1_indices, &self.rs2_indices, &r_address, &r_cycle);
+        let (rs1_ra, rs2_ra) = self.one_hot_operand_claims(&r_address, &r_cycle);
         Ok(RegistersReadWriteOutputClaims {
             registers_val: self.val[0],
             rs1_ra,
@@ -1501,7 +1503,7 @@ pub(crate) mod test_support {
     #[cfg(feature = "parallel")]
     #[test]
     fn cycle_entry_count_matches_cycle_entries() {
-        use super::{cycle_entries, cycle_entry_count, RegisterCycleRow};
+        use super::RegisterCycleRow;
         let candidates: [Option<u8>; 5] = [None, Some(0), Some(5), Some(127), Some(255)];
         for rs1 in candidates {
             for rs2 in candidates {
@@ -1511,9 +1513,9 @@ pub(crate) mod test_support {
                         rs2: rs2.map(|register| (register, 22)),
                         rd: rd.map(|register| (register, 33, 44)),
                     };
-                    let (_, len) = cycle_entries::<Fr>(0, &cycle);
+                    let (_, len) = cycle.entries::<Fr>(0);
                     assert_eq!(
-                        cycle_entry_count(&cycle),
+                        cycle.entry_count(),
                         len,
                         "count/write divergence for {cycle:?}"
                     );
@@ -1528,7 +1530,7 @@ pub(crate) mod test_support {
     /// reports the FIRST one, independent of thread timing.
     #[test]
     fn collect_rejects_out_of_domain_register_indices() {
-        use super::collect_register_entries;
+        use super::CollectRegisterEntries;
         let mut fixture = TraceFixture::new();
         fixture.noop();
         fixture.op(Some(3), Some(2), None);
@@ -1555,7 +1557,7 @@ pub(crate) mod test_support {
             ..TraceRow::default()
         });
         fixture.with_plane(2, |witness| {
-            let error = match collect_register_entries::<Fr>(witness, 1 << 2) {
+            let error = match CollectRegisterEntries::<Fr>::collect(witness, 1 << 2) {
                 Err(error) => error,
                 Ok(_) => panic!("collect accepted an out-of-domain register index"),
             };

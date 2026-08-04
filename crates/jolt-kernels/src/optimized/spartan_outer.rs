@@ -177,96 +177,99 @@ struct RowGroupValues {
     b_second: [S192; SECOND_GROUP_LEN],
 }
 
-/// Evaluate the 19 constraint rows at one cycle with exact integer
-/// arithmetic. Formulas transcribe `jolt-r1cs`'s `rv64_eq_constraint_rows`
-/// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
-/// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
-fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
-    let flag = |value: bool| i64::from(value);
-    let load = flag(row.load.0);
-    let store = flag(row.store.0);
-    let add = flag(row.add_operands.0);
-    let sub = flag(row.subtract_operands.0);
-    let mul = flag(row.multiply_operands.0);
-    let jump = flag(row.jump.0);
-    let should_branch = flag(row.should_branch.0);
+impl SpartanOuterRow {
+    /// Evaluate the 19 constraint rows at one cycle with exact integer
+    /// arithmetic. Formulas transcribe `jolt-r1cs`'s `rv64_eq_constraint_rows`
+    /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
+    /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
+    fn group_values(&self) -> RowGroupValues {
+        let flag = |value: bool| i64::from(value);
+        let load = flag(self.load.0);
+        let store = flag(self.store.0);
+        let add = flag(self.add_operands.0);
+        let sub = flag(self.subtract_operands.0);
+        let mul = flag(self.multiply_operands.0);
+        let jump = flag(self.jump.0);
+        let should_branch = flag(self.should_branch.0);
 
-    // Rows 1, 2, 3, 4, 5, 6, 11, 14, 17, 18.
-    let a_first = [
-        1 - load - store,
-        load,
-        load,
-        store,
-        add + sub + mul,
-        1 - add - sub - mul,
-        flag(row.assert_flag.0),
-        flag(row.should_jump.0),
-        flag(row.virtual_instruction.0) - flag(row.is_last_in_sequence.0),
-        flag(row.next_is_virtual.0) - flag(row.next_is_first_in_sequence.0),
-    ];
-    // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
-    let a_second = [
-        load + store,
-        add,
-        sub,
-        mul,
-        1 - add - sub - mul - flag(row.advice.0),
-        flag(row.write_lookup_output_to_rd.0),
-        jump,
-        should_branch,
-        1 - should_branch - jump,
-    ];
+        // Rows 1, 2, 3, 4, 5, 6, 11, 14, 17, 18.
+        let a_first = [
+            1 - load - store,
+            load,
+            load,
+            store,
+            add + sub + mul,
+            1 - add - sub - mul,
+            flag(self.assert_flag.0),
+            flag(self.should_jump.0),
+            flag(self.virtual_instruction.0) - flag(self.is_last_in_sequence.0),
+            flag(self.next_is_virtual.0) - flag(self.next_is_first_in_sequence.0),
+        ];
+        // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
+        let a_second = [
+            load + store,
+            add,
+            sub,
+            mul,
+            1 - add - sub - mul - flag(self.advice.0),
+            flag(self.write_lookup_output_to_rd.0),
+            jump,
+            should_branch,
+            1 - should_branch - jump,
+        ];
 
-    let diff = |a: u64, b: u64| S192::from_i128(i128::from(a) - i128::from(b));
-    let b_first = [
-        S192::from_u64(row.ram_address.0),
-        diff(row.ram_read_value.0, row.ram_write_value.0),
-        diff(row.ram_read_value.0, row.rd_write_value.0),
-        diff(row.rs2_value.0, row.ram_write_value.0),
-        S192::from_u64(row.left_lookup_operand.0),
-        diff(row.left_lookup_operand.0, row.left_instruction_input.0),
-        S192::from_i128(i128::from(row.lookup_output.0) - 1),
-        diff(row.next_unexpanded_pc.0, row.lookup_output.0),
-        S192::from_i128(i128::from(row.next_pc.0) - i128::from(row.pc.0) - 1),
-        S192::from_i64(1 - flag(row.do_not_update_unexpanded_pc.0)),
-    ];
+        let diff = |a: u64, b: u64| S192::from_i128(i128::from(a) - i128::from(b));
+        let b_first = [
+            S192::from_u64(self.ram_address.0),
+            diff(self.ram_read_value.0, self.ram_write_value.0),
+            diff(self.ram_read_value.0, self.rd_write_value.0),
+            diff(self.rs2_value.0, self.ram_write_value.0),
+            S192::from_u64(self.left_lookup_operand.0),
+            diff(self.left_lookup_operand.0, self.left_instruction_input.0),
+            S192::from_i128(i128::from(self.lookup_output.0) - 1),
+            diff(self.next_unexpanded_pc.0, self.lookup_output.0),
+            S192::from_i128(i128::from(self.next_pc.0) - i128::from(self.pc.0) - 1),
+            S192::from_i64(1 - flag(self.do_not_update_unexpanded_pc.0)),
+        ];
 
-    let flag_i128 = |value: bool| i128::from(value);
-    let right_lookup = S192::from_u128(row.right_lookup_operand.0);
-    let right_input = S192::from_i128(row.right_instruction_input.0);
-    let left_input = S192::from_u64(row.left_instruction_input.0);
-    let imm = S192::from_i128(row.imm.0);
-    let product_limbs = row.product.0.magnitude_limbs();
-    let product = S192::new(
-        [product_limbs[0], product_limbs[1], 0],
-        row.product.0.is_positive,
-    );
-    let two_pow_64 = S192::new([0, 1, 0], true);
-    let b_second = [
-        S192::from_i128(i128::from(row.ram_address.0) - i128::from(row.rs1_value.0)) - imm,
-        right_lookup - left_input - right_input,
-        right_lookup - left_input + right_input - two_pow_64,
-        right_lookup - product,
-        right_lookup - right_input,
-        S192::from_i128(i128::from(row.rd_write_value.0) - i128::from(row.lookup_output.0)),
-        S192::from_i128(
-            i128::from(row.rd_write_value.0) - i128::from(row.unexpanded_pc.0) - 4
-                + 2 * flag_i128(row.is_compressed.0),
-        ),
-        S192::from_i128(i128::from(row.next_unexpanded_pc.0) - i128::from(row.unexpanded_pc.0))
-            - imm,
-        S192::from_i128(
-            i128::from(row.next_unexpanded_pc.0) - i128::from(row.unexpanded_pc.0) - 4
-                + 4 * flag_i128(row.do_not_update_unexpanded_pc.0)
-                + 2 * flag_i128(row.is_compressed.0),
-        ),
-    ];
+        let flag_i128 = |value: bool| i128::from(value);
+        let right_lookup = S192::from_u128(self.right_lookup_operand.0);
+        let right_input = S192::from_i128(self.right_instruction_input.0);
+        let left_input = S192::from_u64(self.left_instruction_input.0);
+        let imm = S192::from_i128(self.imm.0);
+        let product_limbs = self.product.0.magnitude_limbs();
+        let product = S192::new(
+            [product_limbs[0], product_limbs[1], 0],
+            self.product.0.is_positive,
+        );
+        let two_pow_64 = S192::new([0, 1, 0], true);
+        let b_second = [
+            S192::from_i128(i128::from(self.ram_address.0) - i128::from(self.rs1_value.0)) - imm,
+            right_lookup - left_input - right_input,
+            right_lookup - left_input + right_input - two_pow_64,
+            right_lookup - product,
+            right_lookup - right_input,
+            S192::from_i128(i128::from(self.rd_write_value.0) - i128::from(self.lookup_output.0)),
+            S192::from_i128(
+                i128::from(self.rd_write_value.0) - i128::from(self.unexpanded_pc.0) - 4
+                    + 2 * flag_i128(self.is_compressed.0),
+            ),
+            S192::from_i128(
+                i128::from(self.next_unexpanded_pc.0) - i128::from(self.unexpanded_pc.0),
+            ) - imm,
+            S192::from_i128(
+                i128::from(self.next_unexpanded_pc.0) - i128::from(self.unexpanded_pc.0) - 4
+                    + 4 * flag_i128(self.do_not_update_unexpanded_pc.0)
+                    + 2 * flag_i128(self.is_compressed.0),
+            ),
+        ];
 
-    RowGroupValues {
-        a_first,
-        a_second,
-        b_first,
-        b_second,
+        RowGroupValues {
+            a_first,
+            a_second,
+            b_first,
+            b_second,
+        }
     }
 }
 
@@ -304,37 +307,51 @@ fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
     out
 }
 
-/// `Az·Bz` at every extended node for one cycle, per stream: integer Lagrange
-/// extension of the group row values, then one wide integer product. Ranges:
-/// `|az| < 2^22`, `|bz| < 2^152`, product `< 2^174` — inside `S256`.
-fn extended_products(
-    values: &RowGroupValues,
-    coefficients: &[(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT],
-) -> [(S256, S256); EXTENDED_NODE_COUNT] {
-    let mut out = [(S256::zero(), S256::zero()); EXTENDED_NODE_COUNT];
-    for (slot, (_, coefficients)) in coefficients.iter().enumerate() {
-        let mut az_first: i64 = 0;
-        let mut az_second: i64 = 0;
-        let mut bz_first = S192::zero();
-        let mut bz_second = S192::zero();
-        for (i, &c) in coefficients.iter().enumerate() {
-            if c == 0 {
-                continue;
+impl RowGroupValues {
+    /// `Az·Bz` at every extended node for one cycle, per stream: integer Lagrange
+    /// extension of the group row values, then one wide integer product. Ranges:
+    /// `|az| < 2^22`, `|bz| < 2^152`, product `< 2^174` — inside `S256`.
+    fn extended_products(
+        &self,
+        coefficients: &[(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT],
+    ) -> [(S256, S256); EXTENDED_NODE_COUNT] {
+        let mut out = [(S256::zero(), S256::zero()); EXTENDED_NODE_COUNT];
+        for (slot, (_, coefficients)) in coefficients.iter().enumerate() {
+            let mut az_first: i64 = 0;
+            let mut az_second: i64 = 0;
+            let mut bz_first = S192::zero();
+            let mut bz_second = S192::zero();
+            for (i, &c) in coefficients.iter().enumerate() {
+                if c == 0 {
+                    continue;
+                }
+                let c_signed = S64::from_i64(c);
+                az_first += c * self.a_first[i];
+                bz_first += c_signed.mul_trunc::<3, 3>(&self.b_first[i]);
+                if i < SECOND_GROUP_LEN {
+                    az_second += c * self.a_second[i];
+                    bz_second += c_signed.mul_trunc::<3, 3>(&self.b_second[i]);
+                }
             }
-            let c_signed = S64::from_i64(c);
-            az_first += c * values.a_first[i];
-            bz_first += c_signed.mul_trunc::<3, 3>(&values.b_first[i]);
-            if i < SECOND_GROUP_LEN {
-                az_second += c * values.a_second[i];
-                bz_second += c_signed.mul_trunc::<3, 3>(&values.b_second[i]);
-            }
+            out[slot] = (
+                S64::from_i64(az_first).mul_trunc::<3, 4>(&bz_first),
+                S64::from_i64(az_second).mul_trunc::<3, 4>(&bz_second),
+            );
         }
-        out[slot] = (
-            S64::from_i64(az_first).mul_trunc::<3, 4>(&bz_first),
-            S64::from_i64(az_second).mul_trunc::<3, 4>(&bz_second),
-        );
+        out
     }
-    out
+
+    /// The bound `Az`/`Bz` values of the first stream group under the
+    /// uni-skip challenge's Lagrange weights.
+    fn fold_first<F: Field>(&self, weights: &[F]) -> (F, F) {
+        fold_group(weights, &self.a_first, &self.b_first)
+    }
+
+    /// The bound `Az`/`Bz` values of the second stream group; only the first
+    /// `SECOND_GROUP_LEN` Lagrange weights apply.
+    fn fold_second<F: Field>(&self, weights: &[F]) -> (F, F) {
+        fold_group(&weights[..SECOND_GROUP_LEN], &self.a_second, &self.b_second)
+    }
 }
 
 fn widen(value: &S192) -> S256 {
@@ -376,49 +393,6 @@ crate::optimized::impl_field_allocative!(SpartanOuterCarry, |carry| {
     vec_heap_bytes(&carry.tau) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
 });
 
-/// Extended-node evaluations of
-/// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
-/// table factored as `E_out ⊗ E_in` and the per-cycle products from the
-/// integer extension pipeline.
-fn extended_t1_values<F: Field>(
-    rows: &BundleAccess<'_, SpartanOuterRow>,
-    tau_low: &[F],
-) -> Result<Vec<F>, WitnessError> {
-    let split = tau_low.len() / 2;
-    let (out_point, in_point) = tau_low.split_at(split);
-    let e_out = EqPolynomial::<F>::evals(out_point, None);
-    let e_in = EqPolynomial::<F>::evals(in_point, None);
-    // `in_point` always covers the stream bit (τ_low's last entry), so every
-    // (cycle, stream) pair sits inside one `x_out` block.
-    let pairs_per_block = e_in.len() / 2;
-    let coefficients = extension_coefficients();
-
-    let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, |x_out| {
-        let mut accumulators: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator> =
-            vec![Default::default(); EXTENDED_NODE_COUNT];
-        for pair in 0..pairs_per_block {
-            let t = x_out * pairs_per_block + pair;
-            let row = rows.row(t)?;
-            let values = row_group_values(&row);
-            let products = extended_products(&values, &coefficients);
-            for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
-                accumulator.fmadd_s256(e_in[2 * pair], first);
-                accumulator.fmadd_s256(e_in[2 * pair + 1], second);
-            }
-        }
-        Ok(accumulators
-            .into_iter()
-            .map(|accumulator| e_out[x_out] * accumulator.reduce())
-            .collect())
-    })?;
-
-    let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
-    for ((position, _), value) in extension_coefficients().iter().zip(extended) {
-        t1_values[*position] = value;
-    }
-    Ok(t1_values)
-}
-
 /// The stage-1 uni-skip front: typed-row collection, the extended-node
 /// evaluation pass, and the first-round polynomial assembly.
 pub struct OptimizedOuterUniskip;
@@ -454,7 +428,7 @@ impl OptimizedOuterUniskip {
             });
         }
         let (tau_low, _) = tau.split_at(log_t + 1);
-        let t1_values = extended_t1_values(&rows.access(), tau_low)?;
+        let t1_values = Self::extended_t1_values(&rows.access(), tau_low)?;
         session.park(SpartanOuterCarry {
             log_t,
             tau: tau.to_vec(),
@@ -462,6 +436,50 @@ impl OptimizedOuterUniskip {
             t1_values,
         });
         Ok(())
+    }
+
+    /// Extended-node evaluations of
+    /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
+    /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
+    /// integer extension pipeline.
+    fn extended_t1_values<F: Field>(
+        rows: &BundleAccess<'_, SpartanOuterRow>,
+        tau_low: &[F],
+    ) -> Result<Vec<F>, WitnessError> {
+        let split = tau_low.len() / 2;
+        let (out_point, in_point) = tau_low.split_at(split);
+        let e_out = EqPolynomial::<F>::evals(out_point, None);
+        let e_in = EqPolynomial::<F>::evals(in_point, None);
+        // `in_point` always covers the stream bit (τ_low's last entry), so every
+        // (cycle, stream) pair sits inside one `x_out` block.
+        let pairs_per_block = e_in.len() / 2;
+        let coefficients = extension_coefficients();
+
+        let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, |x_out| {
+            let mut accumulators: Vec<
+                <F as WithSignedProductAccumulator>::SignedProductAccumulator,
+            > = vec![Default::default(); EXTENDED_NODE_COUNT];
+            for pair in 0..pairs_per_block {
+                let t = x_out * pairs_per_block + pair;
+                let row = rows.row(t)?;
+                let values = row.group_values();
+                let products = values.extended_products(&coefficients);
+                for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
+                    accumulator.fmadd_s256(e_in[2 * pair], first);
+                    accumulator.fmadd_s256(e_in[2 * pair + 1], second);
+                }
+            }
+            Ok(accumulators
+                .into_iter()
+                .map(|accumulator| e_out[x_out] * accumulator.reduce())
+                .collect())
+        })?;
+
+        let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
+        for ((position, _), value) in extension_coefficients().iter().zip(extended) {
+            t1_values[*position] = value;
+        }
+        Ok(t1_values)
     }
 }
 
@@ -623,13 +641,9 @@ impl<F: Field> OuterRemainderKernel<F> {
             for x_in in 0..in_len {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
-                let values = row_group_values(&row);
-                let (az_zero, bz_zero) = fold_group(lagrange, &values.a_first, &values.b_first);
-                let (az_one, bz_one) = fold_group(
-                    &lagrange[..SECOND_GROUP_LEN],
-                    &values.a_second,
-                    &values.b_second,
-                );
+                let values = row.group_values();
+                let (az_zero, bz_zero) = values.fold_first(lagrange);
+                let (az_one, bz_one) = values.fold_second(lagrange);
                 az_chunk[2 * x_in] = az_zero;
                 az_chunk[2 * x_in + 1] = az_one;
                 bz_chunk[2 * x_in] = bz_zero;

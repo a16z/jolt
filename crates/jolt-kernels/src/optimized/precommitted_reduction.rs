@@ -172,10 +172,10 @@ impl<F: Field> PrepareKernel<F, TrustedAdviceCyclePhase<F>> for OptimizedPrecomm
                 .ok_or(KernelError::InvariantViolation {
                     reason: "trusted-advice cycle phase carries no reference opening point",
                 })?;
-        Ok(Box::new(advice_reduction_kernel::<
+        Ok(Box::new(CycleReductionKernel::<
             F,
             TrustedAdviceCyclePhase<F>,
-        >(
+        >::for_advice(
             JoltAdviceKind::Trusted,
             inputs.relation.layout(),
             r_val,
@@ -199,10 +199,10 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPreco
                 .ok_or(KernelError::InvariantViolation {
                     reason: "untrusted-advice cycle phase carries no reference opening point",
                 })?;
-        Ok(Box::new(advice_reduction_kernel::<
+        Ok(Box::new(CycleReductionKernel::<
             F,
             UntrustedAdviceCyclePhase<F>,
-        >(
+        >::for_advice(
             JoltAdviceKind::Untrusted,
             inputs.relation.layout(),
             r_val,
@@ -211,38 +211,42 @@ impl<F: Field> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedPreco
     }
 }
 
-/// The advice reduction's cycle-phase kernel: the advice polynomial as the
-/// value table and the eq table of the staged RAM value-check point, both in
-/// Dory opening-round order. The eq table is built from the permuted
-/// challenges directly — the coefficient permute and the challenge permute
-/// are the same LSB relabeling, so `permuted_table[i] · permuted_eq[i]` pairs
-/// exactly as the unpermuted product did.
-fn advice_reduction_kernel<F: Field, R>(
-    kind: JoltAdviceKind,
-    layout: &AdviceClaimReductionLayout,
-    r_val: &[F],
-    witness: &dyn JoltWitnessPlane<F>,
-) -> Result<CycleReductionKernel<F, R>, KernelError<F>> {
-    let reduction = layout.precommitted().clone();
-    let permutation = reduction.poly_opening_round_permutation_be();
-    if r_val.len() != permutation.len() {
-        return Err(KernelError::InvalidGeometry {
-            reason: format!(
-                "advice reference point has {} variables, schedule expects {}",
-                r_val.len(),
-                permutation.len()
+/// Optimized-tier constructors for the shared cycle-phase kernel — the
+/// PREPARE-side table builders this module owns.
+impl<F: Field, R> CycleReductionKernel<F, R> {
+    /// The advice reduction's cycle-phase kernel: the advice polynomial as the
+    /// value table and the eq table of the staged RAM value-check point, both in
+    /// Dory opening-round order. The eq table is built from the permuted
+    /// challenges directly — the coefficient permute and the challenge permute
+    /// are the same LSB relabeling, so `permuted_table[i] · permuted_eq[i]` pairs
+    /// exactly as the unpermuted product did.
+    fn for_advice(
+        kind: JoltAdviceKind,
+        layout: &AdviceClaimReductionLayout,
+        r_val: &[F],
+        witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<Self, KernelError<F>> {
+        let reduction = layout.precommitted().clone();
+        let permutation = reduction.poly_opening_round_permutation_be();
+        if r_val.len() != permutation.len() {
+            return Err(KernelError::InvalidGeometry {
+                reason: format!(
+                    "advice reference point has {} variables, schedule expects {}",
+                    r_val.len(),
+                    permutation.len()
+                ),
+            });
+        }
+        let table = advice_table(witness, kind, permutation.len())?;
+        let (value, eq) = match lsb_permutation(permutation) {
+            Some(old_lsb_to_new_lsb) => (
+                permute_coefficients(&table, &old_lsb_to_new_lsb),
+                eq_table(&permute_challenges(r_val, &old_lsb_to_new_lsb)),
             ),
-        });
+            None => (table, eq_table(r_val)),
+        };
+        CycleReductionKernel::new(reduction, value, eq, Vec::new())
     }
-    let table = advice_table(witness, kind, permutation.len())?;
-    let (value, eq) = match lsb_permutation(permutation) {
-        Some(old_lsb_to_new_lsb) => (
-            permute_coefficients(&table, &old_lsb_to_new_lsb),
-            eq_table(&permute_challenges(r_val, &old_lsb_to_new_lsb)),
-        ),
-        None => (table, eq_table(r_val)),
-    };
-    CycleReductionKernel::new(reduction, value, eq, Vec::new())
 }
 
 fn advice_table<F: Field>(
@@ -275,7 +279,7 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Optimize
     > {
         let layout = inputs.relation.layout();
         let program = witness.program_preprocessing();
-        Ok(Box::new(program_image_reduction_kernel(
+        Ok(Box::new(CycleReductionKernel::for_program_image(
             layout,
             inputs.relation.r_addr_rw(),
             layout.start_index(),
@@ -284,44 +288,48 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Optimize
     }
 }
 
-/// The program-image reduction's cycle-phase kernel: the padded word vector
-/// (permuted as raw `u64`s, converted in one parallel pass) against the
-/// blocked shifted eq slice.
-fn program_image_reduction_kernel<F: Field>(
-    layout: &ProgramImageClaimReductionLayout,
-    r_addr_rw: &[F],
-    start_index: usize,
-    bytecode_words: &[u64],
-) -> Result<CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>>, KernelError<F>> {
-    let reduction = layout.precommitted().clone();
-    let words = program_image_words_padded(bytecode_words);
-    let padded_len = words.len();
-    if padded_len != 1usize << reduction.poly_opening_round_permutation_be().len() {
-        return Err(KernelError::TableSizeMismatch {
-            table: "program image words".to_owned(),
-            expected: 1usize << reduction.poly_opening_round_permutation_be().len(),
-            got: padded_len,
-        });
-    }
-    let ram_domain = 1usize << r_addr_rw.len();
-    if start_index >= ram_domain || padded_len > ram_domain {
-        return Err(KernelError::InvalidGeometry {
+/// Optimized-tier constructor for the program-image cycle phase.
+impl<F: Field> CycleReductionKernel<F, ProgramImageReductionCyclePhase<F>> {
+    /// The program-image reduction's cycle-phase kernel: the padded word vector
+    /// (permuted as raw `u64`s, converted in one parallel pass) against the
+    /// blocked shifted eq slice.
+    fn for_program_image(
+        layout: &ProgramImageClaimReductionLayout,
+        r_addr_rw: &[F],
+        start_index: usize,
+        bytecode_words: &[u64],
+    ) -> Result<Self, KernelError<F>> {
+        let reduction = layout.precommitted().clone();
+        let words = program_image_words_padded(bytecode_words);
+        let padded_len = words.len();
+        if padded_len != 1usize << reduction.poly_opening_round_permutation_be().len() {
+            return Err(KernelError::TableSizeMismatch {
+                table: "program image words".to_owned(),
+                expected: 1usize << reduction.poly_opening_round_permutation_be().len(),
+                got: padded_len,
+            });
+        }
+        let ram_domain = 1usize << r_addr_rw.len();
+        if start_index >= ram_domain || padded_len > ram_domain {
+            return Err(KernelError::InvalidGeometry {
                 reason: format!(
                     "program image block [{start_index}, +{padded_len}) cannot index the RAM domain {ram_domain}"
                 ),
             });
-    }
+        }
 
-    let shifted_eq = shifted_eq_slice(r_addr_rw, start_index, padded_len);
-    let (words, shifted_eq) = match lsb_permutation(reduction.poly_opening_round_permutation_be()) {
-        Some(old_lsb_to_new_lsb) => (
-            permute_coefficients(&words, &old_lsb_to_new_lsb),
-            permute_coefficients(&shifted_eq, &old_lsb_to_new_lsb),
-        ),
-        None => (words, shifted_eq),
-    };
-    let value = convert_words(&words);
-    CycleReductionKernel::new(reduction, value, shifted_eq, Vec::new())
+        let shifted_eq = shifted_eq_slice(r_addr_rw, start_index, padded_len);
+        let (words, shifted_eq) =
+            match lsb_permutation(reduction.poly_opening_round_permutation_be()) {
+                Some(old_lsb_to_new_lsb) => (
+                    permute_coefficients(&words, &old_lsb_to_new_lsb),
+                    permute_coefficients(&shifted_eq, &old_lsb_to_new_lsb),
+                ),
+                None => (words, shifted_eq),
+            };
+        let value = convert_words(&words);
+        CycleReductionKernel::new(reduction, value, shifted_eq, Vec::new())
+    }
 }
 
 /// `eq(r_addr, start_index + offset)` for `offset < len`, indices wrapping mod
@@ -369,7 +377,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPre
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReductionCyclePhase<F>>>, KernelError<F>>
     {
         let program = witness.program_preprocessing();
-        Ok(Box::new(bytecode_reduction_kernel(
+        Ok(Box::new(CycleReductionKernel::for_bytecode(
             inputs.relation.layout(),
             inputs.relation.weights(),
             &program.bytecode.bytecode,
@@ -377,78 +385,82 @@ impl<F: Field> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPre
     }
 }
 
-/// The committed-bytecode reduction's cycle-phase kernel — the chunk-weight
-/// value fold over the parallel-built per-chunk grids, the lane-weight eq
-/// template, and the raw grids as aux tables (their fully bound coefficients
-/// are the final per-chunk openings).
-fn bytecode_reduction_kernel<F: Field>(
-    layout: &BytecodeClaimReductionLayout,
-    weights: &BytecodeReductionWeights<F>,
-    bytecode: &[JoltInstructionRow],
-) -> Result<CycleReductionKernel<F, BytecodeReductionCyclePhase<F>>, KernelError<F>> {
-    let reduction = layout.precommitted().clone();
-    let chunk_coeffs = parallel_chunk_coeffs(bytecode, layout.chunk_count(), layout)?;
-    let chunk_len = chunk_coeffs[0].len();
-    if chunk_len != 1usize << reduction.poly_opening_round_permutation_be().len() {
-        return Err(KernelError::TableSizeMismatch {
-            table: "committed bytecode chunk grid".to_owned(),
-            expected: 1usize << reduction.poly_opening_round_permutation_be().len(),
-            got: chunk_len,
-        });
-    }
-    if weights.chunk_rbc_weights.len() != chunk_coeffs.len() {
-        return Err(KernelError::TableSizeMismatch {
-            table: "bytecode chunk weights".to_owned(),
-            expected: chunk_coeffs.len(),
-            got: weights.chunk_rbc_weights.len(),
-        });
-    }
-
-    let chunk_cycle_len = 1usize << layout.log_bytecode_chunk_size();
-    let eq_cycle = eq_table(&weights.r_bc);
-    let eq_entry = |index: usize| -> F {
-        let (lane, cycle) = chunk_index_to_lane_cycle(index, chunk_cycle_len, layout.trace_order());
-        weights.lane_weights[lane] * eq_cycle[cycle]
-    };
-    let value_entry = |index: usize| -> F {
-        chunk_coeffs
-            .iter()
-            .zip(&weights.chunk_rbc_weights)
-            .map(|(coeffs, weight)| coeffs[index] * *weight)
-            .sum()
-    };
-    #[cfg(feature = "parallel")]
-    let (eq_template, value): (Vec<F>, Vec<F>) = if chunk_len >= PAR_THRESHOLD {
-        (
-            (0..chunk_len).into_par_iter().map(eq_entry).collect(),
-            (0..chunk_len).into_par_iter().map(value_entry).collect(),
-        )
-    } else {
-        (
-            (0..chunk_len).map(eq_entry).collect(),
-            (0..chunk_len).map(value_entry).collect(),
-        )
-    };
-    #[cfg(not(feature = "parallel"))]
-    let (eq_template, value): (Vec<F>, Vec<F>) = (
-        (0..chunk_len).map(eq_entry).collect(),
-        (0..chunk_len).map(value_entry).collect(),
-    );
-
-    let mut tables = Vec::with_capacity(2 + chunk_coeffs.len());
-    tables.push(value);
-    tables.push(eq_template);
-    tables.extend(chunk_coeffs);
-    let mut permuted = permute_tables(&reduction, tables).into_iter();
-    let (value, eq) = match (permuted.next(), permuted.next()) {
-        (Some(value), Some(eq)) => (value, eq),
-        _ => {
-            return Err(KernelError::InvariantViolation {
-                reason: "bytecode reduction table permutation lost the value/eq tables",
+/// Optimized-tier constructor for the committed-bytecode cycle phase.
+impl<F: Field> CycleReductionKernel<F, BytecodeReductionCyclePhase<F>> {
+    /// The committed-bytecode reduction's cycle-phase kernel — the chunk-weight
+    /// value fold over the parallel-built per-chunk grids, the lane-weight eq
+    /// template, and the raw grids as aux tables (their fully bound coefficients
+    /// are the final per-chunk openings).
+    fn for_bytecode(
+        layout: &BytecodeClaimReductionLayout,
+        weights: &BytecodeReductionWeights<F>,
+        bytecode: &[JoltInstructionRow],
+    ) -> Result<Self, KernelError<F>> {
+        let reduction = layout.precommitted().clone();
+        let chunk_coeffs = parallel_chunk_coeffs(bytecode, layout.chunk_count(), layout)?;
+        let chunk_len = chunk_coeffs[0].len();
+        if chunk_len != 1usize << reduction.poly_opening_round_permutation_be().len() {
+            return Err(KernelError::TableSizeMismatch {
+                table: "committed bytecode chunk grid".to_owned(),
+                expected: 1usize << reduction.poly_opening_round_permutation_be().len(),
+                got: chunk_len,
             });
         }
-    };
-    CycleReductionKernel::new(reduction, value, eq, permuted.collect())
+        if weights.chunk_rbc_weights.len() != chunk_coeffs.len() {
+            return Err(KernelError::TableSizeMismatch {
+                table: "bytecode chunk weights".to_owned(),
+                expected: chunk_coeffs.len(),
+                got: weights.chunk_rbc_weights.len(),
+            });
+        }
+
+        let chunk_cycle_len = 1usize << layout.log_bytecode_chunk_size();
+        let eq_cycle = eq_table(&weights.r_bc);
+        let eq_entry = |index: usize| -> F {
+            let (lane, cycle) =
+                chunk_index_to_lane_cycle(index, chunk_cycle_len, layout.trace_order());
+            weights.lane_weights[lane] * eq_cycle[cycle]
+        };
+        let value_entry = |index: usize| -> F {
+            chunk_coeffs
+                .iter()
+                .zip(&weights.chunk_rbc_weights)
+                .map(|(coeffs, weight)| coeffs[index] * *weight)
+                .sum()
+        };
+        #[cfg(feature = "parallel")]
+        let (eq_template, value): (Vec<F>, Vec<F>) = if chunk_len >= PAR_THRESHOLD {
+            (
+                (0..chunk_len).into_par_iter().map(eq_entry).collect(),
+                (0..chunk_len).into_par_iter().map(value_entry).collect(),
+            )
+        } else {
+            (
+                (0..chunk_len).map(eq_entry).collect(),
+                (0..chunk_len).map(value_entry).collect(),
+            )
+        };
+        #[cfg(not(feature = "parallel"))]
+        let (eq_template, value): (Vec<F>, Vec<F>) = (
+            (0..chunk_len).map(eq_entry).collect(),
+            (0..chunk_len).map(value_entry).collect(),
+        );
+
+        let mut tables = Vec::with_capacity(2 + chunk_coeffs.len());
+        tables.push(value);
+        tables.push(eq_template);
+        tables.extend(chunk_coeffs);
+        let mut permuted = permute_tables(&reduction, tables).into_iter();
+        let (value, eq) = match (permuted.next(), permuted.next()) {
+            (Some(value), Some(eq)) => (value, eq),
+            _ => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "bytecode reduction table permutation lost the value/eq tables",
+                });
+            }
+        };
+        CycleReductionKernel::new(reduction, value, eq, permuted.collect())
+    }
 }
 
 /// The per-chunk committed bytecode grids, one independent build per chunk in

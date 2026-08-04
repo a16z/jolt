@@ -94,57 +94,59 @@ struct PcBundle {
     mapped_pc: MappedPc,
 }
 
-/// One trace scan per proof, shared by both phases through the session.
-fn pc_rows<F: Field>(
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Arc<Vec<PcRow>>, KernelError<F>> {
-    if session.state::<PcRowsKey>().is_none() {
-        let bundles: Vec<PcBundle> = collect_rows(witness, cycles)?;
-        let pack = |bundle: &PcBundle| {
-            let mapped = match bundle.mapped_pc.0 {
-                Some(pc) if pc as u32 as usize == pc && pc as u32 != COLD => pc as u32,
-                Some(_) => {
+impl PcRow {
+    /// One trace scan per proof, shared by both phases through the session.
+    fn shared<F: Field>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Arc<Vec<PcRow>>, KernelError<F>> {
+        if session.state::<PcRowsKey>().is_none() {
+            let bundles: Vec<PcBundle> = collect_rows(witness, cycles)?;
+            let pack = |bundle: &PcBundle| {
+                let mapped = match bundle.mapped_pc.0 {
+                    Some(pc) if pc as u32 as usize == pc && pc as u32 != COLD => pc as u32,
+                    Some(_) => {
+                        return Err(KernelError::InvariantViolation {
+                            reason: "bytecode PC exceeds the packed u32 range",
+                        })
+                    }
+                    None => COLD,
+                };
+                if bundle.bytecode_pc.0 as u32 as usize != bundle.bytecode_pc.0 {
                     return Err(KernelError::InvariantViolation {
                         reason: "bytecode PC exceeds the packed u32 range",
-                    })
+                    });
                 }
-                None => COLD,
+                Ok(PcRow {
+                    push_pc: bundle.bytecode_pc.0 as u32,
+                    mapped_pc: mapped,
+                })
             };
-            if bundle.bytecode_pc.0 as u32 as usize != bundle.bytecode_pc.0 {
-                return Err(KernelError::InvariantViolation {
-                    reason: "bytecode PC exceeds the packed u32 range",
-                });
-            }
-            Ok(PcRow {
-                push_pc: bundle.bytecode_pc.0 as u32,
-                mapped_pc: mapped,
-            })
-        };
-        #[cfg(feature = "parallel")]
-        let rows = bundles
-            .par_iter()
-            .map(pack)
-            .collect::<Result<Vec<_>, _>>()?;
-        #[cfg(not(feature = "parallel"))]
-        let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
-        session.park(PcRowsKey(Arc::new(rows)));
+            #[cfg(feature = "parallel")]
+            let rows = bundles
+                .par_iter()
+                .map(pack)
+                .collect::<Result<Vec<_>, _>>()?;
+            #[cfg(not(feature = "parallel"))]
+            let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
+            session.park(PcRowsKey(Arc::new(rows)));
+        }
+        let rows = session
+            .state::<PcRowsKey>()
+            .map(|key| Arc::clone(&key.0))
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode PC rows vanished from the session",
+            })?;
+        if rows.len() != cycles {
+            return Err(KernelError::TableSizeMismatch {
+                table: "bytecode cycle PC rows".to_owned(),
+                expected: cycles,
+                got: rows.len(),
+            });
+        }
+        Ok(rows)
     }
-    let rows = session
-        .state::<PcRowsKey>()
-        .map(|key| Arc::clone(&key.0))
-        .ok_or(KernelError::InvariantViolation {
-            reason: "bytecode PC rows vanished from the session",
-        })?;
-    if rows.len() != cycles {
-        return Err(KernelError::TableSizeMismatch {
-            table: "bytecode cycle PC rows".to_owned(),
-            expected: cycles,
-            got: rows.len(),
-        });
-    }
-    Ok(rows)
 }
 
 /// The five per-stage cycle-eq pushforwards onto the bytecode address domain,
@@ -280,7 +282,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 });
             }
         }
-        let rows = pc_rows(session, witness, cycles)?;
+        let rows = PcRow::shared(session, witness, cycles)?;
         let entry_bytecode_index = relation.entry_bytecode_index();
         if entry_bytecode_index >= addresses
             || rows.iter().any(|row| row.push_pc as usize >= addresses)
@@ -479,7 +481,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
                 reason: "bytecode address chunk count disagrees with the committed RA count",
             });
         }
-        let rows = pc_rows(session, witness, cycles)?;
+        let rows = PcRow::shared(session, witness, cycles)?;
         // This is the PC scan's last consumer: remove the session's copy so
         // the rows free at the lazy fold's materialization instead of living
         // to the end of the proof.
