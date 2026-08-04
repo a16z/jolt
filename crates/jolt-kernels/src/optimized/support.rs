@@ -240,6 +240,62 @@ pub(crate) fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
     table.truncate(half);
 }
 
+/// The drawn challenges of a kernel's bound rounds, tracked against the
+/// round total — one authority for both the challenge history and the
+/// bound-rounds invariant. Kernels that never revisit their challenges use
+/// [`RoundProgress`] instead.
+pub(crate) struct RoundChallenges<F> {
+    challenges: Vec<F>,
+    total: usize,
+}
+
+impl<F: Field> RoundChallenges<F> {
+    pub(crate) fn new(total: usize) -> Self {
+        Self {
+            challenges: Vec::with_capacity(total),
+            total,
+        }
+    }
+
+    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
+    pub(crate) fn total(&self) -> usize {
+        self.total
+    }
+
+    /// Rounds bound so far.
+    pub(crate) fn bound(&self) -> usize {
+        self.challenges.len()
+    }
+
+    /// Record one bound round's challenge.
+    pub(crate) fn push(&mut self, challenge: F) {
+        self.challenges.push(challenge);
+    }
+
+    /// The challenges bound so far, in binding order.
+    pub(crate) fn as_slice(&self) -> &[F] {
+        &self.challenges
+    }
+
+    /// Gate for every output-claim / derived-table entry point.
+    pub(crate) fn require_complete(&self) -> Result<(), SumcheckKernelError<F>> {
+        if self.challenges.len() == self.total {
+            Ok(())
+        } else {
+            Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.total - self.challenges.len(),
+            })
+        }
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl<F> RoundChallenges<F> {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        crate::backend::vec_heap_bytes(&self.challenges)
+    }
+}
+
 /// Pin a kernel-maintained derived value (typically its fully bound split-eq
 /// scalar) against the verifier's own `derive_output_term` — the optimized
 /// tier's drift detector for tables it never materializes, mirroring the

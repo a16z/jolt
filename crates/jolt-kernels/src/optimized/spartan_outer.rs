@@ -77,6 +77,7 @@ use rayon::prelude::*;
 
 use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
+    RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -555,14 +556,13 @@ struct DerivedWeights<F> {
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
 struct OuterRemainderKernel<F: Field> {
-    rounds: usize,
     az: Polynomial<F>,
     bz: Polynomial<F>,
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     /// Round-0 endpoints, fused into the materialization pass.
     pending_endpoints: Option<(F, F)>,
-    challenges: Vec<F>,
+    challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanOuterRow>,
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
@@ -575,7 +575,7 @@ crate::optimized::impl_field_allocative!(OuterRemainderKernel, |kernel| {
         + poly_heap_bytes(&kernel.bz)
         + vec_heap_bytes(&kernel.scratch)
         + kernel.split_eq.heap_bytes()
-        + vec_heap_bytes(&kernel.challenges)
+        + kernel.challenges.heap_bytes()
         + kernel.rows.heap_bytes()
         + vec_heap_bytes(&kernel.opening_ids)
         + kernel
@@ -677,13 +677,12 @@ impl<F: Field> OuterRemainderKernel<F> {
             folded
         };
         Ok(Self {
-            rounds,
             az: Polynomial::new(az),
             bz: Polynomial::new(bz),
             scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
-            challenges: Vec::with_capacity(rounds),
+            challenges: RoundChallenges::new(rounds),
             rows,
             opening_ids,
             derived,
@@ -733,7 +732,11 @@ impl<F: Field> OuterRemainderKernel<F> {
     /// eq-weighted walk over the typed rows (`compute_claimed_inputs`),
     /// mixed-width accumulators per input.
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
-        let reversed: Vec<F> = self.challenges[1..].iter().rev().copied().collect();
+        let reversed: Vec<F> = self.challenges.as_slice()[1..]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
         let cycles = weights.len();
         let access = self.rows.access();
@@ -863,7 +866,7 @@ impl<F: Field> ClaimAccumulator<F> {
 
 impl<F: Field> ProveRounds<F> for OuterRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.challenges.total()
     }
 
     fn prove_round(
@@ -899,10 +902,7 @@ impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.challenges.len();
-        if remaining != 0 {
-            return Err(SumcheckKernelError::NotFullyBound { remaining });
-        }
+        self.challenges.require_complete()?;
         let claimed =
             self.claimed_inputs()
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
@@ -923,14 +923,11 @@ impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.challenges.len();
-        if remaining != 0 {
-            return Err(SumcheckKernelError::NotFullyBound { remaining });
-        }
+        self.challenges.require_complete()?;
         // The stream challenge binds the per-stream weight pairs; the split-eq
         // scalar is the fully bound TauKernel — both from the kernel's own
         // state, cross-checked against the verifier's coefficient build.
-        let stream = self.challenges[0];
+        let stream = self.challenges.as_slice()[0];
         let blend = |pair: [&F; 2]| *pair[0] + stream * (*pair[1] - *pair[0]);
         let variable_count = self.opening_ids.len();
         let ids = std::iter::once(SpartanOuterPublic::TauKernel)

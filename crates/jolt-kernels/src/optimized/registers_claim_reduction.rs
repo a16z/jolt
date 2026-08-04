@@ -42,7 +42,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{bind_pairs, collect_rows, fmadd_u64_split, pin_derived_term, RoundProgress};
+use super::support::{
+    bind_pairs, collect_rows, fmadd_u64_split, pin_derived_term, RoundChallenges,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -139,8 +141,7 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegiste
             tau: tau.to_vec(),
             values,
             phase: Phase::PrefixSuffix { p, q },
-            bound_challenges: Vec::with_capacity(log_t),
-            progress: RoundProgress::new(log_t),
+            challenges: RoundChallenges::new(log_t),
         }))
     }
 }
@@ -166,8 +167,7 @@ struct ClaimReductionKernel<F: Field> {
     /// Raw per-cycle `u64` values, kept for the phase-2 regeneration.
     values: Vec<RegisterValuesRow>,
     phase: Phase<F>,
-    bound_challenges: Vec<F>,
-    progress: RoundProgress,
+    challenges: RoundChallenges<F>,
 }
 
 #[cfg(feature = "allocative")]
@@ -190,7 +190,7 @@ crate::optimized::impl_field_allocative!(ClaimReductionKernel, |kernel| {
     vec_heap_bytes(&kernel.tau)
         + vec_heap_bytes(&kernel.values)
         + phase
-        + vec_heap_bytes(&kernel.bound_challenges)
+        + kernel.challenges.heap_bytes()
 });
 
 impl<F: Field> ClaimReductionKernel<F> {
@@ -198,8 +198,8 @@ impl<F: Field> ClaimReductionKernel<F> {
     /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix
     /// eq table scaled by the bound-prefix eq factor.
     fn transition_to_dense(&mut self) {
-        let bound = self.progress.bound();
-        let r_prefix: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
+        let bound = self.challenges.bound();
+        let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let eq_prefix = EqPolynomial::<F>::evals(&r_prefix, None);
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
         let chunk = eq_prefix.len();
@@ -237,8 +237,7 @@ impl<F: Field> ClaimReductionKernel<F> {
     }
 
     fn bind(&mut self, r: F) {
-        self.bound_challenges.push(r);
-        self.progress.advance();
+        self.challenges.push(r);
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q.
         if matches!(&self.phase, Phase::PrefixSuffix { p, .. } if p.len() == 2) {
@@ -333,7 +332,7 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RegistersClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.challenges.require_complete()?;
         let Phase::Dense {
             rd_write_value,
             rs1_value,
@@ -361,7 +360,7 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.challenges.require_complete()?;
         let Phase::Dense { eq, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "claim reduction must finish in the dense phase",

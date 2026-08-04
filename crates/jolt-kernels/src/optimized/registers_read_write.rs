@@ -63,7 +63,7 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{bind_pairs, pin_derived_term, RoundProgress};
+use super::support::{bind_pairs, pin_derived_term, RoundChallenges};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -828,8 +828,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
             inc_scalar: F::zero(),
             rs1_indices,
             rs2_indices,
-            bound_challenges: Vec::with_capacity(log_t + log_k),
-            progress: RoundProgress::new(log_t + log_k),
+            challenges: RoundChallenges::new(log_t + log_k),
         }))
     }
 }
@@ -985,8 +984,7 @@ struct ReadWriteKernel<F: Field> {
     inc_scalar: F,
     rs1_indices: Vec<Option<u8>>,
     rs2_indices: Vec<Option<u8>>,
-    bound_challenges: Vec<F>,
-    progress: RoundProgress,
+    challenges: RoundChallenges<F>,
 }
 
 #[cfg(feature = "allocative")]
@@ -1012,7 +1010,7 @@ crate::optimized::impl_field_allocative!(ReadWriteKernel, |kernel| {
         + vec_heap_bytes(&kernel.val)
         + vec_heap_bytes(&kernel.rs1_indices)
         + vec_heap_bytes(&kernel.rs2_indices)
-        + vec_heap_bytes(&kernel.bound_challenges)
+        + kernel.challenges.heap_bytes()
 });
 
 /// Bind one cycle variable of the sparse matrix in place: merge every
@@ -1288,7 +1286,7 @@ impl<F: Field> ReadWriteKernel<F> {
     /// sparse rows; the final cycle bind collapses to the K-sized dense
     /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
-        if self.progress.bound() < self.log_t {
+        if self.challenges.bound() < self.log_t {
             self.gruen.bind(r);
             self.inc.bind_with_order(r, BindingOrder::LowToHigh);
             self.entries.bind(r);
@@ -1297,10 +1295,9 @@ impl<F: Field> ReadWriteKernel<F> {
                 bind_pairs(table, r);
             }
         }
-        self.bound_challenges.push(r);
-        self.progress.advance();
+        self.challenges.push(r);
 
-        if self.progress.bound() == self.log_t {
+        if self.challenges.bound() == self.log_t {
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
             let entries = std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new()));
@@ -1314,12 +1311,12 @@ impl<F: Field> ReadWriteKernel<F> {
     /// reversal `ReadWriteDimensions::read_write_opening_point` applies under
     /// the default config.
     fn bound_point(&self) -> (Vec<F>, Vec<F>) {
-        let r_cycle: Vec<F> = self.bound_challenges[..self.log_t]
+        let r_cycle: Vec<F> = self.challenges.as_slice()[..self.log_t]
             .iter()
             .rev()
             .copied()
             .collect();
-        let r_address: Vec<F> = self.bound_challenges[self.log_t..]
+        let r_address: Vec<F> = self.challenges.as_slice()[self.log_t..]
             .iter()
             .rev()
             .copied()
@@ -1399,7 +1396,7 @@ impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        if self.progress.bound() < self.log_t {
+        if self.challenges.bound() < self.log_t {
             Ok(self.cycle_round_message(previous_claim))
         } else {
             self.address_round_message(round, previous_claim)
@@ -1419,7 +1416,7 @@ impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RegistersReadWriteOutputClaims<F>, SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.challenges.require_complete()?;
         let (r_address, r_cycle) = self.bound_point();
         let (rs1_ra, rs2_ra) = self.one_hot_operand_claims(&r_address, &r_cycle);
         Ok(RegistersReadWriteOutputClaims {
@@ -1440,7 +1437,7 @@ impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.challenges.require_complete()?;
         pin_derived_term(
             relation,
             JoltDerivedId::from(RegistersReadWritePublic::EqCycle),

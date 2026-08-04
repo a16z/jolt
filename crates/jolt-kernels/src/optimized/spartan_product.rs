@@ -49,6 +49,7 @@ use rayon::prelude::*;
 
 use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
+    RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -298,13 +299,12 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemaind
 /// The linear-time product remainder rounds over the cycle domain
 /// (bound `LowToHigh`).
 struct ProductRemainderKernel<F: Field> {
-    rounds: usize,
     left: Polynomial<F>,
     right: Polynomial<F>,
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     pending_endpoints: Option<(F, F)>,
-    challenges: Vec<F>,
+    challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
@@ -317,7 +317,7 @@ crate::optimized::impl_field_allocative!(ProductRemainderKernel, |kernel| {
         + poly_heap_bytes(&kernel.right)
         + vec_heap_bytes(&kernel.scratch)
         + kernel.split_eq.heap_bytes()
-        + vec_heap_bytes(&kernel.challenges)
+        + kernel.challenges.heap_bytes()
         + kernel.rows.heap_bytes()
         + vec_heap_bytes(&kernel.lagrange_weights)
 });
@@ -430,13 +430,12 @@ impl<F: Field> ProductRemainderKernel<F> {
         };
 
         Ok(Self {
-            rounds,
             left: Polynomial::new(left),
             right: Polynomial::new(right),
             scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
-            challenges: Vec::with_capacity(rounds),
+            challenges: RoundChallenges::new(rounds),
             rows,
             lagrange_weights: weights,
         })
@@ -456,7 +455,7 @@ impl<F: Field> ProductRemainderKernel<F> {
     /// eq-weighted walk over the typed rows, in the output claims' canonical
     /// field order.
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
-        let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
+        let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
         let cycles = weights.len();
         let access = self.rows.access();
@@ -500,7 +499,7 @@ impl<F: Field> ProductRemainderKernel<F> {
 
 impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.challenges.total()
     }
 
     fn prove_round(
@@ -536,10 +535,7 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.challenges.len();
-        if remaining != 0 {
-            return Err(SumcheckKernelError::NotFullyBound { remaining });
-        }
+        self.challenges.require_complete()?;
         let ids = [
             left_instruction_input_product(),
             right_instruction_input_product(),
@@ -571,10 +567,7 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.rounds - self.challenges.len();
-        if remaining != 0 {
-            return Err(SumcheckKernelError::NotFullyBound { remaining });
-        }
+        self.challenges.require_complete()?;
         let ids = std::iter::once(SpartanProductVirtualizationPublic::TauKernel)
             .chain((0..DOMAIN).map(SpartanProductVirtualizationPublic::LagrangeWeight));
         for public_id in ids {

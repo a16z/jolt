@@ -46,7 +46,8 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::support::{
-    bind_pairs, collect_rows, fmadd_u64_split, gamma_powers_array, pin_derived_term, RoundProgress,
+    bind_pairs, collect_rows, fmadd_u64_split, gamma_powers_array, pin_derived_term,
+    RoundChallenges,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -178,8 +179,7 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
             r_product: r_product.to_vec(),
             rows,
             phase: Phase::PrefixSuffix { pairs },
-            bound_challenges: Vec::with_capacity(log_t),
-            progress: RoundProgress::new(log_t),
+            challenges: RoundChallenges::new(log_t),
         }))
     }
 }
@@ -209,8 +209,7 @@ struct ShiftKernel<F: Field> {
     /// Raw per-cycle values, kept for the phase-2 regeneration.
     rows: Vec<SpartanShiftRow>,
     phase: Phase<F>,
-    bound_challenges: Vec<F>,
-    progress: RoundProgress,
+    challenges: RoundChallenges<F>,
 }
 
 #[cfg(feature = "allocative")]
@@ -247,7 +246,7 @@ crate::optimized::impl_field_allocative!(ShiftKernel, |kernel| {
         + vec_heap_bytes(&kernel.r_product)
         + vec_heap_bytes(&kernel.rows)
         + phase
-        + vec_heap_bytes(&kernel.bound_challenges)
+        + kernel.challenges.heap_bytes()
 });
 
 impl<F: Field> ShiftKernel<F> {
@@ -255,8 +254,8 @@ impl<F: Field> ShiftKernel<F> {
     /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
     /// table recombined from its suffix pair and bound-prefix evaluations.
     fn transition_to_dense(&mut self) {
-        let bound = self.progress.bound();
-        let r_prefix: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
+        let bound = self.challenges.bound();
+        let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let eq_prefix = EqPolynomial::<F>::evals(&r_prefix, None);
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
         let chunk = eq_prefix.len();
@@ -322,8 +321,7 @@ impl<F: Field> ShiftKernel<F> {
     }
 
     fn bind(&mut self, r: F) {
-        self.bound_challenges.push(r);
-        self.progress.advance();
+        self.challenges.push(r);
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q pairs.
         if matches!(&self.phase, Phase::PrefixSuffix { pairs } if pairs[0].0.len() == 2) {
@@ -451,7 +449,7 @@ impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SpartanShiftOutputClaims<F>, SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.challenges.require_complete()?;
         let Phase::Dense {
             unexpanded_pc,
             pc,
@@ -483,7 +481,7 @@ impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.challenges.require_complete()?;
         let Phase::Dense {
             eq_plus_one_outer,
             eq_plus_one_product,
