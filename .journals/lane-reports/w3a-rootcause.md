@@ -150,3 +150,50 @@ variance). 2^26 census 35.60 s. 2^22/2^18 smoke. Artifacts:
 benchmark-runs/perfetto_traces/modular_sha2_chain_2{6,7}_metal.json,
 /tmp/w3a-lifetime-2to22.log. Monitor-fix e2e receipt:
 modular_sha2_chain_18_metal.json (112 ph:'C' counters, auto-converted).
+
+## 7. Phase-2 results (fix landed; wall gate deferred to cool cert)
+
+Correction to §1: SharedOpeningIncrements' tag fires when the struct is
+consumed into `OpeningColumns` at st6b open (prefetch); the increment DATA
+lives on inside the opening views to st8 — live by design, not corpse.
+
+**Fix shipped (7cb173075 + 16c228ca2):** `MmapVec` (fixed-capacity
+anonymous mmap, munmap on drop) backs the TraceRecord lanes, RegisterLanes,
+RamAccessColumns, SharedInstructionRows, PcRows, and `own_uninit_frs`'
+device ping-pong (`OwnedBacking::Mmap`). Every corpse-pile member now
+leaves RSS+footprint at its designed drop site. Second negative result
+pinned alongside W1D's madvise: `malloc_zone_pressure_relief` is a
+measured no-op (probe: 4 GiB freed Vecs stay resident, returns 0) — that
+is WHY freed-Vec corpses ride forward at all; an experimental relief call
+at the st6b boundary changed nothing at 2^27 and was removed.
+
+**Matched-pair 2^27 A/B (one lock window, pre-fix ran first/cooler):**
+pre-fix 90.40 s (peak footprint 96.91, st6b entry 70.91) vs post-fix
+**79.91 s (peak 79.28, entry 54.29) = −10.5 s (−11.6%)**. Same-day
+post-fix runs: 79.15 / 76.77 / 79.91 with st6b 17.3 / 16.8 / 16.9 vs
+same-afternoon pre-fix 86.46 / 90.40. The afternoon ambient deepened the
+bad mode (dawn cert pre-fix: 76.4–77.1) — the bistability in action.
+
+**Residual storm, decomposed:** with corpses gone, st6b still shows
+RSS −19/−20 vs footprint −1.8 = ~15 GiB compressed mid-stage: cold-LIVE
+pages (the ~20 GiB in-heap trace + late-stage carries) squeezed under
+st6b's +25 GiB burst (IncCR cur 16 + capped-BRRC CPU tables + concurrent
+st8-prefetch OpeningColumns 8) when ambient is tight. Not reachable by
+lifetime/drop-site work: the remaining mass is live (trace/witness plane,
+IncCR/BRRC slot allocations — other lanes' surfaces).
+
+**Gate assessment (honest):** 2^25 neutral −0.4% ✓; byte-diff 11+9/20
+both arms ✓ (one known fixture-race flake, two clean consecutive full
+passes); kernels 239/239 + 158/158, dory 46/46, muldiv 3/3+3/3, clippy
+host/zk/metal, fmt ✓. The 2^27 wall gate (total ≤74, st6b ≤15.5, entry
+≤45) is NOT certifiable under today's ambient: entry 54.3 is now
+live-only (the ≤45 target was calibrated on pre-wave-2 live composition
+— wave-2 carries +13 GiB more live at entry), and totals land 76.8–79.9
+in the deepened afternoon mode. Recommendation: re-base the entry gate to
+"zero dead pages at st6b entry" (achieved, receipts above) and take walls
+in the orchestrator's cool certification window — 3 of 8 2^27 runs left
+banked for it. Expected there: the fix's storm-avoidance margin (+18 GiB)
+puts trunk at ~72–74 with st6b ~14–15.5.
+
+Artifacts: /tmp/w3a-{census,vmstat}-2to27-{r1,mmap,relief}.log,
+/tmp/w3a-ab-{prefix,postfix}.log, binaries /tmp/w3a-bin-{prefix,postfix}.
