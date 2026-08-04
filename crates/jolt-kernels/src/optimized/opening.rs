@@ -40,7 +40,9 @@
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Range;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(feature = "parallel")]
+use std::sync::Mutex;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};

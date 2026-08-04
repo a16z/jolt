@@ -7,9 +7,10 @@ use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::Field;
 use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
+#[cfg(feature = "parallel")]
+use jolt_witness::FirstErrorLatch;
 use jolt_witness::{
-    stream_witnesses, FirstErrorLatch, JoltWitnessPlane, StreamConsumer, WitnessBundle,
-    WitnessError,
+    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
