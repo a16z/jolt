@@ -234,6 +234,29 @@ soundness note before merge.
 
 ## Wave 3 (continued)
 
+- **W3D CLOSED — RETAINED, merged to trunk @513b1e195** (kernels 242/242,
+  prover 20/20 metal arm post-merge; byte-diff 12/12 BOTH arms on the lane
+  tree with the hoist live). F1: TraceRecord::collect (challenge-independent,
+  proven by signature) hoisted into st0's commit window — scoped thread, 8-
+  thread capped pool, extends W2A's BACKGROUND_BUILD_TOKEN (record holds it
+  st0-st1, 6a builds post-st4; zero interaction measured), mpsc carry with
+  inline-rebuild fallback, JOLT_RECORD_HOIST=off ablation knob. F2: the four
+  post-rounds claims walks (st1 outer 35-opening, st2 product+ICR, both
+  twins) lose their full-T eq materializations (3× 4.3 GiB @2^27) via run-
+  factored e_hi/e_lo + fmadd_s256 unreduced accumulation. F3 mapped not done
+  (InstrInput q0 device promotion, ~0.4 s door). Gates: st1+st2 −43% at both
+  2^24 and 2^25 cool (gate −25%); st3 bonus −15..−23% (eq-flood relief).
+  **st0 tax saga (model-failure lesson):** 2^25 cool tax +5.8% (+264 ms),
+  mechanism pinned = bandwidth contention (pool-width and QoS probes both
+  null); lane deferred per W3C amendment at 5.2× win/loss. At 2^27 the tax
+  model FAILED — the walk ran 13.0 s (not the 7.2 modeled) and st0 stretched
+  10.7→17.8 under mutual starvation — BUT the same ambient inflates the
+  trunk's INLINE walk worse (st1 12.1 s): same-window certification pair
+  (afternoon deep-bad ambient) = **W3D 77.72 vs trunk 87.22 = net −9.5 s**;
+  st1 4.65/st2 2.89 confirmed at tier. Two regimes, same sign ⇒ retained.
+  Clean-window magnitude → tonight's banked flagship pass. Trunk binary
+  rebuilt: ca653254ec4ce1eb….
+
 - **W3A (task 743016e4, fable-max, worktree gpuutil-w3a) — PHASE 2 (fix).**
   Phase-1 artifact (w3a-rootcause.md, ACCEPTED 2026-08-04 17:0x UTC) overturns
   the parity theory: (1) Rust drop sites are at design points in every mode
