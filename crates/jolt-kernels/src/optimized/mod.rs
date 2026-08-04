@@ -67,7 +67,7 @@ pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
 pub(crate) mod support;
-pub(crate) mod trace_record;
+pub mod trace_record;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
