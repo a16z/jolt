@@ -354,10 +354,13 @@ impl VerifierFixtureKind {
             Self::AdviceConsumer => "standard-advice-consumer",
             #[cfg(not(feature = "zk"))]
             Self::CommittedMulDivSmall => "standard-committed-muldiv-small",
+            // ZK names carry a transcript-scheme suffix: they key the temp-dir
+            // cache, so a ZK transcript change must rename them or stale cached
+            // proofs fail verification instead of regenerating.
             #[cfg(feature = "zk")]
-            Self::ZkMulDivSmall => "zk-muldiv-small-continued-transcript",
+            Self::ZkMulDivSmall => "zk-muldiv-small-degree-bound",
             #[cfg(feature = "zk")]
-            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small",
+            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-degree-bound",
         }
     }
 }
