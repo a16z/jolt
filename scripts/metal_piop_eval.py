@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -16,6 +17,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    from metal_autoresearch import evaluator_lock
+except ModuleNotFoundError:
+    from scripts.metal_autoresearch import evaluator_lock
 
 
 SCHEMA_VERSION = 4
@@ -144,6 +150,17 @@ def trace_attribution(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def kernel_wall_us(attribution: dict[str, Any], kernel: str) -> float:
+    matches = [
+        float(item["wall_ms"]) * 1000.0
+        for item in attribution.get("kernels", [])
+        if item.get("kernel") == kernel
+    ]
+    if len(matches) != 1 or not math.isfinite(matches[0]) or matches[0] <= 0.0:
+        raise ValueError(f"attribution must contain one positive {kernel} seam")
+    return matches[0]
+
+
 def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:
     if not pairs:
         raise ValueError("at least one CPU/Metal pair is required")
@@ -151,11 +168,21 @@ def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:
     metal = [float(pair["metal_us"]) for pair in pairs]
     cpu_prepare = [float(pair["cpu_prepare_us"]) for pair in pairs]
     metal_prepare = [float(pair["metal_prepare_us"]) for pair in pairs]
+    cpu_instruction_ra = [float(pair["cpu_instruction_ra_us"]) for pair in pairs]
+    metal_instruction_ra = [float(pair["metal_instruction_ra_us"]) for pair in pairs]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
         raise ValueError("backend witness preparation durations must be finite and non-negative")
+    if any(
+        not math.isfinite(value) or value <= 0.0
+        for value in cpu_instruction_ra + metal_instruction_ra
+    ):
+        raise ValueError("Instruction RA durations must be finite and positive")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
+    instruction_ra_speedups = [
+        cpu_us / metal_us for cpu_us, metal_us in zip(cpu_instruction_ra, metal_instruction_ra)
+    ]
     paired_with_prepare = [
         (cpu_us + cpu_prepare_us) / (metal_us + metal_prepare_us)
         for cpu_us, metal_us, cpu_prepare_us, metal_prepare_us in zip(
@@ -164,12 +191,14 @@ def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:
     ]
     return {
         "piop_speedup": statistics.median(paired_speedups),
+        "instruction_ra_speedup": statistics.median(instruction_ra_speedups),
         "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
         "cpu_backend_witness_prepare_ms": statistics.median(cpu_prepare) / 1000.0,
         "metal_backend_witness_prepare_ms": statistics.median(metal_prepare) / 1000.0,
         "paired_speedups": paired_speedups,
+        "paired_instruction_ra_speedups": instruction_ra_speedups,
         "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
@@ -189,6 +218,8 @@ def run_backend(
     workload: str,
     log_n: int,
     backend: str,
+    instruction_ra_materialize_width: int,
+    instruction_ra_reuse_inverse: bool,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -213,6 +244,15 @@ def run_backend(
         "--backend",
         backend,
     ]
+    if backend == "metal":
+        command.extend(
+            [
+                "--instruction-ra-materialize-width",
+                f"w{instruction_ra_materialize_width}",
+            ]
+        )
+        if instruction_ra_reuse_inverse:
+            command.append("--instruction-ra-reuse-inverse")
     started_ns = time.time_ns()
     result = subprocess.run(
         command,
@@ -260,6 +300,45 @@ def git_head(root: Path) -> str:
     return result.stdout.strip()
 
 
+def worktree_state_digest(
+    tracked_diff: bytes, untracked_files: list[tuple[bytes, bytes]]
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"tracked\0")
+    digest.update(tracked_diff)
+    for path, contents in sorted(untracked_files):
+        digest.update(b"untracked\0")
+        digest.update(path)
+        digest.update(b"\0")
+        digest.update(contents)
+    return digest.hexdigest()
+
+
+def source_fingerprint(root: Path) -> dict[str, Any]:
+    tracked = subprocess.run(
+        ["git", "diff", "--binary", "HEAD", "--"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    untracked_output = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    untracked = []
+    for raw_path in filter(None, untracked_output.split(b"\0")):
+        path = root / os.fsdecode(raw_path)
+        contents = os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
+        untracked.append((raw_path, contents))
+    return {
+        "git_revision": git_head(root),
+        "worktree_dirty": bool(tracked or untracked),
+        "worktree_state_sha256": worktree_state_digest(tracked, untracked),
+    }
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--root", default=Path(__file__).resolve().parents[1])
@@ -271,6 +350,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--log-n", type=int, default=26)
     result.add_argument("--repeats", type=int, default=1)
     result.add_argument("--timeout-seconds", type=int, default=7200)
+    result.add_argument(
+        "--instruction-ra-materialize-width",
+        type=int,
+        choices=[16, 32, 64, 128, 256, 512],
+        default=16,
+    )
+    result.add_argument("--instruction-ra-reuse-inverse", action="store_true")
     result.add_argument("--trace", type=Path)
     return result
 
@@ -287,7 +373,11 @@ def main() -> int:
     if args.log_n < 1 or args.repeats < 1 or args.timeout_seconds < 1:
         print("error: log-n, repeats, and timeout must be positive", file=sys.stderr)
         return 2
+    if args.instruction_ra_reuse_inverse and args.instruction_ra_materialize_width == 16:
+        print("error: width-16 Instruction RA cannot reuse the inverse", file=sys.stderr)
+        return 2
     root = Path(args.root).resolve()
+    source = source_fingerprint(root)
     artifact_dir = default_artifact_dir(root)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     pairs = []
@@ -305,6 +395,8 @@ def main() -> int:
                     args.workload,
                     args.log_n,
                     backend,
+                    args.instruction_ra_materialize_width,
+                    args.instruction_ra_reuse_inverse,
                     index + 1,
                     args.timeout_seconds,
                 )
@@ -314,6 +406,12 @@ def main() -> int:
                     "metal_us": results["metal"]["piop_us"],
                     "cpu_prepare_us": results["optimized"]["backend_witness_prepare_us"],
                     "metal_prepare_us": results["metal"]["backend_witness_prepare_us"],
+                    "cpu_instruction_ra_us": kernel_wall_us(
+                        results["optimized"]["attribution"], "InstructionRaVirtualization"
+                    ),
+                    "metal_instruction_ra_us": kernel_wall_us(
+                        results["metal"]["attribution"], "InstructionRaVirtualization"
+                    ),
                 }
             )
             attributions.append(
@@ -323,6 +421,8 @@ def main() -> int:
                 }
             )
         metrics = summarize_pairs(pairs)
+        if source_fingerprint(root) != source:
+            raise ValueError("source worktree changed during the paired evaluation")
         output = {
             "schema_version": SCHEMA_VERSION,
             "kernel": "akita_piop",
@@ -339,17 +439,21 @@ def main() -> int:
                 "gpu_seconds": sum(pair["metal_us"] for pair in pairs) / 1_000_000.0,
             },
             "fingerprint": {
-                "git_revision": git_head(root),
+                **source,
                 "machine": platform.machine(),
                 "platform": platform.platform(),
                 "workload": args.workload,
                 "log_n": args.log_n,
+                "instruction_ra_materialize_width": args.instruction_ra_materialize_width,
+                "instruction_ra_reuse_inverse": args.instruction_ra_reuse_inverse,
                 "span": PIOP_SPAN,
                 "orders": orders,
             },
             "artifacts": str(artifact_dir),
         }
-        print(json.dumps(output, sort_keys=True))
+        encoded = json.dumps(output, sort_keys=True)
+        (artifact_dir / "result.json").write_text(encoded + "\n")
+        print(encoded)
         return 0
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)
@@ -357,4 +461,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    with evaluator_lock({"direct_evaluator": "metal_piop_eval"}):
+        raise SystemExit(main())

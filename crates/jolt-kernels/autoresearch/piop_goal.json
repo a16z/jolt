@@ -38,10 +38,19 @@
       "resident-state and backend integration",
       "portfolio priority and shared primitive reuse"
     ],
+    "candidate_artifact_contract": "candidate.json plus analysis.md and candidate.patch, outside the shared worktree; the manifest binds run, base, accepted-parent, all changes outside the editable scope, frozen paths, parent/candidate editable paths, evaluator, analysis, and patch SHA-256 values",
     "build_and_test_owner": "root agent",
     "candidate_reconciliation": "root agent freezes one experiment only after reconciling the independent analyses",
     "implementation_fanout": "after the contract is frozen, subagents may draft non-overlapping shader, host-integration, or evaluator patches as isolated artifacts; the root agent reviews and applies them serially",
     "gpu_execution": "serialized by the root agent; never overlap GPU evaluators or target-scale CPU controls",
+    "promotion_queue": {
+      "global_lock": "/private/tmp/jolt-metal-autoresearch-evaluator.lock",
+      "ledger": "candidate-events.jsonl records queued, accepted_parent, then production-gated promoted or rejected",
+      "owner": "root",
+      "production_gate": "five clean interleaved target-scale PIOP pairs with exact proofs and the kernel's local bar",
+      "stale_base_policy": "reject before compilation on any manifest or live hash mismatch"
+    },
+    "goal_decision_requires_disjoint_share_attestation": true,
     "subagent_mode": "read-only analysis by default; isolated patch artifacts only after the experiment freezes; no shared-worktree edits, builds, GPU runs, evaluator mutation, or commits",
     "worktree_writer": "root agent only"
   },
@@ -80,7 +89,7 @@
   },
   "validation": {
     "analytical_entry_margin": 1.25,
-    "interleaved_pairs": 3,
+    "interleaved_pairs": 5,
     "primary_log_trace_size": 26,
     "transfer_log_trace_sizes": [
       24,

@@ -1,20 +1,27 @@
 {
   "algorithm_contract": {
-    "arithmetic": "exact quadratic reuse for two factor pairs, with optional round-zero endpoint-pair tables",
+    "arithmetic": "exact quadratic reuse for two factor pairs across direct and delayed materialization schedules",
     "cpu_tail": "single dense readback followed by the optimized CPU kernel",
     "fiat_shamir": "host",
-    "initial_schedule": "one cycle pair per thread",
+    "initial_schedule": "one cycle pair per thread through width 8, then configurable width-16 through width-512 materialization",
     "resident_input": "stage-5 table-major u128 lookup indices plus u32 cycle-to-table-major inverse",
     "sample_grid": [1, 2, 3, "infinity"]
   },
   "baseline_params": {
     "JOLT_METAL_INSTRUCTION_RA_CUTOFF_LOG2": "10",
+    "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_THREADS": "64",
     "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_WIDTH": "16",
-    "JOLT_METAL_INSTRUCTION_RA_PAIR_TABLES": "1",
+    "JOLT_METAL_INSTRUCTION_RA_REUSE_INVERSE": "0",
     "JOLT_METAL_INSTRUCTION_RA_THREADS": "128"
   },
   "baseline_repeats": 3,
   "candidate_repeats": 3,
+  "collaboration": {
+    "evaluator_lock": "/private/tmp/jolt-metal-autoresearch-evaluator.lock",
+    "local_acceptance_status": "accepted_parent",
+    "portfolio_promotion": "requires the executable production gate",
+    "promotion_owner": "root"
+  },
   "budget": {
     "max_gpu_seconds": 600,
     "max_seconds": 1800,
@@ -31,7 +38,7 @@
       "-p",
       "jolt-kernels",
       "--features",
-      "metal",
+      "metal,parallel",
       "--example",
       "metal-instruction-ra-eval"
     ],
@@ -40,6 +47,11 @@
       "JOLT_METAL_EVAL_REPEATS": "3",
       "JOLT_METAL_EVAL_SEED": "1"
     },
+    "frozen_paths": [
+      "crates/jolt-kernels/examples/metal-instruction-ra-eval.rs",
+      "crates/jolt-kernels/examples/support/instruction_ra.rs",
+      "scripts/metal_autoresearch.py"
+    ],
     "parser": "last schema-version 1 JSON object on stdout",
     "timeout_seconds": 600
   },
@@ -48,32 +60,77 @@
     "cross_geometry_log_n": [18, 22, 24],
     "fresh_processes": 2,
     "primary_log_n": 26,
+    "production_gate": {
+      "evaluator": {
+        "command": [
+          "python3",
+          "scripts/metal_piop_eval.py",
+          "--workload",
+          "fibonacci",
+          "--log-n",
+          "26",
+          "--repeats",
+          "5"
+        ],
+        "timeout_seconds": 7200
+      },
+      "expected_fingerprint": {
+        "instruction_ra_materialize_width": {
+          "parameter": "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_WIDTH",
+          "type": "int"
+        },
+        "instruction_ra_reuse_inverse": {
+          "parameter": "JOLT_METAL_INSTRUCTION_RA_REUSE_INVERSE",
+          "type": "bool01"
+        }
+      },
+      "metric": "instruction_ra_speedup",
+      "minimum_local_speedup": 7.0,
+      "minimum_log_n": 26,
+      "minimum_pairs": 5,
+      "require_alternating_orders": true,
+      "require_clean_worktree": true,
+      "required_guards": [
+        "cpu_proofs_verified",
+        "metal_proofs_verified",
+        "target_scale"
+      ],
+      "workload": "fibonacci"
+    },
     "required_path": "PrepareKernel<AkitaField, InstructionRaVirtualization>",
     "resource_gated_log_n": 28
   },
-  "goal": "maximize exact Instruction RA complete-hybrid speedup over the fastest optimized CPU control; 4x is a floor and 7x is the initial target",
+  "goal": "maximize exact Instruction RA stress-layout throughput while preserving at least 7x on the production relation; the portfolio PIOP floor remains 4x and is not a cap",
   "guards": {
     "required_true": [
       "exact_q_evals",
       "exact_round_polys",
       "exact_challenges",
+      "cpu_w16_schedule",
+      "configured_hybrid_schedule",
+      "exact_same_bind_scheduled_tables",
       "exact_cutoff_tables",
       "exact_final_claims",
+      "exact_transcript_state",
       "first_factor_only_gamma_unscale",
       "exact_derived_eq_cycle",
+      "exact_final_relation",
       "host_fiat_shamir",
       "resident_plane_zero_copy",
-      "stable_buffer_identities",
-      "no_round_allocations"
+      "static_device_buffer_identities_stable",
+      "inverse_dense_b_handoff_exact",
+      "host_readback_preallocated_before_primary_timer",
+      "all_exact"
     ]
   },
-  "hypothesis": "zero-copy lookup-plane residency, exact quadratic reuse, and fused width-16 dense transitions can complete the relation in at most 311 ms at 2^26",
+  "hypothesis": "direct width-16 materialization remains the throughput winner; a delayed width is promoted only if it clears 3 percent, while W32 inverse reuse remains a capacity-only mode",
   "kernel": "instruction_ra_virtualization",
   "metric": {
     "direction": "max",
     "minimum_relative_improvement": 0.03,
     "name": "hybrid_speedup",
-    "target": 7.0,
+    "role": "search_proxy",
+    "target": 3.0,
     "unit": "x"
   },
   "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.json",
@@ -81,35 +138,40 @@
   "scope": {
     "editable": [
       "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.metal",
-      "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.rs"
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.rs",
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.metal",
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.rs"
     ],
     "frozen": [
       "crates/jolt-kernels/examples/metal-instruction-ra-eval.rs",
+      "crates/jolt-kernels/examples/support/instruction_ra.rs",
       "crates/jolt-kernels/src/metal/instruction_ra_virtualization.rs",
       "crates/jolt-kernels/src/optimized/instruction_ra_virtualization.rs",
       "crates/jolt-kernels/src/metal/solinas/address_sequence.rs",
       "crates/jolt-field/src/akita.rs",
       "crates/jolt-kernels/autoresearch/piop_goal.json",
-      "scripts/metal_autoresearch.py"
+      "scripts/metal_autoresearch.py",
+      "scripts/metal_piop_eval.py"
     ]
   },
   "search_space": {
     "JOLT_METAL_INSTRUCTION_RA_CUTOFF_LOG2": [8, 10, 12, 14, 16],
-    "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_WIDTH": [4, 8, 16],
-    "JOLT_METAL_INSTRUCTION_RA_PAIR_TABLES": [0, 1],
+    "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_THREADS": [32, 64, 128, 256],
+    "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_WIDTH": [16],
+    "JOLT_METAL_INSTRUCTION_RA_REUSE_INVERSE": [0],
     "JOLT_METAL_INSTRUCTION_RA_THREADS": [64, 128, 256]
   },
   "stopping_conditions": [
     "trial or wall-clock budget is exhausted",
     "no candidate clears the noise-qualified 3 percent promotion threshold",
     "a correctness or resident-state guard fails",
-    "every legal row-thread candidate exceeds the 544-ms 4x falsification bar",
+    "a candidate regresses the production relation below its 7x local bar",
     "the measured bottleneck requires a different schedule and therefore a new phase"
   ],
   "working_targets": {
-    "conservative_4x_wall_ms": 544,
-    "initial_7x_wall_ms": 311,
-    "optimistic_roof_wall_ms": 259,
-    "shader_entry_6_25x_wall_ms": 348
+    "production_7x_wall_ms": 272.1,
+    "production_current_wall_ms": 250.6,
+    "stress_3x_wall_ms": 459.4,
+    "stress_w16_wall_ms": 472.2
   }
 }

@@ -11,6 +11,19 @@ SPEC.loader.exec_module(metal_piop_eval)
 
 
 class MetalPiopEvalTests(unittest.TestCase):
+    def test_worktree_digest_binds_untracked_paths_and_contents(self) -> None:
+        first = metal_piop_eval.worktree_state_digest(
+            b"diff", [(b"b.rs", b"two"), (b"a.rs", b"one")]
+        )
+        reordered = metal_piop_eval.worktree_state_digest(
+            b"diff", [(b"a.rs", b"one"), (b"b.rs", b"two")]
+        )
+        changed = metal_piop_eval.worktree_state_digest(
+            b"diff", [(b"a.rs", b"changed"), (b"b.rs", b"two")]
+        )
+        self.assertEqual(first, reordered)
+        self.assertNotEqual(first, changed)
+
     def test_extracts_one_complete_piop_span(self) -> None:
         events = [
             {"name": "jolt_prover::piop", "ph": "B", "pid": 1, "tid": 0, "ts": 10.0},
@@ -52,16 +65,22 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_us": 20.0,
                     "cpu_prepare_us": 0.0,
                     "metal_prepare_us": 5.0,
+                    "cpu_instruction_ra_us": 50.0,
+                    "metal_instruction_ra_us": 10.0,
                 },
                 {
                     "cpu_us": 120.0,
                     "metal_us": 30.0,
                     "cpu_prepare_us": 0.0,
                     "metal_prepare_us": 10.0,
+                    "cpu_instruction_ra_us": 60.0,
+                    "metal_instruction_ra_us": 15.0,
                 },
             ]
         )
         self.assertEqual(metrics["paired_speedups"], [5.0, 4.0])
+        self.assertEqual(metrics["paired_instruction_ra_speedups"], [5.0, 4.0])
+        self.assertEqual(metrics["instruction_ra_speedup"], 4.5)
         self.assertEqual(metrics["piop_speedup"], 4.5)
         self.assertEqual(metrics["paired_speedups_with_backend_witness_prepare"], [4.0, 3.0])
         self.assertEqual(metrics["piop_plus_backend_witness_prepare_speedup"], 3.5)

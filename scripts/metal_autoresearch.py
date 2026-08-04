@@ -4,23 +4,31 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import math
 import os
 import platform
+import re
+import secrets
 import shutil
 import statistics
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 SCHEMA_VERSION = 1
 VERDICTS = {"keep", "discard", "crash", "invalid"}
+CANDIDATE_STATUSES = {"queued", "accepted_parent", "promoted", "rejected"}
+EVALUATOR_LOCK_PATH = Path("/private/tmp/jolt-metal-autoresearch-evaluator.lock")
+EVALUATOR_LOCK_HELD_ENV = "JOLT_METAL_EVAL_LOCK_HELD"
+CANDIDATE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 
 
 def utc_now() -> str:
@@ -66,6 +74,87 @@ def path_digest(root: Path, paths: list[str]) -> str:
     return digest.hexdigest()
 
 
+def path_is_in_scope(relative: str, scope: list[str]) -> bool:
+    path = Path(relative)
+    return any(path == Path(item) or Path(item) in path.parents for item in scope)
+
+
+def outside_editable_worktree_digest(root: Path, editable: list[str]) -> str:
+    tracked = subprocess.run(
+        ["git", "diff", "--name-only", "--no-renames", "-z", "HEAD", "--"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    changed = {
+        os.fsdecode(raw)
+        for raw in [*tracked.split(b"\0"), *untracked.split(b"\0")]
+        if raw
+    }
+    digest = hashlib.sha256()
+    for relative in sorted(changed):
+        if path_is_in_scope(relative, editable):
+            continue
+        path = root / relative
+        digest.update(relative.encode())
+        digest.update(b"\0")
+        if path.is_symlink():
+            digest.update(b"symlink\0")
+            digest.update(os.readlink(path).encode())
+        elif path.is_file():
+            digest.update(f"mode:{path.stat().st_mode & 0o777:o}\0".encode())
+            digest.update(path.read_bytes())
+        else:
+            digest.update(b"missing")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+@contextmanager
+def evaluator_lock(owner: dict[str, Any]):
+    """Serialize every controller-launched compile and GPU/CPU evaluator."""
+    inherited_token = os.environ.get(EVALUATOR_LOCK_HELD_ENV)
+    if inherited_token:
+        try:
+            record = read_json(EVALUATOR_LOCK_PATH)
+        except (OSError, ValueError, json.JSONDecodeError):
+            record = {}
+        if secrets.compare_digest(str(record.get("token", "")), inherited_token):
+            yield
+            return
+    descriptor = os.open(EVALUATOR_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
+    previous_marker = os.environ.get(EVALUATOR_LOCK_HELD_ENV)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        token = secrets.token_hex(32)
+        os.environ[EVALUATOR_LOCK_HELD_ENV] = token
+        os.ftruncate(descriptor, 0)
+        lock_record = {
+            **owner,
+            "pid": os.getpid(),
+            "locked_at": utc_now(),
+            "token": token,
+        }
+        os.write(descriptor, canonical_json(lock_record))
+        os.fsync(descriptor)
+        yield
+    finally:
+        if previous_marker is None:
+            os.environ.pop(EVALUATOR_LOCK_HELD_ENV, None)
+        else:
+            os.environ[EVALUATOR_LOCK_HELD_ENV] = previous_marker
+        os.ftruncate(descriptor, 0)
+        os.fsync(descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
 def snapshot_paths(root: Path, paths: list[str], destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=False)
     for source in expand_paths(root, paths):
@@ -93,15 +182,31 @@ def git_head(root: Path) -> str:
     return result.stdout.strip()
 
 
-def parse_result(stdout: str) -> dict[str, Any]:
+def git_worktree_clean(root: Path) -> bool:
+    result = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    return not result.stdout
+
+
+def parse_schema_result(stdout: str, schema_version: int) -> dict[str, Any]:
     for line in reversed(stdout.splitlines()):
         try:
             value = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(value, dict) and value.get("schema_version") == SCHEMA_VERSION:
+        if isinstance(value, dict) and value.get("schema_version") == schema_version:
             return value
-    raise ValueError("evaluator stdout contains no schema-version 1 JSON object")
+    raise ValueError(
+        f"evaluator stdout contains no schema-version {schema_version} JSON object"
+    )
+
+
+def parse_result(stdout: str) -> dict[str, Any]:
+    return parse_schema_result(stdout, SCHEMA_VERSION)
 
 
 def validate_template(template: dict[str, Any]) -> None:
@@ -131,11 +236,11 @@ def validate_template(template: dict[str, Any]) -> None:
         raise ValueError("metric direction must be min or max")
     if template["baseline_repeats"] < 3:
         raise ValueError("baseline_repeats must be at least three")
+    if template["baseline_repeats"] % 2 == 0:
+        raise ValueError("baseline_repeats must be odd")
     candidate_repeats = template["candidate_repeats"]
     if candidate_repeats < 1 or candidate_repeats % 2 == 0:
         raise ValueError("candidate_repeats must be a positive odd integer")
-    if template["baseline_repeats"] % candidate_repeats != 0:
-        raise ValueError("baseline_repeats must be divisible by candidate_repeats")
     if template["budget"]["max_trials"] < 1:
         raise ValueError("max_trials must be positive")
     editable = set(template["scope"]["editable"])
@@ -145,6 +250,48 @@ def validate_template(template: dict[str, Any]) -> None:
         raise ValueError(f"paths cannot be editable and frozen: {overlap}")
     if template["portfolio_contract"] not in frozen:
         raise ValueError("the portfolio contract must be in the frozen path set")
+    search_space = template["search_space"]
+    for combination in template.get("invalid_parameter_combinations", []):
+        if not isinstance(combination, dict) or not combination:
+            raise ValueError("invalid parameter combinations must be non-empty objects")
+        unknown = sorted(set(combination) - set(search_space))
+        if unknown:
+            raise ValueError(f"invalid parameter combination has unknown fields: {unknown}")
+        for name, value in combination.items():
+            if str(value) not in {str(item) for item in search_space[name]}:
+                raise ValueError(f"invalid parameter combination uses unsupported {name}")
+    evaluator_paths = set(
+        template["evaluator"].get("frozen_paths", template["scope"]["frozen"])
+    )
+    if not evaluator_paths or not evaluator_paths <= frozen:
+        raise ValueError("evaluator frozen_paths must be a subset of scope.frozen")
+    collaboration = template.get("collaboration")
+    if collaboration is not None:
+        if collaboration.get("promotion_owner") != "root":
+            raise ValueError("the root controller must own candidate promotion")
+        if collaboration.get("evaluator_lock") != str(EVALUATOR_LOCK_PATH):
+            raise ValueError("all Metal evaluators must share the global lock")
+        if collaboration.get("local_acceptance_status") != "accepted_parent":
+            raise ValueError("local winners must remain accepted parents until production validation")
+    if template["metric"].get("role") == "search_proxy":
+        gate = template["final_validation"].get("production_gate", {})
+        if gate.get("metric") is None or float(gate.get("minimum_local_speedup", 0.0)) <= 1.0:
+            raise ValueError("search proxies require a production local-speedup gate")
+        if int(gate.get("minimum_pairs", 0)) < 5:
+            raise ValueError("production promotion requires at least five paired observations")
+        if int(gate.get("minimum_log_n", 0)) < 1:
+            raise ValueError("production promotion requires a target trace scale")
+        if not gate.get("workload"):
+            raise ValueError("production promotion requires a fixed workload")
+        if gate.get("require_alternating_orders") is not True:
+            raise ValueError("production promotion requires alternating backend orders")
+        if gate.get("require_clean_worktree") is not True:
+            raise ValueError("production promotion requires a clean source worktree")
+        evaluator = gate.get("evaluator", {})
+        if not isinstance(evaluator.get("command"), list) or not evaluator["command"]:
+            raise ValueError("production promotion requires an executable evaluator command")
+        if int(evaluator.get("timeout_seconds", 0)) < 1:
+            raise ValueError("production evaluator timeout must be positive")
 
 
 def validate_goal_contract(contract: dict[str, Any]) -> None:
@@ -179,6 +326,16 @@ def validate_goal_contract(contract: dict[str, Any]) -> None:
     local_stretch_floor = float(continuation.get("clear_local_speedup_to_pursue", floor))
     if not math.isfinite(local_stretch_floor) or local_stretch_floor < floor:
         raise ValueError("the clear local stretch floor must be at least the portfolio floor")
+    promotion_queue = contract.get("orchestration", {}).get("promotion_queue", {})
+    if promotion_queue.get("owner") != "root":
+        raise ValueError("the root controller must own the promotion queue")
+    if promotion_queue.get("global_lock") != str(EVALUATOR_LOCK_PATH):
+        raise ValueError("the promotion queue must use the shared evaluator lock")
+    orchestration = contract.get("orchestration", {})
+    if orchestration.get("goal_decision_requires_disjoint_share_attestation") is not True:
+        raise ValueError("portfolio projections require disjoint-share attestation")
+    if int(contract["validation"].get("interleaved_pairs", 0)) < 5:
+        raise ValueError("portfolio acceptance requires at least five interleaved pairs")
 
 
 def validate_params(config: dict[str, Any], params: dict[str, str]) -> None:
@@ -190,6 +347,14 @@ def validate_params(config: dict[str, Any], params: dict[str, str]) -> None:
         allowed = {str(item) for item in search_space[name]}
         if value not in allowed:
             raise ValueError(f"{name}={value} is not one of {sorted(allowed)}")
+    effective = {
+        **{str(name): str(value) for name, value in config.get("baseline_params", {}).items()},
+        **params,
+    }
+    for combination in config.get("invalid_parameter_combinations", []):
+        if all(effective.get(name) == str(value) for name, value in combination.items()):
+            rendered = ", ".join(f"{name}={value}" for name, value in combination.items())
+            raise ValueError(f"invalid parameter combination: {rendered}")
 
 
 def run_evaluator(
@@ -198,19 +363,25 @@ def run_evaluator(
     params: dict[str, str],
     log_dir: Path,
     label: str,
+    remaining_seconds: Optional[float] = None,
 ) -> tuple[dict[str, Any], float]:
     command = config["evaluator"]["command"]
     environment = os.environ.copy()
     environment.update({str(k): str(v) for k, v in config["evaluator"].get("env", {}).items()})
     environment.update(params)
     environment["JOLT_AUTORESEARCH_EVAL_DIR"] = str(log_dir / f"{label}.artifacts")
+    timeout = float(config["evaluator"]["timeout_seconds"])
+    if remaining_seconds is not None:
+        timeout = min(timeout, remaining_seconds)
+    if timeout <= 0.0:
+        raise ValueError("evaluator phase wall-clock budget exhausted")
     started = time.monotonic()
     try:
         result = subprocess.run(
             command,
             cwd=root,
             env=environment,
-            timeout=config["evaluator"]["timeout_seconds"],
+            timeout=timeout,
             capture_output=True,
             text=True,
         )
@@ -240,6 +411,108 @@ def guards_pass(config: dict[str, Any], output: dict[str, Any]) -> tuple[bool, s
     if failed:
         return False, f"failed guards: {failed}"
     return True, "all guards passed"
+
+
+def validate_production_result(
+    config: dict[str, Any],
+    result: dict[str, Any],
+    expected_revision: str,
+    expected_params: dict[str, str],
+    current_worktree_clean: bool,
+) -> dict[str, Any]:
+    gate = config["final_validation"].get("production_gate", {})
+    if result.get("schema_version") != 4 or result.get("kernel") != "akita_piop":
+        raise ValueError("production validation requires a schema-4 Akita PIOP result")
+    guards = result.get("guards", {})
+    if not isinstance(guards, dict):
+        raise ValueError("production result has no guard object")
+    failed = [name for name in gate["required_guards"] if guards.get(name) is not True]
+    if failed:
+        raise ValueError(f"production result failed guards: {failed}")
+    metrics = result.get("metrics", {})
+    if not isinstance(metrics, dict):
+        raise ValueError("production result has no metric object")
+    metric_name = gate["metric"]
+    metric = metrics.get(metric_name)
+    if isinstance(metric, bool) or not isinstance(metric, (int, float)) or not math.isfinite(metric):
+        raise ValueError("production result has no finite local-speedup metric")
+    if metric < float(gate["minimum_local_speedup"]):
+        raise ValueError("production result does not clear the local-speedup gate")
+    pairs = metrics.get("paired_speedups")
+    if not isinstance(pairs, list) or len(pairs) < int(gate["minimum_pairs"]):
+        raise ValueError("production result has too few paired observations")
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0.0
+        for value in pairs
+    ):
+        raise ValueError("production result has invalid paired PIOP speedups")
+    local_pairs = metrics.get("paired_instruction_ra_speedups")
+    if not isinstance(local_pairs, list) or len(local_pairs) != len(pairs):
+        raise ValueError("production result has incomplete local paired observations")
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0.0
+        for value in local_pairs
+    ):
+        raise ValueError("production result has invalid local paired speedups")
+    if not math.isclose(float(metric), statistics.median(local_pairs), rel_tol=1e-12):
+        raise ValueError("production local-speedup summary disagrees with its pairs")
+    piop_speedup = metrics.get("piop_speedup")
+    if (
+        isinstance(piop_speedup, bool)
+        or not isinstance(piop_speedup, (int, float))
+        or not math.isfinite(piop_speedup)
+        or not math.isclose(float(piop_speedup), statistics.median(pairs), rel_tol=1e-12)
+    ):
+        raise ValueError("production PIOP summary disagrees with its pairs")
+    fingerprint = result.get("fingerprint", {})
+    if not isinstance(fingerprint, dict):
+        raise ValueError("production result has no fingerprint object")
+    if fingerprint.get("git_revision") != expected_revision:
+        raise ValueError("production result revision does not match the accepted source")
+    if gate.get("require_clean_worktree") and (
+        fingerprint.get("worktree_dirty") is not False or not current_worktree_clean
+    ):
+        raise ValueError("production promotion requires clean result and current worktrees")
+    if fingerprint.get("workload") != gate["workload"]:
+        raise ValueError("production result used the wrong workload")
+    log_n = fingerprint.get("log_n")
+    if isinstance(log_n, bool) or not isinstance(log_n, int) or log_n < int(gate["minimum_log_n"]):
+        raise ValueError("production result used a sub-target trace scale")
+    if fingerprint.get("span") != "jolt_prover::piop":
+        raise ValueError("production result used the wrong timed span")
+    orders = fingerprint.get("orders")
+    expected_orders = [
+        ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+        for index in range(len(pairs))
+    ]
+    if gate.get("require_alternating_orders") and orders != expected_orders:
+        raise ValueError("production result did not alternate backend order")
+    for name, specification in gate.get("expected_fingerprint", {}).items():
+        parameter = specification["parameter"]
+        if parameter not in expected_params:
+            raise ValueError(f"accepted parameters are missing {parameter}")
+        expected: Any = expected_params[parameter]
+        if specification["type"] == "int":
+            expected = int(expected)
+        elif specification["type"] == "bool01":
+            expected = expected == "1"
+        else:
+            raise ValueError(f"unknown fingerprint conversion for {name}")
+        if fingerprint.get(name) != expected:
+            raise ValueError(f"production fingerprint does not match {parameter}")
+    return {
+        "metric": metric_name,
+        "metric_value": float(metric),
+        "minimum_local_speedup": float(gate["minimum_local_speedup"]),
+        "pairs": len(pairs),
+        "piop_speedup": float(piop_speedup),
+    }
 
 
 def load_run(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -276,13 +549,80 @@ def accepted_parent(config: dict[str, Any], events: list[dict[str, Any]]) -> tup
     return parent_id, value
 
 
-def grouped_medians(values: list[float], group_size: int) -> list[float]:
-    if not values or group_size < 1 or len(values) % group_size != 0:
-        raise ValueError("measurements do not form complete comparison groups")
-    return [
-        statistics.median(values[start : start + group_size])
-        for start in range(0, len(values), group_size)
-    ]
+def accepted_parent_params(
+    config: dict[str, Any], events: list[dict[str, Any]]
+) -> dict[str, str]:
+    params = {str(name): str(value) for name, value in config["baseline"]["params"].items()}
+    for event in events:
+        if event["verdict"] == "keep":
+            params.update({str(name): str(value) for name, value in event["params"].items()})
+    return params
+
+
+def candidate_context(
+    run_dir: Path, config: dict[str, Any], events: list[dict[str, Any]]
+) -> dict[str, str]:
+    parent_id, _ = accepted_parent(config, events)
+    return {
+        "run_sha256": (run_dir / "run.sha256").read_text().strip(),
+        "base_revision": config["base_revision"],
+        "parent_id": parent_id,
+        "frozen_paths_sha256": config["fingerprint"]["frozen_paths_sha256"],
+        "parent_editable_paths_sha256": path_digest(
+            run_dir / "snapshots" / parent_id, config["scope"]["editable"]
+        ),
+        "parent_params_sha256": sha256(
+            canonical_json(accepted_parent_params(config, events))
+        ),
+        "evaluator_contract_sha256": config["fingerprint"][
+            "evaluator_contract_sha256"
+        ],
+        "evaluator_paths_sha256": config["fingerprint"]["evaluator_paths_sha256"],
+        "outside_editable_worktree_sha256": config["fingerprint"][
+            "outside_editable_worktree_sha256"
+        ],
+    }
+
+
+def validate_candidate_manifest(
+    manifest: dict[str, Any], expected: dict[str, str]
+) -> None:
+    required = {
+        "schema_version",
+        "candidate_id",
+        "producer",
+        "summary",
+        "candidate_editable_paths_sha256",
+        "analysis_sha256",
+        "patch_sha256",
+        *expected.keys(),
+    }
+    missing = sorted(required - manifest.keys())
+    if missing:
+        raise ValueError(f"candidate manifest is missing fields: {missing}")
+    if manifest["schema_version"] != SCHEMA_VERSION:
+        raise ValueError("unsupported candidate manifest schema")
+    if CANDIDATE_ID.fullmatch(str(manifest["candidate_id"])) is None:
+        raise ValueError("candidate_id contains unsafe characters")
+    for field, value in expected.items():
+        if manifest.get(field) != value:
+            raise ValueError(f"candidate has stale {field}")
+    for field in (
+        "candidate_editable_paths_sha256",
+        "analysis_sha256",
+        "patch_sha256",
+    ):
+        if re.fullmatch(r"[0-9a-f]{64}", str(manifest[field])) is None:
+            raise ValueError(f"candidate {field} must be SHA-256")
+
+
+def median_and_relative_mad(values: list[float]) -> tuple[float, float]:
+    if not values:
+        raise ValueError("at least one measurement is required")
+    median = statistics.median(values)
+    deviations = [abs(value - median) for value in values]
+    relative_mad = statistics.median(deviations) / abs(median) if median else 0.0
+    return median, relative_mad
 
 
 def goal_decision(
@@ -380,6 +720,49 @@ def append_event(path: Path, event: dict[str, Any]) -> None:
         os.close(descriptor)
 
 
+def record_candidate_event(
+    run_dir: Path,
+    candidate_id: str,
+    status: str,
+    reason: str,
+    manifest_sha256: str,
+) -> None:
+    if status not in CANDIDATE_STATUSES:
+        raise ValueError(f"invalid candidate status: {status}")
+    append_event(
+        run_dir / "candidate-events.jsonl",
+        {
+            "schema_version": SCHEMA_VERSION,
+            "candidate_id": candidate_id,
+            "status": status,
+            "reason": reason,
+            "manifest_sha256": manifest_sha256,
+            "recorded_at": utc_now(),
+        },
+    )
+
+
+def candidate_status_recorded(run_dir: Path, candidate_id: str, status: str) -> bool:
+    path = run_dir / "candidate-events.jsonl"
+    if not path.exists():
+        return False
+    return any(
+        record.get("candidate_id") == candidate_id and record.get("status") == status
+        for record in (json.loads(line) for line in path.read_text().splitlines())
+    )
+
+
+def production_rejection_record(run_dir: Path) -> Optional[dict[str, Any]]:
+    ledger = run_dir / "production-validations.jsonl"
+    if not ledger.exists():
+        return None
+    for line in ledger.read_text().splitlines():
+        record = json.loads(line)
+        if record.get("status") == "rejected":
+            return record
+    return None
+
+
 def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     template = read_json(Path(args.template))
@@ -393,6 +776,15 @@ def command_init(args: argparse.Namespace) -> int:
     snapshots = run_dir / "snapshots"
     snapshots.mkdir()
     snapshot_paths(root, template["scope"]["editable"], snapshots / "baseline")
+    initial_editable_digest = path_digest(root, template["scope"]["editable"])
+    initial_frozen_digest = path_digest(root, template["scope"]["frozen"])
+    initial_evaluator_digest = path_digest(
+        root,
+        template["evaluator"].get("frozen_paths", template["scope"]["frozen"]),
+    )
+    initial_outside_editable_digest = outside_editable_worktree_digest(
+        root, template["scope"]["editable"]
+    )
 
     baseline_params = {str(k): str(v) for k, v in template.get("baseline_params", {}).items()}
     validate_params(template, baseline_params)
@@ -400,8 +792,14 @@ def command_init(args: argparse.Namespace) -> int:
     elapsed_total = 0.0
     gpu_seconds = 0.0
     for index in range(template["baseline_repeats"]):
+        remaining_seconds = float(template["budget"]["max_seconds"]) - elapsed_total
         output, elapsed = run_evaluator(
-            root, template, baseline_params, logs, f"baseline-{index + 1:02d}"
+            root,
+            template,
+            baseline_params,
+            logs,
+            f"baseline-{index + 1:02d}",
+            remaining_seconds,
         )
         passed, reason = guards_pass(template, output)
         if not passed:
@@ -409,11 +807,24 @@ def command_init(args: argparse.Namespace) -> int:
         measurements.append(float(output["metrics"][template["metric"]["name"]]))
         elapsed_total += elapsed
         gpu_seconds += float(output.get("resources", {}).get("gpu_seconds", 0.0))
+        if gpu_seconds > float(template["budget"]["max_gpu_seconds"]):
+            raise ValueError("baseline GPU budget exhausted")
 
-    comparison_measurements = grouped_medians(measurements, template["candidate_repeats"])
-    median = statistics.median(comparison_measurements)
-    deviations = [abs(value - median) for value in comparison_measurements]
-    relative_mad = statistics.median(deviations) / abs(median) if median else 0.0
+    if path_digest(root, template["scope"]["frozen"]) != initial_frozen_digest:
+        raise ValueError("a frozen path changed during baseline evaluation")
+    if path_digest(root, template["scope"]["editable"]) != initial_editable_digest:
+        raise ValueError("an editable path changed during baseline evaluation")
+    if path_digest(
+        root,
+        template["evaluator"].get("frozen_paths", template["scope"]["frozen"]),
+    ) != initial_evaluator_digest:
+        raise ValueError("an evaluator path changed during baseline evaluation")
+    if outside_editable_worktree_digest(
+        root, template["scope"]["editable"]
+    ) != initial_outside_editable_digest:
+        raise ValueError("a path outside the editable scope changed during baseline evaluation")
+
+    median, relative_mad = median_and_relative_mad(measurements)
     config = dict(template)
     config["portfolio"] = goal_contract
     config["created_at"] = utc_now()
@@ -426,14 +837,16 @@ def command_init(args: argparse.Namespace) -> int:
     config["fingerprint"] = {
         "platform": platform.platform(),
         "machine": platform.machine(),
-        "frozen_paths_sha256": path_digest(root, config["scope"]["frozen"]),
-        "editable_paths_sha256": path_digest(root, config["scope"]["editable"]),
+        "frozen_paths_sha256": initial_frozen_digest,
+        "editable_paths_sha256": initial_editable_digest,
         "portfolio_contract_sha256": sha256(canonical_json(goal_contract)),
+        "evaluator_contract_sha256": sha256(canonical_json(config["evaluator"])),
+        "evaluator_paths_sha256": initial_evaluator_digest,
+        "outside_editable_worktree_sha256": initial_outside_editable_digest,
     }
     config["baseline"] = {
         "params": baseline_params,
         "measurements": measurements,
-        "comparison_measurements": comparison_measurements,
         "metric_median": median,
         "relative_mad": relative_mad,
         "elapsed_seconds": elapsed_total,
@@ -448,7 +861,16 @@ def command_init(args: argparse.Namespace) -> int:
     (run_dir / "run.json").write_bytes(encoded)
     (run_dir / "run.sha256").write_text(sha256(encoded) + "\n")
     (run_dir / "events.jsonl").touch()
+    (run_dir / "candidate-events.jsonl").touch()
+    (run_dir / "production-validations.jsonl").touch()
     print(json.dumps({"run_dir": str(run_dir), "baseline": config["baseline"]}, sort_keys=True))
+    return 0
+
+
+def command_candidate_context(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir).resolve()
+    config, events = load_run(run_dir)
+    print(json.dumps(candidate_context(run_dir, config, events), indent=2, sort_keys=True))
     return 0
 
 
@@ -456,8 +878,73 @@ def command_trial(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     run_dir = Path(args.run_dir).resolve()
     config, events = load_run(run_dir)
+    if (run_dir / "production-rejected.json").exists() or production_rejection_record(run_dir):
+        raise ValueError("the production gate rejected this phase; start a new phase")
+    candidate = None
+    candidate_manifest_sha256 = None
+    live_revision = git_head(root)
+    if config.get("collaboration") is not None:
+        if args.candidate_manifest is None:
+            raise ValueError("collaborative runs require --candidate-manifest")
+        manifest_path = Path(args.candidate_manifest).resolve()
+        manifest_bytes = manifest_path.read_bytes()
+        candidate = json.loads(manifest_bytes)
+        if not isinstance(candidate, dict):
+            raise ValueError("candidate manifest must contain a JSON object")
+        candidate_manifest_sha256 = sha256(manifest_bytes)
+        candidate_id = str(candidate.get("candidate_id", "invalid"))
+        try:
+            if live_revision != config["base_revision"]:
+                raise ValueError("run phase base revision no longer matches live HEAD")
+            if root == manifest_path or root in manifest_path.parents:
+                raise ValueError("candidate artifacts must be outside the shared worktree")
+            expected = candidate_context(run_dir, config, events)
+            expected.update(
+                frozen_paths_sha256=path_digest(root, config["scope"]["frozen"]),
+                evaluator_paths_sha256=path_digest(
+                    root,
+                    config["evaluator"].get(
+                        "frozen_paths", config["scope"]["frozen"]
+                    ),
+                ),
+                candidate_editable_paths_sha256=path_digest(
+                    root, config["scope"]["editable"]
+                ),
+                outside_editable_worktree_sha256=outside_editable_worktree_digest(
+                    root, config["scope"]["editable"]
+                ),
+            )
+            validate_candidate_manifest(candidate, expected)
+            candidate_ledger = run_dir / "candidate-events.jsonl"
+            if candidate_ledger.exists() and any(
+                json.loads(line).get("candidate_id") == candidate["candidate_id"]
+                for line in candidate_ledger.read_text().splitlines()
+            ):
+                raise ValueError("candidate_id was already admitted in this run")
+            artifacts = {"analysis.md": "analysis_sha256", "candidate.patch": "patch_sha256"}
+            for relative, field in artifacts.items():
+                artifact = manifest_path.parent / relative
+                if not artifact.is_file() or sha256(artifact.read_bytes()) != candidate[field]:
+                    raise ValueError(f"candidate artifact hash mismatch: {relative}")
+        except (OSError, ValueError) as error:
+            record_candidate_event(
+                run_dir,
+                candidate_id,
+                "rejected",
+                str(error),
+                candidate_manifest_sha256,
+            )
+            raise
+    elif args.summary is None:
+        raise ValueError("non-collaborative trials require --summary")
+    if live_revision != config["base_revision"]:
+        raise ValueError("run phase base revision no longer matches live HEAD")
     if path_digest(root, config["scope"]["frozen"]) != config["fingerprint"]["frozen_paths_sha256"]:
         raise ValueError("a frozen path changed; start a new run phase")
+    if outside_editable_worktree_digest(
+        root, config["scope"]["editable"]
+    ) != config["fingerprint"]["outside_editable_worktree_sha256"]:
+        raise ValueError("a path outside the editable scope changed; start a new run phase")
     inflight = run_dir / "inflight.json"
     if inflight.exists():
         raise ValueError("an interrupted trial needs `recover` before another trial")
@@ -474,7 +961,9 @@ def command_trial(args: argparse.Namespace) -> int:
     if gpu_used >= config["budget"]["max_gpu_seconds"]:
         raise ValueError("GPU budget exhausted")
 
-    params = dict(item.split("=", 1) for item in args.param)
+    parameter_overrides = dict(item.split("=", 1) for item in args.param)
+    params = accepted_parent_params(config, events)
+    params.update(parameter_overrides)
     validate_params(config, params)
     index = len(events) + 1
     trial_id = f"trial-{index:03d}"
@@ -487,32 +976,52 @@ def command_trial(args: argparse.Namespace) -> int:
                 "trial_id": trial_id,
                 "parent_id": parent_id,
                 "candidate_revision": candidate_revision,
+                "candidate_id": candidate.get("candidate_id") if candidate else None,
+                "candidate_manifest_sha256": candidate_manifest_sha256,
                 "params": params,
                 "started_at": started_at,
             }
         )
     )
+    if candidate is not None:
+        record_candidate_event(
+            run_dir,
+            candidate["candidate_id"],
+            "queued",
+            "root admitted candidate for serialized evaluation",
+            candidate_manifest_sha256,
+        )
     elapsed = 0.0
     gpu_seconds = 0.0
     measurements = []
     combined_guards = {name: True for name in config["guards"]["required_true"]}
     try:
         for repeat in range(config.get("candidate_repeats", 1)):
+            remaining_seconds = float(config["budget"]["max_seconds"]) - elapsed_used - elapsed
             output, repetition_elapsed = run_evaluator(
                 root,
                 config,
                 params,
                 run_dir / "logs",
                 f"{trial_id}-{repeat + 1:02d}",
+                remaining_seconds,
             )
             elapsed += repetition_elapsed
             gpu_seconds += float(output.get("resources", {}).get("gpu_seconds", 0.0))
+            if gpu_used + gpu_seconds > float(config["budget"]["max_gpu_seconds"]):
+                raise ValueError("candidate GPU budget exhausted")
             measurements.append(float(output["metrics"][config["metric"]["name"]]))
             passed, reason = guards_pass(config, output)
             for name in combined_guards:
                 combined_guards[name] = combined_guards[name] and output["guards"].get(name) is True
             if not passed:
                 break
+        if path_digest(root, config["scope"]["editable"]) != candidate_revision:
+            raise ValueError("editable source changed during candidate evaluation")
+        if outside_editable_worktree_digest(
+            root, config["scope"]["editable"]
+        ) != config["fingerprint"]["outside_editable_worktree_sha256"]:
+            raise ValueError("a path outside the editable scope changed during evaluation")
         metric_value = statistics.median(measurements)
         if not passed:
             verdict = "invalid"
@@ -541,7 +1050,9 @@ def command_trial(args: argparse.Namespace) -> int:
         "candidate_revision": sha256(
             canonical_json({"source": candidate_revision, "params": params})
         ),
-        "proposal_summary": args.summary,
+        "proposal_summary": candidate["summary"] if candidate else args.summary,
+        "candidate_id": candidate.get("candidate_id") if candidate else None,
+        "candidate_manifest_sha256": candidate_manifest_sha256,
         "params": params,
         "started_at": started_at,
         "elapsed_seconds": elapsed,
@@ -552,7 +1063,6 @@ def command_trial(args: argparse.Namespace) -> int:
         "verdict": verdict,
         "reason": reason,
     }
-    append_event(run_dir / "events.jsonl", event)
     if verdict == "keep":
         snapshot_paths(
             root,
@@ -565,20 +1075,36 @@ def command_trial(args: argparse.Namespace) -> int:
             config["scope"]["editable"],
             run_dir / "snapshots" / parent_id,
         )
+    append_event(run_dir / "events.jsonl", event)
+    if candidate is not None:
+        record_candidate_event(
+            run_dir,
+            candidate["candidate_id"],
+            "accepted_parent" if verdict == "keep" else "rejected",
+            reason,
+            candidate_manifest_sha256,
+        )
     inflight.unlink()
     print(json.dumps(event, sort_keys=True))
     return 0 if verdict in {"keep", "discard"} else 2
 
 
 def command_status(args: argparse.Namespace) -> int:
-    config, events = load_run(Path(args.run_dir).resolve())
+    run_dir = Path(args.run_dir).resolve()
+    config, events = load_run(run_dir)
     parent_id, metric = accepted_parent(config, events)
+    validations = (run_dir / "production-validations.jsonl")
+    validation_count = len(validations.read_text().splitlines()) if validations.exists() else 0
     summary = {
         "kernel": config["kernel"],
         "trials": len(events),
         "remaining_trials": config["budget"]["max_trials"] - len(events),
         "accepted_parent": parent_id,
         "accepted_metric": metric,
+        "accepted_params": accepted_parent_params(config, events),
+        "production_validations": validation_count,
+        "production_rejected": (run_dir / "production-rejected.json").exists()
+        or production_rejection_record(run_dir) is not None,
         "portfolio_minimum_speedup": config.get("portfolio", {})
         .get("primary_metric", {})
         .get("minimum_accepted_speedup"),
@@ -592,6 +1118,199 @@ def command_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def production_parent_event(
+    events: list[dict[str, Any]], parent_id: str
+) -> Optional[dict[str, Any]]:
+    return next((event for event in events if event["trial_id"] == parent_id), None)
+
+
+def repair_candidate_promotion(
+    run_dir: Path,
+    events: list[dict[str, Any]],
+    parent_id: str,
+) -> None:
+    parent_event = production_parent_event(events, parent_id)
+    if parent_event is None or parent_event.get("candidate_id") is None:
+        return
+    candidate_id = parent_event["candidate_id"]
+    if candidate_status_recorded(run_dir, candidate_id, "promoted"):
+        return
+    record_candidate_event(
+        run_dir,
+        candidate_id,
+        "promoted",
+        "production relation cleared the executable paired-validation gate",
+        parent_event["candidate_manifest_sha256"],
+    )
+
+
+def finalize_production_rejection(
+    root: Path,
+    run_dir: Path,
+    config: dict[str, Any],
+    events: list[dict[str, Any]],
+    rejection: dict[str, Any],
+) -> None:
+    parent_id = str(rejection["parent_id"])
+    parent_event = production_parent_event(events, parent_id)
+    restored_parent = None
+    if parent_event is not None:
+        restored_parent = parent_event["parent_id"]
+        restore_snapshot(
+            root,
+            config["scope"]["editable"],
+            run_dir / "snapshots" / restored_parent,
+        )
+        candidate_id = parent_event.get("candidate_id")
+        if candidate_id is not None and not candidate_status_recorded(
+            run_dir, candidate_id, "rejected"
+        ):
+            record_candidate_event(
+                run_dir,
+                candidate_id,
+                "rejected",
+                f"production gate failed: {rejection['reason']}",
+                parent_event["candidate_manifest_sha256"],
+            )
+    marker = {**rejection, "restored_parent": restored_parent}
+    (run_dir / "production-rejected.json").write_bytes(canonical_json(marker))
+
+
+def run_production_evaluator(
+    root: Path,
+    run_dir: Path,
+    config: dict[str, Any],
+    params: dict[str, str],
+) -> tuple[dict[str, Any], bytes, Path]:
+    gate = config["final_validation"]["production_gate"]
+    evaluator = gate["evaluator"]
+    command = [str(item) for item in evaluator["command"]]
+    fingerprint = gate["expected_fingerprint"]
+    width_parameter = fingerprint["instruction_ra_materialize_width"]["parameter"]
+    reuse_parameter = fingerprint["instruction_ra_reuse_inverse"]["parameter"]
+    command.extend(["--instruction-ra-materialize-width", params[width_parameter]])
+    if params[reuse_parameter] == "1":
+        command.append("--instruction-ra-reuse-inverse")
+
+    attempts = run_dir / "production-attempts"
+    attempts.mkdir(exist_ok=True)
+    attempt = attempts / utc_now().replace(":", "-")
+    attempt.mkdir()
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            timeout=int(evaluator["timeout_seconds"]),
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.TimeoutExpired as error:
+        stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout or ""
+        stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else error.stderr or ""
+        (attempt / "stdout.log").write_text(stdout)
+        (attempt / "stderr.log").write_text(stderr)
+        raise ValueError("production evaluator timed out") from error
+    (attempt / "stdout.log").write_text(completed.stdout)
+    (attempt / "stderr.log").write_text(completed.stderr)
+    if completed.returncode != 0:
+        raise ValueError(f"production evaluator exited with status {completed.returncode}")
+    result = parse_schema_result(completed.stdout, 4)
+    result_bytes = canonical_json(result)
+    (attempt / "result.json").write_bytes(result_bytes)
+    return result, result_bytes, attempt
+
+
+def command_validate_production(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    run_dir = Path(args.run_dir).resolve()
+    config, events = load_run(run_dir)
+    parent_id, _ = accepted_parent(config, events)
+    params = accepted_parent_params(config, events)
+    ledger = run_dir / "production-validations.jsonl"
+    if not ledger.exists():
+        ledger.touch()
+    prior = [json.loads(line) for line in ledger.read_text().splitlines()]
+    successful = next(
+        (
+            record
+            for record in prior
+            if record.get("parent_id") == parent_id and record.get("status") == "promoted"
+        ),
+        None,
+    )
+    if successful is not None:
+        repair_candidate_promotion(run_dir, events, parent_id)
+        print(json.dumps(successful, sort_keys=True))
+        return 0
+    rejected = next(
+        (
+            record
+            for record in prior
+            if record.get("parent_id") == parent_id and record.get("status") == "rejected"
+        ),
+        None,
+    )
+    if rejected is not None:
+        finalize_production_rejection(root, run_dir, config, events, rejected)
+        raise ValueError("the production gate already rejected this phase")
+
+    accepted_snapshot = run_dir / "snapshots" / parent_id
+    editable = config["scope"]["editable"]
+    if path_digest(root, editable) != path_digest(accepted_snapshot, editable):
+        raise ValueError("live editable source does not match the accepted parent snapshot")
+    if path_digest(root, config["scope"]["frozen"]) != config["fingerprint"][
+        "frozen_paths_sha256"
+    ]:
+        raise ValueError("a frozen path changed after phase initialization")
+    if not git_worktree_clean(root):
+        raise ValueError("production evaluation requires a clean source worktree")
+    expected_revision = git_head(root)
+    result, result_bytes, attempt = run_production_evaluator(root, run_dir, config, params)
+    try:
+        evidence = validate_production_result(
+            config,
+            result,
+            expected_revision,
+            params,
+            git_worktree_clean(root),
+        )
+        if git_head(root) != expected_revision:
+            raise ValueError("source revision changed during production evaluation")
+        if path_digest(root, editable) != path_digest(accepted_snapshot, editable):
+            raise ValueError("accepted source changed during production evaluation")
+        if path_digest(root, config["scope"]["frozen"]) != config["fingerprint"][
+            "frozen_paths_sha256"
+        ]:
+            raise ValueError("a frozen path changed during production evaluation")
+    except ValueError as error:
+        rejection = {
+            "schema_version": SCHEMA_VERSION,
+            "status": "rejected",
+            "parent_id": parent_id,
+            "result_sha256": sha256(result_bytes),
+            "attempt": str(attempt),
+            "reason": str(error),
+            "recorded_at": utc_now(),
+        }
+        append_event(ledger, rejection)
+        finalize_production_rejection(root, run_dir, config, events, rejection)
+        raise ValueError(f"production gate rejected the accepted parent: {error}") from error
+
+    record = {
+        "schema_version": SCHEMA_VERSION,
+        "status": "promoted",
+        "parent_id": parent_id,
+        "result_sha256": sha256(result_bytes),
+        "attempt": str(attempt),
+        "recorded_at": utc_now(),
+        **evidence,
+    }
+    append_event(ledger, record)
+    repair_candidate_promotion(run_dir, events, parent_id)
+    print(json.dumps(record, sort_keys=True))
+    return 0
+
+
 def command_recover(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     run_dir = Path(args.run_dir).resolve()
@@ -599,16 +1318,64 @@ def command_recover(args: argparse.Namespace) -> int:
     inflight = run_dir / "inflight.json"
     if not inflight.exists():
         raise ValueError("there is no interrupted trial")
+    interrupted = read_json(inflight)
+    committed = next(
+        (event for event in events if event["trial_id"] == interrupted["trial_id"]),
+        None,
+    )
     parent_id, _ = accepted_parent(config, events)
     quarantine = run_dir / "quarantine" / utc_now().replace(":", "-")
     snapshot_paths(root, config["scope"]["editable"], quarantine)
+    orphan = run_dir / "snapshots" / interrupted["trial_id"]
+    if committed is None and orphan.exists():
+        shutil.move(orphan, quarantine / "orphan-accepted-snapshot")
     restore_snapshot(
         root,
         config["scope"]["editable"],
         run_dir / "snapshots" / parent_id,
     )
+    candidate_id = interrupted.get("candidate_id")
+    if candidate_id is not None and not candidate_status_recorded(
+        run_dir, candidate_id, "queued"
+    ):
+        record_candidate_event(
+            run_dir,
+            candidate_id,
+            "queued",
+            "recovered an interrupted admission before its queue ledger write",
+            interrupted.get("candidate_manifest_sha256", ""),
+        )
+    if committed is not None and candidate_id is not None:
+        status = "accepted_parent" if committed["verdict"] == "keep" else "rejected"
+        if not candidate_status_recorded(run_dir, candidate_id, status):
+            record_candidate_event(
+                run_dir,
+                candidate_id,
+                status,
+                "recovered a committed trial whose final ledger write was interrupted",
+                interrupted.get("candidate_manifest_sha256", ""),
+            )
+    elif candidate_id is not None and not candidate_status_recorded(
+        run_dir, candidate_id, "rejected"
+    ):
+        record_candidate_event(
+            run_dir,
+            candidate_id,
+            "rejected",
+            "interrupted evaluation recovered to the accepted parent",
+            interrupted.get("candidate_manifest_sha256", ""),
+        )
     inflight.unlink()
-    print(json.dumps({"restored": parent_id, "quarantine": str(quarantine)}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "committed": committed is not None,
+                "restored": parent_id,
+                "quarantine": str(quarantine),
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -616,6 +1383,8 @@ def command_goal_decision(args: argparse.Namespace) -> int:
     contract = read_json(Path(args.contract))
     validate_goal_contract(contract)
     candidates = [parse_goal_candidate(value) for value in args.candidate]
+    if candidates and not args.shares_disjoint:
+        raise ValueError("portfolio candidates require --shares-disjoint attestation")
     decision = goal_decision(contract, args.current_speedup, candidates)
     print(json.dumps(decision, indent=2, sort_keys=True))
     return 0
@@ -636,14 +1405,21 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("template")
     init.add_argument("run_dir")
     init.set_defaults(handler=command_init)
+    context = commands.add_parser("candidate-context")
+    context.add_argument("run_dir")
+    context.set_defaults(handler=command_candidate_context)
     trial = commands.add_parser("trial")
     trial.add_argument("run_dir")
+    trial.add_argument("--candidate-manifest")
     trial.add_argument("--param", action="append", default=[])
-    trial.add_argument("--summary", required=True)
+    trial.add_argument("--summary")
     trial.set_defaults(handler=command_trial)
     status = commands.add_parser("status")
     status.add_argument("run_dir")
     status.set_defaults(handler=command_status)
+    production = commands.add_parser("validate-production")
+    production.add_argument("run_dir")
+    production.set_defaults(handler=command_validate_production)
     recover = commands.add_parser("recover")
     recover.add_argument("run_dir")
     recover.set_defaults(handler=command_recover)
@@ -651,6 +1427,7 @@ def parser() -> argparse.ArgumentParser:
     goal.add_argument("contract")
     goal.add_argument("--current-speedup", type=float, required=True)
     goal.add_argument("--candidate", action="append", default=[])
+    goal.add_argument("--shares-disjoint", action="store_true")
     goal.set_defaults(handler=command_goal_decision)
     goal_prompt = commands.add_parser("goal-prompt")
     goal_prompt.add_argument("contract")
@@ -661,6 +1438,9 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     try:
+        if args.command in {"init", "trial", "recover", "validate-production"}:
+            with evaluator_lock({"controller_command": args.command}):
+                return args.handler(args)
         return args.handler(args)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)

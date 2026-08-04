@@ -181,11 +181,11 @@ order after the first slot establishes the harness.
 | 5 | `registers_val_evaluation` | dense fused product | analyze |
 | 6a | `bytecode_read_raf_address` | address pushforward | analyze |
 | 6a | `booleanity_address` | address pushforward | analyze |
-| 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | analyze |
+| 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | ceiling/evaluator frozen; optimized CPU Q10 control next |
 | 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | integrated; 4.85x real kernel seam at `2^26`, further ceiling work open |
 | 6b | `ram_hamming_booleanity` | dense cubic | analyze |
 | 6b | `ram_ra_virtualization` | one-hot virtualization | analyze |
-| 6b | `instruction_ra_virtualization` | one-hot virtualization | analyze |
+| 6b | `instruction_ra_virtualization` | one-hot virtualization | Metal integrated and exact; promotion requires five-pair production revalidation |
 | 6b | `inc_claim_reduction` | dense reduction | analyze |
 | 6b/7 | trusted-advice cycle/address | resident two-phase reduction | analyze |
 | 6b/7 | untrusted-advice cycle/address | resident two-phase reduction | analyze |
@@ -233,7 +233,14 @@ backends in alternating order. Both runs must verify, and each trace must contai
 complete PIOP span:
 
 ```bash
-python3 scripts/metal_piop_eval.py --log-n 26 --repeats 3
+python3 scripts/metal_piop_eval.py --log-n 26 --repeats 5
+```
+
+For a retained kernel phase, root runs the same frozen five-pair evaluator and records
+the promotion transaction with:
+
+```bash
+python3 scripts/metal_autoresearch.py validate-production <run-dir>
 ```
 
 After profiling residual kernels, the deterministic continuation check is:
@@ -242,6 +249,7 @@ After profiling residual kernels, the deterministic continuation check is:
 python3 scripts/metal_autoresearch.py goal-decision \
   crates/jolt-kernels/autoresearch/piop_goal.json \
   --current-speedup <S> \
+  --shares-disjoint \
   --candidate '<kernel>:<current-PIOP-share>:<conservative-local-speedup>'
 ```
 
@@ -814,12 +822,13 @@ optimistic complete roof is about 259 ms after dispatches and the measured CPU t
 charging only one third of the arithmetic roof and serializing traffic gives about
 501 ms.
 
-The strict control is the faster 2.176-s CPU round trace rather than the older
-2.242-s complete attribution. It fixes the local budgets at 544 ms for 4x, 435 ms
-for 5x, 348 ms for the 6.25x shader-entry margin, and 311 ms for the initial 7x
-working target. Four times is the architecture falsification bar, not the stopping
-point: the modeled roof is about 8.4x and the search continues past 7x while a
-noise-qualified candidate has material headroom.
+The provisional planning denominator is the faster observed 2.176-s CPU round trace
+rather than the older 2.242-s attribution. Selecting one faster sample is not a
+strict or noise-qualified control; it only sets optimistic local budgets of 544 ms
+for 4x, 435 ms for 5x, 348 ms for the 6.25x shader-entry margin, and 311 ms for the
+initial 7x target. Four times is the architecture falsification bar, not the stopping
+point. Production promotion uses an interleaved median rather than either one-shot
+denominator.
 
 ### Resident seam and frozen first experiment
 
@@ -849,24 +858,27 @@ mid-proof retry from mutated state.
 
 At `T = 2^28`, this M4 Max reports an 80.64-GiB per-buffer limit, so the
 unsegmented width-16 design is API-legal: lookup indices use 4 GiB, the inverse map
-1 GiB, and the two dense factor buffers 4 GiB and 2 GiB. Aggregate stage-6b
-residency, rather than `maxBufferLength`, is the practical risk because Booleanity
-state can still be live. The `2^28` validation is therefore resource-gated and the
-portable layout uses four `2^26`-row shards plus one dense source/destination pair
-per virtual product. At width 16 that holds row shards to 1 GiB, inverse shards to
-256 MiB, and dense buffers to 1 GiB/512 MiB. All shards for one round remain in one
-command buffer and reduce into the same four outputs, so the arithmetic, host
-Fiat-Shamir, and 256-KiB cutoff readback are unchanged from `2^26`.
+1 GiB, and the two dense factor buffers 4 GiB and 2 GiB. Including branch tables,
+the sequence owns 6.002 GiB of modeled scratch in addition to the 5-GiB lookup
+plane. Aggregate unified-memory pressure, rather than `maxBufferLength`, is the
+practical risk because CPU rows and other stage-6b state can still be live. Width 32
+with inverse reuse lowers owned sequence scratch to 2.003 GiB and post-handoff
+residency to 3.003 GiB. The implementation remains unsegmented; no sharded or split
+layout is currently justified.
 
-`autoresearch/instruction_ra_virtualization.template.json` freezes the first search.
-It compares the complete resident hybrid against both the current optimized CPU and
-a portable quadratic-reuse CPU control. If the portable algebra wins beyond noise,
-that faster CPU becomes the fair oracle. The evaluator compares all four `q` values,
-the degree-five round polynomial and host challenge after every round, the cutoff
-tables, all final claims, transcript state, stable resident-buffer identities, and
-zero per-round allocations. It reports endpoint refresh, GPU active and wall time by
-round, readback, CPU tail, useful multiplication rate, logical traffic, and peak
-resident bytes separately.
+`autoresearch/instruction_ra_virtualization.template.json` freezes the evaluator,
+support module, optimized CPU mirror, editable shader scope, and promotion threshold.
+The evaluator compares all four `q` values, the degree-five round polynomial and host
+challenge after every round, same-bind and cutoff tables, all final claims, transcript
+state, the derived `EqCycle` relation, buffer identities, and inverse-buffer handoff.
+Round paths use only preallocated device buffers. The evaluator reports complete CPU and hybrid wall time, GPU
+dispatch and active time, host rounds, readback, CPU tail, and modeled scratch
+separately. Its bit-reversed lookup layout is a deterministic gather stress case, not
+a prediction of the production stage-5 table-major distribution. The controller
+serializes every evaluator behind one global lock and hashes the frozen evaluator,
+accepted parent and parameters, candidate source, analysis, and patch. A local
+winner becomes only an accepted search parent. Root promotion requires five clean
+interleaved production PIOP pairs, exact proofs, and the executable 7x local gate.
 
 ### First-message gate
 
@@ -904,9 +916,10 @@ The first complete width-16 sequence is checkpointed by
 fused bind-and-message rounds; a 1,024-element CPU cutoff; all 16 final claims; and
 host Fiat-Shamir. The optimized CPU relation measured 2,002.044 ms. The initial
 Metal relation measured 1,144.763 ms, only 1.749x, but 877.842 ms of that was
-sequence preparation while the actual rounds took 266.921 ms. Resident arithmetic
-was already 7.50x faster than the fair CPU control; the failure was lifecycle
-placement of transcript-independent storage, not the shader schedule.
+sequence preparation while the actual rounds took 266.921 ms. Dividing the complete
+CPU relation by resident rounds gives a 7.50x diagnostic, not a fair
+complete-hybrid speedup. The checkpoint isolated lifecycle placement as the dominant
+overhead.
 
 Reusable storage now allocates in `backend_witness_prepare`, before the PIOP, and
 stage 6b only attaches the resident lookup plane plus 4,096 challenge-dependent
@@ -925,12 +938,36 @@ The Metal relation decomposed into 0.011 ms attachment, 225.170 ms of lazy round
 row preparation. These are exact-proof paired samples, not yet a noise-qualified
 aggregate.
 
-Width 16 still reserves about 1.503 GiB of sequence storage in addition to the
-1.25-GiB resident lookup plane. Wider lazy materialization is therefore the next
-experiment. W256 projects about 120 MiB of sequence scratch, or about 88 MiB of new
-scratch when the dead 256-MiB inverse buffer becomes the dense destination after
-its final read. The current ceiling model predicts roughly 5.4--5.7x complete local
-speedup. W64, W128, W256, and W512 are compared before considering pair tables.
+Width 16 reserves about 1.503 GiB of sequence storage in addition to the 1.25-GiB
+resident lookup plane at `2^26`. Delayed materialization through widths 32, 64, 128,
+256, and 512, plus one-shot reuse of the dead inverse buffer, passed exact schedule,
+table, transcript, claim, and final-relation checks. The `2^22` stress-layout screen
+measured:
+
+| Width | Inverse reuse | Hybrid wall | CPU-mirror speedup | Owned scratch |
+|---:|:---:|---:|---:|---:|
+| 16 | no | 34.887 ms | 2.631x | 98 MiB |
+| 32 | no | 37.123 ms | 2.532x | 51 MiB |
+| 32 | yes | 36.734 ms | 2.577x | 35 MiB |
+| 64 | yes | 39.675 ms | 2.377x | 22 MiB |
+| 128 | yes | 39.470 ms | 2.355x | 20 MiB |
+| 256 | yes | 47.196 ms | 1.994x | 28 MiB |
+| 512 | yes | 57.089 ms | 1.619x | 50 MiB |
+
+Only W16 and W32+reuse advanced. At `2^26`, W16 took 472.200 ms while W32
+took 550.642 ms, a 16.6% slowdown, although W32 cut owned scratch from 1.503 GiB
+to 515 MiB. At the requested `2^28` resource gate, W16 took 2.143 s at
+125.260 million rows/s and W32 took 2.572 s at 104.367 million rows/s, a 20.0%
+slowdown. All guards remained exact. W16 is therefore the throughput default;
+W32+reuse is retained only as a capacity mode, and widths 64 through 512 are pruned.
+
+The production-layout transfer check is
+`benchmark-runs/metal-piop-eval/20260804-182805`. In that single exact-proof pair,
+Instruction RA measured 1,904.747 ms on the optimized CPU and 250.616 ms on Metal,
+or 7.600x. PIOP measured 19.407 s versus 11.679 s, or 1.662x. The earlier clean
+pair above measured 8.253x locally and 1.812x for PIOP; the CPU baseline moved more
+than the Metal relation, so neither single pair is promoted as a noise-qualified
+aggregate.
 
 ## Requirement map and open points
 
