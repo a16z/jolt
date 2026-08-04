@@ -69,21 +69,29 @@ impl FamilySelectors {
     }
 }
 
-/// All `N` pushforwards from one pass over the shared stage-5 rows against
-/// the shared cycle-eq table, in canonical (instruction, bytecode, RAM)
-/// order.
+/// All `N` pushforwards from one pass over the shared stage-5 rows, in
+/// canonical (instruction, bytecode, RAM) order. The cycle-eq weight is
+/// computed on the fly from the split tables `eq(r, j) = eq(r[..hi], j_hi) ·
+/// eq(r[hi..], j_lo)` — two `O(√T)` tables instead of the `T`-sized eq
+/// materialization (4.3 GiB at 2^27), identical field values (field
+/// multiplication regroups exactly), one extra multiply per row.
 fn pushforwards<F: Field>(
     rows: &[InstructionCycleRow],
-    eq_cycle: &[F],
+    r_cycle: &[F],
     selectors: &FamilySelectors,
     k_chunk: usize,
 ) -> Vec<Vec<F>> {
+    let log_t = r_cycle.len();
+    let lo_bits = log_t / 2;
+    let hi_bits = log_t - lo_bits;
+    let e_hi = eq_table(&r_cycle[..hi_bits]);
+    let e_lo = eq_table(&r_cycle[hi_bits..]);
     let total = selectors.instruction.len() + selectors.bytecode.len() + selectors.ram.len();
     let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
         let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
         for j in range {
             let row = &rows[j];
-            let eq = eq_cycle[j];
+            let eq = e_hi[j >> lo_bits] * e_lo[j & ((1 << lo_bits) - 1)];
             let mut slot = 0;
             for selector in &selectors.instruction {
                 partial[slot][selector.chunk_u128(row.lookup_index)] += eq;
@@ -171,12 +179,11 @@ pub(crate) fn build_hamming_weight_tables<F: Field>(
     // exactly the shared stage-5 rows the record walk co-produced — reclaim
     // them instead of re-walking the trace.
     let rows = shared_instruction_rows(session, witness, cycles)?;
-    let eq_cycle = eq_table(r_cycle);
     let selectors = FamilySelectors::new(
         (layout.instruction(), layout.bytecode(), layout.ram()),
         dimensions.log_k_chunk,
     )?;
-    let g_tables = pushforwards(&rows, &eq_cycle, &selectors, k_chunk);
+    let g_tables = pushforwards(&rows, r_cycle, &selectors, k_chunk);
 
     // W_i(k) = γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k).
     let gamma = inputs.challenges.gamma;

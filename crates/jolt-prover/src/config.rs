@@ -12,6 +12,7 @@ use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_field::FieldCore;
 use jolt_program::execution::{RamAccess, TraceRow};
+use jolt_verifier::config::BooleanityAnchor;
 
 use crate::ProverError;
 
@@ -35,6 +36,13 @@ pub struct ProverConfig {
     /// preprocessing bakes this order into its chunk commitments — it must
     /// be chosen before preprocessing and match here (stage 0 checks).
     pub trace_polynomial_order: TracePolynomialOrder,
+    /// Which transcript-prior point anchors the booleanity `eq` factor
+    /// (echoed into `JoltProof::protocol`). Derivation picks
+    /// [`BooleanityAnchor::Stage1CycleV1`] — known four stages before it is
+    /// consumed, so the address-phase pushforward builds in the background
+    /// during stage 5. The byte-diff harness overwrites this with the legacy
+    /// anchor to stay wire-equal with `jolt-prover-legacy`.
+    pub booleanity_anchor: BooleanityAnchor,
 }
 
 impl ProverConfig {
@@ -85,6 +93,7 @@ impl ProverConfig {
             rw_config: read_write_config(log_T, ram_K.ilog2() as usize),
             one_hot_config: one_hot_config(log_T),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
+            booleanity_anchor: BooleanityAnchor::Stage1CycleV1,
         })
     }
 

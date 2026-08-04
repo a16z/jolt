@@ -178,13 +178,18 @@ pub(crate) fn pc_rows<F: Field>(
     Ok(rows)
 }
 
-/// The five per-stage cycle-eq pushforwards onto the bytecode address domain,
-/// all stages in one trace walk over the split-eq two-table decomposition.
-fn stage_pushforwards<F: Field>(
-    stage_cycle_points: &[Vec<F>; 5],
+/// Per-stage cycle-eq pushforwards onto the bytecode address domain for any
+/// point subset, all stages in one trace walk over the split-eq two-table
+/// decomposition. Each stage's table is accumulated in its own lanes, so a
+/// subset walk produces the same field values as the five-stage walk — the
+/// stage-1..4 tables build in the background during stage 5 and only the
+/// stage-5 table's walk stays on the 6a critical path.
+fn stage_pushforwards_for<F: Field>(
+    stage_cycle_points: &[Vec<F>],
     rows: &[PcRow],
     addresses: usize,
-) -> [Vec<F>; 5] {
+) -> Vec<Vec<F>> {
+    let stages = stage_cycle_points.len();
     let log_t = stage_cycle_points[0].len();
     let lo_bits = log_t / 2;
     let hi_bits = log_t - lo_bits;
@@ -193,12 +198,18 @@ fn stage_pushforwards<F: Field>(
 
     // Big-endian points split as eq(r, j) = eq(r[..hi], j_hi) · eq(r[hi..], j_lo)
     // with j = (j_hi << lo_bits) | j_lo.
-    let e_hi: [Vec<F>; 5] = std::array::from_fn(|s| eq_table(&stage_cycle_points[s][..hi_bits]));
-    let e_lo: [Vec<F>; 5] = std::array::from_fn(|s| eq_table(&stage_cycle_points[s][hi_bits..]));
+    let e_hi: Vec<Vec<F>> = stage_cycle_points
+        .iter()
+        .map(|point| eq_table(&point[..hi_bits]))
+        .collect();
+    let e_lo: Vec<Vec<F>> = stage_cycle_points
+        .iter()
+        .map(|point| eq_table(&point[hi_bits..]))
+        .collect();
 
-    let block = |range: std::ops::Range<usize>| -> [Vec<F>; 5] {
-        let mut partial: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
-        let mut inner: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
+    let block = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
+        let mut partial: Vec<Vec<F>> = (0..stages).map(|_| vec![F::zero(); addresses]).collect();
+        let mut inner: Vec<Vec<F>> = (0..stages).map(|_| vec![F::zero(); addresses]).collect();
         let mut touched: Vec<usize> = Vec::with_capacity(in_len);
         for j_hi in range {
             for &k in &touched {
@@ -237,7 +248,7 @@ fn stage_pushforwards<F: Field>(
             .step_by(chunk)
             .map(|start| block(start..(start + chunk).min(out_len)))
             .reduce(
-                || std::array::from_fn(|_| vec![F::zero(); addresses]),
+                || (0..stages).map(|_| vec![F::zero(); addresses]).collect(),
                 |mut left, right| {
                     for (left, right) in left.iter_mut().zip(right) {
                         for (left, right) in left.iter_mut().zip(right) {
@@ -252,6 +263,61 @@ fn stage_pushforwards<F: Field>(
     {
         block(0..out_len)
     }
+}
+
+/// Session carry: the stage-1..4 pushforward tables, built ahead of stage 6a
+/// on a dedicated thread. The points are stored for validation — any mismatch
+/// (or a panicked worker, e.g. an out-of-domain PC that the prepare's own
+/// validation would reject anyway) falls back to the inline five-stage walk,
+/// which produces bit-identical values.
+struct PrebuiltBytecodePushforwards<F> {
+    points: [Vec<F>; 4],
+    addresses: usize,
+    handle: std::thread::JoinHandle<Vec<Vec<F>>>,
+}
+
+/// The background pool width for [`spawn_bytecode_stage_pushforwards`].
+const BYTECODE_BACKGROUND_THREADS: usize = 4;
+
+/// Spawn the stage-1..4 bytecode pushforward walk on a dedicated capped
+/// thread pool and park the join handle in the session. Call once the
+/// stage-4 output points exist (the stage-5 point does not yet); the 6a
+/// address-phase prepare reclaims the four tables and walks only the
+/// stage-5 point inline.
+pub fn spawn_bytecode_stage_pushforwards<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+    addresses: usize,
+    early_points: [Vec<F>; 4],
+) -> Result<(), KernelError<F>> {
+    if early_points.iter().any(|point| point.len() != log_t) {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode early stage point has the wrong variable count",
+        });
+    }
+    let rows = pc_rows(session, witness, 1usize << log_t)?;
+    let points = early_points.clone();
+    let handle = std::thread::spawn(move || {
+        let _token = super::BACKGROUND_BUILD_TOKEN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let build = || stage_pushforwards_for::<F>(&early_points, &rows, addresses);
+        #[cfg(feature = "parallel")]
+        if let Ok(pool) = rayon::ThreadPoolBuilder::new()
+            .num_threads(BYTECODE_BACKGROUND_THREADS)
+            .build()
+        {
+            return pool.install(build);
+        }
+        build()
+    });
+    session.park(PrebuiltBytecodePushforwards {
+        points,
+        addresses,
+        handle,
+    });
+    Ok(())
 }
 
 /// Stage-6a address phase: `PrepareKernel` front of the optimized kernel.
@@ -318,8 +384,34 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        let pushforwards =
-            stage_pushforwards(stage_cycle_points, &rows, addresses).map(Polynomial::new);
+        // Reclaim the background-built stage-1..4 tables when they match this
+        // relation's points; walk only the stage-5 point inline. Otherwise
+        // (no spawn, stale points, panicked worker) run the five-stage walk —
+        // the same per-stage lanes in either case, so the values are
+        // identical.
+        let prebuilt = session
+            .take::<PrebuiltBytecodePushforwards<F>>()
+            .filter(|carry| {
+                carry.addresses == addresses && carry.points[..] == stage_cycle_points[..4]
+            })
+            .and_then(|carry| carry.handle.join().ok());
+        let tables: Vec<Vec<F>> = if let Some(mut early) = prebuilt {
+            early.extend(stage_pushforwards_for(
+                std::slice::from_ref(&stage_cycle_points[4]),
+                &rows,
+                addresses,
+            ));
+            early
+        } else {
+            stage_pushforwards_for(stage_cycle_points.as_slice(), &rows, addresses)
+        };
+        let tables: [Vec<F>; 5] =
+            tables
+                .try_into()
+                .map_err(|_| KernelError::InvariantViolation {
+                    reason: "bytecode pushforward table count drifted",
+                })?;
+        let pushforwards = tables.map(Polynomial::new);
         let values: [Polynomial<F>; 5] = std::array::from_fn(|s| {
             Polynomial::new(stage_values.iter().map(|row| row[s]).collect())
         });
@@ -1000,6 +1092,121 @@ mod tests {
                 reference.output_claims(&cycle_claims).unwrap(),
                 optimized.output_claims(&cycle_claims).unwrap()
             );
+        });
+    }
+
+    /// The background stage-1..4 walk plus the inline stage-5 walk equals
+    /// the five-stage walk (matching carry consumed, same round polys and
+    /// claims), and a stale carry (wrong points) falls back to the identical
+    /// inline build.
+    #[test]
+    fn background_pushforwards_match_inline_build() {
+        with_sample_backend(|backend| {
+            let log_t = JoltWitnessOracle::<Fr>::shape(
+                backend,
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
+            )
+            .unwrap()
+            .rows()
+            .ilog2() as usize;
+            let (bytecode_d, _) =
+                probe_one_hot_family(backend, JoltCommittedPolynomial::BytecodeRa, log_t);
+            assert!(bytecode_d > 0, "fixture serves no BytecodeRa polynomials");
+            let program = backend.program_preprocessing();
+            let bytecode_len = program.bytecode.bytecode.len();
+            let log_k = bytecode_len.ilog2() as usize;
+            let dimensions = BytecodeReadRafDimensions::new(log_t, log_k, bytecode_d);
+            let stage_cycle_points: [Vec<Fr>; 5] =
+                std::array::from_fn(|s| synthetic_point(log_t, 11 + s as u64));
+            let stage_points = BytecodeStagePoints {
+                stage_cycle_points: stage_cycle_points.clone(),
+                register_read_write_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 31),
+                register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 37),
+            };
+            let relation = BytecodeReadRafAddressPhase::new(
+                dimensions,
+                false,
+                stage_points,
+                1.min(bytecode_len - 1),
+            );
+            let challenges = BytecodeReadRafAddressPhaseChallenges {
+                gamma: fr(3),
+                stage1_gamma: fr(5),
+                stage2_gamma: fr(7),
+                stage3_gamma: fr(11),
+                stage4_gamma: fr(13),
+                stage5_gamma: fr(17),
+            };
+            let claims = BytecodeReadRafAddressPhaseInputClaims::<Fr>::default();
+            let input_points = BytecodeReadRafAddressPhaseInputClaims::<Vec<Fr>>::default();
+            let prepare = |session: &mut ProofSession| {
+                OptimizedBytecodeReadRafAddress
+                    .prepare(
+                        session,
+                        backend,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &input_points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .unwrap()
+            };
+
+            let mut spawned_session = ProofSession::default();
+            spawn_bytecode_stage_pushforwards(
+                &mut spawned_session,
+                backend,
+                log_t,
+                bytecode_len,
+                std::array::from_fn(|s| stage_cycle_points[s].clone()),
+            )
+            .unwrap();
+            let mut spawned = prepare(&mut spawned_session);
+            assert!(
+                spawned_session
+                    .state::<PrebuiltBytecodePushforwards<Fr>>()
+                    .is_none(),
+                "the prepare must consume the background carry"
+            );
+
+            let mut stale_session = ProofSession::default();
+            spawn_bytecode_stage_pushforwards(
+                &mut stale_session,
+                backend,
+                log_t,
+                bytecode_len,
+                std::array::from_fn(|s| synthetic_point(log_t, 900 + s as u64)),
+            )
+            .unwrap();
+            let mut stale = prepare(&mut stale_session);
+
+            let mut inline_a = prepare(&mut ProofSession::default());
+            let mut inline_b = prepare(&mut ProofSession::default());
+
+            // The optimized kernel recovers eval-at-1 from the claim instead
+            // of checking it, so the honest input claim probes off a
+            // reference twin (the run_pair idiom).
+            let mut reference =
+                <ReferenceBackend as PrepareKernel<Fr, BytecodeReadRafAddressPhase<Fr>>>::prepare(
+                    &ReferenceBackend,
+                    &mut ProofSession::default(),
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &input_points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            let input_claim = probe_input_claim(reference.as_mut());
+            let drive: Vec<Fr> = (0..relation.rounds())
+                .map(|round| fr(1000 + round as u64))
+                .collect();
+            run_lockstep(&mut *inline_a, &mut *spawned, input_claim, &drive);
+            run_lockstep(&mut *inline_b, &mut *stale, input_claim, &drive);
         });
     }
 

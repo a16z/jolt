@@ -248,7 +248,7 @@ fn run_benchmark(
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
     let trace_length = trace_output.trace.rows().len();
 
-    let config = ProverConfig::derive::<Fr>(
+    let mut config = ProverConfig::derive::<Fr>(
         trace_output.trace.rows(),
         &memory_layout,
         verifier_preprocessing.program.min_bytecode_address(),
@@ -256,6 +256,11 @@ fn run_benchmark(
         max_trace_length,
     )
     .expect("derive config");
+    // Bench-only A/B ablation: `JOLT_BOOLEANITY_ANCHOR=legacy` pins the
+    // stage-5 anchor so both arms run from one binary.
+    if std::env::var("JOLT_BOOLEANITY_ANCHOR").as_deref() == Ok("legacy") {
+        config.booleanity_anchor = jolt_verifier::config::BooleanityAnchor::Stage5Instruction;
+    }
     let public_io = trace_output.device.clone();
     let padded_output = pad_trace(trace_output, config.trace_length);
 

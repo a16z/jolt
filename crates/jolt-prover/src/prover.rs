@@ -3,13 +3,18 @@
 //! the complete [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
+use jolt_kernels::optimized::booleanity::spawn_booleanity_address_masses;
+use jolt_kernels::optimized::bytecode_read_raf::spawn_bytecode_stage_pushforwards;
 use jolt_kernels::JoltBackend;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
-use jolt_verifier::config::JoltProtocolConfig;
+use jolt_verifier::config::{BooleanityAnchor, JoltProtocolConfig};
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
+use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_early_stage_points;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
@@ -112,6 +117,65 @@ where
         witness,
         &mut transcript,
     )?;
+    // Stage-6a prepare work whose inputs exist by the end of stage 4 builds
+    // on capped background pools overlapping stage 5's device-heavy window;
+    // the 6a prepares join (or rebuild inline on any mismatch — identical
+    // values either way).
+    //
+    // Booleanity pushforward: only under the stage-1 anchor (`Stage1CycleV1`)
+    // — the legacy anchor point does not exist until stage 5 ends.
+    if config.booleanity_anchor == BooleanityAnchor::Stage1CycleV1 {
+        let formula_dimensions = crate::stages::formula_dimensions(
+            &checked,
+            config,
+            preprocessing.verifier.program.bytecode_len(),
+            JoltRelationId::Booleanity,
+        )?;
+        let anchor: Vec<F> = stage1
+            .clear_output
+            .cycle_binding_checked(JoltRelationId::Booleanity)?
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        spawn_booleanity_address_masses(
+            &mut session,
+            witness,
+            BooleanityDimensions::new(
+                formula_dimensions.ra_layout,
+                formula_dimensions.trace.log_t(),
+                config.one_hot_config.committed_chunk_bits(),
+            ),
+            anchor,
+        )?;
+    }
+    // Bytecode read-RAF stage-1..4 pushforwards: anchor-independent (the four
+    // early points are protocol-fixed); the stage-5 table's walk stays on the
+    // 6a critical path.
+    {
+        let formula_dimensions = crate::stages::formula_dimensions(
+            &checked,
+            config,
+            preprocessing.verifier.program.bytecode_len(),
+            JoltRelationId::BytecodeReadRaf,
+        )?;
+        let stage1_cycle_binding = stage1
+            .clear_output
+            .cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
+        let early_points = bytecode_early_stage_points(
+            &stage1_cycle_binding,
+            &stage2.clear_output.output_points,
+            &stage3.clear_output.output_points,
+            &stage4.clear_output.output_points,
+        )?;
+        spawn_bytecode_stage_pushforwards(
+            &mut session,
+            witness,
+            formula_dimensions.trace.log_t(),
+            1usize << formula_dimensions.bytecode_read_raf.log_k(),
+            early_points,
+        )?;
+    }
     let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T>(
         backend,
         &mut session,
@@ -198,7 +262,10 @@ where
     )?;
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+        protocol: JoltProtocolConfig {
+            booleanity_anchor: config.booleanity_anchor,
+            ..JoltProtocolConfig::for_zk(false)
+        },
         commitments: stage0.commitments,
         stages: JoltStageProofs {
             stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

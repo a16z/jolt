@@ -265,6 +265,63 @@ fn cycle_pushforward<F: Field>(
 // Stage 6a: address phase
 // ---------------------------------------------------------------------------
 
+/// Session carry: the address-phase pushforward masses, built ahead of stage
+/// 6a on a dedicated thread (the prover spawns the build before stage 5 when
+/// the booleanity anchor is transcript-prior to it). The reference cycle is
+/// stored for validation — a point mismatch (or a panicked worker) falls back
+/// to the inline build, which produces bit-identical values.
+struct PrebuiltBooleanityMasses<F> {
+    reference_cycle: Vec<F>,
+    handle: std::thread::JoinHandle<Vec<Vec<F>>>,
+}
+
+/// The background pool width for [`spawn_booleanity_address_masses`]: wide
+/// enough to finish well inside stage 5's window at every scale, narrow
+/// enough not to contend with the stage's own host work.
+const BOOLEANITY_BACKGROUND_THREADS: usize = 4;
+
+/// Spawn the stage-6a booleanity pushforward build (`cycle_pushforward` at
+/// the little-endian `reference_cycle`) on a dedicated capped thread pool and
+/// park the join handle in the session. Call after the anchor point exists;
+/// the address-phase prepare reclaims the result (or rebuilds inline on any
+/// mismatch). Row collection cost is unchanged: this reuses (or first parks)
+/// the shared stage rows the later prepares would collect anyway.
+pub fn spawn_booleanity_address_masses<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    dimensions: BooleanityDimensions,
+    reference_cycle: Vec<F>,
+) -> Result<(), KernelError<F>> {
+    if reference_cycle.len() != dimensions.log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "booleanity anchor point length disagrees with the dimensions",
+        });
+    }
+    let selectors = column_selectors(witness, dimensions)?;
+    let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+    let k_chunk = 1usize << dimensions.log_k_chunk;
+    let point = reference_cycle.clone();
+    let handle = std::thread::spawn(move || {
+        let _token = super::BACKGROUND_BUILD_TOKEN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let build = || cycle_pushforward::<F>(&rows, &selectors, k_chunk, &point);
+        #[cfg(feature = "parallel")]
+        if let Ok(pool) = rayon::ThreadPoolBuilder::new()
+            .num_threads(BOOLEANITY_BACKGROUND_THREADS)
+            .build()
+        {
+            return pool.install(build);
+        }
+        build()
+    });
+    session.park(PrebuiltBooleanityMasses {
+        reference_cycle,
+        handle,
+    });
+    Ok(())
+}
+
 /// Slot front for the stage-6a booleanity address phase.
 pub struct OptimizedBooleanityAddress;
 
@@ -291,14 +348,25 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleani
             });
         }
 
-        let selectors = column_selectors(witness, dimensions)?;
-        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
-        let masses = cycle_pushforward(
-            &rows,
-            &selectors,
-            1usize << dimensions.log_k_chunk,
-            &reference_cycle,
-        );
+        // Reclaim the background-built masses when they match this relation's
+        // point; otherwise (no spawn, stale anchor, panicked worker) build
+        // inline — the same sums in either case, so the values are identical.
+        let prebuilt = session
+            .take::<PrebuiltBooleanityMasses<F>>()
+            .filter(|carry| carry.reference_cycle == reference_cycle)
+            .and_then(|carry| carry.handle.join().ok());
+        let masses = if let Some(masses) = prebuilt {
+            masses
+        } else {
+            let selectors = column_selectors(witness, dimensions)?;
+            let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+            cycle_pushforward(
+                &rows,
+                &selectors,
+                1usize << dimensions.log_k_chunk,
+                &reference_cycle,
+            )
+        };
 
         Ok(Box::new(OptimizedBooleanityAddressKernel::new(
             relation.rounds(),
@@ -1156,6 +1224,127 @@ mod tests {
     #[test]
     fn address_kernel_matches_reference_wide_chunk() {
         address_parity(2, 8);
+    }
+
+    /// The background spawn and the inline build feed byte-identical kernels:
+    /// same round polynomials, same output claims. Also pins the carry
+    /// contract — the prepare consumes a matching carry and leaves the shared
+    /// rows parked (the spawn parks them) for the 6b consumers.
+    #[test]
+    fn background_masses_match_inline_build() {
+        with_booleanity_backend(3, 4, |backend, dimensions| {
+            let relation = BooleanityAddressPhase::<Fr>::new(
+                dimensions,
+                point(900, dimensions.log_k_chunk),
+                point(300, 3),
+            );
+            let claims = Default::default();
+            let points = Default::default();
+            let challenges = BooleanityAddressPhaseChallenges {
+                reference_address: point(700, dimensions.log_k_chunk),
+                gamma: Fr::from_u64(31),
+            };
+            let mut spawned_session = ProofSession::default();
+            spawn_booleanity_address_masses(
+                &mut spawned_session,
+                backend,
+                dimensions,
+                relation.reference_cycle(),
+            )
+            .unwrap();
+            let spawned = OptimizedBooleanityAddress
+                .prepare(
+                    &mut spawned_session,
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            assert!(
+                spawned_session
+                    .state::<PrebuiltBooleanityMasses<Fr>>()
+                    .is_none(),
+                "the prepare must consume the background carry"
+            );
+            assert!(spawned_session.state::<SharedInstructionRows>().is_some());
+            let inline = OptimizedBooleanityAddress
+                .prepare(
+                    &mut ProofSession::default(),
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            let (mut spawned, mut inline, _) = drive_lockstep(spawned, inline, Fr::from_u64(0));
+            assert_eq!(
+                spawned.output_claims(&claims).unwrap(),
+                inline.output_claims(&claims).unwrap(),
+            );
+        });
+    }
+
+    /// A carry built at a different anchor point is discarded and the prepare
+    /// rebuilds inline — the kernel still matches the clean inline build.
+    #[test]
+    fn stale_background_carry_falls_back_inline() {
+        with_booleanity_backend(3, 4, |backend, dimensions| {
+            let relation = BooleanityAddressPhase::<Fr>::new(
+                dimensions,
+                point(900, dimensions.log_k_chunk),
+                point(300, 3),
+            );
+            let claims = Default::default();
+            let points = Default::default();
+            let challenges = BooleanityAddressPhaseChallenges {
+                reference_address: point(700, dimensions.log_k_chunk),
+                gamma: Fr::from_u64(31),
+            };
+            let mut stale_session = ProofSession::default();
+            spawn_booleanity_address_masses(
+                &mut stale_session,
+                backend,
+                dimensions,
+                point(555, 3), // not the relation's reference cycle
+            )
+            .unwrap();
+            let stale = OptimizedBooleanityAddress
+                .prepare(
+                    &mut stale_session,
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            let inline = OptimizedBooleanityAddress
+                .prepare(
+                    &mut ProofSession::default(),
+                    backend,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+            let (mut stale, mut inline, _) = drive_lockstep(stale, inline, Fr::from_u64(0));
+            assert_eq!(
+                stale.output_claims(&claims).unwrap(),
+                inline.output_claims(&claims).unwrap(),
+            );
+        });
     }
 
     fn cycle_parity(log_t: usize, log_k_chunk: u8, carried_indices: bool) {
