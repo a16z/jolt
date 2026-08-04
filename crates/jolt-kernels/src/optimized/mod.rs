@@ -61,7 +61,9 @@ pub mod spartan_product;
 pub mod spartan_shift;
 mod support;
 
-pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
+pub use bytecode_read_raf::{
+    BytecodeCycleAlgebra, OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle,
+};
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 pub use inc_claim_reduction::OptimizedIncClaimReduction;
 pub use precommitted_reduction::{OptimizedPrecommittedAddress, OptimizedPrecommittedCycle};
@@ -130,7 +132,7 @@ where
             Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
 
         self.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
-        self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
+        self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle::default());
         self.hamming_weight_claim_reduction = Box::new(OptimizedHammingWeightClaimReduction);
         self.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
 

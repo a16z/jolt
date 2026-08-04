@@ -527,6 +527,24 @@ mod akita_benchmark {
         W512,
     }
 
+    #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
+    enum BytecodeCycleAlgebra {
+        #[default]
+        Generic,
+        Q10,
+        Q10Accum,
+    }
+
+    impl BytecodeCycleAlgebra {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::Generic => "generic",
+                Self::Q10 => "q10",
+                Self::Q10Accum => "q10-accum",
+            }
+        }
+    }
+
     #[derive(Parser, Debug)]
     struct Cli {
         #[clap(long, value_enum)]
@@ -549,6 +567,9 @@ mod akita_benchmark {
 
         #[clap(long)]
         instruction_ra_reuse_inverse: bool,
+
+        #[clap(long, value_enum, default_value = "generic")]
+        bytecode_cycle_algebra: BytecodeCycleAlgebra,
     }
 
     pub fn run() {
@@ -590,6 +611,7 @@ mod akita_benchmark {
             cli.backend,
             cli.instruction_ra_materialize_width,
             cli.instruction_ra_reuse_inverse,
+            cli.bytecode_cycle_algebra,
         );
     }
 
@@ -600,6 +622,7 @@ mod akita_benchmark {
         backend_choice: Backend,
         instruction_ra_materialize_width: InstructionRaMaterializeWidth,
         instruction_ra_reuse_inverse: bool,
+        bytecode_cycle_algebra: BytecodeCycleAlgebra,
     ) {
         let bench_name = bench.as_str();
         let max_trace_length = 1usize << scale;
@@ -657,6 +680,24 @@ mod akita_benchmark {
             log_t,
             log_k_chunk,
         };
+        let bytecode_dimensions = dimensions.bytecode_read_raf;
+        let effective_bytecode_algebra = if backend_choice == Backend::Reference
+            || bytecode_dimensions.num_committed_ra_polys() != 2
+        {
+            "generic"
+        } else {
+            bytecode_cycle_algebra.as_str()
+        };
+        println!(
+            "BYTECODE_CYCLE_CONFIG requested={} effective={} log_t={} log_k={} chunk_bits={} num_ra={} degree={}",
+            bytecode_cycle_algebra.as_str(),
+            effective_bytecode_algebra,
+            bytecode_dimensions.log_t(),
+            bytecode_dimensions.log_k(),
+            log_k_chunk,
+            bytecode_dimensions.num_committed_ra_polys(),
+            bytecode_dimensions.num_committed_ra_polys() + 2,
+        );
         let setup_shape = ONE_HOT_TRACE_LAYOUT
             .setup_shape(&one_hot_shape)
             .expect("derive canonical packed setup shape");
@@ -695,7 +736,7 @@ mod akita_benchmark {
             instruction_ra_materialize_width,
             instruction_ra_reuse_inverse,
         );
-        let backend = match backend_choice {
+        let mut backend = match backend_choice {
             Backend::Reference => akita::JoltAkitaBackend::reference(),
             Backend::Optimized => akita::JoltAkitaBackend::optimized(),
             #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -731,6 +772,20 @@ mod akita_benchmark {
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }
         };
+        if backend_choice != Backend::Reference {
+            let algebra = match bytecode_cycle_algebra {
+                BytecodeCycleAlgebra::Generic => {
+                    jolt_kernels::optimized::BytecodeCycleAlgebra::Generic
+                }
+                BytecodeCycleAlgebra::Q10 => jolt_kernels::optimized::BytecodeCycleAlgebra::Q10,
+                BytecodeCycleAlgebra::Q10Accum => {
+                    jolt_kernels::optimized::BytecodeCycleAlgebra::Q10Accum
+                }
+            };
+            backend.base.bytecode_read_raf_cycle = Box::new(
+                jolt_kernels::optimized::OptimizedBytecodeReadRafCycle::new(algebra),
+            );
+        }
 
         let now = Instant::now();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(

@@ -181,7 +181,7 @@ order after the first slot establishes the harness.
 | 5 | `registers_val_evaluation` | dense fused product | analyze |
 | 6a | `bytecode_read_raf_address` | address pushforward | analyze |
 | 6a | `booleanity_address` | address pushforward | analyze |
-| 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | ceiling/evaluator frozen; optimized CPU Q10 control next |
+| 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | Q10 controls implemented; five-block CPU-denominator gate pending |
 | 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | integrated; 4.85x real kernel seam at `2^26`, further ceiling work open |
 | 6b | `ram_hamming_booleanity` | dense cubic | analyze |
 | 6b | `ram_ra_virtualization` | one-hot virtualization | analyze |
@@ -770,6 +770,93 @@ transcript-independent Metal row materialization immediately before PIOP took
 essentially the same aggregate result as the prior 1.557x profile. This checkpoint
 therefore validates the backend-ready PIOP architecture and local port, but makes no
 end-to-end speedup claim from relocating the row conversion.
+
+## Bytecode read-RAF cycle ceiling
+
+The production `2^26` Fibonacci geometry has `log_K = 13`, eight-bit committed
+chunks, and two `BytecodeRa` factors. Its degree-four cycle summand is
+
+```text
+Q(t) = R0(t) R1(t) [C(t) + I(t) D(t)],
+```
+
+where every factor is affine over one Boolean pair, `I` is the signed fused
+increment, and `C,D` combine the nine stage equality polynomials. The prover needs
+the four skipped samples at `t = 0,2,3,4`; interpolation, the batch transcript, and
+the final checks remain on the host.
+
+Evaluating four points independently costs 27 canonical field products per pair.
+For two affine factors, their quadratic product grid is recovered from three
+products: its values at zero and one and its leading coefficient. Applying this to
+`R0 R1` and `C + I D`, then multiplying the two four-point grids, costs exactly ten:
+
+```text
+3 products  R0 R1 anchors
+3 products  C + I D anchors
+4 products  terminal grid products
+```
+
+The optimized CPU control exposes Generic, Q10, and Q10Accum at runtime. All three
+use the same all-RA gather and fixed four-lane Rayon reduction at the target shape;
+Q10Accum leaves only the four terminal products unreduced until the global merge.
+The common round-sequence work is `115T/16 + 60K + 25` canonical products, so the
+27-to-10 inner-loop ratio is not a complete-relation speedup prediction. At `2^26`,
+the comparable totals are about 2.294 billion products for Generic, 1.153 billion
+for Q10, and 885 million canonical plus 268 million deferred products for
+Q10Accum.
+
+One exploratory, proof-verified target block measured 1,287.971 ms Generic,
+1,040.265 ms Q10, and 931.278 ms Q10Accum at the member-local boundary. The 27.7%
+and 10.5% reductions are screens, not promoted results; the canonical five-block
+interleaved evaluator must clear the fixed noise gates on a clean revision before
+the default changes. It builds once without the Metal feature, hashes the binary,
+uses fresh processes, and measures
+`prepare + sum(prove_round) + finish_rounds + output_claims`. Shared batch
+Fiat--Shamir is invariant across the arms and remains a separately covered proof
+operation, not falsely attributed to one member.
+
+### Metal schedule and roof
+
+The preferred sequence enters PIOP with a transcript-independent compact resident
+`(mapped_pc, fused_inc)` plane. It generates `C,D` on device from cache-sized
+equality roots and fuses their generation with the first message. `R0,R1,I` remain
+sparse gathers for the first few binds, then materialize once at width 8 or 16 in
+the same dispatch that emits that round. Later dispatches fuse bind and next-message
+over five dense factor planes. Four field sums return per active round; after one
+readback at the measured cutoff, the selected optimized CPU kernel finishes the
+tail.
+
+For materialization width `W`, branch depth `b = log2(W)`, and `q` compact row bytes,
+the optimistic non-cache traffic is
+
+```text
+B(W,q) = [128 + q(b+1) + 192/W] T bytes.
+```
+
+This is `200T` bytes for a 12-byte SoA row at either width 8 or 16, and `216T` or
+`220T` for an aligned 16-byte row. At `2^26`, the measured 420.68-GiB/s copy control
+therefore gives a 29.7--32.7 ms traffic floor. Nine equality-table expansions, Q10
+messages, sparse binds, and the dense tail total about `19.5T + 3T/W` full products
+plus `(1.5 + log2(W))T` small-scalar products. Pricing even the scalar work at the
+calibrated 26.7-Gproduct/s sequence rate gives a 61--63 ms arithmetic floor.
+
+The first complete-hybrid budget is at most 100 ms, with 80 ms as the stretch goal.
+It must also beat the revalidated optimized CPU control by at least 4x; 4x is not a
+stopping rule when the measured ceiling supports more. A result still above 150 ms
+after the fixed row-layout, width, threadgroup, scalar-specialization, and cutoff
+sweep rejects this architecture rather than relaxing the bar. Sub-budgets are 45 ms
+for `C,D` generation plus the first message, 30 ms for sparse/materialization work,
+and 15 ms for the dense tail plus handoff.
+
+The primary timing starts with the shared resident row plane ready and includes all
+transcript-dependent setup, command submissions and waits, host Fiat--Shamir,
+readback, and CPU tail. Row-plane construction is reported in an inclusive
+diagnostic. Bytecode clones the plane handle before Booleanity reclaims its session
+carrier; no full-domain host `C,D` tables or per-round allocations are permitted.
+Because `log_K=13` is leading-zero padded into two eight-bit chunks, neither bound
+Bytecode RA point equals Booleanity's eight-round tail point. A later joint stage-6b
+dispatcher may share row scans or command submission, but not bound RA state in the
+primary geometry.
 
 ## Instruction RA virtualization ceiling
 

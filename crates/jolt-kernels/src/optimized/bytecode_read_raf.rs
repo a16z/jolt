@@ -50,6 +50,8 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
 use jolt_field::Field;
+#[cfg(feature = "akita")]
+use jolt_field::{AdditiveAccumulator, RingAccumulator};
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -684,8 +686,35 @@ impl<F: Field> LazyFusedInc<F> {
     }
 }
 
+/// Inner-loop algebra used by the stage-6b cycle kernel.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BytecodeCycleAlgebra {
+    /// Evaluate every sample point independently.
+    #[default]
+    Generic,
+    /// Specialize the Akita two-RA relation to ten field products per group.
+    Q10,
+    /// Keep the four terminal Q10 products in wide accumulators until reduction.
+    Q10Accum,
+}
+
 /// Stage-6b cycle phase: `PrepareKernel` front of the optimized kernel.
-pub struct OptimizedBytecodeReadRafCycle;
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OptimizedBytecodeReadRafCycle {
+    #[cfg(feature = "akita")]
+    algebra: BytecodeCycleAlgebra,
+}
+
+impl OptimizedBytecodeReadRafCycle {
+    pub const fn new(algebra: BytecodeCycleAlgebra) -> Self {
+        #[cfg(not(feature = "akita"))]
+        let _ = algebra;
+        Self {
+            #[cfg(feature = "akita")]
+            algebra,
+        }
+    }
+}
 
 impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeReadRafCycle {
     fn prepare(
@@ -732,9 +761,10 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
 
         // The combined coefficient table: every non-RA factor of the summand
         // is linear in one cycle table, so
-        //   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) + γ⁷·entry·[j = 0]
-        // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
-        // stage-1 cycle point, SpartanShiftRaf the stage-3 one).
+        //   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j)
+        //          + γ^(n+2)·entry·[j = 0]
+        // where n is the stage count, raf_0 = γ^n·int_r, and
+        // raf_2 = γ^(n+1)·int_r.
         let stage_values = relation.stage_values_at_r_address()?;
         let gamma = inputs.challenges.gamma;
         let num_stages = stage_cycle_points.len();
@@ -811,6 +841,8 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
         Ok(Box::new(CycleKernel {
             rounds: relation.rounds(),
             degree: relation.degree(),
+            #[cfg(feature = "akita")]
+            algebra: self.algebra,
             ra,
             combined: Polynomial::new(combined),
             #[cfg(feature = "akita")]
@@ -867,6 +899,8 @@ impl ChunkIndexSource for BytecodePcChunks {
 struct CycleKernel<F: Field> {
     rounds: usize,
     degree: usize,
+    #[cfg(feature = "akita")]
+    algebra: BytecodeCycleAlgebra,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
     combined: Polynomial<F>,
     #[cfg(feature = "akita")]
@@ -934,9 +968,7 @@ impl<F: Field> CycleKernel<F> {
         let (fused_inc_lo, fused_inc_hi) = self.fused_inc.lo_hi(y);
         #[cfg(feature = "akita")]
         let fused_inc_delta = fused_inc_hi - fused_inc_lo;
-        for (i, slot) in ra_pairs.iter_mut().enumerate() {
-            *slot = self.ra.lo_hi(i, y);
-        }
+        self.ra.lo_hi_all(y, ra_pairs);
         #[cfg(not(feature = "akita"))]
         let coefficient_at_zero = c_lo;
         #[cfg(feature = "akita")]
@@ -956,6 +988,150 @@ impl<F: Field> CycleKernel<F> {
             });
         }
     }
+
+    #[cfg(feature = "akita")]
+    #[inline]
+    fn q10_factors(&self, y: usize, ra_pairs: &mut [(F, F)]) -> ([F; 4], [F; 4]) {
+        let (c_0, c_1) = pair(&self.combined, y);
+        let (inc_0, inc_1) = self.fused_inc.lo_hi(y);
+        let (fused_0, fused_1) = pair(&self.fused_combined, y);
+
+        self.ra.lo_hi_all(y, ra_pairs);
+        let ra = quadratic_grid(ra_pairs[0], ra_pairs[1]);
+        let coefficient_0 = c_0 + inc_0 * fused_0;
+        let coefficient_1 = c_1 + inc_1 * fused_1;
+        let coefficient_leading = (inc_1 - inc_0) * (fused_1 - fused_0);
+        let coefficient =
+            quadratic_grid_from_anchors(coefficient_0, coefficient_1, coefficient_leading);
+        (ra, coefficient)
+    }
+
+    #[cfg(feature = "akita")]
+    #[inline]
+    fn accumulate_group_q10(&self, y: usize, acc: &mut [F; 4], ra_pairs: &mut [(F, F)]) {
+        let (ra, coefficient) = self.q10_factors(y, ra_pairs);
+        for ((acc, ra), coefficient) in acc.iter_mut().zip(ra).zip(coefficient) {
+            *acc += ra * coefficient;
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    #[inline]
+    fn accumulate_group_q10_wide(
+        &self,
+        y: usize,
+        acc: &mut [F::Accumulator; 4],
+        ra_pairs: &mut [(F, F)],
+    ) {
+        let (ra, coefficient) = self.q10_factors(y, ra_pairs);
+        for ((acc, ra), coefficient) in acc.iter_mut().zip(ra).zip(coefficient) {
+            acc.fmadd(ra, coefficient);
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn q10_wide_evals(&self, half: usize) -> Vec<F> {
+        let num_ra = self.ra.num_polys();
+        #[cfg(feature = "parallel")]
+        let acc = (0..half)
+            .into_par_iter()
+            .fold(
+                || {
+                    (
+                        [F::Accumulator::default(); 4],
+                        vec![(F::zero(), F::zero()); num_ra],
+                    )
+                },
+                |(mut acc, mut ra_pairs), y| {
+                    self.accumulate_group_q10_wide(y, &mut acc, &mut ra_pairs);
+                    (acc, ra_pairs)
+                },
+            )
+            .map(|(acc, _)| acc)
+            .reduce(
+                || [F::Accumulator::default(); 4],
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        left.merge(right);
+                    }
+                    left
+                },
+            );
+        #[cfg(not(feature = "parallel"))]
+        let acc = {
+            let mut acc = [F::Accumulator::default(); 4];
+            let mut ra_pairs = vec![(F::zero(), F::zero()); num_ra];
+            for y in 0..half {
+                self.accumulate_group_q10_wide(y, &mut acc, &mut ra_pairs);
+            }
+            acc
+        };
+        acc.map(F::Accumulator::reduce).into()
+    }
+
+    #[cfg(feature = "akita")]
+    fn target_evals<const Q10: bool>(&self, half: usize) -> Vec<F> {
+        let num_ra = self.ra.num_polys();
+        #[cfg(feature = "parallel")]
+        let acc = (0..half)
+            .into_par_iter()
+            .fold(
+                || ([F::zero(); 4], vec![(F::zero(), F::zero()); num_ra]),
+                |(mut acc, mut ra_pairs), y| {
+                    if Q10 {
+                        self.accumulate_group_q10(y, &mut acc, &mut ra_pairs);
+                    } else {
+                        self.accumulate_group(y, &mut acc, &mut ra_pairs);
+                    }
+                    (acc, ra_pairs)
+                },
+            )
+            .map(|(acc, _)| acc)
+            .reduce(
+                || [F::zero(); 4],
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        *left += right;
+                    }
+                    left
+                },
+            );
+        #[cfg(not(feature = "parallel"))]
+        let acc = {
+            let mut acc = [F::zero(); 4];
+            let mut ra_pairs = vec![(F::zero(), F::zero()); num_ra];
+            for y in 0..half {
+                if Q10 {
+                    self.accumulate_group_q10(y, &mut acc, &mut ra_pairs);
+                } else {
+                    self.accumulate_group(y, &mut acc, &mut ra_pairs);
+                }
+            }
+            acc
+        };
+        acc.into()
+    }
+}
+
+#[cfg(feature = "akita")]
+#[inline]
+fn quadratic_grid<F: Field>(left: (F, F), right: (F, F)) -> [F; 4] {
+    let leading = (left.1 - left.0) * (right.1 - right.0);
+    let at_0 = left.0 * right.0;
+    let at_1 = left.1 * right.1;
+    quadratic_grid_from_anchors(at_0, at_1, leading)
+}
+
+#[cfg(feature = "akita")]
+#[inline]
+fn quadratic_grid_from_anchors<F: Field>(at_0: F, at_1: F, leading: F) -> [F; 4] {
+    let second_difference = leading + leading;
+    let delta_2 = at_1 - at_0 + second_difference;
+    let at_2 = at_1 + delta_2;
+    let delta_3 = delta_2 + second_difference;
+    let at_3 = at_2 + delta_3;
+    let at_4 = at_3 + delta_3 + second_difference;
+    [at_0, at_2, at_3, at_4]
 }
 
 impl<F: Field> ProveRounds<F> for CycleKernel<F> {
@@ -975,6 +1151,16 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
         let half = self.combined.len() / 2;
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
+
+        #[cfg(feature = "akita")]
+        if num_ra == 2 && slots == 4 {
+            let evals = match self.algebra {
+                BytecodeCycleAlgebra::Generic => self.target_evals::<false>(half),
+                BytecodeCycleAlgebra::Q10 => self.target_evals::<true>(half),
+                BytecodeCycleAlgebra::Q10Accum => self.q10_wide_evals(half),
+            };
+            return Ok(round_poly_from_skipped_evals(&evals, previous_claim));
+        }
 
         #[cfg(feature = "parallel")]
         let evals = (0..half)
@@ -1202,7 +1388,7 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let mut optimized = OptimizedBytecodeReadRafCycle
+            let mut optimized = OptimizedBytecodeReadRafCycle::default()
                 .prepare(
                     &mut session,
                     backend,
@@ -1247,11 +1433,12 @@ mod akita_tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{AkitaField, Fr, FromPrimitiveInt};
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
-        BytecodeReadRafCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
-        BytecodeReadRafInputClaims, BytecodeReadRafTableFoldInputs,
+        BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycleInputs,
+        BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
+        BytecodeReadRafTableFoldInputs,
     };
     use jolt_witness::ProgramSource;
 
@@ -1259,6 +1446,12 @@ mod akita_tests {
     use crate::optimized::booleanity::testing::with_booleanity_backend;
     use crate::optimized::harness::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::ReferenceBackend;
+
+    fn akita_point(len: usize, seed: u64) -> Vec<AkitaField> {
+        (0..len as u64)
+            .map(|index| AkitaField::from_u64(seed + 37 * index + 5))
+            .collect()
+    }
 
     fn address_parity(log_t: usize, log_k_chunk: u8, committed_program: bool) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
@@ -1344,94 +1537,167 @@ mod akita_tests {
         });
     }
 
-    fn cycle_parity(log_t: usize, log_k_chunk: u8) {
+    fn cycle_parity(log_t: usize, log_k_chunk: u8, committed_program: bool) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
             let program = backend.program_preprocessing();
             let bytecode_len = program.bytecode.bytecode.len();
+            if log_k_chunk == 1 {
+                assert_eq!(base_dimensions.layout.bytecode(), 2);
+            }
             let dimensions = BytecodeReadRafDimensions::new(
                 log_t,
                 bytecode_len.ilog2() as usize,
                 base_dimensions.layout.bytecode(),
             );
+            if log_k_chunk == 1 {
+                assert_eq!(dimensions.num_committed_ra_polys(), 2);
+                assert_eq!(dimensions.num_committed_ra_polys() + 2, 4);
+            }
             let stage_cycle_points =
-                std::array::from_fn(|stage| synthetic_point(log_t, 11 + stage as u64));
+                std::array::from_fn(|stage| akita_point(log_t, 11 + stage as u64));
             let address_challenges = BytecodeReadRafAddressPhaseChallenges {
-                gamma: Fr::from_u64(3),
-                stage1_gamma: Fr::from_u64(5),
-                stage2_gamma: Fr::from_u64(7),
-                stage3_gamma: Fr::from_u64(11),
-                stage4_gamma: Fr::from_u64(13),
-                stage5_gamma: Fr::from_u64(17),
+                gamma: AkitaField::from_u64(3),
+                stage1_gamma: AkitaField::from_u64(5),
+                stage2_gamma: AkitaField::from_u64(7),
+                stage3_gamma: AkitaField::from_u64(11),
+                stage4_gamma: AkitaField::from_u64(13),
+                stage5_gamma: AkitaField::from_u64(17),
             };
             let stage_gammas = address_challenges.stage_gamma_powers();
-            let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
-                dimensions,
-                r_address: synthetic_point(dimensions.log_k(), 19),
-                stage_cycle_points,
-                entry_bytecode_index: 0,
-                committed_chunk_bits: usize::from(log_k_chunk),
-                table_fold: Some(BytecodeReadRafTableFoldInputs {
-                    bytecode: &program.bytecode.bytecode,
-                    register_read_write_point: &synthetic_point(REGISTER_ADDRESS_BITS, 23),
-                    register_val_evaluation_point: &synthetic_point(REGISTER_ADDRESS_BITS, 29),
-                    stage_gammas: std::array::from_fn(|stage| stage_gammas[stage].as_slice()),
-                }),
-            })
-            .unwrap();
-            let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {
-                gamma: Fr::from_u64(31),
+            let r_address = akita_point(dimensions.log_k(), 19);
+            let relation = if committed_program {
+                BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
+                    dimensions,
+                    r_address,
+                    stage_cycle_points,
+                    entry_bytecode_index: 0,
+                    committed_chunk_bits: usize::from(log_k_chunk),
+                    val_stages: (0..NUM_BYTECODE_VAL_STAGES)
+                        .map(|stage| AkitaField::from_u64(101 + stage as u64))
+                        .collect(),
+                })
+            } else {
+                let register_read_write_point = akita_point(REGISTER_ADDRESS_BITS, 23);
+                let register_val_evaluation_point = akita_point(REGISTER_ADDRESS_BITS, 29);
+                BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
+                    dimensions,
+                    r_address,
+                    stage_cycle_points,
+                    entry_bytecode_index: 0,
+                    committed_chunk_bits: usize::from(log_k_chunk),
+                    table_fold: Some(BytecodeReadRafTableFoldInputs {
+                        bytecode: &program.bytecode.bytecode,
+                        register_read_write_point: &register_read_write_point,
+                        register_val_evaluation_point: &register_val_evaluation_point,
+                        stage_gammas: std::array::from_fn(|stage| stage_gammas[stage].as_slice()),
+                    }),
+                })
+                .unwrap()
             };
-            let claims = BytecodeReadRafInputClaims::<Fr>::default();
-            let input_points = BytecodeReadRafInputClaims::<Vec<Fr>>::default();
+            if log_k_chunk == 1 {
+                assert_eq!(relation.degree(), 4);
+            }
+            let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {
+                gamma: AkitaField::from_u64(31),
+            };
+            let claims = BytecodeReadRafInputClaims::<AkitaField>::default();
+            let input_points = BytecodeReadRafInputClaims::<Vec<AkitaField>>::default();
 
-            let mut session = ProofSession::default();
-            let mut reference = ReferenceBackend
-                .prepare(
-                    &mut session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &input_points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
-            let mut optimized = OptimizedBytecodeReadRafCycle
-                .prepare(
-                    &mut session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &input_points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
+            for algebra in [
+                BytecodeCycleAlgebra::Generic,
+                BytecodeCycleAlgebra::Q10,
+                BytecodeCycleAlgebra::Q10Accum,
+            ] {
+                let mut session = ProofSession::default();
+                let mut reference = ReferenceBackend
+                    .prepare(
+                        &mut session,
+                        backend,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &input_points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .unwrap();
+                let mut optimized = OptimizedBytecodeReadRafCycle::new(algebra)
+                    .prepare(
+                        &mut session,
+                        backend,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &input_points,
+                            challenges: &challenges,
+                        },
+                    )
+                    .unwrap();
 
-            let claim = probe_input_claim(reference.as_mut());
-            run_lockstep(
-                reference.as_mut(),
-                optimized.as_mut(),
-                claim,
-                &synthetic_point(log_t, 211),
-            );
-            assert_eq!(
-                reference.output_claims(&claims).unwrap(),
-                optimized.output_claims(&claims).unwrap()
-            );
+                let claim = probe_input_claim(reference.as_mut());
+                run_lockstep(
+                    reference.as_mut(),
+                    optimized.as_mut(),
+                    claim,
+                    &akita_point(log_t, 211),
+                );
+                assert_eq!(
+                    reference.output_claims(&claims).unwrap(),
+                    optimized.output_claims(&claims).unwrap(),
+                    "output mismatch for {algebra:?}"
+                );
+            }
         });
     }
 
     #[test]
+    fn quadratic_grid_matches_direct_evaluation() {
+        let left = (Fr::from_u64(7), Fr::from_u64(29));
+        let right = (Fr::from_u64(11), Fr::from_u64(41));
+        let actual = quadratic_grid(left, right);
+        for (actual, t) in actual.into_iter().zip([0, 2, 3, 4]) {
+            let t = Fr::from_u64(t);
+            let left_at_t = left.0 + t * (left.1 - left.0);
+            let right_at_t = right.0 + t * (right.1 - right.0);
+            assert_eq!(actual, left_at_t * right_at_t);
+        }
+    }
+
+    #[test]
+    fn q10_coefficient_grid_matches_direct_evaluation() {
+        let c = (Fr::from_u64(5), Fr::from_u64(17));
+        let inc = (Fr::from_u64(7), Fr::from_u64(29));
+        let fused = (Fr::from_u64(11), Fr::from_u64(41));
+        let actual = quadratic_grid_from_anchors(
+            c.0 + inc.0 * fused.0,
+            c.1 + inc.1 * fused.1,
+            (inc.1 - inc.0) * (fused.1 - fused.0),
+        );
+        for (actual, t) in actual.into_iter().zip([0, 2, 3, 4]) {
+            let t = Fr::from_u64(t);
+            let affine = |pair: (Fr, Fr)| pair.0 + t * (pair.1 - pair.0);
+            assert_eq!(actual, affine(c) + affine(inc) * affine(fused));
+        }
+    }
+
+    #[test]
     fn bytecode_cycle_matches_reference_k16() {
-        cycle_parity(2, 4);
+        cycle_parity(2, 4, false);
     }
 
     #[test]
     fn bytecode_cycle_matches_reference_k256() {
-        cycle_parity(3, 8);
+        cycle_parity(3, 8, false);
+    }
+
+    #[test]
+    fn bytecode_cycle_q10_matches_reference_two_chunks() {
+        cycle_parity(5, 1, false);
+    }
+
+    #[test]
+    fn bytecode_cycle_q10_matches_committed_reference_two_chunks() {
+        cycle_parity(5, 1, true);
     }
 
     #[test]
