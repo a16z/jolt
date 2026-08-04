@@ -226,6 +226,19 @@ soundness note before merge.
   Lane task IDs (recorded late, lesson): A=2bbe078e, B=83cf4e87 (confirmed:
   sole surviving codex process = 83cf4e87 = B, still implementing after A's
   kill-gate exit), D=5c8623e5, scope=5068310d (done).
+- 2026-08-04 06:1x UTC: **W1B CLOSED — retained + merged to trunk @c8b5841e0.**
+  Final 2^25 cool ABBA: st6b −25.5% (2.070→1.543 s), member −38.1%, total
+  −0.910 s. IncClaimReduction prepare device port REJECTED (−9 ms prepare /
+  +22 ms stage = noise; reverted; monitor showed no util shift). Full matrix
+  green: kernels 233/233, dory 46/46, muldiv 3/3+3/3, byte-diff 11/11 both
+  feature sets, clippy/fmt clean. Binary sha 333ad9ee…. W1D artifact complete
+  (§Wave-1 gate results); D ablating park-vs-free @2^27 under lock
+  (JOLT_METAL_NO_PARK knob committed). **W2B dispatched: task 6d1f61bb,
+  gpt-5.6-sol-xhigh, worktree gpuutil-w2b (branch gpu/util-w2b off trunk
+  @c8b5841e0)** — st4 CSR/fixed-segment rewrite (step 1) + round-loop fusion
+  (step 2, both byte-identical) + optional gated round-pairing (step 3,
+  orchestrator GO required). st4 ownership transferred D→W2B. W2A + D notified
+  of merge; W2A told to merge trunk into its branch now.
 - 2026-08-04 05:0x UTC: wave-1 gate results journaled (A killed / B passed —
   see §Wave-1 gate results). W2A dispatched: task 0eb25fd2, fable-max,
   worktree gpuutil-w2a (branch gpu/util-w2a off trunk @2fc5e877f) — st6a+st7
