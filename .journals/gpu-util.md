@@ -239,6 +239,30 @@ soundness note before merge.
   Lane task IDs (recorded late, lesson): A=2bbe078e, B=83cf4e87 (confirmed:
   sole surviving codex process = 83cf4e87 = B, still implementing after A's
   kill-gate exit), D=5c8623e5, scope=5068310d (done).
+- 2026-08-04 12:0x UTC: **W2A CLOSED — merged to trunk @cc7a5c5d5** (validated:
+  kernels 236/236, jolt-prover 20/20 metal arm). Final: combined st6a+st7
+  −51.6% @2^24 / −67.3% @2^25 cool (st6a −85.7% → −90.7% [0.53→0.05 s];
+  st7 −10.7%; st6b bonus −8.1%/−4.8% from guaranteed-parked shared scans);
+  st5 contention (+4.5% from two concurrent 4-thread pools) root-caused and
+  fixed via process-wide build token → final st5 +1.1% ✓. R1 = FIRST LANDED
+  PROTOCOL CHANGE under the directive: BooleanityAnchor axis (V1 = stage-1
+  anchor, DEFAULT for modular non-zk prover; legacy/zk pinned; fail-closed;
+  anchor_v1 e2e proves V1 verifies AND a re-tagged anchor fails = axis
+  load-bearing). Soundness note: w2a.md §3 (accepted 06:45). NOTE for
+  certification: canonical anchors predate V1 — wave-2 close certifies the
+  new default protocol; wall comparison remains the metric. Session thermal
+  caveat: lanes measured absolute walls 15-20% above canonical anchors
+  (22-day-uptime box after a full bench day) — A/B ratios valid, absolutes
+  need a cool certification pass.
+  **W2B checkpoint 2: steps 1-2 gate PASSED** (st4 −33.4% @2^24, prepare
+  −82.8% [0.788→0.136 s], byte-diff 11/11 both, fused CB; step 3 round-pairing
+  correctly self-killed: fused-vs-unfused delta = noise @2^24, residual sync
+  <0.3 s projected — scope report's modeled pairing win is fully absorbed by
+  the fusion+rewrite, pairing dead for st4 too). **BUT memory-viability gate
+  TRIPPED by orchestrator:** +6.57 GiB st4 transient @2^24 → ~+52 GiB linear
+  @2^27 → ~112-123 GiB peak = compressor cliff. W2B ordered to reduce the
+  transient (compact-scalar segments / narrow layout / windowed conversion)
+  to ≤+10 GiB projected @2^27 and re-measure before 2^25 retention.
 - 2026-08-04 08:0x UTC: **W1D CLOSED — merged to trunk @79b83e0e3.** Final
   report lane-reports/w1d.md: mechanism verdict with receipts (pressure tier
   does not exist on trunk: no compressor/swap/starvation; park-vs-free null),
