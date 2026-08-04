@@ -760,3 +760,130 @@ impl<T: Copy> Drop for ArenaLease<T> {
         state.leased -= 1;
     }
 }
+
+/// W1D diagnostic (ignored): does `MADV_FREE_REUSABLE` actually remove
+/// dirty anonymous pages from `phys_footprint` when the range is wrapped by
+/// a live no-copy `MTLBuffer`? Pins the W4-U1 failure mechanism — the
+/// campaign's retired-arena madvise returned 0 but the parked 30 GiB never
+/// left the ledger. Run explicitly:
+/// `cargo nextest run -p jolt-kernels madvise_reusable --features metal --run-ignored all`
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod madvise_probe {
+    use super::*;
+
+    fn phys_footprint_bytes() -> u64 {
+        // `rusage_info_v4`: 16 UUID bytes then 35 u64 counters;
+        // ri_phys_footprint at post-UUID index 7 — the layout jolt-profiling
+        // pins with its `footprint_tracks_dirty_memory` test.
+        #[repr(C)]
+        struct RusageInfoV4 {
+            uuid: [u8; 16],
+            counters: [u64; 35],
+        }
+        extern "C" {
+            fn proc_pid_rusage(
+                pid: libc::c_int,
+                flavor: libc::c_int,
+                buffer: *mut RusageInfoV4,
+            ) -> libc::c_int;
+        }
+        const RUSAGE_INFO_V4: libc::c_int = 4;
+        const RI_PHYS_FOOTPRINT_INDEX: usize = 7;
+        let mut info = RusageInfoV4 {
+            uuid: [0; 16],
+            counters: [0; 35],
+        };
+        // SAFETY: RUSAGE_INFO_V4 fills exactly a rusage_info_v4.
+        let rc = unsafe { proc_pid_rusage(std::process::id() as i32, RUSAGE_INFO_V4, &mut info) };
+        assert_eq!(rc, 0);
+        info.counters[RI_PHYS_FOOTPRINT_INDEX]
+    }
+
+    struct Region {
+        base: NonNull<u8>,
+        bytes: usize,
+    }
+
+    impl Region {
+        fn dirty(bytes: usize) -> Self {
+            let mut raw: *mut c_void = std::ptr::null_mut();
+            // SAFETY: valid out-pointer, power-of-two alignment.
+            let rc = unsafe { libc::posix_memalign(&raw mut raw, PAGE_SIZE, bytes) };
+            assert_eq!(rc, 0);
+            let base = NonNull::new(raw.cast::<u8>()).unwrap();
+            // SAFETY: the allocation spans `bytes`.
+            unsafe { std::ptr::write_bytes(base.as_ptr(), 0xa5, bytes) };
+            Self { base, bytes }
+        }
+
+        fn reusable(&self) -> bool {
+            // SAFETY: page-aligned range inside the live allocation.
+            unsafe {
+                libc::madvise(
+                    self.base.as_ptr().cast(),
+                    self.bytes,
+                    libc::MADV_FREE_REUSABLE,
+                ) == 0
+            }
+        }
+    }
+
+    impl Drop for Region {
+        fn drop(&mut self) {
+            // SAFETY: exactly the posix_memalign allocation, freed once.
+            unsafe { libc::free(self.base.as_ptr().cast()) };
+        }
+    }
+
+    /// Footprint delta (MiB) from applying REUSABLE to a freshly dirtied
+    /// 1 GiB region under `configure`'s Metal wrapping choice.
+    fn probe(context: &MetalContext, wrap: bool, release_before: bool) -> (bool, i64) {
+        const BYTES: usize = 1 << 30;
+        let region = Region::dirty(BYTES);
+        let slice =
+            // SAFETY: live dirtied allocation of BYTES.
+            unsafe { std::slice::from_raw_parts(region.base.as_ptr(), region.bytes) };
+        let buffer = wrap.then(|| context.wrap_slice_nocopy(slice).unwrap());
+        let buffer = if release_before { None } else { buffer };
+        let before = phys_footprint_bytes();
+        let ok = region.reusable();
+        let after = phys_footprint_bytes();
+        drop(buffer);
+        (ok, (after as i64 - before as i64) / (1 << 20))
+    }
+
+    #[test]
+    #[ignore = "W1D diagnostic; prints footprint ledger deltas"]
+    #[expect(clippy::print_stdout, reason = "diagnostic output is the deliverable")]
+    fn madvise_reusable_vs_metal_wrap() {
+        let _lock = super::super::testing::gpu_lock();
+        let context = MetalContext::global().unwrap();
+
+        // Ledger sanity: dirtying and freeing 1 GiB must move phys_footprint
+        // by roughly that much, or the probe cannot be trusted.
+        let base = phys_footprint_bytes();
+        let region = Region::dirty(1 << 30);
+        let dirtied = phys_footprint_bytes() as i64 - base as i64;
+        drop(region);
+        let freed = phys_footprint_bytes() as i64 - base as i64;
+        println!(
+            "ledger sanity: dirty 1 GiB => +{} MiB, free => {:+} MiB residual",
+            dirtied / (1 << 20),
+            freed / (1 << 20)
+        );
+        assert!(
+            dirtied > (900 << 20),
+            "footprint ledger did not track dirty"
+        );
+
+        let (ok_plain, delta_plain) = probe(context, false, false);
+        let (ok_wrapped, delta_wrapped) = probe(context, true, false);
+        let (ok_released, delta_released) = probe(context, true, true);
+
+        println!("REUSABLE on 1 GiB dirty region, footprint delta:");
+        println!("  plain malloc:           ok={ok_plain} delta={delta_plain} MiB");
+        println!("  live MTLBuffer wrap:    ok={ok_wrapped} delta={delta_wrapped} MiB");
+        println!("  wrap released first:    ok={ok_released} delta={delta_released} MiB");
+    }
+}

@@ -140,15 +140,33 @@ to be.
 
 ## 5. Micro-experiment: REUSABLE vs Metal wrap (footprint ledger)
 
-Standalone test (this worktree, `/tmp/w1d-madvise-probe`): allocate 2 GiB
-page-aligned, dirty it, `MADV_FREE_REUSABLE`, read `phys_footprint` deltas
-via `proc_pid_rusage`:
+Ignored test `metal::buffers::madvise_probe::madvise_reusable_vs_metal_wrap`
+(this branch): dirty 1 GiB page-aligned, apply `MADV_FREE_REUSABLE`, read
+`phys_footprint` deltas via `proc_pid_rusage(RUSAGE_INFO_V4)` (ledger sanity
+leg: dirtying moves the ledger +1024 MiB). Measured 2026-08-04:
 
-| variant | footprint after REUSABLE |
-|---|---|
-| plain malloc'd (no Metal) | (§7 fills in measured values) |
-| wrapped in live no-copy MTLBuffer | |
-| wrapped, buffer released before madvise | |
+| variant | madvise rc | footprint delta |
+|---|---|---|
+| plain malloc'd, never Metal-touched | 0 | **−1024 MiB** (works) |
+| wrapped in live no-copy `MTLBuffer` | 0 | **0 (silent no-op)** |
+| wrapped, then buffer released before madvise | 0 | **0 (silent no-op)** |
+
+`MADV_FREE_REUSABLE` works exactly as documented on virgin malloc memory
+and does nothing — while still returning success — on any range that has
+ever been mapped by `newBufferWithBytesNoCopy` (IOGPU holds a second
+reference to the VM object; release does not restore eligibility on any
+relevant timescale). U1 applied it under a live owner `MTLBuffer` plus
+per-carve lease wraps: it could never have worked, and its return-code
+check (and the unit test asserting `reclaimable`) verified nothing.
+
+Corollary for fix design: any madvise-shaped decommit of Metal-wrapped
+pages is dead on arrival. Ending stage-5 ownership means actually dropping
+the buffer AND its backing allocation. A dropped `Vec` backing goes to
+malloc's large-entry cache (the sanity leg shows `free()` alone also leaves
+footprint: +1024 MiB residual — `MADV_FREE`-tagged, reclaim-on-demand,
+reusable warm by the next large allocation), which is precisely the brief's
+candidate "st6b carves the same physical pages" — via malloc, with no
+arena code at all.
 | wrapped + dispatched once, buffer live | |
 
 ## 6. st4: pressure vs shape — verdict SHAPE (hand off, do not fix here)
