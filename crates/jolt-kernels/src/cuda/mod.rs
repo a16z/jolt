@@ -4,6 +4,7 @@ use jolt_openings::CommitmentScheme;
 use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
+mod combine;
 mod context;
 mod dense_product;
 mod device;

@@ -38,6 +38,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/suffixes.cu"),
     "\n",
     include_str!("kernels/prefixes.cu"),
+    "\n",
+    include_str!("kernels/combine.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -74,6 +76,7 @@ pub struct CudaKernelContext {
     sfx_eval_batch: CudaFunction,
     pfx_eval_batch: CudaFunction,
     pfx_default_checkpoints: CudaFunction,
+    cmb_combine: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -120,6 +123,7 @@ impl CudaKernelContext {
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
             pfx_eval_batch: module.load_function("pfx_eval_batch_kernel")?,
             pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
+            cmb_combine: module.load_function("cmb_combine_kernel")?,
         })
     }
 
@@ -267,6 +271,10 @@ impl CudaKernelContext {
 
     pub(super) const fn pfx_default_checkpoints(&self) -> &CudaFunction {
         &self.pfx_default_checkpoints
+    }
+
+    pub(super) const fn cmb_combine(&self) -> &CudaFunction {
+        &self.cmb_combine
     }
 
     pub(super) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
