@@ -58,7 +58,10 @@ pub use booleanity::{
 pub(crate) use instruction_ra_sequence::{
     instruction_ra_weight_capacities, InstructionRaSequenceStorage,
 };
-pub use instruction_ra_sequence::{InstructionRaSequence, InstructionRaSequenceConfig};
+pub use instruction_ra_sequence::{
+    InstructionRaLookupPlane, InstructionRaMaterializeWidth, InstructionRaSequence,
+    InstructionRaSequenceConfig, InstructionRaSequenceScratchLayout,
+};
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
 };

@@ -43,12 +43,13 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             let rows = prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?;
             session.park(rows);
         }
+        let instruction_ra_dispatch = self.config.instruction_ra_virtualization.dispatch;
         if cycles
             >= self
                 .config
                 .instruction_ra_virtualization
                 .trace_cutoff_elements
-            && cycles >= 32
+            && cycles >= 2 * instruction_ra_dispatch.materialize_width.elements()
         {
             let (e_in_capacity, e_out_capacity) =
                 instruction_ra_weight_capacities(cycles).map_err(metal_prepare_error)?;
@@ -61,7 +62,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         cycles,
                         e_in_capacity,
                         e_out_capacity,
-                        self.config.instruction_ra_virtualization.dispatch,
+                        instruction_ra_dispatch,
                     )
                     .map_err(metal_prepare_error)?
             };

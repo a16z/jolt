@@ -516,6 +516,17 @@ mod akita_benchmark {
         Metal,
     }
 
+    #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
+    enum InstructionRaMaterializeWidth {
+        #[default]
+        W16,
+        W32,
+        W64,
+        W128,
+        W256,
+        W512,
+    }
+
     #[derive(Parser, Debug)]
     struct Cli {
         #[clap(long, value_enum)]
@@ -532,6 +543,12 @@ mod akita_benchmark {
 
         #[clap(short, long, value_enum, default_value = "optimized")]
         backend: Backend,
+
+        #[clap(long, value_enum, default_value = "w16")]
+        instruction_ra_materialize_width: InstructionRaMaterializeWidth,
+
+        #[clap(long)]
+        instruction_ra_reuse_inverse: bool,
     }
 
     pub fn run() {
@@ -566,7 +583,14 @@ mod akita_benchmark {
         );
         let _guards = setup_tracing(&formats, &trace_name);
 
-        run_benchmark(cli.name, scale, cli.target_trace_size, cli.backend);
+        run_benchmark(
+            cli.name,
+            scale,
+            cli.target_trace_size,
+            cli.backend,
+            cli.instruction_ra_materialize_width,
+            cli.instruction_ra_reuse_inverse,
+        );
     }
 
     fn run_benchmark(
@@ -574,6 +598,8 @@ mod akita_benchmark {
         scale: usize,
         target_trace_size: Option<usize>,
         backend_choice: Backend,
+        instruction_ra_materialize_width: InstructionRaMaterializeWidth,
+        instruction_ra_reuse_inverse: bool,
     ) {
         let bench_name = bench.as_str();
         let max_trace_length = 1usize << scale;
@@ -664,12 +690,46 @@ mod akita_benchmark {
             pcs_setup,
             committed_program: None,
         };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let _ = (
+            instruction_ra_materialize_width,
+            instruction_ra_reuse_inverse,
+        );
         let backend = match backend_choice {
             Backend::Reference => akita::JoltAkitaBackend::reference(),
             Backend::Optimized => akita::JoltAkitaBackend::optimized(),
             #[cfg(all(feature = "metal", target_os = "macos"))]
-            Backend::Metal => akita::JoltAkitaBackend::metal(Default::default())
-                .expect("Metal backend should initialize"),
+            Backend::Metal => {
+                let mut config = jolt_kernels::metal::MetalConfig::default();
+                config
+                    .instruction_ra_virtualization
+                    .dispatch
+                    .materialize_width = match instruction_ra_materialize_width {
+                    InstructionRaMaterializeWidth::W16 => {
+                        jolt_kernels::metal::solinas::InstructionRaMaterializeWidth::W16
+                    }
+                    InstructionRaMaterializeWidth::W32 => {
+                        jolt_kernels::metal::solinas::InstructionRaMaterializeWidth::W32
+                    }
+                    InstructionRaMaterializeWidth::W64 => {
+                        jolt_kernels::metal::solinas::InstructionRaMaterializeWidth::W64
+                    }
+                    InstructionRaMaterializeWidth::W128 => {
+                        jolt_kernels::metal::solinas::InstructionRaMaterializeWidth::W128
+                    }
+                    InstructionRaMaterializeWidth::W256 => {
+                        jolt_kernels::metal::solinas::InstructionRaMaterializeWidth::W256
+                    }
+                    InstructionRaMaterializeWidth::W512 => {
+                        jolt_kernels::metal::solinas::InstructionRaMaterializeWidth::W512
+                    }
+                };
+                config
+                    .instruction_ra_virtualization
+                    .dispatch
+                    .reuse_inverse_for_dense = instruction_ra_reuse_inverse;
+                akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
+            }
         };
 
         let now = Instant::now();

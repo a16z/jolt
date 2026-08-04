@@ -48,13 +48,14 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
         KernelError<AkitaField>,
     > {
         let trace_elements = 1usize << inputs.relation.dimensions().log_t();
+        let dispatch = self.config.instruction_ra_virtualization.dispatch;
         let initialization = prepare_instruction_ra_initialization(inputs)?;
         if trace_elements
             < self
                 .config
                 .instruction_ra_virtualization
                 .trace_cutoff_elements
-            || trace_elements < 32
+            || trace_elements < 2 * dispatch.materialize_width.elements()
             || !initialization.supports_metal_sequence()
         {
             let _ = session.take::<InstructionRaSequenceStorage>();
@@ -91,7 +92,6 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
             (e_in.len(), e_out.len())
         };
         let sequence = {
-            let dispatch = self.config.instruction_ra_virtualization.dispatch;
             let storage = session
                 .take::<InstructionRaSequenceStorage>()
                 .filter(|storage| {

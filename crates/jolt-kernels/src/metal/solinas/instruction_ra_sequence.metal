@@ -13,6 +13,8 @@ struct InstructionRaMaterializeParams {
     uint reserved;
 };
 
+constant uint instruction_ra_wide_branch_width [[function_constant(0)]];
+
 inline void instruction_ra_gather_group(
     uint group,
     uint pair,
@@ -189,6 +191,38 @@ kernel void solinas_instruction_ra_message_width_8(
         params, shared, x_in_thread, x_out, lane_in_simd, simdgroup, threads);
 }
 
+kernel void solinas_instruction_ra_message_wide(
+    device const InstructionRaLookup* lookups [[buffer(0)]],
+    device const uint* cycle_to_table_major [[buffer(1)]],
+    device const SolinasFp128* branches [[buffer(2)]],
+    device const SolinasFp128* e_in [[buffer(3)]],
+    device const SolinasFp128* e_out [[buffer(4)]],
+    device SolinasFp128* partials [[buffer(5)]],
+    constant InstructionRaFirstMessageParams& params [[buffer(6)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint x_in_thread [[thread_index_in_threadgroup]],
+    uint x_out [[threadgroup_position_in_grid]],
+    uint lane_in_simd [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    instruction_ra_lazy_message_body(
+        instruction_ra_wide_branch_width,
+        lookups,
+        cycle_to_table_major,
+        branches,
+        e_in,
+        e_out,
+        partials,
+        params,
+        shared,
+        x_in_thread,
+        x_out,
+        lane_in_simd,
+        simdgroup,
+        threads);
+}
+
 kernel void solinas_instruction_ra_double_branches(
     device const SolinasFp128* source [[buffer(0)]],
     device SolinasFp128* destination [[buffer(1)]],
@@ -214,21 +248,22 @@ kernel void solinas_instruction_ra_double_branches(
         solinas_mul_wide(challenge, value);
 }
 
-kernel void solinas_instruction_ra_materialize_width_16(
-    device const InstructionRaLookup* lookups [[buffer(0)]],
-    device const uint* cycle_to_table_major [[buffer(1)]],
-    device const SolinasFp128* branches [[buffer(2)]],
-    device SolinasFp128* dense [[buffer(3)]],
-    device const SolinasFp128* e_in [[buffer(4)]],
-    device const SolinasFp128* e_out [[buffer(5)]],
-    device SolinasFp128* partials [[buffer(6)]],
-    constant InstructionRaMaterializeParams& params [[buffer(7)]],
-    threadgroup SolinasFp128* shared [[threadgroup(0)]],
-    uint x_in_thread [[thread_index_in_threadgroup]],
-    uint x_out [[threadgroup_position_in_grid]],
-    uint lane_in_simd [[thread_index_in_simdgroup]],
-    uint simdgroup [[simdgroup_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
+inline void instruction_ra_materialize_body(
+    uint branch_width,
+    device const InstructionRaLookup* lookups,
+    device const uint* cycle_to_table_major,
+    device const SolinasFp128* branches,
+    device SolinasFp128* dense,
+    device const SolinasFp128* e_in,
+    device const SolinasFp128* e_out,
+    device SolinasFp128* partials,
+    constant InstructionRaMaterializeParams& params,
+    threadgroup SolinasFp128* shared,
+    uint x_in_thread,
+    uint x_out,
+    uint lane_in_simd,
+    uint simdgroup,
+    uint threads)
 {
     SolinasFp128 lanes[INSTRUCTION_RA_SAMPLES];
     for (uint sample = 0; sample < INSTRUCTION_RA_SAMPLES; sample++) {
@@ -246,7 +281,7 @@ kernel void solinas_instruction_ra_materialize_width_16(
             instruction_ra_gather_group(
                 group,
                 pair,
-                16u,
+                branch_width,
                 lookups,
                 cycle_to_table_major,
                 branches,
@@ -278,6 +313,74 @@ kernel void solinas_instruction_ra_materialize_width_16(
         lane_in_simd,
         simdgroup,
         threads / 32u);
+}
+
+kernel void solinas_instruction_ra_materialize_width_16(
+    device const InstructionRaLookup* lookups [[buffer(0)]],
+    device const uint* cycle_to_table_major [[buffer(1)]],
+    device const SolinasFp128* branches [[buffer(2)]],
+    device SolinasFp128* dense [[buffer(3)]],
+    device const SolinasFp128* e_in [[buffer(4)]],
+    device const SolinasFp128* e_out [[buffer(5)]],
+    device SolinasFp128* partials [[buffer(6)]],
+    constant InstructionRaMaterializeParams& params [[buffer(7)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint x_in_thread [[thread_index_in_threadgroup]],
+    uint x_out [[threadgroup_position_in_grid]],
+    uint lane_in_simd [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    instruction_ra_materialize_body(
+        16u,
+        lookups,
+        cycle_to_table_major,
+        branches,
+        dense,
+        e_in,
+        e_out,
+        partials,
+        params,
+        shared,
+        x_in_thread,
+        x_out,
+        lane_in_simd,
+        simdgroup,
+        threads);
+}
+
+kernel void solinas_instruction_ra_materialize_wide(
+    device const InstructionRaLookup* lookups [[buffer(0)]],
+    device const uint* cycle_to_table_major [[buffer(1)]],
+    device const SolinasFp128* branches [[buffer(2)]],
+    device SolinasFp128* dense [[buffer(3)]],
+    device const SolinasFp128* e_in [[buffer(4)]],
+    device const SolinasFp128* e_out [[buffer(5)]],
+    device SolinasFp128* partials [[buffer(6)]],
+    constant InstructionRaMaterializeParams& params [[buffer(7)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint x_in_thread [[thread_index_in_threadgroup]],
+    uint x_out [[threadgroup_position_in_grid]],
+    uint lane_in_simd [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    instruction_ra_materialize_body(
+        instruction_ra_wide_branch_width,
+        lookups,
+        cycle_to_table_major,
+        branches,
+        dense,
+        e_in,
+        e_out,
+        partials,
+        params,
+        shared,
+        x_in_thread,
+        x_out,
+        lane_in_simd,
+        simdgroup,
+        threads);
 }
 
 kernel void solinas_instruction_ra_dense_transition(
