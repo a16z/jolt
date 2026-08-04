@@ -3273,6 +3273,7 @@ dependencies = [
  "jolt-field",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
+ "jolt-kernels",
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-riscv",

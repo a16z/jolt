@@ -56,15 +56,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
+use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::{
     BooleanityPublic, JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::{OutputClaims, Source, SymbolicSumcheck};
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
-use jolt_poly::{
-    try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
-};
+use jolt_poly::{try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
@@ -75,54 +73,15 @@ use jolt_verifier::stages::stage6a::booleanity::{
 };
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_verifier::VerifierError;
-use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow, InstructionRows};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
+use super::one_hot_pushforward::{split_eq_pushforwards, ColumnSelector};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-
-/// One checked polynomial's chunk selector over the packed per-cycle rows
-/// (canonical layout order: instruction, bytecode, ram).
-enum ColumnSelector {
-    Instruction(RaChunkSelector),
-    Bytecode(RaChunkSelector),
-    Ram(RaChunkSelector),
-}
-
-impl ColumnSelector {
-    /// The hot chunk index at `row`; `None` is a cold cycle. Mirrors the
-    /// trace oracle's grid materializers (`materialize_one_hot`), so
-    /// gathered indices and the reference tier's dense grids describe the
-    /// same one-hot polynomials.
-    #[inline]
-    fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
-        match self {
-            Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index)),
-            Self::Bytecode(selector) => row.mapped_pc().map(|pc| selector.chunk_usize(pc)),
-            Self::Ram(selector) => row
-                .remapped_ram_address()
-                .map(|address| selector.chunk_usize(address as usize)),
-        }
-    }
-
-    /// `(family, shift)` for a device tier re-expressing the selection over
-    /// the packed row words: family 0 selects the 128-bit lookup index,
-    /// 1 the (`+1`-sentinel) mapped PC, 2 the (`+1`-sentinel) remapped RAM
-    /// address.
-    fn device_meta(&self) -> (u32, u32) {
-        match self {
-            Self::Instruction(selector) => (0, selector.shift() as u32),
-            Self::Bytecode(selector) => (1, selector.shift() as u32),
-            Self::Ram(selector) => (2, selector.shift() as u32),
-        }
-    }
-}
 
 /// What a booleanity-cycle device driver captures at prepare (borrowed —
 /// the factory clones what it keeps).
@@ -160,22 +119,7 @@ fn column_selectors<F: Field>(
             });
         }
     }
-    layout
-        .polynomials()
-        .map(|polynomial| {
-            Ok(match polynomial {
-                JoltRaPolynomial::Instruction(index) => ColumnSelector::Instruction(
-                    RaChunkSelector::new(index, layout.instruction(), log_k_chunk)?,
-                ),
-                JoltRaPolynomial::Bytecode(index) => ColumnSelector::Bytecode(
-                    RaChunkSelector::new(index, layout.bytecode(), log_k_chunk)?,
-                ),
-                JoltRaPolynomial::Ram(index) => {
-                    ColumnSelector::Ram(RaChunkSelector::new(index, layout.ram(), log_k_chunk)?)
-                }
-            })
-        })
-        .collect()
+    ColumnSelector::for_layout(layout, log_k_chunk)
 }
 
 /// The one-hot pushforward `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`
@@ -192,73 +136,7 @@ fn cycle_pushforward<F: Field>(
     k_chunk: usize,
     point: &[F],
 ) -> Vec<Vec<F>> {
-    let eq = TensorEqTable::new(point);
-    debug_assert_eq!(eq.len(), rows.len());
-    let e_out = eq.e_out();
-    let e_in = eq.e_in();
-    let in_len = e_in.len();
-
-    struct State<F: Field> {
-        /// Cross-block `Σ e_out · reduce(block)` lanes, still deferred.
-        partial: Vec<Vec<F::Accumulator>>,
-        /// Within-block unreduced `Σ e_in` buckets, cleared per block.
-        block: Vec<Vec<F::Accumulator>>,
-    }
-    let zero = || State::<F> {
-        partial: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
-        block: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
-    };
-    let scatter = |mut state: State<F>, x_out: usize| {
-        let base = x_out * in_len;
-        for (x_in, e) in e_in.iter().enumerate() {
-            let row = &rows[base + x_in];
-            for (selector, block) in selectors.iter().zip(state.block.iter_mut()) {
-                if let Some(k) = selector.index(row) {
-                    block[k].add(*e);
-                }
-            }
-        }
-        let e_out = e_out[x_out];
-        for (partial, block) in state.partial.iter_mut().zip(state.block.iter_mut()) {
-            for (partial, block) in partial.iter_mut().zip(block.iter_mut()) {
-                let value = std::mem::take(block).reduce();
-                if value != F::zero() {
-                    partial.fmadd(e_out, value);
-                }
-            }
-        }
-        state
-    };
-    let finish = |state: State<F>| -> Vec<Vec<F>> {
-        state
-            .partial
-            .into_iter()
-            .map(|buckets| buckets.into_iter().map(|bucket| bucket.reduce()).collect())
-            .collect()
-    };
-    let merge = |mut left: State<F>, right: State<F>| {
-        for (left, right) in left.partial.iter_mut().zip(right.partial) {
-            for (left, right) in left.iter_mut().zip(right) {
-                left.merge(right);
-            }
-        }
-        left
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        finish(
-            (0..e_out.len())
-                .into_par_iter()
-                .fold(zero, scatter)
-                .reduce(zero, merge),
-        )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let _ = merge;
-        finish((0..e_out.len()).fold(zero(), scatter))
-    }
+    split_eq_pushforwards(rows, selectors, k_chunk, point, point.len() / 2)
 }
 
 // ---------------------------------------------------------------------------
