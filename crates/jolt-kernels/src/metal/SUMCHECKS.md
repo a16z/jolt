@@ -158,7 +158,7 @@ order after the first slot establishes the harness.
 
 | Stage | Slot or shared implementation | Initial Metal plan | State |
 |---|---|---|---|
-| 1 | `spartan_outer_uniskip` | centered-domain reduction | analyze |
+| 1 | `spartan_outer_uniskip` | centered-domain reduction | shader retained at 8.53x seam estimate; backend handoff integrating |
 | 1 | `spartan_outer_remainder` | dense fused product | analyze |
 | 2 | `spartan_product_uniskip` | centered-domain reduction | analyze |
 | 2 | `spartan_product_remainder` | dense fused product | analyze |
@@ -638,6 +638,86 @@ The post-promotion CPU-first PIOP pair in
 (5.61x), 106.5 ms below the first retained Metal seam. Both proofs verified. The
 aggregate remains a one-pair checkpoint; the next port is selected from the Metal
 profile, where Booleanity is now 4.73% of PIOP rather than the leading bottleneck.
+
+## Spartan outer uni-skip ceiling
+
+The post-Booleanity Metal profile makes `SpartanOuterUniskip` the largest remaining
+seam: 2.626 s, or 17.37% of the 15.116-s Metal PIOP. The optimized CPU kernel already
+uses the right protocol reduction. For each cycle and each of the two stream values,
+it extends ten consecutive constraint-row evaluations to the nine nodes outside the
+centered domain, multiplies the extended `Az` and `Bz`, and accumulates against the
+factored equality polynomial. The device therefore returns only nine field values;
+interpolation, the degree-27 round polynomial, transcript absorption, and the
+uni-skip challenge remain on the host.
+
+The first Metal schedule maps three rows onto one 32-lane SIMD group. Each row owns
+nine lanes, one per extended node, so 27 lanes do useful work. A lane computes both
+stream products. One 256-thread threadgroup owns one `E_out` block and walks its
+`E_in` rows in strides of 24. It reduces nine values in 3.4 KiB of dynamic
+threadgroup memory, multiplies by the block's single `E_out` value, and writes nine
+block sums. A second dispatch reduces those block sums. This retains the CPU's
+`E_out ⊗ E_in` factorization and avoids a field multiplication by `E_out` per row.
+
+The coefficient path is expanded before shader compilation rather than constructing
+19 signed row values. For example, the first-stream `Bz` coefficient of
+`RamReadValue` is `c1 + c2`, and the second-stream coefficient of
+`RightLookupOperand` is `c1 + c2 + c3 + c4`. This leaves roughly 522 widening
+32-bit multiply-adds for the two signed dot products across all nine nodes, 18
+small-by-wide integer products, and exactly 18 full field multiplications per cycle.
+The largest Lagrange coefficient is 140,140; the existing CPU bounds
+`|Az| < 2^22`, `|Bz| < 2^152`, and `|Az Bz| < 2^174` make a seven-limb product plus
+the reusable Solinas reducer exact.
+
+At `T = 2^26`, the useful count is 1,207,959,552 field multiplications. A standalone
+160-byte packed-row ABI plus two 16-byte `E_in` weights moves 12.0 logical GiB, a
+28.5-ms floor at the measured 420.68-GiB/s copy roof. The intended direct handoff is
+64 bytes of canonical trace state plus a reusable 64-byte lookup-value sidecar, or
+10.0 logical GiB and a 23.8-ms floor. Output traffic is about 1.2 MiB before the
+final nine-value reduction.
+
+The same binary measures 16.42 Gfield-mul/s on the retained compute-dense path and
+958 G independent `u32` multiply-adds/s. Charging only one third of each measured
+rate gives 220.7 ms for the field products and about 147.6 ms for the expanded
+integer path; adding the standalone traffic floor gives a 397-ms conservative
+budget. Against the measured 2.626-s seam this is 6.62x, above the hot-kernel
+shader-entry bar of `1.25 · 5x = 6.25x`. The working target is at most 375 ms (7x),
+not 5x. A 5x measured port alone projects the current PIOP from 1.394x to 1.619x;
+6.25x projects 1.632x, before any residency reused by `OuterRemainder`.
+
+The frozen evaluator must time three boundaries separately: GPU-active arithmetic
+over resident packed rows, a complete standalone invocation including row-buffer
+preparation, and the real `UniskipKernel` seam including direct witness handoff. Only
+the last promotes the backend. The first two identify whether a miss comes from the
+shader or the row boundary. Exact guards compare all nine extended-node values, the
+assembled round polynomial, the host challenge, and the parked carry consumed by
+`OuterRemainder`.
+
+The target-scale dispatch search is recorded in
+`benchmark-runs/metal-autoresearch/spartan-outer-uniskip-v3`. Its fixed dispatch-time
+baseline was 348.860 ms with 0.83% relative MAD. The first retained candidate defers
+canonical field additions in a 192-bit lane accumulator and performs one Solinas
+fold after the row loop; its 320.499-ms median is 8.13% faster. The second retained
+candidate evaluates six nodes over five rows and then three nodes over ten rows,
+using 30 lanes in both phases without keeping two wide accumulators live. Its
+307.757-ms median is another 3.98% gain and 11.78% faster than the baseline. All six
+source trials passed exact extended-value, round-polynomial, challenge, output-claim,
+host-transcript, and allocation guards.
+
+The retained two-phase schedule rereads resident inputs. With the standalone packed
+ABI, each phase reads 160 row bytes and 32 equality-weight bytes, or 24 logical GiB
+at `2^26`; its 57.1-ms optimistic copy floor remains well below dispatch wall time.
+The intended 128-byte trace-plus-sidecar handoff would read 20 logical GiB across the
+two phases, a 47.5-ms floor. The v3 JSON `direct_handoff_logical_bytes` field records
+the one-pass ABI minimum, not this two-phase shader traffic. A three-phase
+full-occupancy trial improved only 2.06% and was rejected, showing that the extra row
+scan consumed most of its utilization gain.
+
+The retained synthetic packed-row evaluator reports a 10.56x complete resident
+hybrid speedup in its middle fresh process and 4.05x when a new 10-GiB packed-row
+copy is charged. Against the optimized CPU PIOP seam, 307.757 ms corresponds to
+8.53x before handoff cost. The shader therefore clears the 7x working target; the
+promotion question has moved to the real `UniskipKernel` path and whether witness
+residency avoids repacking 160 bytes per row inside the PIOP boundary.
 
 ## Requirement map and open points
 

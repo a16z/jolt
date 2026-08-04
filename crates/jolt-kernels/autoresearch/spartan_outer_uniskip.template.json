@@ -1,0 +1,83 @@
+{
+  "baseline_params": {
+    "JOLT_METAL_SPARTAN_OUTER_THREADS": "256"
+  },
+  "baseline_repeats": 9,
+  "candidate_repeats": 3,
+  "budget": {
+    "max_gpu_seconds": 600,
+    "max_seconds": 1800,
+    "max_trials": 12,
+    "monetary_usd": 0,
+    "token_budget": 0
+  },
+  "evaluator": {
+    "command": [
+      "cargo",
+      "run",
+      "--release",
+      "-q",
+      "-p",
+      "jolt-kernels",
+      "--features",
+      "metal",
+      "--example",
+      "metal-spartan-outer-uniskip-eval"
+    ],
+    "env": {
+      "JOLT_METAL_EVAL_LOG_N": "26",
+      "JOLT_METAL_EVAL_REPEATS": "3",
+      "JOLT_METAL_EVAL_SEED": "1"
+    },
+    "parser": "last schema-version 1 JSON object on stdout",
+    "timeout_seconds": 300
+  },
+  "final_validation": {
+    "fresh_processes": 2,
+    "log_n": [18, 22, 24, 26],
+    "required_path": "UniskipKernel<AkitaField, OuterRemainder>"
+  },
+  "goal": "maximize exact Spartan outer uni-skip complete-hybrid speedup over the optimized CPU kernel; 5x is a floor and 7x is the initial target",
+  "guards": {
+    "required_true": [
+      "exact_extended_nodes",
+      "exact_round_poly",
+      "exact_challenge",
+      "exact_output_claim",
+      "host_fiat_shamir",
+      "no_execute_allocations"
+    ]
+  },
+  "hypothesis": "three rows per SIMD group and one lane per extended node expose enough independent signed-integer work to exceed 7x while factored equality weights keep traffic to one row read",
+  "kernel": "spartan_outer_uniskip",
+  "metric": {
+    "direction": "min",
+    "minimum_relative_improvement": 0.03,
+    "name": "gpu_dispatch_seconds",
+    "target": 0.375,
+    "unit": "s"
+  },
+  "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.json",
+  "schema_version": 1,
+  "scope": {
+    "editable": [
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.metal",
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.rs"
+    ],
+    "frozen": [
+      "crates/jolt-kernels/examples/metal-spartan-outer-uniskip-eval.rs",
+      "crates/jolt-kernels/src/optimized/spartan_outer.rs",
+      "crates/jolt-kernels/autoresearch/piop_goal.json",
+      "scripts/metal_autoresearch.py"
+    ]
+  },
+  "search_space": {
+    "JOLT_METAL_SPARTAN_OUTER_THREADS": [32, 64, 128, 256, 512, 1024]
+  },
+  "stopping_conditions": [
+    "trial or wall-clock budget is exhausted",
+    "no candidate clears the fixed promotion threshold",
+    "a correctness guard fails",
+    "the measured bottleneck requires a different algorithm and therefore a new phase"
+  ]
+}

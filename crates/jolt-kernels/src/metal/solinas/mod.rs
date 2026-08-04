@@ -25,6 +25,7 @@ const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_cycle.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity.metal");
+const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
 
 mod address_raf;
 mod address_raf_direct;
@@ -33,6 +34,7 @@ mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
 mod product5;
+mod spartan_outer_uniskip;
 
 pub use address_raf::{
     AddressRafScanConfig, AddressRafScanInvocation, AddressRafScanRow, AddressRafSums,
@@ -50,6 +52,10 @@ pub use booleanity::{
 };
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
+};
+pub use spartan_outer_uniskip::{
+    evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,
+    SpartanOuterUniskipRow, SpartanOuterUniskipRows, SPARTAN_OUTER_EXTENDED_NODES,
 };
 
 pub const OFFSET_275: u32 = 275;
@@ -216,6 +222,24 @@ pub enum MetalError {
     MisalignedElementCount { probe: &'static str, ilp: usize },
     #[error("iteration count must be nonzero")]
     ZeroIterations,
+    #[error("Spartan outer uni-skip shape mismatch: rows={rows}, e_in={e_in}, e_out={e_out}")]
+    SpartanOuterUniskipShape {
+        rows: usize,
+        e_in: usize,
+        e_out: usize,
+    },
+    #[error(
+        "Spartan outer uni-skip pipeline `{pipeline}` has execution width {got}, expected {expected}"
+    )]
+    UnsupportedSpartanOuterExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "Spartan outer uni-skip needs {requested} bytes of threadgroup memory, device limit is {maximum}"
+    )]
+    SpartanOuterThreadgroupMemory { requested: u64, maximum: u64 },
     #[error("address RAF row and weight lengths differ: rows={rows}, weights={weights}")]
     AddressRafLengthMismatch { rows: usize, weights: usize },
     #[error("address RAF suffix length must be a multiple of eight in 0..=120, got {0}")]
@@ -364,7 +388,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)

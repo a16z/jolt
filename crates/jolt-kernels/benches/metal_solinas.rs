@@ -33,6 +33,10 @@ mod cycle;
 mod product5;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/spartan_outer_uniskip.rs"]
+mod spartan_outer_uniskip;
+
+#[cfg(target_os = "macos")]
 #[path = "../tests/support/mod.rs"]
 mod reference;
 
@@ -51,6 +55,7 @@ mod macos {
     use super::{
         address_raf, address_suffix, booleanity, cpu, cycle, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
+        spartan_outer_uniskip,
     };
 
     const STREAM_ELEMENTS: usize = 1 << 20;
@@ -111,6 +116,7 @@ mod macos {
                     address_suffix::eval_resident_phase(&context);
                 }
                 "booleanity-message" => booleanity::bench_message(c, &context),
+                "spartan-outer-uniskip" => spartan_outer_uniskip::bench(c, &context),
                 "product5" => {
                     product5::bench_message(c, &context);
                     product5::bench_transition(c, &context);
