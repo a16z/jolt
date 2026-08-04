@@ -45,7 +45,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::support::{collect_rows, fmadd_u64_split, gamma_powers_array};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -65,23 +65,6 @@ struct SpartanShiftRow {
     is_first_in_sequence: OpFlag,
     #[opening(InstructionFlags(InstructionFlags::IsNoop))]
     is_noop: InstructionFlag,
-}
-
-/// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
-/// accumulator without overflowing it: the accumulator's headroom is one
-/// extra limb, which ~4 full-magnitude `field × u64` products exhaust, so the
-/// value is split into u32 halves (products ≤ 2^286, headroom ≥ 2^34 terms).
-/// `eq_shifted` must be `eq · 2^32`; the two fused adds sum to exactly
-/// `eq · F(value)`.
-#[inline]
-fn fmadd_u64_split<F: Field>(
-    accumulator: &mut F::SmallScalarAccumulator,
-    eq: F,
-    eq_shifted: F,
-    value: u64,
-) {
-    accumulator.fmadd_u64(eq_shifted, value >> 32);
-    accumulator.fmadd_u64(eq, value & 0xFFFF_FFFF);
 }
 
 pub struct OptimizedSpartanShift;
@@ -110,11 +93,7 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
         let cycles = 1usize << log_t;
         let rows: Vec<SpartanShiftRow> = collect_rows(witness, cycles)?;
 
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = [F::one(); 5];
-        for i in 1..5 {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers: [F; 5] = gamma_powers_array(inputs.challenges.gamma);
 
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);

@@ -63,7 +63,8 @@ use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
 use super::support::{
-    bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals, scaled_eq_table,
+    bind_all, collect_rows, eq_table, gamma_powers_array, pair, round_poly_from_skipped_evals,
+    scaled_eq_table,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -291,11 +292,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             });
         }
 
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = [F::one(); 8];
-        for i in 1..8 {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers: [F; 8] = gamma_powers_array(inputs.challenges.gamma);
 
         let pushforwards =
             stage_pushforwards(stage_cycle_points, &rows, addresses).map(Polynomial::new);
@@ -529,11 +526,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
         // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
         // stage-1 cycle point, SpartanShiftRaf the stage-3 one).
         let stage_values = relation.stage_values_at_r_address()?;
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = [F::one(); 8];
-        for i in 1..8 {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers: [F; 8] = gamma_powers_array(inputs.challenges.gamma);
         let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
         let mut stage_weights: [F; 5] = std::array::from_fn(|s| gamma_powers[s] * stage_values[s]);
         stage_weights[0] += gamma_powers[5] * int_at_r_address;

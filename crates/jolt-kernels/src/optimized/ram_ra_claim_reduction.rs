@@ -39,6 +39,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::support::bind_pairs;
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -229,16 +230,6 @@ fn gather_h_prime<F: Field>(
         fill(&mut h, 0, &columns.addresses);
         h
     }
-}
-
-/// In-place low-to-high bind: `t[y] ← t[2y] + r·(t[2y+1] − t[2y])`.
-fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
-    let half = table.len() / 2;
-    for y in 0..half {
-        let even = table[2 * y];
-        table[y] = even + r * (table[2 * y + 1] - even);
-    }
-    table.truncate(half);
 }
 
 #[expect(

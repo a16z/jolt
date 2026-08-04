@@ -82,6 +82,7 @@ use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::support::{gamma_power_pairs, gamma_powers};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -313,13 +314,7 @@ impl<F: Field> OptimizedBooleanityAddressKernel<F> {
     fn new(rounds: usize, gamma: F, reference_address: &[F], masses: Vec<Vec<F>>) -> Self {
         let linear: Vec<Polynomial<F>> = masses.into_iter().map(Polynomial::new).collect();
         let squared: Vec<Vec<F>> = linear.iter().map(|table| table.evals().to_vec()).collect();
-        let mut gamma_weights = Vec::with_capacity(linear.len());
-        let mut weight = F::one();
-        let gamma_sqr = gamma * gamma;
-        for _ in 0..linear.len() {
-            gamma_weights.push(weight);
-            weight *= gamma_sqr;
-        }
+        let gamma_weights = gamma_powers(gamma * gamma, linear.len());
         Self {
             rounds,
             gamma_weights,
@@ -498,8 +493,11 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
             }
         })?;
         let eq_address = eq_table(r_address);
-        let (gamma_powers, gamma_powers_inv) =
-            gamma_power_pairs(inputs.challenges.gamma, layout.total())?;
+        let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(
+            inputs.challenges.gamma,
+            layout.total(),
+            "booleanity batching gamma must be invertible",
+        )?;
         let tables: Vec<Vec<F>> = gamma_powers
             .iter()
             .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
@@ -519,26 +517,6 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle {
             rounds_bound: 0,
         }))
     }
-}
-
-/// `(γ^i, γ^{-i})` pairs for the pre-scaled shared tables. The inverse
-/// powers unscale the final claims back to the committed polynomials'
-/// values; `γ^i · γ^{-i} = 1` exactly, so unscaling is byte-exact.
-fn gamma_power_pairs<F: Field>(gamma: F, count: usize) -> Result<(Vec<F>, Vec<F>), KernelError<F>> {
-    let gamma_inv = gamma.inverse().ok_or(KernelError::InvariantViolation {
-        reason: "booleanity batching gamma must be invertible",
-    })?;
-    let mut powers = Vec::with_capacity(count);
-    let mut powers_inv = Vec::with_capacity(count);
-    let mut power = F::one();
-    let mut power_inv = F::one();
-    for _ in 0..count {
-        powers.push(power);
-        powers_inv.push(power_inv);
-        power *= gamma;
-        power_inv *= gamma_inv;
-    }
-    Ok((powers, powers_inv))
 }
 
 /// Lazy-RA index source over the packed stage-5 rows: polynomial `i`'s hot

@@ -36,7 +36,9 @@ use rayon::prelude::*;
 
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
-use super::support::{bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals};
+use super::support::{
+    bind_all, collect_rows, eq_table, gamma_powers, pair, round_poly_from_skipped_evals,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -181,11 +183,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             .collect();
 
         // W_i(k) = γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k).
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = vec![F::one(); 3 * layout.total()];
-        for i in 1..gamma_powers.len() {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers = gamma_powers(inputs.challenges.gamma, 3 * layout.total());
         let eq_bool = eq_table(r_address);
         let weight_tables: Vec<Polynomial<F>> = virtualization_points
             .iter()

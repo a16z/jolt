@@ -42,7 +42,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::support::{collect_rows, fmadd_u64_split};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -68,23 +68,6 @@ impl WitnessBundle for RegisterValuesRow {
     fn annotated_ids() -> Vec<JoltPolynomialId> {
         Vec::new()
     }
-}
-
-/// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
-/// accumulator without overflowing it: the accumulator's headroom is one
-/// extra limb, which ~4 full-magnitude `field × u64` products exhaust, so the
-/// value is split into u32 halves (products ≤ 2^286, headroom ≥ 2^34 terms).
-/// `eq_shifted` must be `eq · 2^32`; the two fused adds sum to exactly
-/// `eq · F(value)`.
-#[inline]
-fn fmadd_u64_split<F: Field>(
-    accumulator: &mut F::SmallScalarAccumulator,
-    eq: F,
-    eq_shifted: F,
-    value: u64,
-) {
-    accumulator.fmadd_u64(eq_shifted, value >> 32);
-    accumulator.fmadd_u64(eq, value & 0xFFFF_FFFF);
 }
 
 pub struct OptimizedRegistersClaimReduction;

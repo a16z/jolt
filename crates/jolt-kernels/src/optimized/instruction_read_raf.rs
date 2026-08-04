@@ -34,7 +34,6 @@
 //!   carries the mapped PC and remapped RAM address alongside the stage-5
 //!   facts at no size cost.
 
-use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
@@ -58,7 +57,9 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::accumulate_product;
+use super::support::{
+    accumulate_product, for_each_index_mut, map_indices, map_reduce_chunks, scan_chunk_size,
+};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -277,79 +278,6 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
             rows,
             inputs.challenges.gamma,
         )?))
-    }
-}
-
-// --- parallel shims -------------------------------------------------------
-//
-// The kernel's custom scans need chunked map-reduce and indexed maps; the
-// serial fallbacks compute the same field values (sums and products of the
-// same terms), so parity is unaffected by the feature.
-
-/// `merge`-fold of `map` over index chunks of at most `chunk_size`.
-fn map_reduce_chunks<R: Send>(
-    len: usize,
-    chunk_size: usize,
-    map: impl Fn(Range<usize>) -> R + Send + Sync,
-    merge: impl Fn(R, R) -> R + Send + Sync,
-    identity: impl Fn() -> R + Send + Sync,
-) -> R {
-    if len == 0 {
-        return identity();
-    }
-    #[cfg(feature = "parallel")]
-    {
-        let chunks = len.div_ceil(chunk_size);
-        (0..chunks)
-            .into_par_iter()
-            .map(|c| map(c * chunk_size..((c + 1) * chunk_size).min(len)))
-            .reduce(identity, merge)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let _ = (merge, identity, chunk_size);
-        map(0..len)
-    }
-}
-
-/// Collect `f(0), …, f(len − 1)`.
-fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..len).into_par_iter().map(f).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..len).map(f).collect()
-    }
-}
-
-/// Indexed in-place update of a slice.
-fn for_each_index_mut<T: Send>(items: &mut [T], f: impl Fn(usize, &mut T) + Send + Sync) {
-    #[cfg(feature = "parallel")]
-    {
-        items
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        items
-            .iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-}
-
-fn scan_chunk_size(len: usize) -> usize {
-    #[cfg(feature = "parallel")]
-    {
-        len.div_ceil(rayon::current_num_threads()).max(1024)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        len.max(1)
     }
 }
 

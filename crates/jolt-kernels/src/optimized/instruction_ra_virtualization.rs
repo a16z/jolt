@@ -50,12 +50,10 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::accumulate_product;
+use super::support::{accumulate_product, gamma_power_pairs, map_indices};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -113,18 +111,6 @@ impl ChunkIndexSource for LookupIndexChunks {
         let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
         let mask = (1u128 << self.committed_chunk_bits) - 1;
         Some(((self.rows[j].lookup_index >> shift) & mask) as usize)
-    }
-}
-
-/// Collect `f(0), …, f(len − 1)`.
-fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..len).into_par_iter().map(f).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..len).map(f).collect()
     }
 }
 
@@ -196,19 +182,11 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             });
         }
 
-        let gamma_inv = gamma.inverse().ok_or(KernelError::InvariantViolation {
-            reason: "instruction RA batching gamma must be invertible",
-        })?;
-        let mut gamma_powers = Vec::with_capacity(num_virtual);
-        let mut gamma_powers_inv = Vec::with_capacity(num_virtual);
-        let mut power = F::one();
-        let mut power_inv = F::one();
-        for _ in 0..num_virtual {
-            gamma_powers.push(power);
-            gamma_powers_inv.push(power_inv);
-            power *= gamma;
-            power_inv *= gamma_inv;
-        }
+        let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(
+            gamma,
+            num_virtual,
+            "instruction RA batching gamma must be invertible",
+        )?;
 
         // One eq table per committed chunk point (each `2^w` entries); the
         // point-mass fold stays lazy — one table lookup per gathered cycle —

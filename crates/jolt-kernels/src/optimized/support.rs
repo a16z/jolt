@@ -1,10 +1,16 @@
 //! Small shared primitives of the optimized kernels.
 
-use jolt_field::{Field, RingAccumulator};
+use std::ops::Range;
+
+use jolt_field::{Field, RingAccumulator, SignedScalarAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial, UnivariatePoly};
 use jolt_witness::{
     collect_bundles_par, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+use crate::KernelError;
 
 /// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
 /// rayon extraction dispatch amortizes (the stock bundle pass uses 2^12-row
@@ -59,6 +65,68 @@ pub(crate) fn accumulate_product<F: Field>(factors: &[F], lane: &mut F::Accumula
     lane.fmadd(product, factors[last]);
 }
 
+/// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
+/// accumulator without overflowing it: the accumulator's headroom is one
+/// extra limb, which ~4 full-magnitude `field × u64` products exhaust, so the
+/// value is split into u32 halves (products ≤ 2^286, headroom ≥ 2^34 terms).
+/// `eq_shifted` must be `eq · 2^32`; the two fused adds sum to exactly
+/// `eq · F(value)`.
+#[inline]
+pub(crate) fn fmadd_u64_split<F: Field>(
+    accumulator: &mut F::SmallScalarAccumulator,
+    eq: F,
+    eq_shifted: F,
+    value: u64,
+) {
+    accumulator.fmadd_u64(eq_shifted, value >> 32);
+    accumulator.fmadd_u64(eq, value & 0xFFFF_FFFF);
+}
+
+/// `[1, γ, γ², …, γ^{N−1}]`.
+pub(crate) fn gamma_powers_array<F: Field, const N: usize>(gamma: F) -> [F; N] {
+    let mut powers = [F::one(); N];
+    for i in 1..N {
+        powers[i] = powers[i - 1] * gamma;
+    }
+    powers
+}
+
+/// `[1, γ, γ², …]` of length `count`.
+pub(crate) fn gamma_powers<F: Field>(gamma: F, count: usize) -> Vec<F> {
+    let mut powers = Vec::with_capacity(count);
+    let mut power = F::one();
+    for _ in 0..count {
+        powers.push(power);
+        power *= gamma;
+    }
+    powers
+}
+
+/// `(γ^i, γ^{-i})` pairs for pre-scaled shared tables. The inverse powers
+/// unscale the final claims back to the committed polynomials' values;
+/// `γ^i · γ^{-i} = 1` exactly, so unscaling is byte-exact. `reason` names
+/// the batching challenge in the (unreachable) non-invertible error.
+pub(crate) fn gamma_power_pairs<F: Field>(
+    gamma: F,
+    count: usize,
+    reason: &'static str,
+) -> Result<(Vec<F>, Vec<F>), KernelError<F>> {
+    let gamma_inv = gamma
+        .inverse()
+        .ok_or(KernelError::InvariantViolation { reason })?;
+    let mut powers = Vec::with_capacity(count);
+    let mut powers_inv = Vec::with_capacity(count);
+    let mut power = F::one();
+    let mut power_inv = F::one();
+    for _ in 0..count {
+        powers.push(power);
+        powers_inv.push(power_inv);
+        power *= gamma;
+        power_inv *= gamma_inv;
+    }
+    Ok((powers, powers_inv))
+}
+
 /// `scale · eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index
 /// MSB) — the scaled variant of the reference tier's `eq_table`.
 pub(crate) fn scaled_eq_table<F: Field>(point: &[F], scale: F) -> Vec<F> {
@@ -89,6 +157,17 @@ pub(crate) fn bind_all<'a, F: Field>(
     }
 }
 
+/// In-place low-to-high bind of a raw table:
+/// `t[y] ← t[2y] + r·(t[2y+1] − t[2y])`.
+pub(crate) fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
+    let half = table.len() / 2;
+    for y in 0..half {
+        let even = table[2 * y];
+        table[y] = even + r * (table[2 * y + 1] - even);
+    }
+    table.truncate(half);
+}
+
 /// Assemble a round message from evaluations at `{0, 2, 3, .., degree}`,
 /// recovering `s(1) = previous_claim − s(0)` — exactly the evaluation vector
 /// the reference tier computes directly (its own round check pins
@@ -113,6 +192,83 @@ pub(crate) fn merge_evals<F: Field>(mut left: Vec<F>, right: Vec<F>) -> Vec<F> {
         *left += right;
     }
     left
+}
+
+// --- parallel shims --------------------------------------------------------
+//
+// Kernels' custom scans need chunked map-reduce and indexed maps; the serial
+// fallbacks compute the same field values (sums and products of the same
+// terms), so parity is unaffected by the feature.
+
+/// `merge`-fold of `map` over index chunks of at most `chunk_size`.
+pub(crate) fn map_reduce_chunks<R: Send>(
+    len: usize,
+    chunk_size: usize,
+    map: impl Fn(Range<usize>) -> R + Send + Sync,
+    merge: impl Fn(R, R) -> R + Send + Sync,
+    identity: impl Fn() -> R + Send + Sync,
+) -> R {
+    if len == 0 {
+        return identity();
+    }
+    #[cfg(feature = "parallel")]
+    {
+        let chunks = len.div_ceil(chunk_size);
+        (0..chunks)
+            .into_par_iter()
+            .map(|c| map(c * chunk_size..((c + 1) * chunk_size).min(len)))
+            .reduce(identity, merge)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = (merge, identity, chunk_size);
+        map(0..len)
+    }
+}
+
+/// Collect `f(0), …, f(len − 1)`.
+pub(crate) fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
+    #[cfg(feature = "parallel")]
+    {
+        (0..len).into_par_iter().map(f).collect()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        (0..len).map(f).collect()
+    }
+}
+
+/// Indexed in-place update of a slice.
+pub(crate) fn for_each_index_mut<T: Send>(
+    items: &mut [T],
+    f: impl Fn(usize, &mut T) + Send + Sync,
+) {
+    #[cfg(feature = "parallel")]
+    {
+        items
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(index, item)| f(index, item));
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        items
+            .iter_mut()
+            .enumerate()
+            .for_each(|(index, item)| f(index, item));
+    }
+}
+
+/// Pool-scaled chunk size for the chunked scans.
+pub(crate) fn scan_chunk_size(len: usize) -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        len.div_ceil(rayon::current_num_threads()).max(1024)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        len.max(1)
+    }
 }
 
 /// `LT(·, r) + constant` served from split tables and bound low-to-high
