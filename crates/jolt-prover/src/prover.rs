@@ -3,12 +3,15 @@
 //! the complete [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
+use jolt_kernels::optimized::booleanity::spawn_booleanity_address_masses;
 use jolt_kernels::JoltBackend;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
-use jolt_verifier::config::JoltProtocolConfig;
+use jolt_verifier::config::{BooleanityAnchor, JoltProtocolConfig};
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_witness::JoltWitnessPlane;
 
@@ -112,6 +115,36 @@ where
         witness,
         &mut transcript,
     )?;
+    // Stage-1-anchored booleanity (`Stage1CycleV1`): the stage-6a address
+    // phase's pushforward depends only on the anchor point and witness data,
+    // so its build overlaps stage 5's device-heavy window on a capped
+    // background pool. The 6a prepare joins (or rebuilds inline on any
+    // mismatch — identical values either way).
+    if config.booleanity_anchor == BooleanityAnchor::Stage1CycleV1 {
+        let formula_dimensions = crate::stages::formula_dimensions(
+            &checked,
+            config,
+            preprocessing.verifier.program.bytecode_len(),
+            JoltRelationId::Booleanity,
+        )?;
+        let anchor: Vec<F> = stage1
+            .clear_output
+            .cycle_binding_checked(JoltRelationId::Booleanity)?
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        spawn_booleanity_address_masses(
+            &mut session,
+            witness,
+            BooleanityDimensions::new(
+                formula_dimensions.ra_layout,
+                formula_dimensions.trace.log_t(),
+                config.one_hot_config.committed_chunk_bits(),
+            ),
+            anchor,
+        )?;
+    }
     let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T>(
         backend,
         &mut session,
@@ -198,7 +231,10 @@ where
     )?;
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+        protocol: JoltProtocolConfig {
+            booleanity_anchor: config.booleanity_anchor,
+            ..JoltProtocolConfig::for_zk(false)
+        },
         commitments: stage0.commitments,
         stages: JoltStageProofs {
             stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

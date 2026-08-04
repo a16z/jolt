@@ -206,7 +206,15 @@ mod support {
         )
         .expect("derive config");
         config.trace_polynomial_order = order;
+        // Legacy anchors booleanity at the stage-5 instruction point; pin the
+        // modular side to it so the twins stay wire-equal (the V1 anchor is
+        // covered by the modular-only e2e tests).
+        config.booleanity_anchor = jolt_verifier::config::BooleanityAnchor::Stage5Instruction;
         assert_eq!(config.trace_length, legacy_proof.trace_length);
+        assert_eq!(
+            config.booleanity_anchor,
+            legacy_proof.protocol.booleanity_anchor
+        );
         assert_eq!(config.ram_K, legacy_proof.ram_K);
         assert_eq!(config.rw_config, legacy_proof.rw_config);
         assert_eq!(config.one_hot_config, legacy_proof.one_hot_config);
@@ -1873,6 +1881,118 @@ mod chunk_boundary {
         assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
 
         support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+    }
+}
+
+/// The V1-anchor arm: the modular prover's derived config anchors booleanity
+/// at the stage-1 cycle binding, a protocol legacy never emits — so this is
+/// an e2e prove+verify ratchet rather than a byte-diff (per the campaign's
+/// 2026-08-04 directive, e2e equivalents supersede byte fixtures where the
+/// protocol legitimately changed). Pins: derivation defaults to V1; the proof
+/// self-describes the anchor; both CPU backends prove+verify end-to-end
+/// (exercising the background pushforward build and its join); and the axis
+/// is load-bearing — re-tagging the anchor without re-proving must fail
+/// verification because the verifier reconstructs a different relation.
+#[cfg(feature = "prover-fixtures")]
+mod anchor_v1 {
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_program::execution::JoltProgram;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::config::BooleanityAnchor;
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
+
+    use super::support;
+
+    #[test]
+    fn v1_anchor_proves_verifies_and_is_load_bearing() {
+        let mut program = host::Program::new("muldiv-guest");
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
+        let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
+        let shared = JoltSharedPreprocessing::new(
+            guest.program,
+            guest.io_device.memory_layout.clone(),
+            support::MAX_PADDED_TRACE_LENGTH,
+        );
+        let legacy_preprocessing = support::LegacyPreprocessing::new(shared);
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+        let public_io = guest.io_device.clone();
+
+        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let memory_layout = &public_io.memory_layout;
+        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full()
+            .expect("full program preprocessing")
+            .clone();
+
+        let config = ProverConfig::derive::<Fr>(
+            trace_output.trace.rows(),
+            memory_layout,
+            verifier_preprocessing.program.min_bytecode_address(),
+            verifier_preprocessing.program.program_image_len_words(),
+            support::MAX_PADDED_TRACE_LENGTH,
+        )
+        .expect("derive config");
+        assert_eq!(
+            config.booleanity_anchor,
+            BooleanityAnchor::Stage1CycleV1,
+            "derivation must default to the V1 anchor"
+        );
+        let padded_output = support::pad_trace(trace_output, config.trace_length);
+        let witness = TraceBackend::new(
+            support::witness_config(&config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        );
+        let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                support::MAX_PADDED_TRACE_LENGTH,
+            )),
+            committed_program: None,
+        };
+
+        for backend in [JoltBackend::reference(), JoltBackend::optimized()] {
+            let mut proof =
+                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                    &backend,
+                    &prover_preprocessing,
+                    &config,
+                    None,
+                    &witness,
+                    &public_io,
+                )
+                .expect("V1-anchor prove");
+            assert_eq!(
+                proof.protocol.booleanity_anchor,
+                BooleanityAnchor::Stage1CycleV1,
+                "the proof must self-describe the V1 anchor"
+            );
+            support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+
+            // The axis is load-bearing: the same proof re-tagged with the
+            // legacy anchor makes the verifier anchor the booleanity relation
+            // at a different point, so verification must fail.
+            proof.protocol.booleanity_anchor = BooleanityAnchor::Stage5Instruction;
+            assert!(
+                jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                    &prover_preprocessing.verifier,
+                    &public_io,
+                    &proof,
+                    None,
+                )
+                .is_err(),
+                "a re-tagged anchor must not verify"
+            );
+        }
     }
 }
 
