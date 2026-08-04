@@ -400,6 +400,18 @@ The candidate therefore clears the address RAF-plus-condensation bar even under
 the observed thermal range. It is not yet the complete address phase: the next
 experiment must fold per-table suffix accumulation into the same resident scan.
 
+The first suffix-layout probe accumulated the `One` suffix for all 40 tables. A
+cycle-major source with resident table buckets was exact but scaled poorly: at
+`2^26` it took 18.48 ms versus 70.87 ms CPU (3.83x), because each table stream
+gathered roughly every fortieth weight and repeatedly fetched mostly unused cache
+lines. Reordering the address-phase rows and weights table-major reduced the same
+Metal kernel to 2.60 ms versus 71.43 ms CPU, or 27.45x. RAF accumulation is
+order-independent and can consume that same layout. The only required inverse
+permutation is the weight vector at the address/cycle handoff: about 36 bytes per
+row once, amortized to 2.25 bytes per row over 16 address phases. The retained
+address-session design is therefore table-major; the next implementation expands
+the suffix tile from `One` to each table's actual one-to-four suffix functions.
+
 ### Booleanity cycle worksheet
 
 The next slot is `Booleanity`, selected by the profile. Let `T` be the cycle count,

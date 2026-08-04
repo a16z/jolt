@@ -110,7 +110,7 @@ kernel void solinas_address_raf_direct_tile(
     uint start = group * params.rows_per_threadgroup;
     uint end = min(start + params.rows_per_threadgroup, params.rows);
     for (uint row = start + tid; row < end; row += threads) {
-        uint key = keys[row];
+        uint key = keys[row] & (ADDRESS_RAF_DIRECT_KEYS - 1);
         AddressRafDirectLookup lookup = lookups[row];
         SolinasFp128 weight = weights[row];
         if (params.condense != 0) {

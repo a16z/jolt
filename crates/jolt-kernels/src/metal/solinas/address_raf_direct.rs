@@ -187,7 +187,8 @@ impl SolinasMetal {
             .iter()
             .map(|row| {
                 let chunk = ((row.lookup_index() >> config.suffix_len) & 0xff) as u16;
-                chunk | (u16::from(row.raf_flag()) << 8)
+                let table_plus_one = row.table_index().map_or(0, |index| index as u16 + 1);
+                chunk | (u16::from(row.raf_flag()) << 8) | (table_plus_one << 9)
             })
             .collect();
         let lookups: Vec<AddressRafDirectLookup> = rows

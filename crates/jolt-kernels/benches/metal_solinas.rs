@@ -13,6 +13,10 @@
 mod address_raf;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/address_suffix.rs"]
+mod address_suffix;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/cpu.rs"]
 mod cpu;
 
@@ -41,7 +45,7 @@ mod macos {
     use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
     use super::{
-        address_raf, cpu, cycle, product5,
+        address_raf, address_suffix, cpu, cycle, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
     };
 
@@ -89,6 +93,9 @@ mod macos {
                 }
                 "instruction-read-raf-address-direct-condensed" => {
                     address_raf::bench_direct_condensed(c, &context);
+                }
+                "instruction-read-raf-address-suffix-one" => {
+                    address_suffix::bench_one(c, &context);
                 }
                 "product5" => {
                     product5::bench_message(c, &context);

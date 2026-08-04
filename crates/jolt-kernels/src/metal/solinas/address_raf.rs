@@ -19,6 +19,8 @@ const HISTOGRAM_PIPELINE: &str = "solinas_address_raf_histogram";
 const OFFSETS_PIPELINE: &str = "solinas_address_raf_offsets";
 const SCATTER_PIPELINE: &str = "solinas_address_raf_scatter";
 const REDUCE_PIPELINE: &str = "solinas_address_raf_reduce";
+const TABLE_INDEX_SHIFT: u32 = 56;
+const TABLE_INDEX_MASK: u64 = 0x3f;
 const RAF_FLAG_SHIFT: u32 = 62;
 
 /// The 40-byte row ABI consumed by the address RAF scan probe.
@@ -30,13 +32,25 @@ pub struct AddressRafScanRow {
 
 impl AddressRafScanRow {
     pub const fn new(lookup_index: u128, raf_flag: bool) -> Self {
+        Self::new_with_table(lookup_index, None, raf_flag)
+    }
+
+    pub const fn new_with_table(
+        lookup_index: u128,
+        table_index: Option<usize>,
+        raf_flag: bool,
+    ) -> Self {
+        let table_plus_one = match table_index {
+            Some(index) => index as u64 + 1,
+            None => 0,
+        };
         Self {
             words: [
                 lookup_index as u64,
                 (lookup_index >> 64) as u64,
                 0,
                 0,
-                (raf_flag as u64) << RAF_FLAG_SHIFT,
+                (table_plus_one << TABLE_INDEX_SHIFT) | ((raf_flag as u64) << RAF_FLAG_SHIFT),
             ],
         }
     }
@@ -47,6 +61,11 @@ impl AddressRafScanRow {
 
     pub const fn raf_flag(self) -> bool {
         self.words[4] & (1 << RAF_FLAG_SHIFT) != 0
+    }
+
+    pub const fn table_index(self) -> Option<usize> {
+        let table_plus_one = ((self.words[4] >> TABLE_INDEX_SHIFT) & TABLE_INDEX_MASK) as usize;
+        table_plus_one.checked_sub(1)
     }
 }
 
