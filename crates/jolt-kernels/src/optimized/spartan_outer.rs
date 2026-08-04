@@ -76,7 +76,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::support::{BundleAccess, BundleStore};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -361,20 +361,12 @@ fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (
 struct SpartanOuterCarry<F: Field> {
     log_t: usize,
     tau: Vec<F>,
-    rows: RowsStore,
+    /// Typed-row store: slice-backed witnesses stay unmaterialized (the
+    /// ~176 B × T row vector is the prover's peak allocation at large scale).
+    rows: BundleStore<SpartanOuterRow>,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
     t1_values: Vec<F>,
-}
-
-#[cfg(feature = "allocative")]
-impl RowsStore {
-    fn heap_bytes(&self) -> usize {
-        match self {
-            Self::Owned(_) => 0,
-            Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
-        }
-    }
 }
 
 #[cfg(feature = "allocative")]
@@ -383,62 +375,12 @@ crate::optimized::impl_field_allocative!(SpartanOuterCarry, |carry| {
     vec_heap_bytes(&carry.tau) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
 });
 
-/// Where the kernel's typed rows live. A slice-backed witness serves an
-/// owning handle and every pass re-extracts its windows on the fly — the
-/// materialized row vector (~176 B × T, the prover's peak allocation at
-/// large scale) never exists. Re-emulating sources retain the collected
-/// rows as before.
-enum RowsStore {
-    Owned(jolt_witness::OwnedRows),
-    Retained(Vec<SpartanOuterRow>),
-}
-
-impl RowsStore {
-    /// Resolve for a witness plane: the owning handle when the source is
-    /// slice-backed (and covers the cycle domain), a materialized collect
-    /// otherwise.
-    fn resolve<F: Field>(
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
-        match witness.owned_rows() {
-            Some(owned) if cycles <= owned.cycles() => Ok(Self::Owned(owned)),
-            _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
-        }
-    }
-
-    fn access(&self) -> RowsAccess<'_> {
-        match self {
-            Self::Owned(owned) => RowsAccess::View(owned.view()),
-            Self::Retained(rows) => RowsAccess::Retained(rows),
-        }
-    }
-}
-
-/// One pass's borrowed row provider.
-enum RowsAccess<'a> {
-    View(jolt_witness::RandomAccessRows<'a>),
-    Retained(&'a [SpartanOuterRow]),
-}
-
-impl RowsAccess<'_> {
-    /// The typed row at cycle `t` — an extraction window over a slice-backed
-    /// source, an indexed copy from a retained vector. Pure per index.
-    #[inline]
-    fn row(&self, t: usize) -> Result<SpartanOuterRow, WitnessError> {
-        match self {
-            Self::View(view) => view.window(t),
-            Self::Retained(rows) => Ok(rows[t]),
-        }
-    }
-}
-
 /// Extended-node evaluations of
 /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
 /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
 /// integer extension pipeline.
 fn extended_t1_values<F: Field>(
-    rows: &RowsAccess<'_>,
+    rows: &BundleAccess<'_, SpartanOuterRow>,
     tau_low: &[F],
 ) -> Result<Vec<F>, WitnessError> {
     let split = tau_low.len() / 2;
@@ -515,7 +457,7 @@ impl OptimizedOuterUniskip {
                 reason: "Spartan outer row count disagrees with log_t",
             });
         }
-        Self::prepare_from_store(session, log_t, tau, RowsStore::Retained(rows))
+        Self::prepare_from_store(session, log_t, tau, BundleStore::Retained(rows))
     }
 
     /// The store-generic half of `prepare`.
@@ -523,7 +465,7 @@ impl OptimizedOuterUniskip {
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
-        rows: RowsStore,
+        rows: BundleStore<SpartanOuterRow>,
     ) -> Result<(), KernelError<F>> {
         if tau.len() != log_t + 2 {
             return Err(KernelError::InvariantViolation {
@@ -551,7 +493,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
         tau: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = RowsStore::resolve(witness, 1usize << log_t)?;
+        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
         Self::prepare_from_store(session, log_t, tau, rows)
     }
 
@@ -622,7 +564,7 @@ struct OuterRemainderKernel<F: Field> {
     /// Round-0 endpoints, fused into the materialization pass.
     pending_endpoints: Option<(F, F)>,
     challenges: Vec<F>,
-    rows: RowsStore,
+    rows: BundleStore<SpartanOuterRow>,
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
