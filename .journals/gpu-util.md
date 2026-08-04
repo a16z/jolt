@@ -239,6 +239,34 @@ soundness note before merge.
   Lane task IDs (recorded late, lesson): A=2bbe078e, B=83cf4e87 (confirmed:
   sole surviving codex process = 83cf4e87 = B, still implementing after A's
   kill-gate exit), D=5c8623e5, scope=5068310d (done).
+- 2026-08-04 15:5x UTC: **WAVE-2 CERTIFIED (same-day interleaved, non-monitor,
+  bench-locked, 22-day-uptime box).**
+  | arm | 2^27 runs | mean | st6b | st6b entry |
+  |---|---|---|---|---|
+  | trunk @cap commit (V1 anchor) | 76.37 / 76.86 / 77.10 | **76.8** | 17.0-18.5 | 67.6-69.0 GiB |
+  | baseline (wave-1-open ≈ canonical code) | 85.08 / 87.53 | **86.3** | 25.2-27.4 | 69-70 GiB |
+  **Trunk −9.5 s (−11%) same-day; 1.75 MHz vs baseline's 1.53-1.58 today.**
+  2^25: trunk 19.233/19.248 (1.744 MHz) vs canonical 19.822. Stage story
+  @2^27: st6a 2.27→0.13-0.16 (−94%), st7 2.07→1.06-1.49, st5 14.65→13.5-13.8
+  (−1 s), st4 flat (W2B rejected), st6b = everything (see below).
+  **BISTABILITY EXPOSED (memory-ledger receipts in /tmp/cert-s27-*.log):**
+  yesterday's canonical 77.17 rode the GOOD mode (record family dies at st6a;
+  st6b entry 41 GiB — D's ledger). TODAY every run of BOTH trees enters st6b
+  at ~68-70 GiB (family death migrated inside st6b; st6a frees ≈ 0, st6b
+  frees −32..−44 GiB) — trigger unknown (same binary+fixture as yesterday's
+  good-mode runs; NOT log_T parity; session/page-cache state suspected).
+  Under this adverse mode trunk holds 17-18.5 st6b vs baseline 25-27 —
+  wave-2 content is ~8 s more robust — but the lean-entry upside (~14 s st6b
+  → ~72-73 s total) is unrealized. ⇒ WAVE-3 LANE #1: make the record-family
+  drop deterministic before st6b (U2-demonstrated lever, D's doors note).
+  Anchor A/B @2^27: V1 76.86 vs legacy 76.37 — wash at tier (V1 keeps its
+  clear 2^25 win; V1 stays default). BRRC-device cliff note: measured on a
+  fat-entry run — cliff magnitude under lean entry unknown; W3 BRRC lane is
+  sequenced AFTER the lifetime lane for that reason. Instrumentation bug
+  found: monitor build emitted ZERO gpu_percent counters into the chrome
+  trace this session (ledger prints fine) — fix before next attribution
+  pass. Attribution trace archived: /tmp/gpu-util-trace-2to27-wave2-20260804
+  .json.gz (walls-only value). 2^27 budget spent this session: 10 runs.
 - 2026-08-04 14:3x UTC: **CERTIFICATION FOUND A 2^27 CLIFF IN W1B'S PORT —
   root-caused and capped same-session.** First trunk 2^27: 89.12 s (st6b
   DOUBLED 13.87→27.73; BRRC device rounds 9.89 s vs 4.82 CPU before; IncCR
