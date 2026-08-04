@@ -73,6 +73,10 @@ pub struct AddressRafSums {
 }
 
 impl AddressRafSums {
+    pub(super) fn from_values(values: Vec<Fp128>) -> Self {
+        Self { values }
+    }
+
     pub fn as_flat_slice(&self) -> &[Fp128] {
         &self.values
     }
@@ -543,6 +547,7 @@ mod tests {
         AddressRafScanConfig, AddressRafScanRow, Fp128, SolinasMetal, ADDRESS_RAF_BINS,
         ADDRESS_RAF_OUTPUTS,
     };
+    use crate::metal::solinas::AKITA_OFFSET_FFFFA7F7;
 
     #[test]
     fn mixed_rows_match_jolt_field_at_every_phase_shape() {
@@ -588,6 +593,20 @@ mod tests {
                 difference, None,
                 "suffix_len={suffix_len}, first difference={difference:?}, values={values:?}"
             );
+
+            let direct = context
+                .prepare_direct_address_raf_scan(
+                    &rows,
+                    &weights,
+                    AddressRafScanConfig {
+                        suffix_len,
+                        rows_per_threadgroup: 64,
+                        threads_per_threadgroup: Some(128),
+                    },
+                )
+                .unwrap();
+            direct.execute().unwrap();
+            assert_eq!(direct.read_output().unwrap().as_flat_slice(), &expected);
         }
     }
 
@@ -644,7 +663,53 @@ mod tests {
                 invocation.read_output().unwrap().as_flat_slice(),
                 oracle(&rows, &condensed_weights, suffix_len)
             );
+
+            let direct = context
+                .prepare_direct_condensed_address_raf_scan(
+                    &rows,
+                    &weights,
+                    &previous_phase_table,
+                    AddressRafScanConfig {
+                        suffix_len,
+                        rows_per_threadgroup: 64,
+                        threads_per_threadgroup: Some(128),
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                direct.intermediate_partial_bytes(),
+                rows.len().div_ceil(64) as u64 * 3 * 512 * 16
+            );
+            direct.execute().unwrap();
+            assert_eq!(
+                direct.read_output().unwrap().as_flat_slice(),
+                oracle(&rows, &condensed_weights, suffix_len)
+            );
         }
+    }
+
+    #[test]
+    fn direct_accumulator_handles_a_full_adversarial_tile() {
+        let rows = vec![AddressRafScanRow::new(0, false); 1 << 16];
+        let weight = Fp128::from_u128(u128::MAX - AKITA_OFFSET_FFFFA7F7 as u128);
+        let weights = vec![weight; rows.len()];
+        let context = SolinasMetal::for_akita().unwrap();
+        let invocation = context
+            .prepare_direct_address_raf_scan(
+                &rows,
+                &weights,
+                AddressRafScanConfig {
+                    suffix_len: 120,
+                    rows_per_threadgroup: 1 << 16,
+                    threads_per_threadgroup: Some(1024),
+                },
+            )
+            .unwrap();
+        invocation.execute().unwrap();
+        assert_eq!(
+            invocation.read_output().unwrap().as_flat_slice(),
+            oracle(&rows, &weights, 120)
+        );
     }
 
     fn oracle(rows: &[AddressRafScanRow], weights: &[Fp128], suffix_len: u32) -> Vec<Fp128> {

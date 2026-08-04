@@ -5,8 +5,8 @@ use jolt_field::{
     AdditiveAccumulator, AkitaAccumulator, AkitaField, FromPrimitiveInt, MulPrimitiveInt,
 };
 use jolt_kernels::metal::solinas::{
-    AddressRafScanConfig, AddressRafScanInvocation, AddressRafScanRow, Fp128, SolinasMetal,
-    ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
+    AddressRafDirectInvocation, AddressRafScanConfig, AddressRafScanInvocation, AddressRafScanRow,
+    AddressRafSums, Fp128, PipelineLimits, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
 };
 use jolt_lookup_tables::uninterleave_bits;
 use rayon::prelude::*;
@@ -14,17 +14,83 @@ use rayon::prelude::*;
 const DEFAULT_ELEMENTS: [usize; 3] = [1 << 16, 1 << 20, 1 << 22];
 
 pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
-    bench_impl(c, context, false);
+    bench_impl(c, context, false, false);
 }
 
 pub fn bench_condensed(c: &mut Criterion, context: &SolinasMetal) {
-    bench_impl(c, context, true);
+    bench_impl(c, context, true, false);
 }
 
-fn bench_impl(c: &mut Criterion, context: &SolinasMetal, condense: bool) {
-    let config = config(condense);
+pub fn bench_direct_condensed(c: &mut Criterion, context: &SolinasMetal) {
+    bench_impl(c, context, true, true);
+}
+
+enum AddressBenchmarkInvocation<'a> {
+    Contribution(AddressRafScanInvocation<'a>),
+    Direct(AddressRafDirectInvocation<'a>),
+}
+
+impl AddressBenchmarkInvocation<'_> {
+    fn execute(&self) {
+        match self {
+            Self::Contribution(invocation) => invocation.execute(),
+            Self::Direct(invocation) => invocation.execute(),
+        }
+        .expect("address RAF scan should execute");
+    }
+
+    fn execute_timed(&self) -> Duration {
+        match self {
+            Self::Contribution(invocation) => invocation.execute_timed(),
+            Self::Direct(invocation) => invocation.execute_timed(),
+        }
+        .expect("timed address RAF scan should execute")
+    }
+
+    fn read_output(&self) -> AddressRafSums {
+        match self {
+            Self::Contribution(invocation) => invocation.read_output(),
+            Self::Direct(invocation) => invocation.read_output(),
+        }
+        .expect("address RAF output should be readable")
+    }
+
+    fn read_output_into(&self, output: &mut [Fp128]) {
+        match self {
+            Self::Contribution(invocation) => invocation.read_output_into(output),
+            Self::Direct(invocation) => invocation.read_output_into(output),
+        }
+        .expect("address RAF output should be canonical");
+    }
+
+    fn threadgroup_count(&self) -> usize {
+        match self {
+            Self::Contribution(invocation) => invocation.threadgroup_count(),
+            Self::Direct(invocation) => invocation.threadgroup_count(),
+        }
+    }
+
+    fn threads_per_threadgroup(&self) -> usize {
+        match self {
+            Self::Contribution(invocation) => invocation.threads_per_threadgroup(),
+            Self::Direct(invocation) => invocation.threads_per_threadgroup(),
+        }
+    }
+
+    fn pipeline_limits(&self) -> PipelineLimits {
+        match self {
+            Self::Contribution(invocation) => invocation.pipeline_limits(),
+            Self::Direct(invocation) => invocation.pipeline_limits(),
+        }
+    }
+}
+
+fn bench_impl(c: &mut Criterion, context: &SolinasMetal, condense: bool, direct: bool) {
+    let config = config(condense, direct);
     let metal_first = metal_first();
-    let group_name = if condense {
+    let group_name = if direct {
+        "metal_sumcheck/instruction_read_raf_address_direct_condensed_phase"
+    } else if condense {
         "metal_sumcheck/instruction_read_raf_address_condensed_phase"
     } else {
         "metal_sumcheck/instruction_read_raf_address_phase"
@@ -41,21 +107,37 @@ fn bench_impl(c: &mut Criterion, context: &SolinasMetal, condense: bool) {
         let previous_phase_table = previous_phase_table();
         let metal_previous_phase_table =
             previous_phase_table.map(|value| Fp128::from_jolt_field(&value));
-        let invocation = if condense {
-            context.prepare_condensed_address_raf_scan(
-                &rows,
-                &metal_weights,
-                &metal_previous_phase_table,
-                config,
+        let invocation = if direct {
+            AddressBenchmarkInvocation::Direct(
+                context
+                    .prepare_direct_condensed_address_raf_scan(
+                        &rows,
+                        &metal_weights,
+                        &metal_previous_phase_table,
+                        config,
+                    )
+                    .expect("direct address RAF pipeline should prepare"),
+            )
+        } else if condense {
+            AddressBenchmarkInvocation::Contribution(
+                context
+                    .prepare_condensed_address_raf_scan(
+                        &rows,
+                        &metal_weights,
+                        &metal_previous_phase_table,
+                        config,
+                    )
+                    .expect("address RAF pipeline should prepare"),
             )
         } else {
-            context.prepare_address_raf_scan(&rows, &metal_weights, config)
-        }
-        .expect("address RAF pipeline should prepare");
+            AddressBenchmarkInvocation::Contribution(
+                context
+                    .prepare_address_raf_scan(&rows, &metal_weights, config)
+                    .expect("address RAF pipeline should prepare"),
+            )
+        };
         drop(metal_weights);
-        invocation
-            .execute()
-            .expect("address RAF scan should execute");
+        invocation.execute();
         let mut expected_weights = weights.clone();
         if condense {
             condense_weights(
@@ -66,13 +148,7 @@ fn bench_impl(c: &mut Criterion, context: &SolinasMetal, condense: bool) {
             );
         }
         let expected = cpu_scan(&rows, &expected_weights, config.suffix_len);
-        assert_eq!(
-            invocation
-                .read_output()
-                .expect("address RAF output should be readable")
-                .as_flat_slice(),
-            expected
-        );
+        assert_eq!(invocation.read_output().as_flat_slice(), expected);
         drop(expected_weights);
         drop(expected);
         eprintln!(
@@ -152,17 +228,13 @@ fn benchmark_cpu(
 fn benchmark_metal(
     group: &mut BenchmarkGroup<'_, WallTime>,
     suffix: &str,
-    invocation: &AddressRafScanInvocation<'_>,
+    invocation: &AddressBenchmarkInvocation<'_>,
 ) {
     let mut output = vec![Fp128::ZERO; ADDRESS_RAF_LANES * ADDRESS_RAF_BINS];
     let _ = group.bench_function(BenchmarkId::new("metal_resident_wall", suffix), |b| {
         b.iter(|| {
-            invocation
-                .execute()
-                .expect("address RAF scan should execute");
-            invocation
-                .read_output_into(&mut output)
-                .expect("address RAF output should be canonical");
+            invocation.execute();
+            invocation.read_output_into(&mut output);
             let _ = black_box(&output);
         });
     });
@@ -170,9 +242,7 @@ fn benchmark_metal(
         b.iter_custom(|iterations| {
             let mut elapsed = Duration::ZERO;
             for _ in 0..iterations {
-                elapsed += invocation
-                    .execute_timed()
-                    .expect("timed address RAF scan should execute");
+                elapsed += invocation.execute_timed();
             }
             elapsed
         });
@@ -298,13 +368,16 @@ fn metal_first() -> bool {
     })
 }
 
-fn config(condense: bool) -> AddressRafScanConfig {
-    let rows_per_threadgroup =
-        env::var("JOLT_METAL_ADDRESS_ROWS_PER_THREADGROUP").map_or(1 << 16, |value| {
+fn config(condense: bool, direct: bool) -> AddressRafScanConfig {
+    let default_rows_per_threadgroup = if direct { 1 << 15 } else { 1 << 16 };
+    let rows_per_threadgroup = env::var("JOLT_METAL_ADDRESS_ROWS_PER_THREADGROUP").map_or(
+        default_rows_per_threadgroup,
+        |value| {
             value
                 .parse::<usize>()
                 .expect("rows per threadgroup should be an integer")
-        });
+        },
+    );
     let threads_per_threadgroup = env::var("JOLT_METAL_ADDRESS_THREADS").map_or(1024, |value| {
         value
             .parse::<usize>()

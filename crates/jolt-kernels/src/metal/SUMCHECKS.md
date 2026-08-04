@@ -380,6 +380,26 @@ row; replacing that materialization with compact tile partials is the next candi
 because it has enough analytical headroom to clear 4x rather than merely approach
 it. Table suffix accumulation remains outside both sides of these microbenchmarks.
 
+The direct candidate realizes that layout without assuming lossy atomics. Each
+threadgroup holds all `512 keys * 3 lanes` as four wrapping 32-bit limbs plus a
+fifth word that counts `2^128` carries. This uses 30,720 of the M4 Max's 32,768
+threadgroup-memory bytes. A final exact reduction maps each carry to the Solinas
+offset before reducing the compact per-tile field partials. With 1024 threads this
+permits one full-width resident threadgroup per GPU core; the target sizes expose
+thousands of independent tiles.
+
+For 32K-row tiles, fused source traffic is 50 bytes per row (key, lookup, weight
+read/write) and partial write/read traffic adds 1.5 bytes per row, down from 116.
+The `2^26` sweep measured 9.80 ms wall at 64K rows, 9.28 ms at 32K, and 9.49 ms at
+16K; 32K is the provisional winner. Against the 68.14 ms native-Akita CPU result,
+the 32K cold run is 7.34x. A later heat-soaked order-inverted run measured 14.69 ms
+Metal and 86.42 ms CPU; comparing that slower Metal result with the earlier faster
+CPU still gives a conservative 4.64x. At `2^28`, the paired result was 293.06 ms
+CPU versus 38.55 ms Metal, or 7.60x, with 4.16x Metal scaling for 4x the rows.
+The candidate therefore clears the address RAF-plus-condensation bar even under
+the observed thermal range. It is not yet the complete address phase: the next
+experiment must fold per-table suffix accumulation into the same resident scan.
+
 ### Booleanity cycle worksheet
 
 The next slot is `Booleanity`, selected by the profile. Let `T` be the cycle count,

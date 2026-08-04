@@ -87,6 +87,9 @@ mod macos {
                 "instruction-read-raf-address-condensed" => {
                     address_raf::bench_condensed(c, &context);
                 }
+                "instruction-read-raf-address-direct-condensed" => {
+                    address_raf::bench_direct_condensed(c, &context);
+                }
                 "product5" => {
                     product5::bench_message(c, &context);
                     product5::bench_transition(c, &context);

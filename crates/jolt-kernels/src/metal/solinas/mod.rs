@@ -16,16 +16,19 @@ use thiserror::Error;
 
 const FIELD_SOURCE: &str = include_str!("fp128.metal");
 const ADDRESS_RAF_SOURCE: &str = include_str!("address_raf.metal");
+const ADDRESS_RAF_DIRECT_SOURCE: &str = include_str!("address_raf_direct.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 
 mod address_raf;
+mod address_raf_direct;
 mod product5;
 
 pub use address_raf::{
     AddressRafScanConfig, AddressRafScanInvocation, AddressRafScanRow, AddressRafSums,
     ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
 };
+pub use address_raf_direct::AddressRafDirectInvocation;
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
 };
@@ -202,6 +205,12 @@ pub enum MetalError {
     InvalidAddressRafCondensationSuffixLength(u32),
     #[error("address RAF rows per threadgroup must be nonzero, got {0}")]
     InvalidAddressRafRowsPerThreadgroup(usize),
+    #[error("direct address RAF rows per threadgroup must be in 1..=65536, got {0}")]
+    InvalidAddressRafDirectRowsPerThreadgroup(usize),
+    #[error(
+        "direct address RAF needs {requested} bytes of threadgroup memory, device limit is {maximum}"
+    )]
+    AddressRafDirectThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(
         "address RAF pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
@@ -272,7 +281,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)
