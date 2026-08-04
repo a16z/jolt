@@ -1,11 +1,14 @@
 use std::{env, hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use jolt_field::{AdditiveAccumulator, AkitaAccumulator, AkitaField, FromPrimitiveInt};
+use jolt_field::{
+    AdditiveAccumulator, AkitaAccumulator, AkitaField, FromPrimitiveInt, MulPrimitiveInt,
+};
 use jolt_kernels::metal::solinas::{
     AddressRafScanConfig, AddressRafScanRow, Fp128, SolinasMetal, ADDRESS_SUFFIX_BINS,
     ADDRESS_SUFFIX_TABLES,
 };
+use jolt_lookup_tables::{tables::Suffixes, LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use rayon::prelude::*;
 
 const DEFAULT_ELEMENTS: [usize; 3] = [1 << 16, 1 << 20, 1 << 22];
@@ -79,6 +82,82 @@ pub fn bench_one(c: &mut Criterion, context: &SolinasMetal) {
     group.finish();
 }
 
+pub fn bench_full(c: &mut Criterion, context: &SolinasMetal) {
+    let config = config();
+    let mut group = c.benchmark_group("metal_sumcheck/instruction_read_raf_address_suffix_full");
+    let _ = group
+        .sample_size(10)
+        .warm_up_time(Duration::from_secs(2))
+        .measurement_time(Duration::from_secs(5));
+
+    for elements in cases() {
+        let (rows, weights, buckets) = inputs(elements);
+        let metal_weights: Vec<_> = weights.iter().map(Fp128::from_jolt_field).collect();
+        let invocation = context
+            .prepare_address_suffix_full(&rows, &metal_weights, config)
+            .expect("full address suffix pipeline should prepare");
+        drop(metal_weights);
+        invocation
+            .execute()
+            .expect("full address suffix pipeline should execute");
+        let expected = cpu_suffix_full(&rows, &weights, &buckets, config.suffix_len);
+        assert_eq!(
+            invocation
+                .read_output()
+                .expect("full address suffix output should be readable")
+                .as_flat_slice(),
+            expected
+        );
+        eprintln!(
+            "full address suffix: elements={elements}, jobs={}, threads={}, partial_bytes={}",
+            invocation.job_count(),
+            invocation.threads_per_threadgroup(),
+            invocation.intermediate_partial_bytes(),
+        );
+
+        let _ = group.throughput(Throughput::Elements(elements as u64));
+        let suffix = format!(
+            "n{elements}_r{}_t{}",
+            config.rows_per_threadgroup,
+            invocation.threads_per_threadgroup()
+        );
+        let _ = group.bench_function(BenchmarkId::new("cpu_optimized_buckets", &suffix), |b| {
+            b.iter(|| {
+                black_box(cpu_suffix_full(
+                    &rows,
+                    &weights,
+                    &buckets,
+                    config.suffix_len,
+                ))
+            });
+        });
+        let _ = group.bench_function(BenchmarkId::new("metal_resident_wall", &suffix), |b| {
+            b.iter(|| {
+                invocation
+                    .execute()
+                    .expect("full address suffix pipeline should execute");
+                black_box(
+                    invocation
+                        .read_output()
+                        .expect("full address suffix output should be readable"),
+                )
+            });
+        });
+        let _ = group.bench_function(BenchmarkId::new("metal_resident_active", &suffix), |b| {
+            b.iter_custom(|iterations| {
+                let mut elapsed = Duration::ZERO;
+                for _ in 0..iterations {
+                    elapsed += invocation
+                        .execute_timed()
+                        .expect("timed full address suffix pipeline should execute");
+                }
+                elapsed
+            });
+        });
+    }
+    group.finish();
+}
+
 fn cpu_suffix_one(
     rows: &[AddressRafScanRow],
     weights: &[AkitaField],
@@ -106,6 +185,74 @@ fn cpu_suffix_one(
                 })
                 .reduce(
                     || vec![AkitaAccumulator::default(); ADDRESS_SUFFIX_BINS],
+                    |mut lhs, rhs| {
+                        for (lhs, rhs) in lhs.iter_mut().zip(rhs) {
+                            lhs.merge(rhs);
+                        }
+                        lhs
+                    },
+                )
+                .into_iter()
+                .map(|sum| Fp128::from_jolt_field(&sum.reduce()))
+        })
+        .collect()
+}
+
+fn cpu_suffix_full(
+    rows: &[AddressRafScanRow],
+    weights: &[AkitaField],
+    buckets: &[Vec<u32>],
+    suffix_len: u32,
+) -> Vec<Fp128> {
+    let tables: Vec<_> = LookupTableKind::<RISCV_XLEN>::iter().collect();
+    let suffix_mask = if suffix_len == 0 {
+        0
+    } else {
+        (1u128 << suffix_len) - 1
+    };
+    tables
+        .par_iter()
+        .flat_map_iter(|table| {
+            let suffixes = table.suffixes();
+            let one_position = suffixes
+                .iter()
+                .position(|suffix| matches!(suffix, Suffixes::One));
+            let bucket = &buckets[table.index()];
+            let chunk_len = bucket
+                .len()
+                .div_ceil(rayon::current_num_threads())
+                .max(1024);
+            bucket
+                .par_chunks(chunk_len)
+                .map(|chunk| {
+                    let mut sums =
+                        vec![AkitaAccumulator::default(); suffixes.len() * ADDRESS_SUFFIX_BINS];
+                    for &row in chunk {
+                        let row = row as usize;
+                        let lookup = rows[row].lookup_index();
+                        let key = ((lookup >> suffix_len) as usize) & (ADDRESS_SUFFIX_BINS - 1);
+                        let suffix_bits =
+                            LookupBits::new(lookup & suffix_mask, suffix_len as usize);
+                        for (suffix_index, suffix) in suffixes.iter().enumerate() {
+                            let slot = &mut sums[suffix_index * ADDRESS_SUFFIX_BINS + key];
+                            if one_position == Some(suffix_index) {
+                                slot.add(weights[row]);
+                            } else if suffix.is_01_valued() {
+                                if suffix.suffix_mle(suffix_bits) == 1 {
+                                    slot.add(weights[row]);
+                                }
+                            } else {
+                                let scalar = suffix.suffix_mle(suffix_bits);
+                                if scalar != 0 {
+                                    slot.add(weights[row].mul_u64(scalar));
+                                }
+                            }
+                        }
+                    }
+                    sums
+                })
+                .reduce(
+                    || vec![AkitaAccumulator::default(); suffixes.len() * ADDRESS_SUFFIX_BINS],
                     |mut lhs, rhs| {
                         for (lhs, rhs) in lhs.iter_mut().zip(rhs) {
                             lhs.merge(rhs);

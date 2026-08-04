@@ -412,6 +412,30 @@ row once, amortized to 2.25 bytes per row over 16 address phases. The retained
 address-session design is therefore table-major; the next implementation expands
 the suffix tile from `One` to each table's actual one-to-four suffix functions.
 
+The full suffix tile evaluates all 43 `Suffixes` variants in the shader and selects
+each table's actual one-to-four terms from a compact descriptor. It reads one 16-byte
+lookup and one 16-byte field weight per selected row, evaluates the table's suffixes
+in registers, and accumulates directly into `4 * 256` exact Solinas fields. Each
+field uses four wrapping atomic limbs plus a fifth `2^128`-carry counter, for 20,480
+bytes of dynamic threadgroup memory. The 65,536-row tile bound keeps every carry
+correction within `u64`; a final kernel reduces the compact per-tile fields.
+
+Exact tests cover every table and suffix at lengths 0, 8, 32, 56, 64, 112, and 120.
+At `2^22`, the production-shaped optimized CPU scan measured 12.84 ms, versus
+0.612 ms Metal wall and 0.433 ms active (20.98x and 29.6x). At `2^26`, 32K-row
+tiles measured 223.22 ms CPU, 6.25 ms Metal wall, and 6.19 ms active (35.7x wall).
+Increasing to 64K rows halved partial storage from 34.1 MB to 17.0 MB and measured
+222.68 ms CPU, 6.07 ms wall, and 6.19 ms active; the active-time difference is below
+the noise floor, so 64K is retained for its smaller resident scratch.
+
+The 64K layout moves an optimistic 32 bytes of source data per selected row plus
+about 0.51 bytes per row of partial write/read traffic at `2^26`. Its 6.19 ms active
+time corresponds to roughly 328 GiB/s, 78% of the measured 420.68-GiB/s copy roof.
+That roof gives a 4.83-ms lower bound and only about 1.28x remaining local headroom.
+The kernel is therefore ready for the resident 16-phase evaluator: further suffix-
+only tuning cannot save enough PIOP time to justify a more complex reduction before
+the real table distribution and direct-RAF handoff are measured together.
+
 ### Booleanity cycle worksheet
 
 The next slot is `Booleanity`, selected by the profile. Let `T` be the cycle count,

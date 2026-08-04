@@ -18,12 +18,14 @@ const FIELD_SOURCE: &str = include_str!("fp128.metal");
 const ADDRESS_RAF_SOURCE: &str = include_str!("address_raf.metal");
 const ADDRESS_RAF_DIRECT_SOURCE: &str = include_str!("address_raf_direct.metal");
 const ADDRESS_SUFFIX_SOURCE: &str = include_str!("address_suffix.metal");
+const ADDRESS_SUFFIX_FULL_SOURCE: &str = include_str!("address_suffix_full.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 
 mod address_raf;
 mod address_raf_direct;
 mod address_suffix;
+mod address_suffix_full;
 mod product5;
 
 pub use address_raf::{
@@ -34,6 +36,7 @@ pub use address_raf_direct::AddressRafDirectInvocation;
 pub use address_suffix::{
     AddressSuffixOneInvocation, AddressSuffixOneSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
 };
+pub use address_suffix_full::{AddressSuffixFullInvocation, AddressSuffixFullSums};
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
 };
@@ -220,6 +223,16 @@ pub enum MetalError {
     InvalidAddressSuffixTable(usize),
     #[error("address suffix scan requires at least one table-selected row")]
     EmptyAddressSuffixBuckets,
+    #[error("lookup table {table} has {count} suffixes; Metal supports at most {maximum}")]
+    InvalidAddressSuffixCount {
+        table: usize,
+        count: usize,
+        maximum: usize,
+    },
+    #[error(
+        "address suffix kernel needs {requested} bytes of threadgroup memory, device limit is {maximum}"
+    )]
+    AddressSuffixThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(
         "address RAF pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
@@ -290,7 +303,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)
