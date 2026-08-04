@@ -14,7 +14,7 @@ workspace = true
 
 [features]
 default = []
-monitor = ["dep:sysinfo"]
+monitor = ["dep:sysinfo", "dep:serde_json"]
 pprof = ["dep:pprof", "dep:prost"]
 allocative = ["dep:inferno", "dep:allocative"]
 
@@ -29,6 +29,7 @@ allocative = { workspace = true, optional = true }
 memory-stats.workspace = true
 libc.workspace = true
 sysinfo = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["std"], optional = true }
 pprof = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 

@@ -3609,6 +3609,7 @@ dependencies = [
  "memory-stats",
  "pprof",
  "prost 0.14.4",
+ "serde_json",
  "sysinfo",
  "tracing",
  "tracing-chrome",

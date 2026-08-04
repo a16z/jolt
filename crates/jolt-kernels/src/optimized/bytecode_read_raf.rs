@@ -60,11 +60,13 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lifetime_trace::LifetimeTag;
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
 use super::support::{
     bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals, scaled_eq_table,
 };
+use crate::mmap_vec::MmapVec;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -111,12 +113,45 @@ impl PcRow {
 }
 
 /// The session key of the shared per-cycle PC scan.
-struct PcRowsKey(Arc<Vec<PcRow>>);
+struct PcRowsKey(Arc<PcRows>);
+
+/// The scan behind [`PcRowsKey`] — a `Vec` plus the lifetime tag that logs
+/// the last-`Arc`-drop site under `JOLT_LIFETIME_TRACE=1`.
+pub(crate) struct PcRows {
+    rows: MmapVec<PcRow>,
+    _lifetime: LifetimeTag,
+}
+
+impl PcRows {
+    #[cfg_attr(
+        not(all(feature = "metal", target_os = "macos")),
+        expect(dead_code, reason = "used by the metal bytecode slot")
+    )]
+    pub(crate) fn as_slice(&self) -> &[PcRow] {
+        &self.rows
+    }
+
+    fn new(rows: MmapVec<PcRow>) -> Self {
+        let bytes = rows.len() * size_of::<PcRow>();
+        Self {
+            rows,
+            _lifetime: LifetimeTag::new("PcRows", bytes),
+        }
+    }
+}
+
+impl std::ops::Deref for PcRows {
+    type Target = [PcRow];
+
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
 
 /// Park a lane-packed PC scan (the trace record's walk co-produces it), so
 /// [`pc_rows`] serves it without a second trace pass.
-pub(crate) fn park_pc_rows(session: &mut ProofSession, rows: Vec<PcRow>) {
-    session.park(PcRowsKey(Arc::new(rows)));
+pub(crate) fn park_pc_rows(session: &mut ProofSession, rows: MmapVec<PcRow>) {
+    session.park(PcRowsKey(Arc::new(PcRows::new(rows))));
 }
 
 #[derive(Clone, Copy, Debug, WitnessBundle)]
@@ -130,7 +165,7 @@ pub(crate) fn pc_rows<F: Field>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
-) -> Result<Arc<Vec<PcRow>>, KernelError<F>> {
+) -> Result<Arc<PcRows>, KernelError<F>> {
     if session.state::<PcRowsKey>().is_none() {
         let bundles: Vec<PcBundle> = collect_rows(witness, cycles)?;
         let pack = |bundle: &PcBundle| {
@@ -153,14 +188,22 @@ pub(crate) fn pc_rows<F: Field>(
                 mapped_pc: mapped,
             })
         };
+        let mut rows = MmapVec::zeroed(bundles.len());
         #[cfg(feature = "parallel")]
-        let rows = bundles
-            .par_iter()
-            .map(pack)
-            .collect::<Result<Vec<_>, _>>()?;
+        rows.par_iter_mut()
+            .zip(&bundles[..])
+            .try_for_each(|(row, bundle)| {
+                *row = pack(bundle)?;
+                Ok::<(), KernelError<F>>(())
+            })?;
         #[cfg(not(feature = "parallel"))]
-        let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
-        session.park(PcRowsKey(Arc::new(rows)));
+        rows.iter_mut()
+            .zip(&bundles[..])
+            .try_for_each(|(row, bundle)| {
+                *row = pack(bundle)?;
+                Ok::<(), KernelError<F>>(())
+            })?;
+        session.park(PcRowsKey(Arc::new(PcRows::new(rows))));
     }
     let rows = session
         .state::<PcRowsKey>()
@@ -602,7 +645,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
     expect(dead_code, reason = "read only by the Metal driver factory")
 )]
 pub(crate) struct BytecodeCycleDeviceInputs<'a, F> {
-    pub(crate) rows: &'a Arc<Vec<PcRow>>,
+    pub(crate) rows: &'a Arc<PcRows>,
     pub(crate) stage_cycle_points: &'a [Vec<F>; 5],
     pub(crate) stage_weights: [F; 5],
     pub(crate) entry_term: F,
@@ -722,7 +765,7 @@ pub(crate) fn prepare_bytecode_read_raf_cycle<F: Field>(
 /// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
 /// cold on unmapped cycles, off the session-shared PC scan.
 struct BytecodePcChunks {
-    rows: Arc<Vec<PcRow>>,
+    rows: Arc<PcRows>,
     selectors: Vec<RaChunkSelector>,
 }
 

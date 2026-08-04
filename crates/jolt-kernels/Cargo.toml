@@ -22,7 +22,6 @@ metal = [
   "dep:objc2",
   "dep:objc2-foundation",
   "dep:objc2-metal",
-  "dep:libc",
   "dep:ark-bn254",
   "dep:ark-ec",
   "dep:ark-ff",
@@ -48,6 +47,9 @@ rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 ark-bn254 = { workspace = true, optional = true }
 ark-ec = { workspace = true, optional = true }
@@ -57,7 +59,6 @@ dory = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
 jolt-optimizations = { workspace = true, optional = true }
-libc = { workspace = true, optional = true }
 objc2 = { workspace = true, optional = true }
 objc2-foundation = { workspace = true, optional = true }
 objc2-metal = { workspace = true, optional = true }

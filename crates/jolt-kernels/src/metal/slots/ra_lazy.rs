@@ -40,7 +40,9 @@ use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::booleanity::{prepare_booleanity_cycle, BooleanityDeviceInputs};
 use crate::optimized::instruction_ra_virtualization::OptimizedInstructionRaVirtualizationKernel;
-use crate::optimized::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+#[cfg(test)]
+use crate::optimized::instruction_read_raf::InstructionCycleRow;
+use crate::optimized::instruction_read_raf::{shared_instruction_rows, InstructionRows};
 use crate::optimized::lazy_ra::LazyRaDevice;
 use crate::optimized::ram_ra_virtualization::{
     prepare_ram_ra_virtualization, RamRaVirtualizationDeviceInputs,
@@ -230,7 +232,7 @@ fn build_ram_rav_driver(inputs: RamRaVirtualizationDeviceInputs<'_, Fr>) -> Opti
 }
 
 fn build_rav_driver(
-    rows: &Arc<Vec<InstructionCycleRow>>,
+    rows: &Arc<InstructionRows>,
     num_committed: usize,
     batch: usize,
     chunk_bits: usize,
@@ -280,7 +282,7 @@ fn build_rav_driver(
 struct DeviceLazyRa {
     in_flight: Option<InFlight>,
     device: DeviceRound,
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<InstructionRows>,
     meta: OwnedDeviceBuffer<u32>,
     num_polys: usize,
     k_entries: usize,
@@ -326,7 +328,7 @@ impl DeviceLazyRa {
     fn build(
         context: &'static MetalContext,
         kind: &'static str,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<InstructionRows>,
         meta_pairs: &[(u32, u32)],
         chunk_bits: usize,
         lanes: usize,
@@ -1147,7 +1149,7 @@ mod tests {
         let (num_virtual, per_virtual, chunk_bits) = (4usize, 4usize, 8usize);
         let num_committed = num_virtual * per_virtual;
         let mut state = 0x5EED_0000 + log_t as u64;
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(
+        let rows: Arc<InstructionRows> = Arc::new(InstructionRows::new(
             (0..1usize << log_t)
                 .map(|j| {
                     let index = match j {
@@ -1158,7 +1160,7 @@ mod tests {
                     InstructionCycleRow::new(index, None, false, None, None)
                 })
                 .collect(),
-        );
+        ));
         let instruction_address = point(300, num_committed * chunk_bits);
         let r_cycle = point(7000, log_t);
         let gamma = fr(0xFEED_5EED);

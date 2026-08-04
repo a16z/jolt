@@ -82,9 +82,8 @@ impl MetricsMonitor {
                 while !stop.load(Ordering::Acquire) {
                     system.refresh_cpu_all();
 
-                    let memory_gib = memory_stats()
-                        .map(|s| s.physical_mem as f64 / BYTES_PER_GIB)
-                        .unwrap_or(0.0);
+                    let memory_gib =
+                        memory_stats().map_or(0.0, |s| s.physical_mem as f64 / BYTES_PER_GIB);
                     let cpu_percent = system.global_cpu_usage();
                     let cores_active_avg = cpu_percent / 100.0 * (system.cpus().len() as f32);
                     let active_cores = system
@@ -138,5 +137,117 @@ impl Drop for MetricsMonitor {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+/// Rewrites a freshly flushed `tracing-chrome` trace, converting the monitor's
+/// `counters.*` instant events into Perfetto `ph:"C"` counter events in place.
+///
+/// Replaces the manual `scripts/postprocess_trace.py` step (same transform),
+/// which was routinely forgotten — traces then showed no counter tracks even
+/// though the samples were present as `ph:"i"` events. Relies on
+/// `tracing-chrome`'s one-event-per-line array framing; unrecognized lines pass
+/// through unchanged. Returns the number of counter events written.
+pub(crate) fn convert_counter_events(path: &std::path::Path) -> std::io::Result<usize> {
+    let text = std::fs::read_to_string(path)?;
+    if !text.trim_start().starts_with('[') {
+        return Ok(0);
+    }
+
+    let mut events: Vec<String> = Vec::new();
+    let mut emitted = 0usize;
+    for raw in text.lines() {
+        let line = raw.trim().trim_end_matches(',');
+        if line.is_empty() || line == "[" || line == "]" {
+            continue;
+        }
+        if !(line.contains("monitor.rs") && line.contains("\"counters.")) {
+            events.push(line.to_string());
+            continue;
+        }
+        let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else {
+            events.push(line.to_string());
+            continue;
+        };
+        let (Some(ts), Some(pid), Some(tid), Some(args)) = (
+            ev.get("ts"),
+            ev.get("pid"),
+            ev.get("tid"),
+            ev.get("args").and_then(|a| a.as_object()),
+        ) else {
+            events.push(line.to_string());
+            continue;
+        };
+        for (key, value) in args {
+            let Some(name) = key.strip_prefix("counters.") else {
+                continue;
+            };
+            let counter = serde_json::json!({
+                "name": name,
+                "ph": "C",
+                "ts": ts,
+                "pid": pid,
+                "tid": tid,
+                "args": { name: value },
+            });
+            events.push(counter.to_string());
+            emitted += 1;
+        }
+    }
+
+    if emitted == 0 {
+        return Ok(0);
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, format!("[\n{}\n]", events.join(",\n")))?;
+    std::fs::rename(&tmp, path)?;
+    Ok(emitted)
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    #[test]
+    fn convert_counter_events_rewrites_monitor_lines() {
+        let dir = std::env::temp_dir().join(format!("w3a-counter-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("trace.json");
+        std::fs::write(
+            &path,
+            concat!(
+                "[\n",
+                r#"{"args":{"name":"main"},"name":"thread_name","ph":"M","pid":1,"tid":0},"#,
+                "\n",
+                r#"{".file":"crates/jolt-profiling/src/monitor.rs",".line":107,"args":{"counters.cpu_percent":"6.25","counters.gpu_percent":"93.0"},"cat":"jolt_profiling::monitor","name":"event crates/jolt-profiling/src/monitor.rs:107","ph":"i","pid":1,"s":"t","tid":1,"ts":356316.875},"#,
+                "\n",
+                r#"{"cat":"prover","name":"prove_stage0","ph":"B","pid":1,"tid":0,"ts":1.0}"#,
+                "\n]",
+            ),
+        )
+        .unwrap();
+
+        let n = super::convert_counter_events(&path).unwrap();
+        assert_eq!(n, 2);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let events = parsed.as_array().unwrap();
+        assert_eq!(events.len(), 4); // M + B + 2 counters; monitor instant dropped
+        let counters: Vec<_> = events
+            .iter()
+            .filter(|e| e.get("ph").and_then(|p| p.as_str()) == Some("C"))
+            .collect();
+        assert_eq!(counters.len(), 2);
+        let gpu = counters
+            .iter()
+            .find(|e| e["name"] == "gpu_percent")
+            .unwrap();
+        assert_eq!(gpu["ts"], 356_316.875);
+        assert_eq!(gpu["args"]["gpu_percent"], "93.0");
+        assert!(!text.contains("monitor.rs")); // instant events consumed
+
+        // Idempotent: second pass finds nothing to convert.
+        assert_eq!(super::convert_counter_events(&path).unwrap(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -534,6 +534,8 @@ mod tests {
 
     use super::*;
     use crate::metal::testing::{device_probe_count, gpu_lock};
+    use crate::mmap_vec::MmapVec;
+    use crate::optimized::lifetime_trace::LifetimeTag;
     use crate::optimized::ram_trace::RamAccessColumns;
     use crate::optimized::trace_record::RegisterLanes;
 
@@ -582,32 +584,35 @@ mod tests {
             imm.push(if index % 3 == 0 { -wide } else { wide });
         }
         Arc::new(TraceRecord {
-            pc: vec![0; t],
-            unexpanded_pc,
-            imm,
+            pc: MmapVec::zeroed(t),
+            unexpanded_pc: unexpanded_pc.into_iter().collect(),
+            imm: imm.into_iter().collect(),
             registers: Arc::new(RegisterLanes {
-                rs1_value,
-                rs2_value,
-                rd_pre_value: vec![0; t],
-                rd_post_value: vec![0; t],
-                rs1_index: vec![0; t],
-                rs2_index: vec![0; t],
-                rd_index: vec![0; t],
+                rs1_value: rs1_value.into_iter().collect(),
+                rs2_value: rs2_value.into_iter().collect(),
+                rd_pre_value: MmapVec::zeroed(t),
+                rd_post_value: MmapVec::zeroed(t),
+                rs1_index: MmapVec::zeroed(t),
+                rs2_index: MmapVec::zeroed(t),
+                rd_index: MmapVec::zeroed(t),
+                _lifetime: LifetimeTag::new("RegisterLanes(test)", t * 35),
             }),
-            ram_address: vec![0; t],
-            left_lookup_operand: vec![0; t],
-            right_lookup_operand: vec![0; t],
-            left_instruction_input: vec![0; t],
-            right_instruction_input: vec![0; t],
-            product_magnitude_lo: vec![0; t],
-            product_magnitude_hi: vec![0; t],
-            lookup_output: vec![0; t],
-            flags,
+            ram_address: MmapVec::zeroed(t),
+            left_lookup_operand: MmapVec::zeroed(t),
+            right_lookup_operand: MmapVec::zeroed(t),
+            left_instruction_input: MmapVec::zeroed(t),
+            right_instruction_input: MmapVec::zeroed(t),
+            product_magnitude_lo: MmapVec::zeroed(t),
+            product_magnitude_hi: MmapVec::zeroed(t),
+            lookup_output: MmapVec::zeroed(t),
+            flags: flags.into_iter().collect(),
             ram: Arc::new(RamAccessColumns {
-                addresses: Vec::new(),
-                pre_values: Vec::new(),
-                post_values: Vec::new(),
+                addresses: MmapVec::with_capacity(0),
+                pre_values: MmapVec::with_capacity(0),
+                post_values: MmapVec::with_capacity(0),
+                _lifetime: LifetimeTag::new("RamAccessColumns(test)", 0),
             }),
+            _lifetime: LifetimeTag::new("TraceRecord(test)", t * 116),
         })
     }
 

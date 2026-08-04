@@ -28,9 +28,37 @@ pub enum TracingFormat {
 /// Opaque container for tracing flush guards.
 ///
 /// Must be held alive for the duration of profiling. Dropping this flushes
-/// all pending trace data and stops background monitors.
+/// all pending trace data, stops background monitors, and (with the `monitor`
+/// feature) converts the monitor's sampled `counters.*` events into Perfetto
+/// counter tracks in the chrome trace file.
 #[must_use = "guards must be held alive for the duration of profiling"]
-pub struct TracingGuards(#[expect(dead_code)] Vec<Box<dyn Any>>);
+pub struct TracingGuards {
+    guards: Vec<Box<dyn Any>>,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
+    chrome_trace_path: Option<std::path::PathBuf>,
+}
+
+impl Drop for TracingGuards {
+    #[cfg_attr(
+        all(not(target_arch = "wasm32"), feature = "monitor"),
+        expect(
+            clippy::print_stdout,
+            reason = "benchmark-harness reporting; stdout is the deliverable"
+        )
+    )]
+    fn drop(&mut self) {
+        // Flush the chrome trace and stop the monitor before rewriting the file.
+        self.guards.clear();
+        #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
+        if let Some(path) = self.chrome_trace_path.take() {
+            match crate::monitor::convert_counter_events(&path) {
+                Ok(0) => {}
+                Ok(n) => println!("{}: converted {n} counter events", path.display()),
+                Err(e) => println!("{}: counter conversion skipped: {e}", path.display()),
+            }
+        }
+    }
+}
 
 /// Initializes the global tracing subscriber with the requested output formats.
 ///
@@ -81,9 +109,15 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuar
             .boxed();
         layers.push(collector_layer);
     }
+    #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
+    let mut chrome_trace_path = None;
     if formats.contains(&TracingFormat::Chrome) {
         let trace_file = format!("benchmark-runs/perfetto_traces/{trace_name}.json");
         let _ = std::fs::create_dir_all("benchmark-runs/perfetto_traces");
+        #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
+        {
+            chrome_trace_path = Some(std::path::PathBuf::from(&trace_file));
+        }
         let (chrome_layer, guard) = ChromeLayerBuilder::new()
             .include_args(true)
             .file(trace_file)
@@ -114,7 +148,11 @@ pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuar
         )
     }));
 
-    TracingGuards(guards)
+    TracingGuards {
+        guards,
+        #[cfg(all(not(target_arch = "wasm32"), feature = "monitor"))]
+        chrome_trace_path,
+    }
 }
 
 #[cfg(test)]

@@ -13,7 +13,9 @@ use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 
+use super::lifetime_trace::LifetimeTag;
 use super::support::collect_rows;
+use crate::mmap_vec::MmapVec;
 use crate::{KernelError, ProofSession};
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
@@ -30,12 +32,13 @@ struct RamAccessBundle {
 pub(crate) struct RamAccessColumns {
     /// Remapped word address per cycle; [`NO_ACCESS`] when the cycle makes no
     /// remappable RAM access (no-ops and address 0).
-    pub addresses: Vec<u64>,
+    pub addresses: MmapVec<u64>,
     /// Pre-access word value per cycle (a read's value, a write's pre-value);
     /// 0 on no-access cycles.
-    pub pre_values: Vec<u64>,
+    pub pre_values: MmapVec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
-    pub post_values: Vec<u64>,
+    pub post_values: MmapVec<u64>,
+    pub(crate) _lifetime: LifetimeTag,
 }
 
 impl RamAccessColumns {
@@ -45,9 +48,9 @@ impl RamAccessColumns {
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
         let bundles: Vec<RamAccessBundle> = collect_rows(witness, cycles)?;
-        let mut addresses = Vec::with_capacity(cycles);
-        let mut pre_values = Vec::with_capacity(cycles);
-        let mut post_values = Vec::with_capacity(cycles);
+        let mut addresses = MmapVec::with_capacity(cycles);
+        let mut pre_values = MmapVec::with_capacity(cycles);
+        let mut post_values = MmapVec::with_capacity(cycles);
         for bundle in bundles {
             addresses.push(bundle.address.0.unwrap_or(NO_ACCESS));
             pre_values.push(bundle.pre_value.0);
@@ -57,6 +60,7 @@ impl RamAccessColumns {
             addresses,
             pre_values,
             post_values,
+            _lifetime: LifetimeTag::new("RamAccessColumns", cycles * 24),
         })
     }
 
@@ -114,14 +118,14 @@ impl RamAccessColumns {
             use rayon::prelude::*;
             self.post_values
                 .par_iter()
-                .zip(&self.pre_values)
+                .zip(&self.pre_values[..])
                 .map(inc)
                 .collect()
         }
         #[cfg(not(feature = "parallel"))]
         self.post_values
             .iter()
-            .zip(&self.pre_values)
+            .zip(&self.pre_values[..])
             .map(inc)
             .collect()
     }
@@ -169,7 +173,7 @@ impl RamAccessColumns {
     pub fn reconstruct_val_init<F: Field>(&self, val_final: Vec<F>) -> Vec<F> {
         let mut val_init = val_final;
         let mut seen = vec![false; val_init.len()];
-        for (&address, &pre_value) in self.addresses.iter().zip(&self.pre_values) {
+        for (&address, &pre_value) in self.addresses.iter().zip(&self.pre_values[..]) {
             if address == NO_ACCESS {
                 continue;
             }

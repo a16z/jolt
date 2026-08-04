@@ -48,10 +48,12 @@ use rayon::prelude::*;
 
 use super::bytecode_read_raf::{park_pc_rows, PcRow};
 use super::instruction_claim_reduction::InstructionOperandRow;
-use super::instruction_read_raf::{InstructionCycleRow, SharedInstructionRows};
+use super::instruction_read_raf::{InstructionCycleRow, InstructionRows, SharedInstructionRows};
+use super::lifetime_trace::{self, lifetime_note, LifetimeTag};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::spartan_outer::SpartanOuterRow;
 use super::spartan_product::SpartanProductRow;
+use crate::mmap_vec::MmapVec;
 use crate::{KernelError, ProofSession};
 
 /// [`InstructionFlags::IsNoop`]'s bit inside the packed flags lane.
@@ -78,37 +80,39 @@ const PRODUCT_POSITIVE_BIT: u32 = 1 << 27;
 /// coexistence window is the proof's RSS high-water mark otherwise. Absent
 /// operands store 0 values and [`NO_REGISTER`] indices.
 pub(crate) struct RegisterLanes {
-    pub rs1_value: Vec<u64>,
-    pub rs2_value: Vec<u64>,
-    pub rd_pre_value: Vec<u64>,
-    pub rd_post_value: Vec<u64>,
-    pub rs1_index: Vec<u8>,
-    pub rs2_index: Vec<u8>,
-    pub rd_index: Vec<u8>,
+    pub rs1_value: MmapVec<u64>,
+    pub rs2_value: MmapVec<u64>,
+    pub rd_pre_value: MmapVec<u64>,
+    pub rd_post_value: MmapVec<u64>,
+    pub rs1_index: MmapVec<u8>,
+    pub rs2_index: MmapVec<u8>,
+    pub rd_index: MmapVec<u8>,
+    pub(crate) _lifetime: LifetimeTag,
 }
 
 /// Column-major branch-resolved witness lanes over the padded cycle domain.
 /// Lane semantics are [`TraceRecordRow`]'s field semantics, position `t` per
 /// cycle.
 pub(crate) struct TraceRecord {
-    pub pc: Vec<u64>,
-    pub unexpanded_pc: Vec<u64>,
-    pub imm: Vec<i128>,
+    pub pc: MmapVec<u64>,
+    pub unexpanded_pc: MmapVec<u64>,
+    pub imm: MmapVec<i128>,
     pub registers: Arc<RegisterLanes>,
     /// Raw (unremapped) RAM address; 0 when the cycle makes no access.
-    pub ram_address: Vec<u64>,
-    pub left_lookup_operand: Vec<u64>,
-    pub right_lookup_operand: Vec<u128>,
-    pub left_instruction_input: Vec<u64>,
-    pub right_instruction_input: Vec<i128>,
-    pub product_magnitude_lo: Vec<u64>,
-    pub product_magnitude_hi: Vec<u64>,
-    pub lookup_output: Vec<u64>,
-    pub flags: Vec<u32>,
+    pub ram_address: MmapVec<u64>,
+    pub left_lookup_operand: MmapVec<u64>,
+    pub right_lookup_operand: MmapVec<u128>,
+    pub left_instruction_input: MmapVec<u64>,
+    pub right_instruction_input: MmapVec<i128>,
+    pub product_magnitude_lo: MmapVec<u64>,
+    pub product_magnitude_hi: MmapVec<u64>,
+    pub lookup_output: MmapVec<u64>,
+    pub flags: MmapVec<u32>,
     /// The shared RAM access columns (remapped address + pre/post values),
     /// built by the same walk and also parked in the session for the RAM
     /// kernels' [`RamAccessColumns::shared`].
     pub ram: Arc<RamAccessColumns>,
+    pub(crate) _lifetime: LifetimeTag,
 }
 
 /// The walk's lane-scattering consumer.
@@ -117,31 +121,31 @@ struct CollectRecord {
 }
 
 struct LaneBuffers {
-    pc: Vec<u64>,
-    unexpanded_pc: Vec<u64>,
-    imm: Vec<i128>,
-    rs1_value: Vec<u64>,
-    rs2_value: Vec<u64>,
-    rd_pre_value: Vec<u64>,
-    rd_post_value: Vec<u64>,
-    rs1_index: Vec<u8>,
-    rs2_index: Vec<u8>,
-    rd_index: Vec<u8>,
-    ram_address: Vec<u64>,
-    left_lookup_operand: Vec<u64>,
-    right_lookup_operand: Vec<u128>,
-    left_instruction_input: Vec<u64>,
-    right_instruction_input: Vec<i128>,
-    product_magnitude_lo: Vec<u64>,
-    product_magnitude_hi: Vec<u64>,
-    lookup_output: Vec<u64>,
-    flags: Vec<u32>,
-    addresses: Vec<u64>,
-    pre_values: Vec<u64>,
-    post_values: Vec<u64>,
+    pc: MmapVec<u64>,
+    unexpanded_pc: MmapVec<u64>,
+    imm: MmapVec<i128>,
+    rs1_value: MmapVec<u64>,
+    rs2_value: MmapVec<u64>,
+    rd_pre_value: MmapVec<u64>,
+    rd_post_value: MmapVec<u64>,
+    rs1_index: MmapVec<u8>,
+    rs2_index: MmapVec<u8>,
+    rd_index: MmapVec<u8>,
+    ram_address: MmapVec<u64>,
+    left_lookup_operand: MmapVec<u64>,
+    right_lookup_operand: MmapVec<u128>,
+    left_instruction_input: MmapVec<u64>,
+    right_instruction_input: MmapVec<i128>,
+    product_magnitude_lo: MmapVec<u64>,
+    product_magnitude_hi: MmapVec<u64>,
+    lookup_output: MmapVec<u64>,
+    flags: MmapVec<u32>,
+    addresses: MmapVec<u64>,
+    pre_values: MmapVec<u64>,
+    post_values: MmapVec<u64>,
     /// The stage-5/6 shared packed rows, co-produced by the same walk
     /// (their extra sources — lookup index, table index — live only here).
-    instruction_rows: Vec<InstructionCycleRow>,
+    instruction_rows: MmapVec<InstructionCycleRow>,
 }
 
 struct PackedRecordRow {
@@ -234,29 +238,29 @@ impl From<&TraceRecordRow> for PackedRecordRow {
 impl LaneBuffers {
     fn with_capacity(cycles: usize) -> Self {
         Self {
-            pc: Vec::with_capacity(cycles),
-            unexpanded_pc: Vec::with_capacity(cycles),
-            imm: Vec::with_capacity(cycles),
-            rs1_value: Vec::with_capacity(cycles),
-            rs2_value: Vec::with_capacity(cycles),
-            rd_pre_value: Vec::with_capacity(cycles),
-            rd_post_value: Vec::with_capacity(cycles),
-            rs1_index: Vec::with_capacity(cycles),
-            rs2_index: Vec::with_capacity(cycles),
-            rd_index: Vec::with_capacity(cycles),
-            ram_address: Vec::with_capacity(cycles),
-            left_lookup_operand: Vec::with_capacity(cycles),
-            right_lookup_operand: Vec::with_capacity(cycles),
-            left_instruction_input: Vec::with_capacity(cycles),
-            right_instruction_input: Vec::with_capacity(cycles),
-            product_magnitude_lo: Vec::with_capacity(cycles),
-            product_magnitude_hi: Vec::with_capacity(cycles),
-            lookup_output: Vec::with_capacity(cycles),
-            flags: Vec::with_capacity(cycles),
-            addresses: Vec::with_capacity(cycles),
-            pre_values: Vec::with_capacity(cycles),
-            post_values: Vec::with_capacity(cycles),
-            instruction_rows: Vec::with_capacity(cycles),
+            pc: MmapVec::with_capacity(cycles),
+            unexpanded_pc: MmapVec::with_capacity(cycles),
+            imm: MmapVec::with_capacity(cycles),
+            rs1_value: MmapVec::with_capacity(cycles),
+            rs2_value: MmapVec::with_capacity(cycles),
+            rd_pre_value: MmapVec::with_capacity(cycles),
+            rd_post_value: MmapVec::with_capacity(cycles),
+            rs1_index: MmapVec::with_capacity(cycles),
+            rs2_index: MmapVec::with_capacity(cycles),
+            rd_index: MmapVec::with_capacity(cycles),
+            ram_address: MmapVec::with_capacity(cycles),
+            left_lookup_operand: MmapVec::with_capacity(cycles),
+            right_lookup_operand: MmapVec::with_capacity(cycles),
+            left_instruction_input: MmapVec::with_capacity(cycles),
+            right_instruction_input: MmapVec::with_capacity(cycles),
+            product_magnitude_lo: MmapVec::with_capacity(cycles),
+            product_magnitude_hi: MmapVec::with_capacity(cycles),
+            lookup_output: MmapVec::with_capacity(cycles),
+            flags: MmapVec::with_capacity(cycles),
+            addresses: MmapVec::with_capacity(cycles),
+            pre_values: MmapVec::with_capacity(cycles),
+            post_values: MmapVec::with_capacity(cycles),
+            instruction_rows: MmapVec::with_capacity(cycles),
         }
     }
 
@@ -295,29 +299,29 @@ impl LaneBuffers {
     ) -> Result<Self, jolt_witness::WitnessError> {
         let empty_instruction = InstructionCycleRow::new(0, None, false, None, None);
         let mut lanes = Self {
-            pc: vec![0; cycles],
-            unexpanded_pc: vec![0; cycles],
-            imm: vec![0; cycles],
-            rs1_value: vec![0; cycles],
-            rs2_value: vec![0; cycles],
-            rd_pre_value: vec![0; cycles],
-            rd_post_value: vec![0; cycles],
-            rs1_index: vec![NO_REGISTER; cycles],
-            rs2_index: vec![NO_REGISTER; cycles],
-            rd_index: vec![NO_REGISTER; cycles],
-            ram_address: vec![0; cycles],
-            left_lookup_operand: vec![0; cycles],
-            right_lookup_operand: vec![0; cycles],
-            left_instruction_input: vec![0; cycles],
-            right_instruction_input: vec![0; cycles],
-            product_magnitude_lo: vec![0; cycles],
-            product_magnitude_hi: vec![0; cycles],
-            lookup_output: vec![0; cycles],
-            flags: vec![0; cycles],
-            addresses: vec![NO_ACCESS; cycles],
-            pre_values: vec![0; cycles],
-            post_values: vec![0; cycles],
-            instruction_rows: vec![empty_instruction; cycles],
+            pc: MmapVec::zeroed(cycles),
+            unexpanded_pc: MmapVec::zeroed(cycles),
+            imm: MmapVec::zeroed(cycles),
+            rs1_value: MmapVec::zeroed(cycles),
+            rs2_value: MmapVec::zeroed(cycles),
+            rd_pre_value: MmapVec::zeroed(cycles),
+            rd_post_value: MmapVec::zeroed(cycles),
+            rs1_index: MmapVec::filled(cycles, NO_REGISTER),
+            rs2_index: MmapVec::filled(cycles, NO_REGISTER),
+            rd_index: MmapVec::filled(cycles, NO_REGISTER),
+            ram_address: MmapVec::zeroed(cycles),
+            left_lookup_operand: MmapVec::zeroed(cycles),
+            right_lookup_operand: MmapVec::zeroed(cycles),
+            left_instruction_input: MmapVec::zeroed(cycles),
+            right_instruction_input: MmapVec::zeroed(cycles),
+            product_magnitude_lo: MmapVec::zeroed(cycles),
+            product_magnitude_hi: MmapVec::zeroed(cycles),
+            lookup_output: MmapVec::zeroed(cycles),
+            flags: MmapVec::zeroed(cycles),
+            addresses: MmapVec::filled(cycles, NO_ACCESS),
+            pre_values: MmapVec::zeroed(cycles),
+            post_values: MmapVec::zeroed(cycles),
+            instruction_rows: MmapVec::filled(cycles, empty_instruction),
         };
         fill_record_lanes(access, lanes.as_slices_mut(), 0)?;
         Ok(lanes)
@@ -569,33 +573,40 @@ impl TraceRecord {
             };
             #[cfg(not(feature = "parallel"))]
             let lanes = collect_streaming()?;
+            let ram_bytes = lanes.addresses.len() * 24;
             let ram = Arc::new(RamAccessColumns {
                 addresses: lanes.addresses,
                 pre_values: lanes.pre_values,
                 post_values: lanes.post_values,
+                _lifetime: LifetimeTag::new("RamAccessColumns", ram_bytes),
             });
             if session.state::<Arc<RamAccessColumns>>().is_none() {
                 session.park(Arc::clone(&ram));
             }
-            session.park(SharedInstructionRows(Arc::new(lanes.instruction_rows)));
+            session.park(SharedInstructionRows(Arc::new(InstructionRows::new(
+                lanes.instruction_rows,
+            ))));
             // The bytecode PC scan, packed from the pc/noop lanes (fallible
             // u32-range guards, so it runs after the walk).
             let pack_pc =
                 |(&pc, &flags): (&u64, &u32)| PcRow::from_lanes::<F>(pc, flags & IS_NOOP_MASK != 0);
+            let mut pc_rows: MmapVec<PcRow> = MmapVec::zeroed(cycles);
             #[cfg(feature = "parallel")]
-            let pc_rows: Vec<PcRow> = lanes
-                .pc
-                .par_iter()
-                .zip(&lanes.flags)
-                .map(pack_pc)
-                .collect::<Result<_, _>>()?;
+            pc_rows
+                .par_iter_mut()
+                .zip(lanes.pc.par_iter().zip(&lanes.flags[..]))
+                .try_for_each(|(row, source)| {
+                    *row = pack_pc(source)?;
+                    Ok::<(), KernelError<F>>(())
+                })?;
             #[cfg(not(feature = "parallel"))]
-            let pc_rows: Vec<PcRow> = lanes
-                .pc
-                .iter()
-                .zip(&lanes.flags)
-                .map(pack_pc)
-                .collect::<Result<_, _>>()?;
+            pc_rows
+                .iter_mut()
+                .zip(lanes.pc.iter().zip(&lanes.flags[..]))
+                .try_for_each(|(row, source)| {
+                    *row = pack_pc(source)?;
+                    Ok::<(), KernelError<F>>(())
+                })?;
             park_pc_rows(session, pc_rows);
             let record = Arc::new(Self {
                 pc: lanes.pc,
@@ -609,6 +620,7 @@ impl TraceRecord {
                     rs1_index: lanes.rs1_index,
                     rs2_index: lanes.rs2_index,
                     rd_index: lanes.rd_index,
+                    _lifetime: LifetimeTag::new("RegisterLanes", cycles * 35),
                 }),
                 ram_address: lanes.ram_address,
                 left_lookup_operand: lanes.left_lookup_operand,
@@ -620,6 +632,7 @@ impl TraceRecord {
                 lookup_output: lanes.lookup_output,
                 flags: lanes.flags,
                 ram,
+                _lifetime: LifetimeTag::new("TraceRecord", cycles * 116),
             });
             session.park(record);
         }
@@ -635,7 +648,16 @@ impl TraceRecord {
     /// lanes free before the stage-5 peak. The RAM access columns survive
     /// under their own session `Arc` for stages 4-6b, exactly as before.
     pub(crate) fn release(session: &mut ProofSession) {
-        let _ = session.take::<Arc<Self>>();
+        let record = session.take::<Arc<Self>>();
+        if let Some(record) = &record {
+            lifetime_note!(
+                "TraceRecord::release — session ref dropped; {} strong refs outstanding",
+                Arc::strong_count(record).saturating_sub(1),
+            );
+        }
+        lifetime_trace::mark_release_scope(true);
+        drop(record);
+        lifetime_trace::mark_release_scope(false);
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -906,7 +928,7 @@ mod tests {
                 1 << shape.log_t,
             )
             .unwrap();
-            assert_eq!(*parked_pc, *walked_pc);
+            assert_eq!(**parked_pc, **walked_pc);
 
             let register_rows: Vec<RegisterCycleRow> =
                 collect_rows(witness, 1 << shape.log_t).unwrap();

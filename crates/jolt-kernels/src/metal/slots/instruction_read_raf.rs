@@ -47,7 +47,7 @@ use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
 use crate::optimized::instruction_read_raf::{
-    shared_instruction_rows, CycleInitRequest, CycleTables, InstructionCycleRow,
+    shared_instruction_rows, CycleInitRequest, CycleTables, InstructionCycleRow, InstructionRows,
     OptimizedInstructionReadRafKernel, PhaseScanRequest, PhaseScanSums, PhaseScanner, RafSums,
     ScanOutcome, ScannerInputs,
 };
@@ -155,7 +155,7 @@ struct IrrInFlight {
 struct DeviceIrrScanner {
     in_flight: Option<IrrInFlight>,
     device: DeviceRound,
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<InstructionRows>,
     /// Address-phase scan state; dropped when the cycle tables are adopted
     /// (the phases are over) so its buffers free early.
     address: Option<AddressState>,
@@ -1055,7 +1055,9 @@ mod tests {
         std::env::set_var("JOLT_METAL_MIN_TERMS", min_terms.to_string());
         let dimensions =
             InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
-        let rows = Arc::new(fixture_rows(log_t, seed, skewed));
+        let rows = Arc::new(InstructionRows::new(
+            fixture_rows(log_t, seed, skewed).into_iter().collect(),
+        ));
         let r_reduction: Vec<Fr> = (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect();
         let gamma = fr(0xACE1_57EF);
 
