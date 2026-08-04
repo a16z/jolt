@@ -43,10 +43,11 @@ jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 
+jolt-eval-macros = { path = "macros" }
+
+# Peak RSS via getrusage; linux reads /proc/self/status instead.
 [target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
 libc = "0.2"
-
-jolt-eval-macros = { path = "macros" }
 
 [dev-dependencies]
 criterion = { workspace = true }
