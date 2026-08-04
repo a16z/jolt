@@ -314,7 +314,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
-        let q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in(
             || ([F::zero(); 3], vec![(F::zero(), F::zero()); num_committed]),
             |(acc, pairs), row, _x_in, e_in| {
                 folded_ra.lo_hi_all(row, pairs);
@@ -345,7 +345,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         );
 
         self.gruen
-            .checked_round_poly(&q_evals, previous_claim, round)
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {

@@ -127,7 +127,7 @@ impl<F: Field> OutputCheckKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         const POINTS: usize = 4;
 
-        let q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in(
             || [F::zero(); POINTS],
             |acc, row, _x_in, e_in| {
                 let pair = |table: &Polynomial<F>| {
@@ -162,7 +162,7 @@ impl<F: Field> OutputCheckKernel<F> {
         );
 
         self.gruen
-            .checked_round_poly(&q_evals, previous_claim, round)
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {

@@ -242,7 +242,7 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         const POINTS: usize = 3;
-        let q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in(
             || [F::zero(); POINTS],
             |acc, row, _x_in, e_in| {
                 let evals = self.combined.evals();
@@ -269,7 +269,7 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
         );
 
         self.gruen
-            .checked_round_poly(&q_evals, previous_claim, round)
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {

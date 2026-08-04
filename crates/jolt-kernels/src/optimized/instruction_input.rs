@@ -279,12 +279,12 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let q_evals = match &self.state {
+        let mut q_evals = match &self.state {
             InputState::Native(rows) => self.native_q_evals(rows),
             InputState::Dense(tables) => self.dense_q_evals(tables),
         };
         self.gruen
-            .checked_round_poly(&q_evals, previous_claim, round)
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {

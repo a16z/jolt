@@ -284,6 +284,7 @@ pub(crate) trait GruenRoundMessage<F: Field> {
     /// `s(t) = ℓ(t) · q(t)` at `t = 0, 1, …, q_evals.len() − 1`, checked
     /// against `s(0) + s(1) = previous_claim` (the reference tier's round
     /// consistency pin) and interpolated through `UnivariatePoly::from_evals`.
+    /// `q_evals` is scaled into the `s` evaluations in place.
     ///
     /// This is the assembly half of the Gruen trick: the split-eq factor
     /// contributes only its per-round linear term `ℓ`, so kernels sample the
@@ -291,7 +292,7 @@ pub(crate) trait GruenRoundMessage<F: Field> {
     /// never a full-domain eq-weighted sweep.
     fn checked_round_poly(
         &self,
-        q_evals: &[F],
+        q_evals: &mut [F],
         previous_claim: F,
         round: usize,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
@@ -306,7 +307,7 @@ pub(crate) trait GruenRoundMessage<F: Field> {
 impl<F: Field> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
     fn checked_round_poly(
         &self,
-        q_evals: &[F],
+        q_evals: &mut [F],
         previous_claim: F,
         round: usize,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
@@ -314,13 +315,12 @@ impl<F: Field> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
         let (l_at_0, l_at_1) = self.current_linear_evals();
         let l_step = l_at_1 - l_at_0;
         let mut l_eval = l_at_0;
-        let mut evals = Vec::with_capacity(q_evals.len());
-        for q in q_evals {
-            evals.push(l_eval * *q);
+        for q in q_evals.iter_mut() {
+            *q *= l_eval;
             l_eval += l_step;
         }
 
-        let round_sum = evals[0] + evals[1];
+        let round_sum = q_evals[0] + q_evals[1];
         if round_sum != previous_claim {
             return Err(SumcheckError::RoundCheckFailed {
                 round,
@@ -328,7 +328,7 @@ impl<F: Field> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
                 actual: round_sum,
             });
         }
-        Ok(UnivariatePoly::from_evals(&evals))
+        Ok(UnivariatePoly::from_evals(q_evals))
     }
 
     fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {

@@ -163,7 +163,7 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
 
-        let q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in(
             || {
                 (
                     vec![F::zero(); points],
@@ -212,7 +212,7 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
         );
 
         self.gruen
-            .checked_round_poly(&q_evals, previous_claim, round)
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {
