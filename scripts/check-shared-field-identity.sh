@@ -9,15 +9,17 @@ set -euo pipefail
 # `akita` feature, but only from Jolt's immutable Akita Git pin, never from a
 # local path. The final migration PR replaces this check with one that rejects
 # every `akita-field` identity.
+#
+# Structural check over `cargo metadata` package IDs: immune to `cargo tree`
+# rendering (CARGO_TERM_COLOR=always colorizes the `(*)` dedup marker, which
+# broke the previous text parse). The worst-case color environment is forced
+# below as a permanent regression guard.
+export CARGO_TERM_COLOR=always
 
-tree="$(cargo tree --workspace --edges normal,build --prefix none --color never)"
+metadata="$(cargo metadata --format-version 1 --locked)"
 
-jolt_identities="$(
-  grep '^jolt-field v' <<<"$tree" \
-    | sed 's/ (\*)$//' \
-    | sort -u
-)"
-jolt_count="$(grep -c '^jolt-field v' <<<"$jolt_identities" || true)"
+jolt_identities="$(jq -r '.packages[] | select(.name == "jolt-field") | .id' <<<"$metadata" | sort -u)"
+jolt_count="$(grep -c . <<<"$jolt_identities" || true)"
 
 if [[ "$jolt_count" -ne 1 ]]; then
   echo "error: expected exactly one jolt-field package identity, found $jolt_count" >&2
@@ -25,22 +27,17 @@ if [[ "$jolt_count" -ne 1 ]]; then
   exit 1
 fi
 
-akita_identities="$(
-  { grep '^akita-field v' <<<"$tree" || true; } \
-    | sed 's/ (\*)$//' \
-    | sort -u
-)"
+akita_identities="$(jq -r '.packages[] | select(.name == "akita-field") | .id' <<<"$metadata" | sort -u)"
+akita_count="$(grep -c . <<<"$akita_identities" || true)"
 
-if [[ -n "$akita_identities" ]]; then
-  akita_count="$(grep -c '^akita-field v' <<<"$akita_identities" || true)"
-
+if [[ "$akita_count" -gt 0 ]]; then
   if [[ "$akita_count" -ne 1 ]]; then
     echo "error: expected at most one bootstrap akita-field identity, found $akita_count" >&2
     printf '%s\n' "$akita_identities" >&2
     exit 1
   fi
 
-  if ! grep -q 'https://github.com/LayerZero-Labs/akita' <<<"$akita_identities"; then
+  if ! grep -q 'github.com/LayerZero-Labs/akita' <<<"$akita_identities"; then
     echo "error: bootstrap akita-field must resolve from the pinned Akita Git source" >&2
     printf '%s\n' "$akita_identities" >&2
     exit 1
