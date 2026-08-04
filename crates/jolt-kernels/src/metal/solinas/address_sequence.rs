@@ -273,14 +273,14 @@ impl SolinasMetal {
             slice::from_raw_parts_mut(cycle_to_table_major_buffer.contents().cast::<u32>(), rows)
         };
         let mut table_selected = vec![false; rows];
-        let mut cycle_order = Vec::with_capacity(rows);
+        let mut table_major_len = 0usize;
         let mut suffix_jobs = Vec::new();
         let mut suffix_tables = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
         let mut table_row_ranges = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
         for (table, bucket) in buckets.iter().enumerate() {
             let job_start = u32::try_from(suffix_jobs.len())
                 .map_err(|_| MetalError::InputTooLong(suffix_jobs.len()))?;
-            let bucket_start = cycle_order.len();
+            let bucket_start = table_major_len;
             for &row in bucket {
                 let row = row as usize;
                 if row >= rows {
@@ -289,13 +289,13 @@ impl SolinasMetal {
                 if table_selected[row] {
                     return Err(MetalError::AddressPhaseLayoutLength {
                         expected: rows,
-                        got: cycle_order.len(),
+                        got: table_major_len,
                     });
                 }
                 table_selected[row] = true;
-                cycle_to_table_major[row] = u32::try_from(cycle_order.len())
-                    .map_err(|_| MetalError::InputTooLong(cycle_order.len()))?;
-                cycle_order.push(row as u32);
+                cycle_to_table_major[row] = u32::try_from(table_major_len)
+                    .map_err(|_| MetalError::InputTooLong(table_major_len))?;
+                table_major_len += 1;
             }
             for local_start in (0..bucket.len()).step_by(config.rows_per_threadgroup) {
                 let local_end = (local_start + config.rows_per_threadgroup).min(bucket.len());
@@ -316,24 +316,24 @@ impl SolinasMetal {
                     .map_err(|_| MetalError::InputTooLong(table_offsets[table]))?,
                 suffix_count: u32::from(suffix_counts[table]),
             });
-            table_row_ranges.push(bucket_start..cycle_order.len());
+            table_row_ranges.push(bucket_start..table_major_len);
         }
         if suffix_jobs.is_empty() {
             return Err(MetalError::EmptyAddressSuffixBuckets);
         }
-        let no_table_start = cycle_order.len();
+        let no_table_start = table_major_len;
         for (cycle, &selected) in table_selected.iter().enumerate() {
             if !selected {
-                cycle_to_table_major[cycle] = u32::try_from(cycle_order.len())
-                    .map_err(|_| MetalError::InputTooLong(cycle_order.len()))?;
-                cycle_order.push(cycle as u32);
+                cycle_to_table_major[cycle] = u32::try_from(table_major_len)
+                    .map_err(|_| MetalError::InputTooLong(table_major_len))?;
+                table_major_len += 1;
             }
         }
         drop(table_selected);
-        if cycle_order.len() != rows {
+        if table_major_len != rows {
             return Err(MetalError::AddressPhaseLayoutLength {
                 expected: rows,
-                got: cycle_order.len(),
+                got: table_major_len,
             });
         }
 
@@ -372,33 +372,54 @@ impl SolinasMetal {
         let table_major_weights =
             unsafe { slice::from_raw_parts_mut(weights_buffer.contents().cast::<Fp128>(), rows) };
         #[cfg(feature = "parallel")]
-        lookups
-            .par_iter_mut()
-            .zip(packed_rows.par_iter_mut())
-            .zip(table_major_weights.par_iter_mut())
-            .zip(cycle_order.par_iter())
-            .for_each(|(((lookup, packed), weight), &cycle)| {
-                (*lookup, *packed, *weight) = packed_source(source(cycle as usize));
-            });
-        #[cfg(not(feature = "parallel"))]
-        for (((lookup, packed), weight), &cycle) in lookups
-            .iter_mut()
-            .zip(&mut packed_rows)
-            .zip(&mut table_major_weights)
-            .zip(&cycle_order)
         {
-            (*lookup, *packed, *weight) = packed_source(source(cycle as usize));
+            let lookups_address = lookups.as_mut_ptr() as usize;
+            let packed_address = packed_rows.as_mut_ptr() as usize;
+            let weights_address = table_major_weights.as_mut_ptr() as usize;
+            cycle_to_table_major
+                .par_iter()
+                .enumerate()
+                .for_each(|(cycle, &table_major)| {
+                    let (lookup, packed, weight) = packed_source(source(cycle));
+                    let table_major = table_major as usize;
+                    // SAFETY: the validated inverse is a permutation, so
+                    // parallel iterations write disjoint initialized slots.
+                    unsafe {
+                        (lookups_address as *mut AddressLookup)
+                            .add(table_major)
+                            .write(lookup);
+                        (packed_address as *mut u8).add(table_major).write(packed);
+                        (weights_address as *mut Fp128)
+                            .add(table_major)
+                            .write(weight);
+                    }
+                });
         }
+        #[cfg(not(feature = "parallel"))]
+        for (cycle, &table_major) in cycle_to_table_major.iter().enumerate() {
+            let table_major = table_major as usize;
+            (
+                lookups[table_major],
+                packed_rows[table_major],
+                table_major_weights[table_major],
+            ) = packed_source(source(cycle));
+        }
+        let original_cycle = |table_major: usize| {
+            cycle_to_table_major
+                .iter()
+                .position(|&mapped| mapped as usize == table_major)
+                .unwrap_or(rows)
+        };
         for (table, range) in table_row_ranges.iter().enumerate() {
             if let Some(position) = packed_rows[range.clone()]
                 .iter()
                 .position(|packed| usize::from(*packed & 0x7f) != table + 1)
             {
-                let row = cycle_order[range.start + position] as usize;
-                let packed = packed_rows[range.start + position];
+                let table_major = range.start + position;
+                let packed = packed_rows[table_major];
                 return Err(MetalError::InvalidAddressPhaseBucket {
                     bucket: table,
-                    row,
+                    row: original_cycle(table_major),
                     actual: packed_table(packed),
                 });
             }
@@ -407,16 +428,15 @@ impl SolinasMetal {
             .iter()
             .position(|packed| packed & 0x7f != 0)
         {
-            let row = cycle_order[no_table_start + position] as usize;
-            let packed = packed_rows[no_table_start + position];
+            let table_major = no_table_start + position;
+            let packed = packed_rows[table_major];
             return Err(MetalError::InvalidAddressPhaseBucket {
                 bucket: ADDRESS_SUFFIX_TABLES,
-                row,
+                row: original_cycle(table_major),
                 actual: packed_table(packed),
             });
         }
         self.validate_inputs("resident address weights", table_major_weights)?;
-        drop(cycle_order);
 
         let raf_tile_pipeline = self.compile_named_pipeline(RAF_TILE_PIPELINE)?;
         let raf_finalize_pipeline = self.compile_named_pipeline(RAF_FINALIZE_PIPELINE)?;
