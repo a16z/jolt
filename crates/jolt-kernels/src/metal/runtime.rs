@@ -85,6 +85,11 @@ pub enum KernelId {
     BoolDenseRound,
     RavLazyRound,
     RavDenseRound,
+    BytecodeInit,
+    BytecodeLazyRound,
+    BytecodeAdopt,
+    BytecodeDenseRound,
+    BytecodeOffsetProbe,
     InstrInputBindNative,
     InstrInputRound,
     OuterT1,
@@ -112,7 +117,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 61] = [
+    pub const ALL: [Self; 66] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -150,6 +155,11 @@ impl KernelId {
         Self::BoolDenseRound,
         Self::RavLazyRound,
         Self::RavDenseRound,
+        Self::BytecodeInit,
+        Self::BytecodeLazyRound,
+        Self::BytecodeAdopt,
+        Self::BytecodeDenseRound,
+        Self::BytecodeOffsetProbe,
         Self::InstrInputBindNative,
         Self::InstrInputRound,
         Self::OuterT1,
@@ -215,6 +225,11 @@ impl KernelId {
             Self::BoolDenseRound => "jk_bool_dense_round",
             Self::RavLazyRound => "jk_rav_lazy_round",
             Self::RavDenseRound => "jk_rav_dense_round",
+            Self::BytecodeInit => "jk_bytecode_init",
+            Self::BytecodeLazyRound => "jk_bytecode_lazy_round",
+            Self::BytecodeAdopt => "jk_bytecode_adopt",
+            Self::BytecodeDenseRound => "jk_bytecode_dense_round",
+            Self::BytecodeOffsetProbe => "jk_bytecode_offset_probe",
             Self::InstrInputBindNative => "jk_instr_input_bind_native",
             Self::InstrInputRound => "jk_instr_input_round",
             Self::OuterT1 => "jk_outer_t1",
@@ -320,7 +335,7 @@ impl MetalContext {
     fn new() -> Result<Self, MetalError> {
         let device = MTLCreateSystemDefaultDevice().ok_or(MetalError::NoDevice)?;
         let source = format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             field::constants_preamble(),
             super::miller::pairing_preamble(),
             include_str!("shaders/fr.metal"),
@@ -330,6 +345,7 @@ impl MetalContext {
             include_str!("shaders/fq12.metal"),
             include_str!("shaders/instruction.metal"),
             include_str!("shaders/ra_lazy.metal"),
+            include_str!("shaders/bytecode_read_raf.metal"),
             include_str!("shaders/spartan.metal"),
             include_str!("shaders/ram_read_write.metal"),
             include_str!("shaders/registers_read_write.metal"),

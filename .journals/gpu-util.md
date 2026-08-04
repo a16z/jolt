@@ -127,6 +127,45 @@ Honest wave-1 projection if all three lanes hit: 2^27 ≈ 63-67 s (2.0-2.1 MHz),
 2^25 ≈ 17.5-18.5 s (1.81-1.90 MHz). Above 2 MHz @2^27 requires D to land, not
 just A+B.
 
+## Wave-1 gate results
+
+- **W1A (task 2bbe078e): KILLED at the 2^24 gate, cleanly.** Exact-math device
+  prepares for st6a+st7 regressed the targeted span +26.2% (needed ≥−35%).
+  Diagnosis: SIMD bucket shape leaves lanes inactive scanning every inner-eq
+  row (work inflation scales with T, not fixed overhead — kill is scale-honest);
+  bytecode counting-sort adds two full trace passes. Forced-device parity was
+  3/3 green — correctness fine, shape wrong. Prototype reverted; only report
+  retained (lane-reports/w1a.md in gpuutil-w1a, commits 2dd709f38+80f69a3e0).
+  Artifacts /tmp/w1a-*.{log,json}. CONSEQUENCE: priority-1 target (st6a/st7 0%
+  GPU) does NOT fall to a like-for-like port → new-freedom rethink lane W2A.
+- **W1B (task 83cf4e87): checkpoint-2 kill gate PASSED.** BytecodeReadRafCycle
+  full port: st6b −42.9% @2^24 (2.102→1.200 s), member −53.3%, whole prove
+  −8.7% (11.94→10.90 s). Parity: forced-device lockstep green; byte_diff 11/11
+  in both prover-fixtures and prover-fixtures,metal (brief's "19/19" count was
+  stale — current tree discovers 11 fixtures). Continues: IncClaimReduction
+  prepare device path + 2^25 cool ABBA + full gate matrix.
+
+- **W1D (task 5c8623e5): root-cause artifact complete** (lane-reports/
+  w1d-rootcause.md in gpuutil-w1d — read it in full before any memory work).
+  Headlines: (1) st5 DeviceIrrScanner parks a 30 GiB ping-pong pair in the
+  global RETIRED pool across a 29.5 s idle window (late-st5 tail + st6a + st6b);
+  ≤4 GiB ever carved before mid-st6b; biggest adoption misses the pool. (2) On
+  trunk the 2^27 st6b degradation is NOT OS page pressure — zero compression/
+  swap; prepares run parallel-busy (11-12 cores) ⇒ DRAM-bound at 2^27 working
+  sets; H-park vs H-shape separable only by free-at-retire ablation (running).
+  (3) **W4-U1 madvise failure root-caused: MADV_FREE_REUSABLE is a silent
+  no-op (rc=0, footprint unchanged) on any range ever mapped via
+  newBufferWithBytesNoCopy — IOGPU holds a second VM-object ref; release does
+  not restore eligibility.** Micro-experiment committed as ignored test
+  (madvise_probe). Any madvise-shaped decommit of Metal-wrapped pages is DOA;
+  structural fix = actually drop buffer + backing. (4) **st4 verdict: SHAPE,
+  not pressure** — constant ×2.05/doubling, no tier cliff; RegistersRWC::prepare
+  is a SERIAL host build (1.9 cores, 4.70 s @2^27). D hands st4 off; fix class
+  = parallelize/port ⇒ converges with scope-lane finding (unfused round loop).
+  st4 becomes lane W2B (port+fuse+optional pairing). st6a footprint drop @2^27
+  (−30 GiB) = TraceRecord family death, log_T-parity-dependent (explains the
+  cross-scale contradictions).
+
 ## Post-directive lever board (sound-but-not-byte-identical, wave-1.5+)
 
 Ranked candidates unlocked by the 2026-08-04 directive; each needs a journal
@@ -150,16 +189,29 @@ soundness note before merge.
    prefix-scan + single-CB bind+message, 13→7 passes); sequenced as route (a)
    before pairing route (b). Both routed through lane D's st4 root-cause
    (findings forwarded to D 04:45 UTC) — st4 owner implements, wave 2.
-2. **Address-major layout / materialization** for address-phase sumchecks
-   (booleanity_address, bytecode_read_raf_address — the st6a pair). Only if
-   lane A's exact-math port is gather-bound; wait for A's root-cause report.
-3. **Stage-boundary restructuring on the st5→st6b seam**: hoist st6a/st6b
-   prepares to overlap st5 GPU rounds if challenge deps allow (scheduling =
-   sound trivially); with the directive, reordering transcript absorptions
-   across the seam is also legal if FS ordering keeps every challenge derived
-   after everything it must bind (journal the argument per change).
-4. **st4 RegistersRWC restructure** — if D's root-cause shows the prepare hole
-   is inherent to the current formulation rather than allocator pressure.
+2. **Address-major layout for booleanity: DEAD (W2A design §2, journaled
+   negative result).** Cycle-major binding (j before k) is vacuous — on the
+   boolean cube ra² = ra, so Σ_k eq(r_a,k)(ra²−ra) ≡ 0 pointwise and a j-first
+   sumcheck proves 0=0; keeping k open forces collision-aware sparse state ≈
+   the K×T grid in disguise. Per-round stateless gather (H[j]=E[addr(j)]) is
+   valid math but recomputes the pushforward per address round: ~10× ALU vs
+   one O(T) add-only build. The pushforward IS the compression. (May still
+   apply to non-booleanity address relations — none currently hot.)
+3. **Stage-boundary restructuring on the st5→st6b seam** → ACTIVE as W2A R1:
+   booleanity eq-anchor moved to the stage-1 cycle binding (pure anchor, never
+   absorbed/drawn; soundness §3 of w2a.md — point sampled after ra commitments
+   bound, no FS draw moves, fail-closed BooleanityAnchor axis in
+   JoltProtocolConfig, zk pinned legacy) ⇒ pushforward builds on a capped
+   background pool overlapping st5's GPU window. + R2 bytecode 4-early/1-late
+   split (byte-identical) + R3-lite HWCR on-the-fly tensor eq (kills the 4.3 GB
+   eq_table materialization at the pressure tier, byte-identical). GO granted
+   2026-08-04 ~06:45 UTC; modeled st6a+st7 −43…−56% @2^24 (gate −30%).
+4. **st4 RegistersRWC restructure** → ACTIVE as W2B: implicit-CSR
+   fixed-segment layout (W_r = min(3·2^r, K) per row, offset = row·W_r — no
+   counts/scans/dynamic compaction, ≤3T entries), host-parallel prepare first,
+   single-command-buffer rounds. Protocol-neutral steps 1-2 (byte-diff oracle);
+   optional round-pairing step 3 gated on orchestrator GO. Memory-viability
+   gate added (peak-storage projection @2^27 before 2^25 confirm).
 
 ## Parked doors (inherited)
 
@@ -184,6 +236,39 @@ soundness note before merge.
   forwarded to lane D (task 5c8623e5) for its st4 root-cause artifact. W1A/W1B
   checkpoint-1 decomposition reports read (w1a.md, w1b.md — both sound, byte
   parity retained as their retention gate, stricter than required = fine).
-  Lane task IDs (recorded late, lesson): A=2bbe078e?, B=83cf4e87? (codex pair,
-  A/B assignment inferred from spawn order — confirm at next checkpoint),
-  D=5c8623e5, scope=5068310d (done).
+  Lane task IDs (recorded late, lesson): A=2bbe078e, B=83cf4e87 (confirmed:
+  sole surviving codex process = 83cf4e87 = B, still implementing after A's
+  kill-gate exit), D=5c8623e5, scope=5068310d (done).
+- 2026-08-04 06:5x UTC: **W1D ablation verdict: H-shape — park is perf-neutral
+  @2^27 (+0.12 s total = noise; st6b −0.17 s).** W4-U1 door closed with a
+  measured null: the −4 s allocator prize does not exist on trunk. D's fix =
+  delete the retired-buffer arena outright (risk removal + simplification,
+  perf-neutral by construction; gate 2^25/2^26 neutral ±1% + full matrix +
+  byte-identical) — committed on its branch, gating now. st6b's 2^27 excess is
+  intrinsic CPU-member working-set shape (the surface W1B's port removes).
+  **W2A design GO** (R1 anchor + R2 split + R3-lite; amendments: trunk merge
+  first, 11-fixture count, additive config-axis pattern, st2-st5 regression
+  watch, journal duty). **W2B design ack** (fixed-segment CSR; memory-viability
+  gate added). Lever board items 2/3/4 updated: 2 dead (negative result), 3/4
+  active as W2A/W2B.
+- 2026-08-04 06:1x UTC: **W1B CLOSED — retained + merged to trunk @c8b5841e0.**
+  Final 2^25 cool ABBA: st6b −25.5% (2.070→1.543 s), member −38.1%, total
+  −0.910 s. IncClaimReduction prepare device port REJECTED (−9 ms prepare /
+  +22 ms stage = noise; reverted; monitor showed no util shift). Full matrix
+  green: kernels 233/233, dory 46/46, muldiv 3/3+3/3, byte-diff 11/11 both
+  feature sets, clippy/fmt clean. Binary sha 333ad9ee…. W1D artifact complete
+  (§Wave-1 gate results); D ablating park-vs-free @2^27 under lock
+  (JOLT_METAL_NO_PARK knob committed). **W2B dispatched: task 6d1f61bb,
+  gpt-5.6-sol-xhigh, worktree gpuutil-w2b (branch gpu/util-w2b off trunk
+  @c8b5841e0)** — st4 CSR/fixed-segment rewrite (step 1) + round-loop fusion
+  (step 2, both byte-identical) + optional gated round-pairing (step 3,
+  orchestrator GO required). st4 ownership transferred D→W2B. W2A + D notified
+  of merge; W2A told to merge trunk into its branch now.
+- 2026-08-04 05:0x UTC: wave-1 gate results journaled (A killed / B passed —
+  see §Wave-1 gate results). W2A dispatched: task 0eb25fd2, fable-max,
+  worktree gpuutil-w2a (branch gpu/util-w2a off trunk @2fc5e877f) — st6a+st7
+  rethink under protocol freedom (hypothesis menu H1 address-major bind order,
+  H2 device pushforward shape, H3 r_cycle-independent hoisting, H4 HWCR
+  restructure). Design-before-code hard gate: W2A must get orchestrator GO on
+  its design artifact before implementing. D notified of scope findings +
+  directive earlier (04:45); D currently holds bench lock for 2^27 diagnosis.
