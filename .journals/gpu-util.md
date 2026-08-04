@@ -145,6 +145,27 @@ just A+B.
   stale — current tree discovers 11 fixtures). Continues: IncClaimReduction
   prepare device path + 2^25 cool ABBA + full gate matrix.
 
+- **W1D (task 5c8623e5): root-cause artifact complete** (lane-reports/
+  w1d-rootcause.md in gpuutil-w1d — read it in full before any memory work).
+  Headlines: (1) st5 DeviceIrrScanner parks a 30 GiB ping-pong pair in the
+  global RETIRED pool across a 29.5 s idle window (late-st5 tail + st6a + st6b);
+  ≤4 GiB ever carved before mid-st6b; biggest adoption misses the pool. (2) On
+  trunk the 2^27 st6b degradation is NOT OS page pressure — zero compression/
+  swap; prepares run parallel-busy (11-12 cores) ⇒ DRAM-bound at 2^27 working
+  sets; H-park vs H-shape separable only by free-at-retire ablation (running).
+  (3) **W4-U1 madvise failure root-caused: MADV_FREE_REUSABLE is a silent
+  no-op (rc=0, footprint unchanged) on any range ever mapped via
+  newBufferWithBytesNoCopy — IOGPU holds a second VM-object ref; release does
+  not restore eligibility.** Micro-experiment committed as ignored test
+  (madvise_probe). Any madvise-shaped decommit of Metal-wrapped pages is DOA;
+  structural fix = actually drop buffer + backing. (4) **st4 verdict: SHAPE,
+  not pressure** — constant ×2.05/doubling, no tier cliff; RegistersRWC::prepare
+  is a SERIAL host build (1.9 cores, 4.70 s @2^27). D hands st4 off; fix class
+  = parallelize/port ⇒ converges with scope-lane finding (unfused round loop).
+  st4 becomes lane W2B (port+fuse+optional pairing). st6a footprint drop @2^27
+  (−30 GiB) = TraceRecord family death, log_T-parity-dependent (explains the
+  cross-scale contradictions).
+
 ## Post-directive lever board (sound-but-not-byte-identical, wave-1.5+)
 
 Ranked candidates unlocked by the 2026-08-04 directive; each needs a journal
