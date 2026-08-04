@@ -305,7 +305,11 @@ soundness note before merge.
   host glue. st3 = InstrInput rounds 1.61 s + SpartanShift::prepare 0.44.
   Fix classes: hoist/overlap challenge-independent walk work into st0's
   11.3 s GPU-heavy window (W2A pattern, process token exists) and/or
-  parallelize the serial walks (W1D/W3C pattern). → W3D ACTIVE.
+  parallelize the serial walks (W1D/W3C pattern). → **W3D ACTIVE: task
+  0d5cf2fa, fable-max, worktree gpuutil-w3d.** Phase-1 dependency/shape
+  artifact before fixes; protocol changes need GO; W3C gate amendment
+  codified in its brief (surface SoC-pressure tradeoffs, defer retention to
+  2^27 certification instead of self-killing). Prize ~−3.5..−5 s @2^27.
 - st3 feed (small) — folded into W3D scope as opportunistic.
 
 ## Parked doors (inherited)
