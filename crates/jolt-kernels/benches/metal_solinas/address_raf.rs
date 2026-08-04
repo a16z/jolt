@@ -1,10 +1,12 @@
 use std::{env, hint::black_box, time::Duration};
 
-use criterion::{BenchmarkId, Criterion, Throughput};
-use jolt_field::{AdditiveAccumulator, AkitaAccumulator, AkitaField, MulPrimitiveInt};
+use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId, Criterion, Throughput};
+use jolt_field::{
+    AdditiveAccumulator, AkitaAccumulator, AkitaField, FromPrimitiveInt, MulPrimitiveInt,
+};
 use jolt_kernels::metal::solinas::{
-    AddressRafScanConfig, AddressRafScanRow, Fp128, SolinasMetal, ADDRESS_RAF_BINS,
-    ADDRESS_RAF_LANES,
+    AddressRafScanConfig, AddressRafScanInvocation, AddressRafScanRow, Fp128, SolinasMetal,
+    ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
 };
 use jolt_lookup_tables::uninterleave_bits;
 use rayon::prelude::*;
@@ -12,8 +14,22 @@ use rayon::prelude::*;
 const DEFAULT_ELEMENTS: [usize; 3] = [1 << 16, 1 << 20, 1 << 22];
 
 pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
-    let config = config();
-    let mut group = c.benchmark_group("metal_sumcheck/instruction_read_raf_address_phase");
+    bench_impl(c, context, false);
+}
+
+pub fn bench_condensed(c: &mut Criterion, context: &SolinasMetal) {
+    bench_impl(c, context, true);
+}
+
+fn bench_impl(c: &mut Criterion, context: &SolinasMetal, condense: bool) {
+    let config = config(condense);
+    let metal_first = metal_first();
+    let group_name = if condense {
+        "metal_sumcheck/instruction_read_raf_address_condensed_phase"
+    } else {
+        "metal_sumcheck/instruction_read_raf_address_phase"
+    };
+    let mut group = c.benchmark_group(group_name);
     let _ = group
         .sample_size(10)
         .warm_up_time(Duration::from_secs(2))
@@ -21,13 +37,35 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
 
     for elements in cases() {
         let (rows, weights) = inputs(elements);
-        let invocation = context
-            .prepare_address_raf_scan(&rows, &weights, config)
-            .expect("address RAF pipeline should prepare");
+        let metal_weights: Vec<_> = weights.iter().map(Fp128::from_jolt_field).collect();
+        let previous_phase_table = previous_phase_table();
+        let metal_previous_phase_table =
+            previous_phase_table.map(|value| Fp128::from_jolt_field(&value));
+        let invocation = if condense {
+            context.prepare_condensed_address_raf_scan(
+                &rows,
+                &metal_weights,
+                &metal_previous_phase_table,
+                config,
+            )
+        } else {
+            context.prepare_address_raf_scan(&rows, &metal_weights, config)
+        }
+        .expect("address RAF pipeline should prepare");
+        drop(metal_weights);
         invocation
             .execute()
             .expect("address RAF scan should execute");
-        let expected = cpu_scan(&rows, &weights, config.suffix_len);
+        let mut expected_weights = weights.clone();
+        if condense {
+            condense_weights(
+                &rows,
+                &mut expected_weights,
+                &previous_phase_table,
+                config.suffix_len,
+            );
+        }
+        let expected = cpu_scan(&rows, &expected_weights, config.suffix_len);
         assert_eq!(
             invocation
                 .read_output()
@@ -35,6 +73,8 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
                 .as_flat_slice(),
             expected
         );
+        drop(expected_weights);
+        drop(expected);
         eprintln!(
             "address RAF: elements={elements}, threadgroups={}, threads={}, static TG bytes={}",
             invocation.threadgroup_count(),
@@ -50,38 +90,96 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
             config.rows_per_threadgroup,
             invocation.threads_per_threadgroup()
         );
-        let _ = group.bench_function(BenchmarkId::new("cpu_optimized_scan", &suffix), |b| {
-            b.iter(|| black_box(cpu_scan(&rows, &weights, config.suffix_len)));
-        });
-
-        let mut output = vec![Fp128::ZERO; ADDRESS_RAF_LANES * ADDRESS_RAF_BINS];
-        let _ = group.bench_function(BenchmarkId::new("metal_resident_wall", &suffix), |b| {
-            b.iter(|| {
-                invocation
-                    .execute()
-                    .expect("address RAF scan should execute");
-                invocation
-                    .read_output_into(&mut output)
-                    .expect("address RAF output should be canonical");
-                let _ = black_box(&output);
-            });
-        });
-        let _ = group.bench_function(BenchmarkId::new("metal_resident_active", &suffix), |b| {
-            b.iter_custom(|iterations| {
-                let mut elapsed = Duration::ZERO;
-                for _ in 0..iterations {
-                    elapsed += invocation
-                        .execute_timed()
-                        .expect("timed address RAF scan should execute");
-                }
-                elapsed
-            });
-        });
+        if metal_first {
+            benchmark_metal(&mut group, &suffix, &invocation);
+            benchmark_cpu(
+                &mut group,
+                &suffix,
+                &rows,
+                &weights,
+                &previous_phase_table,
+                config,
+                condense,
+            );
+        } else {
+            benchmark_cpu(
+                &mut group,
+                &suffix,
+                &rows,
+                &weights,
+                &previous_phase_table,
+                config,
+                condense,
+            );
+            benchmark_metal(&mut group, &suffix, &invocation);
+        }
     }
     group.finish();
 }
 
-fn cpu_scan(rows: &[AddressRafScanRow], weights: &[Fp128], suffix_len: u32) -> Vec<Fp128> {
+fn benchmark_cpu(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    suffix: &str,
+    rows: &[AddressRafScanRow],
+    weights: &[AkitaField],
+    previous_phase_table: &[AkitaField; ADDRESS_RAF_BINS],
+    config: AddressRafScanConfig,
+    condense: bool,
+) {
+    if condense {
+        let mut cpu_weights = weights.to_vec();
+        let _ = group.bench_function(
+            BenchmarkId::new("cpu_optimized_condense_then_scan", suffix),
+            |b| {
+                b.iter(|| {
+                    condense_weights(
+                        rows,
+                        &mut cpu_weights,
+                        previous_phase_table,
+                        config.suffix_len,
+                    );
+                    black_box(cpu_scan(rows, &cpu_weights, config.suffix_len))
+                });
+            },
+        );
+    } else {
+        let _ = group.bench_function(BenchmarkId::new("cpu_optimized_scan", suffix), |b| {
+            b.iter(|| black_box(cpu_scan(rows, weights, config.suffix_len)));
+        });
+    }
+}
+
+fn benchmark_metal(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    suffix: &str,
+    invocation: &AddressRafScanInvocation<'_>,
+) {
+    let mut output = vec![Fp128::ZERO; ADDRESS_RAF_LANES * ADDRESS_RAF_BINS];
+    let _ = group.bench_function(BenchmarkId::new("metal_resident_wall", suffix), |b| {
+        b.iter(|| {
+            invocation
+                .execute()
+                .expect("address RAF scan should execute");
+            invocation
+                .read_output_into(&mut output)
+                .expect("address RAF output should be canonical");
+            let _ = black_box(&output);
+        });
+    });
+    let _ = group.bench_function(BenchmarkId::new("metal_resident_active", suffix), |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                elapsed += invocation
+                    .execute_timed()
+                    .expect("timed address RAF scan should execute");
+            }
+            elapsed
+        });
+    });
+}
+
+fn cpu_scan(rows: &[AddressRafScanRow], weights: &[AkitaField], suffix_len: u32) -> Vec<Fp128> {
     let threads = rayon::current_num_threads();
     let chunk_len = rows.len().div_ceil(threads).max(1024);
     let suffix_mask = if suffix_len == 0 {
@@ -99,7 +197,6 @@ fn cpu_scan(rows: &[AddressRafScanRow], weights: &[Fp128], suffix_len: u32) -> V
                 let lookup_index = row.lookup_index();
                 let chunk = ((lookup_index >> suffix_len) as usize) & (ADDRESS_RAF_BINS - 1);
                 let suffix = lookup_index & suffix_mask;
-                let weight: AkitaField = weight.into_jolt_field();
                 if row.raf_flag() {
                     sums[3 * ADDRESS_RAF_BINS + chunk].add(weight);
                     if suffix != 0 {
@@ -140,7 +237,32 @@ fn cpu_scan(rows: &[AddressRafScanRow], weights: &[Fp128], suffix_len: u32) -> V
         .collect()
 }
 
-fn inputs(elements: usize) -> (Vec<AddressRafScanRow>, Vec<Fp128>) {
+fn condense_weights(
+    rows: &[AddressRafScanRow],
+    weights: &mut [AkitaField],
+    previous_phase_table: &[AkitaField; ADDRESS_RAF_BINS],
+    suffix_len: u32,
+) {
+    weights
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(index, weight)| {
+            let previous_chunk = ((rows[index].lookup_index() >> (suffix_len + 8)) as usize)
+                & (ADDRESS_RAF_BINS - 1);
+            *weight *= previous_phase_table[previous_chunk];
+        });
+}
+
+fn previous_phase_table() -> [AkitaField; ADDRESS_RAF_BINS] {
+    let mut state = 0x1319_8a2e_0370_7344;
+    std::array::from_fn(|_| {
+        let value = u128::from(splitmix(&mut state))
+            | (u128::from(splitmix(&mut state) & 0x7fff_ffff_ffff_ffff) << 64);
+        AkitaField::from_u128(value)
+    })
+}
+
+fn inputs(elements: usize) -> (Vec<AddressRafScanRow>, Vec<AkitaField>) {
     let mut state = 0x243f_6a88_85a3_08d3;
     let mut rows = Vec::with_capacity(elements);
     let mut weights = Vec::with_capacity(elements);
@@ -150,7 +272,7 @@ fn inputs(elements: usize) -> (Vec<AddressRafScanRow>, Vec<Fp128>) {
         rows.push(AddressRafScanRow::new(lookup_index, index % 3 == 0));
         let weight = u128::from(splitmix(&mut state))
             | (u128::from(splitmix(&mut state) & 0x7fff_ffff_ffff_ffff) << 64);
-        weights.push(Fp128::from_u128(weight));
+        weights.push(AkitaField::from_u128(weight));
     }
     (rows, weights)
 }
@@ -168,7 +290,15 @@ fn cases() -> Vec<usize> {
     )
 }
 
-fn config() -> AddressRafScanConfig {
+fn metal_first() -> bool {
+    env::var("JOLT_METAL_ADDRESS_BENCH_ORDER").is_ok_and(|value| match value.as_str() {
+        "cpu-first" => false,
+        "metal-first" => true,
+        _ => panic!("benchmark order should be `cpu-first` or `metal-first`"),
+    })
+}
+
+fn config(condense: bool) -> AddressRafScanConfig {
     let rows_per_threadgroup =
         env::var("JOLT_METAL_ADDRESS_ROWS_PER_THREADGROUP").map_or(1 << 16, |value| {
             value
@@ -180,11 +310,13 @@ fn config() -> AddressRafScanConfig {
             .parse::<usize>()
             .expect("threadgroup width should be an integer")
     });
-    let suffix_len = env::var("JOLT_METAL_ADDRESS_SUFFIX_LEN").map_or(120, |value| {
-        value
-            .parse::<u32>()
-            .expect("suffix length should be an integer")
-    });
+    let default_suffix_len = if condense { 112 } else { 120 };
+    let suffix_len =
+        env::var("JOLT_METAL_ADDRESS_SUFFIX_LEN").map_or(default_suffix_len, |value| {
+            value
+                .parse::<u32>()
+                .expect("suffix length should be an integer")
+        });
     AddressRafScanConfig {
         suffix_len,
         rows_per_threadgroup,

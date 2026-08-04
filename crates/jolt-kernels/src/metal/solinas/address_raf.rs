@@ -113,6 +113,7 @@ struct AddressRafParams {
     suffix_len: u32,
     rows_per_threadgroup: u32,
     threadgroup_count: u32,
+    condense: u32,
 }
 
 #[repr(C)]
@@ -131,6 +132,7 @@ struct AddressRafBuffers {
     keys: Buffer,
     lookups: Buffer,
     weights: Buffer,
+    previous_phase_table: Buffer,
     group_counts: Buffer,
     group_offsets: Buffer,
     bin_offsets: Buffer,
@@ -161,6 +163,26 @@ impl SolinasMetal {
         weights: &[Fp128],
         config: AddressRafScanConfig,
     ) -> Result<AddressRafScanInvocation<'_>, MetalError> {
+        self.prepare_address_raf_scan_inner(rows, weights, None, config)
+    }
+
+    pub fn prepare_condensed_address_raf_scan(
+        &self,
+        rows: &[AddressRafScanRow],
+        weights: &[Fp128],
+        previous_phase_table: &[Fp128; ADDRESS_RAF_BINS],
+        config: AddressRafScanConfig,
+    ) -> Result<AddressRafScanInvocation<'_>, MetalError> {
+        self.prepare_address_raf_scan_inner(rows, weights, Some(previous_phase_table), config)
+    }
+
+    fn prepare_address_raf_scan_inner(
+        &self,
+        rows: &[AddressRafScanRow],
+        weights: &[Fp128],
+        previous_phase_table: Option<&[Fp128; ADDRESS_RAF_BINS]>,
+        config: AddressRafScanConfig,
+    ) -> Result<AddressRafScanInvocation<'_>, MetalError> {
         if rows.is_empty() {
             return Err(MetalError::EmptyInput);
         }
@@ -173,12 +195,20 @@ impl SolinasMetal {
         if config.suffix_len > 120 || !config.suffix_len.is_multiple_of(8) {
             return Err(MetalError::InvalidAddressRafSuffixLength(config.suffix_len));
         }
+        if previous_phase_table.is_some() && config.suffix_len > 112 {
+            return Err(MetalError::InvalidAddressRafCondensationSuffixLength(
+                config.suffix_len,
+            ));
+        }
         if config.rows_per_threadgroup == 0 {
             return Err(MetalError::InvalidAddressRafRowsPerThreadgroup(
                 config.rows_per_threadgroup,
             ));
         }
         self.validate_inputs("address RAF weights", weights)?;
+        if let Some(table) = previous_phase_table {
+            self.validate_inputs("address RAF condensation table", table)?;
+        }
 
         let row_count =
             u32::try_from(rows.len()).map_err(|_| MetalError::InputTooLong(rows.len()))?;
@@ -191,6 +221,7 @@ impl SolinasMetal {
             rows_per_threadgroup,
             threadgroup_count: u32::try_from(threadgroup_count)
                 .map_err(|_| MetalError::InputTooLong(threadgroup_count))?,
+            condense: u32::from(previous_phase_table.is_some()),
         };
 
         let histogram_pipeline = self.compile_named_pipeline(HISTOGRAM_PIPELINE)?;
@@ -242,11 +273,13 @@ impl SolinasMetal {
         let contribution_bytes = byte_length::<AddressRafContribution>(rows.len())?;
         let key_bytes = byte_length::<u16>(rows.len())?;
         let lookup_bytes = byte_length::<AddressRafLookup>(rows.len())?;
+        let condensation_bytes = byte_length::<Fp128>(ADDRESS_RAF_BINS)?;
         let output_bytes = byte_length::<Fp128>(ADDRESS_RAF_OUTPUTS)?;
         for requested in [
             size_of_val_u64(weights)?,
             key_bytes,
             lookup_bytes,
+            condensation_bytes,
             group_bytes,
             bin_offset_bytes,
             contribution_bytes,
@@ -270,6 +303,8 @@ impl SolinasMetal {
                 limbs: [row.lookup_index() as u64, (row.lookup_index() >> 64) as u64],
             })
             .collect();
+        let identity_table = [Fp128::ONE; ADDRESS_RAF_BINS];
+        let previous_phase_table = previous_phase_table.unwrap_or(&identity_table);
 
         Ok(AddressRafScanInvocation {
             context: self,
@@ -283,6 +318,7 @@ impl SolinasMetal {
                 keys: buffer_from_slice(&self.device, &keys),
                 lookups: buffer_from_slice(&self.device, &lookups),
                 weights: buffer_from_slice(&self.device, weights),
+                previous_phase_table: buffer_from_slice(&self.device, previous_phase_table),
                 group_counts: self
                     .device
                     .new_buffer(group_bytes, MTLResourceOptions::StorageModeShared),
@@ -388,9 +424,10 @@ impl AddressRafScanInvocation<'_> {
             scatter.set_buffer(0, Some(&self.buffers.keys), 0);
             scatter.set_buffer(1, Some(&self.buffers.lookups), 0);
             scatter.set_buffer(2, Some(&self.buffers.weights), 0);
-            scatter.set_buffer(3, Some(&self.buffers.group_offsets), 0);
-            scatter.set_buffer(4, Some(&self.buffers.bucketed_contributions), 0);
-            scatter.set_buffer(5, Some(&self.buffers.params), 0);
+            scatter.set_buffer(3, Some(&self.buffers.previous_phase_table), 0);
+            scatter.set_buffer(4, Some(&self.buffers.group_offsets), 0);
+            scatter.set_buffer(5, Some(&self.buffers.bucketed_contributions), 0);
+            scatter.set_buffer(6, Some(&self.buffers.params), 0);
             scatter.set_threadgroup_memory_length(0, (ADDRESS_RAF_KEYS * size_of::<u32>()) as u64);
             scatter.dispatch_thread_groups(
                 MTLSize {
@@ -494,7 +531,7 @@ fn size_of_val_u64<T>(values: &[T]) -> Result<u64, MetalError> {
 const _: () = assert!(size_of::<AddressRafScanRow>() == 40);
 const _: () = assert!(size_of::<AddressRafLookup>() == 16);
 const _: () = assert!(size_of::<AddressRafContribution>() == 32);
-const _: () = assert!(size_of::<AddressRafParams>() == 16);
+const _: () = assert!(size_of::<AddressRafParams>() == 20);
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
@@ -550,6 +587,62 @@ mod tests {
             assert_eq!(
                 difference, None,
                 "suffix_len={suffix_len}, first difference={difference:?}, values={values:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn condensation_matches_jolt_field_before_the_raf_scan() {
+        let mut state = 0xc0de_5eed_89ab_cdef;
+        let rows: Vec<_> = (0..4099)
+            .map(|index| {
+                let lookup_index =
+                    (u128::from(splitmix(&mut state)) << 64) | u128::from(splitmix(&mut state));
+                AddressRafScanRow::new(lookup_index, index % 3 == 0)
+            })
+            .collect();
+        let weights: Vec<_> = (0..rows.len())
+            .map(|_| {
+                let value = u128::from(splitmix(&mut state))
+                    | (u128::from(splitmix(&mut state) & 0x7fff_ffff_ffff_ffff) << 64);
+                Fp128::from_u128(value)
+            })
+            .collect();
+        let previous_phase_table: [Fp128; ADDRESS_RAF_BINS] = std::array::from_fn(|_| {
+            let value = u128::from(splitmix(&mut state))
+                | (u128::from(splitmix(&mut state) & 0x7fff_ffff_ffff_ffff) << 64);
+            Fp128::from_u128(value)
+        });
+
+        let context = SolinasMetal::for_akita().unwrap();
+        for suffix_len in [0, 56, 112] {
+            let condensed_weights: Vec<_> = rows
+                .iter()
+                .zip(&weights)
+                .map(|(row, weight)| {
+                    let previous_chunk = ((row.lookup_index() >> (suffix_len + 8)) & 0xff) as usize;
+                    let weight: AkitaField = weight.into_jolt_field();
+                    let challenge: AkitaField =
+                        previous_phase_table[previous_chunk].into_jolt_field();
+                    Fp128::from_jolt_field(&(weight * challenge))
+                })
+                .collect();
+            let invocation = context
+                .prepare_condensed_address_raf_scan(
+                    &rows,
+                    &weights,
+                    &previous_phase_table,
+                    AddressRafScanConfig {
+                        suffix_len,
+                        rows_per_threadgroup: 64,
+                        threads_per_threadgroup: Some(128),
+                    },
+                )
+                .unwrap();
+            invocation.execute().unwrap();
+            assert_eq!(
+                invocation.read_output().unwrap().as_flat_slice(),
+                oracle(&rows, &condensed_weights, suffix_len)
             );
         }
     }

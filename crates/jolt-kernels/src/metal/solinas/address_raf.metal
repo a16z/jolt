@@ -8,6 +8,7 @@ struct AddressRafParams {
     uint suffix_len;
     uint rows_per_threadgroup;
     uint threadgroup_count;
+    uint condense;
 };
 
 struct AddressRafLookup {
@@ -42,6 +43,12 @@ inline SolinasFp128 address_simd_sum(SolinasFp128 value) {
         value = solinas_add(value, other);
     }
     return value;
+}
+
+inline uint address_lookup_byte(AddressRafLookup lookup, uint shift) {
+    return shift < 64
+        ? (uint)(lookup.limbs[0] >> shift) & 0xffu
+        : (uint)(lookup.limbs[1] >> (shift - 64)) & 0xffu;
 }
 
 kernel void solinas_address_raf_histogram(
@@ -108,10 +115,11 @@ kernel void solinas_address_raf_offsets(
 kernel void solinas_address_raf_scatter(
     device const ushort* keys [[buffer(0)]],
     device const AddressRafLookup* lookups [[buffer(1)]],
-    device const SolinasFp128* weights [[buffer(2)]],
-    device const uint* group_offsets [[buffer(3)]],
-    device AddressRafContribution* contributions [[buffer(4)]],
-    constant AddressRafParams& params [[buffer(5)]],
+    device SolinasFp128* weights [[buffer(2)]],
+    device const SolinasFp128* previous_phase_table [[buffer(3)]],
+    device const uint* group_offsets [[buffer(4)]],
+    device AddressRafContribution* contributions [[buffer(5)]],
+    constant AddressRafParams& params [[buffer(6)]],
     threadgroup atomic_uint* positions [[threadgroup(0)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
@@ -128,8 +136,9 @@ kernel void solinas_address_raf_scatter(
         uint key = keys[row];
         uint local = atomic_fetch_add_explicit(&positions[key], 1u, memory_order_relaxed);
         uint destination = group_offsets[group * ADDRESS_RAF_KEYS + key] + local;
-        ulong lookup_lo = lookups[row].limbs[0];
-        ulong lookup_hi = lookups[row].limbs[1];
+        AddressRafLookup lookup = lookups[row];
+        ulong lookup_lo = lookup.limbs[0];
+        ulong lookup_hi = lookup.limbs[1];
         ulong suffix_lo = 0;
         ulong suffix_hi = 0;
         if (params.suffix_len == 64) {
@@ -143,7 +152,13 @@ kernel void solinas_address_raf_scatter(
         }
 
         AddressRafContribution contribution;
-        contribution.weight = weights[row];
+        SolinasFp128 weight = weights[row];
+        if (params.condense != 0) {
+            uint previous_chunk = address_lookup_byte(lookup, params.suffix_len + 8);
+            weight = solinas_mul_wide(weight, previous_phase_table[previous_chunk]);
+            weights[row] = weight;
+        }
+        contribution.weight = weight;
         if (key < ADDRESS_RAF_BINS) {
             contribution.scalars[0] = address_compact_even_bits(suffix_lo >> 1)
                 | (address_compact_even_bits(suffix_hi >> 1) << 32);

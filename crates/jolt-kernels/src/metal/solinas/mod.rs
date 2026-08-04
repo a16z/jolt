@@ -198,6 +198,8 @@ pub enum MetalError {
     AddressRafLengthMismatch { rows: usize, weights: usize },
     #[error("address RAF suffix length must be a multiple of eight in 0..=120, got {0}")]
     InvalidAddressRafSuffixLength(u32),
+    #[error("address RAF condensation requires a suffix length in 0..=112, got {0}")]
+    InvalidAddressRafCondensationSuffixLength(u32),
     #[error("address RAF rows per threadgroup must be nonzero, got {0}")]
     InvalidAddressRafRowsPerThreadgroup(usize),
     #[error(

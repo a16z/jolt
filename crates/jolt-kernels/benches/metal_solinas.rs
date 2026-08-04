@@ -84,6 +84,9 @@ mod macos {
                 "product5-threadgroups" => product5::bench_threadgroups(c, &context),
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
                 "instruction-read-raf-address" => address_raf::bench(c, &context),
+                "instruction-read-raf-address-condensed" => {
+                    address_raf::bench_condensed(c, &context);
+                }
                 "product5" => {
                     product5::bench_message(c, &context);
                     product5::bench_transition(c, &context);

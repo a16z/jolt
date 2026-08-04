@@ -353,16 +353,32 @@ The successor radix layout uses a 9-bit `(chunk, RAF flag)` key and scatters a c
 32-byte contribution: the field weight and two packed scalar operands. Scatter reads
 each source row and weight once in cycle order. Reduction reads contributions
 contiguously, performs the exact scalar field products, and writes three disjoint
-lanes per key. Its optimistic phase traffic is about 98 bytes per row, all sequential
+lanes per key. Its optimistic phase traffic is about 100 bytes per row, all sequential
 except the contribution scatter.
 
-This layout restored locality at the target scale. At `2^26`, 64K-row groups with
-128 threads measured 23.65 ms wall versus 47.88 ms for the CPU scan. Increasing the
-threadgroup width reduced Metal wall time to 18.27 ms at 256 threads, 17.46 ms at
-512, and 17.01 ms at the device maximum of 1024. Halving the row group to 32K was
-flat at 16.98 ms; increasing it to 128K regressed to 21.72 ms with high variance.
-The retained candidate therefore uses 64K-row, 1024-thread groups pending an
-order-inverted validation of the complete phase with condensation and suffix work.
+This layout restored locality at the target scale. The exploratory width sweep at
+`2^26` reduced Metal wall time from 23.65 ms at 128 threads to 18.27 ms at 256,
+17.46 ms at 512, and 17.01 ms at the device maximum of 1024. Halving the 64K-row
+group to 32K was flat at 16.98 ms; increasing it to 128K regressed to 21.72 ms with
+high variance. The retained geometry is therefore 64K rows and 1024 threads.
+
+The benchmark was then corrected to keep the CPU weights natively in `AkitaField`
+instead of converting from the Metal ABI in every row. At `2^26`, the corrected
+uncondensed scan measured 49.74 ms CPU versus 16.42 ms Metal, or 3.03x. Fusing the
+previous phase's field-weight condensation into scatter raised Metal to only
+18.19 ms, while the production-shaped CPU condensation followed by scan measured
+62.36 ms, a conservative 3.43x speedup. Inverting benchmark order left Metal at
+18.19 ms and moved CPU to 70.30 ms, so the conservative comparison uses the faster
+CPU-first result.
+
+At `2^28`, the uncondensed scan measured 193.85 ms CPU versus 66.43 ms Metal (2.92x),
+and the fused scan measured 256.45 ms versus 73.50 ms (3.49x). Metal took 4.04x as
+long for 4x as many fused rows. Its approximately 116 bytes of logical per-row
+traffic correspond to 424 GB/s at that point, so the contribution layout is at its
+bandwidth ceiling. The 32-byte contribution write and read account for 64 bytes per
+row; replacing that materialization with compact tile partials is the next candidate
+because it has enough analytical headroom to clear 4x rather than merely approach
+it. Table suffix accumulation remains outside both sides of these microbenchmarks.
 
 ### Booleanity cycle worksheet
 
