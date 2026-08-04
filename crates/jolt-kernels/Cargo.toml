@@ -16,6 +16,7 @@ default = ["parallel"]
 akita = ["jolt-claims/akita", "jolt-verifier/akita"]
 # Shallow heap visitation of the proof session (profile harness flamegraphs).
 allocative = ["dep:allocative"]
+metal = ["dep:metal"]
 parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
@@ -38,12 +39,22 @@ rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = { workspace = true, optional = true }
+
 [dev-dependencies]
 common = { workspace = true, features = ["std"] }
+criterion.workspace = true
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true
 jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
+num-bigint.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true
+
+[[bench]]
+name = "metal_solinas"
+harness = false
+required-features = ["metal", "parallel"]

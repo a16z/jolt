@@ -39,6 +39,8 @@ mod commitment;
 pub mod committed_program;
 mod error;
 mod kernel;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub mod metal;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;
