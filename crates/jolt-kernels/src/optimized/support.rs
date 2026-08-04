@@ -270,6 +270,12 @@ pub(crate) trait GruenRoundMessage<F: Field> {
         previous_claim: F,
         round: usize,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+
+    /// `(q(0), q(∞))` of the two-table product summand
+    /// `Σ_y E(y) · a(y) · b(y)` over the remaining low-to-high `(lo, hi)`
+    /// pairs — the endpoints `gruen_poly_deg_3` completes into the cubic
+    /// round message with the running claim.
+    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F);
 }
 
 impl<F: Field> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
@@ -298,6 +304,53 @@ impl<F: Field> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
             });
         }
         Ok(UnivariatePoly::from_evals(&evals))
+    }
+
+    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {
+        let a = a.evals();
+        let b = b.evals();
+        let [zero, infinity] = self.par_fold_out_in(
+            || [F::zero(); 2],
+            |accumulator, row, _x_in, e| {
+                let (a_low, a_high) = (a[2 * row], a[2 * row + 1]);
+                let (b_low, b_high) = (b[2 * row], b[2 * row + 1]);
+                accumulator[0] += e * (a_low * b_low);
+                accumulator[1] += e * ((a_high - a_low) * (b_high - b_low));
+            },
+            |_x_out, e_out, accumulator| [e_out * accumulator[0], e_out * accumulator[1]],
+            |left, right| [left[0] + right[0], left[1] + right[1]],
+        );
+        (zero, infinity)
+    }
+}
+
+/// Sum `task(0), …, task(tasks − 1)` elementwise (each yields a `len`-sized
+/// vector), failing fast on the first error.
+pub(crate) fn try_par_sum_vecs<F: Field, E: Send>(
+    tasks: usize,
+    len: usize,
+    task: impl Fn(usize) -> Result<Vec<F>, E> + Send + Sync,
+) -> Result<Vec<F>, E> {
+    let merge = |mut left: Vec<F>, right: Vec<F>| {
+        for (left, right) in left.iter_mut().zip(right) {
+            *left += right;
+        }
+        left
+    };
+    #[cfg(feature = "parallel")]
+    {
+        (0..tasks).into_par_iter().map(task).try_reduce(
+            || vec![F::zero(); len],
+            |left, right| Ok(merge(left, right)),
+        )
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut folded = vec![F::zero(); len];
+        for index in 0..tasks {
+            folded = merge(folded, task(index)?);
+        }
+        Ok(folded)
     }
 }
 

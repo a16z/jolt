@@ -47,7 +47,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{pin_derived_term_if_derived, BundleAccess, BundleStore};
+use super::support::{
+    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
+};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -165,7 +167,7 @@ fn extended_t1_values<F: Field>(
     let in_len = e_in.len();
     let coefficients = extension_coefficients();
 
-    let block = |x_out: usize| -> Result<Vec<F>, WitnessError> {
+    try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, |x_out| {
         let mut accumulators: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator> =
             vec![Default::default(); EXTENDED_SIZE];
         for (x_in, &e) in e_in.iter().enumerate() {
@@ -179,29 +181,7 @@ fn extended_t1_values<F: Field>(
             .into_iter()
             .map(|accumulator| e_out[x_out] * accumulator.reduce())
             .collect())
-    };
-    let merge = |mut left: Vec<F>, right: Vec<F>| {
-        for (left, right) in left.iter_mut().zip(right) {
-            *left += right;
-        }
-        left
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        (0..e_out.len()).into_par_iter().map(block).try_reduce(
-            || vec![F::zero(); EXTENDED_SIZE],
-            |left, right| Ok(merge(left, right)),
-        )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut folded = vec![F::zero(); EXTENDED_SIZE];
-        for x_out in 0..e_out.len() {
-            folded = merge(folded, block(x_out)?);
-        }
-        Ok(folded)
-    }
+    })
 }
 
 /// The stage-2 product uni-skip front. `prepare` runs on `τ_low` only;
@@ -459,45 +439,6 @@ impl<F: Field> ProductRemainderKernel<F> {
         })
     }
 
-    fn endpoints(&self) -> (F, F) {
-        let left = self.left.evals();
-        let right = self.right.evals();
-        let e_out = self.split_eq.e_out_current();
-        let e_in = self.split_eq.e_in_current();
-        let in_len = e_in.len();
-        debug_assert_eq!(e_out.len() * in_len * 2, left.len());
-
-        let block = |x_out: usize| -> (F, F) {
-            let mut inner_zero = F::zero();
-            let mut inner_infinity = F::zero();
-            for (x_in, &e) in e_in.iter().enumerate() {
-                let pair = 2 * (x_out * in_len + x_in);
-                let left_low = left[pair];
-                let left_high = left[pair + 1];
-                let right_low = right[pair];
-                let right_high = right[pair + 1];
-                inner_zero += e * (left_low * right_low);
-                inner_infinity += e * ((left_high - left_low) * (right_high - right_low));
-            }
-            (e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity)
-        };
-        let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
-
-        #[cfg(feature = "parallel")]
-        {
-            (0..e_out.len())
-                .into_par_iter()
-                .map(block)
-                .reduce(|| (F::zero(), F::zero()), add)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            (0..e_out.len())
-                .map(block)
-                .fold((F::zero(), F::zero()), add)
-        }
-    }
-
     fn bind(&mut self, challenge: F) {
         self.left
             .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
@@ -550,28 +491,7 @@ impl<F: Field> ProductRemainderKernel<F> {
                 virtual_instruction.reduce(),
             ])
         };
-        let merge = |mut left: Vec<F>, right: Vec<F>| {
-            for (left, right) in left.iter_mut().zip(right) {
-                *left += right;
-            }
-            left
-        };
-
-        #[cfg(feature = "parallel")]
-        {
-            (0..blocks)
-                .into_par_iter()
-                .map(block)
-                .try_reduce(|| vec![F::zero(); 8], |left, right| Ok(merge(left, right)))
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            let mut folded = vec![F::zero(); 8];
-            for index in 0..blocks {
-                folded = merge(folded, block(index)?);
-            }
-            Ok(folded)
-        }
+        try_par_sum_vecs(blocks, 8, block)
     }
 }
 
@@ -589,9 +509,11 @@ impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
+        // Round 0's endpoints were fused into the materialization pass; later
+        // rounds sample them over the remaining (lo, hi) pairs.
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
-            None => self.endpoints(),
+            None => self.split_eq.product_endpoints(&self.left, &self.right),
         };
         Ok(self
             .split_eq
