@@ -241,7 +241,8 @@ python3 scripts/metal_autoresearch.py goal-decision \
 ```
 
 Below 4x it always returns `continue: true`. At or above 4x, it still returns true
-when the conservative aggregate projection clears the 5% continuation threshold.
+when the conservative aggregate projection clears the 5% continuation threshold or
+any active kernel has a conservative local estimate strictly above 4x.
 Each kernel phase retains its own immutable evaluator, snapshots, and JSONL lineage;
 changing the kernel, algorithm, or evaluator starts a new phase rather than mutating
 the previous run.
@@ -503,6 +504,33 @@ reversed the trend. The gain did not transfer to the real `2^26` distribution: t
 16 phase calls were effectively flat at 279.5 ms and the complete slot regressed to
 832.6 ms. That design is rejected. A successful successor must remove the second
 logical row scan, not merely schedule it closer to the first scan.
+
+The next candidate did remove the second scan. Partitioning each table by RAF flag
+reduced the RAF accumulator to 15 KiB; deriving the `One` suffix from its lane zero
+left another 15 KiB for the three nontrivial suffix lanes. Both relations therefore
+fit in the M4 Max's 32 KiB threadgroup store and consume every selected row once.
+The table-major implementation paid for an inverse permutation and compact-row
+scatter on the host. In a fresh `2^26` pair it measured 895.5 ms for the complete
+slot versus 3.725 s optimized CPU, or 4.16x. Its 253.4-ms address sequence beat the
+retained two-scan sequence, but preparation rose to 441.5 ms, including 136.1 ms of
+layout and 146.9 ms of scatter. It lost to the retained 821.0-ms slot.
+
+A cycle-order variant replaced the inverse permutation with a grouped 4-byte index
+stream. Compact rows stayed in cycle order, making preparation sequential and the
+cycle handoff direct, while the single-scan shader gathered rows through the index
+stream. After removing redundant internal permutation and tag validation, its
+`2^24` exact evaluator measured 101.4 ms preparation and 22.0 ms phase wall time;
+the table-major form measured 148.5 ms and 16.6 ms. At `2^26`, the complete slot was
+871.6 ms: 334.1 ms preparation and 537.5 ms proving, with the 16 address calls taking
+339.4 ms. The indexed form recovered 23.8 ms relative to table-major single-scan but
+remained 50.6 ms behind the retained two-scan checkpoint. It is also rejected.
+
+These results separate logical traffic from effective traffic. Single-scan moves
+about 49 bytes per selected row in table-major order or 53 bytes with an index,
+versus about 81 bytes for two scans, but the host permutation or random device
+gathers consume the theoretical saving. A successor needs either an already-resident
+row layout shared by later kernels or a producer that emits grouped rows directly;
+paying to transform stage-5 rows for this slot alone does not clear the evaluator.
 
 ### Booleanity cycle worksheet
 

@@ -1,4 +1,8 @@
-use std::{env, hint::black_box, time::Duration};
+use std::{
+    env,
+    hint::black_box,
+    time::{Duration, Instant},
+};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_field::{
@@ -162,9 +166,10 @@ pub fn bench_full(c: &mut Criterion, context: &SolinasMetal) {
 
 pub fn bench_resident_phase(c: &mut Criterion, context: &SolinasMetal) {
     let scan_config = config();
+    let default_sequence = AddressPhaseSequenceConfig::default();
     let sequence_config = AddressPhaseSequenceConfig {
         rows_per_threadgroup: env::var("JOLT_METAL_ADDRESS_ROWS_PER_THREADGROUP").map_or(
-            1 << 16,
+            default_sequence.rows_per_threadgroup,
             |value| {
                 value
                     .parse::<usize>()
@@ -184,9 +189,11 @@ pub fn bench_resident_phase(c: &mut Criterion, context: &SolinasMetal) {
         let metal_weights: Vec<_> = weights.iter().map(Fp128::from_jolt_field).collect();
         let previous = previous_phase_table();
         let metal_previous = previous.map(|value| Fp128::from_jolt_field(&value));
+        let prepare_started = Instant::now();
         let mut sequence = context
             .prepare_address_phase_sequence(&rows, &metal_weights, sequence_config)
             .expect("resident address sequence should prepare");
+        let prepare_wall = prepare_started.elapsed();
         drop(metal_weights);
         let actual = sequence
             .phase(scan_config.suffix_len, Some(&metal_previous))
@@ -207,7 +214,8 @@ pub fn bench_resident_phase(c: &mut Criterion, context: &SolinasMetal) {
             cpu_suffix_full(&rows, &expected_weights, &buckets, scan_config.suffix_len)
         );
         eprintln!(
-            "resident address phase: elements={elements}, phases={}, buffers={}",
+            "resident address phase: elements={elements}, prepare_ms={:.3}, phases={}, buffers={}",
+            prepare_wall.as_secs_f64() * 1e3,
             sequence.phases_executed(),
             sequence.resident_buffer_count(),
         );
@@ -251,6 +259,62 @@ pub fn bench_resident_phase(c: &mut Criterion, context: &SolinasMetal) {
         });
     }
     group.finish();
+}
+
+pub fn eval_resident_phase(context: &SolinasMetal) {
+    let scan_config = config();
+    let default_sequence = AddressPhaseSequenceConfig::default();
+    let sequence_config = AddressPhaseSequenceConfig {
+        rows_per_threadgroup: env::var("JOLT_METAL_ADDRESS_ROWS_PER_THREADGROUP").map_or(
+            default_sequence.rows_per_threadgroup,
+            |value| {
+                value
+                    .parse::<usize>()
+                    .expect("rows per threadgroup should be an integer")
+            },
+        ),
+        threads_per_threadgroup: scan_config.threads_per_threadgroup,
+    };
+    for elements in cases() {
+        let (rows, weights, buckets) = inputs(elements);
+        let metal_weights: Vec<_> = weights.iter().map(Fp128::from_jolt_field).collect();
+        let previous = previous_phase_table();
+        let metal_previous = previous.map(|value| Fp128::from_jolt_field(&value));
+
+        let prepare_started = Instant::now();
+        let mut sequence = context
+            .prepare_address_phase_sequence(&rows, &metal_weights, sequence_config)
+            .expect("resident address sequence should prepare");
+        let prepare_wall = prepare_started.elapsed();
+        let phase_started = Instant::now();
+        let actual = sequence
+            .phase(scan_config.suffix_len, Some(&metal_previous))
+            .expect("resident address phase should execute");
+        let phase_wall = phase_started.elapsed();
+
+        let mut expected_weights = weights.clone();
+        condense_weights(
+            &rows,
+            &mut expected_weights,
+            &previous,
+            scan_config.suffix_len,
+        );
+        assert_eq!(
+            actual.raf().as_flat_slice(),
+            cpu_scan(&rows, &expected_weights, scan_config.suffix_len)
+        );
+        assert_eq!(
+            actual.suffix().as_flat_slice(),
+            cpu_suffix_full(&rows, &expected_weights, &buckets, scan_config.suffix_len)
+        );
+        eprintln!(
+            "resident address eval: elements={elements}, rows_per_threadgroup={}, prepare_ms={:.3}, phase_wall_ms={:.3}, phase_active_ms={:.3}",
+            sequence_config.rows_per_threadgroup,
+            prepare_wall.as_secs_f64() * 1e3,
+            phase_wall.as_secs_f64() * 1e3,
+            actual.gpu_active_time().as_secs_f64() * 1e3,
+        );
+    }
 }
 
 fn cpu_suffix_one(

@@ -139,13 +139,21 @@ impl MetalInstructionReadRafKernel {
             metal_address_phases: 0,
         };
         if use_metal_address {
-            let mut sequence = kernel
-                .cpu
-                .metal_prepare_address_sequence(&kernel.context, config.address_dispatch)?;
+            let mut sequence = {
+                let _span =
+                    tracing::info_span!("MetalInstructionReadRaf::sequence_prepare").entered();
+                kernel
+                    .cpu
+                    .metal_prepare_address_sequence(&kernel.context, config.address_dispatch)?
+            };
             let (suffix_len, previous) = kernel.cpu.metal_address_phase_request()?;
-            let sums = sequence
-                .phase(suffix_len, previous.as_ref())
-                .map_err(|error| backend_error(error.to_string()))?;
+            let sums = {
+                let _span =
+                    tracing::info_span!("MetalInstructionReadRaf::initial_address_phase").entered();
+                sequence
+                    .phase(suffix_len, previous.as_ref())
+                    .map_err(|error| backend_error(error.to_string()))?
+            };
             kernel.cpu.metal_install_address_phase(sums)?;
             kernel.metal_address_phases = 1;
             kernel.address_sequence = Some(sequence);
