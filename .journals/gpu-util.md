@@ -510,3 +510,14 @@ SpartanShift γ-split (≤0.3 s, plumbing-deep), st1 claimed_inputs device port
 >1 s GPU-idle host mass; residual low-util is bandwidth-bound device work
 (InstrInput r1 17 GiB write, st6b member streams) and small stages. The
 mandate's surface is EXHAUSTED pending flagship certification numbers.
+
+## Standing velocity rules (USER DIRECTIVES, 2026-08-04 16:48 EDT)
+
+1. **Full gate battery ONCE per wave**, at wave close on the integrated trunk
+   — lanes run targeted tests + their parity oracle only (retro note: this
+   codifies what W3C's close already practiced).
+2. **Max 2 timed benches per decision.** A pair is the default; a third run
+   only when the pair disagrees beyond noise. Flagship cert = 2 canonical
+   runs + conditional third.
+3. **Small scales (2^22-24) for iteration; big scales for gates/certification
+   only.**
