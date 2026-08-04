@@ -536,104 +536,217 @@ impl StreamConsumer for CollectRecord {
     }
 }
 
+/// The complete product set of the shared record walk, in final parked
+/// forms: the record (whose `ram` field carries the [`RamAccessColumns`]),
+/// the packed stage-5/6 instruction rows, and the bytecode PC scan.
+pub(crate) struct RecordArtifacts {
+    record: Arc<TraceRecord>,
+    instruction_rows: SharedInstructionRows,
+    pc_rows: MmapVec<PcRow>,
+}
+
+/// A background record walk in flight: [`spawn_shared_record_collect`] parks
+/// this; [`TraceRecord::shared`] receives the artifacts (or rebuilds inline
+/// on any mismatch/failure — identical values either way, the walk is
+/// deterministic and challenge-independent).
+struct PrebuiltTraceRecord {
+    log_t: usize,
+    receiver: std::sync::mpsc::Receiver<RecordArtifacts>,
+}
+
+/// The background pool width for [`spawn_shared_record_collect`]: sized so
+/// the walk finishes inside stage 0's commit window (measured ~7 s vs the
+/// ~11 s window @2^27) while leaving stage 0's host feed (~8 busy cores of
+/// 18) unconstrained.
+const RECORD_BACKGROUND_THREADS: usize = 8;
+
+/// Spawn the shared trace-record walk on a capped background pool
+/// overlapping stage 0's device-heavy commit window. The walk consumes no
+/// transcript output (witness plane + `log_t` only), so it may start at
+/// `prove()` entry; stage 1's first record consumer joins it inside
+/// [`TraceRecord::shared`]. Holds the process-wide
+/// [`super::BACKGROUND_BUILD_TOKEN`] for the duration, serializing with the
+/// stage-6a background builds (which run post-stage-4 — no overlap).
+///
+/// Bench knobs: `JOLT_RECORD_HOIST=off` disables the spawn (same-binary
+/// ablation arm); `JOLT_RECORD_BACKGROUND_THREADS=N` overrides the pool
+/// width.
+pub fn spawn_shared_record_collect<'scope, 'env, F: Field>(
+    session: &mut ProofSession,
+    witness: &'env dyn JoltWitnessPlane<F>,
+    log_t: usize,
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+) {
+    if std::env::var("JOLT_RECORD_HOIST").as_deref() == Ok("off") {
+        return;
+    }
+    let threads = std::env::var("JOLT_RECORD_BACKGROUND_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&threads| threads > 0)
+        .unwrap_or(RECORD_BACKGROUND_THREADS);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // The handle is intentionally unparked: the receiver is the join point,
+    // and the scope's exit joins the worker on every path.
+    let _ = scope.spawn(move || {
+        let _token = super::BACKGROUND_BUILD_TOKEN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let build = || collect_artifacts::<F>(witness, log_t);
+        #[cfg(feature = "parallel")]
+        let artifacts = match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
+            Ok(pool) => pool.install(build),
+            Err(_) => build(),
+        };
+        #[cfg(not(feature = "parallel"))]
+        let artifacts = build();
+        match artifacts {
+            Ok(artifacts) => {
+                // A dropped receiver (error path before stage 1) is fine.
+                let _ = sender.send(artifacts);
+            }
+            Err(error) => {
+                // The inline fallback rebuild reproduces the real error on
+                // the main path.
+                tracing::warn!(%error, "background trace-record walk failed; stage 1 rebuilds inline");
+            }
+        }
+    });
+    session.park(PrebuiltTraceRecord { log_t, receiver });
+}
+
+/// One deterministic walk over the padded cycle domain producing every
+/// record artifact. Pure function of the witness plane and `log_t` — no
+/// transcript inputs — so background and inline builds are bit-identical.
+#[tracing::instrument(skip_all, name = "TraceRecord::collect", fields(cycles = 1usize << log_t))]
+fn collect_artifacts<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+) -> Result<RecordArtifacts, KernelError<F>> {
+    let cycles = 1usize << log_t;
+    let collect_streaming = || {
+        let mut consumers = (CollectRecord {
+            record: LaneBuffers::with_capacity(cycles),
+        },);
+        stream_witnesses(witness, 0..cycles, RECORD_CHUNK, &mut consumers)?;
+        Ok::<_, jolt_witness::WitnessError>(consumers.0.record)
+    };
+    #[cfg(feature = "parallel")]
+    // The record is the shared SoA substrate for stages 1-6. Fill
+    // its final lanes directly; staging chunk-local AoS rows made
+    // the serial lane scatter the collection wall.
+    let lanes = match witness
+        .random_access()
+        .filter(|access| cycles <= access.cycles)
+    {
+        Some(access) => LaneBuffers::collect_parallel(&access, cycles)?,
+        None => collect_streaming()?,
+    };
+    #[cfg(not(feature = "parallel"))]
+    let lanes = collect_streaming()?;
+    let ram_bytes = lanes.addresses.len() * 24;
+    let ram = Arc::new(RamAccessColumns {
+        addresses: lanes.addresses,
+        pre_values: lanes.pre_values,
+        post_values: lanes.post_values,
+        _lifetime: LifetimeTag::new("RamAccessColumns", ram_bytes),
+    });
+    let instruction_rows =
+        SharedInstructionRows(Arc::new(InstructionRows::new(lanes.instruction_rows)));
+    // The bytecode PC scan, packed from the pc/noop lanes (fallible
+    // u32-range guards, so it runs after the walk).
+    let pack_pc =
+        |(&pc, &flags): (&u64, &u32)| PcRow::from_lanes::<F>(pc, flags & IS_NOOP_MASK != 0);
+    let mut pc_rows: MmapVec<PcRow> = MmapVec::zeroed(cycles);
+    #[cfg(feature = "parallel")]
+    pc_rows
+        .par_iter_mut()
+        .zip(lanes.pc.par_iter().zip(&lanes.flags[..]))
+        .try_for_each(|(row, source)| {
+            *row = pack_pc(source)?;
+            Ok::<(), KernelError<F>>(())
+        })?;
+    #[cfg(not(feature = "parallel"))]
+    pc_rows
+        .iter_mut()
+        .zip(lanes.pc.iter().zip(&lanes.flags[..]))
+        .try_for_each(|(row, source)| {
+            *row = pack_pc(source)?;
+            Ok::<(), KernelError<F>>(())
+        })?;
+    let record = Arc::new(TraceRecord {
+        pc: lanes.pc,
+        unexpanded_pc: lanes.unexpanded_pc,
+        imm: lanes.imm,
+        registers: Arc::new(RegisterLanes {
+            rs1_value: lanes.rs1_value,
+            rs2_value: lanes.rs2_value,
+            rd_pre_value: lanes.rd_pre_value,
+            rd_post_value: lanes.rd_post_value,
+            rs1_index: lanes.rs1_index,
+            rs2_index: lanes.rs2_index,
+            rd_index: lanes.rd_index,
+            _lifetime: LifetimeTag::new("RegisterLanes", cycles * 35),
+        }),
+        ram_address: lanes.ram_address,
+        left_lookup_operand: lanes.left_lookup_operand,
+        right_lookup_operand: lanes.right_lookup_operand,
+        left_instruction_input: lanes.left_instruction_input,
+        right_instruction_input: lanes.right_instruction_input,
+        product_magnitude_lo: lanes.product_magnitude_lo,
+        product_magnitude_hi: lanes.product_magnitude_hi,
+        lookup_output: lanes.lookup_output,
+        flags: lanes.flags,
+        ram,
+        _lifetime: LifetimeTag::new("TraceRecord", cycles * 116),
+    });
+    Ok(RecordArtifacts {
+        record,
+        instruction_rows,
+        pc_rows,
+    })
+}
+
 impl TraceRecord {
-    /// The session-shared record: collected on first request (stage 1's
-    /// Spartan outer kernel today), cloned out as an [`Arc`] afterwards.
-    /// Also parks the [`RamAccessColumns`] the walk co-produces, so the RAM
-    /// kernels' `shared` finds them without a second pass.
+    /// The session-shared record: received from the background walk (or
+    /// collected inline) on first request — stage 1's Spartan outer kernel
+    /// today — and cloned out as an [`Arc`] afterwards. Also parks the
+    /// [`RamAccessColumns`] the walk co-produces, so the RAM kernels'
+    /// `shared` finds them without a second pass.
     #[expect(
         clippy::expect_used,
         reason = "the entry is parked by this function right above the read"
     )]
-    #[tracing::instrument(skip_all, name = "TraceRecord::collect", fields(cycles = 1usize << log_t))]
     pub(crate) fn shared<F: Field>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
     ) -> Result<Arc<Self>, KernelError<F>> {
         if session.state::<Arc<Self>>().is_none() {
-            let cycles = 1usize << log_t;
-            let collect_streaming = || {
-                let mut consumers = (CollectRecord {
-                    record: LaneBuffers::with_capacity(cycles),
-                },);
-                stream_witnesses(witness, 0..cycles, RECORD_CHUNK, &mut consumers)?;
-                Ok::<_, jolt_witness::WitnessError>(consumers.0.record)
+            // A matching background walk joins here; any mismatch, spawn
+            // failure, or walk error falls back to the inline build — the
+            // walk is deterministic, so the values are identical either way.
+            let prebuilt = session
+                .take::<PrebuiltTraceRecord>()
+                .filter(|prebuilt| prebuilt.log_t == log_t)
+                .and_then(|prebuilt| {
+                    tracing::info_span!("TraceRecord::join")
+                        .in_scope(|| prebuilt.receiver.recv().ok())
+                });
+            let artifacts = match prebuilt {
+                Some(artifacts) => artifacts,
+                None => collect_artifacts(witness, log_t)?,
             };
-            #[cfg(feature = "parallel")]
-            // The record is the shared SoA substrate for stages 1-6. Fill
-            // its final lanes directly; staging chunk-local AoS rows made
-            // the serial lane scatter the collection wall.
-            let lanes = match witness
-                .random_access()
-                .filter(|access| cycles <= access.cycles)
-            {
-                Some(access) => LaneBuffers::collect_parallel(&access, cycles)?,
-                None => collect_streaming()?,
-            };
-            #[cfg(not(feature = "parallel"))]
-            let lanes = collect_streaming()?;
-            let ram_bytes = lanes.addresses.len() * 24;
-            let ram = Arc::new(RamAccessColumns {
-                addresses: lanes.addresses,
-                pre_values: lanes.pre_values,
-                post_values: lanes.post_values,
-                _lifetime: LifetimeTag::new("RamAccessColumns", ram_bytes),
-            });
+            let RecordArtifacts {
+                record,
+                instruction_rows,
+                pc_rows,
+            } = artifacts;
             if session.state::<Arc<RamAccessColumns>>().is_none() {
-                session.park(Arc::clone(&ram));
+                session.park(Arc::clone(&record.ram));
             }
-            session.park(SharedInstructionRows(Arc::new(InstructionRows::new(
-                lanes.instruction_rows,
-            ))));
-            // The bytecode PC scan, packed from the pc/noop lanes (fallible
-            // u32-range guards, so it runs after the walk).
-            let pack_pc =
-                |(&pc, &flags): (&u64, &u32)| PcRow::from_lanes::<F>(pc, flags & IS_NOOP_MASK != 0);
-            let mut pc_rows: MmapVec<PcRow> = MmapVec::zeroed(cycles);
-            #[cfg(feature = "parallel")]
-            pc_rows
-                .par_iter_mut()
-                .zip(lanes.pc.par_iter().zip(&lanes.flags[..]))
-                .try_for_each(|(row, source)| {
-                    *row = pack_pc(source)?;
-                    Ok::<(), KernelError<F>>(())
-                })?;
-            #[cfg(not(feature = "parallel"))]
-            pc_rows
-                .iter_mut()
-                .zip(lanes.pc.iter().zip(&lanes.flags[..]))
-                .try_for_each(|(row, source)| {
-                    *row = pack_pc(source)?;
-                    Ok::<(), KernelError<F>>(())
-                })?;
+            session.park(instruction_rows);
             park_pc_rows(session, pc_rows);
-            let record = Arc::new(Self {
-                pc: lanes.pc,
-                unexpanded_pc: lanes.unexpanded_pc,
-                imm: lanes.imm,
-                registers: Arc::new(RegisterLanes {
-                    rs1_value: lanes.rs1_value,
-                    rs2_value: lanes.rs2_value,
-                    rd_pre_value: lanes.rd_pre_value,
-                    rd_post_value: lanes.rd_post_value,
-                    rs1_index: lanes.rs1_index,
-                    rs2_index: lanes.rs2_index,
-                    rd_index: lanes.rd_index,
-                    _lifetime: LifetimeTag::new("RegisterLanes", cycles * 35),
-                }),
-                ram_address: lanes.ram_address,
-                left_lookup_operand: lanes.left_lookup_operand,
-                right_lookup_operand: lanes.right_lookup_operand,
-                left_instruction_input: lanes.left_instruction_input,
-                right_instruction_input: lanes.right_instruction_input,
-                product_magnitude_lo: lanes.product_magnitude_lo,
-                product_magnitude_hi: lanes.product_magnitude_hi,
-                lookup_output: lanes.lookup_output,
-                flags: lanes.flags,
-                ram,
-                _lifetime: LifetimeTag::new("TraceRecord", cycles * 116),
-            });
             session.park(record);
         }
         Ok(Arc::clone(
@@ -957,6 +1070,100 @@ mod tests {
             // them (pointer identity) instead of re-walking.
             let parked = RamAccessColumns::shared(&mut session, witness, shape.log_t).unwrap();
             assert!(Arc::ptr_eq(&parked, &record.ram));
+        });
+    }
+
+    /// The background-built artifacts equal the inline build lane-for-lane
+    /// (the hoist's equality oracle), and a stale spawn (mismatched `log_t`)
+    /// falls back to the inline build with the same values.
+    #[test]
+    fn background_collect_matches_inline() {
+        let shape = FixtureShape { log_t: 4, ram_k: 8 };
+        let ops = vec![
+            RamOp::Write { word: 3, post: 7 },
+            RamOp::Read { word: 3 },
+            RamOp::None,
+            RamOp::Write { word: 2, post: 9 },
+            RamOp::Read { word: 2 },
+        ];
+        with_ram_fixture(shape, ops, |witness| {
+            let mut inline_session = ProofSession::default();
+            let inline =
+                TraceRecord::shared::<jolt_field::Fr>(&mut inline_session, witness, shape.log_t)
+                    .unwrap();
+
+            let assert_matches = |record: &TraceRecord| {
+                assert_eq!(record.pc, inline.pc);
+                assert_eq!(record.unexpanded_pc, inline.unexpanded_pc);
+                assert_eq!(record.imm, inline.imm);
+                assert_eq!(record.registers.rs1_value, inline.registers.rs1_value);
+                assert_eq!(record.registers.rs2_value, inline.registers.rs2_value);
+                assert_eq!(record.registers.rd_pre_value, inline.registers.rd_pre_value);
+                assert_eq!(
+                    record.registers.rd_post_value,
+                    inline.registers.rd_post_value
+                );
+                assert_eq!(record.registers.rs1_index, inline.registers.rs1_index);
+                assert_eq!(record.registers.rs2_index, inline.registers.rs2_index);
+                assert_eq!(record.registers.rd_index, inline.registers.rd_index);
+                assert_eq!(record.ram_address, inline.ram_address);
+                assert_eq!(record.left_lookup_operand, inline.left_lookup_operand);
+                assert_eq!(record.right_lookup_operand, inline.right_lookup_operand);
+                assert_eq!(record.left_instruction_input, inline.left_instruction_input);
+                assert_eq!(
+                    record.right_instruction_input,
+                    inline.right_instruction_input
+                );
+                assert_eq!(record.product_magnitude_lo, inline.product_magnitude_lo);
+                assert_eq!(record.product_magnitude_hi, inline.product_magnitude_hi);
+                assert_eq!(record.lookup_output, inline.lookup_output);
+                assert_eq!(record.flags, inline.flags);
+                assert_eq!(record.ram.addresses, inline.ram.addresses);
+                assert_eq!(record.ram.pre_values, inline.ram.pre_values);
+                assert_eq!(record.ram.post_values, inline.ram.post_values);
+            };
+
+            let mut background_session = ProofSession::default();
+            let background = std::thread::scope(|scope| {
+                spawn_shared_record_collect::<jolt_field::Fr>(
+                    &mut background_session,
+                    witness,
+                    shape.log_t,
+                    scope,
+                );
+                TraceRecord::shared::<jolt_field::Fr>(&mut background_session, witness, shape.log_t)
+                    .unwrap()
+            });
+            assert_matches(&background);
+            // The co-produced PC scan is parked identically in both arms.
+            let background_pc = super::super::bytecode_read_raf::pc_rows::<jolt_field::Fr>(
+                &mut background_session,
+                witness,
+                1 << shape.log_t,
+            )
+            .unwrap();
+            let inline_pc = super::super::bytecode_read_raf::pc_rows::<jolt_field::Fr>(
+                &mut inline_session,
+                witness,
+                1 << shape.log_t,
+            )
+            .unwrap();
+            assert_eq!(**background_pc, **inline_pc);
+
+            // A stale spawn (wrong log_t) is discarded; the inline fallback
+            // produces the same record.
+            let mut stale_session = ProofSession::default();
+            let stale = std::thread::scope(|scope| {
+                spawn_shared_record_collect::<jolt_field::Fr>(
+                    &mut stale_session,
+                    witness,
+                    shape.log_t - 1,
+                    scope,
+                );
+                TraceRecord::shared::<jolt_field::Fr>(&mut stale_session, witness, shape.log_t)
+                    .unwrap()
+            });
+            assert_matches(&stale);
         });
     }
 }

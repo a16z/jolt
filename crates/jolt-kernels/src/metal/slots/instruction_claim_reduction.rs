@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::signed::S256;
+use jolt_field::{
+    Fr, FromPrimitiveInt, SignedProductAccumulator as _, WithSignedProductAccumulator,
+};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -365,22 +368,51 @@ impl MetalInstructionClaimReductionKernel {
 
     fn operand_claims(&self) -> [Fr; 5] {
         let reversed: Vec<Fr> = self.bound_challenges.iter().rev().copied().collect();
-        let weights = EqPolynomial::<Fr>::evals(&reversed, None);
+        // `eq(reversed, t) = e_hi[t >> lo_bits] · e_lo[t & mask]` computed on
+        // the fly — the exact field value of the full T-sized eq table
+        // (multiplication regrouping only), without its T-sized
+        // materialization (4.3 GiB @2^27). Word-valued lanes accumulate
+        // unreduced (`fmadd_s256`, one Barrett reduce per block ≡ the same
+        // sum mod p) instead of one Montgomery conversion + field multiply
+        // per lane per cycle.
+        let hi_bits = reversed.len() / 2;
+        let lo_bits = reversed.len() - hi_bits;
+        let e_hi = EqPolynomial::<Fr>::evals(&reversed[..hi_bits], None);
+        let e_lo = EqPolynomial::<Fr>::evals(&reversed[hi_bits..], None);
+        let lo_mask = (1usize << lo_bits) - 1;
         let block_size = 1usize << 12;
         let record = &self.record;
         let blocks = record.len().div_ceil(block_size);
         let block = |index: usize| {
             let start = index * block_size;
             let end = (start + block_size).min(record.len());
-            let mut sums = [Fr::from_u64(0); 5];
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
-                sums[0] += weight * Fr::from_u64(record.lookup_output[t]);
-                sums[1] += weight * Fr::from_u64(record.left_lookup_operand[t]);
-                sums[2] += weight * Fr::from_u128(record.right_lookup_operand[t]);
-                sums[3] += weight * Fr::from_u64(record.left_instruction_input[t]);
-                sums[4] += weight * Fr::from_i128(record.right_instruction_input[t]);
+            let mut out = [Fr::from_u64(0); 5];
+            // Per `e_hi`-run factoring: rows sharing `t >> lo_bits`
+            // accumulate under their `e_lo` weight alone; one `e_hi` scale
+            // per run (`e_hi·Σ e_lo·v = Σ (e_hi·e_lo)·v` exactly). Blocks
+            // and runs are both power-of-two aligned, so a production block
+            // sits inside one run.
+            let mut t = start;
+            while t < end {
+                let hi = t >> lo_bits;
+                let run_end = end.min((hi + 1) << lo_bits);
+                let mut sums: [<Fr as WithSignedProductAccumulator>::SignedProductAccumulator; 5] =
+                    Default::default();
+                for t in t..run_end {
+                    let weight = e_lo[t & lo_mask];
+                    sums[0].fmadd_s256(weight, &S256::from_u64(record.lookup_output[t]));
+                    sums[1].fmadd_s256(weight, &S256::from_u64(record.left_lookup_operand[t]));
+                    sums[2].fmadd_s256(weight, &S256::from_u128(record.right_lookup_operand[t]));
+                    sums[3].fmadd_s256(weight, &S256::from_u64(record.left_instruction_input[t]));
+                    sums[4].fmadd_s256(weight, &S256::from_i128(record.right_instruction_input[t]));
+                }
+                let e_hi_eval = e_hi[hi];
+                for (out, sum) in out.iter_mut().zip(sums) {
+                    *out += e_hi_eval * sum.reduce();
+                }
+                t = run_end;
             }
-            sums
+            out
         };
         let add = |mut left: [Fr; 5], right: [Fr; 5]| {
             for (left, right) in left.iter_mut().zip(right) {

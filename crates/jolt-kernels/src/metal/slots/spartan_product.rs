@@ -13,7 +13,11 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{InputClaims as _, OutputClaims as _};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::signed::S256;
+use jolt_field::{
+    Fr, FromPrimitiveInt, SignedProductAccumulator as _, SignedScalarAccumulator as _,
+    WithSignedProductAccumulator, WithSmallScalarAccumulator,
+};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
@@ -427,32 +431,76 @@ impl SumcheckKernel<Fr> for MetalProductRemainderKernel {
 
 fn claimed_inputs(record: &TraceRecord, challenges: &[Fr]) -> [Fr; 8] {
     let reversed: Vec<Fr> = challenges.iter().rev().copied().collect();
-    let weights = EqPolynomial::<Fr>::evals(&reversed, None);
+    // `eq(reversed, t) = e_hi[t >> lo_bits] · e_lo[t & mask]` computed on the
+    // fly — the exact field value of the full T-sized eq table
+    // (multiplication regrouping only), without its T-sized materialization
+    // (4.3 GiB @2^27). Word-valued lanes accumulate unreduced (`fmadd_s256`,
+    // one Barrett reduce per block ≡ the same sum mod p); 0/1 flags stay on
+    // the small-scalar window (the word lanes would overflow it).
+    let hi_bits = reversed.len() / 2;
+    let lo_bits = reversed.len() - hi_bits;
+    let e_hi = EqPolynomial::<Fr>::evals(&reversed[..hi_bits], None);
+    let e_lo = EqPolynomial::<Fr>::evals(&reversed[hi_bits..], None);
+    let lo_mask = (1usize << lo_bits) - 1;
     let block_size = 1usize << 12;
     let blocks = record.len().div_ceil(block_size);
     let block = |index: usize| {
         let start = index * block_size;
         let end = (start + block_size).min(record.len());
         let mut out = [Fr::from_u64(0); 8];
-        for (t, &weight) in (start..end).zip(&weights[start..end]) {
-            out[0] += weight * Fr::from_u64(record.left_instruction_input[t]);
-            out[1] += weight * Fr::from_i128(record.right_instruction_input[t]);
-            if record.circuit_flag(t, CircuitFlags::Jump) {
-                out[2] += weight;
+        // Per `e_hi`-run factoring: rows sharing `t >> lo_bits` accumulate
+        // under their `e_lo` weight alone; one `e_hi` scale per run
+        // (`e_hi·Σ e_lo·v = Σ (e_hi·e_lo)·v` exactly). Blocks and runs are
+        // both power-of-two aligned, so a production block sits inside one
+        // run.
+        let mut t = start;
+        while t < end {
+            let hi = t >> lo_bits;
+            let run_end = end.min((hi + 1) << lo_bits);
+            let mut words: [<Fr as WithSignedProductAccumulator>::SignedProductAccumulator; 3] =
+                Default::default();
+            let mut flags: [<Fr as WithSmallScalarAccumulator>::SmallScalarAccumulator; 5] =
+                Default::default();
+            for t in t..run_end {
+                let weight = e_lo[t & lo_mask];
+                words[0].fmadd_s256(weight, &S256::from_u64(record.left_instruction_input[t]));
+                words[1].fmadd_s256(weight, &S256::from_i128(record.right_instruction_input[t]));
+                words[2].fmadd_s256(weight, &S256::from_u64(record.lookup_output[t]));
+                flags[0].fmadd_u64(
+                    weight,
+                    u64::from(record.circuit_flag(t, CircuitFlags::Jump)),
+                );
+                flags[1].fmadd_u64(
+                    weight,
+                    u64::from(record.circuit_flag(t, CircuitFlags::WriteLookupOutputToRD)),
+                );
+                flags[2].fmadd_u64(
+                    weight,
+                    u64::from(record.instruction_flag(t, InstructionFlags::Branch)),
+                );
+                flags[3].fmadd_u64(weight, u64::from(record.next_is_noop(t)));
+                flags[4].fmadd_u64(
+                    weight,
+                    u64::from(record.circuit_flag(t, CircuitFlags::VirtualInstruction)),
+                );
             }
-            if record.circuit_flag(t, CircuitFlags::WriteLookupOutputToRD) {
-                out[3] += weight;
+            let [left_input, right_input, lookup_output] = words;
+            let [jump, write_lookup, branch, noop, virtual_instruction] = flags;
+            let e_hi_eval = e_hi[hi];
+            let run = [
+                left_input.reduce(),
+                right_input.reduce(),
+                jump.reduce(),
+                write_lookup.reduce(),
+                lookup_output.reduce(),
+                branch.reduce(),
+                noop.reduce(),
+                virtual_instruction.reduce(),
+            ];
+            for (out, run) in out.iter_mut().zip(run) {
+                *out += e_hi_eval * run;
             }
-            out[4] += weight * Fr::from_u64(record.lookup_output[t]);
-            if record.instruction_flag(t, InstructionFlags::Branch) {
-                out[5] += weight;
-            }
-            if record.next_is_noop(t) {
-                out[6] += weight;
-            }
-            if record.circuit_flag(t, CircuitFlags::VirtualInstruction) {
-                out[7] += weight;
-            }
+            t = run_end;
         }
         out
     };

@@ -494,41 +494,67 @@ impl<F: Field> ProductRemainderKernel<F> {
     /// field order.
     fn claimed_inputs(&self) -> Vec<F> {
         let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
-        let weights = EqPolynomial::<F>::evals(&reversed, None);
-        debug_assert_eq!(weights.len(), self.rows.len());
+        // `eq(reversed, t) = e_hi[t >> lo_bits] · e_lo[t & mask]` computed on
+        // the fly — the exact field value of the full T-sized eq table
+        // (multiplication regrouping only), without its T-sized
+        // materialization (4.3 GiB @2^27).
+        let hi_bits = reversed.len() / 2;
+        let lo_bits = reversed.len() - hi_bits;
+        let e_hi = EqPolynomial::<F>::evals(&reversed[..hi_bits], None);
+        let e_lo = EqPolynomial::<F>::evals(&reversed[hi_bits..], None);
+        let lo_mask = (1usize << lo_bits) - 1;
+        debug_assert_eq!(e_hi.len() * e_lo.len(), self.rows.len());
 
         let block_size = 1usize << 12;
         let blocks = self.rows.len().div_ceil(block_size);
         let block = |index: usize| -> Vec<F> {
             let start = index * block_size;
             let end = (start + block_size).min(self.rows.len());
-            let mut words: [<F as WithSignedProductAccumulator>::SignedProductAccumulator; 3] =
-                [Default::default(), Default::default(), Default::default()];
-            let mut flags: [<F as WithSmallScalarAccumulator>::SmallScalarAccumulator; 5] =
-                Default::default();
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
-                let row = self.rows.row(t);
-                words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
-                words[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
-                words[2].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));
-                flags[0].fmadd_u64(weight, u64::from(row.jump_flag.0));
-                flags[1].fmadd_u64(weight, u64::from(row.write_lookup_output_to_rd.0));
-                flags[2].fmadd_u64(weight, u64::from(row.branch_flag.0));
-                flags[3].fmadd_u64(weight, u64::from(row.next_is_noop.0));
-                flags[4].fmadd_u64(weight, u64::from(row.virtual_instruction.0));
+            let mut out = vec![F::zero(); 8];
+            // Per `e_hi`-run factoring: rows sharing `t >> lo_bits`
+            // accumulate under their `e_lo` weight alone; one `e_hi` scale
+            // per run (`e_hi·Σ e_lo·v = Σ (e_hi·e_lo)·v` exactly). Blocks
+            // and runs are both power-of-two aligned, so a production block
+            // sits inside one run.
+            let mut t = start;
+            while t < end {
+                let hi = t >> lo_bits;
+                let run_end = end.min((hi + 1) << lo_bits);
+                let mut words: [<F as WithSignedProductAccumulator>::SignedProductAccumulator; 3] =
+                    [Default::default(), Default::default(), Default::default()];
+                let mut flags: [<F as WithSmallScalarAccumulator>::SmallScalarAccumulator; 5] =
+                    Default::default();
+                for t in t..run_end {
+                    let weight = e_lo[t & lo_mask];
+                    let row = self.rows.row(t);
+                    words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
+                    words[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
+                    words[2].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));
+                    flags[0].fmadd_u64(weight, u64::from(row.jump_flag.0));
+                    flags[1].fmadd_u64(weight, u64::from(row.write_lookup_output_to_rd.0));
+                    flags[2].fmadd_u64(weight, u64::from(row.branch_flag.0));
+                    flags[3].fmadd_u64(weight, u64::from(row.next_is_noop.0));
+                    flags[4].fmadd_u64(weight, u64::from(row.virtual_instruction.0));
+                }
+                let [left_input, right_input, lookup_output] = words;
+                let [jump, write_lookup, branch, noop, virtual_instruction] = flags;
+                let e_hi_eval = e_hi[hi];
+                let run = [
+                    left_input.reduce(),
+                    right_input.reduce(),
+                    jump.reduce(),
+                    write_lookup.reduce(),
+                    lookup_output.reduce(),
+                    branch.reduce(),
+                    noop.reduce(),
+                    virtual_instruction.reduce(),
+                ];
+                for (out, run) in out.iter_mut().zip(run) {
+                    *out += e_hi_eval * run;
+                }
+                t = run_end;
             }
-            let [left_input, right_input, lookup_output] = words;
-            let [jump, write_lookup, branch, noop, virtual_instruction] = flags;
-            vec![
-                left_input.reduce(),
-                right_input.reduce(),
-                jump.reduce(),
-                write_lookup.reduce(),
-                lookup_output.reduce(),
-                branch.reduce(),
-                noop.reduce(),
-                virtual_instruction.reduce(),
-            ]
+            out
         };
         let merge = |mut left: Vec<F>, right: Vec<F>| {
             for (left, right) in left.iter_mut().zip(right) {
