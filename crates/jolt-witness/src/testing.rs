@@ -10,6 +10,7 @@ use jolt_program::{
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+use std::sync::Arc;
 
 use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
@@ -31,7 +32,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
         is_first_in_sequence: false,
         is_compressed: false,
     };
-    let preprocessing = JoltProgramPreprocessing {
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
             vec![instruction],
             instruction.address as u64,
@@ -41,7 +42,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
         ram: RAMPreprocessing::default(),
         memory_layout: Default::default(),
         max_padded_trace_length: 4,
-    };
+    });
     let program = JoltProgram::default();
     let rows = vec![
         TraceRow {

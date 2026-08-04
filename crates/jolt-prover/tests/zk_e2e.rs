@@ -355,9 +355,8 @@ mod zk {
         let public_io = trace_output.device.clone();
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         let witness = TraceBackend::new(
@@ -462,9 +461,8 @@ mod zk {
             let public_io = trace_output.device.clone();
             let program_preprocessing = verifier_preprocessing
                 .program
-                .as_full()
-                .expect("full program preprocessing")
-                .clone();
+                .as_full_arc()
+                .expect("full program preprocessing");
             let config =
                 support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
             let padded_output = support::pad_trace(trace_output, config.trace_length);
@@ -560,7 +558,7 @@ mod zk {
             let config =
                 support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
             let padded_output = support::pad_trace(trace_output, config.trace_length);
-            let witness_program = full_program.clone();
+            let witness_program = std::sync::Arc::new(full_program.clone());
             let witness = TraceBackend::new(
                 support::witness_config(&config),
                 JoltVmWitnessInputs::new(&jolt_program, &witness_program, padded_output),

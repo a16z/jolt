@@ -537,9 +537,8 @@ mod muldiv {
 
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
 
         // The derived proof shape must equal what legacy wrote on the wire
         // (asserted inside).
@@ -1074,9 +1073,8 @@ mod advice_consumer {
         );
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config_pinned(
             &trace_output,
             memory_layout,
@@ -1288,7 +1286,7 @@ mod committed_muldiv {
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         // The witness borrows its own copy: `full_program` itself moves into
         // the prover preprocessing below.
-        let witness_program = full_program.clone();
+        let witness_program = std::sync::Arc::new(full_program.clone());
         let witness = TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &witness_program, padded_output),
@@ -1429,9 +1427,8 @@ mod address_major {
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config_pinned(
             &trace_output,
             memory_layout,
@@ -1603,7 +1600,7 @@ mod advice_committed {
         let padded_output = support::pad_trace(trace_output, config.trace_length);
         // The witness borrows its own copy: `full_program` itself moves into
         // the prover preprocessing below.
-        let witness_program = full_program.clone();
+        let witness_program = std::sync::Arc::new(full_program.clone());
         let witness = TraceBackend::new(
             support::witness_config(&config)
                 .include_trusted_advice(true)
@@ -1777,9 +1774,8 @@ mod chunk_boundary {
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config_pinned(
             &trace_output,
             memory_layout,
@@ -1996,9 +1992,8 @@ mod wide_one_hot {
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config_pinned(
             &trace_output,
             memory_layout,

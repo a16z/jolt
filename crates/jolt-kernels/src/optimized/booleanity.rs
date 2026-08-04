@@ -738,7 +738,8 @@ pub(crate) mod testing {
             },
             ..instruction_a
         };
-        let preprocessing = JoltProgramPreprocessing {
+        use std::sync::Arc;
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 vec![instruction_a, instruction_b],
                 instruction_a.address as u64,
@@ -748,7 +749,7 @@ pub(crate) mod testing {
             ram: RAMPreprocessing::default(),
             memory_layout: Default::default(),
             max_padded_trace_length: 4.max(1 << log_t),
-        };
+        });
         let program = JoltProgram::default();
         // Field mutation instead of struct literals: `TraceRow` grows a
         // cfg-gated field under the `field-inline` feature, which a literal

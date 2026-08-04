@@ -5,6 +5,7 @@ use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
 use std::ops::Range;
+use std::sync::Arc;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
 
@@ -132,14 +133,10 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
 
     fn owned_rows(&self) -> Option<crate::OwnedRows> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
-        self.trace.trace.shared_rows().map(|rows| {
-            // One deep clone per backend, cached: three kernels take owned
-            // handles per proof, and the preprocessing is program-sized.
-            let preprocessing = self
-                .owned_preprocessing
-                .get_or_init(|| std::sync::Arc::new(self.preprocessing.clone()));
-            crate::OwnedRows::new(rows, cycles, std::sync::Arc::clone(preprocessing))
-        })
+        self.trace
+            .trace
+            .shared_rows()
+            .map(|rows| crate::OwnedRows::new(rows, cycles, Arc::clone(self.preprocessing)))
     }
 
     fn visit_chunks(

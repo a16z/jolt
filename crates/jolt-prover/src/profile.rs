@@ -542,9 +542,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
     let program_preprocessing = verifier_preprocessing
         .program
-        .as_full()
-        .expect("full program preprocessing")
-        .clone();
+        .as_full_arc()
+        .expect("full program preprocessing");
     let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
 
     // --- Modular trace (unmeasured, like legacy's `gen_from_elf` emulation).

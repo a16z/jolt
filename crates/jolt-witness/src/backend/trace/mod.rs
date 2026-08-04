@@ -11,6 +11,7 @@ use jolt_program::{
     execution::{JoltProgram, RamAccess, TraceOutput, TraceRow, TraceSource},
     preprocess::JoltProgramPreprocessing,
 };
+use std::sync::Arc;
 
 use crate::backend::ProgramSource;
 use crate::witnesses::ram_access_address;
@@ -82,14 +83,14 @@ impl JoltVmWitnessConfig {
 
 pub struct JoltVmWitnessInputs<'a, T: TraceSource> {
     pub program: &'a JoltProgram,
-    pub preprocessing: &'a JoltProgramPreprocessing,
+    pub preprocessing: &'a Arc<JoltProgramPreprocessing>,
     pub trace: TraceOutput<T>,
 }
 
 impl<'a, T: TraceSource> JoltVmWitnessInputs<'a, T> {
     pub const fn new(
         program: &'a JoltProgram,
-        preprocessing: &'a JoltProgramPreprocessing,
+        preprocessing: &'a Arc<JoltProgramPreprocessing>,
         trace: TraceOutput<T>,
     ) -> Self {
         Self {
@@ -103,12 +104,8 @@ impl<'a, T: TraceSource> JoltVmWitnessInputs<'a, T> {
 pub struct TraceBackend<'a, T: TraceSource> {
     pub config: JoltVmWitnessConfig,
     pub program: &'a JoltProgram,
-    pub preprocessing: &'a JoltProgramPreprocessing,
+    pub preprocessing: &'a Arc<JoltProgramPreprocessing>,
     pub trace: TraceOutput<T>,
-    /// Lazily cached owning copy of `preprocessing` for [`crate::OwnedRows`]
-    /// handles: one deep clone on the first `owned_rows` call, shared by
-    /// every kernel that outlives its borrow of the backend.
-    pub(crate) owned_preprocessing: std::sync::OnceLock<std::sync::Arc<JoltProgramPreprocessing>>,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness<'a>>,
 }
@@ -126,7 +123,6 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
             program: inputs.program,
             preprocessing: inputs.preprocessing,
             trace: inputs.trace,
-            owned_preprocessing: std::sync::OnceLock::new(),
             #[cfg(feature = "field-inline")]
             field_inline: None,
         }

@@ -1650,14 +1650,14 @@ pub fn akita_verifier_preprocessing(
 ) -> JoltVerifierPreprocessing<AkitaScheme, AkitaVc> {
     let program = match &preprocessing.shared.program {
         crate::zkvm::program::ProgramPreprocessing::Full(full) => {
-            jolt_verifier::preprocessing::ProgramPreprocessing::Full(
+            jolt_verifier::preprocessing::ProgramPreprocessing::Full(std::sync::Arc::new(
                 jolt_program::preprocess::JoltProgramPreprocessing {
                     bytecode: full.bytecode.as_ref().clone(),
                     ram: full.ram.clone(),
                     memory_layout: preprocessing.shared.memory_layout.clone(),
                     max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
                 },
-            )
+            ))
         }
         crate::zkvm::program::ProgramPreprocessing::Committed(committed) => {
             jolt_verifier::preprocessing::ProgramPreprocessing::Committed(

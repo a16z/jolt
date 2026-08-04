@@ -14,6 +14,7 @@ use jolt_riscv::{
     CircuitFlags, InstructionFlags, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
     RV64IMAC_JOLT,
 };
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 
@@ -25,7 +26,7 @@ use crate::witnesses::{
 };
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
-fn preprocessing() -> JoltProgramPreprocessing {
+fn base_preprocessing() -> JoltProgramPreprocessing {
     let bytecode = BytecodePreprocessing {
         code_size: 32,
         ..Default::default()
@@ -41,18 +42,22 @@ fn preprocessing() -> JoltProgramPreprocessing {
     preprocessing
 }
 
-fn preprocessing_with_bytecode(bytecode: BytecodePreprocessing) -> JoltProgramPreprocessing {
-    JoltProgramPreprocessing {
-        bytecode,
-        ..preprocessing()
-    }
+fn preprocessing() -> Arc<JoltProgramPreprocessing> {
+    Arc::new(base_preprocessing())
 }
 
-fn preprocessing_with_memory_layout(memory_layout: MemoryLayout) -> JoltProgramPreprocessing {
-    JoltProgramPreprocessing {
+fn preprocessing_with_bytecode(bytecode: BytecodePreprocessing) -> Arc<JoltProgramPreprocessing> {
+    Arc::new(JoltProgramPreprocessing {
+        bytecode,
+        ..base_preprocessing()
+    })
+}
+
+fn preprocessing_with_memory_layout(memory_layout: MemoryLayout) -> Arc<JoltProgramPreprocessing> {
+    Arc::new(JoltProgramPreprocessing {
         memory_layout,
-        ..preprocessing()
-    }
+        ..base_preprocessing()
+    })
 }
 
 fn config() -> JoltVmWitnessConfig {

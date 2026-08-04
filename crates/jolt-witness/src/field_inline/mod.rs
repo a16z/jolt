@@ -13,6 +13,7 @@ use jolt_program::{
 };
 use jolt_riscv::{field_inline_operand_shape, FieldInlineOperandShape, FieldInlineXRegisterRole};
 use rayon::prelude::*;
+use std::sync::Arc;
 
 use self::witnesses::{
     decode_value, FieldInvProduct, FieldOpFlag, FieldProduct, FieldRdInc, FieldRdValue,
@@ -87,7 +88,7 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
     pub(crate) fn build<T: TraceSource + Clone>(
         log_t: usize,
         program: &'a JoltProgram,
-        preprocessing: &'a JoltProgramPreprocessing,
+        preprocessing: &'a Arc<JoltProgramPreprocessing>,
         trace: &TraceOutput<T>,
     ) -> Result<Self, WitnessError> {
         let rows = checked_pow2(log_t)?;
@@ -682,13 +683,13 @@ mod tests {
     fn preprocessing(
         bytecode: Vec<JoltInstructionRow>,
         profile: JoltInstructionProfile,
-    ) -> JoltProgramPreprocessing {
-        JoltProgramPreprocessing {
+    ) -> Arc<JoltProgramPreprocessing> {
+        Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, profile).unwrap(),
             ram: RAMPreprocessing::default(),
             memory_layout: Default::default(),
             max_padded_trace_length: 8,
-        }
+        })
     }
 
     fn program(bytecode: Vec<JoltInstructionRow>, profile: JoltInstructionProfile) -> JoltProgram {
@@ -704,7 +705,7 @@ mod tests {
 
     fn witness<'a>(
         program: &'a JoltProgram,
-        preprocessing: &'a JoltProgramPreprocessing,
+        preprocessing: &'a Arc<JoltProgramPreprocessing>,
         rows: Vec<TraceRow>,
         log_t: usize,
     ) -> super::super::TraceBackend<'a, OwnedTrace> {

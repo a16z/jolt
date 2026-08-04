@@ -1,6 +1,8 @@
 #![cfg(feature = "field-inline")]
 #![cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 
+use std::sync::Arc;
+
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::{
     field_inline::{
@@ -63,13 +65,13 @@ fn instruction(
 fn preprocessing(
     bytecode: Vec<JoltInstructionRow>,
     profile: JoltInstructionProfile,
-) -> JoltProgramPreprocessing {
-    JoltProgramPreprocessing {
+) -> Arc<JoltProgramPreprocessing> {
+    Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, profile).unwrap(),
         ram: RAMPreprocessing::default(),
         memory_layout: Default::default(),
         max_padded_trace_length: 8,
-    }
+    })
 }
 
 fn program(bytecode: Vec<JoltInstructionRow>, profile: JoltInstructionProfile) -> JoltProgram {
@@ -85,7 +87,7 @@ fn program(bytecode: Vec<JoltInstructionRow>, profile: JoltInstructionProfile) -
 
 fn witness<'a>(
     program: &'a JoltProgram,
-    preprocessing: &'a JoltProgramPreprocessing,
+    preprocessing: &'a Arc<JoltProgramPreprocessing>,
     rows: Vec<TraceRow>,
     log_t: usize,
 ) -> TraceBackend<'a, OwnedTrace> {

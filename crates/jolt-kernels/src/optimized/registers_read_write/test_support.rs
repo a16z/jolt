@@ -188,7 +188,8 @@ impl TraceFixture {
         f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
     ) -> R {
         assert!(self.rows.len() <= 1 << log_t, "fixture overflows 2^log_t");
-        let preprocessing = JoltProgramPreprocessing {
+        use std::sync::Arc;
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 vec![self.instruction],
                 self.instruction.address as u64,
@@ -198,7 +199,7 @@ impl TraceFixture {
             ram: RAMPreprocessing::default(),
             memory_layout: Default::default(),
             max_padded_trace_length: 1 << log_t,
-        };
+        });
         let program = JoltProgram::default();
         let config = JoltVmWitnessConfig::new(
             log_t,

@@ -203,12 +203,12 @@ where
 {
     match &shared.program {
         ProverProgramPreprocessing::Full(full) => {
-            ProgramPreprocessing::Full(JoltProgramPreprocessing {
+            ProgramPreprocessing::Full(std::sync::Arc::new(JoltProgramPreprocessing {
                 bytecode: full.bytecode.as_ref().clone(),
                 ram: full.ram.clone(),
                 memory_layout: shared.memory_layout.clone(),
                 max_padded_trace_length: shared.max_padded_trace_length,
-            })
+            }))
         }
         #[cfg(not(feature = "akita"))]
         ProverProgramPreprocessing::Committed(committed) => {

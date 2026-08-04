@@ -1641,12 +1641,14 @@ mod tests {
             heap_size: 8,
         });
         JoltVerifierPreprocessing::new(
-            crate::preprocessing::ProgramPreprocessing::Full(JoltProgramPreprocessing {
-                bytecode: BytecodePreprocessing::default(),
-                ram: RAMPreprocessing::default(),
-                memory_layout,
-                max_padded_trace_length: 16,
-            }),
+            crate::preprocessing::ProgramPreprocessing::Full(std::sync::Arc::new(
+                JoltProgramPreprocessing {
+                    bytecode: BytecodePreprocessing::default(),
+                    ram: RAMPreprocessing::default(),
+                    memory_layout,
+                    max_padded_trace_length: 16,
+                },
+            )),
             [7; 32],
             (),
             None,

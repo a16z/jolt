@@ -585,7 +585,8 @@ mod tests {
             })
             .collect();
 
-        let preprocessing = JoltProgramPreprocessing {
+        use std::sync::Arc;
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 bytecode,
                 plain_a.address as u64,
@@ -595,7 +596,7 @@ mod tests {
             ram: RAMPreprocessing::default(),
             memory_layout: Default::default(),
             max_padded_trace_length: 1 << log_t,
-        };
+        });
         let program = JoltProgram::default();
         let config = JoltVmWitnessConfig::new(
             log_t,
