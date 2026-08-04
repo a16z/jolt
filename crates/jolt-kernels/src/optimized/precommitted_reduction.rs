@@ -537,7 +537,7 @@ mod tests {
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, ProgramSource, TraceBackend};
 
     use super::*;
-    use crate::optimized::harness::{run_lockstep, synthetic_point};
+    use crate::optimized::parity::{run_lockstep, synthetic_point};
     use crate::reference::precommitted_reduction::ReferencePrecommittedAddress;
     use crate::ReferenceBackend;
 
@@ -590,7 +590,8 @@ mod tests {
             max_untrusted_advice_size: UNTRUSTED_ADVICE_MAX_BYTES as u64,
             ..Default::default()
         };
-        let preprocessing = JoltProgramPreprocessing {
+        use std::sync::Arc;
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 instructions,
                 0x8000_0000u64,
@@ -603,7 +604,7 @@ mod tests {
             },
             memory_layout: memory_layout.clone(),
             max_padded_trace_length: 1 << LOG_T,
-        };
+        });
         let program = JoltProgram::default();
         let rows = vec![TraceRow::default(), TraceRow::default()];
         let device = JoltDevice {
@@ -730,7 +731,7 @@ mod tests {
             // kernel: with an address phase scheduled, `output_claims` stages
             // the intermediate `Σ value·eq·scale`, which before any binding
             // IS the input claim. (These kernels never round-check, so the
-            // harness's zero-claim probe cannot recover it.)
+            // parity harness's zero-claim probe cannot recover it.)
             let mut throwaway = <ReferenceBackend as PrepareKernel<Fr, RC>>::prepare(
                 &ReferenceBackend,
                 &mut ProofSession::default(),

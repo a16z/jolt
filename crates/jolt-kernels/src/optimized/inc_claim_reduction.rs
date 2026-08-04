@@ -217,7 +217,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
-    use crate::optimized::harness::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::ReferenceBackend;
 
     #[test]
