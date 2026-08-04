@@ -252,8 +252,24 @@ impl SolinasMetal {
             table_offsets.push(table_offsets.last().copied().unwrap_or(0) + suffixes.len());
         }
 
+        let inverse_bytes = byte_length::<u32>(rows)?;
+        let maximum = self.device.max_buffer_length();
+        if inverse_bytes > maximum {
+            return Err(MetalError::BufferTooLong {
+                requested: inverse_bytes,
+                maximum,
+            });
+        }
+        let cycle_to_table_major_buffer = self
+            .device
+            .new_buffer(inverse_bytes, MTLResourceOptions::StorageModeShared);
+        // SAFETY: this fresh shared buffer has exactly `rows` u32 slots and
+        // remains CPU-exclusive until preparation returns.
+        let cycle_to_table_major = unsafe {
+            slice::from_raw_parts_mut(cycle_to_table_major_buffer.contents().cast::<u32>(), rows)
+        };
+        let mut table_selected = vec![false; rows];
         let mut cycle_order = Vec::with_capacity(rows);
-        let mut cycle_to_table_major = vec![u32::MAX; rows];
         let mut suffix_jobs = Vec::new();
         let mut suffix_tables = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
         let mut table_row_ranges = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
@@ -266,12 +282,13 @@ impl SolinasMetal {
                 if row >= rows {
                     return Err(MetalError::InputTooLong(row));
                 }
-                if cycle_to_table_major[row] != u32::MAX {
+                if table_selected[row] {
                     return Err(MetalError::AddressPhaseLayoutLength {
                         expected: rows,
                         got: cycle_order.len(),
                     });
                 }
+                table_selected[row] = true;
                 cycle_to_table_major[row] = u32::try_from(cycle_order.len())
                     .map_err(|_| MetalError::InputTooLong(cycle_order.len()))?;
                 cycle_order.push(row as u32);
@@ -301,13 +318,14 @@ impl SolinasMetal {
             return Err(MetalError::EmptyAddressSuffixBuckets);
         }
         let no_table_start = cycle_order.len();
-        for (cycle, table_major) in cycle_to_table_major.iter_mut().enumerate() {
-            if *table_major == u32::MAX {
-                *table_major = u32::try_from(cycle_order.len())
+        for (cycle, &selected) in table_selected.iter().enumerate() {
+            if !selected {
+                cycle_to_table_major[cycle] = u32::try_from(cycle_order.len())
                     .map_err(|_| MetalError::InputTooLong(cycle_order.len()))?;
                 cycle_order.push(cycle as u32);
             }
         }
+        drop(table_selected);
         if cycle_order.len() != rows {
             return Err(MetalError::AddressPhaseLayoutLength {
                 expected: rows,
@@ -518,7 +536,7 @@ impl SolinasMetal {
         let buffer_lengths = [
             byte_length::<u8>(rows)?,
             byte_length::<AddressLookup>(rows)?,
-            byte_length::<u32>(cycle_to_table_major.len())?,
+            byte_length::<u32>(rows)?,
             byte_length::<Fp128>(rows)?,
             byte_length::<Fp128>(ADDRESS_RAF_BINS)?,
             byte_length::<Fp128>(raf_partial_elements)?,
@@ -575,7 +593,7 @@ impl SolinasMetal {
             buffers: AddressPhaseBuffers {
                 packed_rows: packed_rows_buffer,
                 lookups: lookups_buffer,
-                cycle_to_table_major: buffer_from_slice(&self.device, &cycle_to_table_major),
+                cycle_to_table_major: cycle_to_table_major_buffer,
                 weights: weights_buffer,
                 previous_phase_table: buffer_from_slice(&self.device, &identity),
                 raf_partials: self.device.new_buffer(
