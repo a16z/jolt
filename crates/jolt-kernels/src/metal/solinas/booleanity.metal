@@ -124,6 +124,8 @@ inline void booleanity_lazy_pair(
     device const BooleanitySelector* selectors,
     device const SolinasFp128* branches,
     device const SolinasFp128* rho,
+    device const SolinasFp128* initial_constant,
+    device const SolinasFp128* initial_leading,
     constant BooleanityParams& params,
     uint pair,
     uint lane,
@@ -132,6 +134,23 @@ inline void booleanity_lazy_pair(
     thread SolinasFp128& leading_lane)
 {
     for (uint poly = lane; poly < params.polys; poly += 32u) {
+        if (params.branch_width == 1u && params.materialize == 0u) {
+            BooleanitySelector selector = selectors[poly];
+            BooleanityRow row_0 = booleanity_load_row(rows, 2u * pair, lane);
+            BooleanityRow row_1 = booleanity_load_row(rows, 2u * pair + 1u, lane);
+            uint first = params.k;
+            uint second = params.k;
+            booleanity_hot_index(row_0, selector, params, first);
+            booleanity_hot_index(row_1, selector, params, second);
+            uint stride = params.k + 1u;
+            constant_lane = solinas_add(
+                constant_lane,
+                initial_constant[poly * stride + first]);
+            leading_lane = solinas_add(
+                leading_lane,
+                initial_leading[(poly * stride + first) * stride + second]);
+            continue;
+        }
         SolinasFp128 h_0 = solinas_zero();
         SolinasFp128 h_1 = solinas_zero();
         BooleanitySelector selector = selectors[poly];
@@ -207,7 +226,9 @@ kernel void solinas_booleanity_lazy_message(
     device const SolinasFp128* e_in [[buffer(5)]],
     device const SolinasFp128* e_out [[buffer(6)]],
     device SolinasFp128* partials [[buffer(7)]],
-    constant BooleanityParams& params [[buffer(8)]],
+    device const SolinasFp128* initial_constant [[buffer(8)]],
+    device const SolinasFp128* initial_leading [[buffer(9)]],
+    constant BooleanityParams& params [[buffer(10)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint x_out [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_simdgroup]],
@@ -226,6 +247,8 @@ kernel void solinas_booleanity_lazy_message(
             selectors,
             branches,
             rho,
+            initial_constant,
+            initial_leading,
             params,
             pair,
             lane,

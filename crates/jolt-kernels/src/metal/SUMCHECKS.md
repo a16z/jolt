@@ -573,7 +573,8 @@ useful field-multiplication counts are
 L                 = log2(W) + 1
 B_device          = 40 T L + 64 P T / W - 48 P
 B_cache_logical   = 16 P T L
-M_metal           = P(2T + T/W - 3) + 2T - 2 + 2PK(W - 1).
+M_base            = P(2T + T/W - 3) + 2T - 2 + 2PK(W - 1)
+M_metal           = M_base - PT + P((K+1) + (K+1)^2).
 ```
 
 `B_device` counts the repeated packed-row scans and geometric dense read/write
@@ -582,12 +583,13 @@ only `P * W * K * 16` bytes and are intended to remain cache-resident. Actual pe
 resident storage is one row buffer plus dense buffers of `P*T/W` and `P*T/(2W)`
 field elements, not the full-sequence traffic sum.
 
-At `T = 2^26`, `P = 29`, `K = 256`, and retained `W = 8`, the model gives 4.270
-billion useful Metal multiplications, 26.31 GB optimistic non-cache traffic, and
-124.55 GB of logical cache-table loads. The measured 16.4-Gmul/s arithmetic roof
-gives a 260 ms compute floor; the 420-GiB/s copy roof gives a 58 ms traffic floor.
-Peak row-plus-dense storage is about 7.94 GiB. The kernel is therefore compute-side
-limited in this model; reducing only dense traffic cannot reach the ceiling.
+At `T = 2^26`, `P = 29`, `K = 256`, and retained `W = 8`, the original schedule did
+4.270 billion useful Metal multiplications. The retained initial-pair tables remove
+`PT` initial-round multiplications and add only 1.923 million setup
+multiplications, leaving 2.326 billion. The tables occupy 30.77 MB. The measured
+16.4-Gmul/s arithmetic roof gives a 142 ms floor; 26.31 GB of optimistic non-cache
+traffic gives a 58 ms floor at the 420-GiB/s copy roof. Logical cache-table loads
+remain 124.55 GB and peak row-plus-dense storage is about 7.94 GiB.
 
 The target-size materialization sweep used exact messages, host challenges, final
 tables, and transcript state in every run:
@@ -605,25 +607,37 @@ and cache-table scan. Lazy threadgroup widths 64, 128, and 256 were within about
 at `2^26`; 512 regressed, so the stable 256-thread setting remains. Dense rounds use
 128 threads and the CPU cutoff is `2^10` elements.
 
-The exact local evaluator measured 3.095 s optimized CPU versus 640.4 ms hybrid at
-`2^26`, or 4.83x cycle-only. The bulk row handoff took 125.6 ms, so charging it
-entirely to this slot gives 4.04x. At `2^22`, width 8 measured 202.5 ms CPU, 40.0 ms
-hybrid, and 8.5 ms preparation: 5.06x cycle-only and 4.17x all-in. The real PIOP
-profile measured a 4.85x Booleanity seam because preparation is performed and
-attributed in stage 5.
+Before initial-pair specialization, the exact local evaluator measured 3.095 s
+optimized CPU versus 640.4 ms hybrid at `2^26`, or 4.83x cycle-only. The bulk row
+handoff took 125.6 ms, so charging it entirely to this slot gave 4.04x. At `2^22`,
+width 8 measured 202.5 ms CPU, 40.0 ms hybrid, and 8.5 ms preparation: 5.06x
+cycle-only and 4.17x all-in. The first real PIOP profile measured a 4.85x Booleanity
+seam because preparation is performed and attributed in stage 5.
 
 Seven shader schedules were rejected against the earlier fixed evaluator: pair
 unrolling, selected-word shuffles, raw wide limbs, pair-major first-round work,
 half-limb SIMD reduction, specialized Comba squaring, and selector-grouped SIMD.
-None cleared the 6.44% noise-qualified promotion threshold. The target-scale result
-still reaches only about 6.67 Gmul/s against the 16.4-Gmul/s empirical roof. The next
-candidate specializes the dominant initial message: precompute
-`H(k) * (H(k) - rho)` for each cache-sized base table so the shader loads the
-constant term and performs only the `(H_1 - H_0)^2` multiplication. This removes
-about `PT/2` field multiplications from the 290-ms first round without changing the
-protocol or dense state. Because the conservative local result is already above 4x
-and the compute floor permits materially more, the uncapped controller keeps this
-kernel phase active.
+None cleared the 6.44% noise-qualified promotion threshold. A smaller follow-up that
+precomputed only `H(H-rho)` reduced the first round by 6.8% but improved the complete
+cycle by only 2.63%, below the fixed 3% bar, and was rejected. The retained successor
+precomputes both that constant and `(H_1-H_0)^2` for the `K+1` possible endpoints;
+the extra endpoint represents a cold bytecode/RAM row. It changes no protocol state
+and later rounds use the original shader path.
+
+Against a matched seven-repeat baseline, endpoint-pair tables reduced median hybrid
+wall time from 637.8 to 582.9 ms (8.62%) and the initial round from 286.7 to 228.5 ms
+(20.3%). Their timed refresh cost was 5.6 ms. The contemporaneous CPU median was
+3.344 s, giving 5.74x cycle-only and about 4.67x with the 133.8-ms one-time prepare
+fully charged. Exactness and no-round-allocation guards passed. The new 142-ms
+compute floor still leaves material headroom, so the uncapped controller does not
+treat this promotion as the end of Booleanity analysis.
+
+The post-promotion CPU-first PIOP pair in
+`benchmark-runs/metal-piop-eval/20260804-111730` measured 21.071 s optimized CPU and
+15.116 s Metal, or 1.394x. The real Booleanity seam was 4.007 s versus 714.6 ms
+(5.61x), 106.5 ms below the first retained Metal seam. Both proofs verified. The
+aggregate remains a one-pair checkpoint; the next port is selected from the Metal
+profile, where Booleanity is now 4.73% of PIOP rather than the leading bottleneck.
 
 ## Requirement map and open points
 

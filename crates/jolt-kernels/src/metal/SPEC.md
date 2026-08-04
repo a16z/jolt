@@ -395,20 +395,27 @@ Gruen message to host Fiat-Shamir. The evaluator checks every round polynomial,
 challenge, final table, claim, and transcript state against the optimized Akita CPU
 kernel and asserts zero per-round device allocations.
 
-At `2^26` cycles on the M4 Max, the retained configuration measured 3.095 s CPU and
-640.4 ms hybrid cycle wall time, or 4.83x. Its one-time 40-byte-row bulk handoff took
-125.6 ms; charging that entirely to Booleanity gives 4.04x. A real verified PIOP
-profile measured the `Booleanity` kernel seam at 3.986 s CPU versus 821.1 ms Metal,
-or 4.85x, and improved the complete PIOP from 21.308 s to 15.515 s in one CPU-first
-pair. The aggregate ratio, 1.373x, is a directional checkpoint until interleaved
-repetitions are complete.
+At `2^26` cycles on the M4 Max, the first retained configuration measured 3.095 s
+CPU and 640.4 ms hybrid cycle wall time, or 4.83x. Its one-time 40-byte-row bulk
+handoff took 125.6 ms; charging that entirely to Booleanity gave 4.04x. A real
+verified PIOP profile measured the `Booleanity` kernel seam at 3.986 s CPU versus
+821.1 ms Metal, or 4.85x, and improved the complete PIOP from 21.308 s to 15.515 s
+in one CPU-first pair. The aggregate ratio, 1.373x, is a directional checkpoint
+until interleaved repetitions are complete.
 
-The target geometry performs 4.270 billion useful field multiplications. Its
-260-ms floor at the 16.4-Gmul/s empirical arithmetic roof dominates the 58-ms floor
-for 26.31 GB of optimistic non-cache traffic at 420 GiB/s. Current throughput is
-6.67 Gmul/s, so the local result clears 4x but does not exhaust the measured ceiling.
-The active next candidate removes one multiplication per polynomial pair from the
-dominant initial message by loading a precomputed cache-sized quadratic table.
+The retained follow-up precomputes both initial-round quadratic terms over the
+`K+1` possible endpoints. Its 30.77-MB tables reduce seven-repeat hybrid wall time
+from 637.8 to 582.9 ms (8.62%) and the initial round from 286.7 to 228.5 ms (20.3%).
+The contemporaneous CPU median was 3.344 s, for 5.74x cycle-only and about 4.67x
+after charging the 133.8-ms one-time prepare. The shader now performs 2.326 billion
+useful field multiplications; its 142-ms empirical compute floor still dominates the
+58-ms non-cache traffic floor, so further ceiling work remains justified.
+
+A post-promotion verified PIOP pair measured 21.071 s CPU and 15.116 s Metal
+(1.394x). The real Booleanity seam was 4.007 s versus 714.6 ms, or 5.61x. A focused
+`2^16` Criterion smoke measured 370 us Metal wall, 211 us GPU-active, and 596 us for
+the optimized CPU initial message; the quick sample is a wiring check, not a
+noise-qualified retained comparison.
 
 ## Historical pre-Akita reconnaissance
 

@@ -852,7 +852,10 @@ fn main() -> EvalResult<()> {
         polys * (2 * n + n / width - 3) + 2 * n - 2 + 2 * polys * K as u128 * (width - 1)
     };
     let cpu_useful_multiplications = useful(16);
-    let metal_useful_multiplications = useful(materialize_width as u128);
+    let initial_pair_precompute_multiplications =
+        polys * ((K + 1) as u128 + ((K + 1) as u128).pow(2));
+    let metal_useful_multiplications =
+        useful(materialize_width as u128) - polys * n + initial_pair_precompute_multiplications;
     let lazy_scans = materialize_width.ilog2() as u128 + 1;
     let optimistic_unique_bytes =
         40 * n * lazy_scans + 64 * polys * n / materialize_width as u128 - 48 * polys;
@@ -891,6 +894,7 @@ fn main() -> EvalResult<()> {
             "metal_useful_field_multiplications": metal_useful_multiplications.to_string(),
             "optimistic_unique_device_bytes": optimistic_unique_bytes.to_string(),
             "logical_cache_table_bytes": logical_table_cache_bytes.to_string(),
+            "initial_pair_table_bytes": (16 * initial_pair_precompute_multiplications).to_string(),
             "compute_floor_seconds_at_16_4_gmul_s": metal_useful_multiplications as f64 / 16.4e9,
             "unique_memory_floor_seconds_at_420_gib_s": optimistic_unique_bytes as f64 / (420.0 * 1024.0_f64.powi(3))
         },
@@ -906,6 +910,7 @@ fn main() -> EvalResult<()> {
             "threads": threads,
             "dense_threads": dense_threads,
             "materialize_width": materialize_width,
+            "initial_pair_tables": true,
             "host_fiat_shamir": true,
             "resident_row_handoff": true,
             "base_table_reset_in_primary_metric": true,

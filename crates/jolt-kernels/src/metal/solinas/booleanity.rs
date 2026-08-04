@@ -176,6 +176,8 @@ struct Buffers {
     rows: Buffer,
     selectors: Buffer,
     rho: Buffer,
+    initial_constant: Buffer,
+    initial_leading: Buffer,
     branches_a: Buffer,
     branches_b: Buffer,
     dense_a: Buffer,
@@ -210,6 +212,7 @@ pub struct BooleanitySequence {
     dense: bool,
     dense_elements: usize,
     dense_source_in_a: bool,
+    rho_values: Vec<AkitaField>,
     gpu_active_time: Duration,
 }
 
@@ -363,6 +366,14 @@ impl SolinasMetal {
             .checked_mul(config.materialize_width)
             .and_then(|value| value.checked_mul(k))
             .ok_or(MetalError::InputTooLong(selectors.len()))?;
+        let initial_stride = k + 1;
+        let initial_constant_elements = selectors
+            .len()
+            .checked_mul(initial_stride)
+            .ok_or(MetalError::InputTooLong(selectors.len()))?;
+        let initial_leading_elements = initial_constant_elements
+            .checked_mul(initial_stride)
+            .ok_or(MetalError::InputTooLong(initial_constant_elements))?;
         let initial_dense_elements = rows_len / config.materialize_width;
         let dense_a_elements = selectors
             .len()
@@ -376,6 +387,8 @@ impl SolinasMetal {
             byte_length::<BooleanityRow>(rows_len)?,
             byte_length::<SelectorAbi>(selector_abi.len())?,
             byte_length::<Fp128>(rho.len())?,
+            byte_length::<Fp128>(initial_constant_elements)?,
+            byte_length::<Fp128>(initial_leading_elements)?,
             byte_length::<Fp128>(branch_capacity)?,
             byte_length::<Fp128>(dense_a_elements)?,
             byte_length::<Fp128>(dense_b_elements)?,
@@ -394,6 +407,9 @@ impl SolinasMetal {
         );
         let rho_buffer = self.new_booleanity_buffer(rho.len())?;
         write_fields(&rho_buffer, rho.len(), rho)?;
+        let initial_constant = self.new_booleanity_buffer(initial_constant_elements)?;
+        let initial_leading = self.new_booleanity_buffer(initial_leading_elements)?;
+        write_initial_pair_tables(&initial_constant, &initial_leading, base_tables, rho, k)?;
         let branches_a = self.new_booleanity_buffer(branch_capacity)?;
         write_fields(&branches_a, branch_capacity, base_tables)?;
 
@@ -408,6 +424,8 @@ impl SolinasMetal {
                 rows: rows_buffer,
                 selectors: selectors_buffer,
                 rho: rho_buffer,
+                initial_constant,
+                initial_leading,
                 branches_a,
                 branches_b: self.new_booleanity_buffer(branch_capacity)?,
                 dense_a: self.new_booleanity_buffer(dense_a_elements)?,
@@ -433,6 +451,7 @@ impl SolinasMetal {
             dense: false,
             dense_elements: 0,
             dense_source_in_a: true,
+            rho_values: rho.to_vec(),
             gpu_active_time: Duration::ZERO,
         })
     }
@@ -484,6 +503,13 @@ impl BooleanitySequence {
         }
         let branch_capacity = self.polys * self.materialize_width * self.k;
         write_fields(&self.buffers.branches_a, branch_capacity, base_tables)?;
+        write_initial_pair_tables(
+            &self.buffers.initial_constant,
+            &self.buffers.initial_leading,
+            base_tables,
+            &self.rho_values,
+            self.k,
+        )?;
         self.branch_width = 1;
         self.branches_in_a = true;
         self.dense = false;
@@ -617,7 +643,9 @@ impl BooleanitySequence {
             encoder.set_buffer(5, Some(&self.buffers.e_in), 0);
             encoder.set_buffer(6, Some(&self.buffers.e_out), 0);
             encoder.set_buffer(7, Some(&self.buffers.partial_a), 0);
-            set_inline_bytes(encoder, 8, &params);
+            encoder.set_buffer(8, Some(&self.buffers.initial_constant), 0);
+            encoder.set_buffer(9, Some(&self.buffers.initial_leading), 0);
+            set_inline_bytes(encoder, 10, &params);
             Self::encode_message_dispatch(encoder, e_out.len(), self.threads_per_threadgroup);
             self.encode_reductions(encoder, e_out.len());
             encoder.end_encoding();
@@ -900,6 +928,59 @@ fn write_fields(buffer: &Buffer, capacity: usize, values: &[AkitaField]) -> Resu
     let output = unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), capacity) };
     for (output, value) in output.iter_mut().zip(values) {
         *output = Fp128::from_jolt_field(value);
+    }
+    Ok(())
+}
+
+fn write_initial_pair_tables(
+    constant_buffer: &Buffer,
+    leading_buffer: &Buffer,
+    base_tables: &[AkitaField],
+    rho: &[AkitaField],
+    k: usize,
+) -> Result<(), MetalError> {
+    let expected = rho
+        .len()
+        .checked_mul(k)
+        .ok_or(MetalError::InputTooLong(rho.len()))?;
+    if base_tables.len() != expected {
+        return Err(MetalError::BooleanityStorageLength {
+            name: "initial pair tables",
+            expected,
+            got: base_tables.len(),
+        });
+    }
+    let stride = k + 1;
+    let constant_elements = rho
+        .len()
+        .checked_mul(stride)
+        .ok_or(MetalError::InputTooLong(rho.len()))?;
+    let leading_elements = constant_elements
+        .checked_mul(stride)
+        .ok_or(MetalError::InputTooLong(constant_elements))?;
+    // SAFETY: both fresh shared buffers have the checked capacities below and
+    // no command buffer uses them while the host refreshes a sequence.
+    let constants = unsafe {
+        slice::from_raw_parts_mut(
+            constant_buffer.contents().cast::<Fp128>(),
+            constant_elements,
+        )
+    };
+    // SAFETY: see the allocation and exclusivity argument above.
+    let leading = unsafe {
+        slice::from_raw_parts_mut(leading_buffer.contents().cast::<Fp128>(), leading_elements)
+    };
+    for (poly, (table, rho)) in base_tables.chunks_exact(k).zip(rho).enumerate() {
+        for first in 0..stride {
+            let h_0 = table.get(first).copied().unwrap_or_else(AkitaField::zero);
+            constants[poly * stride + first] = Fp128::from_jolt_field(&(h_0 * (h_0 - *rho)));
+            for second in 0..stride {
+                let h_1 = table.get(second).copied().unwrap_or_else(AkitaField::zero);
+                let delta = h_1 - h_0;
+                leading[(poly * stride + first) * stride + second] =
+                    Fp128::from_jolt_field(&(delta * delta));
+            }
+        }
     }
     Ok(())
 }
