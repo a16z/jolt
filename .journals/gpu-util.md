@@ -257,10 +257,20 @@ soundness note before merge.
   broke — a manual postprocess step converts monitor events; now automated
   (eef0f088e). Also: capped-BRRC re-hosting adds +6 GiB at peak (96.9 vs 91.0)
   — W3B input.
-- **W3B (task 2fbf1cf5, gpt-5.6-sol-xhigh, worktree gpuutil-w3b) — ACTIVE:**
-  BRRC device 2^27 re-baseline under the lean regime → root-cause → bounded
-  fix or evidence-backed no-go. Gate: device-on beats capped arm ≥1.5 s st6b
-  with IncCR as contention canary; else cap stays with mechanism named.
+- **W3B CLOSED — UNCAPPED, merged to trunk @445ff4479** (kernels 239/239,
+  prover 20/20 incl. byte-diff 12/12 both arms — fixture count grew again;
+  the gate is "all discovered", currently 12). Verdict: the 2^27 device cliff
+  was the STORM, not the kernels — BRRC GPU execution is 1.279 s @2^27 and
+  scales linearly (2^26→2^27 = 1.92× for 2× rows); the certification-day
+  9.89 s was ordered-queue WAIT inflated by compressor stalls. Under W3A's
+  lean regime, two opposite-order locked pairs: st6b 16.382 device vs 18.804
+  CPU mean = **−2.42 s (−12.9%)**, IncCR canary improves both pairs, CB
+  timestamps (new JOLT_METAL_CB_TRACE) show no member's GPU execution
+  regressing, and device-on runs 3.8 GiB LOWER peak (no CPU-table rebuild).
+  All four cliff hypotheses discriminated: SLC blowout no, 64-bit offsets no,
+  occupancy no, batch-scheduling-under-storm YES (historical). metal_gate_
+  capped + MAX_DEVICE_ROWS removed. Sequencing vindication: W3B after W3A
+  turned a kernel-rewrite lane into a measurement + one-line-revert lane.
 - **W3C — PARKED:** st4 prepare salvage — parallel build of the EXISTING
   representation (W2B proved −65% prepare in isolation; old rounds untouched;
   byte-identical; no footprint delta). ~−3 s @2^27 prize. U3 lesson applies.
