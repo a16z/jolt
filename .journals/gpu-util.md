@@ -271,9 +271,12 @@ soundness note before merge.
   occupancy no, batch-scheduling-under-storm YES (historical). metal_gate_
   capped + MAX_DEVICE_ROWS removed. Sequencing vindication: W3B after W3A
   turned a kernel-rewrite lane into a measurement + one-line-revert lane.
-- **W3C — PARKED:** st4 prepare salvage — parallel build of the EXISTING
-  representation (W2B proved −65% prepare in isolation; old rounds untouched;
-  byte-identical; no footprint delta). ~−3 s @2^27 prize. U3 lesson applies.
+- **W3C (task 39fb3014, gpt-5.6-sol-xhigh, worktree gpuutil-w3c) — ACTIVE:**
+  st4 prepare salvage — parallelize the WHOLE build (count+scan+scatter) onto
+  the EXISTING frozen representation, byte-identical, rounds untouched;
+  serial-vs-parallel structure-equality test as primary oracle. Gates: @2^24
+  prepare −50% + st4 −12%; @2^25 confirm; ~−3 s @2^27 expected (orchestrator
+  certifies). W2B branch = reference material for the build shape.
 - st1/st2 zero-holes (4.2 + 4.3 s @2^27 instrumented) — untouched, wave-3+.
 - st3 feed (1.97 s @2^27) — smallest, parked.
 
