@@ -896,6 +896,42 @@ groups and four-bit chunks. They remain cross-geometry correctness cases, not sc
 points for the `2^26` G4/8-bit performance target. Target-shaped small shader tests
 force G4 explicitly.
 
+### Complete resident sequence
+
+The first complete width-16 sequence is checkpointed by
+`benchmark-runs/metal-piop-eval/20260804-164342`. It passed proof verification at
+`2^26`, including lazy widths 1, 2, 4, and 8; fused width-16 materialization; dense
+fused bind-and-message rounds; a 1,024-element CPU cutoff; all 16 final claims; and
+host Fiat-Shamir. The optimized CPU relation measured 2,002.044 ms. The initial
+Metal relation measured 1,144.763 ms, only 1.749x, but 877.842 ms of that was
+sequence preparation while the actual rounds took 266.921 ms. Resident arithmetic
+was already 7.50x faster than the fair CPU control; the failure was lifecycle
+placement of transcript-independent storage, not the shader schedule.
+
+Reusable storage now allocates in `backend_witness_prepare`, before the PIOP, and
+stage 6b only attaches the resident lookup plane plus 4,096 challenge-dependent
+field elements. The clean `benchmark-runs/metal-piop-eval/20260804-170646` artifact
+measured:
+
+| Boundary | CPU | Metal | Speedup |
+|---|---:|---:|---:|
+| Instruction RA relation | 2,160.682 ms | 261.795 ms | 8.253x |
+| PIOP | 22,032.015 ms | 12,161.174 ms | 1.812x |
+| PIOP plus backend preparation | 22,032.015 ms | 12,434.008 ms | 1.772x |
+
+The Metal relation decomposed into 0.011 ms attachment, 225.170 ms of lazy rounds,
+34.994 ms of dense rounds, and 0.147 ms of readback. Early storage reservation took
+1.214 ms inside a 272.834-ms backend preparation span; the remainder was Spartan
+row preparation. These are exact-proof paired samples, not yet a noise-qualified
+aggregate.
+
+Width 16 still reserves about 1.503 GiB of sequence storage in addition to the
+1.25-GiB resident lookup plane. Wider lazy materialization is therefore the next
+experiment. W256 projects about 120 MiB of sequence scratch, or about 88 MiB of new
+scratch when the dead 256-MiB inverse buffer becomes the dense destination after
+its final read. The current ceiling model predicts roughly 5.4--5.7x complete local
+speedup. W64, W128, W256, and W512 are compared before considering pair tables.
+
 ## Requirement map and open points
 
 | Requirement | Planned mechanism | Acceptance evidence |
