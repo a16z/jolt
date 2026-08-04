@@ -239,6 +239,18 @@ soundness note before merge.
   Lane task IDs (recorded late, lesson): A=2bbe078e, B=83cf4e87 (confirmed:
   sole surviving codex process = 83cf4e87 = B, still implementing after A's
   kill-gate exit), D=5c8623e5, scope=5068310d (done).
+- 2026-08-04 08:0x UTC: **W1D CLOSED — merged to trunk @79b83e0e3.** Final
+  report lane-reports/w1d.md: mechanism verdict with receipts (pressure tier
+  does not exist on trunk: no compressor/swap/starvation; park-vs-free null),
+  arena deletion −381/+28 (gates: 2^25 neutral −0.09%, byte-diff 11/11 both,
+  kernels 231/231 on its tree, muldiv, clippy, fmt). Honest accounting: 0 s
+  wall delivered vs −4 s target — the chartered door was worth ~0; redirected
+  campaign truth instead. Orchestrator validated MERGED trunk (B+D):
+  kernels 233/233, byte-diff 11/11 metal + 11/11 CPU. Doors it opened:
+  st6b residual = eq-evals 2.2 s + oracle_table 1.6 s feeds (superlinear at
+  2^27) — wave-2/3 candidate, unowned. W2A/W2B notified to merge trunk before
+  their A/B phases. Wave-1 fully closed: A killed, B retained (−0.91 s @2^25),
+  D null-with-simplification. 2^27 certification deferred to wave-2 close.
 - 2026-08-04 06:5x UTC: **W1D ablation verdict: H-shape — park is perf-neutral
   @2^27 (+0.12 s total = noise; st6b −0.17 s).** W4-U1 door closed with a
   measured null: the −4 s allocator prize does not exist on trunk. D's fix =

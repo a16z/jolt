@@ -94,10 +94,6 @@ impl PrepareKernel<Fr, InstructionReadRaf<Fr>> for MetalInstructionReadRaf {
         // stage 1, carried back by every consumer); collects fresh only when
         // no record was built.
         let rows = shared_instruction_rows(session, witness, 1 << dimensions.log_t())?;
-        // The scanner retires its flat cycle pair on drop (stage end) for
-        // the stage-6b adoptions to reuse; the guard drains whatever is
-        // still parked when the proof's session drops.
-        session.park(super::RetiredPoolGuard);
         Ok(Box::new(
             OptimizedInstructionReadRafKernel::new_with_scanner(
                 dimensions,
@@ -171,19 +167,13 @@ struct DeviceIrrScanner {
     r_mont: Fr,
 }
 
-/// Retire the flat cycle ping-pong at scanner drop (the stage-5 kernel is
-/// dropped at its stage's end, before stage 6b prepares): the stage-6b
-/// dense adoptions fit inside this proof's largest pair, so
-/// [`super::own_uninit_frs`] hands the pages back instead of page-zeroing
-/// fresh ones. Every pass completed synchronously — nothing is in flight.
+/// A round left in flight must complete (DetachedPass waits on drop) BEFORE
+/// the cycle ping-pong it reads/writes frees; declaration order (`in_flight`
+/// precedes `cycle`) already guarantees it — this impl documents the
+/// invariant explicitly.
 impl Drop for DeviceIrrScanner {
     fn drop(&mut self) {
-        // A round left in flight must complete (DetachedPass waits on drop)
-        // BEFORE the ping-pong it reads/writes retires into the reuse pool.
         drop(self.in_flight.take());
-        if let Some(cycle) = self.cycle.take() {
-            super::retire_frs([cycle.cur, cycle.nxt]);
-        }
     }
 }
 
@@ -556,9 +546,11 @@ impl PhaseScanner<Fr> for DeviceIrrScanner {
             combined_val: table(0),
             ra: (1..cycle.factors).map(table).collect(),
         };
-        // The live values are host-owned now; the pair is dead weight —
-        // park it for the stage-6b adoptions.
-        super::retire_frs([cycle.cur, cycle.nxt]);
+        // The live values are host-owned now; the pair is dead weight and
+        // frees here (malloc's large cache recycles the pages into the
+        // next stage's allocations — the W1D ablation measured a placement
+        // arena over this pair perf-neutral at every scale).
+        drop((cycle.cur, cycle.nxt));
         Some(tables)
     }
 

@@ -41,9 +41,7 @@ use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, PoisonError};
 
-use jolt_field::Fr;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
@@ -343,8 +341,6 @@ impl<T: Copy> Drop for OwnedDeviceBuffer<T> {
 enum OwnedBacking<T: Copy> {
     Vec(Vec<T>),
     Page(PageAlignedVec<T>),
-    /// A carved sub-range of a retired allocation (see [`ArenaSlab`]).
-    Arena(ArenaLease<T>),
 }
 
 impl<T: Copy> OwnedDeviceBuffer<T> {
@@ -352,7 +348,6 @@ impl<T: Copy> OwnedDeviceBuffer<T> {
         match &self.backing {
             OwnedBacking::Vec(v) => v,
             OwnedBacking::Page(v) => v,
-            OwnedBacking::Arena(lease) => lease.as_slice(),
         }
     }
 
@@ -362,7 +357,6 @@ impl<T: Copy> OwnedDeviceBuffer<T> {
         match &mut self.backing {
             OwnedBacking::Vec(v) => v,
             OwnedBacking::Page(v) => v,
-            OwnedBacking::Arena(lease) => lease.as_mut_slice(),
         }
     }
 
@@ -577,186 +571,130 @@ impl<T: Copy> Drop for PageAlignedVec<T> {
     }
 }
 
-/// A retired device-owned allocation serving later takers as a placement
-/// arena: sub-ranges are carved out at page-aligned offsets instead of
-/// allocating (and first-touch-faulting) fresh pages, so a proof's peak
-/// transient footprint is the largest concurrent SET, not the sum of every
-/// stage's allocations. Measured shape (`JOLT_METAL_ALLOC_TRACE` @2^23):
-/// stage 5 retires a 2.3 + 1.15 GiB ping-pong pair that stage 6b's five
-/// adoption families then re-cover almost exactly — whole-buffer handoff
-/// served one family and the rest allocated ~3.5 GiB fresh.
-///
-/// Lifecycle: the retired pool holds a STRONG ref until the first carve,
-/// then only leases keep the slab alive — when the last lease drops, the
-/// memory frees at exactly the moment the un-pooled buffer would have
-/// (stage-6b batch end), so later stages never see parked idle pages.
-pub(super) struct ArenaSlab {
-    /// The retired buffer, kept whole for its backing allocation (its own
-    /// `MTLBuffer` wrap sits idle; leases mint their own at their offsets).
-    _owner: OwnedDeviceBuffer<Fr>,
-    base: NonNull<u8>,
-    state: Mutex<SlabState>,
-}
+/// W1D diagnostic (ignored): does `MADV_FREE_REUSABLE` actually remove
+/// dirty anonymous pages from `phys_footprint` when the range is wrapped by
+/// a live no-copy `MTLBuffer`? Pins the W4-U1 failure mechanism — the
+/// campaign's retired-arena madvise returned 0 but the parked 30 GiB never
+/// left the ledger. Run explicitly:
+/// `cargo nextest run -p jolt-kernels madvise_reusable --features metal --run-ignored all`
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod madvise_probe {
+    use super::*;
 
-// SAFETY: the owner is a Metal buffer handle plus its host backing memory —
-// `MTLBuffer` is an `MTLResource`, which Metal documents as thread-safe
-// (only command encoders are not), and the backing is plain bytes. `base`
-// is only dereferenced through leases, whose byte ranges the mutex-guarded
-// free-list keeps disjoint.
-unsafe impl Send for ArenaSlab {}
-// SAFETY: as for `Send` — all range bookkeeping is behind the mutex.
-unsafe impl Sync for ArenaSlab {}
-
-struct SlabState {
-    /// Free byte ranges: page-aligned starts, disjoint, unordered.
-    free: Vec<std::ops::Range<usize>>,
-    leased: usize,
-    carved: bool,
-}
-
-impl ArenaSlab {
-    /// Adopt a retired `Fr` buffer as a slab. `None` when the backing is not
-    /// page-aligned (never the case for the pool's no-copy buffers — checked
-    /// rather than assumed).
-    pub(super) fn adopt(buffer: OwnedDeviceBuffer<Fr>) -> Option<Arc<Self>> {
-        let slice = buffer.as_slice();
-        let len_bytes = std::mem::size_of_val(slice);
-        let base = NonNull::new(slice.as_ptr().cast_mut().cast::<u8>())?;
-        if !(base.as_ptr() as usize).is_multiple_of(PAGE_SIZE) || len_bytes < PAGE_SIZE {
-            return None;
+    fn phys_footprint_bytes() -> u64 {
+        // `rusage_info_v4`: 16 UUID bytes then 35 u64 counters;
+        // ri_phys_footprint at post-UUID index 7 — the layout jolt-profiling
+        // pins with its `footprint_tracks_dirty_memory` test.
+        #[repr(C)]
+        struct RusageInfoV4 {
+            uuid: [u8; 16],
+            counters: [u64; 35],
         }
-        Some(Arc::new(Self {
-            _owner: buffer,
-            base,
-            state: Mutex::new(SlabState {
-                free: std::iter::once(0..len_bytes).collect(),
-                leased: 0,
-                carved: false,
-            }),
-        }))
-    }
-
-    /// Total free bytes (for pool ordering; ranges may be fragmented).
-    pub(super) fn free_bytes(&self) -> usize {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .free
-            .iter()
-            .map(|range| range.len())
-            .sum()
-    }
-
-    /// True once every carved lease has been returned — the slab has served
-    /// its purpose and the pool should release its reference.
-    pub(super) fn exhausted(&self) -> bool {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.carved && state.leased == 0
-    }
-
-    /// Carve a `len`-element lease out of the smallest fitting free range,
-    /// minting its own no-copy `MTLBuffer` at the leased offset. `None` when
-    /// no range fits.
-    pub(super) fn carve(
-        self: &Arc<Self>,
-        context: &MetalContext,
-        len: usize,
-    ) -> Option<OwnedDeviceBuffer<Fr>> {
-        let len_bytes = len * size_of::<Fr>();
-        // Page-rounded split point: the remainder must start page-aligned,
-        // and the lease's own wrap rounds up to the same boundary.
-        let take_bytes = round_up_to_page(len_bytes.max(1));
-        let (offset, raw) = {
-            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-            let best = state
-                .free
-                .iter()
-                .enumerate()
-                .filter(|(_, range)| range.len() >= take_bytes)
-                .min_by_key(|(_, range)| range.len())
-                .map(|(index, _)| index)?;
-            let range = state.free.swap_remove(best);
-            let offset = range.start;
-            if range.len() > take_bytes {
-                state.free.push(range.start + take_bytes..range.end);
-            }
-            state.leased += 1;
-            state.carved = true;
-            // SAFETY: `offset` is page-aligned inside the owner allocation
-            // and `take_bytes` stays inside the adopted range, which the
-            // original no-copy wrap already proved page-granular.
-            let raw = unsafe {
-                context.wrap_raw_nocopy_untracked(
-                    NonNull::new_unchecked(self.base.as_ptr().add(offset)).cast(),
-                    len_bytes,
-                )
-            };
-            let Some(raw) = raw else {
-                // Roll the range back; the caller falls through to a fresh
-                // allocation.
-                state.free.push(offset..offset + take_bytes);
-                state.leased -= 1;
-                return None;
-            };
-            (offset, raw)
+        extern "C" {
+            fn proc_pid_rusage(
+                pid: libc::c_int,
+                flavor: libc::c_int,
+                buffer: *mut RusageInfoV4,
+            ) -> libc::c_int;
+        }
+        const RUSAGE_INFO_V4: libc::c_int = 4;
+        const RI_PHYS_FOOTPRINT_INDEX: usize = 7;
+        let mut info = RusageInfoV4 {
+            uuid: [0; 16],
+            counters: [0; 35],
         };
-        Some(OwnedDeviceBuffer {
-            backing: OwnedBacking::Arena(ArenaLease {
-                slab: Arc::clone(self),
-                offset_bytes: offset,
-                len,
-                _elem: PhantomData,
-            }),
-            raw,
-            copied: false,
-            trace_id: 0,
-        })
+        // SAFETY: RUSAGE_INFO_V4 fills exactly a rusage_info_v4.
+        let rc =
+            unsafe { proc_pid_rusage(std::process::id() as i32, RUSAGE_INFO_V4, &raw mut info) };
+        assert_eq!(rc, 0);
+        info.counters[RI_PHYS_FOOTPRINT_INDEX]
     }
-}
 
-/// One carved sub-range: returns itself to the slab's free-list on drop.
-pub(super) struct ArenaLease<T: Copy> {
-    slab: Arc<ArenaSlab>,
-    offset_bytes: usize,
-    len: usize,
-    _elem: PhantomData<T>,
-}
+    struct Region {
+        base: NonNull<u8>,
+        bytes: usize,
+    }
 
-impl<T: Copy> ArenaLease<T> {
-    fn as_slice(&self) -> &[T] {
-        // SAFETY: the lease exclusively owns `[offset, offset + len·size)`
-        // (free-list disjointness); page-aligned offset ⇒ aligned for T.
-        unsafe {
-            std::slice::from_raw_parts(
-                self.slab.base.as_ptr().add(self.offset_bytes).cast::<T>(),
-                self.len,
-            )
+    impl Region {
+        fn dirty(bytes: usize) -> Self {
+            let mut raw: *mut c_void = std::ptr::null_mut();
+            // SAFETY: valid out-pointer, power-of-two alignment.
+            let rc = unsafe { libc::posix_memalign(&raw mut raw, PAGE_SIZE, bytes) };
+            assert_eq!(rc, 0);
+            let base = NonNull::new(raw.cast::<u8>()).unwrap();
+            // SAFETY: the allocation spans `bytes`.
+            unsafe { std::ptr::write_bytes(base.as_ptr(), 0xa5, bytes) };
+            Self { base, bytes }
+        }
+
+        fn reusable(&self) -> bool {
+            // SAFETY: page-aligned range inside the live allocation.
+            unsafe {
+                libc::madvise(
+                    self.base.as_ptr().cast(),
+                    self.bytes,
+                    libc::MADV_FREE_REUSABLE,
+                ) == 0
+            }
         }
     }
 
-    fn as_mut_slice(&mut self) -> &mut [T] {
-        // SAFETY: as in `as_slice`, with exclusivity from `&mut self` — no
-        // other lease overlaps this byte range.
-        unsafe {
-            std::slice::from_raw_parts_mut(
-                self.slab.base.as_ptr().add(self.offset_bytes).cast::<T>(),
-                self.len,
-            )
+    impl Drop for Region {
+        fn drop(&mut self) {
+            // SAFETY: exactly the posix_memalign allocation, freed once.
+            unsafe { libc::free(self.base.as_ptr().cast()) };
         }
     }
-}
 
-impl<T: Copy> Drop for ArenaLease<T> {
-    fn drop(&mut self) {
-        let take_bytes = round_up_to_page((self.len * size_of::<T>()).max(1));
-        let mut state = self
-            .slab
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        state
-            .free
-            .push(self.offset_bytes..self.offset_bytes + take_bytes);
-        state.leased -= 1;
+    /// Footprint delta (MiB) from applying REUSABLE to a freshly dirtied
+    /// 1 GiB region under `configure`'s Metal wrapping choice.
+    fn probe(context: &MetalContext, wrap: bool, release_before: bool) -> (bool, i64) {
+        const BYTES: usize = 1 << 30;
+        let region = Region::dirty(BYTES);
+        let slice =
+            // SAFETY: live dirtied allocation of BYTES.
+            unsafe { std::slice::from_raw_parts(region.base.as_ptr(), region.bytes) };
+        let buffer = wrap.then(|| context.wrap_slice_nocopy(slice).unwrap());
+        let buffer = if release_before { None } else { buffer };
+        let before = phys_footprint_bytes();
+        let ok = region.reusable();
+        let after = phys_footprint_bytes();
+        drop(buffer);
+        (ok, (after as i64 - before as i64) / (1 << 20))
+    }
+
+    #[test]
+    #[ignore = "W1D diagnostic; prints footprint ledger deltas"]
+    #[expect(clippy::print_stdout, reason = "diagnostic output is the deliverable")]
+    fn madvise_reusable_vs_metal_wrap() {
+        let _lock = super::super::testing::gpu_lock();
+        let context = MetalContext::global().unwrap();
+
+        // Ledger sanity: dirtying and freeing 1 GiB must move phys_footprint
+        // by roughly that much, or the probe cannot be trusted.
+        let base = phys_footprint_bytes();
+        let region = Region::dirty(1 << 30);
+        let dirtied = phys_footprint_bytes() as i64 - base as i64;
+        drop(region);
+        let freed = phys_footprint_bytes() as i64 - base as i64;
+        println!(
+            "ledger sanity: dirty 1 GiB => +{} MiB, free => {:+} MiB residual",
+            dirtied / (1 << 20),
+            freed / (1 << 20)
+        );
+        assert!(
+            dirtied > (900 << 20),
+            "footprint ledger did not track dirty"
+        );
+
+        let (ok_plain, delta_plain) = probe(context, false, false);
+        let (ok_wrapped, delta_wrapped) = probe(context, true, false);
+        let (ok_released, delta_released) = probe(context, true, true);
+
+        println!("REUSABLE on 1 GiB dirty region, footprint delta:");
+        println!("  plain malloc:           ok={ok_plain} delta={delta_plain} MiB");
+        println!("  live MTLBuffer wrap:    ok={ok_wrapped} delta={delta_wrapped} MiB");
+        println!("  wrap released first:    ok={ok_released} delta={delta_released} MiB");
     }
 }

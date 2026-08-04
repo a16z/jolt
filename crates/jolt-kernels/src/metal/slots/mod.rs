@@ -63,13 +63,9 @@ pub use registers_read_write::MetalRegistersReadWriteChecking;
 pub use spartan_outer::{MetalOuterRemainder, MetalOuterUniskip};
 pub use spartan_product::{MetalProductRemainder, MetalProductUniskip};
 
-use std::sync::{Arc, Mutex, Weak};
-
 use jolt_field::{Fr, FromPrimitiveInt};
 
-use super::buffers::{
-    ArenaSlab, OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE,
-};
+use super::buffers::{OwnedDeviceBuffer, PageAlignedVec, MALLOC_LARGE_THRESHOLD, PAGE_SIZE};
 use super::error::MetalError;
 use super::field::fr_to_u32_limbs;
 use super::runtime::{MetalContext, THREADGROUP_SIZE};
@@ -93,9 +89,9 @@ impl RoundTable {
         let cur = ctx.own_vec(table)?;
         testing::note_copied_buffers(u64::from(cur.was_copied()));
         // The bind target is written out of place before any read (the
-        // ping-pong contract), so it takes the uninit path: a retired-pool
-        // carve when one fits, a fresh never-zeroed allocation otherwise.
-        // Zero-fill remains only for sizes the no-copy wrap can't serve.
+        // ping-pong contract), so it takes the fresh never-zeroed uninit
+        // path. Zero-fill remains only for sizes the no-copy wrap can't
+        // serve.
         let nxt = match own_uninit_frs(ctx, nxt_len)? {
             Some(buffer) => buffer,
             None => ctx.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), nxt_len))?,
@@ -187,112 +183,20 @@ pub(super) fn num_threadgroups(threads: usize) -> usize {
     threads.div_ceil(THREADGROUP_SIZE).max(1)
 }
 
-/// Retired device buffers awaiting reuse: a slot whose device phase ended
-/// parks its big ping-pong pair here ([`retire_frs`]) so a LATER stage's
-/// [`own_uninit_frs`] hands the pages back instead of allocating fresh ones
-/// (a fresh unified allocation page-zeroes on first touch — the stage-5
-/// scanner's flat pair alone is GiB-scale at production traces, and the
-/// stage-6b dense adoptions fit inside it). Stale contents satisfy the
-/// uninit contract: every consumer device-writes before any read.
+/// An uninitialized device-owned field-element buffer, or `None` when the
+/// allocation would not wrap no-copy (see the SAFETY-adjacent contract on
+/// [`uninit_frs`] — a copy would read the uninitialized memory).
 ///
-/// Retired buffers serve as placement arenas ([`ArenaSlab`]): takers carve
-/// page-aligned sub-ranges, so ONE retired pair covers every stage-6b
-/// adoption concurrently (whole-buffer handoff served only the first
-/// family — the other four allocated ~3.5 GiB fresh @2^23). A parked slab
-/// is held strongly until its first carve, then only weakly: the leases
-/// keep it alive, and the pages free the moment the last lease drops.
-///
-/// Process-global because the consumers (mid-sumcheck adoptions) have no
-/// session access; proof-scoped because the producing slot's `prepare`
-/// parks a [`RetiredPoolGuard`] whose drop drains the pool — buffers never
-/// outlive the proof that retired them.
-enum PoolEntry {
-    Parked(Arc<ArenaSlab>),
-    Carved(Weak<ArenaSlab>),
-}
-
-static RETIRED: Mutex<Vec<PoolEntry>> = Mutex::new(Vec::new());
-
-/// Park device buffers for reuse by a later stage's [`own_uninit_frs`].
-/// Callers (or an earlier slot in the same proof) must have parked a
-/// [`RetiredPoolGuard`] in the session so the pool drains at proof end.
-#[expect(
-    clippy::expect_used,
-    reason = "pool mutex cannot be poisoned: no panics inside"
-)]
-pub(super) fn retire_frs(buffers: impl IntoIterator<Item = OwnedDeviceBuffer<Fr>>) {
-    let mut pool = RETIRED.lock().expect("retired-buffer pool poisoned");
-    // Ineligible buffers (never the pool's in practice) drop here — the
-    // same release they would have had without a pool.
-    pool.extend(
-        buffers
-            .into_iter()
-            .filter_map(ArenaSlab::adopt)
-            .map(PoolEntry::Parked),
-    );
-}
-
-/// Carve `len` elements out of the retired slab with the least free space
-/// that still fits (whole-pool best fit, one carve per call), if any.
-#[expect(
-    clippy::expect_used,
-    reason = "pool mutex cannot be poisoned: no panics inside"
-)]
-fn take_retired(context: &'static MetalContext, len: usize) -> Option<OwnedDeviceBuffer<Fr>> {
-    let mut pool = RETIRED.lock().expect("retired-buffer pool poisoned");
-    // Drop exhausted slabs (fully returned after use) and dead weak refs.
-    pool.retain(|entry| match entry {
-        PoolEntry::Parked(_) => true,
-        PoolEntry::Carved(weak) => weak.upgrade().is_some_and(|slab| !slab.exhausted()),
-    });
-    let mut candidates: Vec<(usize, usize, Arc<ArenaSlab>)> = pool
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| {
-            let slab = match entry {
-                PoolEntry::Parked(slab) => Arc::clone(slab),
-                PoolEntry::Carved(weak) => weak.upgrade()?,
-            };
-            Some((slab.free_bytes(), index, slab))
-        })
-        .collect();
-    candidates.sort_by_key(|(free, _, _)| *free);
-    for (_, index, slab) in candidates {
-        if let Some(buffer) = slab.carve(context, len) {
-            // First carve releases the pool's strong hold: from here the
-            // leases own the slab's lifetime.
-            pool[index] = PoolEntry::Carved(Arc::downgrade(&slab));
-            return Some(buffer);
-        }
-    }
-    None
-}
-
-/// Session-parked drain guard: dropping it (with the proof's session)
-/// releases every still-parked retired buffer, so pooled pages never leak
-/// across proofs.
-pub(super) struct RetiredPoolGuard;
-
-impl Drop for RetiredPoolGuard {
-    fn drop(&mut self) {
-        if let Ok(mut pool) = RETIRED.lock() {
-            pool.clear();
-        }
-    }
-}
-
-/// An uninitialized device-owned field-element buffer — reusing a retired
-/// buffer when one fits — or `None` when a fresh allocation would not wrap
-/// no-copy (see the SAFETY-adjacent contract on [`uninit_frs`] — a copy
-/// would read the uninitialized memory).
+/// Always freshly allocated. A retired-buffer placement arena used to live
+/// here (park a finished slot's ping-pong pair, carve later adoptions from
+/// its pages); the W1D park-vs-free ablation measured it perf-neutral at
+/// every scale — malloc's large-entry cache recycles the just-freed pages
+/// into the next stage's allocations equally warm — so producers now simply
+/// drop their pairs (lane report `.journals/lane-reports/w1d-rootcause.md`).
 pub(super) fn own_uninit_frs(
     context: &'static MetalContext,
     len: usize,
 ) -> Result<Option<OwnedDeviceBuffer<Fr>>, MetalError> {
-    if let Some(buffer) = take_retired(context, len) {
-        testing::note_pool_reuse();
-        return Ok(Some(buffer));
-    }
     let vec = uninit_frs(len);
     let len_bytes = std::mem::size_of_val(vec.as_slice());
     let aligned = (vec.as_ptr() as usize).is_multiple_of(PAGE_SIZE);
@@ -398,46 +302,15 @@ impl DeviceRound {
 mod tests {
     use super::*;
 
-    /// Retire → carve reuse → lease return → guard drain. Pointer identity
-    /// proves the pages came back; two takers carve DISJOINT sub-ranges of
-    /// the one retired slab, and the slab frees with its last lease.
+    /// The uninit path must hand back a no-copy device buffer of the exact
+    /// requested length (a copying wrap would read uninitialized memory).
     #[test]
-    fn retired_pool_roundtrip() {
+    fn own_uninit_frs_wraps_nocopy() {
         let _lock = testing::gpu_lock();
         let context = MetalContext::global().unwrap();
 
-        let big = own_uninit_frs(context, 1 << 15).unwrap().unwrap();
-        let big_ptr = big.as_slice().as_ptr();
-        retire_frs([big]);
-
-        let reuses_before = testing::pool_reuse_count();
-        let first = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
-        let second = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
-        assert_eq!(testing::pool_reuse_count(), reuses_before + 2);
-        assert_eq!(first.as_slice().as_ptr(), big_ptr);
-        assert_eq!(first.as_slice().len(), 1 << 13);
-        let first_range = first.as_slice().as_ptr_range();
-        let second_range = second.as_slice().as_ptr_range();
-        assert!(
-            second_range.start >= first_range.end || first_range.start >= second_range.end,
-            "carved leases must not overlap"
-        );
-
-        // A returned lease's range is takeable again.
-        drop(first);
-        let again = own_uninit_frs(context, 1 << 13).unwrap().unwrap();
-        assert_eq!(again.as_slice().as_ptr(), big_ptr);
-
-        // Once every lease is back the slab is exhausted and GC'd — the
-        // next take finds nothing (the pages freed with the last lease).
-        drop(again);
-        drop(second);
-        assert!(take_retired(context, 1).is_none());
-
-        // Guard drop drains parked (never-carved) slabs too.
-        let parked = own_uninit_frs(context, 1 << 15).unwrap().unwrap();
-        retire_frs([parked]);
-        drop(RetiredPoolGuard);
-        assert!(take_retired(context, 1).is_none());
+        let buffer = own_uninit_frs(context, 1 << 15).unwrap().unwrap();
+        assert!(!buffer.was_copied());
+        assert_eq!(buffer.as_slice().len(), 1 << 15);
     }
 }
