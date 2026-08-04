@@ -290,8 +290,23 @@ soundness note before merge.
   20/20, byte-diff 12/12 CPU arm, muldiv 3/3+3/3, clippy host/zk/metal, fmt —
   all green. Lane discipline exemplary; the override is a scale-of-decision
   question, not a gate failure.
-- st1/st2 zero-holes (4.2 + 4.3 s @2^27 instrumented) — untouched, wave-3+.
-- st3 feed (1.97 s @2^27) — smallest, parked.
+- **Fresh attribution 2026-08-04 17:5x UTC** (trace /tmp/gpu-util-trace-2to27-
+  wave3-20260804.json.gz, monitor binary on trunk @5ce6c19d1; NOTE: the fixed
+  counter reads a different scale — healthy stages now ≈44-45%, use
+  ratios-to-healthy, not absolutes): **zero-GPU windows >1.5 s: NONE** (campaign
+  open: 7 windows, 28.8 s). Per-stage (instr. wall / gpu% / ratio-to-healthy):
+  st0 11.3/44.7/1.0, st1 9.2/21.8/0.49, st2 4.7/19.2/0.43, st3 2.3/15.8/0.35,
+  st4 8.5/19.6/0.44, st5 13.8/42.2/0.94, st6a 0.17/0, st6b 16.3/18.0/0.40,
+  st7 1.9/6.8/0.15, st8 8.2/44.7/1.0.
+- **st1/st2/st3 attribution (the last big door):** st1 = 85% prepare —
+  SpartanOuterUniskip::prepare 6.23 s (TraceRecord::collect 4.17 s inside) +
+  OuterRemainder::prepare 1.65 s vs rounds 0.36 s. st2 = Stage2Batch 4.20 s
+  with rounds 0.98 s + ProductUniskip::prepare 0.50 + ~1.8 s unattributed
+  host glue. st3 = InstrInput rounds 1.61 s + SpartanShift::prepare 0.44.
+  Fix classes: hoist/overlap challenge-independent walk work into st0's
+  11.3 s GPU-heavy window (W2A pattern, process token exists) and/or
+  parallelize the serial walks (W1D/W3C pattern). → W3D ACTIVE.
+- st3 feed (small) — folded into W3D scope as opportunistic.
 
 ## Parked doors (inherited)
 
