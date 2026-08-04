@@ -795,7 +795,8 @@ mod madvise_probe {
             counters: [0; 35],
         };
         // SAFETY: RUSAGE_INFO_V4 fills exactly a rusage_info_v4.
-        let rc = unsafe { proc_pid_rusage(std::process::id() as i32, RUSAGE_INFO_V4, &mut info) };
+        let rc =
+            unsafe { proc_pid_rusage(std::process::id() as i32, RUSAGE_INFO_V4, &raw mut info) };
         assert_eq!(rc, 0);
         info.counters[RI_PHYS_FOOTPRINT_INDEX]
     }

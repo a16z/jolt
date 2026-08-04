@@ -211,6 +211,17 @@ enum PoolEntry {
 
 static RETIRED: Mutex<Vec<PoolEntry>> = Mutex::new(Vec::new());
 
+/// W1D ablation knob: `JOLT_METAL_NO_PARK=1` ends a producing stage's
+/// buffer ownership at retire — the pair drops (freeing its backing) and
+/// later takers allocate fresh. Separates parked-residency harm from
+/// intrinsic working-set shape at the 2^27 tier; read once (cold path).
+fn park_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("JOLT_METAL_NO_PARK").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Park device buffers for reuse by a later stage's [`own_uninit_frs`].
 /// Callers (or an earlier slot in the same proof) must have parked a
 /// [`RetiredPoolGuard`] in the session so the pool drains at proof end.
@@ -219,6 +230,10 @@ static RETIRED: Mutex<Vec<PoolEntry>> = Mutex::new(Vec::new());
     reason = "pool mutex cannot be poisoned: no panics inside"
 )]
 pub(super) fn retire_frs(buffers: impl IntoIterator<Item = OwnedDeviceBuffer<Fr>>) {
+    if park_disabled() {
+        buffers.into_iter().for_each(drop);
+        return;
+    }
     let mut pool = RETIRED.lock().expect("retired-buffer pool poisoned");
     // Ineligible buffers (never the pool's in practice) drop here — the
     // same release they would have had without a pool.
