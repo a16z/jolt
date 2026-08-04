@@ -23,7 +23,12 @@
 //!   surfaces at the driver's final-claim check instead of the round check).
 //! - **Rayon cycle walks** with per-thread partial accumulators.
 //!
-//! Each module documents its own port; [`JoltBackend::optimized`] wires them.
+//! The playbook's shared machinery lives in `support` (the split-eq round
+//! driver `GruenRoundMessage`, `RoundProgress`, the `pin_derived_term`
+//! drift checks, accumulator and parallel-fold helpers) and `lazy_ra` (the
+//! lazy one-hot fold); `ram_trace` and `rw_matrix` carry the RAM family's
+//! shared trace columns and sparse matrix. Each kernel module documents its
+//! own port; [`JoltBackend::optimized`] wires them.
 
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;

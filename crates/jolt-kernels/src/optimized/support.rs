@@ -1,4 +1,7 @@
-//! Small shared primitives of the optimized kernels.
+//! Shared machinery of the optimized kernels: the split-eq (Gruen) round
+//! driver, round/typed-row bookkeeping, deferred-reduction accumulator
+//! helpers, and the cfg(parallel) fold shims. One home per idiom — kernels
+//! hold the summand math, this module holds the plumbing they all repeat.
 
 use std::ops::Range;
 
