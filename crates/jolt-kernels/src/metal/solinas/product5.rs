@@ -637,14 +637,48 @@ impl SolinasMetal {
                 got: elements_per_table,
             });
         }
-        let table_elements = PRODUCT5_FACTORS
-            .checked_mul(elements_per_table)
-            .ok_or(MetalError::InputTooLong(elements_per_table))?;
         let covered = e_in
             .len()
             .checked_mul(e_out.len())
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
         if e_in.is_empty() || e_out.is_empty() || covered != elements_per_table / 2 {
+            return Err(MetalError::Product5WeightShape {
+                expected: elements_per_table / 2,
+                covered,
+            });
+        }
+
+        let sequence = self.prepare_product5_sequence_storage(
+            elements_per_table,
+            e_in.len(),
+            e_out.len(),
+            config,
+        )?;
+        write_akita_fields(&sequence.buffers.e_in, e_in.len(), e_in)?;
+        write_akita_fields(&sequence.buffers.e_out, e_out.len(), e_out)?;
+        Ok(sequence)
+    }
+
+    pub(super) fn prepare_product5_sequence_storage(
+        &self,
+        elements_per_table: usize,
+        e_in_capacity: usize,
+        e_out_capacity: usize,
+        config: Product5SequenceConfig,
+    ) -> Result<Product5Sequence, MetalError> {
+        if elements_per_table < 2 || !elements_per_table.is_power_of_two() {
+            return Err(MetalError::InvalidProduct5TableLength {
+                minimum: 2,
+                got: elements_per_table,
+            });
+        }
+        let table_elements = PRODUCT5_FACTORS
+            .checked_mul(elements_per_table)
+            .ok_or(MetalError::InputTooLong(elements_per_table))?;
+        let covered = e_in_capacity
+            .checked_mul(e_out_capacity)
+            .ok_or(MetalError::InputTooLong(elements_per_table))?;
+        if e_in_capacity == 0 || e_out_capacity == 0 || covered != elements_per_table / 2 {
             return Err(MetalError::Product5WeightShape {
                 expected: elements_per_table / 2,
                 covered,
@@ -681,15 +715,13 @@ impl SolinasMetal {
 
         let tables_a = self.new_product5_buffer(table_elements)?;
         let tables_b = self.new_product5_buffer(table_elements / 2)?;
-        let e_in_buffer = self.new_product5_buffer(e_in.len())?;
-        let e_out_buffer = self.new_product5_buffer(e_out.len())?;
+        let e_in_buffer = self.new_product5_buffer(e_in_capacity)?;
+        let e_out_buffer = self.new_product5_buffer(e_out_capacity)?;
         let partial_elements = PRODUCT5_FACTORS
-            .checked_mul(e_out.len())
-            .ok_or(MetalError::InputTooLong(e_out.len()))?;
+            .checked_mul(e_out_capacity)
+            .ok_or(MetalError::InputTooLong(e_out_capacity))?;
         let partial_a = self.new_product5_buffer(partial_elements)?;
         let partial_b = self.new_product5_buffer(partial_elements)?;
-        write_akita_fields(&e_in_buffer, e_in.len(), e_in)?;
-        write_akita_fields(&e_out_buffer, e_out.len(), e_out)?;
 
         Ok(Product5Sequence {
             context: self.clone(),
@@ -709,8 +741,8 @@ impl SolinasMetal {
             transition_threads_per_threadgroup,
             initial_elements: elements_per_table,
             current_elements: elements_per_table,
-            e_in_capacity: e_in.len(),
-            e_out_capacity: e_out.len(),
+            e_in_capacity,
+            e_out_capacity,
             source_in_a: true,
             gpu_active_time: Duration::ZERO,
         })
@@ -726,6 +758,14 @@ impl SolinasMetal {
 }
 
 impl Product5Sequence {
+    pub(super) fn initial_table_buffer(&self) -> &Buffer {
+        &self.buffers.tables_a
+    }
+
+    pub(super) fn record_gpu_active_time(&mut self, duration: Duration) {
+        self.gpu_active_time += duration;
+    }
+
     /// Restores the initial tables without reallocating device buffers.
     pub fn reset(&mut self, tables: &[AkitaField]) -> Result<(), MetalError> {
         let expected = PRODUCT5_FACTORS * self.initial_elements;

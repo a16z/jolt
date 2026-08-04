@@ -217,7 +217,38 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
             if self.cpu.metal_address_active() {
                 return self.cpu.metal_address_message(previous_claim);
             }
+        }
+
+        if self.address_sequence.is_some() && !self.cpu.metal_resident_cycle_available() {
             self.address_sequence = None;
+        }
+
+        if self.address_sequence.is_some() {
+            if let Some(challenge) = bind.take() {
+                let _span =
+                    tracing::info_span!("MetalInstructionReadRaf::resident_handoff").entered();
+                let address_sequence = self
+                    .address_sequence
+                    .take()
+                    .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
+                let (sequence, q_evals) = self.cpu.metal_offload_resident_bind(
+                    challenge,
+                    address_sequence,
+                    self.config.dispatch,
+                )?;
+                let poly = self.cpu.metal_cycle_message(&q_evals, previous_claim)?;
+                self.sequence = Some(sequence);
+                self.metal_rounds += 1;
+                return Ok(poly);
+            }
+            let _span =
+                tracing::info_span!("MetalInstructionReadRaf::resident_first_message").entered();
+            let (cpu, address_sequence) = (&self.cpu, self.address_sequence.as_mut());
+            let address_sequence = address_sequence
+                .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
+            let poly = cpu.metal_resident_cycle_message(address_sequence, previous_claim)?;
+            self.metal_rounds += 1;
+            return Ok(poly);
         }
 
         if self

@@ -19,6 +19,7 @@ const ADDRESS_RAF_SOURCE: &str = include_str!("address_raf.metal");
 const ADDRESS_RAF_DIRECT_SOURCE: &str = include_str!("address_raf_direct.metal");
 const ADDRESS_SUFFIX_SOURCE: &str = include_str!("address_suffix.metal");
 const ADDRESS_SUFFIX_FULL_SOURCE: &str = include_str!("address_suffix_full.metal");
+const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_cycle.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 
@@ -235,6 +236,10 @@ pub enum MetalError {
     },
     #[error("address phase table-major layout has {got} rows, expected {expected}")]
     AddressPhaseLayoutLength { expected: usize, got: usize },
+    #[error("address cycle phase tables contain {got} fields, expected {expected}")]
+    AddressCyclePhaseTableShape { expected: usize, got: usize },
+    #[error("address cycle has {got} table values, expected {expected}")]
+    AddressCycleTableValueCount { expected: usize, got: usize },
     #[error("lookup table {table} has {count} suffixes; Metal supports at most {maximum}")]
     InvalidAddressSuffixCount {
         table: usize,
@@ -249,6 +254,14 @@ pub enum MetalError {
         "address RAF pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
     UnsupportedAddressRafExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "address cycle pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedAddressCycleExecutionWidth {
         pipeline: &'static str,
         expected: usize,
         got: usize,
@@ -315,7 +328,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)

@@ -1758,6 +1758,80 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
         Ok(self.address_message(previous_claim))
     }
 
+    pub(crate) fn metal_resident_cycle_message(
+        &self,
+        sequence: &mut AddressPhaseSequence,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let CycleTables::Pending(pending) = &cycle.tables else {
+            return Err(metal_state_error(
+                "resident first cycle message requires pending tables",
+            ));
+        };
+        let q_evals = sequence
+            .cycle_message(
+                &self.v_tables,
+                &pending.table_values,
+                pending.raf_interleaved,
+                pending.raf_identity,
+                cycle.gruen.e_in_current(),
+                cycle.gruen.e_out_current(),
+            )
+            .map_err(metal_sumcheck_error)?;
+        Ok(cycle.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+    }
+
+    pub(crate) fn metal_resident_cycle_available(&self) -> bool {
+        self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
+    }
+
+    pub(crate) fn metal_offload_resident_bind(
+        &mut self,
+        challenge: AkitaField,
+        sequence: AddressPhaseSequence,
+        config: Product5SequenceConfig,
+    ) -> Result<(Product5Sequence, [AkitaField; PRODUCT5_FACTORS]), SumcheckError<AkitaField>> {
+        let pending = {
+            let cycle = self
+                .cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+            cycle.gruen.bind(challenge);
+            let tables = core::mem::replace(&mut cycle.tables, CycleTables::Offloaded);
+            let CycleTables::Pending(pending) = tables else {
+                return Err(metal_state_error(
+                    "resident cycle handoff requires pending tables",
+                ));
+            };
+            pending
+        };
+        self.cycle_challenges.push(challenge);
+        self.rounds_bound += 1;
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let result = sequence
+            .fused_cycle_transition(
+                &self.v_tables,
+                &pending.table_values,
+                pending.raf_interleaved,
+                pending.raf_identity,
+                challenge,
+                cycle.gruen.e_in_current(),
+                cycle.gruen.e_out_current(),
+                config,
+            )
+            .map_err(metal_sumcheck_error)?;
+        self.rows = Arc::new(Vec::new());
+        self.v_tables = Vec::new();
+        Ok(result)
+    }
+
     pub(crate) fn metal_handoff_available(&self, cutoff: usize) -> bool {
         self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
             && self.claim_columns.len() / 2 > cutoff
@@ -2297,22 +2371,31 @@ mod tests {
     #[cfg(all(feature = "metal", target_os = "macos"))]
     #[test]
     fn metal_cycle_tail_matches_optimized_cpu() {
-        metal_matches_optimized_cpu(false);
+        metal_matches_optimized_cpu(false, 4);
     }
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
     #[test]
     fn metal_address_and_cycle_match_optimized_cpu() {
-        metal_matches_optimized_cpu(true);
+        metal_matches_optimized_cpu(true, 4);
     }
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    fn metal_matches_optimized_cpu(use_metal_address: bool) {
+    #[test]
+    fn metal_address_matches_optimized_cpu_with_eight_ra_factors() {
+        metal_matches_optimized_cpu(true, 8);
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn metal_matches_optimized_cpu(use_metal_address: bool, num_virtual_ra_polys: usize) {
         use jolt_field::AkitaField;
 
         let log_t = 7;
-        let dimensions =
-            InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(4).unwrap());
+        let dimensions = InstructionReadRafDimensions::new(
+            log_t,
+            2 * RISCV_XLEN,
+            NonZeroUsize::new(num_virtual_ra_polys).unwrap(),
+        );
         let rows = fixture_rows(log_t, 0xA11A_5EED);
         let r_reduction: Vec<AkitaField> = (0..log_t)
             .map(|i| AkitaField::from_u64(1000 + 37 * i as u64))
@@ -2365,7 +2448,7 @@ mod tests {
         }
         expected.finish_rounds(challenge(rounds - 1)).unwrap();
         actual.finish_rounds(challenge(rounds - 1)).unwrap();
-        assert!(actual.metal_rounds() > 0);
+        assert_eq!(actual.metal_rounds() > 0, num_virtual_ra_polys == 4);
         assert_eq!(
             actual.metal_address_phases(),
             if use_metal_address { 16 } else { 0 }

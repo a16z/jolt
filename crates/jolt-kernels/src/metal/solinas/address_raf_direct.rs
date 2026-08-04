@@ -28,6 +28,7 @@ struct AddressRafDirectParams {
     rows_per_threadgroup: u32,
     threadgroup_count: u32,
     condense: u32,
+    packed_rows: u32,
 }
 
 #[repr(C)]
@@ -127,6 +128,7 @@ impl SolinasMetal {
             threadgroup_count: u32::try_from(threadgroup_count)
                 .map_err(|_| MetalError::InputTooLong(threadgroup_count))?,
             condense: u32::from(previous_phase_table.is_some()),
+            packed_rows: 0,
         };
 
         let tile_pipeline = self.compile_named_pipeline(TILE_PIPELINE)?;
@@ -347,5 +349,5 @@ fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
         .ok_or(MetalError::InputTooLong(elements))
 }
 
-const _: () = assert!(size_of::<AddressRafDirectParams>() == 20);
+const _: () = assert!(size_of::<AddressRafDirectParams>() == 24);
 const _: () = assert!(size_of::<AddressRafDirectLookup>() == 16);
