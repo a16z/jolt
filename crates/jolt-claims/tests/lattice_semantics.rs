@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::lattice::{
     one_hot_trace_columns, OneHotTraceShape, UnsignedIncChunking,
 };
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
-use jolt_field::{Fr, FromPrimitiveInt, RingCore};
+use jolt_field::{Fr, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::math::Math;
 use jolt_poly::{boolean_point_msb, eq_index_msb, EqPolynomial, Polynomial};

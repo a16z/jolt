@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{
     geometry::{claim_reductions::increments, spartan::outer_uniskip_opening},
     JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_riscv::CircuitFlags;
 #[cfg(not(feature = "akita"))]
@@ -79,7 +79,7 @@ use jolt_verifier::{
 // `ClearProofClaims` itself; the base builder and its stage-6b/7 pieces
 // target the base wire shape and are compiled out with it.
 #[cfg(not(feature = "akita"))]
-pub(crate) fn build_clear_claims<F: Field>(
+pub(crate) fn build_clear_claims<F: JoltField>(
     claims: impl IntoIterator<Item = (jolt::JoltOpeningId, F)>,
     _trace_length: usize,
 ) -> Result<ClearProofClaims<F>, VerifierError> {
@@ -101,7 +101,7 @@ pub(crate) fn build_clear_claims<F: Field>(
     })
 }
 
-fn spartan_outer_claims_from_openings<F: Field>(
+fn spartan_outer_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage1BatchOutputClaims<F>, VerifierError> {
     let outer_claim = |variable| claims.require(outer_opening(variable));
@@ -148,7 +148,7 @@ fn spartan_outer_claims_from_openings<F: Field>(
     })
 }
 
-fn stage2_claims_from_openings<F: Field>(
+fn stage2_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage2OutputClaims<F>, VerifierError> {
     let product_remainder = ProductRemainderOutputClaims {
@@ -200,7 +200,7 @@ fn stage2_claims_from_openings<F: Field>(
     })
 }
 
-fn stage3_claims_from_openings<F: Field>(
+fn stage3_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage3OutputClaims<F>, VerifierError> {
     let shift = SpartanShiftOutputClaims {
@@ -239,7 +239,7 @@ fn stage3_claims_from_openings<F: Field>(
     })
 }
 
-fn stage4_claims_from_openings<F: Field>(
+fn stage4_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage4OutputClaims<F>, VerifierError> {
     Ok(Stage4OutputClaims {
@@ -263,7 +263,7 @@ fn stage4_claims_from_openings<F: Field>(
     })
 }
 
-fn stage5_claims_from_openings<F: Field>(
+fn stage5_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage5OutputClaims<F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
@@ -297,7 +297,7 @@ fn stage5_claims_from_openings<F: Field>(
     })
 }
 
-fn stage6a_claims_from_openings<F: Field>(
+fn stage6a_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage6aOutputClaims<F>, VerifierError> {
     let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
@@ -315,7 +315,7 @@ fn stage6a_claims_from_openings<F: Field>(
 }
 
 #[cfg(not(feature = "akita"))]
-fn stage6b_claims_from_openings<F: Field>(
+fn stage6b_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage6bOutputClaims<F>, VerifierError> {
     let mut bytecode_ra = Vec::new();
@@ -438,7 +438,7 @@ fn stage6b_claims_from_openings<F: Field>(
     })
 }
 
-fn trusted_advice_cycle_phase_claim_from_openings<F: Field>(
+fn trusted_advice_cycle_phase_claim_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Option<TrustedAdviceCyclePhaseOutputClaims<F>> {
     let opening_claim = claims
@@ -449,7 +449,7 @@ fn trusted_advice_cycle_phase_claim_from_openings<F: Field>(
     })
 }
 
-fn untrusted_advice_cycle_phase_claim_from_openings<F: Field>(
+fn untrusted_advice_cycle_phase_claim_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Option<UntrustedAdviceCyclePhaseOutputClaims<F>> {
     let opening_claim = claims
@@ -462,7 +462,7 @@ fn untrusted_advice_cycle_phase_claim_from_openings<F: Field>(
     })
 }
 
-fn bytecode_val_stage_claims_from_openings<F: Field>(
+fn bytecode_val_stage_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Vec<F>, VerifierError> {
     if claims
@@ -486,7 +486,7 @@ fn bytecode_val_stage_claims_from_openings<F: Field>(
     Ok(stage_claims)
 }
 
-fn bytecode_cycle_phase_claims_from_openings<F: Field>(
+fn bytecode_cycle_phase_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Option<BytecodeReductionCyclePhaseOutputClaims<F>> {
     if let Some(intermediate) =
@@ -504,7 +504,7 @@ fn bytecode_cycle_phase_claims_from_openings<F: Field>(
     })
 }
 
-fn final_bytecode_chunk_claims_from_openings<F: Field>(claims: &OpeningClaimMap<F>) -> Vec<F> {
+fn final_bytecode_chunk_claims_from_openings<F: JoltField>(claims: &OpeningClaimMap<F>) -> Vec<F> {
     let mut chunks = Vec::new();
     for chunk_idx in 0.. {
         let Some(opening_claim) = claims.get(
@@ -518,7 +518,7 @@ fn final_bytecode_chunk_claims_from_openings<F: Field>(claims: &OpeningClaimMap<
 }
 
 #[cfg(not(feature = "akita"))]
-fn stage7_claims_from_openings<F: Field>(
+fn stage7_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage7OutputClaims<F>, VerifierError> {
     let mut instruction_ra = Vec::new();
@@ -581,7 +581,7 @@ fn stage7_claims_from_openings<F: Field>(
     })
 }
 
-fn advice_address_phase_claim_from_openings<F: Field>(
+fn advice_address_phase_claim_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
     kind: JoltAdviceKind,
 ) -> Option<F> {
@@ -589,7 +589,7 @@ fn advice_address_phase_claim_from_openings<F: Field>(
     claims.get(advice::final_advice_opening(kind))
 }
 
-fn bytecode_address_phase_claims_from_openings<F: Field>(
+fn bytecode_address_phase_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Option<BytecodeReductionAddressPhaseOutputClaims<F>> {
     let _ = claims.get(bytecode_claim_reduction::cycle_phase_intermediate_opening())?;
@@ -597,7 +597,7 @@ fn bytecode_address_phase_claims_from_openings<F: Field>(
     (!chunks.is_empty()).then_some(BytecodeReductionAddressPhaseOutputClaims { chunks })
 }
 
-fn program_image_address_phase_claim_from_openings<F: Field>(
+fn program_image_address_phase_claim_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Option<ProgramImageReductionAddressPhaseOutputClaims<F>> {
     let _ = claims.get(program_image::cycle_phase_program_image_opening())?;
@@ -607,11 +607,11 @@ fn program_image_address_phase_claim_from_openings<F: Field>(
 }
 
 #[derive(Clone, Debug)]
-struct OpeningClaimMap<F: Field> {
+struct OpeningClaimMap<F: JoltField> {
     claims: Vec<(jolt::JoltOpeningId, F)>,
 }
 
-impl<F: Field> OpeningClaimMap<F> {
+impl<F: JoltField> OpeningClaimMap<F> {
     fn get(&self, id: jolt::JoltOpeningId) -> Option<F> {
         self.claims
             .iter()
@@ -664,7 +664,7 @@ mod packed {
     /// lattice stage-6b/7 shapes (the read-raf carries the fused-inc opening;
     /// booleanity carries the unsigned-inc columns; there is no stage-6b inc
     /// slot).
-    pub(crate) fn build_packed_clear_claims<F: Field>(
+    pub(crate) fn build_packed_clear_claims<F: JoltField>(
         claims: impl IntoIterator<Item = (jolt::JoltOpeningId, F)>,
     ) -> Result<ClearProofClaims<F>, VerifierError> {
         let claims = OpeningClaimMap {
@@ -686,7 +686,7 @@ mod packed {
         })
     }
 
-    fn indexed_family<F: Field>(
+    fn indexed_family<F: JoltField>(
         claims: &OpeningClaimMap<F>,
         id: impl Fn(usize) -> JoltOpeningId,
     ) -> Vec<F> {
@@ -700,7 +700,7 @@ mod packed {
         family
     }
 
-    fn packed_stage6b_claims_from_openings<F: Field>(
+    fn packed_stage6b_claims_from_openings<F: JoltField>(
         claims: &OpeningClaimMap<F>,
     ) -> Result<Stage6bOutputClaims<F>, VerifierError> {
         let bytecode_ra = indexed_family(claims, |index| {
@@ -794,7 +794,7 @@ mod packed {
         })
     }
 
-    fn packed_stage7_claims_from_openings<F: Field>(
+    fn packed_stage7_claims_from_openings<F: JoltField>(
         claims: &OpeningClaimMap<F>,
     ) -> Result<Stage7OutputClaims<F>, VerifierError> {
         let instruction_ra = indexed_family(claims, |index| {
@@ -855,7 +855,7 @@ mod packed {
         })
     }
 
-    fn reconstruction_claims_from_openings<F: Field>(
+    fn reconstruction_claims_from_openings<F: JoltField>(
         claims: &OpeningClaimMap<F>,
     ) -> ReconstructionOutputClaims<F> {
         ReconstructionOutputClaims {
@@ -874,7 +874,7 @@ mod packed {
 
     /// Every per-chunk lane family, in the relation's family-major layout;
     /// `None` when no bytecode reconstruction ran (full-program mode).
-    fn bytecode_reconstruction_claims_from_openings<F: Field>(
+    fn bytecode_reconstruction_claims_from_openings<F: JoltField>(
         claims: &OpeningClaimMap<F>,
     ) -> Option<BytecodeChunkReconstructionOutputClaims<F>> {
         let mut chunk_count = 0;

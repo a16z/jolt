@@ -38,7 +38,7 @@ use jolt_claims::protocols::jolt::{
     UntrustedAdviceReconstructionPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::{Field, FixedByteSize};
+use jolt_field::{CanonicalBytes, JoltField};
 use jolt_poly::math::Math;
 use jolt_poly::{eq_index_msb, try_eq_mle};
 use jolt_sumcheck::SumcheckProof;
@@ -76,7 +76,7 @@ fn image_public_failed(reason: impl ToString) -> VerifierError {
 /// The single-leg decode publics shared by the trusted-advice and
 /// program-image instances: [`byte_decode_weight`] at the bound
 /// `(byte ‖ place)` prefix of the produced opening point.
-fn byte_decode_leg<F: Field>(
+fn byte_decode_leg<F: JoltField>(
     opening_point: &[F],
     bound: usize,
     fail: fn(&'static str) -> VerifierError,
@@ -91,12 +91,12 @@ fn byte_decode_leg<F: Field>(
 /// The untrusted advice reconstruction: booleanity + hamming + decode legs
 /// over the full `(byte ‖ place ‖ word)` cell domain.
 #[derive(Clone)]
-pub struct UntrustedAdviceReconstructionInstance<F: Field> {
+pub struct UntrustedAdviceReconstructionInstance<F: JoltField> {
     symbolic: UntrustedSymbolic,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> {
     type Symbolic = UntrustedSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -175,12 +175,12 @@ impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> 
 /// The trusted advice reconstruction: the decode leg alone over the
 /// `(byte ‖ place)` variables, the word point fixed by the incoming claim.
 #[derive(Clone)]
-pub struct TrustedAdviceReconstructionInstance<F: Field> {
+pub struct TrustedAdviceReconstructionInstance<F: JoltField> {
     symbolic: TrustedSymbolic,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceReconstructionInstance<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for TrustedAdviceReconstructionInstance<F> {
     type Symbolic = TrustedSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -231,7 +231,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceReconstructionInstance<F> {
 /// `Π_missing (1 − v_i) · column(v_own ‖ r_row)`, with the `Π` folded into
 /// the derived and the claim landing at the column's own packed-slot point.
 #[derive(Clone)]
-pub struct BytecodeChunkReconstructionInstance<F: Field> {
+pub struct BytecodeChunkReconstructionInstance<F: JoltField> {
     symbolic: BytecodeSymbolic,
     dimensions: BytecodeReconstructionDimensions,
     /// The lane half of the completed chunk claims' shared point.
@@ -240,7 +240,7 @@ pub struct BytecodeChunkReconstructionInstance<F: Field> {
     r_row: Vec<F>,
 }
 
-impl<F: Field> BytecodeChunkReconstructionInstance<F> {
+impl<F: JoltField> BytecodeChunkReconstructionInstance<F> {
     fn own_vars(&self) -> BytecodeLegVars {
         BytecodeLegVars {
             total: SymbolicSumcheck::rounds(&self.symbolic),
@@ -268,12 +268,12 @@ impl BytecodeLegVars {
 
     /// The zero-pin factor of a leg's missing high coordinates:
     /// `eq(v_missing, 0) = Π (1 − v_i)`.
-    fn zero_pin<F: Field>(&self, bound: &[F], own: usize) -> F {
+    fn zero_pin<F: JoltField>(&self, bound: &[F], own: usize) -> F {
         eq_index_msb(&bound[..self.total - own], 0)
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for BytecodeChunkReconstructionInstance<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for BytecodeChunkReconstructionInstance<F> {
     type Symbolic = BytecodeSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -375,12 +375,12 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeChunkReconstructionInstance<F> {
 /// The program-image reconstruction: the trusted-advice decode shape over the
 /// program image byte column.
 #[derive(Clone)]
-pub struct ProgramImageReconstructionInstance<F: Field> {
+pub struct ProgramImageReconstructionInstance<F: JoltField> {
     symbolic: ProgramImageSymbolic,
     _field: core::marker::PhantomData<F>,
 }
 
-impl<F: Field> ConcreteSumcheck<F> for ProgramImageReconstructionInstance<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReconstructionInstance<F> {
     type Symbolic = ProgramImageSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -422,19 +422,19 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReconstructionInstance<F> {
 /// Each is present exactly when its object exists in the public shape.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-pub struct ReconstructionSumchecks<F: Field> {
+pub struct ReconstructionSumchecks<F: JoltField> {
     pub untrusted_advice: Option<UntrustedAdviceReconstructionInstance<F>>,
     pub trusted_advice: Option<TrustedAdviceReconstructionInstance<F>>,
     pub bytecode: Option<BytecodeChunkReconstructionInstance<F>>,
     pub program_image: Option<ProgramImageReconstructionInstance<F>>,
 }
 
-pub struct ReconstructionClearOutput<F: Field> {
+pub struct ReconstructionClearOutput<F: JoltField> {
     pub output_values: ReconstructionOutputClaims<F>,
     pub output_points: ReconstructionOutputPoints<F>,
 }
 
-impl<F: Field> ReconstructionClearOutput<F> {
+impl<F: JoltField> ReconstructionClearOutput<F> {
     fn empty() -> Self {
         Self {
             output_values: ReconstructionOutputClaims {
@@ -464,7 +464,7 @@ struct CompletedClaim<F> {
 /// The address-phase-else-cycle-terminus fallback shared by every completed
 /// claim: take the stage-7 pair when the address phase ran, else the stage-6b
 /// pair, else fail with `error`.
-fn completed<F: Field, V>(
+fn completed<F: JoltField, V>(
     address_phase: Option<(V, &[F])>,
     cycle_phase: Option<(V, &[F])>,
     error: impl FnOnce() -> VerifierError,
@@ -475,7 +475,7 @@ fn completed<F: Field, V>(
         .ok_or_else(error)
 }
 
-fn completed_advice_claim<F: Field>(
+fn completed_advice_claim<F: JoltField>(
     kind: JoltAdviceKind,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
@@ -510,7 +510,7 @@ fn completed_advice_claim<F: Field>(
     Ok(CompletedClaim { value, point })
 }
 
-fn completed_chunk_claims<F: Field>(
+fn completed_chunk_claims<F: JoltField>(
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
 ) -> Result<(Vec<F>, Vec<F>), VerifierError> {
@@ -536,7 +536,7 @@ fn completed_chunk_claims<F: Field>(
     )
 }
 
-fn completed_program_image_claim<F: Field>(
+fn completed_program_image_claim<F: JoltField>(
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
 ) -> Result<CompletedClaim<F>, VerifierError> {
@@ -567,7 +567,7 @@ pub fn verify<F, C, T>(
     stage7: &Stage7ClearOutput<F>,
 ) -> Result<ReconstructionClearOutput<F>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     C: Clone + jolt_transcript::AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
@@ -676,7 +676,7 @@ where
             let (r_lane, r_row) = shared_point.split_at(lane_vars);
             let dimensions = BytecodeReconstructionDimensions {
                 chunks: chunk_values.len(),
-                imm_byte_width: <F as FixedByteSize>::NUM_BYTES,
+                imm_byte_width: <F as CanonicalBytes>::NUM_BYTES,
             };
             let instance = BytecodeChunkReconstructionInstance {
                 symbolic: BytecodeSymbolic::new(dimensions),

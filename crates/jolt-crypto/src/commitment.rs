@@ -3,7 +3,7 @@ use std::{
     fmt::{self, Debug},
 };
 
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, WithAccumulator};
+use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_transcript::AppendToTranscript;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -31,7 +31,7 @@ pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
 pub trait VectorCommitment:
     Commitment<Output: Copy + AppendToTranscript + Serialize + DeserializeOwned>
 {
-    type Field: Field;
+    type Field: JoltField;
 
     /// Transparent setup parameters (generators, public parameters, etc.).
     type Setup: Clone + Send + Sync;
@@ -69,10 +69,7 @@ pub trait VectorCommitment:
         row_len: usize,
         row_point: &[Self::Field],
         entry_point: &[Self::Field],
-    ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError>
-    where
-        <Self::Field as WithAccumulator>::Accumulator: RingAccumulator<Element = Self::Field>,
-    {
+    ) -> Result<(VectorCommitmentOpening<Self::Field>, Self::Field), VectorOpeningError> {
         let row_count = point_len_to_basis_len(row_point.len())?;
         validate_row_len(row_len, entry_point.len())?;
         let max_len = row_count
@@ -117,7 +114,6 @@ pub trait VectorCommitment:
     ) -> Result<Self::Field, VectorOpeningError>
     where
         Self::Output: HomomorphicCommitment<Self::Field>,
-        <Self::Field as WithAccumulator>::Accumulator: RingAccumulator<Element = Self::Field>,
     {
         let row_count = point_len_to_basis_len(row_point.len())?;
         if row_commitments.len() != row_count {
@@ -227,7 +223,7 @@ impl Error for VectorOpeningError {}
 /// Blanket-implemented for [`JoltGroup`](crate::JoltGroup) over any field
 /// (via `scalar_mul` + addition). Non-group commitment types (e.g., lattice
 /// vectors) can implement this trait directly for their native scalar field.
-pub trait HomomorphicCommitment<F: Field>: Clone + Default {
+pub trait HomomorphicCommitment<F: JoltField>: Clone + Default {
     /// Computes `c1 + c2`.
     #[must_use]
     fn add(c1: &Self, c2: &Self) -> Self;
@@ -274,15 +270,12 @@ fn point_len_to_basis_len(point_len: usize) -> Result<usize, VectorOpeningError>
 }
 
 #[cfg(feature = "parallel")]
-fn combine_rows<F: Field>(
+fn combine_rows<F: JoltField>(
     flattened_rows: &[F],
     row_len: usize,
     row_weights: &[F],
     max_len: usize,
-) -> Vec<F>
-where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
-{
+) -> Vec<F> {
     let mut combined_vector = vec![F::zero(); row_len];
 
     if max_len >= PAR_THRESHOLD {
@@ -316,15 +309,12 @@ where
 }
 
 #[cfg(not(feature = "parallel"))]
-fn combine_rows<F: Field>(
+fn combine_rows<F: JoltField>(
     flattened_rows: &[F],
     row_len: usize,
     row_weights: &[F],
     _max_len: usize,
-) -> Vec<F>
-where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
-{
+) -> Vec<F> {
     let mut combined_vector = vec![F::zero(); row_len];
 
     for (entry_index, combined_entry) in combined_vector.iter_mut().enumerate() {
@@ -340,10 +330,7 @@ where
     combined_vector
 }
 
-fn inner_product<F: Field>(lhs: &[F], rhs: &[F]) -> F
-where
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
-{
+fn inner_product<F: JoltField>(lhs: &[F], rhs: &[F]) -> F {
     #[cfg(feature = "parallel")]
     {
         if lhs.len() >= PAR_THRESHOLD {
@@ -379,7 +366,7 @@ where
 
 fn combine_commitments<F, C>(commitments: &[C], weights: &[F]) -> C
 where
-    F: Field,
+    F: JoltField,
     C: HomomorphicCommitment<F> + Copy + Send + Sync,
 {
     #[cfg(feature = "parallel")]
@@ -403,7 +390,7 @@ where
         })
 }
 
-impl<G: crate::JoltGroup, F: Field> HomomorphicCommitment<F> for G {
+impl<G: crate::JoltGroup, F: JoltField> HomomorphicCommitment<F> for G {
     #[inline]
     fn add(c1: &G, c2: &G) -> G {
         *c1 + c2

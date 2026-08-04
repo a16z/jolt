@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_program::execution::{RamAccess, TraceRow};
 
 use super::{Extract, ToField, WitnessEnv};
@@ -14,7 +14,7 @@ pub struct RdInc(pub i128);
 pub struct RamInc(pub i128);
 
 impl ToField for RdInc {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_i128(self.0)
     }
 }
@@ -33,7 +33,7 @@ impl Extract for RdInc {
 }
 
 impl ToField for RamInc {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_i128(self.0)
     }
 }

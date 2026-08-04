@@ -1,6 +1,6 @@
 //! Sparse per-cycle R1CS constraint matrices.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
@@ -38,7 +38,7 @@ pub enum ConstraintMatrixEvalError {
     bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"),
     try_from = "RawConstraintMatrices<F>"
 )]
-pub struct ConstraintMatrices<F: Field> {
+pub struct ConstraintMatrices<F: JoltField> {
     pub num_constraints: usize,
     pub num_vars: usize,
     pub a: Vec<SparseRow<F>>,
@@ -47,14 +47,14 @@ pub struct ConstraintMatrices<F: Field> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct WeightedMatrixColumns<F: Field> {
+pub struct WeightedMatrixColumns<F: JoltField> {
     pub a: Vec<F>,
     pub b: Vec<F>,
     pub c: Vec<F>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MatrixColumnContributions<F: Field> {
+pub struct MatrixColumnContributions<F: JoltField> {
     pub a: F,
     pub b: F,
     pub c: F,
@@ -63,7 +63,7 @@ pub struct MatrixColumnContributions<F: Field> {
 /// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
-struct RawConstraintMatrices<F: Field> {
+struct RawConstraintMatrices<F: JoltField> {
     num_constraints: usize,
     num_vars: usize,
     a: Vec<SparseRow<F>>,
@@ -71,7 +71,7 @@ struct RawConstraintMatrices<F: Field> {
     c: Vec<SparseRow<F>>,
 }
 
-impl<F: Field> TryFrom<RawConstraintMatrices<F>> for ConstraintMatrices<F> {
+impl<F: JoltField> TryFrom<RawConstraintMatrices<F>> for ConstraintMatrices<F> {
     type Error = String;
 
     fn try_from(raw: RawConstraintMatrices<F>) -> Result<Self, Self::Error> {
@@ -93,7 +93,7 @@ impl<F: Field> TryFrom<RawConstraintMatrices<F>> for ConstraintMatrices<F> {
     }
 }
 
-fn check_invariants<F: Field>(
+fn check_invariants<F: JoltField>(
     num_constraints: usize,
     num_vars: usize,
     a: &[SparseRow<F>],
@@ -120,7 +120,7 @@ fn check_invariants<F: Field>(
     Ok(())
 }
 
-impl<F: Field> ConstraintMatrices<F> {
+impl<F: JoltField> ConstraintMatrices<F> {
     /// Builds constraint matrices from sparse rows.
     ///
     /// # Panics
@@ -253,7 +253,7 @@ impl<F: Field> ConstraintMatrices<F> {
 }
 
 #[inline]
-fn dot<F: Field>(row: &[(usize, F)], witness: &[F]) -> F {
+fn dot<F: JoltField>(row: &[(usize, F)], witness: &[F]) -> F {
     let mut acc = F::zero();
     for &(col, coeff) in row {
         acc += coeff * witness[col];
@@ -261,7 +261,7 @@ fn dot<F: Field>(row: &[(usize, F)], witness: &[F]) -> F {
     acc
 }
 
-fn matrix_column_eval<F: Field>(
+fn matrix_column_eval<F: JoltField>(
     rows: &[SparseRow<F>],
     row_weights: &[F],
     column: usize,
@@ -284,7 +284,7 @@ fn matrix_column_eval<F: Field>(
     Ok(acc)
 }
 
-fn matrix_bilinear_eval_columns<F: Field>(
+fn matrix_bilinear_eval_columns<F: JoltField>(
     rows: &[SparseRow<F>],
     row_weights: &[F],
     column_weights: &[F],
@@ -326,7 +326,7 @@ fn matrix_bilinear_eval_columns<F: Field>(
 #[expect(clippy::expect_used, reason = "tests should fail loudly")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn satisfied_constraint() {

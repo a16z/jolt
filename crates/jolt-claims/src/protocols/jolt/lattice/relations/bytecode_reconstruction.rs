@@ -22,7 +22,7 @@
 //! lattice booleanity's msb). Every leg is at most a product of two
 //! multilinears per bound variable, hence degree 2.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_poly::math::Math;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 use serde::{Deserialize, Serialize};
@@ -145,7 +145,7 @@ impl<C> BytecodeChunkReconstructionOutputClaims<C> {
     }
 }
 
-impl<F: jolt_field::Field> OutputClaims<F> for BytecodeChunkReconstructionOutputClaims<F> {
+impl<F: jolt_field::JoltField> OutputClaims<F> for BytecodeChunkReconstructionOutputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         self.leaves().map(|(id, _)| id).collect()
     }
@@ -248,14 +248,14 @@ impl SymbolicSumcheck for BytecodeChunkReconstruction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(BytecodeChunkReconstructionChallenge::Gamma);
         (0..self.shape.chunks).fold(JoltExpr::zero(), |acc, chunk| {
             acc + gamma.clone().pow(chunk) * opening(final_bytecode_chunk_opening(chunk))
         })
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(BytecodeChunkReconstructionChallenge::Gamma);
         let layout = BYTECODE_LANE_LAYOUT;
         let mut output = JoltExpr::<F>::zero();
@@ -362,7 +362,7 @@ pub fn bytecode_imm_bytes_opening(chunk: usize) -> JoltOpeningId {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> BytecodeReconstructionDimensions {
         BytecodeReconstructionDimensions {

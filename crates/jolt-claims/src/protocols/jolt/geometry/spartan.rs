@@ -1,6 +1,6 @@
 use std::fmt;
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel, CenteredIntegerDomainError},
     EqPolynomial,
@@ -179,7 +179,7 @@ impl SpartanOuterRemainderPlan {
             .collect()
     }
 
-    pub fn row_weights<F: Field>(
+    pub fn row_weights<F: JoltField>(
         &self,
         r0: F,
         r_stream: F,
@@ -202,7 +202,7 @@ impl SpartanOuterRemainderPlan {
         Ok(weights)
     }
 
-    pub fn tau_kernel<F: Field>(
+    pub fn tau_kernel<F: JoltField>(
         &self,
         tau: &[F],
         r0: F,
@@ -224,7 +224,7 @@ impl SpartanOuterRemainderPlan {
         Ok(tau_high_bound_r0 * EqPolynomial::<F>::mle(&tau[..tau.len() - 1], &reversed_challenges))
     }
 
-    pub fn public_claims<F: Field>(
+    pub fn public_claims<F: JoltField>(
         &self,
         tau_kernel: F,
         linear_forms: &SpartanOuterLinearForms<F>,
@@ -292,7 +292,7 @@ fn spartan_outer_r1cs_input_index(
 
 pub(crate) fn product_weight<F>(index: usize) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::LagrangeWeight(index),
@@ -301,7 +301,7 @@ where
 
 pub(crate) fn product_uniskip_weight<F>(index: usize) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index),
@@ -310,7 +310,7 @@ where
 
 pub(crate) fn product_tau_kernel<F>() -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     derived(JoltDerivedId::from(
         SpartanProductVirtualizationPublic::TauKernel,
@@ -444,7 +444,7 @@ pub fn is_noop_shift() -> JoltOpeningId {
 #[expect(clippy::panic, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn outer_dimensions() -> SpartanOuterDimensions {
         match SpartanOuterDimensions::new(

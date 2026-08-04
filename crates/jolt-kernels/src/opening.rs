@@ -24,7 +24,7 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::MultilinearPoly;
 use jolt_witness::JoltWitnessOracle;
 
@@ -36,7 +36,7 @@ use crate::{KernelError, ProofSession};
 /// `precommitted_tables` carries the committed-program polynomials (bytecode
 /// chunks, program image) the recipe materialized from the prover-retained
 /// full program — they are preprocessing data, not witness oracles.
-pub trait JointOpeningPolynomials<F: Field> {
+pub trait JointOpeningPolynomials<F: JoltField> {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -53,7 +53,7 @@ pub trait JointOpeningPolynomials<F: Field> {
 /// opening evaluation), so it keeps a hand-shaped trait; the advice
 /// polynomial's REDUCTION duties are ordinary `PrepareKernel` members
 /// (`precommitted_reduction`).
-pub trait AdviceOpeningEvaluation<F: Field> {
+pub trait AdviceOpeningEvaluation<F: JoltField> {
     fn evaluate(
         &self,
         session: &mut ProofSession,

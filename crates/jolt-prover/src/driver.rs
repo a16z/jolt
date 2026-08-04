@@ -23,7 +23,7 @@
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{
     PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -45,7 +45,7 @@ use crate::ProverError;
 /// [`Kernels`](Self::Kernels) is the typed kernel bundle — one boxed
 /// [`SumcheckKernel`] per member, `Option`-wrapped for a conditional member,
 /// in declaration order — that [`KernelSource::prepare_members`] mints.
-pub trait StageProver<F: Field>: Sized {
+pub trait StageProver<F: JoltField>: Sized {
     type InputClaims;
     type InputPoints;
     type Challenges;
@@ -96,7 +96,7 @@ pub trait StageProver<F: Field>: Sized {
 /// `prepare_members` mints the typed kernel bundle in declaration order
 /// (`Option` members gated on presence, mismatched presence attributed to the
 /// member's relation id).
-pub trait KernelSource<F: Field, S: StageProver<F>> {
+pub trait KernelSource<F: JoltField, S: StageProver<F>> {
     fn prepare_members(
         &self,
         batch: &S,
@@ -113,7 +113,7 @@ pub trait KernelSource<F: Field, S: StageProver<F>> {
 /// witness for a committed recorder), the typed output claims and derived
 /// opening points, and the batch's final running claim (already hard-checked
 /// against the generated `expected_final_claim`).
-pub struct Proved<F: Field, S: StageProver<F>, C> {
+pub struct Proved<F: JoltField, S: StageProver<F>, C> {
     pub recorded: RecordedSumcheck<F, C>,
     pub output_claims: S::OutputClaims,
     pub output_points: S::OutputPoints,
@@ -138,7 +138,7 @@ pub struct SpannedRounds<K, SR, SF> {
 
 impl<F, K, SR, SF> ProveRounds<F> for SpannedRounds<Box<K>, SR, SF>
 where
-    F: Field,
+    F: JoltField,
     K: ProveRounds<F> + ?Sized,
     SR: Fn() -> tracing::Span,
     SF: Fn() -> tracing::Span,
@@ -200,7 +200,7 @@ pub fn prepare_required<F, R, B>(
     challenges: &ConcreteSumcheckChallenges<F, R>,
 ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     B: PrepareKernel<F, R> + ?Sized,
     SumcheckInputClaims<F, R>: InputClaims<F>,
@@ -238,7 +238,7 @@ pub fn prepare_optional<F, R, B>(
     challenges: Option<&ConcreteSumcheckChallenges<F, R>>,
 ) -> Result<Option<Box<dyn SumcheckKernel<F, Relation = R>>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     B: PrepareKernel<F, R> + ?Sized,
     SumcheckInputClaims<F, R>: InputClaims<F>,
@@ -277,7 +277,7 @@ pub fn validate_optional_tables<F, R>(
     challenges: Option<&ConcreteSumcheckChallenges<F, R>>,
 ) -> Result<(), SumcheckKernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -305,7 +305,7 @@ pub fn extract_optional<F, R>(
     inputs: Option<&SumcheckInputClaims<F, R>>,
 ) -> Result<Option<SumcheckOutputClaims<F, R>>, SumcheckKernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -486,7 +486,7 @@ macro_rules! impl_stage_prover {
             $({ name: $member:ident, relation: $relation:ident, presence: $presence:ident },)+
         ]
     ) => {
-        impl<F: ::jolt_field::Field> $crate::driver::StageProver<F> for $batch<F> {
+        impl<F: ::jolt_field::JoltField> $crate::driver::StageProver<F> for $batch<F> {
             type InputClaims = $input_claims<F>;
             type InputPoints = $input_points<F>;
             type Challenges = $challenges_ty<F>;
@@ -609,7 +609,7 @@ macro_rules! impl_stage_prover {
             }
         }
 
-        impl<F: ::jolt_field::Field, B> $crate::driver::KernelSource<F, $batch<F>> for B
+        impl<F: ::jolt_field::JoltField, B> $crate::driver::KernelSource<F, $batch<F>> for B
         where
             B: ?Sized $(+ ::jolt_kernels::PrepareKernel<F, $relation<F>>)+,
         {

@@ -12,7 +12,7 @@
 //! fallback partial backends compose over; it is eager-dense throughout — a
 //! test oracle at harness scale, never a performance path.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use crate::commitment::ModeStreamingCommitment;
@@ -58,7 +58,7 @@ pub struct ReferenceBackend;
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The always-present reference backend: every slot served by the naive

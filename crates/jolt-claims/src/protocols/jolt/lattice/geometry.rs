@@ -3,7 +3,7 @@
 //! relations' deriveds. Vocabulary is inherited — see the
 //! [module doc](super).
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_poly::math::Math;
 use jolt_poly::{eq_index_msb, IdentityPolynomial, MultilinearEvaluation};
 use thiserror::Error;
@@ -80,7 +80,7 @@ impl UnsignedIncChunking {
 
     /// The place value `2^(chunk_width * index)` weighting chunk `index` in
     /// the little-endian reconstruction of the low 64 bits.
-    pub fn place_value<F: RingCore>(self, index: usize) -> F {
+    pub fn place_value<F: Ring>(self, index: usize) -> F {
         F::pow2(self.chunk_width * index)
     }
 }
@@ -120,7 +120,7 @@ pub fn word_byte_num_vars(log_words: usize) -> usize {
 /// `Π_position ((256^(2^(bits − 1 − position)) − 1) · point[position] + 1)`.
 /// The radix half of the byte decode; the value half is `jolt-poly`'s
 /// `IdentityPolynomial`.
-pub fn place_value_weight<F: RingCore>(point: &[F]) -> F {
+pub fn place_value_weight<F: Ring>(point: &[F]) -> F {
     let bits = point.len();
     point
         .iter()
@@ -137,7 +137,7 @@ pub fn place_value_weight<F: RingCore>(point: &[F]) -> F {
 /// decode(byte, place) · Bytes(byte ‖ place ‖ instance)`. This is the
 /// semantic definition of the `ByteDecode` deriveds of the reconstruction
 /// relations.
-pub fn byte_decode_weight<F: Field>(byte_point: &[F], place_point: &[F]) -> F {
+pub fn byte_decode_weight<F: JoltField>(byte_point: &[F], place_point: &[F]) -> F {
     IdentityPolynomial::new(byte_point.len()).evaluate(byte_point) * place_value_weight(place_point)
 }
 
@@ -147,7 +147,7 @@ pub fn byte_decode_weight<F: Field>(byte_point: &[F], place_point: &[F]) -> F {
 /// `LookupSelectorWeight` deriveds (a one-hot selector's lane-eq weights, one
 /// lane per register / table index); the `LaneWeight(lane)` deriveds of the
 /// direct 0/1 flag lanes are plain `eq_index_msb(lane_point, lane)`.
-pub fn selector_block_weight<F: Field>(
+pub fn selector_block_weight<F: JoltField>(
     lane_point: &[F],
     block_start: usize,
     value_point: &[F],
@@ -165,7 +165,7 @@ pub fn selector_block_weight<F: Field>(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{boolean_point_msb, EqPolynomial};
 
     #[test]

@@ -7,7 +7,7 @@
 )]
 
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
 
@@ -1298,7 +1298,7 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     use crate::prover::{prove_batch, ProveRounds};
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
     use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
-    use jolt_field::MulPow2;
+    use jolt_field::Ring;
 
     let sum_long = F::from_u64(1234);
     let sum_short = F::from_u64(777);
@@ -1384,7 +1384,7 @@ fn prove_batch_clear_twin_head_aligned_member() {
     use crate::prover::{prove_batch, ProveRounds};
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
     use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
-    use jolt_field::{Invertible, MulPow2};
+    use jolt_field::{Field, Ring};
 
     let sum_long = F::from_u64(1234);
     let sum_short = F::from_u64(777);

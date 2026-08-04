@@ -36,7 +36,7 @@ mod support {
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_kernels::committed_program::{
         build_committed_bytecode_chunk_coeffs, program_image_words_padded,
     };

@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
 use jolt_program::execution::TraceRow;
 use jolt_riscv::JoltInstruction;
@@ -21,7 +21,7 @@ pub struct LookupIndex(pub u128);
 pub struct TableIndex(pub Option<usize>);
 
 impl ToField for LookupOutput {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -39,7 +39,7 @@ impl Extract for LookupOutput {
 }
 
 impl ToField for LookupIndex {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u128(self.0)
     }
 }

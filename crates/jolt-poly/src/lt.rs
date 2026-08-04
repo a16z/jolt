@@ -24,7 +24,7 @@
 //! (shrinking `lt_hi` and `eq_hi`), then all lo vars (shrinking `lt_lo`).
 //! Total memory stays at 3 · √N throughout.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::EqPolynomial;
 
@@ -34,7 +34,7 @@ use crate::EqPolynomial;
 /// values on demand via `LT[j] = lt_hi[j_hi] + eq_hi[j_hi] · lt_lo[j_lo]`.
 ///
 /// Supports HighToLow binding only (MSB first).
-pub struct LtPolynomial<F: Field> {
+pub struct LtPolynomial<F: JoltField> {
     lt_lo: Vec<F>,
     lt_hi: Vec<F>,
     eq_hi: Vec<F>,
@@ -42,7 +42,7 @@ pub struct LtPolynomial<F: Field> {
     n_hi_vars: usize,
 }
 
-impl<F: Field> LtPolynomial<F> {
+impl<F: JoltField> LtPolynomial<F> {
     /// Creates a split LT polynomial for the fixed point `r` (big-endian).
     ///
     /// Splits at `r.len() / 2`: the first half is `r_hi`, the second is `r_lo`.
@@ -141,7 +141,7 @@ impl<F: Field> LtPolynomial<F> {
 /// - Right half `y`: `y' = x·r_i` (propagates eq term through x_i=1)
 ///
 /// Time: O(n·2^n). Space: O(2^n).
-fn lt_evals<F: Field>(r: &[F]) -> Vec<F> {
+fn lt_evals<F: JoltField>(r: &[F]) -> Vec<F> {
     let n = r.len();
     let mut evals = crate::thread::unsafe_allocate_zero_vec(1usize << n);
     for (i, &ri) in r.iter().rev().enumerate() {
@@ -156,7 +156,7 @@ fn lt_evals<F: Field>(r: &[F]) -> Vec<F> {
 
 /// In-place HighToLow bind: `v[j] = v[j] + challenge · (v[j+half] - v[j])`.
 #[inline]
-fn bind_in_place<F: Field>(v: &mut Vec<F>, challenge: F) {
+fn bind_in_place<F: JoltField>(v: &mut Vec<F>, challenge: F) {
     let half = v.len() / 2;
     for j in 0..half {
         let lo = v[j];
@@ -169,7 +169,7 @@ fn bind_in_place<F: Field>(v: &mut Vec<F>, challenge: F) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

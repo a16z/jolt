@@ -101,7 +101,7 @@ use jolt_claims::{
     Expr, OutputClaims, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::{Field, FromPrimitiveInt, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
@@ -157,7 +157,7 @@ impl From<JoltDerivedId> for VerifierPublicId {
 }
 
 #[derive(Default)]
-struct SourceValues<F: Field> {
+struct SourceValues<F: JoltField> {
     publics: Vec<(VerifierPublicId, F)>,
 }
 
@@ -217,7 +217,7 @@ fn add_batched_stage<F, C>(
     aliases: Vec<OpeningAlias<JoltOpeningId>>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     if claims.is_empty() {
@@ -280,7 +280,7 @@ fn add_stage<F, C>(
     output_claim: VerifierExpr<F>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     require_expr_sources(name, "input claim", &input_claim, values)?;
@@ -314,7 +314,7 @@ where
 /// Lower one symbolic relation into its `(rounds, input, output)` batch tuple.
 fn relation_claim<F, S>(relation: &S) -> (usize, VerifierExpr<F>, VerifierExpr<F>)
 where
-    F: Field,
+    F: JoltField,
     S: SymbolicSumcheck<
         OpeningId = JoltOpeningId,
         DerivedId = JoltDerivedId,
@@ -328,7 +328,7 @@ where
     )
 }
 
-fn scale_expr<F: Field>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr<F> {
+fn scale_expr<F: JoltField>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr<F> {
     if scale.is_zero() {
         return VerifierExpr::zero();
     }
@@ -338,7 +338,7 @@ fn scale_expr<F: Field>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr<F> 
     expr
 }
 
-fn map_jolt_expr<F: Field>(expr: JoltExpr<F>) -> VerifierExpr<F> {
+fn map_jolt_expr<F: JoltField>(expr: JoltExpr<F>) -> VerifierExpr<F> {
     Expr {
         terms: expr
             .terms
@@ -359,7 +359,7 @@ fn map_jolt_expr<F: Field>(expr: JoltExpr<F>) -> VerifierExpr<F> {
     }
 }
 
-fn require_expr_sources<F: Field>(
+fn require_expr_sources<F: JoltField>(
     stage: &'static str,
     expression: &'static str,
     expr: &VerifierExpr<F>,
@@ -895,7 +895,7 @@ where
     )
 }
 
-fn add_bytecode_chunk_weight_publics<F: Field>(
+fn add_bytecode_chunk_weight_publics<F: JoltField>(
     values: &mut SourceValues<F>,
     chunk_weights: Vec<F>,
 ) -> Result<(), VerifierError> {
@@ -1103,7 +1103,7 @@ where
         .collect()
 }
 
-fn hamming_virtualization_address_point<F: Field>(
+fn hamming_virtualization_address_point<F: JoltField>(
     log_k_chunk: usize,
     point: &[F],
 ) -> Result<Vec<F>, VerifierError> {
@@ -1118,7 +1118,7 @@ fn hamming_virtualization_address_point<F: Field>(
         })
 }
 
-impl<F: Field> SourceValues<F> {
+impl<F: JoltField> SourceValues<F> {
     fn public(&mut self, id: impl Into<VerifierPublicId>, value: F) -> Result<(), VerifierError> {
         let id = id.into();
         if let Some((_, existing)) = self.publics.iter().find(|(candidate, _)| *candidate == id) {
@@ -1138,7 +1138,7 @@ impl<F: Field> SourceValues<F> {
     }
 }
 
-fn stage_sumcheck_error<F: Field>(
+fn stage_sumcheck_error<F: JoltField>(
     stage: JoltRelationId,
     error: jolt_sumcheck::SumcheckError<F>,
 ) -> VerifierError {

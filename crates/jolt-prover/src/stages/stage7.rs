@@ -14,7 +14,7 @@
 use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
@@ -33,7 +33,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 
 /// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 8 consumes.
-pub struct Stage7ProverOutput<F: Field, C> {
+pub struct Stage7ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage7OutputClaims<F>,
     pub clear_output: Stage7ClearOutput<F>,
@@ -57,7 +57,7 @@ pub fn prove_stage7<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage7ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,

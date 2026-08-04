@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
 use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltPolynomialId,
 };
-use jolt_field::{Field, FixedByteSize};
+use jolt_field::{CanonicalBytes, JoltField};
 use jolt_openings::{
     verify_packed_openings, CommitmentScheme, EvaluationClaim, PackedObjectGroup,
     PackedVerifierObject, PrefixPackedStatement, PrefixPacking,
@@ -292,7 +292,7 @@ where
                 precommitted_packing(&PrecommittedPackingShape {
                     bytecode_chunks: committed.bytecode_chunk_count(),
                     log_bytecode_rows,
-                    imm_byte_width: <PCS::Field as FixedByteSize>::NUM_BYTES,
+                    imm_byte_width: <PCS::Field as CanonicalBytes>::NUM_BYTES,
                     program_image_log_words,
                 })
                 .map_err(batch_failed)?,
@@ -348,7 +348,7 @@ fn object_statement<F, C>(
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
 ) -> Result<PrefixPackedStatement<F, JoltCommittedPolynomial, C>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
 {
     let claims = packing
         .iter()
@@ -371,16 +371,16 @@ where
 /// reconstruction outputs and keyed by committed polynomial. Coverage against
 /// the packings is machine-checked downstream by `prepare_statement`
 /// (one-claim-per-slot, no gaps, per-slot point arity).
-fn leaf_claims<F: Field>(
+fn leaf_claims<F: JoltField>(
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
 ) -> BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>> {
     use JoltCommittedPolynomial as Poly;
 
-    fn leaf<F: Field>(value: F, point: &[F]) -> EvaluationClaim<F> {
+    fn leaf<F: JoltField>(value: F, point: &[F]) -> EvaluationClaim<F> {
         EvaluationClaim::new(Point::high_to_low(point.to_vec()), value)
     }
-    fn insert<F: Field>(
+    fn insert<F: JoltField>(
         leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
         polynomial: JoltCommittedPolynomial,
         claim: EvaluationClaim<F>,
@@ -388,7 +388,7 @@ fn leaf_claims<F: Field>(
         // Keys are distinct by construction, so no entry is ever displaced.
         let _previous = BTreeMap::insert(leaves, polynomial, claim);
     }
-    fn insert_indexed<F: Field>(
+    fn insert_indexed<F: JoltField>(
         leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
         values: &[F],
         points: &[Vec<F>],
@@ -512,7 +512,7 @@ mod tests {
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::BytecodeChunkReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::ProgramImageReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::BytecodeRegisterLane;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::math::Math;
     use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
@@ -730,7 +730,7 @@ mod tests {
             imm_bytes: vec![
                 point(
                     jolt_claims::protocols::jolt::lattice::geometry::byte_num_vars(
-                        <Fr as FixedByteSize>::NUM_BYTES,
+                        <Fr as CanonicalBytes>::NUM_BYTES,
                         LOG_BYTECODE_ROWS,
                     )
                     .unwrap()
@@ -776,7 +776,7 @@ mod tests {
             precommitted_packing(&PrecommittedPackingShape {
                 bytecode_chunks: BYTECODE_CHUNKS,
                 log_bytecode_rows: LOG_BYTECODE_ROWS,
-                imm_byte_width: <Fr as FixedByteSize>::NUM_BYTES,
+                imm_byte_width: <Fr as CanonicalBytes>::NUM_BYTES,
                 program_image_log_words: Some(LOG_IMAGE_WORDS),
             })
             .unwrap(),

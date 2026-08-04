@@ -9,7 +9,7 @@
 use std::{fmt::Debug, marker::PhantomData};
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::{Field, FromPrimitiveInt};
+use jolt_field::{JoltField, Ring};
 use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
@@ -41,7 +41,7 @@ pub trait GroupSetupMetadata {
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
 pub trait CommitmentScheme: Commitment {
-    type Field: Field;
+    type Field: JoltField;
     type Proof: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
@@ -164,7 +164,7 @@ pub trait StreamingCommitment: CommitmentScheme {
         let values: Vec<Self::Field> = chunk
             .iter()
             .copied()
-            .map(<Self::Field as FromPrimitiveInt>::from_u64)
+            .map(<Self::Field as Ring>::from_u64)
             .collect();
         Self::feed(partial, &values, setup);
     }
@@ -173,7 +173,7 @@ pub trait StreamingCommitment: CommitmentScheme {
         let values: Vec<Self::Field> = chunk
             .iter()
             .copied()
-            .map(<Self::Field as FromPrimitiveInt>::from_i128)
+            .map(<Self::Field as Ring>::from_i128)
             .collect();
         Self::feed(partial, &values, setup);
     }
@@ -291,7 +291,7 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
 /// - [`Hints`](Self::Hints) are the commit-time auxiliary data
 ///   ([`CommitmentScheme::OpeningHint`]) the PCS reuses when opening.
 pub trait BatchOpeningScheme {
-    type Field: Field;
+    type Field: JoltField;
     type ProverSetup;
     type VerifierSetup;
     /// Public opening claims plus the commitments they refer to.
@@ -490,14 +490,14 @@ where
     }
 }
 
-struct HomomorphicBatchStatement<'a, F: Field, C> {
+struct HomomorphicBatchStatement<'a, F: JoltField, C> {
     claims: &'a [VerifierOpeningClaim<F, C>],
     point: Point<HIGH_TO_LOW, F>,
 }
 
 impl<'a, F, C> HomomorphicBatchStatement<'a, F, C>
 where
-    F: Field,
+    F: JoltField,
     C: Clone,
 {
     fn new(claims: &'a [VerifierOpeningClaim<F, C>]) -> Result<Self, OpeningsError> {
@@ -535,7 +535,7 @@ where
 
 impl<F, C> AppendToTranscript for HomomorphicBatchStatement<'_, F, C>
 where
-    F: Field,
+    F: JoltField,
 {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         VerifierRlcClaims(self.claims).append_to_transcript(transcript);

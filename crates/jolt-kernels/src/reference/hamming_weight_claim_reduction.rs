@@ -17,7 +17,7 @@ use crate::ProverInputs;
 use jolt_claims::protocols::jolt::{
     HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
@@ -27,7 +27,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

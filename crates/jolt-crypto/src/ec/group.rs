@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_transcript::AppendToTranscript;
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +51,7 @@ pub trait JoltGroup:
 
     /// Scalar multiplication: `scalar * self`.
     #[must_use]
-    fn scalar_mul<F: Field>(&self, scalar: &F) -> Self;
+    fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self;
 
     /// Multi-scalar multiplication: `Σᵢ scalars[i] * bases[i]`.
     ///
@@ -59,5 +59,5 @@ pub trait JoltGroup:
     ///
     /// Debug-asserts that `bases.len() == scalars.len()`.
     #[must_use]
-    fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self;
+    fn msm<F: JoltField>(bases: &[Self], scalars: &[F]) -> Self;
 }

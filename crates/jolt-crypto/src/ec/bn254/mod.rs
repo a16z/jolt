@@ -157,12 +157,12 @@ macro_rules! impl_jolt_group_wrapper {
             }
 
             #[inline]
-            fn scalar_mul<F: ::jolt_field::Field>(&self, scalar: &F) -> Self {
+            fn scalar_mul<F: ::jolt_field::JoltField>(&self, scalar: &F) -> Self {
                 Self(self.0 * super::field_to_fr(scalar))
             }
 
             #[inline]
-            fn msm<F: ::jolt_field::Field>(bases: &[Self], scalars: &[F]) -> Self {
+            fn msm<F: ::jolt_field::JoltField>(bases: &[Self], scalars: &[F]) -> Self {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
                 debug_assert_eq!(bases.len(), scalars.len());
@@ -197,7 +197,7 @@ use ark_bn254::Bn254 as ArkBn254;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField as _;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::PairingGroup;
 
@@ -248,16 +248,16 @@ impl PairingGroup for Bn254 {
     }
 }
 
-/// Converts a generic `Field` element to an arkworks `Fr` via serialization.
+/// Converts a generic `JoltField` element to an arkworks `Fr` via serialization.
 ///
-/// This is the bridge between jolt-field's backend-agnostic `Field` trait and
+/// This is the bridge between jolt-field's backend-agnostic `JoltField` trait and
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
 ///
 /// In debug builds, asserts that the source value fits in the BN254 Fr modulus —
 /// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
 #[inline]
-pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
+pub(crate) fn field_to_fr<F: JoltField>(f: &F) -> ark_bn254::Fr {
     let mut bytes = vec![0u8; F::NUM_BYTES];
     f.to_bytes_le(&mut bytes);
     #[cfg(debug_assertions)]

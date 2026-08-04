@@ -4,7 +4,7 @@ use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{Commitment, VectorCommitment};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
@@ -148,7 +148,7 @@ impl<C> JoltCommitments<C> {
 ))]
 pub enum JoltProofClaims<F, ZkProof>
 where
-    F: Field,
+    F: JoltField,
 {
     Clear(ClearProofClaims<F>),
     Zk { blindfold_proof: ZkProof },
@@ -156,7 +156,7 @@ where
 
 impl<F, ZkProof> JoltProofClaims<F, ZkProof>
 where
-    F: Field,
+    F: JoltField,
 {
     pub const fn is_zk(&self) -> bool {
         matches!(self, Self::Zk { .. })
@@ -165,7 +165,7 @@ where
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct ClearProofClaims<F: Field> {
+pub struct ClearProofClaims<F: JoltField> {
     pub stage1: stage1::outputs::Stage1OutputClaims<F>,
     pub stage2: stage2::outputs::Stage2OutputClaims<F>,
     pub stage3: stage3::outputs::Stage3OutputClaims<F>,
@@ -187,7 +187,7 @@ pub struct ClearProofClaims<F: Field> {
 ))]
 pub struct JoltStageProofs<F, VC>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
 {
     pub stage1_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,

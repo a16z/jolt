@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
@@ -7,7 +7,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum XorRotWPrefix<const ROTATION: usize> {}
 
-impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotWPrefix<ROTATION> {
+impl<const ROTATION: usize, F: JoltField> SparseDensePrefix<F> for XorRotWPrefix<ROTATION> {
     fn default_checkpoint() -> F {
         F::zero()
     }

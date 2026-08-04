@@ -4,7 +4,7 @@
 //! sharing a relation id across mode variants: the full/committed bytecode
 //! read-raf pair.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::opening;
@@ -99,11 +99,11 @@ impl SymbolicSumcheck for LatticeBooleanity {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         booleanity_output(lattice_booleanity_output_openings(self.shape))
     }
 }
@@ -144,11 +144,11 @@ impl SymbolicSumcheck for LatticeBooleanityCyclePhase {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(booleanity_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         booleanity_output(lattice_booleanity_output_openings(self.shape))
     }
 }
@@ -188,7 +188,7 @@ mod tests {
     use crate::protocols::jolt::{
         BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltDerivedId,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> LatticeBooleanityDimensions {
         let layout = JoltRaPolynomialLayout::new(1, 0, 0).unwrap();

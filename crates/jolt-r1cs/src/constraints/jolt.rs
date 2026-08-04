@@ -1,6 +1,6 @@
 //! Compile-time Jolt R1CS composition.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel, CenteredIntegerDomainError},
     EqPolynomial,
@@ -108,7 +108,7 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
 ];
 
-pub fn spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
+pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let constraints = rv64::rv64_spartan_outer_constraints();
     #[cfg(feature = "field-inline")]
     {
@@ -123,7 +123,7 @@ pub fn spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
     }
 }
 
-pub fn trace_constraints<F: Field>() -> ConstraintMatrices<F> {
+pub fn trace_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let constraints = rv64::rv64_trace_constraints();
     #[cfg(feature = "field-inline")]
     {
@@ -138,7 +138,7 @@ pub fn trace_constraints<F: Field>() -> ConstraintMatrices<F> {
     }
 }
 
-pub fn spartan_outer_row_weights<F: Field>(
+pub fn spartan_outer_row_weights<F: JoltField>(
     uniskip: F,
     stream: F,
 ) -> Result<Vec<F>, CenteredIntegerDomainError> {
@@ -199,7 +199,7 @@ pub enum JoltSpartanOuterRemainderError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct JoltSpartanOuterRemainder<F: Field> {
+pub struct JoltSpartanOuterRemainder<F: JoltField> {
     tau_kernel: F,
     az_coefficients: Vec<F>,
     bz_coefficients: Vec<F>,
@@ -214,7 +214,7 @@ pub struct JoltSpartanOuterRemainderChallenges<'a, F> {
     pub remainder: &'a [F],
 }
 
-impl<F: Field> JoltSpartanOuterRemainder<F> {
+impl<F: JoltField> JoltSpartanOuterRemainder<F> {
     pub fn new(
         challenges: JoltSpartanOuterRemainderChallenges<'_, F>,
     ) -> Result<Self, JoltSpartanOuterRemainderError> {
@@ -282,7 +282,7 @@ impl<F: Field> JoltSpartanOuterRemainder<F> {
     }
 }
 
-fn spartan_outer_tau_kernel<F: Field>(
+fn spartan_outer_tau_kernel<F: JoltField>(
     tau: &[F],
     uniskip: F,
     remainder_challenges: &[F],
@@ -303,7 +303,7 @@ fn spartan_outer_tau_kernel<F: Field>(
     Ok(tau_high_bound_r0 * EqPolynomial::<F>::mle(&tau[..tau.len() - 1], &reversed_challenges))
 }
 
-fn eval_linear_form<F: Field>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
+fn eval_linear_form<F: JoltField>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
     coefficients
         .iter()
         .zip(inputs)
@@ -345,7 +345,7 @@ pub const fn field_inline_input_column(input_index: usize) -> Option<usize> {
 }
 
 #[cfg(feature = "field-inline")]
-fn append_field_inline_columns<F: Field>(
+fn append_field_inline_columns<F: JoltField>(
     base: ConstraintMatrices<F>,
     extension: ConstraintMatrices<F>,
 ) -> ConstraintMatrices<F> {
@@ -363,7 +363,7 @@ fn append_field_inline_columns<F: Field>(
 }
 
 #[cfg(feature = "field-inline")]
-fn remap_rows<F: Field>(rows: Vec<SparseRow<F>>) -> Vec<SparseRow<F>> {
+fn remap_rows<F: JoltField>(rows: Vec<SparseRow<F>>) -> Vec<SparseRow<F>> {
     rows.into_iter()
         .map(|row| {
             row.into_iter()
@@ -400,7 +400,7 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         geometry::spartan::SpartanOuterDimensions, SpartanOuterPublic,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use num_traits::Zero;
 

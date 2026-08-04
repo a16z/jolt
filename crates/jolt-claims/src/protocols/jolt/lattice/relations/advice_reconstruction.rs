@@ -34,7 +34,7 @@
 //! point is fixed by the incoming claim, mirroring how the inc chunk
 //! reconstruction fixes its cycle point).
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::advice::final_advice_opening;
@@ -98,7 +98,7 @@ pub struct UntrustedAdviceReconstructionChallenges<F> {
     pub gamma: F,
 }
 
-impl<F: Field> SumcheckChallenges<F> for UntrustedAdviceReconstructionChallenges<F> {
+impl<F: JoltField> SumcheckChallenges<F> for UntrustedAdviceReconstructionChallenges<F> {
     fn from_transcript_values<I: Iterator<Item = F>>(
         _values: I,
     ) -> Result<Self, ChallengeDrawError> {
@@ -144,12 +144,12 @@ impl SymbolicSumcheck for UntrustedAdviceReconstruction {
 
     /// The booleanity leg sums to zero, the hamming leg to one, and the
     /// decode leg to the incoming word claim.
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(UntrustedAdviceReconstructionChallenge::Gamma);
         gamma.clone() + gamma.pow(2) * opening(final_advice_opening(JoltAdviceKind::Untrusted))
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(UntrustedAdviceReconstructionChallenge::Gamma);
         let bytes = opening(untrusted_advice_bytes_opening());
 
@@ -221,11 +221,11 @@ impl SymbolicSumcheck for TrustedAdviceReconstruction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(final_advice_opening(JoltAdviceKind::Trusted))
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(TrustedAdviceReconstructionPublic::ByteDecode)
             * opening(trusted_advice_bytes_opening())
     }
@@ -242,7 +242,7 @@ pub fn trusted_advice_bytes_opening() -> JoltOpeningId {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn untrusted_reconstruction_evaluates_like_core_formula() {

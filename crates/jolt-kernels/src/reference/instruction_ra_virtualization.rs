@@ -12,7 +12,7 @@ use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::geometry::instruction::committed_instruction_ra;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
@@ -22,7 +22,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

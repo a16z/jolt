@@ -31,7 +31,7 @@ use jolt_claims::protocols::jolt::{
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{
@@ -48,7 +48,7 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
 /// [`batch_entries`] wiring.
-pub struct Stage8BatchEntry<'a, F: Field, C> {
+pub struct Stage8BatchEntry<'a, F: JoltField, C> {
     pub id: JoltOpeningId,
     pub commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
@@ -74,7 +74,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
@@ -272,7 +272,7 @@ pub fn batch_entries<'a, F, PCS, VC>(
     clear_claims: Option<(&Stage6bOutputClaims<F>, &Stage7OutputClaims<F>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
 {
@@ -447,7 +447,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     PCS::Output: Clone + AppendToTranscript + super::OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: super::OneHotTraceSetupMetadata,

@@ -15,7 +15,7 @@
 //! Matrix MLE factors as:
 //! $$\tilde{M}(r_x, r_y) = \widetilde{eq}(r_x^{cyc}, r_y^{cyc}) \cdot \tilde{M}_{local}(r_x^{con}, r_y^{var})$$
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use serde::{Deserialize, Serialize};
 
@@ -27,14 +27,14 @@ use crate::constraint::ConstraintMatrices;
 /// All evaluation methods exploit the uniform (repeated-constraint) structure.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct R1csKey<F: Field> {
+pub struct R1csKey<F: JoltField> {
     pub matrices: ConstraintMatrices<F>,
     pub num_cycles: usize,
     pub num_constraints_padded: usize,
     pub num_vars_padded: usize,
 }
 
-impl<F: Field> R1csKey<F> {
+impl<F: JoltField> R1csKey<F> {
     /// Creates a new key from per-cycle constraints and cycle count.
     ///
     /// # Panics
@@ -280,7 +280,7 @@ impl<F: Field> R1csKey<F> {
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr, Ring};
     use num_traits::{One, Zero};
 
     /// x * x = y, y * x = z — 2 constraints, 4 vars [1, x, y, z]
