@@ -25,7 +25,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::Field;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -40,7 +40,9 @@ use jolt_witness::{collect_par_map, JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
-use super::support::{collect_rows, pin_derived_term, RoundProgress, SplitLt};
+use super::support::{
+    collect_rows, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -251,42 +253,12 @@ impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
         };
         let half = inc_poly.len() / 2;
         let inc = inc_poly.evals();
-        let accumulate = |y: usize, acc: &mut [F::Accumulator; 3]| {
-            let (inc_0, inc_1) = (inc[2 * y], inc[2 * y + 1]);
-            let (wa_0, wa_1) = self.wa.pair(y);
-            let (lt_0, lt_1) = self.lt.pair(y);
-            let (inc_m, wa_m, lt_m) = (inc_1 - inc_0, wa_1 - wa_0, lt_1 - lt_0);
-            // t = 0, 2, 3; s(1) comes from the engine hint.
-            let (inc_2, wa_2, lt_2) = (inc_1 + inc_m, wa_1 + wa_m, lt_1 + lt_m);
-            acc[0].fmadd(inc_0 * wa_0, lt_0);
-            acc[1].fmadd(inc_2 * wa_2, lt_2);
-            acc[2].fmadd((inc_2 + inc_m) * (wa_2 + wa_m), lt_2 + lt_m);
-        };
-
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || [F::Accumulator::default(); 3],
-                |mut acc, y| {
-                    accumulate(y, &mut acc);
-                    acc
-                },
-            )
-            .map(|acc| acc.map(F::Accumulator::reduce))
-            .reduce(
-                || [F::zero(); 3],
-                |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
-            );
-        #[cfg(not(feature = "parallel"))]
-        let evals = {
-            let mut acc = [F::Accumulator::default(); 3];
-            for y in 0..half {
-                accumulate(y, &mut acc);
-            }
-            acc.map(F::Accumulator::reduce)
-        };
-
+        let evals = triple_product_round_evals(
+            half,
+            |y| (inc[2 * y], inc[2 * y + 1]),
+            |y| self.wa.pair(y),
+            |y| self.lt.pair(y),
+        );
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
     }
 

@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use jolt_claims::protocols::jolt::JoltDerivedId;
-use jolt_field::{Field, RingAccumulator, SignedScalarAccumulator};
+use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, SignedScalarAccumulator};
 use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
 };
@@ -378,6 +378,54 @@ pub(crate) fn merge_evals<F: Field>(mut left: Vec<F>, right: Vec<F>) -> Vec<F> {
         *left += right;
     }
     left
+}
+
+/// `s(t)` samples at `t ∈ {0, 2, 3}` of the cubic triple-product summand
+/// `Σ_y a(y) · b(y) · c(y)` over the remaining low-to-high `(lo, hi)` pairs,
+/// through the deferred-reduction accumulator; `s(1)` comes from the engine's
+/// `from_evals_and_hint` recovery.
+pub(crate) fn triple_product_round_evals<F: Field>(
+    half: usize,
+    a: impl Fn(usize) -> (F, F) + Send + Sync,
+    b: impl Fn(usize) -> (F, F) + Send + Sync,
+    c: impl Fn(usize) -> (F, F) + Send + Sync,
+) -> [F; 3] {
+    let accumulate = |y: usize, acc: &mut [F::Accumulator; 3]| {
+        let (a_0, a_1) = a(y);
+        let (b_0, b_1) = b(y);
+        let (c_0, c_1) = c(y);
+        let (a_m, b_m, c_m) = (a_1 - a_0, b_1 - b_0, c_1 - c_0);
+        let (a_2, b_2, c_2) = (a_1 + a_m, b_1 + b_m, c_1 + c_m);
+        acc[0].fmadd(a_0 * b_0, c_0);
+        acc[1].fmadd(a_2 * b_2, c_2);
+        acc[2].fmadd((a_2 + a_m) * (b_2 + b_m), c_2 + c_m);
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        (0..half)
+            .into_par_iter()
+            .fold(
+                || [F::Accumulator::default(); 3],
+                |mut acc, y| {
+                    accumulate(y, &mut acc);
+                    acc
+                },
+            )
+            .map(|acc| acc.map(F::Accumulator::reduce))
+            .reduce(
+                || [F::zero(); 3],
+                |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
+            )
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut acc = [F::Accumulator::default(); 3];
+        for y in 0..half {
+            accumulate(y, &mut acc);
+        }
+        acc.map(F::Accumulator::reduce)
+    }
 }
 
 /// Sum per-pair-group evaluation contributions over `y = 0..groups` into a
