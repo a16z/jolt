@@ -132,16 +132,24 @@ just A+B.
 Ranked candidates unlocked by the 2026-08-04 directive; each needs a journal
 soundness note before merge.
 
-1. **Round-pairing (two sumcheck rounds per GPU round-trip).** Per pair: one
-   eval pass producing a bivariate g(X,Y) on a (d+1)² grid + one bind-by-2 pass,
-   vs two eval + two bind passes today → ~2× fewer big-array traversals and ~2×
-   fewer host↔GPU sync/transcript round-trips on round loops. Cost: (d+1)²
-   coeffs vs 2(d+1) per pair in the proof (d=3: 16 vs 8 Fr) and more ALU per
-   pass. Soundness sketch: verifier checks Σ_{x,y∈{0,1}} g(x,y) = prev claim,
-   samples (r_i, r_{i+1}), next claim g(r_i,r_{i+1}); Schwartz-Zippel gives
-   2d/|F| per pair = identical total to two single rounds. Best on the mid-util
-   stages (st1/2/3/4/6b, 18-31% @2^27) where round-boundary stalls dominate.
-   SCOPING LANE dispatched (read-only) before any implementation.
+1. **Round-pairing (two sumcheck rounds per GPU round-trip).** SCOPED
+   2026-08-04 (lane-reports/w15-roundpair-scope.md, task 5068310d): **narrow GO
+   only — st4 RegistersRW device-only prefix rounds 0..6, pairs (0,1)(2,3)(4,5),
+   never across the r6/r7 join; generic rollout NO-GO** (normal Metal slots
+   already fuse bind+eval in one command buffer — measured exposed round-boundary
+   gaps: st5 5 ms, st6b 0.14 ms, st3 54 ms; pairing there buys ~nothing and d5/d6
+   members make paired messages 3-3.5× ALU). RegistersRW is the sole UNFUSED
+   slot: message pass + host count-scan/alloc + bind pass per round = 2 waits +
+   1 host boundary/round; prefix = 5.862 s @2^27 at 30.5% GPU-eq (3.73 s
+   sampled-0% inside its own spans). Modeled pairing win 1.2-1.8 s @2^27.
+   Soundness: verifier checks Σ_{x,y∈{0,1}} g(x,y) = prev claim, samples both
+   challenges after the bivariate is absorbed; 2d/|F| per pair = two single
+   rounds. zk: protocol-profile knob in JoltProtocolConfig, pairing rejected
+   fail-closed under zk (report §5, Option A). NOTE: a protocol-NEUTRAL
+   alternative captures much of the same prize — fuse RegistersRW (device
+   prefix-scan + single-CB bind+message, 13→7 passes); sequenced as route (a)
+   before pairing route (b). Both routed through lane D's st4 root-cause
+   (findings forwarded to D 04:45 UTC) — st4 owner implements, wave 2.
 2. **Address-major layout / materialization** for address-phase sumchecks
    (booleanity_address, bytecode_read_raf_address — the st6a pair). Only if
    lane A's exact-math port is gather-bound; wait for A's root-cause report.
@@ -170,3 +178,12 @@ soundness note before merge.
   Wave-1 lanes finish as scoped (unaffected: exact-math ports). Lever board
   published; round-pairing scoping lane dispatched (read-only, no bench lock):
   task 5068310d, gpt-5.6-sol-xhigh, report → lane-reports/w15-roundpair-scope.md.
+- 2026-08-04 04:36-04:50 UTC: scope lane returned in ~15 min — narrow GO (st4
+  RegistersRW prefix only), generic pairing no-go; lever-board entry updated
+  with verdict + protocol-neutral fusion alternative. Findings + gate change
+  forwarded to lane D (task 5c8623e5) for its st4 root-cause artifact. W1A/W1B
+  checkpoint-1 decomposition reports read (w1a.md, w1b.md — both sound, byte
+  parity retained as their retention gate, stricter than required = fine).
+  Lane task IDs (recorded late, lesson): A=2bbe078e?, B=83cf4e87? (codex pair,
+  A/B assignment inferred from spawn order — confirm at next checkpoint),
+  D=5c8623e5, scope=5068310d (done).
