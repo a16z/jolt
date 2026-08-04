@@ -690,9 +690,9 @@ impl<F: Field> LazyFusedInc<F> {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BytecodeCycleAlgebra {
     /// Evaluate every sample point independently.
-    #[default]
     Generic,
     /// Specialize the Akita two-RA relation to ten field products per group.
+    #[default]
     Q10,
     /// Keep the four terminal Q10 products in wide accumulators until reduction.
     Q10Accum,

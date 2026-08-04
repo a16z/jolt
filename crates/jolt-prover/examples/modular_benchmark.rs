@@ -529,8 +529,8 @@ mod akita_benchmark {
 
     #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
     enum BytecodeCycleAlgebra {
-        #[default]
         Generic,
+        #[default]
         Q10,
         Q10Accum,
     }
@@ -568,7 +568,7 @@ mod akita_benchmark {
         #[clap(long)]
         instruction_ra_reuse_inverse: bool,
 
-        #[clap(long, value_enum, default_value = "generic")]
+        #[clap(long, value_enum, default_value = "q10")]
         bytecode_cycle_algebra: BytecodeCycleAlgebra,
     }
 

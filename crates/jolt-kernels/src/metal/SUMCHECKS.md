@@ -181,7 +181,7 @@ order after the first slot establishes the harness.
 | 5 | `registers_val_evaluation` | dense fused product | analyze |
 | 6a | `bytecode_read_raf_address` | address pushforward | analyze |
 | 6a | `booleanity_address` | address pushforward | analyze |
-| 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | Q10 controls implemented; five-block CPU-denominator gate pending |
+| 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | Q10 CPU denominator revalidated; dense Metal control next |
 | 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | integrated; 4.85x real kernel seam at `2^26`, further ceiling work open |
 | 6b | `ram_hamming_booleanity` | dense cubic | analyze |
 | 6b | `ram_ra_virtualization` | one-hot virtualization | analyze |
@@ -781,7 +781,8 @@ Q(t) = R0(t) R1(t) [C(t) + I(t) D(t)],
 ```
 
 where every factor is affine over one Boolean pair, `I` is the signed fused
-increment, and `C,D` combine the nine stage equality polynomials. The prover needs
+increment, `C` is `combined`, and `D` is `fused_combined`. Together `C,D` combine
+the nine stage equality polynomials. The prover needs
 the four skipped samples at `t = 0,2,3,4`; interpolation, the batch transcript, and
 the final checks remain on the host.
 
@@ -805,15 +806,24 @@ the comparable totals are about 2.294 billion products for Generic, 1.153 billio
 for Q10, and 885 million canonical plus 268 million deferred products for
 Q10Accum.
 
-One exploratory, proof-verified target block measured 1,287.971 ms Generic,
-1,040.265 ms Q10, and 931.278 ms Q10Accum at the member-local boundary. The 27.7%
-and 10.5% reductions are screens, not promoted results; the canonical five-block
-interleaved evaluator must clear the fixed noise gates on a clean revision before
-the default changes. It builds once without the Metal feature, hashes the binary,
-uses fresh processes, and measures
-`prepare + sum(prove_round) + finish_rounds + output_claims`. Shared batch
-Fiat--Shamir is invariant across the arms and remains a separately covered proof
-operation, not falsely attributed to one member.
+The canonical evaluator ran five interleaved target blocks on an Apple M4 Max with
+16 Rayon threads. Every one of its 18 proofs verified, every trace was reparsed from
+its hashed artifact, and the source and binary stayed fixed at revision `7b98309e0`.
+At the member-local boundary, Generic measured 1,268.459 ms median (10.348 ms MAD),
+Q10 measured 1,003.465 ms (20.221 ms MAD), and Q10Accum measured 945.742 ms
+(4.281 ms MAD). Q10's paired improvement over Generic was 21.38% with 1.10% MAD,
+clearing the fixed 5% and `3*MAD` gates. Q10Accum was 5.91% faster than Q10 by the
+paired median, but its 2.22% MAD made the `3*MAD` threshold 6.65%; one of five pairs
+also reversed. Q10 is therefore the revalidated default, while Q10Accum remains an
+unpromoted experimental arm.
+
+The result, observation ledger, and immutable manifest hashes are respectively
+`3570c4f3b507803ace56a70868bcdf5281e57b249f28186cf30d6ee147cc9367`,
+`d8ae1ba853e7fe875f339bfd248a072dbd6852dec13c6bb6b43b0d65441e6e32`, and
+`c35ac678c80382bd47eabf84aa7a80c508877fcc37dbe494c262c7d0d9eea76d`. The
+evaluator measures `prepare + sum(prove_round) + finish_rounds + output_claims`.
+Shared batch Fiat--Shamir is excluded from this member comparison and covered
+symmetrically by the later paired PIOP gate.
 
 ### Metal schedule and roof
 
@@ -834,29 +844,34 @@ B(W,q) = [128 + q(b+1) + 192/W] T bytes.
 ```
 
 This is `200T` bytes for a 12-byte SoA row at either width 8 or 16, and `216T` or
-`220T` for an aligned 16-byte row. At `2^26`, the measured 420.68-GiB/s copy control
-therefore gives a 29.7--32.7 ms traffic floor. Nine equality-table expansions, Q10
+`220T` for an aligned 16-byte row. These are optimistic layouts, not the current
+resident ABI: the existing shared carrier is a 40-byte AoS row, so a compact
+projection must be charged to Bytecode preparation unless witness preparation later
+shares it across consumers. At `2^26`, the measured 420.68-GiB/s copy control gives
+a 29.7--32.7 ms traffic floor once such a compact layout is available. Nine
+equality-table expansions, Q10
 messages, sparse binds, and the dense tail total about `19.5T + 3T/W` full products
 plus `(1.5 + log2(W))T` small-scalar products. Pricing even the scalar work at the
 calibrated 26.7-Gproduct/s sequence rate gives a 61--63 ms arithmetic floor.
 
-The first complete-hybrid budget is at most 100 ms, with 80 ms as the stretch goal.
-It must also beat the revalidated optimized CPU control by at least 4x; 4x is not a
-stopping rule when the measured ceiling supports more. A result still above 150 ms
-after the fixed row-layout, width, threadgroup, scalar-specialization, and cutoff
-sweep rejects this architecture rather than relaxing the bar. Sub-budgets are 45 ms
-for `C,D` generation plus the first message, 30 ms for sparse/materialization work,
-and 15 ms for the dense tail plus handoff.
+The acceptance floor is at least 4x against the 1,003.465-ms Q10 control, or at most
+250.866 ms at this member boundary. The stretch targets are 100 ms and then 80 ms;
+4x is not a stopping rule when the measured ceiling supports more. The 100-ms model
+decomposes into 45 ms for `C,D` generation plus the first message, 30 ms for sparse
+and materialization work, and 15 ms for the dense tail plus handoff. A slower result
+triggers an architecture review only when measured attribution and the roof model
+show that the current design cannot reach 4x.
 
-The primary timing starts with the shared resident row plane ready and includes all
-transcript-dependent setup, command submissions and waits, host Fiat--Shamir,
-readback, and CPU tail. Row-plane construction is reported in an inclusive
-diagnostic. Bytecode clones the plane handle before Booleanity reclaims its session
-carrier; no full-domain host `C,D` tables or per-round allocations are permitted.
-Because `log_K=13` is leading-zero padded into two eight-bit chunks, neither bound
-Bytecode RA point equals Booleanity's eight-round tail point. A later joint stage-6b
-dispatcher may share row scans or command submission, but not bound RA state in the
-primary geometry.
+The first local Metal evaluator uses a fixed production-shape challenge tape and the
+same member boundary as the CPU control. It starts before Bytecode `prepare` and
+includes member-specific projection, allocation, upload, every command submission
+and wait, readback, CPU tail, `finish_rounds`, and `output_claims`. Device, library,
+and pipeline creation are excluded; allocations after `prepare` are forbidden. The
+later paired PIOP gate includes the real host Fiat--Shamir and shared batch work in
+both arms. Because `log_K=13` is leading-zero padded into two eight-bit chunks,
+neither bound Bytecode RA point equals Booleanity's eight-round tail point. A later
+joint stage-6b dispatcher may share row scans or command submission, but not bound
+RA state in the primary geometry.
 
 ## Instruction RA virtualization ceiling
 
