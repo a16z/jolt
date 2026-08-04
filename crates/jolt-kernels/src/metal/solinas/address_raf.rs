@@ -13,7 +13,9 @@ pub const ADDRESS_RAF_LANES: usize = 6;
 pub const ADDRESS_RAF_BINS: usize = 256;
 const ADDRESS_RAF_OUTPUTS: usize = ADDRESS_RAF_LANES * ADDRESS_RAF_BINS;
 const ADDRESS_RAF_SIMD_WIDTH: usize = 32;
-const SCAN_PIPELINE: &str = "solinas_address_raf_scan";
+const HISTOGRAM_PIPELINE: &str = "solinas_address_raf_histogram";
+const OFFSETS_PIPELINE: &str = "solinas_address_raf_offsets";
+const SCATTER_PIPELINE: &str = "solinas_address_raf_scatter";
 const REDUCE_PIPELINE: &str = "solinas_address_raf_reduce";
 const RAF_FLAG_SHIFT: u32 = 62;
 
@@ -49,7 +51,7 @@ impl AddressRafScanRow {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AddressRafScanConfig {
     pub suffix_len: u32,
-    pub rows_per_simdgroup: usize,
+    pub rows_per_threadgroup: usize,
     pub threads_per_threadgroup: Option<usize>,
 }
 
@@ -57,7 +59,7 @@ impl Default for AddressRafScanConfig {
     fn default() -> Self {
         Self {
             suffix_len: 120,
-            rows_per_simdgroup: 1 << 16,
+            rows_per_threadgroup: 1 << 16,
             threads_per_threadgroup: Some(128),
         }
     }
@@ -107,27 +109,33 @@ impl AddressRafSums {
 struct AddressRafParams {
     rows: u32,
     suffix_len: u32,
-    rows_per_simdgroup: u32,
-    simdgroup_count: u32,
+    rows_per_threadgroup: u32,
+    threadgroup_count: u32,
 }
 
 struct AddressRafBuffers {
     rows: Buffer,
+    keys: Buffer,
     weights: Buffer,
-    partials: Buffer,
+    group_counts: Buffer,
+    group_offsets: Buffer,
+    bin_offsets: Buffer,
+    bucketed_indices: Buffer,
     output: Buffer,
     params: Buffer,
 }
 
 pub struct AddressRafScanInvocation<'a> {
     context: &'a SolinasMetal,
-    scan_pipeline: ComputePipelineState,
+    histogram_pipeline: ComputePipelineState,
+    offsets_pipeline: ComputePipelineState,
+    scatter_pipeline: ComputePipelineState,
     reduction_pipeline: ComputePipelineState,
-    scan_limits: PipelineLimits,
+    histogram_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: AddressRafBuffers,
     rows: usize,
-    simdgroup_count: usize,
+    threadgroup_count: usize,
     threads_per_threadgroup: usize,
     completed: Cell<bool>,
 }
@@ -151,36 +159,38 @@ impl SolinasMetal {
         if config.suffix_len > 120 || !config.suffix_len.is_multiple_of(8) {
             return Err(MetalError::InvalidAddressRafSuffixLength(config.suffix_len));
         }
-        if config.rows_per_simdgroup == 0
-            || !config
-                .rows_per_simdgroup
-                .is_multiple_of(ADDRESS_RAF_SIMD_WIDTH)
-        {
-            return Err(MetalError::InvalidAddressRafRowsPerSimdgroup(
-                config.rows_per_simdgroup,
+        if config.rows_per_threadgroup == 0 {
+            return Err(MetalError::InvalidAddressRafRowsPerThreadgroup(
+                config.rows_per_threadgroup,
             ));
         }
         self.validate_inputs("address RAF weights", weights)?;
 
         let row_count =
             u32::try_from(rows.len()).map_err(|_| MetalError::InputTooLong(rows.len()))?;
-        let rows_per_simdgroup = u32::try_from(config.rows_per_simdgroup)
-            .map_err(|_| MetalError::InputTooLong(config.rows_per_simdgroup))?;
-        let simdgroup_count = rows.len().div_ceil(config.rows_per_simdgroup);
+        let rows_per_threadgroup = u32::try_from(config.rows_per_threadgroup)
+            .map_err(|_| MetalError::InputTooLong(config.rows_per_threadgroup))?;
+        let threadgroup_count = rows.len().div_ceil(config.rows_per_threadgroup);
         let params = AddressRafParams {
             rows: row_count,
             suffix_len: config.suffix_len,
-            rows_per_simdgroup,
-            simdgroup_count: u32::try_from(simdgroup_count)
-                .map_err(|_| MetalError::InputTooLong(simdgroup_count))?,
+            rows_per_threadgroup,
+            threadgroup_count: u32::try_from(threadgroup_count)
+                .map_err(|_| MetalError::InputTooLong(threadgroup_count))?,
         };
 
-        let scan_pipeline = self.compile_named_pipeline(SCAN_PIPELINE)?;
+        let histogram_pipeline = self.compile_named_pipeline(HISTOGRAM_PIPELINE)?;
+        let offsets_pipeline = self.compile_named_pipeline(OFFSETS_PIPELINE)?;
+        let scatter_pipeline = self.compile_named_pipeline(SCATTER_PIPELINE)?;
         let reduction_pipeline = self.compile_named_pipeline(REDUCE_PIPELINE)?;
-        let scan_limits = Self::limits(&scan_pipeline);
+        let histogram_limits = Self::limits(&histogram_pipeline);
+        let offsets_limits = Self::limits(&offsets_pipeline);
+        let scatter_limits = Self::limits(&scatter_pipeline);
         let reduction_limits = Self::limits(&reduction_pipeline);
         for (pipeline, limits) in [
-            (SCAN_PIPELINE, scan_limits),
+            (HISTOGRAM_PIPELINE, histogram_limits),
+            (OFFSETS_PIPELINE, offsets_limits),
+            (SCATTER_PIPELINE, scatter_limits),
             (REDUCE_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != ADDRESS_RAF_SIMD_WIDTH {
@@ -192,17 +202,39 @@ impl SolinasMetal {
             }
         }
         let threads_per_threadgroup =
-            Self::resolve_threadgroup_width(config.threads_per_threadgroup, scan_limits)?;
+            Self::resolve_threadgroup_width(config.threads_per_threadgroup, histogram_limits)?;
+        for limits in [scatter_limits, reduction_limits] {
+            if threads_per_threadgroup > limits.max_total_threads_per_threadgroup {
+                return Err(MetalError::InvalidThreadgroupWidth {
+                    requested: threads_per_threadgroup,
+                    execution_width: limits.thread_execution_width,
+                    maximum: limits.max_total_threads_per_threadgroup,
+                });
+            }
+        }
+        if offsets_limits.max_total_threads_per_threadgroup < ADDRESS_RAF_BINS {
+            return Err(MetalError::InvalidThreadgroupWidth {
+                requested: ADDRESS_RAF_BINS,
+                execution_width: offsets_limits.thread_execution_width,
+                maximum: offsets_limits.max_total_threads_per_threadgroup,
+            });
+        }
 
-        let partial_elements = simdgroup_count
-            .checked_mul(ADDRESS_RAF_OUTPUTS)
-            .ok_or(MetalError::InputTooLong(simdgroup_count))?;
-        let partial_bytes = byte_length::<Fp128>(partial_elements)?;
+        let group_entries = threadgroup_count
+            .checked_mul(ADDRESS_RAF_BINS)
+            .ok_or(MetalError::InputTooLong(threadgroup_count))?;
+        let group_bytes = byte_length::<u32>(group_entries)?;
+        let bin_offset_bytes = byte_length::<u32>(ADDRESS_RAF_BINS + 1)?;
+        let index_bytes = byte_length::<u32>(rows.len())?;
+        let key_bytes = byte_length::<u8>(rows.len())?;
         let output_bytes = byte_length::<Fp128>(ADDRESS_RAF_OUTPUTS)?;
         for requested in [
             size_of_val_u64(rows)?,
             size_of_val_u64(weights)?,
-            partial_bytes,
+            key_bytes,
+            group_bytes,
+            bin_offset_bytes,
+            index_bytes,
             output_bytes,
         ] {
             let maximum = self.device.max_buffer_length();
@@ -210,26 +242,42 @@ impl SolinasMetal {
                 return Err(MetalError::BufferTooLong { requested, maximum });
             }
         }
+        let keys: Vec<u8> = rows
+            .iter()
+            .map(|row| ((row.lookup_index() >> config.suffix_len) & 0xff) as u8)
+            .collect();
 
         Ok(AddressRafScanInvocation {
             context: self,
-            scan_pipeline,
+            histogram_pipeline,
+            offsets_pipeline,
+            scatter_pipeline,
             reduction_pipeline,
-            scan_limits,
+            histogram_limits,
             reduction_limits,
             buffers: AddressRafBuffers {
                 rows: buffer_from_slice(&self.device, rows),
+                keys: buffer_from_slice(&self.device, &keys),
                 weights: buffer_from_slice(&self.device, weights),
-                partials: self
+                group_counts: self
                     .device
-                    .new_buffer(partial_bytes, MTLResourceOptions::StorageModeShared),
+                    .new_buffer(group_bytes, MTLResourceOptions::StorageModeShared),
+                group_offsets: self
+                    .device
+                    .new_buffer(group_bytes, MTLResourceOptions::StorageModeShared),
+                bin_offsets: self
+                    .device
+                    .new_buffer(bin_offset_bytes, MTLResourceOptions::StorageModeShared),
+                bucketed_indices: self
+                    .device
+                    .new_buffer(index_bytes, MTLResourceOptions::StorageModeShared),
                 output: self
                     .device
                     .new_buffer(output_bytes, MTLResourceOptions::StorageModeShared),
                 params: buffer_from_slice(&self.device, slice::from_ref(&params)),
             },
             rows: rows.len(),
-            simdgroup_count,
+            threadgroup_count,
             threads_per_threadgroup,
             completed: Cell::new(false),
         })
@@ -238,7 +286,7 @@ impl SolinasMetal {
 
 impl AddressRafScanInvocation<'_> {
     pub const fn pipeline_limits(&self) -> PipelineLimits {
-        self.scan_limits
+        self.histogram_limits
     }
 
     pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
@@ -249,8 +297,12 @@ impl AddressRafScanInvocation<'_> {
         self.threads_per_threadgroup
     }
 
-    pub const fn simdgroup_count(&self) -> usize {
-        self.simdgroup_count
+    pub const fn threadgroup_count(&self) -> usize {
+        self.threadgroup_count
+    }
+
+    pub const fn intermediate_index_bytes(&self) -> u64 {
+        self.rows as u64 * size_of::<u32>() as u64
     }
 
     pub const fn input_bytes(&self) -> u64 {
@@ -264,16 +316,16 @@ impl AddressRafScanInvocation<'_> {
     pub fn execute_timed(&self) -> Result<Duration, MetalError> {
         autoreleasepool(|| {
             let command_buffer = self.context.queue.new_command_buffer();
-            let scan = command_buffer.new_compute_command_encoder();
-            scan.set_compute_pipeline_state(&self.scan_pipeline);
-            scan.set_buffer(0, Some(&self.buffers.rows), 0);
-            scan.set_buffer(1, Some(&self.buffers.weights), 0);
-            scan.set_buffer(2, Some(&self.buffers.partials), 0);
-            scan.set_buffer(3, Some(&self.buffers.params), 0);
-            let simdgroups_per_threadgroup = self.threads_per_threadgroup / ADDRESS_RAF_SIMD_WIDTH;
-            scan.dispatch_thread_groups(
+            let histogram = command_buffer.new_compute_command_encoder();
+            histogram.set_compute_pipeline_state(&self.histogram_pipeline);
+            histogram.set_buffer(0, Some(&self.buffers.keys), 0);
+            histogram.set_buffer(1, Some(&self.buffers.group_counts), 0);
+            histogram.set_buffer(2, Some(&self.buffers.params), 0);
+            histogram
+                .set_threadgroup_memory_length(0, (ADDRESS_RAF_BINS * size_of::<u32>()) as u64);
+            histogram.dispatch_thread_groups(
                 MTLSize {
-                    width: self.simdgroup_count.div_ceil(simdgroups_per_threadgroup) as u64,
+                    width: self.threadgroup_count as u64,
                     height: 1,
                     depth: 1,
                 },
@@ -283,23 +335,71 @@ impl AddressRafScanInvocation<'_> {
                     depth: 1,
                 },
             );
-            scan.end_encoding();
+            histogram.end_encoding();
 
-            let reduce = command_buffer.new_compute_command_encoder();
-            reduce.set_compute_pipeline_state(&self.reduction_pipeline);
-            reduce.set_buffer(0, Some(&self.buffers.partials), 0);
-            reduce.set_buffer(1, Some(&self.buffers.output), 0);
-            reduce.set_buffer(2, Some(&self.buffers.params), 0);
-            let reduction_width = (self.reduction_limits.thread_execution_width * 8)
-                .min(self.reduction_limits.max_total_threads_per_threadgroup);
-            reduce.dispatch_thread_groups(
+            let offsets = command_buffer.new_compute_command_encoder();
+            offsets.set_compute_pipeline_state(&self.offsets_pipeline);
+            offsets.set_buffer(0, Some(&self.buffers.group_counts), 0);
+            offsets.set_buffer(1, Some(&self.buffers.group_offsets), 0);
+            offsets.set_buffer(2, Some(&self.buffers.bin_offsets), 0);
+            offsets.set_buffer(3, Some(&self.buffers.params), 0);
+            offsets.set_threadgroup_memory_length(0, (ADDRESS_RAF_BINS * size_of::<u32>()) as u64);
+            offsets.dispatch_thread_groups(
                 MTLSize {
-                    width: ADDRESS_RAF_OUTPUTS.div_ceil(reduction_width) as u64,
+                    width: 1,
                     height: 1,
                     depth: 1,
                 },
                 MTLSize {
-                    width: reduction_width as u64,
+                    width: ADDRESS_RAF_BINS as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            offsets.end_encoding();
+
+            let scatter = command_buffer.new_compute_command_encoder();
+            scatter.set_compute_pipeline_state(&self.scatter_pipeline);
+            scatter.set_buffer(0, Some(&self.buffers.keys), 0);
+            scatter.set_buffer(1, Some(&self.buffers.group_offsets), 0);
+            scatter.set_buffer(2, Some(&self.buffers.bucketed_indices), 0);
+            scatter.set_buffer(3, Some(&self.buffers.params), 0);
+            scatter.set_threadgroup_memory_length(0, (ADDRESS_RAF_BINS * size_of::<u32>()) as u64);
+            scatter.dispatch_thread_groups(
+                MTLSize {
+                    width: self.threadgroup_count as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.threads_per_threadgroup as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            scatter.end_encoding();
+
+            let reduce = command_buffer.new_compute_command_encoder();
+            reduce.set_compute_pipeline_state(&self.reduction_pipeline);
+            reduce.set_buffer(0, Some(&self.buffers.rows), 0);
+            reduce.set_buffer(1, Some(&self.buffers.weights), 0);
+            reduce.set_buffer(2, Some(&self.buffers.bucketed_indices), 0);
+            reduce.set_buffer(3, Some(&self.buffers.bin_offsets), 0);
+            reduce.set_buffer(4, Some(&self.buffers.output), 0);
+            reduce.set_buffer(5, Some(&self.buffers.params), 0);
+            let simdgroups = self.threads_per_threadgroup / ADDRESS_RAF_SIMD_WIDTH;
+            reduce.set_threadgroup_memory_length(
+                0,
+                (ADDRESS_RAF_LANES * simdgroups * size_of::<Fp128>()) as u64,
+            );
+            reduce.dispatch_thread_groups(
+                MTLSize {
+                    width: ADDRESS_RAF_BINS as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.threads_per_threadgroup as u64,
                     height: 1,
                     depth: 1,
                 },
@@ -406,7 +506,7 @@ mod tests {
                     &weights,
                     AddressRafScanConfig {
                         suffix_len,
-                        rows_per_simdgroup: 64,
+                        rows_per_threadgroup: 64,
                         threads_per_threadgroup: Some(128),
                     },
                 )

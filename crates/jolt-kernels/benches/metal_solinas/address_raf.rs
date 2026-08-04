@@ -36,8 +36,8 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
             expected
         );
         eprintln!(
-            "address RAF: elements={elements}, SIMD groups={}, threads={}, static TG bytes={}",
-            invocation.simdgroup_count(),
+            "address RAF: elements={elements}, threadgroups={}, threads={}, static TG bytes={}",
+            invocation.threadgroup_count(),
             invocation.threads_per_threadgroup(),
             invocation
                 .pipeline_limits()
@@ -47,7 +47,7 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         let _ = group.throughput(Throughput::Elements(elements as u64));
         let suffix = format!(
             "n{elements}_r{}_t{}",
-            config.rows_per_simdgroup,
+            config.rows_per_threadgroup,
             invocation.threads_per_threadgroup()
         );
         let _ = group.bench_function(BenchmarkId::new("cpu_optimized_scan", &suffix), |b| {
@@ -169,11 +169,11 @@ fn cases() -> Vec<usize> {
 }
 
 fn config() -> AddressRafScanConfig {
-    let rows_per_simdgroup =
-        env::var("JOLT_METAL_ADDRESS_ROWS_PER_SIMDGROUP").map_or(1 << 16, |value| {
+    let rows_per_threadgroup =
+        env::var("JOLT_METAL_ADDRESS_ROWS_PER_THREADGROUP").map_or(1 << 16, |value| {
             value
                 .parse::<usize>()
-                .expect("rows per SIMD group should be an integer")
+                .expect("rows per threadgroup should be an integer")
         });
     let threads_per_threadgroup = env::var("JOLT_METAL_ADDRESS_THREADS").map_or(128, |value| {
         value
@@ -187,7 +187,7 @@ fn config() -> AddressRafScanConfig {
     });
     AddressRafScanConfig {
         suffix_len,
-        rows_per_simdgroup,
+        rows_per_threadgroup,
         threads_per_threadgroup: Some(threads_per_threadgroup),
     }
 }

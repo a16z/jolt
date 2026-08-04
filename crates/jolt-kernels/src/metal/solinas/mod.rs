@@ -198,8 +198,8 @@ pub enum MetalError {
     AddressRafLengthMismatch { rows: usize, weights: usize },
     #[error("address RAF suffix length must be a multiple of eight in 0..=120, got {0}")]
     InvalidAddressRafSuffixLength(u32),
-    #[error("address RAF rows per SIMD group must be a nonzero multiple of 32, got {0}")]
-    InvalidAddressRafRowsPerSimdgroup(usize),
+    #[error("address RAF rows per threadgroup must be nonzero, got {0}")]
+    InvalidAddressRafRowsPerThreadgroup(usize),
     #[error(
         "address RAF pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
@@ -673,6 +673,7 @@ mod tests {
                 },
             )
             .expect("address RAF scan should prepare");
+        assert_eq!(invocation.intermediate_index_bytes(), rows.len() as u64 * 4);
 
         invocation
             .execute()

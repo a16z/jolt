@@ -342,6 +342,20 @@ threadgroup to each chunk. This rereads the row key during scatter and adds an i
 stream, but removes every per-row sort and gives the field reduction coalesced bucket
 ranges with only a few KiB of dynamic threadgroup memory.
 
+The index-radix candidate improved the `2^22` phase to 1.499 ms wall (1.319 ms
+active), 2.30x faster than the 3.444 ms CPU scan and 3.20x faster than SIMD-sort
+Metal. At `2^26`, however, it measured 38.66 ms wall versus 47.22 ms CPU, only 1.22x.
+Replacing the two strided row-key reads with a resident one-byte key plane did not
+change the target-size time. This falsified key extraction as the scale bottleneck;
+the final reduction's 32-bit indices still gather sparse 40-byte rows and weights.
+
+The successor radix layout uses a 9-bit `(chunk, RAF flag)` key and scatters a compact
+32-byte contribution: the field weight and two packed scalar operands. Scatter reads
+each source row and weight once in cycle order. Reduction reads contributions
+contiguously, performs the exact scalar field products, and writes three disjoint
+lanes per key. Its optimistic phase traffic is about 98 bytes per row, all sequential
+except the contribution scatter.
+
 ### Booleanity cycle worksheet
 
 The next slot is `Booleanity`, selected by the profile. Let `T` be the cycle count,
