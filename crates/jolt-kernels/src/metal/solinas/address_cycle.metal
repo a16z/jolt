@@ -144,6 +144,52 @@ kernel void solinas_address_cycle_message(
         threads_per_threadgroup / 32);
 }
 
+kernel void solinas_address_cycle_bind(
+    device const uchar* packed_rows [[buffer(0)]],
+    device const AddressCycleLookup* lookups [[buffer(1)]],
+    device const uint* cycle_to_table_major [[buffer(2)]],
+    device const SolinasFp128* phase_tables [[buffer(3)]],
+    device const SolinasFp128* table_values [[buffer(4)]],
+    device SolinasFp128* bound [[buffer(5)]],
+    constant SolinasFp128& raf_interleaved [[buffer(6)]],
+    constant SolinasFp128& raf_identity [[buffer(7)]],
+    constant SolinasFp128& challenge [[buffer(8)]],
+    constant AddressCycleParams& params [[buffer(9)]],
+    uint position [[thread_position_in_grid]])
+{
+    uint bound_elements = params.rows / 2u;
+    if (position >= bound_elements) {
+        return;
+    }
+    SolinasFp128 lo[PRODUCT5_FACTORS];
+    SolinasFp128 hi[PRODUCT5_FACTORS];
+    address_cycle_factors(
+        2u * position,
+        packed_rows,
+        lookups,
+        cycle_to_table_major,
+        phase_tables,
+        table_values,
+        raf_interleaved,
+        raf_identity,
+        lo);
+    address_cycle_factors(
+        2u * position + 1u,
+        packed_rows,
+        lookups,
+        cycle_to_table_major,
+        phase_tables,
+        table_values,
+        raf_interleaved,
+        raf_identity,
+        hi);
+    for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        bound[factor * bound_elements + position] = solinas_add(
+            lo[factor],
+            solinas_mul_wide(challenge, solinas_sub(hi[factor], lo[factor])));
+    }
+}
+
 kernel void solinas_address_cycle_fused_transition(
     device const uchar* packed_rows [[buffer(0)]],
     device const AddressCycleLookup* lookups [[buffer(1)]],

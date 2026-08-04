@@ -29,11 +29,13 @@ const RAF_FINALIZE_PIPELINE: &str = "solinas_address_raf_direct_finalize";
 const SUFFIX_TILE_PIPELINE: &str = "solinas_address_suffix_full_tile";
 const SUFFIX_FINALIZE_PIPELINE: &str = "solinas_address_suffix_full_finalize";
 const CYCLE_MESSAGE_PIPELINE: &str = "solinas_address_cycle_message";
+const CYCLE_BIND_PIPELINE: &str = "solinas_address_cycle_bind";
 const CYCLE_TRANSITION_PIPELINE: &str = "solinas_address_cycle_fused_transition";
 const PRODUCT_REDUCE_PIPELINE: &str = "solinas_product5_reduce";
 const CYCLE_PHASES: usize = 16;
 const CYCLE_PHASE_ELEMENTS: usize = CYCLE_PHASES * ADDRESS_RAF_BINS;
 const CYCLE_THREADS_PER_THREADGROUP: usize = 128;
+const CYCLE_BIND_THREADS_PER_THREADGROUP: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AddressPhaseSequenceConfig {
@@ -142,6 +144,7 @@ pub struct AddressPhaseSequence {
     suffix_tile_pipeline: ComputePipelineState,
     suffix_finalize_pipeline: ComputePipelineState,
     cycle_message_pipeline: ComputePipelineState,
+    cycle_bind_pipeline: ComputePipelineState,
     cycle_transition_pipeline: ComputePipelineState,
     cycle_reduce_pipeline: ComputePipelineState,
     cycle_reduce_limits: PipelineLimits,
@@ -154,6 +157,7 @@ pub struct AddressPhaseSequence {
     rows_per_threadgroup: usize,
     threads_per_threadgroup: usize,
     cycle_threads_per_threadgroup: usize,
+    cycle_bind_threads_per_threadgroup: usize,
     cycle_e_in_capacity: usize,
     cycle_e_out_capacity: usize,
     phases_executed: usize,
@@ -419,6 +423,7 @@ impl SolinasMetal {
         let suffix_tile_pipeline = self.compile_named_pipeline(SUFFIX_TILE_PIPELINE)?;
         let suffix_finalize_pipeline = self.compile_named_pipeline(SUFFIX_FINALIZE_PIPELINE)?;
         let cycle_message_pipeline = self.compile_named_pipeline(CYCLE_MESSAGE_PIPELINE)?;
+        let cycle_bind_pipeline = self.compile_named_pipeline(CYCLE_BIND_PIPELINE)?;
         let cycle_transition_pipeline = self.compile_named_pipeline(CYCLE_TRANSITION_PIPELINE)?;
         let cycle_reduce_pipeline = self.compile_named_pipeline(PRODUCT_REDUCE_PIPELINE)?;
         let limits = [
@@ -445,6 +450,7 @@ impl SolinasMetal {
                 CYCLE_MESSAGE_PIPELINE,
                 Self::limits(&cycle_message_pipeline),
             ),
+            (CYCLE_BIND_PIPELINE, Self::limits(&cycle_bind_pipeline)),
             (
                 CYCLE_TRANSITION_PIPELINE,
                 Self::limits(&cycle_transition_pipeline),
@@ -465,6 +471,10 @@ impl SolinasMetal {
         let cycle_threads_per_threadgroup = Self::resolve_threadgroup_width(
             Some(CYCLE_THREADS_PER_THREADGROUP),
             Self::limits(&cycle_message_pipeline),
+        )?;
+        let cycle_bind_threads_per_threadgroup = Self::resolve_threadgroup_width(
+            Some(CYCLE_BIND_THREADS_PER_THREADGROUP),
+            Self::limits(&cycle_bind_pipeline),
         )?;
         if cycle_threads_per_threadgroup
             > Self::limits(&cycle_transition_pipeline).max_total_threads_per_threadgroup
@@ -587,6 +597,7 @@ impl SolinasMetal {
             suffix_tile_pipeline,
             suffix_finalize_pipeline,
             cycle_message_pipeline,
+            cycle_bind_pipeline,
             cycle_transition_pipeline,
             cycle_reduce_pipeline,
             cycle_reduce_limits,
@@ -651,6 +662,7 @@ impl SolinasMetal {
             rows_per_threadgroup: config.rows_per_threadgroup,
             threads_per_threadgroup,
             cycle_threads_per_threadgroup,
+            cycle_bind_threads_per_threadgroup,
             cycle_e_in_capacity,
             cycle_e_out_capacity,
             phases_executed: 0,
@@ -887,17 +899,104 @@ impl AddressPhaseSequence {
             e_out.len(),
             config,
         )?;
-        let (message, active_time) = self.execute_cycle(
+        let active_time = self.bind_cycle_tables(
             phase_tables,
             table_values,
             raf_interleaved,
             raf_identity,
-            e_in,
-            e_out,
-            Some((challenge, sequence.initial_table_buffer())),
+            challenge,
+            sequence.initial_table_buffer(),
         )?;
         sequence.record_gpu_active_time(active_time);
+        let message = sequence.message(e_in, e_out)?;
         Ok((sequence, message))
+    }
+
+    fn bind_cycle_tables(
+        &mut self,
+        phase_tables: &[Vec<AkitaField>],
+        table_values: &[AkitaField],
+        raf_interleaved: AkitaField,
+        raf_identity: AkitaField,
+        challenge: AkitaField,
+        bound: &Buffer,
+    ) -> Result<Duration, MetalError> {
+        if self.rows < 4 || !self.rows.is_power_of_two() {
+            return Err(MetalError::InvalidProduct5TableLength {
+                minimum: 4,
+                got: self.rows,
+            });
+        }
+        if phase_tables.len() != CYCLE_PHASES
+            || phase_tables
+                .iter()
+                .any(|table| table.len() != ADDRESS_RAF_BINS)
+        {
+            let got = phase_tables.iter().map(Vec::len).sum();
+            return Err(MetalError::AddressCyclePhaseTableShape {
+                expected: CYCLE_PHASE_ELEMENTS,
+                got,
+            });
+        }
+        if table_values.len() != ADDRESS_SUFFIX_TABLES {
+            return Err(MetalError::AddressCycleTableValueCount {
+                expected: ADDRESS_SUFFIX_TABLES,
+                got: table_values.len(),
+            });
+        }
+        write_phase_tables(&self.buffers.cycle_phase_tables, phase_tables);
+        write_akita_fields(&self.buffers.cycle_table_values, table_values);
+        let raf_interleaved = Fp128::from_jolt_field(&raf_interleaved);
+        let raf_identity = Fp128::from_jolt_field(&raf_identity);
+        let challenge = Fp128::from_jolt_field(&challenge);
+        let params = CycleParams {
+            rows: self.rows as u32,
+            e_in_length: 0,
+            e_out_length: 0,
+            reserved: 0,
+        };
+
+        let command_buffer = self.context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.cycle_bind_pipeline);
+            encoder.set_buffer(0, Some(&self.buffers.packed_rows), 0);
+            encoder.set_buffer(1, Some(&self.buffers.lookups), 0);
+            encoder.set_buffer(2, Some(&self.buffers.cycle_to_table_major), 0);
+            encoder.set_buffer(3, Some(&self.buffers.cycle_phase_tables), 0);
+            encoder.set_buffer(4, Some(&self.buffers.cycle_table_values), 0);
+            encoder.set_buffer(5, Some(bound), 0);
+            set_inline_bytes(encoder, 6, &raf_interleaved);
+            set_inline_bytes(encoder, 7, &raf_identity);
+            set_inline_bytes(encoder, 8, &challenge);
+            set_inline_bytes(encoder, 9, &params);
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: (self.rows / 2).div_ceil(self.cycle_bind_threads_per_threadgroup) as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.cycle_bind_threads_per_threadgroup as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        let active_time = Duration::from_secs_f64(end - start);
+        self.gpu_active_time += active_time;
+        Ok(active_time)
     }
 
     #[expect(
