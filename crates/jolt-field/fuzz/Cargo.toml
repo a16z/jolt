@@ -11,7 +11,10 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-jolt-field = { path = "..", default-features = false, features = ["bn254", "solinas"] }
+jolt-field = { path = "..", default-features = false, features = [
+  "bn254",
+  "solinas",
+] }
 num-traits = "0.2"
 
 [[bin]]
