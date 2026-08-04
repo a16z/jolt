@@ -5,11 +5,13 @@ use jolt_field::{
     AdditiveAccumulator, AkitaAccumulator, AkitaField, FromPrimitiveInt, MulPrimitiveInt,
 };
 use jolt_kernels::metal::solinas::{
-    AddressRafScanConfig, AddressRafScanRow, Fp128, SolinasMetal, ADDRESS_SUFFIX_BINS,
-    ADDRESS_SUFFIX_TABLES,
+    AddressPhaseSequenceConfig, AddressRafScanConfig, AddressRafScanRow, Fp128, SolinasMetal,
+    ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
 };
 use jolt_lookup_tables::{tables::Suffixes, LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use rayon::prelude::*;
+
+use super::address_raf::{condense_weights, cpu_scan};
 
 const DEFAULT_ELEMENTS: [usize; 3] = [1 << 16, 1 << 20, 1 << 22];
 
@@ -158,6 +160,99 @@ pub fn bench_full(c: &mut Criterion, context: &SolinasMetal) {
     group.finish();
 }
 
+pub fn bench_resident_phase(c: &mut Criterion, context: &SolinasMetal) {
+    let scan_config = config();
+    let sequence_config = AddressPhaseSequenceConfig {
+        rows_per_threadgroup: env::var("JOLT_METAL_ADDRESS_ROWS_PER_THREADGROUP").map_or(
+            1 << 16,
+            |value| {
+                value
+                    .parse::<usize>()
+                    .expect("rows per threadgroup should be an integer")
+            },
+        ),
+        threads_per_threadgroup: scan_config.threads_per_threadgroup,
+    };
+    let mut group = c.benchmark_group("metal_sumcheck/instruction_read_raf_address_resident_phase");
+    let _ = group
+        .sample_size(10)
+        .warm_up_time(Duration::from_secs(2))
+        .measurement_time(Duration::from_secs(5));
+
+    for elements in cases() {
+        let (rows, weights, buckets) = inputs(elements);
+        let metal_weights: Vec<_> = weights.iter().map(Fp128::from_jolt_field).collect();
+        let previous = previous_phase_table();
+        let metal_previous = previous.map(|value| Fp128::from_jolt_field(&value));
+        let mut sequence = context
+            .prepare_address_phase_sequence(&rows, &metal_weights, sequence_config)
+            .expect("resident address sequence should prepare");
+        drop(metal_weights);
+        let actual = sequence
+            .phase(scan_config.suffix_len, Some(&metal_previous))
+            .expect("resident address phase should execute");
+        let mut expected_weights = weights.clone();
+        condense_weights(
+            &rows,
+            &mut expected_weights,
+            &previous,
+            scan_config.suffix_len,
+        );
+        assert_eq!(
+            actual.raf().as_flat_slice(),
+            cpu_scan(&rows, &expected_weights, scan_config.suffix_len)
+        );
+        assert_eq!(
+            actual.suffix().as_flat_slice(),
+            cpu_suffix_full(&rows, &expected_weights, &buckets, scan_config.suffix_len)
+        );
+        eprintln!(
+            "resident address phase: elements={elements}, phases={}, buffers={}",
+            sequence.phases_executed(),
+            sequence.resident_buffer_count(),
+        );
+
+        let _ = group.throughput(Throughput::Elements(elements as u64));
+        let suffix = format!(
+            "n{elements}_r{}_t{}",
+            sequence_config.rows_per_threadgroup,
+            sequence_config.threads_per_threadgroup.unwrap_or(0)
+        );
+        let mut cpu_weights = weights.clone();
+        let _ = group.bench_function(BenchmarkId::new("cpu_optimized_complete", &suffix), |b| {
+            b.iter(|| {
+                condense_weights(&rows, &mut cpu_weights, &previous, scan_config.suffix_len);
+                let raf = cpu_scan(&rows, &cpu_weights, scan_config.suffix_len);
+                let suffixes =
+                    cpu_suffix_full(&rows, &cpu_weights, &buckets, scan_config.suffix_len);
+                black_box((raf, suffixes))
+            });
+        });
+        let _ = group.bench_function(BenchmarkId::new("metal_resident_wall", &suffix), |b| {
+            b.iter(|| {
+                black_box(
+                    sequence
+                        .phase(scan_config.suffix_len, Some(&metal_previous))
+                        .expect("resident address phase should execute"),
+                )
+            });
+        });
+        let _ = group.bench_function(BenchmarkId::new("metal_resident_active", &suffix), |b| {
+            b.iter_custom(|iterations| {
+                let mut elapsed = Duration::ZERO;
+                for _ in 0..iterations {
+                    elapsed += sequence
+                        .phase(scan_config.suffix_len, Some(&metal_previous))
+                        .expect("resident address phase should execute")
+                        .gpu_active_time();
+                }
+                elapsed
+            });
+        });
+    }
+    group.finish();
+}
+
 fn cpu_suffix_one(
     rows: &[AddressRafScanRow],
     weights: &[AkitaField],
@@ -288,6 +383,15 @@ fn inputs(elements: usize) -> (Vec<AddressRafScanRow>, Vec<AkitaField>, Vec<Vec<
         weights.push(AkitaField::from_u128(weight));
     }
     (rows, weights, buckets)
+}
+
+fn previous_phase_table() -> [AkitaField; ADDRESS_SUFFIX_BINS] {
+    let mut state = 0x1319_8a2e_0370_7344;
+    std::array::from_fn(|_| {
+        let value = u128::from(splitmix(&mut state))
+            | (u128::from(splitmix(&mut state) & 0x7fff_ffff_ffff_ffff) << 64);
+        AkitaField::from_u128(value)
+    })
 }
 
 fn cases() -> Vec<usize> {

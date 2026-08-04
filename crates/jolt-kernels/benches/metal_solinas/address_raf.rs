@@ -249,7 +249,11 @@ fn benchmark_metal(
     });
 }
 
-fn cpu_scan(rows: &[AddressRafScanRow], weights: &[AkitaField], suffix_len: u32) -> Vec<Fp128> {
+pub(super) fn cpu_scan(
+    rows: &[AddressRafScanRow],
+    weights: &[AkitaField],
+    suffix_len: u32,
+) -> Vec<Fp128> {
     let threads = rayon::current_num_threads();
     let chunk_len = rows.len().div_ceil(threads).max(1024);
     let suffix_mask = if suffix_len == 0 {
@@ -307,7 +311,7 @@ fn cpu_scan(rows: &[AddressRafScanRow], weights: &[AkitaField], suffix_len: u32)
         .collect()
 }
 
-fn condense_weights(
+pub(super) fn condense_weights(
     rows: &[AddressRafScanRow],
     weights: &mut [AkitaField],
     previous_phase_table: &[AkitaField; ADDRESS_RAF_BINS],

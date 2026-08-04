@@ -100,6 +100,9 @@ mod macos {
                 "instruction-read-raf-address-suffix-full" => {
                     address_suffix::bench_full(c, &context);
                 }
+                "instruction-read-raf-address-resident-phase" => {
+                    address_suffix::bench_resident_phase(c, &context);
+                }
                 "product5" => {
                     product5::bench_message(c, &context);
                     product5::bench_transition(c, &context);

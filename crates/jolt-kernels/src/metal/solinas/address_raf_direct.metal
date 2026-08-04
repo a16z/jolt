@@ -90,7 +90,7 @@ inline SolinasFp128 address_direct_simd_sum(SolinasFp128 value) {
 }
 
 kernel void solinas_address_raf_direct_tile(
-    device const ushort* keys [[buffer(0)]],
+    device const uchar* raf_flags [[buffer(0)]],
     device const AddressRafDirectLookup* lookups [[buffer(1)]],
     device SolinasFp128* weights [[buffer(2)]],
     device const SolinasFp128* previous_phase_table [[buffer(3)]],
@@ -110,8 +110,9 @@ kernel void solinas_address_raf_direct_tile(
     uint start = group * params.rows_per_threadgroup;
     uint end = min(start + params.rows_per_threadgroup, params.rows);
     for (uint row = start + tid; row < end; row += threads) {
-        uint key = keys[row] & (ADDRESS_RAF_DIRECT_KEYS - 1);
         AddressRafDirectLookup lookup = lookups[row];
+        uint key = address_direct_lookup_byte(lookup, params.suffix_len)
+            | ((uint)raf_flags[row] << 8);
         SolinasFp128 weight = weights[row];
         if (params.condense != 0) {
             uint previous_chunk = address_direct_lookup_byte(lookup, params.suffix_len + 8);

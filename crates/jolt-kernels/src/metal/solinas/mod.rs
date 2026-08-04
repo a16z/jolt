@@ -24,6 +24,7 @@ const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 
 mod address_raf;
 mod address_raf_direct;
+mod address_sequence;
 mod address_suffix;
 mod address_suffix_full;
 mod product5;
@@ -33,6 +34,7 @@ pub use address_raf::{
     ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
 };
 pub use address_raf_direct::AddressRafDirectInvocation;
+pub use address_sequence::{AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums};
 pub use address_suffix::{
     AddressSuffixOneInvocation, AddressSuffixOneSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
 };
@@ -223,6 +225,16 @@ pub enum MetalError {
     InvalidAddressSuffixTable(usize),
     #[error("address suffix scan requires at least one table-selected row")]
     EmptyAddressSuffixBuckets,
+    #[error("address phase needs {expected} table buckets, got {got}")]
+    AddressPhaseBucketCount { expected: usize, got: usize },
+    #[error("address phase bucket {bucket} contains row {row} for table {actual:?}")]
+    InvalidAddressPhaseBucket {
+        bucket: usize,
+        row: usize,
+        actual: Option<usize>,
+    },
+    #[error("address phase table-major layout has {got} rows, expected {expected}")]
+    AddressPhaseLayoutLength { expected: usize, got: usize },
     #[error("lookup table {table} has {count} suffixes; Metal supports at most {maximum}")]
     InvalidAddressSuffixCount {
         table: usize,

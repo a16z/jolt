@@ -37,7 +37,7 @@ struct AddressRafDirectLookup {
 }
 
 struct AddressRafDirectBuffers {
-    keys: Buffer,
+    raf_flags: Buffer,
     lookups: Buffer,
     weights: Buffer,
     previous_phase_table: Buffer,
@@ -167,12 +167,12 @@ impl SolinasMetal {
             .checked_mul(ADDRESS_RAF_FIELDS)
             .ok_or(MetalError::InputTooLong(threadgroup_count))?;
         let partial_bytes = byte_length::<Fp128>(partial_elements)?;
-        let key_bytes = byte_length::<u16>(rows.len())?;
+        let flag_bytes = byte_length::<u8>(rows.len())?;
         let lookup_bytes = byte_length::<AddressRafDirectLookup>(rows.len())?;
         let output_bytes = byte_length::<Fp128>(ADDRESS_RAF_LANES * ADDRESS_RAF_BINS)?;
         for requested in [
             byte_length::<Fp128>(weights.len())?,
-            key_bytes,
+            flag_bytes,
             lookup_bytes,
             partial_bytes,
             output_bytes,
@@ -183,14 +183,7 @@ impl SolinasMetal {
             }
         }
 
-        let keys: Vec<u16> = rows
-            .iter()
-            .map(|row| {
-                let chunk = ((row.lookup_index() >> config.suffix_len) & 0xff) as u16;
-                let table_plus_one = row.table_index().map_or(0, |index| index as u16 + 1);
-                chunk | (u16::from(row.raf_flag()) << 8) | (table_plus_one << 9)
-            })
-            .collect();
+        let raf_flags: Vec<u8> = rows.iter().map(|row| u8::from(row.raf_flag())).collect();
         let lookups: Vec<AddressRafDirectLookup> = rows
             .iter()
             .map(|row| AddressRafDirectLookup {
@@ -206,7 +199,7 @@ impl SolinasMetal {
             finalize_pipeline,
             tile_limits,
             buffers: AddressRafDirectBuffers {
-                keys: buffer_from_slice(&self.device, &keys),
+                raf_flags: buffer_from_slice(&self.device, &raf_flags),
                 lookups: buffer_from_slice(&self.device, &lookups),
                 weights: buffer_from_slice(&self.device, weights),
                 previous_phase_table: buffer_from_slice(&self.device, previous_phase_table),
@@ -251,7 +244,7 @@ impl AddressRafDirectInvocation<'_> {
             let command_buffer = self.context.queue.new_command_buffer();
             let tile = command_buffer.new_compute_command_encoder();
             tile.set_compute_pipeline_state(&self.tile_pipeline);
-            tile.set_buffer(0, Some(&self.buffers.keys), 0);
+            tile.set_buffer(0, Some(&self.buffers.raf_flags), 0);
             tile.set_buffer(1, Some(&self.buffers.lookups), 0);
             tile.set_buffer(2, Some(&self.buffers.weights), 0);
             tile.set_buffer(3, Some(&self.buffers.previous_phase_table), 0);

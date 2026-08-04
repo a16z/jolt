@@ -84,6 +84,13 @@ pub struct AddressSuffixFullSums {
 }
 
 impl AddressSuffixFullSums {
+    pub(super) fn from_values(values: Vec<Fp128>, table_offsets: Vec<usize>) -> Self {
+        Self {
+            values,
+            table_offsets,
+        }
+    }
+
     pub fn as_flat_slice(&self) -> &[Fp128] {
         &self.values
     }
@@ -402,10 +409,10 @@ impl AddressSuffixFullInvocation<'_> {
         };
         self.context
             .validate_inputs("full address suffix output", values)?;
-        Ok(AddressSuffixFullSums {
-            values: values.to_vec(),
-            table_offsets: self.table_offsets.clone(),
-        })
+        Ok(AddressSuffixFullSums::from_values(
+            values.to_vec(),
+            self.table_offsets.clone(),
+        ))
     }
 }
 

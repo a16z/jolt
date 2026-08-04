@@ -406,9 +406,9 @@ cycle-major source with resident table buckets was exact but scaled poorly: at
 gathered roughly every fortieth weight and repeatedly fetched mostly unused cache
 lines. Reordering the address-phase rows and weights table-major reduced the same
 Metal kernel to 2.60 ms versus 71.43 ms CPU, or 27.45x. RAF accumulation is
-order-independent and can consume that same layout. The only required inverse
-permutation is the weight vector at the address/cycle handoff: about 36 bytes per
-row once, amortized to 2.25 bytes per row over 16 address phases. The retained
+order-independent and can consume that same layout. Stage 5 does not need an inverse
+permutation: the condensed weights die at the address/cycle handoff, while the cycle
+bases use the original packed rows and the 16 small phase tables. The retained
 address-session design is therefore table-major; the next implementation expands
 the suffix tile from `One` to each table's actual one-to-four suffix functions.
 
@@ -435,6 +435,24 @@ That roof gives a 4.83-ms lower bound and only about 1.28x remaining local headr
 The kernel is therefore ready for the resident 16-phase evaluator: further suffix-
 only tuning cannot save enough PIOP time to justify a more complex reduction before
 the real table distribution and direct-RAF handoff are measured together.
+
+The resident phase sequence allocates the table-major lookup, RAF flag, and weight
+planes once. A phase runs condensation and direct RAF first, then reads the updated
+weights in the full suffix tile, all in one command buffer. It performs no device
+allocation, upload, or permutation between phases and returns only the exact RAF and
+suffix bin tables used to build the host round message. A two-phase test checks the
+in-place condensation handoff against independently prepared direct-RAF and suffix
+invocations.
+
+For a condensed `2^26` phase with every table equally represented, the complete
+production-shaped CPU control measured 290.39 ms and the resident Metal phase
+measured 15.81 ms wall / 16.20 ms heat-soaked active, a wall speedup of 18.36x. The
+optimistic logical traffic is about 82.3 bytes per row including compact partial
+write/read, corresponding to roughly 317 GiB/s at the active time, or 75% of the
+measured copy roof. The empirical traffic floor is about 12.2 ms, leaving only
+1.33x local headroom. The next evaluator therefore measures all 16 real address
+phases, their one-time table-major handoff, CPU message construction, and the cycle
+tail rather than further tuning this isolated dispatch.
 
 ### Booleanity cycle worksheet
 
