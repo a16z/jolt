@@ -65,12 +65,23 @@ pub trait ProgramSource {
     fn program_preprocessing(&self) -> &JoltProgramPreprocessing;
 }
 
+pub trait OneHotSource {
+    fn hot_indices(&self, id: JoltPolynomialId) -> Result<Vec<Option<usize>>, WitnessError>;
+
+    fn hot_address_bits(&self, id: JoltPolynomialId) -> Result<usize, WitnessError>;
+}
+
 /// The full witness plane a prover kernel prepares against: the id-indexed
 /// oracle surface, the sequential row source (kernels collect their own
 /// typed bundles through [`crate::collect_bundles`], so no stage recipe
 /// stages row vectors on the side), and the program view.
 /// Blanket-implemented; the supertrait set is exactly what kernels consume.
-pub trait JoltWitnessPlane<F: Field>: JoltWitnessOracle<F> + RowSource + ProgramSource {}
+pub trait JoltWitnessPlane<F: Field>:
+    JoltWitnessOracle<F> + RowSource + ProgramSource + OneHotSource
+{
+}
 
-impl<F: Field, T> JoltWitnessPlane<F> for T where T: JoltWitnessOracle<F> + RowSource + ProgramSource
-{}
+impl<F: Field, T> JoltWitnessPlane<F> for T where
+    T: JoltWitnessOracle<F> + RowSource + ProgramSource + OneHotSource
+{
+}

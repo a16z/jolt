@@ -38,7 +38,8 @@ mod shape;
 pub use backend::fixed::FixedBackend;
 pub use backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 pub use backend::{
-    validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, ProgramSource,
+    validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, OneHotSource,
+    ProgramSource,
 };
 pub use bundle::WitnessBundle;
 pub use consumer::{

@@ -3550,6 +3550,7 @@ name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "common",
  "cudarc",
  "jolt-claims",
  "jolt-field",
@@ -3557,6 +3558,7 @@ dependencies = [
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-program",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",

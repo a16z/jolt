@@ -1,7 +1,8 @@
 use std::sync::{Arc, OnceLock};
 
 use cudarc::driver::{
-    CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
+    CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, DevicePtr, LaunchConfig,
+    PushKernelArg,
 };
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 use jolt_field::Fr;
@@ -23,6 +24,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/tables.cu"),
     "\n",
     include_str!("kernels/scan.cu"),
+    "\n",
+    include_str!("kernels/dense_product.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -44,6 +47,9 @@ pub struct CudaKernelContext {
     pub(super) lt_double: CudaFunction,
     pub(super) scan_u32_block: CudaFunction,
     pub(super) scan_u32_add_offsets: CudaFunction,
+    dense_product_round: CudaFunction,
+    lane_sum_reduce: CudaFunction,
+    weighted_combine: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -75,6 +81,9 @@ impl CudaKernelContext {
             lt_double: module.load_function("lt_double_kernel")?,
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
+            dense_product_round: module.load_function("dense_product_round_kernel")?,
+            lane_sum_reduce: module.load_function("lane_sum_reduce_kernel")?,
+            weighted_combine: module.load_function("weighted_combine_kernel")?,
         })
     }
 
@@ -162,6 +171,32 @@ impl CudaKernelContext {
 
     pub(super) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
         Ok(self.stream.alloc_zeros::<u32>(len)?)
+    }
+
+    pub(super) const fn dense_product_round(&self) -> &CudaFunction {
+        &self.dense_product_round
+    }
+
+    pub(super) const fn lane_sum_reduce(&self) -> &CudaFunction {
+        &self.lane_sum_reduce
+    }
+
+    pub(super) const fn weighted_combine(&self) -> &CudaFunction {
+        &self.weighted_combine
+    }
+
+    pub(super) fn device_pointers(
+        &self,
+        tables: &[&DeviceFrVec],
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let pointers: Vec<u64> = tables
+            .iter()
+            .map(|table| {
+                let (pointer, _guard) = table.limbs().device_ptr(&self.stream);
+                pointer
+            })
+            .collect();
+        self.upload_u64_slice(&pointers)
     }
 
     pub fn fr_identity(&self, input: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {

@@ -5,10 +5,15 @@ use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
 mod context;
+mod dense_product;
 mod device;
 mod error;
 mod primitives;
+mod ram_ra_claim_reduction;
+mod registers_val_evaluation;
 mod staging;
+#[cfg(test)]
+mod testing;
 pub mod xfer_stats;
 
 pub use context::{shared_context, CudaKernelContext};
@@ -21,6 +26,13 @@ pub fn device_available() -> bool {
     shared_context().is_some()
 }
 
+pub(crate) fn require_context<F: jolt_field::FieldCore>(
+) -> Result<&'static CudaKernelContext, crate::KernelError<F>> {
+    shared_context().ok_or(crate::KernelError::Unsupported {
+        reason: "no CUDA device is present",
+    })
+}
+
 impl<F, PCS> JoltBackend<F, PCS>
 where
     F: Field,
@@ -30,8 +42,13 @@ where
     where
         PCS: ModeStreamingCommitment,
     {
-        let _ = device_available();
-        Self::reference()
+        let mut backend = Self::reference();
+        if !device_available() {
+            return backend;
+        }
+        backend.registers_val_evaluation = Box::new(CudaBackend);
+        backend.ram_ra_claim_reduction = Box::new(CudaBackend);
+        backend
     }
 }
 

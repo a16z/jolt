@@ -673,6 +673,22 @@ mod twin_tests {
         }
     }
 
+    impl jolt_witness::OneHotSource for NoWitness {
+        fn hot_indices(
+            &self,
+            _id: jolt_claims::protocols::jolt::JoltPolynomialId,
+        ) -> Result<Vec<Option<usize>>, WitnessError> {
+            Err(Self::unavailable())
+        }
+
+        fn hot_address_bits(
+            &self,
+            _id: jolt_claims::protocols::jolt::JoltPolynomialId,
+        ) -> Result<usize, WitnessError> {
+            Err(Self::unavailable())
+        }
+    }
+
     impl RowSource for NoWitness {
         fn visit_chunks(
             &self,

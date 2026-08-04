@@ -21,6 +21,9 @@ pub enum CudaError {
 
     #[error("CUDA kernel not implemented: {kernel}")]
     NotImplemented { kernel: &'static str },
+
+    #[error("CUDA kernel invariant violated: {reason}")]
+    InvariantViolation { reason: &'static str },
 }
 
 impl From<CompileError> for CudaError {

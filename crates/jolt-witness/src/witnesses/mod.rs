@@ -44,7 +44,7 @@ pub use operands::{
 };
 pub use pc::{BytecodePc, MappedPc, NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
 pub use ram::{RamAddress, RamHammingWeight, RamReadValue, RamWriteValue, RemappedRamAddress};
-pub use registers::{RdWriteValue, Rs1Value, Rs2Value};
+pub use registers::{RdAddress, RdWriteValue, Rs1Value, Rs2Value};
 
 pub(crate) use ram::ram_access_address;
 

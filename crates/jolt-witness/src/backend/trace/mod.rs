@@ -18,6 +18,7 @@ use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
 mod advice;
 mod cycle;
+mod one_hot;
 mod oracle;
 mod ram;
 mod registers;

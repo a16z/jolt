@@ -16,8 +16,16 @@ use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
 
 /// Runs `f` against a small canned backend: two real cycles (an ADDI with
 /// register activity and RAM traffic, then a RAM write) padded to `2^2`.
-#[expect(clippy::unwrap_used, reason = "test fixture construction")]
 pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R) -> R {
+    with_sample_backend_config(64, 0x8000_1000, f)
+}
+
+#[expect(clippy::unwrap_used, reason = "test fixture construction")]
+fn with_sample_backend_config<R>(
+    ram_k: usize,
+    ram_base: u64,
+    f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
     let instruction = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::ADDI,
         address: 0x8000_0000,
@@ -59,7 +67,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
                 ..Default::default()
             },
             ram_access: RamAccess::Read(RamRead {
-                address: 0x8000_1000,
+                address: ram_base,
                 value: 7,
             }),
             #[cfg(feature = "field-inline")]
@@ -67,7 +75,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
         },
         TraceRow {
             ram_access: RamAccess::Write(RamWrite {
-                address: 0x8000_1008,
+                address: ram_base + 8,
                 pre_value: 7,
                 post_value: 11,
             }),
@@ -76,7 +84,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
     ];
     let config = JoltVmWitnessConfig::new(
         2,
-        64,
+        ram_k,
         JoltOneHotConfig {
             log_k_chunk: 4,
             lookups_ra_virtual_log_k_chunk: 16,
@@ -90,6 +98,14 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
     let backend = TraceBackend::new(config, inputs);
     f(&backend)
 }
+
+pub fn with_ram_sized_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R) -> R {
+    with_sample_backend_config(RAM_SIZED_K, RAM_SIZED_BASE, f)
+}
+
+const RAM_SIZED_K: usize = 16;
+
+const RAM_SIZED_BASE: u64 = 0x40;
 
 /// Asserts that one annotated bundle field's column (extracted by `value`)
 /// equals the backend's `oracle_table` for `id` — the typed path and the id

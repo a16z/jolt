@@ -63,3 +63,16 @@ impl Extract for RdWriteValue {
         Ok(Self(row.registers.rd.map_or(0, |write| write.post_value)))
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RdAddress(pub Option<u8>);
+
+impl Extract for RdAddress {
+    fn extract(
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row.registers.rd.map(|write| write.register)))
+    }
+}
