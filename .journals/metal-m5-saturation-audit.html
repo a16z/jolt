@@ -2358,6 +2358,10 @@ body.doc {
       <span class="cl">Measurement boundary</span>
       <p>The public M5 Max Metal runtime exposes only timestamp counters on this host; direct ALU occupancy, cache-miss, and DRAM-byte counters are unavailable. Classification below triangulates fresh device-active samples, GPU timestamps, bandwidth/compute roofs, thread scaling, and controlled co-runs.</p>
     </div>
+    <div class="callout callout--info reveal">
+      <span class="cl">Wave-close variance</span>
+      <p>The unchanged prover path closed at 81.54 s (stage 0 = 19.3 s), then 100.25 s after a four-minute gap (stage 6b = 31.0 s). The timed cap is exhausted; the clean 71.77 s campaign-start run remains the flagship, while these tails strengthen the stage-specific contention diagnosis.</p>
+    </div>
   </div></section>
 
   <section id="stages"><div class="wrap block">
@@ -2462,6 +2466,7 @@ body.doc {
     </div>
     <ul class="prose">
       <li><b>Measured:</b> 2²⁵ baseline 19.67 s / 1.706 MHz; 2²⁷ baseline 71.77 s / 1.870 MHz.</li>
+      <li><b>Measured:</b> wave-close 2²⁵ 20.13 s; 2²⁷ tails 81.54 s and 100.25 s, localized to stage 0 and stage 6b rather than the unused prototype.</li>
       <li><b>Measured:</b> fresh per-stage monitor trace, zero-run ledger, command-buffer count/timestamps, memory/compute micro-roofs, contention co-runs.</li>
       <li><b>Measured:</b> radix-4 Metal bind A/B and accept/tamper algebra tests; address-major 2²² kill gate.</li>
       <li><b>Inferred:</b> exact ALU-versus-cache split inside stages 0 and 8 because public hardware counters are absent.</li>

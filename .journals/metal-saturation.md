@@ -253,6 +253,26 @@ auditing the concrete degree-9 polynomial, the virtual-only Dory invariant,
 batch padding, transcript schedule, downstream equality semantics, and tamper
 suite. No production code before a GO verdict.
 
+## Wave-1 close certification
+
+Commit `5d835a6d3` changes no active prover path: it adds the unused bind4
+kernel/prototype tests, a benchmark selector, and reports. The canonical
+close nevertheless reproduced both known ambient/tail modes:
+
+| run | result | distinguishing stage |
+|---|---:|---|
+| `2^25` | **20.13 s / 1.667 MHz padded** | warm, within the established band |
+| `2^27` close 1 | **81.54 s / 1.646 MHz padded** | st0 19.305 s vs 12.079 s baseline |
+| `2^27` close 2, 4-min cool gap | **100.25 s / 1.339 MHz padded** | st6b 30.963 s vs 16.345 s baseline; st0 21.354 s |
+
+Velocity cap reached (baseline + disagreeing close pair); no fourth run. The
+fresh campaign-start run remains the flagship for this unchanged prover path:
+**71.77 s / 1.870 MHz padded** at `88b063db3`. The close pair is not a retained
+regression: neither prototype is called by the prover, and stage-local deltas
+identify the existing bimodal st0 walk/commit contention plus a newly observed
+st6b tail mode. Dashboard candidate remains the 71.77 s baseline; no new point
+should be emitted for the research-only commit.
+
 ### Address-major Metal probe
 
 Address-major is already a valid end-to-end protocol mode, including verifier
