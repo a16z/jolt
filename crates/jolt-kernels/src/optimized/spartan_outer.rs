@@ -764,19 +764,43 @@ pub(crate) fn claimed_inputs_from_record<F: Field>(
 
 fn claimed_inputs<F: Field>(rows: &OuterRows, challenges: &[F]) -> Vec<F> {
     let reversed: Vec<F> = challenges[1..].iter().rev().copied().collect();
-    let weights = EqPolynomial::<F>::evals(&reversed, None);
-    debug_assert_eq!(weights.len(), rows.len());
+    // `eq(reversed, t) = e_hi[t >> lo_bits] · e_lo[t & mask]` computed on the
+    // fly — the exact field value of the full T-sized eq table
+    // (multiplication regrouping only), without its T-sized materialization
+    // (4.3 GiB @2^27).
+    let hi_bits = reversed.len() / 2;
+    let lo_bits = reversed.len() - hi_bits;
+    let e_hi = EqPolynomial::<F>::evals(&reversed[..hi_bits], None);
+    let e_lo = EqPolynomial::<F>::evals(&reversed[hi_bits..], None);
+    let lo_mask = (1usize << lo_bits) - 1;
+    debug_assert_eq!(e_hi.len() * e_lo.len(), rows.len());
 
     let block_size = 1usize << 12;
     let blocks = rows.len().div_ceil(block_size);
     let block = |index: usize| -> Vec<F> {
         let start = index * block_size;
         let end = (start + block_size).min(rows.len());
-        let mut accumulator = ClaimAccumulator::<F>::default();
-        for (t, &weight) in (start..end).zip(&weights[start..end]) {
-            accumulator.add_row(weight, &rows.row(t));
+        let mut out = vec![F::zero(); VARIABLE_COUNT];
+        // Per `e_hi`-run factoring: rows sharing `t >> lo_bits` accumulate
+        // under their `e_lo` weight alone; one `e_hi` scale per run
+        // (`e_hi·Σ e_lo·v = Σ (e_hi·e_lo)·v` exactly). Blocks and runs are
+        // both power-of-two aligned, so a production block sits inside one
+        // run.
+        let mut t = start;
+        while t < end {
+            let hi = t >> lo_bits;
+            let run_end = end.min((hi + 1) << lo_bits);
+            let mut accumulator = ClaimAccumulator::<F>::default();
+            for t in t..run_end {
+                accumulator.add_row(e_lo[t & lo_mask], &rows.row(t));
+            }
+            let e_hi_eval = e_hi[hi];
+            for (out, run) in out.iter_mut().zip(accumulator.finish()) {
+                *out += e_hi_eval * run;
+            }
+            t = run_end;
         }
-        accumulator.finish()
+        out
     };
     let merge = |mut left: Vec<F>, right: Vec<F>| {
         for (left, right) in left.iter_mut().zip(right) {

@@ -27,7 +27,11 @@
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::signed::S256;
+use jolt_field::{
+    AdditiveAccumulator, Field, RingAccumulator, SignedProductAccumulator as _,
+    WithSignedProductAccumulator,
+};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -66,6 +70,9 @@ pub struct InstructionOperandRow {
 impl InstructionOperandRow {
     /// The row's five operand values as field elements, in output-claim
     /// declaration order — the exact entries the dense reduced tables hold.
+    /// Production paths accumulate the native scalars unreduced instead;
+    /// the parity tests build their reference tables through this.
+    #[cfg(test)]
     #[inline]
     fn field_values<F: Field>(&self) -> [F; NUM_TABLES] {
         [
@@ -186,7 +193,10 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
     }
 
     /// The five individual bound operand values: multilinear evaluations of
-    /// the native rows at the bound point, one split-eq-weighted walk.
+    /// the native rows at the bound point, one split-eq-weighted walk. The
+    /// operands accumulate unreduced (`fmadd_s256`, one Barrett reduce per
+    /// `e_hi` block ≡ the same sum mod p) instead of one Montgomery
+    /// conversion + field multiply per lane per cycle.
     fn operand_claims(&self) -> [F; NUM_TABLES] {
         let reversed: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
         let split = reversed.len() / 2;
@@ -196,16 +206,19 @@ impl<F: Field> OptimizedInstructionClaimReductionKernel<F> {
         let lo_len = e_lo.len();
 
         let block = |idx_hi: usize| -> [F; NUM_TABLES] {
-            let mut sums = [F::zero(); NUM_TABLES];
+            let mut sums: [<F as WithSignedProductAccumulator>::SignedProductAccumulator;
+                NUM_TABLES] = Default::default();
             let start = idx_hi * lo_len;
             for (t, &weight) in (start..start + lo_len).zip(&e_lo) {
-                let values = self.rows.row(t).field_values::<F>();
-                for (sum, value) in sums.iter_mut().zip(values) {
-                    *sum += weight * value;
-                }
+                let row = self.rows.row(t);
+                sums[0].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));
+                sums[1].fmadd_s256(weight, &S256::from_u64(row.left_lookup_operand.0));
+                sums[2].fmadd_s256(weight, &S256::from_u128(row.right_lookup_operand.0));
+                sums[3].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
+                sums[4].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
             }
             let e_hi_eval = e_hi[idx_hi];
-            sums.map(|sum| e_hi_eval * sum)
+            sums.map(|sum| e_hi_eval * sum.reduce())
         };
         let merge = |mut left: [F; NUM_TABLES], right: [F; NUM_TABLES]| {
             for (left, right) in left.iter_mut().zip(right) {
