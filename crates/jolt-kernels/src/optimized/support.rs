@@ -112,6 +112,28 @@ pub(crate) fn accumulate_product<F: Field>(factors: &[F], lane: &mut F::Accumula
     lane.fmadd(product, factors[last]);
 }
 
+/// Walk one row's product grid: with `evals` seeded at the `t = 1` factor
+/// values and `steps` their per-factor linear steps, accumulate the factor
+/// product `Π evals` into `lanes[t − 1]` for `t = 1, …, n − 1` (advancing
+/// every factor by its step between points) and the leading coefficient
+/// `Π steps` into `lanes[n − 1]`, where `n = lanes.len()`.
+#[inline]
+pub(crate) fn accumulate_product_grid<F: Field>(
+    evals: &mut [F],
+    steps: &[F],
+    lanes: &mut [F::Accumulator],
+) {
+    let n = lanes.len();
+    accumulate_product(evals, &mut lanes[0]);
+    for lane in &mut lanes[1..n - 1] {
+        for (eval, step) in evals.iter_mut().zip(steps) {
+            *eval += *step;
+        }
+        accumulate_product(evals, lane);
+    }
+    accumulate_product(steps, &mut lanes[n - 1]);
+}
+
 /// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
 /// accumulator without overflowing it: the accumulator's headroom is one
 /// extra limb, which ~4 full-magnitude `field × u64` products exhaust, so the

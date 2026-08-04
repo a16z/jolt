@@ -53,7 +53,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
-    accumulate_product, gamma_power_pairs, map_indices, pin_derived_term, GruenRoundMessage,
+    accumulate_product_grid, gamma_power_pairs, map_indices, pin_derived_term, GruenRoundMessage,
     RoundProgress,
 };
 use crate::reference::views::eq_table;
@@ -275,14 +275,11 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
                         *eval = pair.1;
                         *step = pair.1 - pair.0;
                     }
-                    accumulate_product(&scratch.evals, &mut scratch.row_lanes[0]);
-                    for lane in 1..n - 1 {
-                        for (eval, step) in scratch.evals.iter_mut().zip(&scratch.steps) {
-                            *eval += *step;
-                        }
-                        accumulate_product(&scratch.evals, &mut scratch.row_lanes[lane]);
-                    }
-                    accumulate_product(&scratch.steps, &mut scratch.row_lanes[n - 1]);
+                    accumulate_product_grid(
+                        &mut scratch.evals,
+                        &scratch.steps,
+                        &mut scratch.row_lanes,
+                    );
                 }
                 for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
                     lane.fmadd(e_in, row_lane.reduce());

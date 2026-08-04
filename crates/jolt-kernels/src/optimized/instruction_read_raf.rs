@@ -58,7 +58,7 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use super::support::{
-    accumulate_product, for_each_index_mut, map_indices, map_reduce_chunks, scan_chunk_size,
+    accumulate_product_grid, for_each_index_mut, map_indices, map_reduce_chunks, scan_chunk_size,
     RoundProgress,
 };
 use crate::reference::views::eq_table;
@@ -1011,14 +1011,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                         }
                     }
                 }
-                accumulate_product(&scratch.evals, &mut scratch.lanes[0]);
-                for lane in 1..factors - 1 {
-                    for (eval, step) in scratch.evals.iter_mut().zip(&scratch.steps) {
-                        *eval += *step;
-                    }
-                    accumulate_product(&scratch.evals, &mut scratch.lanes[lane]);
-                }
-                accumulate_product(&scratch.steps, &mut scratch.lanes[factors - 1]);
+                accumulate_product_grid(&mut scratch.evals, &scratch.steps, &mut scratch.lanes);
             },
             |_x_out, e_out, scratch| {
                 let mut out = vec![F::Accumulator::default(); factors];
