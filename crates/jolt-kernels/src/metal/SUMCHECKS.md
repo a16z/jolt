@@ -185,7 +185,7 @@ order after the first slot establishes the harness.
 | 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | integrated; 4.85x real kernel seam at `2^26`, further ceiling work open |
 | 6b | `ram_hamming_booleanity` | dense cubic | analyze |
 | 6b | `ram_ra_virtualization` | one-hot virtualization | analyze |
-| 6b | `instruction_ra_virtualization` | one-hot virtualization | Metal integrated and exact; promotion requires five-pair production revalidation |
+| 6b | `instruction_ra_virtualization` | one-hot virtualization | production-qualified: 7.485x local median over five exact `2^26` pairs |
 | 6b | `inc_claim_reduction` | dense reduction | analyze |
 | 6b/7 | trusted-advice cycle/address | resident two-phase reduction | analyze |
 | 6b/7 | untrusted-advice cycle/address | resident two-phase reduction | analyze |
@@ -968,6 +968,14 @@ or 7.600x. PIOP measured 19.407 s versus 11.679 s, or 1.662x. The earlier clean
 pair above measured 8.253x locally and 1.812x for PIOP; the CPU baseline moved more
 than the Metal relation, so neither single pair is promoted as a noise-qualified
 aggregate.
+
+The clean production gate at revision `7f0d18926` is recorded under
+`benchmark-runs/metal-autoresearch/instruction-ra-20260804-final`. Five alternating
+exact-proof pairs measured a 7.485x Instruction RA median (7.102x--8.264x), with
+1,908.277-ms optimized-CPU and 255.499-ms Metal median relation walls. Paired PIOP
+speedup was 1.897x (1.866x--1.930x), or 1.850x when backend witness preparation was
+charged. The source fingerprint was clean and the promotion evidence hash is
+`0a99bced26449f8d084a5a4a1836f200570bf343d0afed9b6a8ee60104c80687`.
 
 ## Requirement map and open points
 
