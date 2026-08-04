@@ -30,6 +30,14 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 
 use crate::JoltBackend;
 
+/// Serializes the background prepare builds (booleanity, bytecode): each
+/// spawned worker holds this token for the duration of its capped-pool walk,
+/// so at most one background pool competes with the foreground stage at a
+/// time. Prepares only ever JOIN worker handles (never lock the token), so
+/// no deadlock is possible; a poisoned token (panicked worker) is taken
+/// anyway — the fallback path there is the inline rebuild.
+pub(crate) static BACKGROUND_BUILD_TOKEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod commitment;

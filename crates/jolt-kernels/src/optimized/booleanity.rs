@@ -302,6 +302,9 @@ pub fn spawn_booleanity_address_masses<F: Field>(
     let k_chunk = 1usize << dimensions.log_k_chunk;
     let point = reference_cycle.clone();
     let handle = std::thread::spawn(move || {
+        let _token = super::BACKGROUND_BUILD_TOKEN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let build = || cycle_pushforward::<F>(&rows, &selectors, k_chunk, &point);
         #[cfg(feature = "parallel")]
         if let Ok(pool) = rayon::ThreadPoolBuilder::new()

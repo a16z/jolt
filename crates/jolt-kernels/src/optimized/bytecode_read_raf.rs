@@ -299,6 +299,9 @@ pub fn spawn_bytecode_stage_pushforwards<F: Field>(
     let rows = pc_rows(session, witness, 1usize << log_t)?;
     let points = early_points.clone();
     let handle = std::thread::spawn(move || {
+        let _token = super::BACKGROUND_BUILD_TOKEN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let build = || stage_pushforwards_for::<F>(&early_points, &rows, addresses);
         #[cfg(feature = "parallel")]
         if let Ok(pool) = rayon::ThreadPoolBuilder::new()
