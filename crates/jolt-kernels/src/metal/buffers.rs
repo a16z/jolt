@@ -697,4 +697,101 @@ mod madvise_probe {
         println!("  live MTLBuffer wrap:    ok={ok_wrapped} delta={delta_wrapped} MiB");
         println!("  wrap released first:    ok={ok_released} delta={delta_released} MiB");
     }
+
+    /// One page-aligned anonymous `mmap` region, dirtied; footprint-visible.
+    struct MmapRegion {
+        base: NonNull<u8>,
+        bytes: usize,
+    }
+
+    impl MmapRegion {
+        fn dirty(bytes: usize) -> Self {
+            // SAFETY: anonymous private mapping, no fd.
+            let raw = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    bytes,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_ANON | libc::MAP_PRIVATE,
+                    -1,
+                    0,
+                )
+            };
+            assert_ne!(raw, libc::MAP_FAILED);
+            let base = NonNull::new(raw.cast::<u8>()).unwrap();
+            // SAFETY: the mapping spans `bytes`.
+            unsafe { std::ptr::write_bytes(base.as_ptr(), 0x5a, bytes) };
+            Self { base, bytes }
+        }
+
+        fn unmap(self) {
+            // SAFETY: exactly the mmap'd range, unmapped once (no Drop).
+            let rc = unsafe { libc::munmap(self.base.as_ptr().cast(), self.bytes) };
+            assert_eq!(rc, 0);
+            std::mem::forget(self);
+        }
+    }
+
+    impl Drop for MmapRegion {
+        fn drop(&mut self) {
+            // SAFETY: the mmap'd range, unmapped once (unmap() forgets self).
+            unsafe { libc::munmap(self.base.as_ptr().cast(), self.bytes) };
+        }
+    }
+
+    /// W3A diagnostic (ignored): does `munmap` remove dirty anonymous pages
+    /// from `phys_footprint` when the range was wrapped by a no-copy
+    /// `MTLBuffer`? The REUSABLE probe above pinned madvise as a silent
+    /// no-op on ever-wrapped ranges — this asks whether an mmap-backed
+    /// allocation whose drop actually unmaps is immune (the phase-2 lever
+    /// for the record family / IRR pair corpse pile). Run explicitly:
+    /// `cargo nextest run -p jolt-kernels munmap_vs_metal_wrap --features metal --run-ignored all`
+    #[test]
+    #[ignore = "W3A diagnostic; prints footprint ledger deltas"]
+    #[expect(clippy::print_stdout, reason = "diagnostic output is the deliverable")]
+    fn munmap_vs_metal_wrap() {
+        let _lock = super::super::testing::gpu_lock();
+        let context = MetalContext::global().unwrap();
+        const BYTES: usize = 1 << 30;
+        let mib = |delta: i64| delta / (1 << 20);
+
+        // Leg 1: never wrapped (the record-family lanes' case).
+        let region = MmapRegion::dirty(BYTES);
+        let before = phys_footprint_bytes() as i64;
+        region.unmap();
+        let plain = phys_footprint_bytes() as i64 - before;
+
+        // Leg 2: wrapped, buffer released BEFORE munmap (the IRR-pair case).
+        let region = MmapRegion::dirty(BYTES);
+        let slice =
+            // SAFETY: live dirtied mapping of BYTES.
+            unsafe { std::slice::from_raw_parts(region.base.as_ptr(), region.bytes) };
+        let buffer = context.wrap_slice_nocopy(slice).unwrap();
+        drop(buffer);
+        let before = phys_footprint_bytes() as i64;
+        region.unmap();
+        let released = phys_footprint_bytes() as i64 - before;
+
+        // Leg 3: wrapped, buffer still LIVE at munmap (measures whether the
+        // IOGPU reference keeps the pages on our ledger past the unmap).
+        let region = MmapRegion::dirty(BYTES);
+        let slice =
+            // SAFETY: live dirtied mapping of BYTES.
+            unsafe { std::slice::from_raw_parts(region.base.as_ptr(), region.bytes) };
+        let buffer = context.wrap_slice_nocopy(slice).unwrap();
+        let before = phys_footprint_bytes() as i64;
+        region.unmap();
+        let live = phys_footprint_bytes() as i64 - before;
+        drop(buffer);
+        let after_release = phys_footprint_bytes() as i64 - before;
+
+        println!("munmap of a dirty 1 GiB mmap region, footprint delta:");
+        println!("  never wrapped:                {} MiB", mib(plain));
+        println!("  wrapped, released, munmap:    {} MiB", mib(released));
+        println!(
+            "  wrapped, live at munmap:      {} MiB (after release: {} MiB)",
+            mib(live),
+            mib(after_release)
+        );
+    }
 }
