@@ -31,7 +31,6 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "parallel")]
 use super::support::{
     bind_all, pair, par_sum_pair_groups, round_poly_from_skipped_evals, scaled_eq_table,
     RoundProgress,

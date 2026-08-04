@@ -24,9 +24,9 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 
 use crate::commitment::{finish_streamed, finish_streamed_one_hot, ModeStreamingCommitment};
-use jolt_witness::{
-    collect_range_into, stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer,
-};
+#[cfg(feature = "parallel")]
+use jolt_witness::collect_range_into;
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -41,6 +41,7 @@ use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 /// critical path is one window's serial MSM), so fewer, larger superchunks
 /// win: 2^17 → 2^21 measured 59.3s → 41.1s whole-prove at 2^25 on 64
 /// threads.
+#[cfg(feature = "parallel")]
 const SUPERCHUNK_CYCLES_MAX: usize = 1 << 21;
 
 /// Cycles per superchunk, scaled to the pool: the measured optimum allots

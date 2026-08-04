@@ -334,6 +334,11 @@ impl<F: Field> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
     fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {
         let a = a.evals();
         let b = b.evals();
+        debug_assert_eq!(
+            self.e_out_current_len() * self.e_in_current_len() * 2,
+            a.len()
+        );
+        debug_assert_eq!(a.len(), b.len());
         let [zero, infinity] = self.par_fold_out_in(
             || [F::zero(); 2],
             |accumulator, row, _x_in, e| {
