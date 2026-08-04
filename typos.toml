@@ -1,5 +1,7 @@
 [files]
-extend-exclude = ["patches/*.patch"]
+# golden_bytes.rs is hex fixture data (byte-encoding pins); hex substrings
+# trigger false positives ("ede", "ba").
+extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
 
 [default.extend-words]
 "groth" = "groth"

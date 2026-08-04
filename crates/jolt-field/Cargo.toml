@@ -43,4 +43,3 @@ rand_chacha = { workspace = true }
 [[bench]]
 name = "ext4_kernels"
 harness = false
-required-features = ["solinas"]

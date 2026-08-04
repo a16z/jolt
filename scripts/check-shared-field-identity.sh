@@ -10,7 +10,7 @@ set -euo pipefail
 # local path. The final migration PR replaces this check with one that rejects
 # every `akita-field` identity.
 
-tree="$(cargo tree --workspace --edges normal,build --prefix none)"
+tree="$(cargo tree --workspace --edges normal,build --prefix none --color never)"
 
 jolt_identities="$(
   grep '^jolt-field v' <<<"$tree" \
