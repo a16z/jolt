@@ -56,6 +56,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::lifetime_trace::LifetimeTag;
 use super::support::accumulate_product;
 use crate::reference::views::eq_table;
 use crate::{
@@ -185,7 +186,32 @@ pub(crate) fn collect_instruction_cycle_rows<F: Field>(
 /// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
 /// carry back for the later stages.
 #[derive(Clone)]
-pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
+pub(crate) struct SharedInstructionRows(pub(crate) Arc<InstructionRows>);
+
+/// The rows behind [`SharedInstructionRows`] — a `Vec` plus the lifetime
+/// tag that logs the last-`Arc`-drop site under `JOLT_LIFETIME_TRACE=1`.
+pub(crate) struct InstructionRows {
+    rows: Vec<InstructionCycleRow>,
+    _lifetime: LifetimeTag,
+}
+
+impl InstructionRows {
+    pub(crate) fn new(rows: Vec<InstructionCycleRow>) -> Self {
+        let bytes = rows.len() * size_of::<InstructionCycleRow>();
+        Self {
+            rows,
+            _lifetime: LifetimeTag::new("SharedInstructionRows", bytes),
+        }
+    }
+}
+
+impl std::ops::Deref for InstructionRows {
+    type Target = Vec<InstructionCycleRow>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
 
 /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
 /// impossible to consume) or collect them fresh, and park the carry back
@@ -194,10 +220,12 @@ pub(crate) fn shared_instruction_rows<F: Field>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
-) -> Result<Arc<Vec<InstructionCycleRow>>, KernelError<F>> {
+) -> Result<Arc<InstructionRows>, KernelError<F>> {
     let rows = match session.take::<SharedInstructionRows>() {
         Some(SharedInstructionRows(rows)) if rows.len() == cycles => rows,
-        _ => Arc::new(collect_instruction_cycle_rows(witness, cycles)?),
+        _ => Arc::new(InstructionRows::new(collect_instruction_cycle_rows(
+            witness, cycles,
+        )?)),
     };
     session.park(SharedInstructionRows(Arc::clone(&rows)));
     Ok(rows)
@@ -511,7 +539,7 @@ pub(crate) struct PresentTable {
     expect(dead_code, reason = "read only by the Metal scanner")
 )]
 pub(crate) struct ScannerInputs<'a> {
-    pub(crate) rows: &'a Arc<Vec<InstructionCycleRow>>,
+    pub(crate) rows: &'a Arc<InstructionRows>,
     pub(crate) bucket_flat: &'a Arc<Vec<u32>>,
     pub(crate) present: &'a [PresentTable],
 }
@@ -646,7 +674,7 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<InstructionRows>,
     /// All present tables' cycle buckets, concatenated in
     /// `LookupTableKind::iter()` order; per-table slices in `present`.
     bucket_flat: Arc<Vec<u32>>,
@@ -680,7 +708,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<InstructionRows>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         Self::new_with_scanner(dimensions, r_reduction, rows, gamma, |_| None)
@@ -692,7 +720,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new_with_scanner(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<InstructionRows>,
         gamma: F,
         scanner: impl FnOnce(ScannerInputs<'_>) -> Option<Box<dyn PhaseScanner<F>>>,
     ) -> Result<Self, KernelError<F>> {
@@ -1679,7 +1707,7 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel};
+    use super::{InstructionCycleRow, InstructionRows, OptimizedInstructionReadRafKernel};
 
     /// Packs reference-typed fixture rows into the optimized kernel's shared
     /// row form (the stage-5 kernel reads no PC/RAM columns).
@@ -1797,7 +1825,7 @@ mod tests {
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(pack(&rows)),
+            Arc::new(InstructionRows::new(pack(&rows))),
             gamma,
         )
         .unwrap();
@@ -1872,7 +1900,7 @@ mod tests {
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(pack(&rows)),
+            Arc::new(InstructionRows::new(pack(&rows))),
             gamma,
         )
         .unwrap();

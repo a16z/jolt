@@ -80,7 +80,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow, InstructionRows};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
 use crate::reference::views::eq_table;
 use crate::{
@@ -131,7 +131,7 @@ impl ColumnSelector {
     expect(dead_code, reason = "read only by the Metal driver factory")
 )]
 pub(crate) struct BooleanityDeviceInputs<'a, F> {
-    pub(crate) rows: &'a Arc<Vec<InstructionCycleRow>>,
+    pub(crate) rows: &'a Arc<InstructionRows>,
     /// Per polynomial (layout order): [`ColumnSelector::device_meta`].
     pub(crate) poly_meta: Vec<(u32, u32)>,
     pub(crate) log_k_chunk: usize,
@@ -649,7 +649,7 @@ fn gamma_power_pairs<F: Field>(gamma: F, count: usize) -> Result<(Vec<F>, Vec<F>
 /// Lazy-RA index source over the packed stage-5 rows: polynomial `i`'s hot
 /// chunk at cycle `j`, through the layout's selectors.
 struct BooleanityChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<InstructionRows>,
     selectors: Vec<ColumnSelector>,
 }
 
@@ -1390,7 +1390,9 @@ mod tests {
             let mut session = ProofSession::default();
             if carried_indices {
                 let rows = collect_instruction_cycle_rows::<Fr>(backend, 1usize << log_t).unwrap();
-                session.park(SharedInstructionRows(std::sync::Arc::new(rows)));
+                session.park(SharedInstructionRows(std::sync::Arc::new(
+                    super::super::instruction_read_raf::InstructionRows::new(rows),
+                )));
             }
             let optimized = OptimizedBooleanityCycle
                 .prepare(

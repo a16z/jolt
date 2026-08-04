@@ -21,7 +21,7 @@ use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate_capped, testing, MetalError};
 use crate::optimized::bytecode_read_raf::{
-    prepare_bytecode_read_raf_cycle, BytecodeCycleDevice, BytecodeCycleDeviceInputs, PcRow,
+    prepare_bytecode_read_raf_cycle, BytecodeCycleDevice, BytecodeCycleDeviceInputs, PcRow, PcRows,
 };
 use crate::optimized::lazy_ra::LazyRaDevice;
 use crate::optimized::support::eq_table;
@@ -77,7 +77,7 @@ fn build_driver(inputs: BytecodeCycleDeviceInputs<'_, Fr>) -> Option<BytecodeCyc
 
 struct BytecodeDriver {
     device: DeviceRound,
-    rows: Arc<Vec<PcRow>>,
+    rows: Arc<PcRows>,
     shifts: OwnedDeviceBuffer<u32>,
     partials: Partials,
     cur: OwnedDeviceBuffer<Fr>,

@@ -53,7 +53,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::instruction_read_raf::{shared_instruction_rows, InstructionRows};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaDevice};
 use super::support::accumulate_product;
 use crate::reference::views::eq_table;
@@ -94,7 +94,7 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
 /// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
 /// hot), off the stage-5 shared rows.
 struct LookupIndexChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<InstructionRows>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
@@ -157,7 +157,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<InstructionRows>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         Self::new_with_driver(
@@ -187,7 +187,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         instruction_address: &[F],
         instruction_read_raf_cycle: &[F],
         committed_chunk_bits: usize,
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<InstructionRows>,
         gamma: F,
         driver: Option<Box<dyn LazyRaDevice<F>>>,
     ) -> Result<Self, KernelError<F>> {
@@ -574,7 +574,9 @@ mod tests {
     use crate::reference::views::{address_fold, eq_table};
     use crate::{NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-    use super::super::instruction_read_raf::{InstructionCycleRow, SharedInstructionRows};
+    use super::super::instruction_read_raf::{
+        InstructionCycleRow, InstructionRows, SharedInstructionRows,
+    };
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
@@ -740,7 +742,9 @@ mod tests {
                 let shape = FixtureShape { log_t, ram_k: 16 };
                 with_ram_fixture(shape, Vec::new(), |witness| {
                     let mut session = ProofSession::default();
-                    session.park(SharedInstructionRows(Arc::new(pack(&rows))));
+                    session.park(SharedInstructionRows(Arc::new(InstructionRows::new(pack(
+                        &rows,
+                    )))));
                     let kernel = OptimizedInstructionRaVirtualization
                         .prepare(
                             &mut session,
@@ -768,7 +772,7 @@ mod tests {
                         &instruction_address,
                         &r_cycle,
                         chunk_bits,
-                        Arc::new(pack(&rows)),
+                        Arc::new(InstructionRows::new(pack(&rows))),
                         gamma,
                     )
                     .unwrap(),

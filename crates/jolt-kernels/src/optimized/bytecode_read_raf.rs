@@ -60,6 +60,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lifetime_trace::LifetimeTag;
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
 use super::support::{
@@ -111,12 +112,37 @@ impl PcRow {
 }
 
 /// The session key of the shared per-cycle PC scan.
-struct PcRowsKey(Arc<Vec<PcRow>>);
+struct PcRowsKey(Arc<PcRows>);
+
+/// The scan behind [`PcRowsKey`] — a `Vec` plus the lifetime tag that logs
+/// the last-`Arc`-drop site under `JOLT_LIFETIME_TRACE=1`.
+pub(crate) struct PcRows {
+    rows: Vec<PcRow>,
+    _lifetime: LifetimeTag,
+}
+
+impl PcRows {
+    fn new(rows: Vec<PcRow>) -> Self {
+        let bytes = rows.len() * size_of::<PcRow>();
+        Self {
+            rows,
+            _lifetime: LifetimeTag::new("PcRows", bytes),
+        }
+    }
+}
+
+impl std::ops::Deref for PcRows {
+    type Target = Vec<PcRow>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
 
 /// Park a lane-packed PC scan (the trace record's walk co-produces it), so
 /// [`pc_rows`] serves it without a second trace pass.
 pub(crate) fn park_pc_rows(session: &mut ProofSession, rows: Vec<PcRow>) {
-    session.park(PcRowsKey(Arc::new(rows)));
+    session.park(PcRowsKey(Arc::new(PcRows::new(rows))));
 }
 
 #[derive(Clone, Copy, Debug, WitnessBundle)]
@@ -130,7 +156,7 @@ pub(crate) fn pc_rows<F: Field>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
-) -> Result<Arc<Vec<PcRow>>, KernelError<F>> {
+) -> Result<Arc<PcRows>, KernelError<F>> {
     if session.state::<PcRowsKey>().is_none() {
         let bundles: Vec<PcBundle> = collect_rows(witness, cycles)?;
         let pack = |bundle: &PcBundle| {
@@ -160,7 +186,7 @@ pub(crate) fn pc_rows<F: Field>(
             .collect::<Result<Vec<_>, _>>()?;
         #[cfg(not(feature = "parallel"))]
         let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
-        session.park(PcRowsKey(Arc::new(rows)));
+        session.park(PcRowsKey(Arc::new(PcRows::new(rows))));
     }
     let rows = session
         .state::<PcRowsKey>()
@@ -602,7 +628,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
     expect(dead_code, reason = "read only by the Metal driver factory")
 )]
 pub(crate) struct BytecodeCycleDeviceInputs<'a, F> {
-    pub(crate) rows: &'a Arc<Vec<PcRow>>,
+    pub(crate) rows: &'a Arc<PcRows>,
     pub(crate) stage_cycle_points: &'a [Vec<F>; 5],
     pub(crate) stage_weights: [F; 5],
     pub(crate) entry_term: F,
@@ -722,7 +748,7 @@ pub(crate) fn prepare_bytecode_read_raf_cycle<F: Field>(
 /// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
 /// cold on unmapped cycles, off the session-shared PC scan.
 struct BytecodePcChunks {
-    rows: Arc<Vec<PcRow>>,
+    rows: Arc<PcRows>,
     selectors: Vec<RaChunkSelector>,
 }
 

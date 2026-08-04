@@ -55,6 +55,7 @@ use rayon::prelude::*;
 use super::instruction_read_raf::{
     shared_instruction_rows, InstructionCycleRow, SharedInstructionRows,
 };
+use super::lifetime_trace::LifetimeTag;
 use super::ram_trace::RamAccessColumns;
 use super::trace_record::RegisterLanes;
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
@@ -228,6 +229,7 @@ pub(crate) struct OpeningColumns {
 pub(crate) struct SharedOpeningIncrements {
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
+    _lifetime: LifetimeTag,
 }
 
 pub(crate) fn park_opening_increments(
@@ -254,10 +256,15 @@ pub(crate) fn park_opening_increments(
             .collect()
     };
     #[cfg(feature = "parallel")]
-    let (rd_inc, ram_inc) = rayon::join(rd, ram_inc);
+    let (rd_inc, ram_inc): (Vec<i128>, Vec<i128>) = rayon::join(rd, ram_inc);
     #[cfg(not(feature = "parallel"))]
-    let (rd_inc, ram_inc) = (rd(), ram_inc());
-    session.park(SharedOpeningIncrements { rd_inc, ram_inc });
+    let (rd_inc, ram_inc): (Vec<i128>, Vec<i128>) = (rd(), ram_inc());
+    let bytes = (rd_inc.len() + ram_inc.len()) * 16;
+    session.park(SharedOpeningIncrements {
+        rd_inc,
+        ram_inc,
+        _lifetime: LifetimeTag::new("SharedOpeningIncrements", bytes),
+    });
 }
 
 impl OpeningColumns {

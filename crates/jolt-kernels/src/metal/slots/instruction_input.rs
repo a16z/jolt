@@ -534,6 +534,7 @@ mod tests {
 
     use super::*;
     use crate::metal::testing::{device_probe_count, gpu_lock};
+    use crate::optimized::lifetime_trace::LifetimeTag;
     use crate::optimized::ram_trace::RamAccessColumns;
     use crate::optimized::trace_record::RegisterLanes;
 
@@ -593,6 +594,7 @@ mod tests {
                 rs1_index: vec![0; t],
                 rs2_index: vec![0; t],
                 rd_index: vec![0; t],
+                _lifetime: LifetimeTag::new("RegisterLanes(test)", t * 35),
             }),
             ram_address: vec![0; t],
             left_lookup_operand: vec![0; t],
@@ -607,7 +609,9 @@ mod tests {
                 addresses: Vec::new(),
                 pre_values: Vec::new(),
                 post_values: Vec::new(),
+                _lifetime: LifetimeTag::new("RamAccessColumns(test)", 0),
             }),
+            _lifetime: LifetimeTag::new("TraceRecord(test)", t * 116),
         })
     }
 

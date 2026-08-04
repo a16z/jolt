@@ -13,6 +13,7 @@ use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 
+use super::lifetime_trace::LifetimeTag;
 use super::support::collect_rows;
 use crate::{KernelError, ProofSession};
 
@@ -36,6 +37,7 @@ pub(crate) struct RamAccessColumns {
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
     pub post_values: Vec<u64>,
+    pub(crate) _lifetime: LifetimeTag,
 }
 
 impl RamAccessColumns {
@@ -57,6 +59,7 @@ impl RamAccessColumns {
             addresses,
             pre_values,
             post_values,
+            _lifetime: LifetimeTag::new("RamAccessColumns", cycles * 24),
         })
     }
 

@@ -48,7 +48,8 @@ use rayon::prelude::*;
 
 use super::bytecode_read_raf::{park_pc_rows, PcRow};
 use super::instruction_claim_reduction::InstructionOperandRow;
-use super::instruction_read_raf::{InstructionCycleRow, SharedInstructionRows};
+use super::instruction_read_raf::{InstructionCycleRow, InstructionRows, SharedInstructionRows};
+use super::lifetime_trace::{self, lifetime_note, LifetimeTag};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::spartan_outer::SpartanOuterRow;
 use super::spartan_product::SpartanProductRow;
@@ -85,6 +86,7 @@ pub(crate) struct RegisterLanes {
     pub rs1_index: Vec<u8>,
     pub rs2_index: Vec<u8>,
     pub rd_index: Vec<u8>,
+    pub(crate) _lifetime: LifetimeTag,
 }
 
 /// Column-major branch-resolved witness lanes over the padded cycle domain.
@@ -109,6 +111,7 @@ pub(crate) struct TraceRecord {
     /// built by the same walk and also parked in the session for the RAM
     /// kernels' [`RamAccessColumns::shared`].
     pub ram: Arc<RamAccessColumns>,
+    pub(crate) _lifetime: LifetimeTag,
 }
 
 /// The walk's lane-scattering consumer.
@@ -569,15 +572,19 @@ impl TraceRecord {
             };
             #[cfg(not(feature = "parallel"))]
             let lanes = collect_streaming()?;
+            let ram_bytes = lanes.addresses.len() * 24;
             let ram = Arc::new(RamAccessColumns {
                 addresses: lanes.addresses,
                 pre_values: lanes.pre_values,
                 post_values: lanes.post_values,
+                _lifetime: LifetimeTag::new("RamAccessColumns", ram_bytes),
             });
             if session.state::<Arc<RamAccessColumns>>().is_none() {
                 session.park(Arc::clone(&ram));
             }
-            session.park(SharedInstructionRows(Arc::new(lanes.instruction_rows)));
+            session.park(SharedInstructionRows(Arc::new(InstructionRows::new(
+                lanes.instruction_rows,
+            ))));
             // The bytecode PC scan, packed from the pc/noop lanes (fallible
             // u32-range guards, so it runs after the walk).
             let pack_pc =
@@ -609,6 +616,7 @@ impl TraceRecord {
                     rs1_index: lanes.rs1_index,
                     rs2_index: lanes.rs2_index,
                     rd_index: lanes.rd_index,
+                    _lifetime: LifetimeTag::new("RegisterLanes", cycles * 35),
                 }),
                 ram_address: lanes.ram_address,
                 left_lookup_operand: lanes.left_lookup_operand,
@@ -620,6 +628,7 @@ impl TraceRecord {
                 lookup_output: lanes.lookup_output,
                 flags: lanes.flags,
                 ram,
+                _lifetime: LifetimeTag::new("TraceRecord", cycles * 116),
             });
             session.park(record);
         }
@@ -635,7 +644,16 @@ impl TraceRecord {
     /// lanes free before the stage-5 peak. The RAM access columns survive
     /// under their own session `Arc` for stages 4-6b, exactly as before.
     pub(crate) fn release(session: &mut ProofSession) {
-        let _ = session.take::<Arc<Self>>();
+        let record = session.take::<Arc<Self>>();
+        if let Some(record) = &record {
+            lifetime_note!(
+                "TraceRecord::release — session ref dropped; {} strong refs outstanding",
+                Arc::strong_count(record).saturating_sub(1),
+            );
+        }
+        lifetime_trace::mark_release_scope(true);
+        drop(record);
+        lifetime_trace::mark_release_scope(false);
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -906,7 +924,7 @@ mod tests {
                 1 << shape.log_t,
             )
             .unwrap();
-            assert_eq!(*parked_pc, *walked_pc);
+            assert_eq!(**parked_pc, **walked_pc);
 
             let register_rows: Vec<RegisterCycleRow> =
                 collect_rows(witness, 1 << shape.log_t).unwrap();

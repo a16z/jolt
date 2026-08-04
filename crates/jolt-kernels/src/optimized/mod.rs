@@ -48,6 +48,7 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 pub(crate) mod lazy_ra;
+pub(crate) mod lifetime_trace;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod ram_hamming_booleanity;
