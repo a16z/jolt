@@ -487,6 +487,23 @@ measured 0.30-s address work, and a 0.18-s cycle seam put a roughly 5x complete-
 result within the empirical roofs. Because this is clearly above the 4x floor, the
 goal controller keeps the slot open.
 
+The compact-row seam and preparation iterations were retained through `9167000c7`.
+Against the 3.697-s optimized-CPU `InstructionReadRaf` control at `2^26`, the current
+Metal slot measures 821.0 ms: 314.6 ms of preparation and 506.4 ms of proving, or
+4.50x. The 16 slow address-phase calls account for 280.6 ms; resident first-message,
+handoff, dense rounds, and readback spans account for another 190.8 ms. The same
+single-profile pair measures 20.642 s CPU versus 17.490 s Metal for the full PIOP,
+or 1.18x. These are bottleneck and direction measurements, not the final three-pair
+promotion result.
+
+A cache-reuse candidate fused each RAF tile with its suffix tile and reused the same
+30 KiB threadgroup allocation sequentially. At synthetic `2^22`, a 16K tile improved
+complete phase wall time from 1.686 ms to 1.453 ms; 32K and 64K were worse, and 4K
+reversed the trend. The gain did not transfer to the real `2^26` distribution: the
+16 phase calls were effectively flat at 279.5 ms and the complete slot regressed to
+832.6 ms. That design is rejected. A successful successor must remove the second
+logical row scan, not merely schedule it closer to the first scan.
+
 ### Booleanity cycle worksheet
 
 The next slot is `Booleanity`, selected by the profile. Let `T` be the cycle count,
