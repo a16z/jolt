@@ -12,6 +12,8 @@ use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, Library,
     MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use thiserror::Error;
 
 const FIELD_SOURCE: &str = include_str!("fp128.metal");
@@ -470,11 +472,17 @@ impl SolinasMetal {
     }
 
     fn validate_inputs(&self, side: &'static str, values: &[Fp128]) -> Result<(), MetalError> {
-        if let Some((index, _)) = values
+        #[cfg(feature = "parallel")]
+        let invalid = values
+            .par_iter()
+            .enumerate()
+            .find_first(|(_, value)| !value.is_canonical(self.offset));
+        #[cfg(not(feature = "parallel"))]
+        let invalid = values
             .iter()
             .enumerate()
-            .find(|(_, value)| !value.is_canonical(self.offset))
-        {
+            .find(|(_, value)| !value.is_canonical(self.offset));
+        if let Some((index, _)) = invalid {
             return Err(MetalError::NonCanonicalInput {
                 side,
                 index,

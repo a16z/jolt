@@ -6,6 +6,8 @@ use metal::{
     objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
     MTLResourceOptions, MTLSize,
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::{
     address_raf::{AddressRafScanRow, AddressRafSums},
@@ -211,7 +213,7 @@ impl SolinasMetal {
         rows: usize,
         buckets: &[Vec<u32>],
         config: AddressPhaseSequenceConfig,
-        source: impl Fn(usize) -> (AddressRafScanRow, Fp128),
+        source: impl Fn(usize) -> (AddressRafScanRow, Fp128) + Sync,
     ) -> Result<AddressPhaseSequence, MetalError> {
         if rows == 0 {
             return Err(MetalError::EmptyInput);
@@ -250,38 +252,29 @@ impl SolinasMetal {
             table_offsets.push(table_offsets.last().copied().unwrap_or(0) + suffixes.len());
         }
 
-        let mut lookups = Vec::with_capacity(rows);
-        let mut packed_rows = Vec::with_capacity(rows);
+        let mut cycle_order = Vec::with_capacity(rows);
         let mut cycle_to_table_major = vec![u32::MAX; rows];
-        let mut table_major_weights = Vec::with_capacity(rows);
         let mut suffix_jobs = Vec::new();
         let mut suffix_tables = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
+        let mut table_row_ranges = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
         for (table, bucket) in buckets.iter().enumerate() {
             let job_start = u32::try_from(suffix_jobs.len())
                 .map_err(|_| MetalError::InputTooLong(suffix_jobs.len()))?;
-            let bucket_start = lookups.len();
+            let bucket_start = cycle_order.len();
             for &row in bucket {
                 let row = row as usize;
                 if row >= rows {
                     return Err(MetalError::InputTooLong(row));
                 }
-                let (source_row, weight) = source(row);
-                if source_row.table_index() != Some(table) {
-                    return Err(MetalError::InvalidAddressPhaseBucket {
-                        bucket: table,
-                        row,
-                        actual: source_row.table_index(),
+                if cycle_to_table_major[row] != u32::MAX {
+                    return Err(MetalError::AddressPhaseLayoutLength {
+                        expected: rows,
+                        got: cycle_order.len(),
                     });
                 }
-                push_source(
-                    row,
-                    source_row,
-                    weight,
-                    &mut lookups,
-                    &mut packed_rows,
-                    &mut cycle_to_table_major,
-                    &mut table_major_weights,
-                )?;
+                cycle_to_table_major[row] = u32::try_from(cycle_order.len())
+                    .map_err(|_| MetalError::InputTooLong(cycle_order.len()))?;
+                cycle_order.push(row as u32);
             }
             for local_start in (0..bucket.len()).step_by(config.rows_per_threadgroup) {
                 let local_end = (local_start + config.rows_per_threadgroup).min(bucket.len());
@@ -302,35 +295,106 @@ impl SolinasMetal {
                     .map_err(|_| MetalError::InputTooLong(table_offsets[table]))?,
                 suffix_count: u32::from(suffix_counts[table]),
             });
+            table_row_ranges.push(bucket_start..cycle_order.len());
         }
         if suffix_jobs.is_empty() {
             return Err(MetalError::EmptyAddressSuffixBuckets);
         }
-        for index in 0..rows {
-            let (row, weight) = source(index);
-            if row.table_index().is_none() {
-                push_source(
-                    index,
-                    row,
-                    weight,
-                    &mut lookups,
-                    &mut packed_rows,
-                    &mut cycle_to_table_major,
-                    &mut table_major_weights,
-                )?;
+        let no_table_start = cycle_order.len();
+        for (cycle, table_major) in cycle_to_table_major.iter_mut().enumerate() {
+            if *table_major == u32::MAX {
+                *table_major = u32::try_from(cycle_order.len())
+                    .map_err(|_| MetalError::InputTooLong(cycle_order.len()))?;
+                cycle_order.push(cycle as u32);
             }
         }
-        let assigned_cycles = cycle_to_table_major
-            .iter()
-            .filter(|&&index| index != u32::MAX)
-            .count();
-        if lookups.len() != rows || assigned_cycles != rows {
+        if cycle_order.len() != rows {
             return Err(MetalError::AddressPhaseLayoutLength {
                 expected: rows,
-                got: assigned_cycles.min(lookups.len()),
+                got: cycle_order.len(),
             });
         }
-        self.validate_inputs("resident address weights", &table_major_weights)?;
+
+        let row_buffer_lengths = [
+            byte_length::<u8>(rows)?,
+            byte_length::<AddressLookup>(rows)?,
+            byte_length::<Fp128>(rows)?,
+        ];
+        for requested in row_buffer_lengths {
+            let maximum = self.device.max_buffer_length();
+            if requested > maximum {
+                return Err(MetalError::BufferTooLong { requested, maximum });
+            }
+        }
+        let packed_rows_buffer = self.device.new_buffer(
+            byte_length::<u8>(rows)?,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let lookups_buffer = self.device.new_buffer(
+            byte_length::<AddressLookup>(rows)?,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let weights_buffer = self.device.new_buffer(
+            byte_length::<Fp128>(rows)?,
+            MTLResourceOptions::StorageModeShared,
+        );
+        // SAFETY: the three shared buffers have exactly `rows` elements, are
+        // distinct allocations, and are not visible to a command buffer yet.
+        let lookups = unsafe {
+            slice::from_raw_parts_mut(lookups_buffer.contents().cast::<AddressLookup>(), rows)
+        };
+        // SAFETY: see the allocation and exclusivity argument above.
+        let packed_rows =
+            unsafe { slice::from_raw_parts_mut(packed_rows_buffer.contents().cast::<u8>(), rows) };
+        // SAFETY: see the allocation and exclusivity argument above.
+        let table_major_weights =
+            unsafe { slice::from_raw_parts_mut(weights_buffer.contents().cast::<Fp128>(), rows) };
+        #[cfg(feature = "parallel")]
+        lookups
+            .par_iter_mut()
+            .zip(packed_rows.par_iter_mut())
+            .zip(table_major_weights.par_iter_mut())
+            .zip(cycle_order.par_iter())
+            .for_each(|(((lookup, packed), weight), &cycle)| {
+                (*lookup, *packed, *weight) = packed_source(source(cycle as usize));
+            });
+        #[cfg(not(feature = "parallel"))]
+        for (((lookup, packed), weight), &cycle) in lookups
+            .iter_mut()
+            .zip(&mut packed_rows)
+            .zip(&mut table_major_weights)
+            .zip(&cycle_order)
+        {
+            (*lookup, *packed, *weight) = packed_source(source(cycle as usize));
+        }
+        for (table, range) in table_row_ranges.iter().enumerate() {
+            if let Some(position) = packed_rows[range.clone()]
+                .iter()
+                .position(|packed| usize::from(*packed & 0x7f) != table + 1)
+            {
+                let row = cycle_order[range.start + position] as usize;
+                let packed = packed_rows[range.start + position];
+                return Err(MetalError::InvalidAddressPhaseBucket {
+                    bucket: table,
+                    row,
+                    actual: packed_table(packed),
+                });
+            }
+        }
+        if let Some(position) = packed_rows[no_table_start..]
+            .iter()
+            .position(|packed| packed & 0x7f != 0)
+        {
+            let row = cycle_order[no_table_start + position] as usize;
+            let packed = packed_rows[no_table_start + position];
+            return Err(MetalError::InvalidAddressPhaseBucket {
+                bucket: ADDRESS_SUFFIX_TABLES,
+                row,
+                actual: packed_table(packed),
+            });
+        }
+        self.validate_inputs("resident address weights", table_major_weights)?;
+        drop(cycle_order);
 
         let raf_tile_pipeline = self.compile_named_pipeline(RAF_TILE_PIPELINE)?;
         let raf_finalize_pipeline = self.compile_named_pipeline(RAF_FINALIZE_PIPELINE)?;
@@ -452,10 +516,10 @@ impl SolinasMetal {
             .checked_mul(cycle_e_out_capacity)
             .ok_or(MetalError::InputTooLong(cycle_e_out_capacity))?;
         let buffer_lengths = [
-            byte_length::<u8>(packed_rows.len())?,
-            byte_length::<AddressLookup>(lookups.len())?,
+            byte_length::<u8>(rows)?,
+            byte_length::<AddressLookup>(rows)?,
             byte_length::<u32>(cycle_to_table_major.len())?,
-            byte_length::<Fp128>(table_major_weights.len())?,
+            byte_length::<Fp128>(rows)?,
             byte_length::<Fp128>(ADDRESS_RAF_BINS)?,
             byte_length::<Fp128>(raf_partial_elements)?,
             byte_length::<Fp128>(ADDRESS_RAF_LANES * ADDRESS_RAF_BINS)?,
@@ -509,10 +573,10 @@ impl SolinasMetal {
             cycle_reduce_pipeline,
             cycle_reduce_limits,
             buffers: AddressPhaseBuffers {
-                packed_rows: buffer_from_slice(&self.device, &packed_rows),
-                lookups: buffer_from_slice(&self.device, &lookups),
+                packed_rows: packed_rows_buffer,
+                lookups: lookups_buffer,
                 cycle_to_table_major: buffer_from_slice(&self.device, &cycle_to_table_major),
-                weights: buffer_from_slice(&self.device, &table_major_weights),
+                weights: weights_buffer,
                 previous_phase_table: buffer_from_slice(&self.device, &identity),
                 raf_partials: self.device.new_buffer(
                     byte_length::<Fp128>(raf_partial_elements)?,
@@ -1022,35 +1086,22 @@ impl AddressPhaseSequence {
     }
 }
 
-fn push_source(
-    cycle: usize,
-    row: AddressRafScanRow,
-    weight: Fp128,
-    lookups: &mut Vec<AddressLookup>,
-    packed_rows: &mut Vec<u8>,
-    cycle_to_table_major: &mut [u32],
-    weights: &mut Vec<Fp128>,
-) -> Result<(), MetalError> {
-    let table_major =
-        u32::try_from(lookups.len()).map_err(|_| MetalError::InputTooLong(lookups.len()))?;
-    let mapping = cycle_to_table_major
-        .get_mut(cycle)
-        .ok_or(MetalError::InputTooLong(cycle))?;
-    if *mapping != u32::MAX {
-        return Err(MetalError::AddressPhaseLayoutLength {
-            expected: cycle_to_table_major.len(),
-            got: lookups.len(),
-        });
-    }
-    *mapping = table_major;
+fn packed_source(row_and_weight: (AddressRafScanRow, Fp128)) -> (AddressLookup, u8, Fp128) {
+    let (row, weight) = row_and_weight;
     let lookup = row.lookup_index();
-    lookups.push(AddressLookup {
-        limbs: [lookup as u64, (lookup >> 64) as u64],
-    });
     let table = row.table_index().map_or(0, |table| table + 1) as u8;
-    packed_rows.push(table | (u8::from(row.raf_flag()) << 7));
-    weights.push(weight);
-    Ok(())
+    (
+        AddressLookup {
+            limbs: [lookup as u64, (lookup >> 64) as u64],
+        },
+        table | (u8::from(row.raf_flag()) << 7),
+        weight,
+    )
+}
+
+fn packed_table(packed: u8) -> Option<usize> {
+    let table = usize::from(packed & 0x7f);
+    (table != 0).then_some(table - 1)
 }
 
 fn write_phase_tables(buffer: &Buffer, tables: &[Vec<AkitaField>]) {
