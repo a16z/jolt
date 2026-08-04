@@ -3,7 +3,10 @@
 use std::ops::Range;
 
 use jolt_field::{Field, RingAccumulator, SignedScalarAccumulator};
-use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
+};
+use jolt_sumcheck::SumcheckError;
 use jolt_witness::{
     collect_bundles_par, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
 };
@@ -166,6 +169,54 @@ pub(crate) fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
         table[y] = even + r * (table[2 * y + 1] - even);
     }
     table.truncate(half);
+}
+
+/// Kernel-side extension of [`GruenSplitEqPolynomial`]: assemble a round
+/// message from the eq-stripped inner factor's evaluations.
+pub(crate) trait GruenRoundMessage<F: Field> {
+    /// `s(t) = ℓ(t) · q(t)` at `t = 0, 1, …, q_evals.len() − 1`, checked
+    /// against `s(0) + s(1) = previous_claim` (the reference tier's round
+    /// consistency pin) and interpolated through `UnivariatePoly::from_evals`.
+    ///
+    /// This is the assembly half of the Gruen trick: the split-eq factor
+    /// contributes only its per-round linear term `ℓ`, so kernels sample the
+    /// remaining summand `q` alone and the product is restored per point —
+    /// never a full-domain eq-weighted sweep.
+    fn checked_round_poly(
+        &self,
+        q_evals: &[F],
+        previous_claim: F,
+        round: usize,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+}
+
+impl<F: Field> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
+    fn checked_round_poly(
+        &self,
+        q_evals: &[F],
+        previous_claim: F,
+        round: usize,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        debug_assert!(q_evals.len() >= 2);
+        let (l_at_0, l_at_1) = self.current_linear_evals();
+        let l_step = l_at_1 - l_at_0;
+        let mut l_eval = l_at_0;
+        let mut evals = Vec::with_capacity(q_evals.len());
+        for q in q_evals {
+            evals.push(l_eval * *q);
+            l_eval += l_step;
+        }
+
+        let round_sum = evals[0] + evals[1];
+        if round_sum != previous_claim {
+            return Err(SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual: round_sum,
+            });
+        }
+        Ok(UnivariatePoly::from_evals(&evals))
+    }
 }
 
 /// Assemble a round message from evaluations at `{0, 2, 3, .., degree}`,

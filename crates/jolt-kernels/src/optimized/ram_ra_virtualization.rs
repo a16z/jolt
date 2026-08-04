@@ -37,6 +37,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::support::GruenRoundMessage;
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -223,24 +224,8 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
             },
         );
 
-        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let mut l_eval = l_at_0;
-        let mut evals = Vec::with_capacity(points);
-        for q in &q_evals {
-            evals.push(l_eval * *q);
-            l_eval += l_step;
-        }
-
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        self.gruen
+            .checked_round_poly(&q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {

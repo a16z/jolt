@@ -53,7 +53,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::{accumulate_product, gamma_power_pairs, map_indices};
+use super::support::{accumulate_product, gamma_power_pairs, map_indices, GruenRoundMessage};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -347,22 +347,8 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             },
         );
 
-        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let evals = [
-            l_at_0 * q_evals[0],
-            l_at_1 * q_evals[1],
-            (l_at_1 + l_step) * q_evals[2],
-        ];
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        self.gruen
+            .checked_round_poly(&q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {
