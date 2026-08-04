@@ -13,17 +13,21 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
 use jolt_witness::JoltWitnessPlane;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::{num_threadgroups, Partials, RoundTable};
 use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
 use crate::metal::field::{fr_as_u32s, fr_to_u32_limbs};
 use crate::metal::runtime::{KernelId, MetalContext};
 use crate::metal::{metal_gate, testing, MetalError};
+#[cfg(feature = "parallel")]
+use crate::optimized::registers_read_write::register_build_chunk_size;
 use crate::optimized::registers_read_write::{
     BoundRegistersRwEntry, OptimizedRegistersReadWrite, ReadWriteKernel, RegistersRwCycleEntry,
     SharedRdIndices,
 };
-use crate::optimized::trace_record::{TraceRecord, NO_REGISTER};
+use crate::optimized::trace_record::{RegisterLanes, TraceRecord, NO_REGISTER};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -32,7 +36,7 @@ const KIND: &str = "registers_read_write";
 const RA_TABLE_DEREF_LEN: usize = 256;
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RawRwEntryIdx {
     val: Fr,
     prev_val: u64,
@@ -59,6 +63,229 @@ const _: () = {
     assert!(std::mem::size_of::<RawRwEntryIdx>() == 56);
     assert!(std::mem::size_of::<RawRwEntryF>() == 120);
 };
+
+struct MetalRegisterTables {
+    entries: Vec<RawRwEntryIdx>,
+    offsets: Vec<u32>,
+    inc: Vec<Fr>,
+    rs1_indices: Vec<Option<u8>>,
+    rs2_indices: Vec<Option<u8>>,
+    rd_indices: Vec<Option<u8>>,
+}
+
+#[inline]
+fn raw_cycle_entries(registers: &RegisterLanes, t: usize) -> ([RawRwEntryIdx; 3], usize) {
+    let mut row = [RawRwEntryIdx::default(); 3];
+    let mut len = 0;
+    let rs1 = registers.rs1_index[t];
+    let rs2 = registers.rs2_index[t];
+    let rd = registers.rd_index[t];
+    if rs1 != NO_REGISTER {
+        row[len] = RawRwEntryIdx {
+            val: Fr::from_u64(registers.rs1_value[t]),
+            prev_val: registers.rs1_value[t],
+            next_val: registers.rs1_value[t],
+            ra: 1,
+            wa: 0,
+            col: rs1,
+            pad: [0; 3],
+        };
+        len += 1;
+    }
+    if rs2 != NO_REGISTER {
+        if let Some(entry) = row[..len].iter_mut().find(|entry| entry.col == rs2) {
+            entry.ra = 3;
+        } else {
+            row[len] = RawRwEntryIdx {
+                val: Fr::from_u64(registers.rs2_value[t]),
+                prev_val: registers.rs2_value[t],
+                next_val: registers.rs2_value[t],
+                ra: 2,
+                wa: 0,
+                col: rs2,
+                pad: [0; 3],
+            };
+            len += 1;
+        }
+    }
+    if rd != NO_REGISTER {
+        if let Some(entry) = row[..len].iter_mut().find(|entry| entry.col == rd) {
+            entry.wa = 1;
+            entry.next_val = registers.rd_post_value[t];
+        } else {
+            row[len] = RawRwEntryIdx {
+                val: Fr::from_u64(registers.rd_pre_value[t]),
+                prev_val: registers.rd_pre_value[t],
+                next_val: registers.rd_post_value[t],
+                ra: 0,
+                wa: 1,
+                col: rd,
+                pad: [0; 3],
+            };
+            len += 1;
+        }
+    }
+    row[..len].sort_unstable_by_key(|entry| entry.col);
+    (row, len)
+}
+
+#[inline]
+fn raw_cycle_entry_count(registers: &RegisterLanes, t: usize) -> usize {
+    let rs1 = registers.rs1_index[t];
+    let rs2 = registers.rs2_index[t];
+    let rd = registers.rd_index[t];
+    usize::from(rs1 != NO_REGISTER)
+        + usize::from(rs2 != NO_REGISTER && rs2 != rs1)
+        + usize::from(rd != NO_REGISTER && rd != rs1 && rd != rs2)
+}
+
+fn build_metal_register_tables_serial(registers: &RegisterLanes) -> MetalRegisterTables {
+    let cycles = registers.rd_index.len();
+    let mut tables = MetalRegisterTables {
+        entries: Vec::with_capacity(cycles * 3),
+        offsets: Vec::with_capacity(cycles + 1),
+        inc: Vec::with_capacity(cycles),
+        rs1_indices: Vec::with_capacity(cycles),
+        rs2_indices: Vec::with_capacity(cycles),
+        rd_indices: Vec::with_capacity(cycles),
+    };
+    tables.offsets.push(0);
+    for t in 0..cycles {
+        let (row, len) = raw_cycle_entries(registers, t);
+        tables.entries.extend_from_slice(&row[..len]);
+        tables.offsets.push(tables.entries.len() as u32);
+        tables.inc.push(Fr::from_i128(
+            i128::from(registers.rd_post_value[t]) - i128::from(registers.rd_pre_value[t]),
+        ));
+        let rs1 = registers.rs1_index[t];
+        let rs2 = registers.rs2_index[t];
+        let rd = registers.rd_index[t];
+        tables.rs1_indices.push((rs1 != NO_REGISTER).then_some(rs1));
+        tables.rs2_indices.push((rs2 != NO_REGISTER).then_some(rs2));
+        tables.rd_indices.push((rd != NO_REGISTER).then_some(rd));
+    }
+    tables
+}
+
+#[cfg(feature = "parallel")]
+fn build_metal_register_tables_parallel(
+    registers: &RegisterLanes,
+    chunk_size: usize,
+) -> MetalRegisterTables {
+    let cycles = registers.rd_index.len();
+    let num_chunks = cycles.div_ceil(chunk_size);
+    let mut offsets = vec![0u32; cycles + 1];
+    offsets[1..]
+        .par_chunks_mut(chunk_size)
+        .enumerate()
+        .for_each(|(chunk, counts)| {
+            let start = chunk * chunk_size;
+            for (local_t, count) in counts.iter_mut().enumerate() {
+                *count = raw_cycle_entry_count(registers, start + local_t) as u32;
+            }
+        });
+    for t in 0..cycles {
+        offsets[t + 1] += offsets[t];
+    }
+    let entries_len = offsets[cycles] as usize;
+
+    let mut tables = MetalRegisterTables {
+        entries: Vec::with_capacity(cycles * 3),
+        offsets,
+        inc: Vec::with_capacity(cycles),
+        rs1_indices: Vec::with_capacity(cycles),
+        rs2_indices: Vec::with_capacity(cycles),
+        rd_indices: Vec::with_capacity(cycles),
+    };
+    let mut entry_chunks = Vec::with_capacity(num_chunks);
+    let mut entries_rest = tables.entries.spare_capacity_mut();
+    for chunk in 0..num_chunks {
+        let start = chunk * chunk_size;
+        let end = (start + chunk_size).min(cycles);
+        let len = (tables.offsets[end] - tables.offsets[start]) as usize;
+        let (entries, rest) = entries_rest.split_at_mut(len);
+        entry_chunks.push(entries);
+        entries_rest = rest;
+    }
+
+    entry_chunks
+        .into_par_iter()
+        .zip(tables.inc.spare_capacity_mut().par_chunks_mut(chunk_size))
+        .zip(
+            tables
+                .rs1_indices
+                .spare_capacity_mut()
+                .par_chunks_mut(chunk_size),
+        )
+        .zip(
+            tables
+                .rs2_indices
+                .spare_capacity_mut()
+                .par_chunks_mut(chunk_size),
+        )
+        .zip(
+            tables
+                .rd_indices
+                .spare_capacity_mut()
+                .par_chunks_mut(chunk_size),
+        )
+        .enumerate()
+        .for_each(
+            |(chunk_index, ((((entries, inc), rs1_indices), rs2_indices), rd_indices))| {
+                let start = chunk_index * chunk_size;
+                let mut entry_index = 0;
+                for local_t in 0..inc.len() {
+                    let t = start + local_t;
+                    let (row, len) = raw_cycle_entries(registers, t);
+                    debug_assert_eq!(len, raw_cycle_entry_count(registers, t));
+                    for entry in &row[..len] {
+                        let _ = entries[entry_index].write(*entry);
+                        entry_index += 1;
+                    }
+                    let _ = inc[local_t].write(Fr::from_i128(
+                        i128::from(registers.rd_post_value[t])
+                            - i128::from(registers.rd_pre_value[t]),
+                    ));
+                    let rs1 = registers.rs1_index[t];
+                    let rs2 = registers.rs2_index[t];
+                    let rd = registers.rd_index[t];
+                    let _ = rs1_indices[local_t].write((rs1 != NO_REGISTER).then_some(rs1));
+                    let _ = rs2_indices[local_t].write((rs2 != NO_REGISTER).then_some(rs2));
+                    let _ = rd_indices[local_t].write((rd != NO_REGISTER).then_some(rd));
+                }
+                debug_assert_eq!(entry_index, entries.len());
+            },
+        );
+
+    // SAFETY: every spare-capacity slot below the new lengths is partitioned
+    // into one parallel chunk and initialized exactly once above.
+    unsafe {
+        tables.entries.set_len(entries_len);
+        tables.inc.set_len(cycles);
+        tables.rs1_indices.set_len(cycles);
+        tables.rs2_indices.set_len(cycles);
+        tables.rd_indices.set_len(cycles);
+    }
+    tables
+}
+
+fn build_metal_register_tables(registers: &RegisterLanes) -> MetalRegisterTables {
+    #[cfg(feature = "parallel")]
+    {
+        if std::env::var_os("JOLT_REGISTERS_PREPARE_SERIAL").is_some() {
+            build_metal_register_tables_serial(registers)
+        } else {
+            build_metal_register_tables_parallel(
+                registers,
+                register_build_chunk_size(registers.rd_index.len()),
+            )
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        build_metal_register_tables_serial(registers)
+    }
+}
 
 fn expand_lookup_table(table: &[Fr], challenge: Fr) -> Vec<Fr> {
     let mut next = Vec::with_capacity(table.len() * table.len());
@@ -458,84 +685,17 @@ impl PrepareKernel<Fr, RegistersReadWriteChecking<Fr>> for MetalRegistersReadWri
         TraceRecord::release(session);
         crate::optimized::opening::park_opening_increments(session, &registers, &ram);
 
-        let mut entries = Vec::with_capacity(cycles * 3);
-        let mut offsets = Vec::with_capacity(cycles + 1);
-        let mut inc = Vec::with_capacity(cycles);
-        let mut rs1_indices = Vec::with_capacity(cycles);
-        let mut rs2_indices = Vec::with_capacity(cycles);
-        let mut rd_indices = Vec::with_capacity(cycles);
-        offsets.push(0);
-        for t in 0..cycles {
-            let mut row = [RawRwEntryIdx::default(); 3];
-            let mut len = 0;
-            let rs1 = registers.rs1_index[t];
-            let rs2 = registers.rs2_index[t];
-            let rd = registers.rd_index[t];
-            if rs1 != NO_REGISTER {
-                row[len] = RawRwEntryIdx {
-                    val: Fr::from_u64(registers.rs1_value[t]),
-                    prev_val: registers.rs1_value[t],
-                    next_val: registers.rs1_value[t],
-                    ra: 1,
-                    wa: 0,
-                    col: rs1,
-                    pad: [0; 3],
-                };
-                len += 1;
-            }
-            if rs2 != NO_REGISTER {
-                if let Some(entry) = row[..len].iter_mut().find(|entry| entry.col == rs2) {
-                    entry.ra = 3;
-                } else {
-                    row[len] = RawRwEntryIdx {
-                        val: Fr::from_u64(registers.rs2_value[t]),
-                        prev_val: registers.rs2_value[t],
-                        next_val: registers.rs2_value[t],
-                        ra: 2,
-                        wa: 0,
-                        col: rs2,
-                        pad: [0; 3],
-                    };
-                    len += 1;
-                }
-            }
-            if rd != NO_REGISTER {
-                if let Some(entry) = row[..len].iter_mut().find(|entry| entry.col == rd) {
-                    entry.wa = 1;
-                    entry.next_val = registers.rd_post_value[t];
-                } else {
-                    row[len] = RawRwEntryIdx {
-                        val: Fr::from_u64(registers.rd_pre_value[t]),
-                        prev_val: registers.rd_pre_value[t],
-                        next_val: registers.rd_post_value[t],
-                        ra: 0,
-                        wa: 1,
-                        col: rd,
-                        pad: [0; 3],
-                    };
-                    len += 1;
-                }
-            }
-            row[..len].sort_unstable_by_key(|entry| entry.col);
-            entries.extend_from_slice(&row[..len]);
-            offsets.push(entries.len() as u32);
-            inc.push(Fr::from_i128(
-                i128::from(registers.rd_post_value[t]) - i128::from(registers.rd_pre_value[t]),
-            ));
-            rs1_indices.push((rs1 != NO_REGISTER).then_some(rs1));
-            rs2_indices.push((rs2 != NO_REGISTER).then_some(rs2));
-            rd_indices.push((rd != NO_REGISTER).then_some(rd));
-        }
+        let tables = build_metal_register_tables(&registers);
         drop(registers);
-        if entries.is_empty() {
+        if tables.entries.is_empty() {
             return self.fallback.prepare(session, witness, inputs);
         }
-        session.park(SharedRdIndices(rd_indices));
+        session.park(SharedRdIndices(tables.rd_indices));
         let device = match DeviceRegistersRwState::new(
             context,
-            entries,
-            offsets,
-            inc,
+            tables.entries,
+            tables.offsets,
+            tables.inc,
             inputs.challenges.gamma,
         ) {
             Ok(device) => device,
@@ -553,8 +713,8 @@ impl PrepareKernel<Fr, RegistersReadWriteChecking<Fr>> for MetalRegistersReadWri
                 BindingOrder::LowToHigh,
             )),
             host: None,
-            rs1_indices: Some(rs1_indices),
-            rs2_indices: Some(rs2_indices),
+            rs1_indices: Some(tables.rs1_indices),
+            rs2_indices: Some(tables.rs2_indices),
             bound_challenges: Some(Vec::with_capacity(log_t + log_k)),
             rounds_bound: 0,
         }))
@@ -773,6 +933,24 @@ mod tests {
     use crate::optimized::registers_read_write::test_support::{
         assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture,
     };
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn registers_rw_parallel_prepare_matches_serial() {
+        structured_fixture(257).with_plane(9, |backend| {
+            let mut session = ProofSession::default();
+            let record = TraceRecord::shared::<Fr>(&mut session, backend, 9).unwrap();
+            let serial = build_metal_register_tables_serial(&record.registers);
+            let parallel = build_metal_register_tables_parallel(&record.registers, 17);
+
+            assert_eq!(parallel.entries, serial.entries);
+            assert_eq!(parallel.offsets, serial.offsets);
+            assert_eq!(parallel.inc, serial.inc);
+            assert_eq!(parallel.rs1_indices, serial.rs1_indices);
+            assert_eq!(parallel.rs2_indices, serial.rs2_indices);
+            assert_eq!(parallel.rd_indices, serial.rd_indices);
+        });
+    }
 
     fn run_parity(log_t: usize, seed: u64) {
         let _lock = gpu_lock();

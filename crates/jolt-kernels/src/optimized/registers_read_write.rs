@@ -228,7 +228,7 @@ impl<F: Field> OneHotCoeff<F> for F {
 
 /// A `u16` index into a [`CoeffLut`] (newtype: a bare `u16` would collide
 /// with the blanket field-value impl under coherence).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct LutIndex(u16);
 
 impl<F: Field> OneHotCoeff<F> for LutIndex {
@@ -277,7 +277,7 @@ impl<F: Field> OneHotCoeff<F> for LutIndex {
 /// touches, and a constant slice's bound coefficient is the constant itself,
 /// so the values neighboring this entry's slice never need field form until
 /// they participate in a merge.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SparseEntry<F, C> {
     /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     val: F,
@@ -465,6 +465,176 @@ fn cycle_entries<F: Field>(
     (out, len)
 }
 
+struct RegisterTables<F: Field> {
+    entries: Vec<SparseEntry<F, LutIndex>>,
+    inc: Vec<F>,
+    rs1_indices: Vec<Option<u8>>,
+    rs2_indices: Vec<Option<u8>>,
+    rd_indices: Vec<Option<u8>>,
+}
+
+#[inline]
+fn cycle_entry_count(registers: &RegisterLanes, t: usize) -> usize {
+    let rs1 = registers.rs1_index[t];
+    let rs2 = registers.rs2_index[t];
+    let rd = registers.rd_index[t];
+    usize::from(rs1 != NO_REGISTER)
+        + usize::from(rs2 != NO_REGISTER && rs2 != rs1)
+        + usize::from(rd != NO_REGISTER && rd != rs1 && rd != rs2)
+}
+
+fn build_register_tables_serial<F: Field>(registers: &RegisterLanes) -> RegisterTables<F> {
+    let cycles = registers.rd_index.len();
+    let rd_inc = |t: usize| {
+        F::from_i128(i128::from(registers.rd_post_value[t]) - i128::from(registers.rd_pre_value[t]))
+    };
+    #[cfg(feature = "parallel")]
+    let inc = (0..cycles).into_par_iter().map(rd_inc).collect();
+    #[cfg(not(feature = "parallel"))]
+    let inc = (0..cycles).map(rd_inc).collect();
+    let mut tables = RegisterTables {
+        entries: Vec::with_capacity(cycles * 3),
+        inc,
+        rs1_indices: Vec::with_capacity(cycles),
+        rs2_indices: Vec::with_capacity(cycles),
+        rd_indices: Vec::with_capacity(cycles),
+    };
+    for t in 0..cycles {
+        let cycle = RegisterCycleRow::from_lanes(registers, t);
+        let (cells, len) = cycle_entries::<F>(t, &cycle);
+        tables.entries.extend_from_slice(&cells[..len]);
+        tables.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
+        tables.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
+        tables.rd_indices.push(cycle.rd.map(|(k, ..)| k));
+    }
+    tables
+}
+
+#[cfg(feature = "parallel")]
+fn build_register_tables_parallel<F: Field>(
+    registers: &RegisterLanes,
+    chunk_size: usize,
+) -> RegisterTables<F> {
+    let cycles = registers.rd_index.len();
+    let num_chunks = cycles.div_ceil(chunk_size);
+
+    let chunk_counts: Vec<usize> = (0..num_chunks)
+        .into_par_iter()
+        .map(|chunk| {
+            let start = chunk * chunk_size;
+            let end = (start + chunk_size).min(cycles);
+            (start..end).map(|t| cycle_entry_count(registers, t)).sum()
+        })
+        .collect();
+
+    let mut chunk_offsets = Vec::with_capacity(num_chunks + 1);
+    chunk_offsets.push(0);
+    for count in chunk_counts {
+        let next = chunk_offsets[chunk_offsets.len() - 1] + count;
+        chunk_offsets.push(next);
+    }
+    let entries_len = chunk_offsets[num_chunks];
+
+    let mut tables = RegisterTables {
+        entries: Vec::with_capacity(cycles * 3),
+        inc: Vec::with_capacity(cycles),
+        rs1_indices: Vec::with_capacity(cycles),
+        rs2_indices: Vec::with_capacity(cycles),
+        rd_indices: Vec::with_capacity(cycles),
+    };
+
+    let mut entry_chunks = Vec::with_capacity(num_chunks);
+    let mut entries_rest = tables.entries.spare_capacity_mut();
+    for offsets in chunk_offsets.windows(2) {
+        let len = offsets[1] - offsets[0];
+        let (chunk, rest) = entries_rest.split_at_mut(len);
+        entry_chunks.push(chunk);
+        entries_rest = rest;
+    }
+
+    entry_chunks
+        .into_par_iter()
+        .zip(tables.inc.spare_capacity_mut().par_chunks_mut(chunk_size))
+        .zip(
+            tables
+                .rs1_indices
+                .spare_capacity_mut()
+                .par_chunks_mut(chunk_size),
+        )
+        .zip(
+            tables
+                .rs2_indices
+                .spare_capacity_mut()
+                .par_chunks_mut(chunk_size),
+        )
+        .zip(
+            tables
+                .rd_indices
+                .spare_capacity_mut()
+                .par_chunks_mut(chunk_size),
+        )
+        .enumerate()
+        .for_each(
+            |(chunk_index, ((((entries, inc), rs1_indices), rs2_indices), rd_indices))| {
+                let start = chunk_index * chunk_size;
+                let mut entry_index = 0;
+                for local_t in 0..inc.len() {
+                    let t = start + local_t;
+                    let cycle = RegisterCycleRow::from_lanes(registers, t);
+                    let (cells, len) = cycle_entries::<F>(t, &cycle);
+                    debug_assert_eq!(len, cycle_entry_count(registers, t));
+                    for cell in &cells[..len] {
+                        let _ = entries[entry_index].write(*cell);
+                        entry_index += 1;
+                    }
+                    let _ = inc[local_t].write(F::from_i128(
+                        i128::from(registers.rd_post_value[t])
+                            - i128::from(registers.rd_pre_value[t]),
+                    ));
+                    let _ = rs1_indices[local_t].write(cycle.rs1.map(|(k, _)| k));
+                    let _ = rs2_indices[local_t].write(cycle.rs2.map(|(k, _)| k));
+                    let _ = rd_indices[local_t].write(cycle.rd.map(|(k, ..)| k));
+                }
+                debug_assert_eq!(entry_index, entries.len());
+            },
+        );
+
+    // SAFETY: every spare-capacity slot below the new lengths is partitioned
+    // into one parallel chunk and initialized exactly once above.
+    unsafe {
+        tables.entries.set_len(entries_len);
+        tables.inc.set_len(cycles);
+        tables.rs1_indices.set_len(cycles);
+        tables.rs2_indices.set_len(cycles);
+        tables.rd_indices.set_len(cycles);
+    }
+    tables
+}
+
+#[cfg(feature = "parallel")]
+pub(crate) fn register_build_chunk_size(cycles: usize) -> usize {
+    const MAX_WORKERS: usize = 4;
+    cycles.div_ceil(MAX_WORKERS).max(1)
+}
+
+fn build_register_tables<F: Field>(registers: &RegisterLanes) -> RegisterTables<F> {
+    #[cfg(feature = "parallel")]
+    {
+        if std::env::var_os("JOLT_REGISTERS_PREPARE_SERIAL").is_some() {
+            build_register_tables_serial(registers)
+        } else {
+            build_register_tables_parallel(
+                registers,
+                register_build_chunk_size(registers.rd_index.len()),
+            )
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        build_register_tables_serial(registers)
+    }
+}
+
 /// Merged length of two adjacent sorted-by-column rows (a bind dry run —
 /// the count is value-independent).
 fn merge_count<F, C>(evens: &[SparseEntry<F, C>], odds: &[SparseEntry<F, C>]) -> usize {
@@ -600,59 +770,35 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         TraceRecord::release(session);
         super::opening::park_opening_increments(session, &registers, &ram);
 
-        // RdInc from the rd lanes: `post − pre` per cycle (absent operands
-        // store 0/0), exactly the extractor's value.
-        let rd_inc = |t: usize| {
-            F::from_i128(
-                i128::from(registers.rd_post_value[t]) - i128::from(registers.rd_pre_value[t]),
-            )
-        };
-        #[cfg(feature = "parallel")]
-        let inc_table: Vec<F> = (0..cycles).into_par_iter().map(rd_inc).collect();
-        #[cfg(not(feature = "parallel"))]
-        let inc_table: Vec<F> = (0..cycles).map(rd_inc).collect();
-
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // Sparse entry construction from the register lanes. `entries`
-        // reserves the ≤ 3-per-cycle upper bound; the overshoot lives only
-        // until the first merge bind rebuilds the vector exactly sized.
-        let mut entries = Vec::with_capacity(cycles * 3);
-        let mut rs1_indices = Vec::with_capacity(cycles);
-        let mut rs2_indices = Vec::with_capacity(cycles);
-        let mut rd_indices = Vec::with_capacity(cycles);
-        for t in 0..cycles {
-            let cycle = RegisterCycleRow::from_lanes(&registers, t);
-            let (cells, len) = cycle_entries::<F>(t, &cycle);
-            entries.extend_from_slice(&cells[..len]);
-            rs1_indices.push(cycle.rs1.map(|(k, _)| k));
-            rs2_indices.push(cycle.rs2.map(|(k, _)| k));
-            rd_indices.push(cycle.rd.map(|(k, ..)| k));
-        }
+        // Count per chunk, scan exact chunk offsets, then scatter the legacy
+        // row-major sparse entries and every companion lane in parallel.
+        let tables = build_register_tables(&registers);
         drop(registers);
         let entries = SparseEntries::Indexed {
-            entries,
+            entries: tables.entries,
             ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
             wa_lut: CoeffLut::new(vec![F::zero(), F::one()]),
         };
 
         // Park the rd hot indices for the stage-5 val-evaluation kernel.
-        session.park(SharedRdIndices(rd_indices));
+        session.park(SharedRdIndices(tables.rd_indices));
 
         Ok(Box::new(ReadWriteKernel {
             log_t,
             log_k,
             entries,
             gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            inc: Polynomial::new(inc_table),
+            inc: Polynomial::new(tables.inc),
             ra: Vec::new(),
             wa: Vec::new(),
             val: Vec::new(),
             eq_scalar: F::zero(),
             inc_scalar: F::zero(),
-            rs1_indices,
-            rs2_indices,
+            rs1_indices: tables.rs1_indices,
+            rs2_indices: tables.rs2_indices,
             bound_challenges: Vec::with_capacity(log_t + log_k),
             rounds_bound: 0,
         }))
@@ -1685,7 +1831,27 @@ mod tests {
         assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture,
         TraceFixture,
     };
-    use super::OptimizedRegistersReadWrite;
+    use super::{
+        build_register_tables_parallel, build_register_tables_serial, OptimizedRegistersReadWrite,
+        ProofSession, TraceRecord,
+    };
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn parallel_prepare_build_matches_serial() {
+        structured_fixture(257).with_plane(9, |backend| {
+            let mut session = ProofSession::default();
+            let record = TraceRecord::shared::<Fr>(&mut session, backend, 9).unwrap();
+            let serial = build_register_tables_serial::<Fr>(&record.registers);
+            let parallel = build_register_tables_parallel::<Fr>(&record.registers, 17);
+
+            assert_eq!(parallel.entries, serial.entries);
+            assert_eq!(parallel.inc, serial.inc);
+            assert_eq!(parallel.rs1_indices, serial.rs1_indices);
+            assert_eq!(parallel.rs2_indices, serial.rs2_indices);
+            assert_eq!(parallel.rd_indices, serial.rd_indices);
+        });
+    }
 
     fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {
         fixture.with_plane(log_t, |backend| {
