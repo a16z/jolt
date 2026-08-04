@@ -244,3 +244,28 @@ through the allocator/lifetime door — the door was already worth ~0 on
 trunk. D's deliverables are the mechanism verdict (this artifact), the
 REUSABLE failure pin (§5), the st4 shape hand-off (§6), and the arena
 deletion (risk removal + simplification, perf-neutral by construction).
+
+## 8. Deletion validation (post-fix)
+
+- **2^25 interleaved A/B ×3** (park binary vs deletion binary, one lock
+  window, alternating): park 23.19/23.23/23.25 vs deletion
+  23.17/23.21/23.29 — minima 23.19 vs 23.17 (**−0.09%**, spread ≤ 0.12 s).
+  Neutral well inside ±1%. (Absolute walls carry ambient+chrome overhead vs
+  the 19.82 cool anchor; both arms identically.)
+- **2^27 deletion sanity (run #4):** 91.56 s, vector `[12.376, 12.093,
+  5.691, 3.001, 11.534, 15.927, 3.676, 16.277, 2.237, 8.698]`, peak
+  footprint 89.36 GiB, zero swap. Carries ~3-4% same-day ambient inflation
+  vs the controlled knob A/B window (88.25/88.37 — wave-2 sibling lanes were
+  building all day; inflation spreads across CPU-heavy stages, no
+  localization at the retire/adoption sites). The controlled same-window
+  knob A/B (§7) remains the perf evidence; cool canonical certification is
+  the orchestrator's wave-close run.
+- **Gate matrix (deletion tree):** jolt-kernels 231/231 (incl. the new
+  `own_uninit_frs_wraps_nocopy`; madvise probe stays ignored), jolt-dory
+  46/46, byte-diff 11/11 `prover-fixtures` + 11/11 `prover-fixtures,metal`
+  (proof bytes identical — hard gate; first host run hit the known
+  fixture-build-race flake, clean full rerun), legacy muldiv 3/3 host + 3/3
+  host,zk, jolt-witness 34/34, workspace clippy `-D warnings`
+  host/host,zk/host,metal, fmt check clean.
+- 2^27 budget: 4 of ≈6 used (1 instrumented diagnostic, 2 ablation A/B,
+  1 deletion sanity); 2 unspent.
