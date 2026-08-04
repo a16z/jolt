@@ -2379,7 +2379,7 @@ body.doc {
             <tr class="hl"><td class="k">3 · Instruction input</td><td class="r">3.00 s</td><td class="r neg">16.1%</td><td class="r">37.0%</td><td>Serial host preparation</td><td class="sub">2.48 s sampled-zero hold; GPU arithmetic is not the limiting resource.</td></tr>
             <tr class="hl"><td class="k">4 · Instruction RAF</td><td class="r">9.28 s</td><td class="r">40.2%</td><td class="r">22.3%</td><td>Host/device phase boundary</td><td class="sub">4.76 s total sampled-zero, 2.58 s max run; strongest bounded host-gap target.</td></tr>
             <tr><td class="k">5 · Booleanity/RAM</td><td class="r">14.67 s</td><td class="r hi">77.6%</td><td class="r">25.0%</td><td>Streaming bytes + queue pressure</td><td class="sub">Large dense passes; fixed launch removal cannot move this roof.</td></tr>
-            <tr class="hl"><td class="k">6b · Bytecode RAF</td><td class="r">17.49 s</td><td class="r">34.5%</td><td class="r">18.6%</td><td>Bytes + serial queue gaps</td><td class="sub">10.60 s sampled-zero total, 2.23 s max; reduce traffic before adding dispatches.</td></tr>
+            <tr class="hl"><td class="k">6b · Bytecode RAF</td><td class="r">17.49 s</td><td class="r">34.5%</td><td class="r">18.6%</td><td>Gather ALU + waits + tail occupancy</td><td class="sub">Dense streams are only ≈0.3 s at roof; 10.60 s sampled-zero total exposes serialization and host glue.</td></tr>
             <tr class="hl"><td class="k">7 · Output checks</td><td class="r">1.89 s</td><td class="r neg">13.5%</td><td class="r hi">65.6%</td><td>CPU-serial</td><td class="sub">1.62 s sampled-zero run; upper bound is small but unusually clean.</td></tr>
             <tr><td class="k">8 · Dory opening</td><td class="r">8.70 s</td><td class="r hi">86.6%</td><td class="r">10.2%</td><td>Miller ALU / occupancy</td><td class="sub">Thread-scaling and compute-roof behavior; aggregate GPU% does not reveal SIMD efficiency.</td></tr>
           </tbody>
@@ -2414,8 +2414,8 @@ body.doc {
 
     <div class="verdict card verdict--green reveal">
       <span class="vlabel">Radix-4 decision</span>
-      <blockquote>Retain the isolated Metal kernel and soundness tests. Park production transcripts until a typed quaternary Dory evaluation factor is independently audited and the higher message-generation cost clears an end-to-end 3–5% gate.</blockquote>
-      <div class="vwho">Expected whole-proof upside: 4–10% if higher-degree messages and Dory folding stay below saved table traffic · high cost · high protocol risk</div>
+      <blockquote>Retain the isolated Metal kernel and soundness tests. Generic packed coordinates remain parked at Dory; one narrow production candidate survives: the virtual-only stage-4 register-address prefix, now under independent soundness audit.</blockquote>
+      <div class="vwho">Narrow modeled upside: 1.2–2.2 s at 2²⁷ · no Dory change · high integration cost · moderate-high protocol risk</div>
     </div>
 
     <h3>Address-major</h3>
@@ -2441,10 +2441,10 @@ body.doc {
           <thead><tr><th>Rank</th><th>Idea</th><th class="r">Whole-proof gain</th><th>Cost</th><th>Risk</th><th>Gate</th></tr></thead>
           <tbody>
             <tr class="hl"><td class="k">1</td><td>Stage-0 trace-walk / commit scheduling; eliminate bad-mode overlap contention</td><td class="r hi">0–7%</td><td>Medium</td><td>Medium</td><td class="sub">Target variance first: save the occasional ≈5 s tail without hurting good mode.</td></tr>
-            <tr><td class="k">2</td><td>Stage-6b byte reduction + queue serialization cleanup</td><td class="r hi">2–5%</td><td>Medium–high</td><td>Medium</td><td class="sub">Fewer full-table bytes; no extra shared-fabric overlap.</td></tr>
+            <tr><td class="k">2</td><td>Stage-6b cross-member fusion, wait removal, gather/tail occupancy</td><td class="r hi">2–5%</td><td>Medium–high</td><td>Medium</td><td class="sub">Avoid address relayout: no address axis remains and dense streams are ≈2% of stage wall.</td></tr>
             <tr><td class="k">3</td><td>Stage-4 bounded device scan / remove host phase boundary</td><td class="r hi">1–3%</td><td>Medium</td><td>Medium</td><td class="sub">Delete a measured zero-GPU window; preserve tamper/e2e gates.</td></tr>
-            <tr><td class="k">4</td><td>Production quaternary radix-4 + typed Dory factor</td><td class="r hi">4–10%</td><td>Very high</td><td>High</td><td class="sub">Independent soundness audit, full accept/tamper suite, ≥3–5% representative win.</td></tr>
-            <tr><td class="k">5</td><td>Stage-7 sparse reuse / device preparation</td><td class="r">1–2%</td><td>Medium</td><td>Low–medium</td><td class="sub">Small ceiling; pursue only after larger roofs.</td></tr>
+            <tr><td class="k">4</td><td>Stage-4 virtual-address radix-4 prefix</td><td class="r hi">1.7–3.1%</td><td>High</td><td>Medium–high</td><td class="sub">No Dory factor; pro-model GO, full accept/tamper suite, and ≥1.2 s stage win required.</td></tr>
+            <tr><td class="k">5</td><td>Stage-4 address-first bind-order probe</td><td class="r">2–3.5%</td><td>Low probe / high build</td><td>Medium–high</td><td class="sub">Kill if seven address passes exceed 0.15 s at 2²⁴; protocol axis required only after a win.</td></tr>
             <tr><td class="k">Kill</td><td>More fixed command-buffer batching</td><td class="r neg">&lt;0.5%</td><td>Low</td><td>Low</td><td class="sub">646 fresh launches cap the global prize near 86 ms.</td></tr>
             <tr><td class="k">Kill</td><td>Global address-major flip</td><td class="r neg">&gt;68× regression</td><td>Very high</td><td>High</td><td class="sub">Requires a new Metal commitment/opening backend before reconsideration.</td></tr>
           </tbody>

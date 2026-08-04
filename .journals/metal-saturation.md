@@ -225,6 +225,34 @@ check but is rejected at the terminal random point. Targeted device/algebra
 tests pass. This establishes a sound single fused-round Metal prototype; it
 does not yet alter production transcripts or Dory.
 
+### Narrow production candidate: stage-4 virtual register address prefix
+
+The fusion scope found one place where the quaternary extension never has to
+be translated into a binary-separable Dory point: `RegistersRW`'s seven
+register-address variables. Register ra/wa/Val claims are virtual; committed
+`RdInc` is cycle-indexed. The legal schedule is three radix-4 pairs over vars
+`(0,1)`, `(2,3)`, `(4,5)`, then one legacy binary round for var 6, stopping
+before `RamVal` joins the batch.
+
+For the degree-3 relation, each packed message has degree at most 9 and ten
+coefficients. Downstream virtual equality tables must carry the four Lagrange
+weights as one tensor factor; they must never manufacture two ordinary MLE
+coordinates. The current CSR representation stays intact. Three packed pairs
+replace six binary rounds, reducing the address-prefix pass/wait count from
+13 to 7 and host scan/allocation boundaries from 6 to 3. Modeled whole-proof
+prize: **1.2–2.2 s at `2^27`** with no persistent-buffer growth.
+
+This corrects prior negative-result #4 only for trunk stage 4: its alleged
+pairing test measured a rejected W2B representation rewrite whose round loop
+was already fused. Trunk's two-wait CSR loop never received that fusion.
+Generic cycle/address pairing remains closed because those coordinates reach
+committed binary-tensor openings or already-fused slots with negligible gaps.
+
+Status: implementation blocked on pro-model job `20b0ff781369`, which is
+auditing the concrete degree-9 polynomial, the virtual-only Dory invariant,
+batch padding, transcript schedule, downstream equality semantics, and tamper
+suite. No production code before a GO verdict.
+
 ### Address-major Metal probe
 
 Address-major is already a valid end-to-end protocol mode, including verifier
@@ -252,3 +280,26 @@ mode and use targeted internal AoSoA/block-local transposes when an individual
 kernel demonstrates a locality win. A production address-major campaign would
 first need a streaming commitment builder, Metal joint-opening fold, and
 address-major sumcheck kernels; it is not an optimization knob today.
+
+The code-dimension audit closes two broader layout hypotheses. Stage 6b has
+no remaining address axis after 6a; its T-scale state is already contiguous
+cycle-domain ping-pong. Its dense streams total roughly 170–190 GB at `2^27`,
+about 0.3 s at the measured memory roof versus a 16.3–17.5 s stage. The
+residual is gather arithmetic, per-round waits, shrinking-tail occupancy,
+host glue, and CPU-member interference—not address locality. Likewise,
+cycle-major Dory shards are contiguous trace segments; address-major shards
+would each scan the full trace, reversing rather than enabling useful
+sharding on this backend.
+
+One address-related door remains a bounded **probe**, not a retention:
+stage-4 `RegistersRW` could bind its seven address variables before the 27
+cycle variables. Fixed three-wide slots would then collapse into four dense
+cycle tables, reusing the already-fused IncCR-shaped loop. Modeled prize is
+1.5–2.5 s at `2^27`; protocol and batch-window risk are moderate-high. Probe
+only the seven-pass address phase first; kill if it exceeds 0.15 s at `2^24`.
+If built, binding-order soundness follows from a public permutation of the
+same sumcheck variables: every message still precedes its challenge, degree
+bounds and `sum degree/|F|` are unchanged, and downstream opening coordinates
+must be permuted explicitly. Retention would require an FS-absorbed protocol
+axis, fail-closed verifier validation, e2e accept, round/config/opening tamper
+rejection, and the full integrated suite.
