@@ -82,6 +82,7 @@ impl MetalBackend {
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
             config.instruction_ra_virtualization.trace_cutoff_elements,
+            config.instruction_ra_virtualization.cutoff_elements,
         ] {
             if cutoff < 2 || !cutoff.is_power_of_two() {
                 return Err(MetalError::InvalidHybridCutoff(cutoff));

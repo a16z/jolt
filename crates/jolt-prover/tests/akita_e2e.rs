@@ -256,6 +256,8 @@ mod muldiv {
             instruction_ra_virtualization:
                 jolt_kernels::metal::InstructionRaVirtualizationMetalConfig {
                     trace_cutoff_elements: 8,
+                    cutoff_elements: 2,
+                    ..Default::default()
                 },
         })
         .expect("Metal backend should initialize");

@@ -26,6 +26,7 @@ const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity.metal");
 const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization.metal");
+const INSTRUCTION_RA_SEQUENCE_SOURCE: &str = include_str!("instruction_ra_sequence.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
 
 mod address_raf;
@@ -34,6 +35,7 @@ mod address_sequence;
 mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
+mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
 mod product5;
 mod spartan_outer_uniskip;
@@ -53,6 +55,7 @@ pub(crate) use booleanity::BooleanityRows;
 pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
 };
+pub use instruction_ra_sequence::{InstructionRaSequence, InstructionRaSequenceConfig};
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
 };
@@ -339,6 +342,8 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
+    #[error("invalid resident Instruction RA state: {0}")]
+    InvalidInstructionRaState(&'static str),
     #[error(
         "five-factor kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
@@ -431,7 +436,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)
