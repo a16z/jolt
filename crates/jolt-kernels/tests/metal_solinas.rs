@@ -3,8 +3,9 @@
 
 use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
-    BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128, MetalError,
-    Probe, Product5Config, Product5SequenceConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+    BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128,
+    InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
+    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
@@ -176,6 +177,86 @@ fn product5_sequence_reuses_resident_buffers_across_rounds() {
     );
     assert_eq!(sequence.resident_buffer_count(), allocations);
     assert_eq!(sequence.round_device_buffer_allocations(), 0);
+}
+
+#[test]
+fn instruction_ra_first_message_matches_cpu() {
+    const LOG_T: usize = 12;
+    const ROWS: usize = 1 << LOG_T;
+    const FACTORS: usize = 16;
+    const BINS: usize = 256;
+
+    let mut cycle_lookups = (0..ROWS)
+        .map(|row| {
+            let lo = (row as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let hi = (!(row as u64)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            u128::from(lo) | (u128::from(hi) << 64)
+        })
+        .collect::<Vec<_>>();
+    cycle_lookups[0] = 0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f;
+    cycle_lookups[1] = 0xf0e1_d2c3_b4a5_9687_7869_5a4b_3c2d_1e0f;
+    cycle_lookups[2] = 0xff00_aa55_cc33_9966_1234_5678_9abc_def0;
+
+    let mut table_major_lookups = vec![0u128; ROWS];
+    let mut cycle_to_table_major = vec![0u32; ROWS];
+    for (cycle, &lookup) in cycle_lookups.iter().enumerate() {
+        let slot = (5 * cycle + 3) & (ROWS - 1);
+        table_major_lookups[slot] = lookup;
+        cycle_to_table_major[cycle] = slot as u32;
+    }
+    let chunk_tables = (0..FACTORS)
+        .flat_map(|factor| {
+            (0..BINS).map(move |bin| AkitaField::from_u64((2 + 17 * factor + 31 * bin) as u64))
+        })
+        .collect::<Vec<_>>();
+    let point = (0..LOG_T)
+        .map(|round| AkitaField::from_u64((1009 + 37 * round) as u64))
+        .collect::<Vec<_>>();
+    let gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let expected = instruction_ra_message_cpu(
+        &cycle_lookups,
+        &chunk_tables,
+        gruen.e_in_current(),
+        gruen.e_out_current(),
+    );
+
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let invocation = context
+        .prepare_instruction_ra_first_message(
+            &table_major_lookups,
+            &cycle_to_table_major,
+            &chunk_tables,
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+            InstructionRaFirstMessageConfig::default(),
+        )
+        .expect("Instruction RA pipelines should compile");
+    assert_eq!(invocation.threads_per_threadgroup(), 128);
+    assert_eq!(invocation.dynamic_threadgroup_memory_bytes(), 256);
+    assert_eq!(
+        invocation.useful_multiplications(),
+        44 * (ROWS / 2) as u64 + 4 * gruen.e_out_current().len() as u64
+    );
+    assert_eq!(invocation.logical_lookup_plane_bytes(), 20 * ROWS as u64);
+    assert_eq!(invocation.logical_branch_bytes(), 256 * ROWS as u64);
+    assert_eq!(
+        invocation.logical_weight_bytes(),
+        8 * ROWS as u64 + 16 * gruen.e_out_current().len() as u64
+    );
+    assert!(matches!(
+        invocation.read_message(),
+        Err(MetalError::NotExecuted)
+    ));
+
+    invocation
+        .execute()
+        .expect("Instruction RA first message should execute");
+    assert_eq!(
+        invocation
+            .read_message()
+            .expect("Instruction RA message should read"),
+        expected
+    );
 }
 
 #[test]
@@ -612,6 +693,58 @@ fn bind_dense_tables(tables: &mut [Vec<AkitaField>], challenge: AkitaField) {
 
 fn flatten_tables(tables: &[Vec<AkitaField>]) -> Vec<AkitaField> {
     tables.iter().flatten().copied().collect()
+}
+
+fn instruction_ra_message_cpu(
+    lookups: &[u128],
+    chunk_tables: &[AkitaField],
+    e_in: &[AkitaField],
+    e_out: &[AkitaField],
+) -> [AkitaField; 4] {
+    const GROUPS: usize = 4;
+    const FACTORS_PER_GROUP: usize = 4;
+    const FACTORS: usize = GROUPS * FACTORS_PER_GROUP;
+    const BINS: usize = 256;
+
+    assert_eq!(lookups.len() / 2, e_in.len() * e_out.len());
+    assert_eq!(chunk_tables.len(), FACTORS * BINS);
+    let zero = AkitaField::from_u64(0);
+    let mut output = [zero; 4];
+    for (x_out, &outer_weight) in e_out.iter().enumerate() {
+        let mut outer = [zero; 4];
+        for (x_in, &inner_weight) in e_in.iter().enumerate() {
+            let pair = x_out * e_in.len() + x_in;
+            let mut groups = [zero; 4];
+            for group in 0..GROUPS {
+                let mut finite = [AkitaField::from_u64(1); 3];
+                let mut infinity = AkitaField::from_u64(1);
+                for offset in 0..FACTORS_PER_GROUP {
+                    let factor = group * FACTORS_PER_GROUP + offset;
+                    let shift = 8 * (FACTORS - 1 - factor);
+                    let lo_index = ((lookups[2 * pair] >> shift) & 0xff) as usize;
+                    let hi_index = ((lookups[2 * pair + 1] >> shift) & 0xff) as usize;
+                    let lo = chunk_tables[factor * BINS + lo_index];
+                    let hi = chunk_tables[factor * BINS + hi_index];
+                    let step = hi - lo;
+                    for (sample, value) in finite.iter_mut().enumerate() {
+                        *value *= lo + AkitaField::from_u64((sample + 1) as u64) * step;
+                    }
+                    infinity *= step;
+                }
+                for sample in 0..3 {
+                    groups[sample] += finite[sample];
+                }
+                groups[3] += infinity;
+            }
+            for (outer, group) in outer.iter_mut().zip(groups) {
+                *outer += inner_weight * group;
+            }
+        }
+        for (output, outer) in output.iter_mut().zip(outer) {
+            *output += outer_weight * outer;
+        }
+    }
+    output
 }
 
 fn assert_probe(

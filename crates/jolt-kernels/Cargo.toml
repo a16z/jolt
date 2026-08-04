@@ -71,3 +71,7 @@ required-features = ["metal", "parallel"]
 [[example]]
 name = "metal-spartan-outer-uniskip-eval"
 required-features = ["metal", "parallel"]
+
+[[example]]
+name = "metal-instruction-ra-first-message-eval"
+required-features = ["metal", "parallel"]

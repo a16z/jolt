@@ -8,9 +8,10 @@ use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
 use super::booleanity::BooleanityMetalConfig;
+use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows, MetalError, Product5Sequence,
-    Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
+    Product5SequenceConfig, ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
 };
 use super::spartan_outer::SpartanOuterUniskipMetalConfig;
 use crate::optimized::instruction_read_raf::{
@@ -54,6 +55,8 @@ pub struct MetalConfig {
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-6b Booleanity cycle settings.
     pub booleanity_cycle: BooleanityMetalConfig,
+    /// Stage-6b instruction RA virtualization settings.
+    pub instruction_ra_virtualization: InstructionRaVirtualizationMetalConfig,
 }
 
 /// Shared Metal device state used by the installed sumcheck slots.
@@ -78,10 +81,18 @@ impl MetalBackend {
             config.spartan_outer_uniskip.trace_cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
+            config.instruction_ra_virtualization.trace_cutoff_elements,
         ] {
             if cutoff < 2 || !cutoff.is_power_of_two() {
                 return Err(MetalError::InvalidHybridCutoff(cutoff));
             }
+        }
+        let instruction_ra_cutoff = config.instruction_ra_virtualization.trace_cutoff_elements;
+        if instruction_ra_cutoff < address_cutoff {
+            return Err(MetalError::InstructionRaRequiresAddressPlane {
+                instruction_ra_cutoff,
+                address_cutoff,
+            });
         }
         Ok(Self {
             context: Arc::new(SolinasMetal::for_akita()?),
@@ -99,6 +110,7 @@ where
         self.spartan_outer_uniskip = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());
+        self.instruction_ra_virtualization = Box::new(metal.clone());
         self
     }
 }
@@ -116,6 +128,11 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let trace_elements = 1usize << inputs.relation.dimensions().log_t();
         let use_metal_address =
             trace_elements >= self.config.instruction_read_raf.address_cutoff_elements;
+        let retain_lookup_plane = trace_elements
+            >= self
+                .config
+                .instruction_ra_virtualization
+                .trace_cutoff_elements;
         let cpu = prepare_metal_instruction_read_raf(session, witness, inputs, use_metal_address)?;
         if trace_elements >= self.config.booleanity_cycle.trace_cutoff_elements
             && session.state::<BooleanityRows>().is_none()
@@ -130,6 +147,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             Arc::clone(&self.context),
             self.config.instruction_read_raf,
             use_metal_address,
+            retain_lookup_plane,
         )?))
     }
 }
@@ -139,6 +157,7 @@ pub(crate) struct MetalInstructionReadRafKernel {
     context: Arc<SolinasMetal>,
     config: InstructionReadRafMetalConfig,
     address_sequence: Option<AddressPhaseSequence>,
+    resident_lookup_plane: Option<ResidentLookupIndexPlane>,
     sequence: Option<Product5Sequence>,
     host_tail: Option<[Vec<AkitaField>; PRODUCT5_FACTORS]>,
     metal_rounds: usize,
@@ -151,12 +170,14 @@ impl MetalInstructionReadRafKernel {
         context: Arc<SolinasMetal>,
         config: InstructionReadRafMetalConfig,
         use_metal_address: bool,
+        retain_lookup_plane: bool,
     ) -> Result<Self, SumcheckError<AkitaField>> {
         let mut kernel = Self {
             cpu,
             context,
             config,
             address_sequence: None,
+            resident_lookup_plane: None,
             sequence: None,
             host_tail: Some(std::array::from_fn(|_| {
                 vec![AkitaField::zero(); config.cutoff_elements]
@@ -172,6 +193,9 @@ impl MetalInstructionReadRafKernel {
                     .cpu
                     .metal_prepare_address_sequence(&kernel.context, config.address_dispatch)?
             };
+            if retain_lookup_plane {
+                kernel.resident_lookup_plane = Some(sequence.resident_lookup_index_plane());
+            }
             let (suffix_len, previous) = kernel.cpu.metal_address_phase_request()?;
             let sums = {
                 let _span =
@@ -357,6 +381,12 @@ impl SumcheckKernel<AkitaField> for MetalInstructionReadRafKernel {
         SumcheckKernelError<AkitaField>,
     > {
         self.cpu.output_claims(inputs)
+    }
+
+    fn park_residue(mut self: Box<Self>, session: &mut ProofSession) {
+        if let Some(plane) = self.resident_lookup_plane.take() {
+            session.park(plane);
+        }
     }
 }
 

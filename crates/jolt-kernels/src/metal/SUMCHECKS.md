@@ -842,9 +842,10 @@ The host keeps Gruen interpolation, the degree-five round polynomial, and
 Fiat-Shamir. Every round returns only four canonical `q` evaluations. The device
 plane is released after width-16 materialization; after the single cutoff readback,
 the optimized CPU resumes from `LazyFoldedRa::Dense`, completes the tail, unscales
-all 16 final claims by the existing inverse gamma powers, and performs the normal
-derived-`EqCycle` validation. Once a device command or transcript step succeeds, an
-error aborts the proof; there is no mid-proof retry from mutated state.
+the first factor of each virtual group by its existing inverse gamma power, compares
+all 16 final claims, and performs the normal derived-`EqCycle` validation. Once a
+device command or transcript step succeeds, an error aborts the proof; there is no
+mid-proof retry from mutated state.
 
 At `T = 2^28`, this M4 Max reports an 80.64-GiB per-buffer limit, so the
 unsegmented width-16 design is API-legal: lookup indices use 4 GiB, the inverse map
@@ -866,6 +867,34 @@ tables, all final claims, transcript state, stable resident-buffer identities, a
 zero per-round allocations. It reports endpoint refresh, GPU active and wall time by
 round, readback, CPU tail, useful multiplication rate, logical traffic, and peak
 resident bytes separately.
+
+### First-message gate
+
+The first fixed-width-one G4 shader passed the independent, endian-sensitive oracle
+with a bit-reversed table-major layout. The portable CPU control was changed to the
+same exact quadratic reuse first, reducing its per-pair relation work from 52 to 44
+field multiplications. At `2^26`, three alternating measurements produced:
+
+| Boundary | Median |
+|---|---:|
+| matched quadratic CPU | 415.834 ms |
+| resident Metal wall | 52.679 ms |
+| Metal GPU-active | 51.880 ms |
+| resident speedup | 7.894x |
+| GPU useful rate | 28.459 Gmul/s |
+
+The dispatch performed 1,476,427,776 useful field multiplications, read the synthetic
+20-byte/cycle lookup plane through its inverse permutation, and allocated no buffers
+inside execution. Its separate 210.813-ms preparation constructed and copied that
+plane; it is excluded from the resident result because the production plane already
+exists after stage 5, but remains a diagnostic control. This is not a complete
+Instruction-RA or PIOP speedup: it validates the arithmetic schedule and makes the
+first round a roughly 53-ms component of the 311-ms complete-relation working budget.
+
+The smaller `2^18`, `2^22`, and `2^24` protocol configurations use eight virtual
+groups and four-bit chunks. They remain cross-geometry correctness cases, not scaling
+points for the `2^26` G4/8-bit performance target. Target-shaped small shader tests
+force G4 explicitly.
 
 ## Requirement map and open points
 

@@ -45,8 +45,9 @@
   },
   "final_validation": {
     "cutoff_neighbors": true,
+    "cross_geometry_log_n": [18, 22, 24],
     "fresh_processes": 2,
-    "log_n": [18, 22, 24, 26],
+    "primary_log_n": 26,
     "required_path": "PrepareKernel<AkitaField, InstructionRaVirtualization>",
     "resource_gated_log_n": 28
   },
@@ -58,6 +59,7 @@
       "exact_challenges",
       "exact_cutoff_tables",
       "exact_final_claims",
+      "first_factor_only_gamma_unscale",
       "exact_derived_eq_cycle",
       "host_fiat_shamir",
       "resident_plane_zero_copy",

@@ -29,6 +29,10 @@ mod cpu;
 mod cycle;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/instruction_ra.rs"]
+mod instruction_ra;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/product5.rs"]
 mod product5;
 
@@ -53,7 +57,7 @@ mod macos {
     use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
     use super::{
-        address_raf, address_suffix, booleanity, cpu, cycle, product5,
+        address_raf, address_suffix, booleanity, cpu, cycle, instruction_ra, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         spartan_outer_uniskip,
     };
@@ -96,6 +100,7 @@ mod macos {
                 "product5-transition" => product5::bench_transition(c, &context),
                 "product5-threadgroups" => product5::bench_threadgroups(c, &context),
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
+                "instruction-ra-first-message" => instruction_ra::bench(c, &context),
                 "instruction-read-raf-address" => address_raf::bench(c, &context),
                 "instruction-read-raf-address-condensed" => {
                     address_raf::bench_condensed(c, &context);

@@ -75,20 +75,30 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
         inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
     {
-        let relation = inputs.relation;
-        let cycles = 1usize << relation.dimensions().log_t();
-        let rows = shared_instruction_rows(session, witness, cycles)?;
-        Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
-            relation.dimensions().log_t(),
-            relation.dimensions().num_virtual_ra_polys(),
-            relation.dimensions().num_committed_per_virtual(),
-            relation.instruction_address(),
-            relation.instruction_read_raf_cycle(),
-            relation.committed_chunk_bits(),
-            rows,
-            inputs.challenges.gamma,
+        Ok(Box::new(prepare_optimized_instruction_ra_virtualization(
+            session, witness, inputs,
         )?))
     }
+}
+
+pub(crate) fn prepare_optimized_instruction_ra_virtualization<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
+) -> Result<OptimizedInstructionRaVirtualizationKernel<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let cycles = 1usize << relation.dimensions().log_t();
+    let rows = shared_instruction_rows(session, witness, cycles)?;
+    OptimizedInstructionRaVirtualizationKernel::new(
+        relation.dimensions().log_t(),
+        relation.dimensions().num_virtual_ra_polys(),
+        relation.dimensions().num_committed_per_virtual(),
+        relation.instruction_address(),
+        relation.instruction_read_raf_cycle(),
+        relation.committed_chunk_bits(),
+        rows,
+        inputs.challenges.gamma,
+    )
 }
 
 /// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
@@ -126,6 +136,17 @@ fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec
     {
         (0..len).map(f).collect()
     }
+}
+
+#[inline(always)]
+fn quadratic_pair_product_grid<F: Field>(first: (F, F), second: (F, F)) -> [F; 4] {
+    let at_zero = first.0 * second.0;
+    let at_one = first.1 * second.1;
+    let at_infinity = (first.1 - first.0) * (second.1 - second.0);
+    let twice_at_infinity = at_infinity + at_infinity;
+    let at_two = at_one + at_one - at_zero + twice_at_infinity;
+    let at_three = at_two + at_one - at_zero + twice_at_infinity + twice_at_infinity;
+    [at_one, at_two, at_three, at_infinity]
 }
 
 pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
@@ -270,6 +291,9 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         if n < 2 {
             return self.message_single_factor(round, previous_claim);
         }
+        if n == 4 {
+            return self.message_four_factors(previous_claim);
+        }
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
 
@@ -334,6 +358,63 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         );
 
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        Ok(self.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+    }
+
+    fn message_four_factors(
+        &self,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        const N: usize = 4;
+
+        let num_committed = self.folded_ra.num_polys();
+        let folded_ra = &self.folded_ra;
+        debug_assert_eq!(num_committed % N, 0);
+
+        struct Scratch<F: Field> {
+            lanes: [F::Accumulator; N],
+            row_lanes: [F::Accumulator; N],
+            pairs: Vec<(F, F)>,
+        }
+
+        let block_lanes = self.gruen.par_fold_out_in(
+            || Scratch {
+                lanes: [F::Accumulator::default(); N],
+                row_lanes: [F::Accumulator::default(); N],
+                pairs: vec![(F::zero(), F::zero()); num_committed],
+            },
+            |scratch, row, _x_in, e_in| {
+                folded_ra.lo_hi_all(row, &mut scratch.pairs);
+                for lane in &mut scratch.row_lanes {
+                    *lane = F::Accumulator::default();
+                }
+                for factors in scratch.pairs.chunks_exact(N) {
+                    let left = quadratic_pair_product_grid(factors[0], factors[1]);
+                    let right = quadratic_pair_product_grid(factors[2], factors[3]);
+                    for ((lane, left), right) in scratch.row_lanes.iter_mut().zip(left).zip(right) {
+                        lane.fmadd(left, right);
+                    }
+                }
+                for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
+                    lane.fmadd(e_in, row_lane.reduce());
+                }
+            },
+            |_x_out, e_out, scratch| {
+                let mut out = [F::Accumulator::default(); N];
+                for (out, lane) in out.iter_mut().zip(scratch.lanes) {
+                    out.fmadd(e_out, lane.reduce());
+                }
+                out
+            },
+            |mut a, b| {
+                for (a, b) in a.iter_mut().zip(b) {
+                    a.merge(b);
+                }
+                a
+            },
+        );
+
+        let q_evals = block_lanes.map(|lane| lane.reduce());
         Ok(self.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
     }
 
@@ -508,6 +589,21 @@ mod tests {
     };
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
+
+    #[test]
+    fn quadratic_pair_product_grid_matches_direct_evaluation() {
+        let first = (fr(3), fr(11));
+        let second = (fr(5), fr(23));
+        let eval = |(lo, hi): (Fr, Fr), t: Fr| lo + t * (hi - lo);
+        let expected = [
+            eval(first, fr(1)) * eval(second, fr(1)),
+            eval(first, fr(2)) * eval(second, fr(2)),
+            eval(first, fr(3)) * eval(second, fr(3)),
+            (first.1 - first.0) * (second.1 - second.0),
+        ];
+
+        assert_eq!(super::quadratic_pair_product_grid(first, second), expected);
+    }
 
     /// Packs reference-typed fixture rows into the optimized kernels' shared
     /// row form (this kernel reads only the lookup index).
@@ -768,8 +864,7 @@ mod tests {
             .unwrap();
     }
 
-    /// Production shape: 8 virtuals × 4 committed each, 4-bit chunks (the
-    /// 128-bit instruction address).
+    /// Small-trace shape: 8 virtuals × 4 committed each, 4-bit chunks.
     #[test]
     fn parity_production_geometry() {
         assert_parity(4, 8, 4, 4, 42, false);

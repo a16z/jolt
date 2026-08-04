@@ -253,6 +253,10 @@ mod muldiv {
                 cutoff_elements: 2,
                 ..Default::default()
             },
+            instruction_ra_virtualization:
+                jolt_kernels::metal::InstructionRaVirtualizationMetalConfig {
+                    trace_cutoff_elements: 8,
+                },
         })
         .expect("Metal backend should initialize");
         #[cfg(not(all(feature = "metal", target_os = "macos")))]

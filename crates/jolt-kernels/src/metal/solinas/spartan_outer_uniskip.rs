@@ -22,7 +22,7 @@ const REDUCE_PIPELINE: &str = "solinas_spartan_outer_uniskip_reduce";
 
 const EXTENSION_COEFFICIENTS: [[i64; 10]; SPARTAN_OUTER_EXTENDED_NODES] = [
     [
-        2002, -15015, 51480, -105105, 140140, -126126, 76440, -30030, 6930, -715,
+        2002, -15015, 51480, -105_105, 140_140, -126_126, 76440, -30030, 6930, -715,
     ],
     [
         715, -5148, 17160, -34320, 45045, -40040, 24024, -9360, 2145, -220,
@@ -461,7 +461,7 @@ impl SolinasMetal {
         config: SpartanOuterUniskipConfig,
     ) -> Result<SpartanOuterUniskipInvocation<'_>, MetalError> {
         self.prepare_spartan_outer_uniskip_from_buffer(
-            rows.buffer.to_owned(),
+            rows.buffer.clone(),
             rows.len,
             e_in,
             e_out,

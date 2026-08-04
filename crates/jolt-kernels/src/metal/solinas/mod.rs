@@ -25,6 +25,7 @@ const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_cycle.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity.metal");
+const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
 
 mod address_raf;
@@ -33,6 +34,7 @@ mod address_sequence;
 mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
+mod instruction_ra_virtualization;
 mod product5;
 mod spartan_outer_uniskip;
 
@@ -41,6 +43,7 @@ pub use address_raf::{
     ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
 };
 pub use address_raf_direct::AddressRafDirectInvocation;
+pub(crate) use address_sequence::ResidentLookupIndexPlane;
 pub use address_sequence::{AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums};
 pub use address_suffix::{
     AddressSuffixOneInvocation, AddressSuffixOneSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
@@ -49,6 +52,9 @@ pub use address_suffix_full::{AddressSuffixFullInvocation, AddressSuffixFullSums
 pub(crate) use booleanity::BooleanityRows;
 pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
+};
+pub use instruction_ra_virtualization::{
+    InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
 };
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
@@ -303,6 +309,37 @@ pub enum MetalError {
     #[error("hybrid cutoff must be a power of two of at least two, got {0}")]
     InvalidHybridCutoff(usize),
     #[error(
+        "Instruction RA cutoff {instruction_ra_cutoff} is below the address-plane cutoff {address_cutoff}"
+    )]
+    InstructionRaRequiresAddressPlane {
+        instruction_ra_cutoff: usize,
+        address_cutoff: usize,
+    },
+    #[error("Instruction RA needs a power-of-two row count of at least two, got {0}")]
+    InvalidInstructionRaRows(usize),
+    #[error("Instruction RA factor-table storage has length {got}, expected {expected}")]
+    InstructionRaStorageLength { expected: usize, got: usize },
+    #[error("Instruction RA split weights cover {covered} pairs, expected {expected}")]
+    InstructionRaWeightShape { expected: usize, covered: usize },
+    #[error("Instruction RA resident {name} buffer has {got} bytes, expected {expected}")]
+    InstructionRaPlaneLength {
+        name: &'static str,
+        expected: u64,
+        got: u64,
+    },
+    #[error(
+        "Instruction RA resident plane belongs to Metal device {got}, but the kernel uses {expected}"
+    )]
+    InstructionRaPlaneDevice { expected: u64, got: u64 },
+    #[error(
+        "Instruction RA pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedInstructionRaExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
         "five-factor kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
     InvalidProduct5TableLength { minimum: usize, got: usize },
@@ -383,6 +420,10 @@ impl SolinasMetal {
         Self::new(OFFSET_275)
     }
 
+    pub(crate) fn device_registry_id(&self) -> u64 {
+        self.device.registry_id()
+    }
+
     pub fn new(offset: u32) -> Result<Self, MetalError> {
         if offset == 0 {
             return Err(MetalError::InvalidOffset);
@@ -390,7 +431,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)

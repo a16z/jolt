@@ -3,11 +3,13 @@
 //! Reusable field arithmetic and hybrid sumcheck kernels for Apple GPUs.
 
 mod booleanity;
+mod instruction_ra_virtualization;
 mod instruction_read_raf;
 pub mod solinas;
 mod spartan_outer;
 
 pub use booleanity::BooleanityMetalConfig;
+pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 #[cfg(test)]
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
 pub use instruction_read_raf::{InstructionReadRafMetalConfig, MetalBackend, MetalConfig};

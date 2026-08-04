@@ -2447,6 +2447,7 @@ mod tests {
                 ..Default::default()
             },
             use_metal_address,
+            false,
         )
         .unwrap();
         let challenge = |round: usize| {

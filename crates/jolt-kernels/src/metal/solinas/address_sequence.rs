@@ -96,6 +96,62 @@ struct AddressLookup {
     limbs: [u64; 2],
 }
 
+#[derive(Clone)]
+pub(crate) struct ResidentLookupIndexPlane {
+    lookups: Buffer,
+    cycle_to_table_major: Buffer,
+    rows: usize,
+    device_registry_id: u64,
+}
+
+impl ResidentLookupIndexPlane {
+    pub(super) fn from_buffers(
+        lookups: Buffer,
+        cycle_to_table_major: Buffer,
+        rows: usize,
+        device_registry_id: u64,
+    ) -> Self {
+        Self {
+            lookups,
+            cycle_to_table_major,
+            rows,
+            device_registry_id,
+        }
+    }
+
+    pub(crate) const fn len(&self) -> usize {
+        self.rows
+    }
+
+    pub(crate) const fn device_registry_id(&self) -> u64 {
+        self.device_registry_id
+    }
+
+    pub(crate) const fn lookups(&self) -> &Buffer {
+        &self.lookups
+    }
+
+    pub(crate) const fn cycle_to_table_major(&self) -> &Buffer {
+        &self.cycle_to_table_major
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for ResidentLookupIndexPlane {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_lookup_indices"),
+            self.rows * size_of::<AddressLookup>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("device_cycle_to_table_major"),
+            self.rows * size_of::<u32>(),
+        );
+        visitor.exit();
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct CycleParams {
@@ -692,6 +748,15 @@ impl SolinasMetal {
 }
 
 impl AddressPhaseSequence {
+    pub(crate) fn resident_lookup_index_plane(&self) -> ResidentLookupIndexPlane {
+        ResidentLookupIndexPlane::from_buffers(
+            self.buffers.lookups.clone(),
+            self.buffers.cycle_to_table_major.clone(),
+            self.rows,
+            self.context.device.registry_id(),
+        )
+    }
+
     pub fn phase(
         &mut self,
         suffix_len: u32,
