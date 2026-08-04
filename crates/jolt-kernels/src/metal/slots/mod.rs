@@ -31,6 +31,7 @@
 //! ([`DeviceRound::failed`]). `finish_rounds` (a single fold to one element)
 //! is always host-side.
 
+mod bytecode_read_raf;
 mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
 mod instruction_claim_reduction;
@@ -45,6 +46,7 @@ mod registers_read_write;
 mod spartan_outer;
 mod spartan_product;
 
+pub use bytecode_read_raf::MetalBytecodeReadRafCycle;
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
 pub use instruction_claim_reduction::MetalInstructionClaimReduction;
