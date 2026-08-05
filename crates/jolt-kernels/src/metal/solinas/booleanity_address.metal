@@ -13,6 +13,49 @@ struct BooleanityAddressParams {
     ulong inc_bias;
 };
 
+struct BooleanityAddressLocalSum {
+    SolinasFp128 low;
+    uint overflow;
+};
+
+inline BooleanityAddressLocalSum booleanity_address_local_zero() {
+    BooleanityAddressLocalSum result;
+    result.low = solinas_zero();
+    result.overflow = 0u;
+    return result;
+}
+
+inline void booleanity_address_local_add(
+    thread BooleanityAddressLocalSum& sum,
+    SolinasFp128 value)
+{
+    ulong carry = 0ul;
+    for (uint limb = 0u; limb < 4u; limb++) {
+        ulong word = (ulong)sum.low.limb[limb]
+            + (ulong)value.limb[limb]
+            + carry;
+        sum.low.limb[limb] = (uint)word;
+        carry = word >> 32;
+    }
+    sum.overflow += (uint)carry;
+}
+
+inline void booleanity_address_flush_local(
+    threadgroup atomic_uint* sums,
+    uint local,
+    uint hot,
+    BooleanityAddressLocalSum value)
+{
+    uint field = local * BOOLEANITY_ADDRESS_BINS + hot;
+    solinas_deferred_atomic_add_5(sums, field, value.low);
+    if (value.overflow != 0u) {
+        atomic_fetch_add_explicit(
+            &sums[field * BOOLEANITY_ADDRESS_ACCUMULATOR_WORDS + 4u],
+            value.overflow,
+            memory_order_relaxed);
+    }
+}
+
 inline void booleanity_address_add(
     threadgroup atomic_uint* sums,
     uint local,
@@ -87,6 +130,17 @@ inline void booleanity_address_inc(
         biased = bias + magnitude;
         carry = biased < bias ? 1 : 0;
     }
+}
+
+inline int booleanity_address_inc_carry(
+    ulong magnitude,
+    ulong packed_pc_and_flags,
+    ulong bias)
+{
+    if ((packed_pc_and_flags >> 63) != 0ul) {
+        return magnitude > bias ? -1 : 0;
+    }
+    return bias + magnitude < bias ? 1 : 0;
 }
 
 inline void booleanity_address_add_inc(
@@ -164,7 +218,7 @@ inline void booleanity_address_add_production_selector(
     }
 }
 
-template <uint production_offset, uint production_count>
+template <uint production_offset, uint production_count, bool aggregate_inc>
 inline void booleanity_address_tile_impl(
     device const BooleanityRow* rows,
     device const BooleanitySelector* selectors,
@@ -184,6 +238,10 @@ inline void booleanity_address_tile_impl(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
+    BooleanityAddressLocalSum common_inc_sum = booleanity_address_local_zero();
+    BooleanityAddressLocalSum negative_carry_sum = booleanity_address_local_zero();
+    BooleanityAddressLocalSum zero_carry_sum = booleanity_address_local_zero();
+    BooleanityAddressLocalSum positive_carry_sum = booleanity_address_local_zero();
     uint row_base = x_out * params.e_in_length;
     for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
         uint row_index = row_base + x_in;
@@ -197,6 +255,36 @@ inline void booleanity_address_tile_impl(
                         row, selector, params.chunk_bits, params.inc_bias, hot)) {
                     booleanity_address_add(sums, local, hot, weight);
                 }
+            }
+        } else if (aggregate_inc) {
+            ulong biased;
+            int carry;
+            booleanity_address_inc(
+                rows[row_index].fused_inc_magnitude,
+                rows[row_index].packed_pc_and_flags,
+                params.inc_bias,
+                biased,
+                carry);
+            uint hot_32 = ((uint)(biased >> 32) + BOOLEANITY_ADDRESS_BINS / 2u)
+                & (BOOLEANITY_ADDRESS_BINS - 1u);
+            uint hot_40 = ((uint)(biased >> 40) + BOOLEANITY_ADDRESS_BINS / 2u)
+                & (BOOLEANITY_ADDRESS_BINS - 1u);
+            uint hot_48 = ((uint)(biased >> 48) + BOOLEANITY_ADDRESS_BINS / 2u)
+                & (BOOLEANITY_ADDRESS_BINS - 1u);
+            if (hot_32 == 0u && hot_40 == 0u && hot_48 == 0u) {
+                booleanity_address_local_add(common_inc_sum, weight);
+            } else {
+                booleanity_address_add(sums, 0u, hot_32, weight);
+                booleanity_address_add(sums, 1u, hot_40, weight);
+                booleanity_address_add(sums, 2u, hot_48, weight);
+            }
+            booleanity_address_add_inc(sums, biased, 3u, 56u, weight);
+            if (carry < 0) {
+                booleanity_address_local_add(negative_carry_sum, weight);
+            } else if (carry > 0) {
+                booleanity_address_local_add(positive_carry_sum, weight);
+            } else {
+                booleanity_address_local_add(zero_carry_sum, weight);
             }
         } else {
             if (production_count > 0u) {
@@ -225,6 +313,15 @@ inline void booleanity_address_tile_impl(
             }
         }
     }
+    if (aggregate_inc) {
+        booleanity_address_flush_local(sums, 0u, 0u, common_inc_sum);
+        booleanity_address_flush_local(sums, 1u, 0u, common_inc_sum);
+        booleanity_address_flush_local(sums, 2u, 0u, common_inc_sum);
+        booleanity_address_flush_local(
+            sums, 4u, BOOLEANITY_ADDRESS_BINS - 1u, negative_carry_sum);
+        booleanity_address_flush_local(sums, 4u, 0u, zero_carry_sum);
+        booleanity_address_flush_local(sums, 4u, 1u, positive_carry_sum);
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     SolinasFp128 outer = e_out[x_out];
@@ -235,7 +332,7 @@ inline void booleanity_address_tile_impl(
     }
 }
 
-#define BOOLEANITY_ADDRESS_TILE_ENTRY(name, offset, count)                         \
+#define BOOLEANITY_ADDRESS_TILE_ENTRY(name, offset, count, aggregate_inc)          \
 kernel void name(                                                                 \
     device const BooleanityRow* rows [[buffer(0)]],                               \
     device const BooleanitySelector* selectors [[buffer(1)]],                    \
@@ -248,26 +345,26 @@ kernel void name(                                                               
     uint tid [[thread_index_in_threadgroup]],                                     \
     uint threads [[threads_per_threadgroup]])                                     \
 {                                                                                 \
-    booleanity_address_tile_impl<offset, count>(                                  \
+    booleanity_address_tile_impl<offset, count, aggregate_inc>(                   \
         rows, selectors, e_in, e_out, partials, params, sums, x_out, tid, threads); \
 }
 
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile, 0u, 0u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_0, 0u, 6u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_1, 6u, 6u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_2, 12u, 6u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3, 18u, 6u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_4, 24u, 5u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_0, 0u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_1, 3u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_2, 6u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_3, 9u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_4, 12u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_5, 15u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_6, 18u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_7, 21u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_8, 24u, 3u)
-BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_9, 27u, 2u)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile, 0u, 0u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_0, 0u, 6u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_1, 6u, 6u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_2, 12u, 6u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3, 18u, 6u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_4, 24u, 5u, true)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_0, 0u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_1, 3u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_2, 6u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_3, 9u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_4, 12u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_5, 15u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_6, 18u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_7, 21u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_8, 24u, 3u, false)
+BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile_3_9, 27u, 2u, false)
 
 #undef BOOLEANITY_ADDRESS_TILE_ENTRY
 
