@@ -253,3 +253,225 @@ extern "C" __global__ void ap_condense_kernel(const unsigned long long *__restri
     fr_mul(u, v, product);
     store4(u_evals + (unsigned long long)j * LIMBS, product);
 }
+
+__device__ __forceinline__ void ap_mul_pow2(const u64 *a, unsigned int k, u64 *out) {
+    u64 value[LIMBS];
+    load4(a, value);
+    for (unsigned int i = 0; i < k; i++) {
+        u64 doubled[LIMBS];
+        fr_add(value, value, doubled);
+        store4(value, doubled);
+    }
+    store4(out, value);
+}
+
+extern "C" __global__ void ap_prefix_tables_kernel(const u64 *__restrict__ checkpoints,
+                                                   unsigned int suffix_len,
+                                                   u64 *__restrict__ out,
+                                                   unsigned int prefix_count) {
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= AP_CHUNK_SIZE) return;
+    sfx_bits b = sfx_new((u128)x, AP_CHUNK_LEN);
+    for (unsigned int prefix = 0; prefix < prefix_count; prefix++) {
+        u64 value[LIMBS];
+        pfx_eval(prefix, checkpoints, b, suffix_len, value);
+        store4(out + ((unsigned long long)prefix * AP_CHUNK_SIZE + x) * LIMBS, value);
+    }
+}
+
+extern "C" __global__ void ap_raf_prefix_kernel(const u64 *__restrict__ checkpoints,
+                                                unsigned int chunk_upper_bits,
+                                                unsigned int canonical,
+                                                u64 *__restrict__ out) {
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= AP_CHUNK_SIZE) return;
+
+    u64 left_cp[LIMBS], right_cp[LIMBS], identity_cp[LIMBS], upper_cp[LIMBS];
+    load4(checkpoints, left_cp);
+    load4(checkpoints + LIMBS, right_cp);
+    load4(checkpoints + 2 * LIMBS, identity_cp);
+    load4(checkpoints + 3 * LIMBS, upper_cp);
+
+    sfx_bits chunk = sfx_new((u128)x, AP_CHUNK_LEN);
+    sfx_bits left, right;
+    sfx_uninterleave(chunk, &left, &right);
+
+    u64 scaled[LIMBS], addend[LIMBS], value[LIMBS], raw[LIMBS];
+
+    ap_mul_pow2(left_cp, AP_CHUNK_LEN / 2, scaled);
+    raw[0] = sfx_u64(left); raw[1] = 0; raw[2] = 0; raw[3] = 0;
+    fr_to_mont(raw, addend);
+    fr_add(scaled, addend, value);
+    store4(out + (unsigned long long)x * LIMBS, value);
+
+    ap_mul_pow2(right_cp, AP_CHUNK_LEN / 2, scaled);
+    raw[0] = sfx_u64(right); raw[1] = 0; raw[2] = 0; raw[3] = 0;
+    fr_to_mont(raw, addend);
+    fr_add(scaled, addend, value);
+    store4(out + ((unsigned long long)AP_CHUNK_SIZE + x) * LIMBS, value);
+
+    ap_mul_pow2(identity_cp, AP_CHUNK_LEN, scaled);
+    raw[0] = (unsigned long long)x; raw[1] = 0; raw[2] = 0; raw[3] = 0;
+    fr_to_mont(raw, addend);
+    fr_add(scaled, addend, value);
+    store4(out + ((unsigned long long)2 * AP_CHUNK_SIZE + x) * LIMBS, value);
+
+    if (canonical != 0u) {
+        if (chunk_upper_bits == 0u ||
+            (x >> (AP_CHUNK_LEN - chunk_upper_bits)) == ((1u << chunk_upper_bits) - 1u)) {
+            store4(out + ((unsigned long long)3 * AP_CHUNK_SIZE + x) * LIMBS, upper_cp);
+        } else {
+            u64 zero[LIMBS] = {0, 0, 0, 0};
+            store4(out + ((unsigned long long)3 * AP_CHUNK_SIZE + x) * LIMBS, zero);
+        }
+    }
+}
+
+extern "C" __global__ void ap_bind_strided_kernel(const u64 *__restrict__ in,
+                                                  const u64 *__restrict__ challenge,
+                                                  u64 *__restrict__ out,
+                                                  unsigned int half,
+                                                  unsigned int stride,
+                                                  unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    unsigned int column = i / half;
+    unsigned int b = i % half;
+    const u64 *base = in + (unsigned long long)column * stride * LIMBS;
+    u64 lo[LIMBS], hi[LIMBS], c[LIMBS], d[LIMBS], t[LIMBS], r[LIMBS];
+    load4(base + (unsigned long long)b * LIMBS, lo);
+    load4(base + ((unsigned long long)b + half) * LIMBS, hi);
+    load4(challenge, c);
+    fr_sub(hi, lo, d);
+    fr_mul(c, d, t);
+    fr_add(lo, t, r);
+    store4(out + (unsigned long long)i * LIMBS, r);
+}
+
+__device__ __forceinline__ void ap_extension(const u64 *__restrict__ column,
+                                             unsigned int b,
+                                             unsigned int half,
+                                             unsigned int c,
+                                             u64 *out) {
+    u64 lo[LIMBS], hi[LIMBS];
+    load4(column + (unsigned long long)b * LIMBS, lo);
+    load4(column + ((unsigned long long)b + half) * LIMBS, hi);
+    if (c == 0) { store4(out, lo); return; }
+    if (c == 1) { store4(out, hi); return; }
+    u64 doubled[LIMBS];
+    fr_add(hi, hi, doubled);
+    fr_sub(doubled, lo, out);
+}
+
+extern "C" __global__ void ap_round_message_kernel(
+    const u64 *__restrict__ prefixes,
+    const unsigned int *__restrict__ prefix_ids,
+    const unsigned int *__restrict__ suffix_slots,
+    const unsigned int *__restrict__ scales,
+    const unsigned int *__restrict__ term_offsets,
+    const unsigned int *__restrict__ term_counts,
+    const u64 *__restrict__ suffixes,
+    const unsigned int *__restrict__ suffix_bases,
+    unsigned int table_count,
+    const u64 *__restrict__ raf_prefix,
+    const u64 *__restrict__ raf_shift_half,
+    const u64 *__restrict__ raf_shift_full,
+    const u64 *__restrict__ raf_left,
+    const u64 *__restrict__ raf_right,
+    const u64 *__restrict__ raf_identity,
+    unsigned int raf_count,
+    unsigned int stride,
+    unsigned int half,
+    u64 *__restrict__ partials) {
+    extern __shared__ u64 scratch[];
+    unsigned int tid = threadIdx.x;
+    unsigned int b = blockIdx.x * blockDim.x + tid;
+    unsigned int lanes = 3u * (1u + raf_count);
+
+    for (unsigned int lane = 0; lane < lanes; lane++) {
+        unsigned int c = lane / (1u + raf_count);
+        unsigned int slot = lane % (1u + raf_count);
+        u64 acc[LIMBS] = {0, 0, 0, 0};
+
+        if (b < half) {
+            if (slot == 0) {
+                for (unsigned int t = 0; t < table_count; t++) {
+                    unsigned int count = term_counts[t];
+                    unsigned int base = term_offsets[t];
+                    u64 sum[LIMBS] = {0, 0, 0, 0};
+                    for (unsigned int k = 0; k < count; k++) {
+                        unsigned int term = base + k;
+                        const u64 *column =
+                            suffixes + (unsigned long long)(suffix_bases[t] + suffix_slots[term]) *
+                                           stride * LIMBS;
+                        u64 value[LIMBS];
+                        ap_extension(column, b, half, c, value);
+                        unsigned int prefix = prefix_ids[term];
+                        if (prefix != 0xFFFFFFFFu) {
+                            u64 p[LIMBS], product[LIMBS];
+                            ap_extension(prefixes + (unsigned long long)prefix * stride * LIMBS,
+                                         b, half, c, p);
+                            fr_mul(value, p, product);
+                            store4(value, product);
+                        }
+                        if (scales[term] != 0u) {
+                            u64 s[LIMBS], scaled[LIMBS];
+                            cmb_scale(scales[term], s);
+                            fr_mul(value, s, scaled);
+                            store4(value, scaled);
+                        }
+                        u64 next[LIMBS];
+                        fr_add(sum, value, next);
+                        store4(sum, next);
+                    }
+                    u64 total[LIMBS];
+                    fr_add(acc, sum, total);
+                    store4(acc, total);
+                }
+            } else {
+                const u64 *prefix_column;
+                const u64 *shift_column;
+                const u64 *value_column;
+                if (slot == 1u) {
+                    prefix_column = raf_prefix;
+                    shift_column = raf_shift_half;
+                    value_column = raf_left;
+                } else if (slot == 2u) {
+                    prefix_column = raf_prefix + (unsigned long long)stride * LIMBS;
+                    shift_column = raf_shift_half;
+                    value_column = raf_right;
+                } else {
+                    prefix_column = raf_prefix + (unsigned long long)2 * stride * LIMBS;
+                    shift_column = raf_shift_full;
+                    value_column = raf_identity;
+                }
+                u64 p[LIMBS], shift[LIMBS], value[LIMBS], product[LIMBS], sum[LIMBS];
+                ap_extension(prefix_column, b, half, c, p);
+                ap_extension(shift_column, b, half, c, shift);
+                ap_extension(value_column, b, half, c, value);
+                fr_mul(p, shift, product);
+                fr_add(product, value, sum);
+                store4(acc, sum);
+            }
+        }
+
+        store4(scratch + tid * LIMBS, acc);
+        __syncthreads();
+        for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+            if (tid < s) {
+                u64 x[LIMBS], y[LIMBS], sum[LIMBS];
+                load4(scratch + tid * LIMBS, x);
+                load4(scratch + (tid + s) * LIMBS, y);
+                fr_add(x, y, sum);
+                store4(scratch + tid * LIMBS, sum);
+            }
+            __syncthreads();
+        }
+        if (tid == 0) {
+            u64 total[LIMBS];
+            load4(scratch, total);
+            store4(partials + ((unsigned long long)lane * gridDim.x + blockIdx.x) * LIMBS, total);
+        }
+        __syncthreads();
+    }
+}

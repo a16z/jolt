@@ -90,6 +90,10 @@ pub struct CudaKernelContext {
     ap_suffix_reduce: CudaFunction,
     ap_scale_shift: CudaFunction,
     ap_condense: CudaFunction,
+    ap_prefix_tables: CudaFunction,
+    ap_raf_prefix: CudaFunction,
+    ap_bind_strided: CudaFunction,
+    ap_round_message: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -146,6 +150,10 @@ impl CudaKernelContext {
             ap_suffix_reduce: module.load_function("ap_suffix_reduce_kernel")?,
             ap_scale_shift: module.load_function("ap_scale_shift_kernel")?,
             ap_condense: module.load_function("ap_condense_kernel")?,
+            ap_prefix_tables: module.load_function("ap_prefix_tables_kernel")?,
+            ap_raf_prefix: module.load_function("ap_raf_prefix_kernel")?,
+            ap_bind_strided: module.load_function("ap_bind_strided_kernel")?,
+            ap_round_message: module.load_function("ap_round_message_kernel")?,
         })
     }
 
@@ -333,6 +341,48 @@ impl CudaKernelContext {
 
     pub(super) const fn ap_condense(&self) -> &CudaFunction {
         &self.ap_condense
+    }
+
+    pub(super) const fn ap_prefix_tables(&self) -> &CudaFunction {
+        &self.ap_prefix_tables
+    }
+
+    pub(super) const fn ap_raf_prefix(&self) -> &CudaFunction {
+        &self.ap_raf_prefix
+    }
+
+    pub(super) const fn ap_bind_strided(&self) -> &CudaFunction {
+        &self.ap_bind_strided
+    }
+
+    pub(super) const fn ap_round_message(&self) -> &CudaFunction {
+        &self.ap_round_message
+    }
+
+    pub(super) fn copy_into(
+        &self,
+        destination: &mut DeviceFrVec,
+        offset: usize,
+        source: &DeviceFrVec,
+    ) -> Result<(), CudaError> {
+        if offset + source.len() > destination.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: destination.len(),
+                got: offset + source.len(),
+            });
+        }
+        if source.is_empty() {
+            return Ok(());
+        }
+        let limbs = source.len() * LIMBS;
+        let start = offset * LIMBS;
+        xfer_stats::timed(Phase::D2d, limbs * size_of::<u64>(), || {
+            let source = source.limbs().slice(0..limbs);
+            let mut target = destination.limbs_mut().slice_mut(start..start + limbs);
+            self.stream.memcpy_dtod(&source, &mut target)?;
+            self.stream.synchronize()?;
+            Ok::<_, CudaError>(())
+        })
     }
 
     pub(super) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {

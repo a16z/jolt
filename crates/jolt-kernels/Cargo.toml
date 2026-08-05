@@ -60,3 +60,7 @@ required-features = ["cuda"]
 [[example]]
 name = "cuda_address_phase_bench"
 required-features = ["cuda"]
+
+[[example]]
+name = "cuda_address_driver_bench"
+required-features = ["cuda"]

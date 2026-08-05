@@ -372,6 +372,10 @@ impl<F: Field> InstructionReadRafKernel<F> {
         &self.v_tables[phase]
     }
 
+    pub(crate) fn prefix_checkpoints(&self) -> &[PrefixEval<F>] {
+        &self.prefix_checkpoints
+    }
+
     pub(crate) fn phases(&self) -> usize {
         self.address_bits() / CHUNK_LEN
     }
