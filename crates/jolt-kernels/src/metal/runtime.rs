@@ -85,6 +85,7 @@ pub enum KernelId {
     BoolLazyRound,
     BoolDenseRound,
     RavLazyRound,
+    RavAdoptRound,
     RavDenseRound,
     BytecodeInit,
     BytecodeLazyRound,
@@ -118,7 +119,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 67] = [
+    pub const ALL: [Self; 68] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -156,6 +157,7 @@ impl KernelId {
         Self::BoolLazyRound,
         Self::BoolDenseRound,
         Self::RavLazyRound,
+        Self::RavAdoptRound,
         Self::RavDenseRound,
         Self::BytecodeInit,
         Self::BytecodeLazyRound,
@@ -227,6 +229,7 @@ impl KernelId {
             Self::BoolLazyRound => "jk_bool_lazy_round",
             Self::BoolDenseRound => "jk_bool_dense_round",
             Self::RavLazyRound => "jk_rav_lazy_round",
+            Self::RavAdoptRound => "jk_rav_adopt_round",
             Self::RavDenseRound => "jk_rav_dense_round",
             Self::BytecodeInit => "jk_bytecode_init",
             Self::BytecodeLazyRound => "jk_bytecode_lazy_round",

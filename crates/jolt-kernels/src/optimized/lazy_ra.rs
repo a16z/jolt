@@ -62,6 +62,48 @@ pub(crate) trait LazyRaDevice<F: Field>: Send + Sync {
     /// low-to-high bind schedule. Most consumers have no auxiliary table.
     fn bind_lazy(&mut self, _challenge: F) {}
 
+    /// Last lazy branch width before dense adoption. The default `4` is the
+    /// legacy schedule (three lazy rounds, then [`adopt_dense`](Self::adopt_dense)
+    /// materializes at width 8). A driver returning `8` defers adoption one
+    /// round: a fourth lazy round runs at width 8, and the adoption then
+    /// rides [`launch_adopt`](Self::launch_adopt)/[`adopt_round`](Self::adopt_round)
+    /// at width 16 — half the dense footprint, fused with that round's
+    /// message. Only `4` and `8` are meaningful.
+    fn lazy_horizon(&self) -> usize {
+        4
+    }
+
+    /// Fused adoption round, synchronous: materialize every polynomial dense
+    /// at `cycles / width` from the width-`width` branch tables AND emit this
+    /// round's message lanes in one dispatch. `Some(lanes)` = adopted (the
+    /// driver owns the dense tables); `None` = nothing ran or the device
+    /// failed — the caller materializes on the CPU from the unchanged
+    /// tables/source.
+    fn adopt_round(
+        &mut self,
+        _tables: &[Vec<F>],
+        _width: usize,
+        _e_in: &[F],
+        _e_out: &[F],
+    ) -> Option<Vec<F>> {
+        None
+    }
+
+    /// Launch the fused adoption round without blocking; as
+    /// [`launch_lazy`](Self::launch_lazy). Collection rides
+    /// [`collect_lanes`](Self::collect_lanes): `Some` installs the dense
+    /// tables, `None` leaves the tables/source unchanged for the CPU
+    /// recovery.
+    fn launch_adopt(
+        &mut self,
+        _tables: &[Vec<F>],
+        _width: usize,
+        _e_in: &[F],
+        _e_out: &[F],
+    ) -> bool {
+        false
+    }
+
     /// Lazy-phase message lanes against the CURRENT branch tables
     /// (offset-major, per-poly `width · 2^w` entries) and gruen levels.
     fn lazy_lanes(
@@ -127,17 +169,29 @@ pub(crate) trait LazyRaDevice<F: Field>: Send + Sync {
 /// `N` address-folded selector columns bound `LowToHigh`, lazily for the
 /// first three binds.
 pub(crate) enum LazyFoldedRa<F: Field, S> {
-    /// Fewer than three binds: per-polynomial branch scale tables (the base
-    /// table pre-scaled by each bound-bit pattern's eq weight), flattened
-    /// offset-major — `tables[i][offset · stride_i + k]` with
+    /// Fewer than `lazy_horizon` binds: per-polynomial branch scale tables
+    /// (the base table pre-scaled by each bound-bit pattern's eq weight),
+    /// flattened offset-major — `tables[i][offset · stride_i + k]` with
     /// `stride_i = tables[i].len() / width` — plus the compact index source.
     Lazy {
         tables: Vec<Vec<F>>,
-        /// Bound-bit branch count (`2^binds`: 1, 2, or 4).
+        /// Bound-bit branch count (`2^binds`: 1, 2, 4, or — one round before
+        /// a deferred adoption — 8).
         width: usize,
         source: S,
         /// Optional device tier; `None` keeps every phase on the CPU.
         driver: Option<Box<dyn LazyRaDevice<F>>>,
+    },
+    /// A deferred-horizon driver's adoption bind has landed (tables doubled
+    /// to `width = 2 · horizon`) but the fused adoption round has not run
+    /// yet: the next message call adopts on the device
+    /// ([`LazyRaDevice::adopt_round`] / [`LazyRaDevice::launch_adopt`]), or
+    /// the CPU materializes from these unchanged tables on any decline.
+    PendingAdopt {
+        tables: Vec<Vec<F>>,
+        width: usize,
+        source: S,
+        driver: Box<dyn LazyRaDevice<F>>,
     },
     /// Three or more binds with a device driver: the dense tables live in
     /// the driver's buffers; `pending_bind` is a challenge not yet folded
@@ -175,10 +229,46 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
 
     pub(crate) fn num_polys(&self) -> usize {
         match self {
-            Self::Lazy { tables, .. } => tables.len(),
+            Self::Lazy { tables, .. } | Self::PendingAdopt { tables, .. } => tables.len(),
             Self::DeviceDense { num_polys, .. } => *num_polys,
             Self::Dense(polys) => polys.len(),
         }
+    }
+
+    /// Resolve a pending adoption on the CPU: materialize dense from the
+    /// held tables at their current width. No-op in any other state.
+    fn materialize_pending(&mut self) {
+        let Self::PendingAdopt { .. } = self else {
+            return;
+        };
+        let Self::PendingAdopt {
+            tables,
+            width,
+            source,
+            ..
+        } = std::mem::replace(self, Self::Dense(Vec::new()))
+        else {
+            unreachable!("just matched");
+        };
+        *self = Self::Dense(materialize(&tables, &source, width));
+    }
+
+    /// Promote a successfully adopted pending state to device-dense. The
+    /// driver already owns the materialized tables.
+    fn promote_adopted(&mut self) {
+        let Self::PendingAdopt { .. } = self else {
+            return;
+        };
+        let Self::PendingAdopt { tables, driver, .. } =
+            std::mem::replace(self, Self::Dense(Vec::new()))
+        else {
+            unreachable!("just matched");
+        };
+        *self = Self::DeviceDense {
+            num_polys: tables.len(),
+            driver,
+            pending_bind: None,
+        };
     }
 
     /// The current (bound) evaluation of polynomial `i` at index `j` —
@@ -191,6 +281,12 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     pub(crate) fn value(&self, i: usize, j: usize) -> F {
         match self {
             Self::Lazy {
+                tables,
+                width,
+                source,
+                ..
+            }
+            | Self::PendingAdopt {
                 tables,
                 width,
                 source,
@@ -216,6 +312,12 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     pub(crate) fn lo_hi_all(&self, row: usize, out: &mut [(F, F)]) {
         match self {
             Self::Lazy {
+                tables,
+                width,
+                source,
+                ..
+            }
+            | Self::PendingAdopt {
                 tables,
                 width,
                 source,
@@ -246,11 +348,14 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// for the first two binds, materialize dense at the third — into the
-    /// driver's device buffers when it adopts, on the CPU (dropping the
-    /// source) otherwise — plain multilinear binds after. A device-resident
-    /// bind is only RECORDED here; the driver folds it fused with the next
-    /// round's message (or [`ensure_host`](Self::ensure_host) applies it).
+    /// below the driver's lazy horizon, materialize dense at the horizon —
+    /// into the driver's device buffers when it adopts, on the CPU (dropping
+    /// the source) otherwise — plain multilinear binds after. A
+    /// deferred-horizon driver's adoption bind only doubles the tables here
+    /// ([`PendingAdopt`](Self::PendingAdopt)); the driver materializes fused
+    /// with the next round's message. A device-resident bind is only
+    /// RECORDED here; the driver folds it fused with the next round's
+    /// message (or [`ensure_host`](Self::ensure_host) applies it).
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
@@ -262,13 +367,23 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 if let Some(driver) = driver.as_mut() {
                     driver.bind_lazy(challenge);
                 }
+                let horizon = driver.as_ref().map_or(4, |driver| driver.lazy_horizon());
                 let tables = double_branches(tables, challenge);
-                if width < 4 {
+                if width < horizon {
                     Self::Lazy {
                         tables,
                         width: width * 2,
                         source,
                         driver,
+                    }
+                } else if horizon > 4 {
+                    // `map_or(4, ..)` above proved the driver's presence.
+                    #[expect(clippy::unwrap_used, reason = "horizon > 4 implies a driver")]
+                    Self::PendingAdopt {
+                        width: width * 2,
+                        tables,
+                        source,
+                        driver: driver.unwrap(),
                     }
                 } else if driver
                     .as_mut()
@@ -282,8 +397,23 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                         pending_bind: None,
                     }
                 } else {
-                    Self::Dense(materialize(&tables, &source))
+                    Self::Dense(materialize(&tables, &source, 8))
                 }
+            }
+            // Reachable only when the adoption bind is the sumcheck's LAST
+            // (`finish_rounds` at tiny cycle geometries): no message follows,
+            // so resolve on the CPU and bind dense.
+            Self::PendingAdopt {
+                tables,
+                width,
+                source,
+                ..
+            } => {
+                let mut polys = materialize(&tables, &source, width);
+                for poly in &mut polys {
+                    poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+                }
+                Self::Dense(polys)
             }
             Self::DeviceDense {
                 driver,
@@ -322,6 +452,20 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 driver: Some(driver),
                 ..
             } => driver.lazy_lanes(tables, *width, e_in, e_out),
+            Self::PendingAdopt {
+                tables,
+                width,
+                driver,
+                ..
+            } => {
+                if let Some(lanes) = driver.adopt_round(tables, *width, e_in, e_out) {
+                    self.promote_adopted();
+                    Some(lanes)
+                } else {
+                    self.materialize_pending();
+                    None
+                }
+            }
             Self::DeviceDense {
                 driver,
                 pending_bind,
@@ -353,6 +497,19 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 driver: Some(driver),
                 ..
             } => driver.launch_lazy(tables, *width, e_in, e_out),
+            Self::PendingAdopt {
+                tables,
+                width,
+                driver,
+                ..
+            } => {
+                if driver.launch_adopt(tables, *width, e_in, e_out) {
+                    true
+                } else {
+                    self.materialize_pending();
+                    false
+                }
+            }
             Self::DeviceDense {
                 driver,
                 pending_bind,
@@ -380,6 +537,15 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 driver: Some(driver),
                 ..
             } => driver.collect_lanes(),
+            Self::PendingAdopt { driver, .. } => {
+                if let Some(lanes) = driver.collect_lanes() {
+                    self.promote_adopted();
+                    Some(lanes)
+                } else {
+                    self.materialize_pending();
+                    None
+                }
+            }
             Self::DeviceDense {
                 driver,
                 pending_bind,
@@ -402,6 +568,10 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     /// direct table access (`value`, `lo_hi_all`, `final_values`) that could
     /// follow a device phase — e.g. at output claims.
     pub(crate) fn ensure_host(&mut self) {
+        if matches!(self, Self::PendingAdopt { .. }) {
+            self.materialize_pending();
+            return;
+        }
         let Self::DeviceDense {
             driver,
             pending_bind,
@@ -484,17 +654,21 @@ fn double_branches<F: Field>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
     }
 }
 
-/// The third bind's materialization: gather every polynomial dense at
-/// `cycles / 8` length through the eight pre-scaled branch tables —
+/// The adoption bind's materialization: gather every polynomial dense at
+/// `cycles / width` length through the `width` pre-scaled branch tables —
 /// lookups and adds only.
-fn materialize<F: Field, S: ChunkIndexSource>(tables: &[Vec<F>], source: &S) -> Vec<Polynomial<F>> {
-    // Materialization runs at the third bind, so the unbound cycle domain
-    // holds at least 2^3 slots.
-    debug_assert!(source.cycles() >= 8);
-    let new_len = source.cycles() / 8;
+fn materialize<F: Field, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    source: &S,
+    width: usize,
+) -> Vec<Polynomial<F>> {
+    // Materialization runs after `log2(width)` binds, so the unbound cycle
+    // domain holds at least `width` slots.
+    debug_assert!(source.cycles() >= width);
+    let new_len = source.cycles() / width;
     let materialize_poly = |i: usize| -> Polynomial<F> {
         let table = tables[i].as_slice();
-        let eval = |j: usize| gather(table, 8, source, i, j);
+        let eval = |j: usize| gather(table, width, source, i, j);
         #[cfg(feature = "parallel")]
         let evals: Vec<F> = (0..new_len).into_par_iter().map(eval).collect();
         #[cfg(not(feature = "parallel"))]
