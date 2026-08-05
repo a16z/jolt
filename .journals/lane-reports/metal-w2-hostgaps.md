@@ -118,3 +118,72 @@ end-to-end measurement. Retention bar (`>= 0.3 s`) clears; **GO**.
 - `cargo fmt --all` passed;
 - touched-crate clippy with `-D warnings` passed;
 - no end-to-end prover run.
+
+## st1: Spartan outer remaining
+
+### Attribution
+
+The isolated fixture uses all 17 production `TraceRecord` lanes, the exact
+`log_t + 1` split-eq geometry, production T1/AzBz kernels, and the fused
+shrinking-round dispatch. Command-buffer GPU timestamps split synchronous
+wall into device execution, queue/wait residual, and host preparation.
+
+| slice / exact function | `2^22` | share | `2^24` | share |
+|---|---:|---:|---:|---:|
+| Uniskip message: `dispatch_t1` / `jk_outer_t1` | 0.059810 s | 38.42% | 0.237246 s | 39.80% |
+| First remainder message: `dispatch_azbz` / `jk_outer_azbz` | 0.053279 s | 34.23% | 0.207250 s | 34.77% |
+| Key evaluation: `claimed_inputs_from_record` | 0.025111 s | 16.13% | 0.101753 s | 17.07% |
+| Bound rounds: `bind_and_endpoints` / `jk_outer_round` | 0.017021 s | 10.93% | 0.048994 s | 8.22% |
+| Interpolation, derived weights, allocation, final host bind | 0.000439 s | 0.28% | 0.000819 s | 0.14% |
+| **Attributed total** | **0.155660 s** | **100%** | **0.596062 s** | **100%** |
+
+At `2^24`, T1 splits into 0.207570 s GPU + 0.025517 s wait +
+0.004159 s host; Az/Bz into 0.143864 + 0.062656 + 0.000730 s; the
+round loop into 0.019315 + 0.028435 + 0.001244 s. At `2^22`, the same
+splits are T1 0.052101 + 0.006711 + 0.000998 s, Az/Bz 0.035787 +
+0.017206 + 0.000286 s, and rounds 0.005021 + 0.011317 + 0.000683 s.
+
+The round loop is already fused: each `jk_outer_round` command buffer folds
+Az/Bz and produces q(0)/q(∞) in one dispatch. There is no st4-style
+message/bind host boundary to remove. The largest separately removable host
+slice is the final 35-opening `claimed_inputs_from_record` walk.
+
+### Isolated objective and change
+
+Added `jolt-eval` bench `spartan_outer_claims` at `2^22` and `2^24`:
+
+- deterministic full-width record lanes and production split-eq point;
+- exact setup oracle against `claimed_inputs_from_record` for all 35 claims;
+- shared `gpu_lock()`, record construction and oracle outside timing;
+- same-window host/Metal Criterion arms; no prover or transcript.
+
+`jk_outer_claims` maps one threadgroup to one outer-eq index and a four-column
+tile. Threads reduce inner-eq weighted native lane values; the host applies
+one outer-eq multiplication per partial. Nine tiles cover the 18 wide and 17
+boolean inputs without a full-T eq table. `output_claims` keeps the host
+fallback and gates Metal below the measured winning scale, `2^24`. Opening
+values and transcript bytes are unchanged.
+
+### Timing decision
+
+Criterion quick profile, 10 samples per arm, adjacent host/Metal arms:
+
+| size | host median (95% median CI) | Metal median (95% median CI) | result |
+|---|---:|---:|---:|
+| `2^22` primary | 25.373 ms (24.995–25.468) | 31.438 ms (31.301–31.983) | host wins 19.29%; gated |
+| `2^24` confirmation | 300.34 ms (289.86–302.95) | 115.43 ms (114.49–119.20) | **61.57% removed; 2.60x** |
+
+The `2^24` intervals do not overlap. Applying its 61.57% isolated reduction
+to the measured 17.07% final-key-evaluation share estimates **0.468 s removed**
+from the measured 4.456 s `2^27` stage: `4.456 -> 3.988 s` (**10.51%**).
+Against the 71.77 s flagship proof, the estimated whole-proof gain is
+**0.65%** (`71.77 -> 71.30 s`). Stage-calibrated estimate only; no end-to-end
+run. Retention bar clears; **GO**.
+
+### Verification
+
+- exact `2^22`, `2^24`, and targeted `2^8` host/device claim oracle passed;
+- existing full Metal/optimized Spartan outer package parity passed;
+- `cargo fmt` passed;
+- touched-crate clippy with `-D warnings` passed;
+- no end-to-end prover run.
