@@ -57,3 +57,64 @@ stage-calibrated estimate, not an end-to-end measurement.
 - `cargo clippy -p jolt-eval --all-targets ... -D warnings`
 - `cargo fmt --all`
 - no end-to-end prover run, per lane scope
+
+## st3: instruction-input round 0
+
+### Attribution
+
+The isolated fixture uses the production native lane types, eight-table
+geometry, low-to-high Gruen split, and first-bind dense allocation. A traced
+single pass separates the host message from the bind command buffer's GPU
+timestamp; residual is synchronous bind wall minus GPU execution, covering
+first-write residency, queue/wait, and host partial collection.
+
+| slice / exact function | `2^22` | share | `2^24` | share |
+|---|---:|---:|---:|---:|
+| Host message: `native_q_evals` | 0.011752 s | 33.41% | 0.044612 s | 40.41% |
+| Dense write + evaluation: `jk_instr_input_bind_native` GPU window | 0.010899 s | 30.99% | 0.029308 s | 26.55% |
+| First-write/sync residual: `ComputePass::run` / `PendingPass::wait` / `Partials::sums` | 0.012520 s | 35.60% | 0.036477 s | 33.04% |
+| **Combined front** | **0.035171 s** | **100%** | **0.110397 s** | **100%** |
+
+The `2^27` stage trace independently measures `native_q_evals` at 0.455 s
+and the dense bind round at 0.793 s. The host message is the largest growing,
+separately removable slice; the bind's device write and first-touch residual
+remain unchanged.
+
+### Isolated objective and change
+
+Added `jolt-eval` bench `instruction_input_round0` at `2^22` and `2^24`:
+
+- deterministic packed flags, u64 operands, full-range i128 immediates;
+- production split-eq factorization and eight `T/2` dense bind target;
+- exact setup-time oracle: device q(0..=3) equals `native_q_evals`;
+- shared `gpu_lock()`, setup/buffers outside Criterion timing.
+
+`jk_instr_input_q0` computes q(0), q(1), and the quadratic coefficient from
+native lanes. Boolean endpoint selection removes field products at q(0/1);
+flag transitions times operand slopes produce the quadratic term. Three
+device reductions replace the host walk, and the host reconstructs q(2/3).
+The existing host implementation remains the fail-closed fallback. Round
+polynomials and transcript bytes are unchanged.
+
+### Timing decision
+
+Criterion, 10 samples, 5 s measurement per case:
+
+| size | before median (95% median CI) | after median (95% median CI) | reduction |
+|---|---:|---:|---:|
+| `2^22` primary | 32.055792 ms (30.621938–33.365754) | 3.810223 ms (3.804239–3.812924) | 88.1138%; 8.4131x |
+| `2^24` confirmation | 139.642703 ms (135.926600–142.529087) | 15.148045 ms (14.628770–15.630624) | 89.1523%; 9.2185x |
+
+Both confidence intervals are disjoint. Applying the primary isolated ratio
+to the measured 0.455 s `2^27` host slice estimates **0.400918 s removed**:
+stage 3 `2.340 -> 1.939 s` (**17.13%**) and flagship proof
+`71.77 -> 71.37 s` (**0.56%**). This is a stage-calibrated estimate, not an
+end-to-end measurement. Retention bar (`>= 0.3 s`) clears; **GO**.
+
+### Verification
+
+- exact `2^22` and `2^24` fixture oracle passed;
+- targeted Metal instruction-input parity: **3/3 passed**;
+- `cargo fmt --all` passed;
+- touched-crate clippy with `-D warnings` passed;
+- no end-to-end prover run.

@@ -50,6 +50,8 @@ pub use bytecode_read_raf::MetalBytecodeReadRafCycle;
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
 pub use inc_claim_reduction::MetalIncClaimReduction;
 pub use instruction_claim_reduction::MetalInstructionClaimReduction;
+#[cfg(feature = "bench-utils")]
+pub use instruction_input::bench::InstructionInputRound0Fixture;
 pub use instruction_input::MetalInstructionInput;
 pub use instruction_read_raf::MetalInstructionReadRaf;
 pub use joint_opening::MetalJointOpening;

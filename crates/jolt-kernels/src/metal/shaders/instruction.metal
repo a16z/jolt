@@ -754,6 +754,97 @@ inline Fr256 jk_fr_flag(uint w, uint bit) {
     return r;
 }
 
+inline Fr256 jk_ii_select(bool selected, Fr256 value) {
+    uint mask = 0u - uint(selected);
+    Fr256 out;
+    for (uint i = 0; i < FR_LIMBS; i++) {
+        out.v[i] = value.v[i] & mask;
+    }
+    return out;
+}
+
+// Quadratic coefficient of f(t)·v(t), where f is Boolean at t=0,1.
+inline Fr256 jk_ii_flag_times_slope(bool f0, bool f1, Fr256 v0, Fr256 v1) {
+    Fr256 slope = fr_sub(v1, v0);
+    Fr256 rising = jk_ii_select(!f0 && f1, slope);
+    Fr256 falling = jk_ii_select(f0 && !f1, slope);
+    return fr_sub(rising, falling);
+}
+
+struct InstrInputQ0Params {
+    uint groups;        // native row pairs = T/2
+    uint num_tgs;
+    uint log_in;        // log2(e_in length)
+    uint flag_bits[4];  // packed-lane bit of is_rs1, is_pc, is_rs2, is_imm
+    uint gamma[FR_LIMBS];
+};
+
+// Native round-0 message. Each operand product is quadratic in t. Boolean
+// endpoint selection gives q(0), q(1) without a field multiplication; the
+// flag-transition times operand slope gives the quadratic coefficient.
+// Three weighted reductions reconstruct q(2), q(3) on the host.
+kernel void jk_instr_input_q0(
+    device const uint* flags [[buffer(0)]],
+    device const ulong* rs1 [[buffer(1)]],
+    device const ulong* upc [[buffer(2)]],
+    device const ulong* rs2 [[buffer(3)]],
+    device const uint* imm [[buffer(4)]],  // 4 LE u32 words per cycle
+    device const uint* e_in [[buffer(5)]],
+    device const uint* e_out [[buffer(6)]],
+    device uint* partials [[buffer(7)]],
+    constant InstrInputQ0Params& p [[buffer(8)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < p.groups;
+    Fr256 q0 = fr_zero();
+    Fr256 q1 = fr_zero();
+    Fr256 qa = fr_zero();
+    Fr256 eq = fr_zero();
+    if (active) {
+        uint j = 2u * gid;
+        uint w0 = flags[j], w1 = flags[j + 1u];
+        bool rs1_f0 = ((w0 >> p.flag_bits[0]) & 1u) != 0u;
+        bool rs1_f1 = ((w1 >> p.flag_bits[0]) & 1u) != 0u;
+        bool pc_f0 = ((w0 >> p.flag_bits[1]) & 1u) != 0u;
+        bool pc_f1 = ((w1 >> p.flag_bits[1]) & 1u) != 0u;
+        bool rs2_f0 = ((w0 >> p.flag_bits[2]) & 1u) != 0u;
+        bool rs2_f1 = ((w1 >> p.flag_bits[2]) & 1u) != 0u;
+        bool imm_f0 = ((w0 >> p.flag_bits[3]) & 1u) != 0u;
+        bool imm_f1 = ((w1 >> p.flag_bits[3]) & 1u) != 0u;
+
+        Fr256 rs1_0 = jk_fr_mont_from_u64(rs1[j]);
+        Fr256 rs1_1 = jk_fr_mont_from_u64(rs1[j + 1u]);
+        Fr256 upc_0 = jk_fr_mont_from_u64(upc[j]);
+        Fr256 upc_1 = jk_fr_mont_from_u64(upc[j + 1u]);
+        Fr256 rs2_0 = jk_fr_mont_from_u64(rs2[j]);
+        Fr256 rs2_1 = jk_fr_mont_from_u64(rs2[j + 1u]);
+        uint k = 4u * j;
+        Fr256 imm_0 = fr_from_i128(imm[k], imm[k + 1u], imm[k + 2u], imm[k + 3u]);
+        Fr256 imm_1 = fr_from_i128(imm[k + 4u], imm[k + 5u], imm[k + 6u], imm[k + 7u]);
+
+        Fr256 left0 = fr_add(jk_ii_select(rs1_f0, rs1_0), jk_ii_select(pc_f0, upc_0));
+        Fr256 left1 = fr_add(jk_ii_select(rs1_f1, rs1_1), jk_ii_select(pc_f1, upc_1));
+        Fr256 right0 = fr_add(jk_ii_select(rs2_f0, rs2_0), jk_ii_select(imm_f0, imm_0));
+        Fr256 right1 = fr_add(jk_ii_select(rs2_f1, rs2_1), jk_ii_select(imm_f1, imm_1));
+        Fr256 left_a = fr_add(jk_ii_flag_times_slope(rs1_f0, rs1_f1, rs1_0, rs1_1),
+                              jk_ii_flag_times_slope(pc_f0, pc_f1, upc_0, upc_1));
+        Fr256 right_a = fr_add(jk_ii_flag_times_slope(rs2_f0, rs2_f1, rs2_0, rs2_1),
+                               jk_ii_flag_times_slope(imm_f0, imm_f1, imm_0, imm_1));
+        Fr256 gamma = fr_load_const(p.gamma, 0);
+        q0 = fr_add(right0, fr_mont_mul(gamma, left0));
+        q1 = fr_add(right1, fr_mont_mul(gamma, left1));
+        qa = fr_add(right_a, fr_mont_mul(gamma, left_a));
+        eq = fr_mont_mul(fr_load(e_out, gid >> p.log_in),
+                         fr_load(e_in, gid & ((1u << p.log_in) - 1u)));
+    }
+    jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, q0), partials, 0u, p.num_tgs);
+    jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, q1), partials, 1u, p.num_tgs);
+    jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, qa), partials, 2u, p.num_tgs);
+}
+
 // Fold one table's quad (e0, e1) → lo, (e2, e3) → hi with r, store the pair
 // at nxt[2y], nxt[2y+1], and hand back (value at t=0, step) of the pair's
 // linear extension.
