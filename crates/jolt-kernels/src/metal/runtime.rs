@@ -121,7 +121,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 69] = [
+    pub const ALL: [Self; 70] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
