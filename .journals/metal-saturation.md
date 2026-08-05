@@ -508,3 +508,43 @@ Running total (stage-calibrated estimates, uncertified): st7 −0.78 s,
 st6b −0.5..−1.5 s, st3 −0.40 s ⇒ ~**−1.7..−2.7 s** vs 71.77 s flagship.
 Pending: Bool driver, st1, Gate-1 (radix4). Wave-2 gate (full battery +
 2^25/2^27 certification) after those settle.
+
+### Wake 4 (00:53 UTC): Gate 1 FAIL — address-first door killed entirely
+
+**bdcc152e Gate-1 verdict: FAIL, pre-registered kill line hit decisively.**
+Honest parallel (Rayon, release) CPU implementation of the full address
+phase with the complete parity battery (dense 128×T reference, boundary
+cases, 64 per-fold probes — all passing):
+
+| cycles | binary 7-message | radix-4 [P4,P4,P4,S] | ratio |
+|---:|---:|---:|---:|
+| 2^22 | 1.099 s | 1.467 s | 1.334× |
+| 2^24 | 6.303 s | 7.104 s | 1.127× |
+
+Both arms **>42× over the 0.15 s @2^24 kill line**, and radix-4 loses to
+binary at both scales (the 4-child merge + 7-point extension costs more
+than it saves in passes). Extrapolated to 2^27 the run-list address phase
+alone (~50 s) would dwarf the 5.86 s sparse prefix it was to replace —
+the modeled 1.5–2.5 s prize was predicated on ~0.15 s and is arithmetic
+fiction at the measured cost. No implementation-quality escape: even a
+perfect further ×10 leaves the phase above the kill line. **KILLED:
+st4 address-first restructuring, both arms (binary AND radix-4) — closes
+the campaign-close parked probe AND the radix-4 map's sole conditional GO.**
+
+Durable salvage merged (`eb31df7f5` map, `a25aa6793` objective):
+- `RegistersAddressPhase` objective + the full boundary parity suite;
+- **normative Level-0 Val temporal convention** (oracle Q3 answer, cited
+  to code): `Val(k,j)` = pre-state of cycle j; write at j effective at
+  j+1; same-cycle reads see pre-state; cycle-0 run `(0,0)` for every
+  register; final-cycle writes emit no run; x0 writes discarded.
+
+**Radix-4 / protocol-restructuring thread status after Gate 1:** closed
+for this wave. Remaining doors, all wave-3+ and none scheduled: typed-Dory
+st6b/st7 packing (oracle ec0b50d07d63 GO; prize shrinks as the st6b
+adoption fix lands — must be re-priced against the post-fix anatomy),
+st1 packing (await e371fb72's attribution). The isolated bind4 kernel
+remains sound research on the trunk.
+
+Worktrees pruned: metal-w2-{radix4,st0,harness,r4gate1} removed (merged).
+Active: metal-w2-hostgaps (st1) · metal-w2-st6b (Bool). Wave-2 gate
+(full battery + 2^25/2^27 certification) fires when those two land.
