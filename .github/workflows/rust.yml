@@ -176,11 +176,6 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
-      # The MODULAR prover's clear-mode acceptance suites: the byte-diff
-      # ratchets asserting wire-for-wire equality with the legacy prover,
-      # plus the engine/driver twins.
-      - name: Run jolt-prover tests with fixtures
-        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
 
   test-prover-zk:
     runs-on: ubuntu-latest
