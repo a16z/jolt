@@ -50,6 +50,9 @@ baseline's window; baseline-window model ≈ 64 s.
 - Generic radix-4/round-pairing outside st4: slots already fuse bind+eval;
   packed challenges are rank-2 weights, illegal in Dory opening points.
 - `malloc_zone_pressure_relief` on freed huge regions: no-op.
+- st6b gather residual kernels: measured NO-GO — width-1/2/4 lazy gathers
+  are the mass (75/43/31 ms @2^24); row-batching and SIMD-reduction
+  prototypes both overlapped baseline. Attribution harness retained.
 
 ## Parked doors
 
@@ -57,8 +60,6 @@ baseline's window; baseline-window model ≈ 64 s.
   (ec0b50d07d63); re-price against post-adoption-fix st6b anatomy.
 - st0 bg12 E-cluster commit + starvation guard: fail-unsafe without guard;
   needs explicit mandate + 2^27 cert.
-- st6b gather residual (7.0 s: jk_ra_gather branch tables, waits, tail
-  occupancy) — next lane slot.
 - Radix-4 packed round oracle-SOUND (3dbb9c10e48a Q1/Q2/Q4) if a PCS-clean
   cheap-state site appears; Val temporal convention pinned in
   metal-w2-r4gate1.md.
@@ -81,3 +82,4 @@ Doctrine: single-kernel + prepare→GPU. Off `3830f4da8`+.
 - **st5 IRR phase-scan: GO, merged.** 2^24 41.12→18.91 ms (−54.0%), modeled st5 −2.68 s @2^27 (14.81→~12.13). `36485d52e` — collision-only SIMD scatter replaces full-width scan. Parity 10/10+10/10.
 - **st4 GPU CSR prepare (W2B salvage): RETAIN, merged.** 2^24 985.11→136.46 ms (−86.1%), modeled ≥1.58 s @2^27, alloc Δ0. Loop fusion NO-GO (−5.7%, JOLT_REGRW_FUSED=1 opt-in probe). `c3222b7ce` — exact legacy CSR built on device. Parity 4/4.
 - **st6b IncCR prepare → GPU: RETAIN, merged.** 2^24 465-490→80-83 ms (−83%), modeled −1.48 s @2^27. st5 bucket attempt reverted (0.07 s, below bar). `1a6c6ff58` — jk_inc_prepare split-eq paired weights, detached fill overlapped with host column materialization. Oracle+transcript parity green. Inventory: st3 SpartanShift 0.66 s below bar; sweep complete.
+- **st6b gathers: NO-GO, merged (docs+harness).** Lazy 178-185 ms of 258-265 ms deferred-RAV @2^24; both prototypes ≈ baseline. `01751baaa` — gather is already ALU/latency-optimal at these widths. Parity 14/14.
