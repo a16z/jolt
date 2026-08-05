@@ -630,3 +630,27 @@ Lanes dispatched (worktrees off `3830f4da8`):
 Parked (not scheduled): typed-Dory st6b/st7 packing (needs post-fix
 re-pricing); st6b gather residual (7.0 s — next lane slot); st0 bg12 +
 starvation guard (fail-unsafe, needs explicit mandate); st1 residual.
+
+### Night mandate (01:49 UTC, user)
+
+Waves run continuously through the night. Two emphases: (1) **prepare
+functions → GPU** — sweep all stages for offloadable host prepare/setup
+work; the W2B post-mortem (gpu-util journal) is the anchor: its device
+prepare build worked in isolation (**−64.6% cool @2^25**, 2.449 s serial
+host slice) and both W2B rejections were round-loop deaths, never the
+prepare — salvage code preserved on `gpu/util-w2b`. (2) **every-kernel
+sweep** under the single-kernel jolt-eval discipline. Gates unchanged.
+
+Fleet updates:
+- **6add005e st4 lane steered:** now owns both st4 doors — W2B prepare
+  salvage FIRST (device build onto unchanged rounds, byte-identical CSR
+  oracle, ≤+1 GiB @2^27, prize ≈ −1.6 s), then the original round-loop
+  waits/scan fusion.
+- **9972a64a prepsweep spawned (sol-xhigh, metal-w3-prepsweep):**
+  cross-stage prepare inventory (every ≥0.2 s host prepare slice, st4
+  excluded) + cut the biggest — expected #1: st6b `IncCR::prepare` 1.79 s
+  (untouched by the adoption fixes). Byte-identical oracle, ≥40% slice /
+  ≥0.4 s bar per cut.
+
+Fleet: 6add005e (st4 prepare+loop) · eb10eb25 (st5 kernel) · c32db501
+(st8 occupancy) · 9972a64a (prepare sweep).
