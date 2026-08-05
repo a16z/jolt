@@ -29,6 +29,52 @@ CANDIDATE_STATUSES = {"queued", "accepted_parent", "promoted", "rejected"}
 EVALUATOR_LOCK_PATH = Path("/private/tmp/jolt-metal-autoresearch-evaluator.lock")
 EVALUATOR_LOCK_HELD_ENV = "JOLT_METAL_EVAL_LOCK_HELD"
 CANDIDATE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
+COMMON_PRODUCTION_GUARDS = frozenset(
+    {
+        "cpu_proofs_verified",
+        "metal_proofs_verified",
+        "target_scale",
+        "production_contract",
+        "local_kernel_attributed",
+        "local_kernel_metal_backend_exercised",
+        "stable_source",
+        "stable_binary",
+    }
+)
+PRODUCTION_LOCAL_KERNELS = {
+    "InstructionRaVirtualization": {
+        "metric": "instruction_ra_speedup",
+        "paired_metric": "paired_instruction_ra_speedups",
+        "parameters": frozenset(
+            {
+                "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_WIDTH",
+                "JOLT_METAL_INSTRUCTION_RA_REUSE_INVERSE",
+            }
+        ),
+        "required_guards": COMMON_PRODUCTION_GUARDS,
+    },
+    "BytecodeReadRafCycle": {
+        "metric": "bytecode_read_raf_cycle_speedup",
+        "paired_metric": "paired_bytecode_read_raf_cycle_speedups",
+        "parameters": frozenset(
+            {
+                "JOLT_METAL_BYTECODE_MESSAGE_THREADS",
+                "JOLT_METAL_BYTECODE_TRANSITION_THREADS",
+                "JOLT_METAL_BYTECODE_MAX_THREADGROUPS",
+                "JOLT_METAL_BYTECODE_CUTOFF_LOG2",
+                "JOLT_METAL_BYTECODE_TRACE_CUTOFF_LOG2",
+            }
+        ),
+        "required_guards": COMMON_PRODUCTION_GUARDS
+        | {
+            "bytecode_q10_cpu_control",
+            "bytecode_metal_backend_exercised",
+            "bytecode_working_set_admitted",
+            "bytecode_readback_exact",
+            "bytecode_local_gate",
+        },
+    },
+}
 
 
 def utc_now() -> str:
@@ -205,6 +251,22 @@ def parse_schema_result(stdout: str, schema_version: int) -> dict[str, Any]:
     )
 
 
+def parse_unique_schema_result(stdout: str, schema_version: int) -> dict[str, Any]:
+    matches = []
+    for line in stdout.splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("schema_version") == schema_version:
+            matches.append(value)
+    if len(matches) != 1:
+        raise ValueError(
+            f"evaluator stdout must contain exactly one schema-version {schema_version} JSON object"
+        )
+    return matches[0]
+
+
 def parse_result(stdout: str) -> dict[str, Any]:
     return parse_schema_result(stdout, SCHEMA_VERSION)
 
@@ -292,6 +354,133 @@ def validate_template(template: dict[str, Any]) -> None:
             raise ValueError("production promotion requires an executable evaluator command")
         if int(evaluator.get("timeout_seconds", 0)) < 1:
             raise ValueError("production evaluator timeout must be positive")
+        result_schema = int(evaluator.get("schema_version", 4))
+        if result_schema not in {4, 5}:
+            raise ValueError("production evaluator schema must be 4 or 5")
+        local_kernel = gate.get("local_kernel")
+        if local_kernel is not None and result_schema != 5:
+            raise ValueError("named local-kernel production gates require schema 5")
+        if result_schema == 5 and local_kernel not in PRODUCTION_LOCAL_KERNELS:
+            raise ValueError("schema-5 production gates require a known local kernel")
+        if local_kernel is not None:
+            descriptor = PRODUCTION_LOCAL_KERNELS.get(local_kernel)
+            if descriptor is None:
+                raise ValueError("production gate names an unknown local kernel")
+            if gate.get("metric") != descriptor["metric"]:
+                raise ValueError("production scalar metric does not match the local kernel")
+            if gate.get("paired_metric") != descriptor["paired_metric"]:
+                raise ValueError("production paired metric does not match the local kernel")
+            missing_guards = sorted(
+                descriptor["required_guards"] - set(gate.get("required_guards", []))
+            )
+            if missing_guards:
+                raise ValueError(
+                    f"production gate omits mandatory local-kernel guards: {missing_guards}"
+                )
+        elif not isinstance(
+            gate.get("paired_metric", "paired_instruction_ra_speedups"), str
+        ):
+            raise ValueError("production promotion requires a paired local metric")
+
+        bindings = evaluator.get("parameter_bindings")
+        if bindings is not None:
+            if not isinstance(bindings, list):
+                raise ValueError("production parameter bindings must be a list")
+            expected_fingerprint = gate.get("expected_fingerprint", {})
+            if not isinstance(expected_fingerprint, dict):
+                raise ValueError("expected production fingerprint must be an object")
+            binding_parameters = [binding.get("parameter") for binding in bindings]
+            fingerprint_parameters = [
+                specification.get("parameter")
+                for specification in expected_fingerprint.values()
+                if isinstance(specification, dict)
+            ]
+            if len(binding_parameters) != len(set(binding_parameters)):
+                raise ValueError("production parameter bindings must be unique")
+            if len(fingerprint_parameters) != len(expected_fingerprint) or len(
+                fingerprint_parameters
+            ) != len(set(fingerprint_parameters)):
+                raise ValueError("production fingerprint parameters must be unique")
+            if set(binding_parameters) != set(fingerprint_parameters):
+                raise ValueError(
+                    "production parameter bindings and fingerprint parameters must match"
+                )
+            if local_kernel is not None and set(binding_parameters) != descriptor["parameters"]:
+                raise ValueError(
+                    "production parameter bindings do not cover the local-kernel contract"
+                )
+
+            flags = []
+            environment_names = []
+            for binding in bindings:
+                parameter = binding.get("parameter")
+                if parameter not in search_space or parameter not in template.get(
+                    "baseline_params", {}
+                ):
+                    raise ValueError(
+                        "production parameter binding must name a baseline search parameter"
+                    )
+                destination = binding.get("destination")
+                if destination == "argument":
+                    flag = binding.get("flag")
+                    value_format = binding.get("value_format")
+                    if (
+                        not isinstance(flag, str)
+                        or not flag.startswith("--")
+                        or not isinstance(value_format, str)
+                        or value_format.count("{}") != 1
+                    ):
+                        raise ValueError(
+                            "argument bindings require a safe flag and one-value format"
+                        )
+                    if flag in {"--mode", "--local-kernel"}:
+                        raise ValueError("production bindings cannot override reserved flags")
+                    try:
+                        rendered = value_format.format("value")
+                    except (IndexError, KeyError, ValueError) as error:
+                        raise ValueError("invalid production argument value_format") from error
+                    if not rendered or any(character.isspace() for character in rendered):
+                        raise ValueError("production argument values must be one token")
+                    flags.append(flag)
+                elif destination == "boolean_flag":
+                    flag = binding.get("flag")
+                    if (
+                        not isinstance(flag, str)
+                        or not flag.startswith("--")
+                        or str(binding.get("true_value")) != "1"
+                        or {str(value) for value in search_space[parameter]} - {"0", "1"}
+                    ):
+                        raise ValueError("invalid production Boolean flag binding")
+                    if flag in {"--mode", "--local-kernel"}:
+                        raise ValueError("production bindings cannot override reserved flags")
+                    flags.append(flag)
+                elif destination == "environment":
+                    name = binding.get("name")
+                    if (
+                        not isinstance(name, str)
+                        or not name.startswith("JOLT_METAL_")
+                        or name == EVALUATOR_LOCK_HELD_ENV
+                        or name in evaluator.get("env", {})
+                    ):
+                        raise ValueError("production environment bindings require JOLT_METAL_ names")
+                    environment_names.append(name)
+                else:
+                    raise ValueError("unknown production parameter binding destination")
+            if len(flags) != len(set(flags)) or any(
+                flag in evaluator["command"] for flag in flags
+            ):
+                raise ValueError("production argument flags must be unique and unbound")
+            if len(environment_names) != len(set(environment_names)):
+                raise ValueError("production environment names must be unique")
+            for specification in expected_fingerprint.values():
+                if specification.get("type") not in {"int", "bool01", "str"}:
+                    raise ValueError("unsupported production fingerprint conversion")
+        elif local_kernel is not None and descriptor["parameters"]:
+            raise ValueError("local-kernel production gates require parameter bindings")
+        if any(flag in evaluator["command"] for flag in ("--mode", "--local-kernel")):
+            raise ValueError("production evaluator command contains a reserved controller flag")
+        if EVALUATOR_LOCK_HELD_ENV in evaluator.get("env", {}):
+            raise ValueError("production evaluator environment cannot override the lock token")
 
 
 def validate_goal_contract(contract: dict[str, Any]) -> None:
@@ -413,6 +602,19 @@ def guards_pass(config: dict[str, Any], output: dict[str, Any]) -> tuple[bool, s
     return True, "all guards passed"
 
 
+def expected_fingerprint_value(specification: dict[str, Any], value: str) -> Any:
+    conversion = specification["type"]
+    if conversion == "int":
+        return int(value)
+    if conversion == "bool01":
+        if value not in {"0", "1"}:
+            raise ValueError("bool01 production parameters must be zero or one")
+        return value == "1"
+    if conversion == "str":
+        return value
+    raise ValueError(f"unknown fingerprint conversion {conversion}")
+
+
 def validate_production_result(
     config: dict[str, Any],
     result: dict[str, Any],
@@ -421,8 +623,22 @@ def validate_production_result(
     current_worktree_clean: bool,
 ) -> dict[str, Any]:
     gate = config["final_validation"].get("production_gate", {})
-    if result.get("schema_version") != 4 or result.get("kernel") != "akita_piop":
-        raise ValueError("production validation requires a schema-4 Akita PIOP result")
+    result_schema = int(gate.get("evaluator", {}).get("schema_version", 4))
+    if result.get("schema_version") != result_schema or result.get("kernel") != "akita_piop":
+        raise ValueError(
+            f"production validation requires a schema-{result_schema} Akita PIOP result"
+        )
+    local_kernel = gate.get("local_kernel")
+    if local_kernel is not None:
+        descriptor = PRODUCTION_LOCAL_KERNELS[local_kernel]
+        if result.get("local_kernel") != local_kernel or result.get("local_metric") != {
+            "metric": descriptor["metric"],
+            "paired_metric": descriptor["paired_metric"],
+        }:
+            raise ValueError("production result local-kernel descriptor does not match the gate")
+        run_class = result.get("run_class")
+        if run_class != {"mode": "production", "acceptance_eligible": True}:
+            raise ValueError("production result was not emitted under the production contract")
     guards = result.get("guards", {})
     if not isinstance(guards, dict):
         raise ValueError("production result has no guard object")
@@ -441,6 +657,8 @@ def validate_production_result(
     pairs = metrics.get("paired_speedups")
     if not isinstance(pairs, list) or len(pairs) < int(gate["minimum_pairs"]):
         raise ValueError("production result has too few paired observations")
+    if local_kernel is not None and len(pairs) != int(gate["minimum_pairs"]):
+        raise ValueError("production result must contain exactly the contracted pair count")
     if any(
         isinstance(value, bool)
         or not isinstance(value, (int, float))
@@ -449,7 +667,8 @@ def validate_production_result(
         for value in pairs
     ):
         raise ValueError("production result has invalid paired PIOP speedups")
-    local_pairs = metrics.get("paired_instruction_ra_speedups")
+    paired_metric = gate.get("paired_metric", "paired_instruction_ra_speedups")
+    local_pairs = metrics.get(paired_metric)
     if not isinstance(local_pairs, list) or len(local_pairs) != len(pairs):
         raise ValueError("production result has incomplete local paired observations")
     if any(
@@ -462,6 +681,47 @@ def validate_production_result(
         raise ValueError("production result has invalid local paired speedups")
     if not math.isclose(float(metric), statistics.median(local_pairs), rel_tol=1e-12):
         raise ValueError("production local-speedup summary disagrees with its pairs")
+    if local_kernel == "BytecodeReadRafCycle":
+        decision = metrics.get("bytecode_read_raf_cycle_decision")
+        if not isinstance(decision, dict) or decision.get("clears") is not True:
+            raise ValueError("production Bytecode result did not clear its fixed local decision")
+        decision_speedup = decision.get("median_speedup")
+        if not math.isclose(
+            float(decision_speedup)
+            if isinstance(decision_speedup, (int, float))
+            and not isinstance(decision_speedup, bool)
+            else math.nan,
+            float(metric),
+            rel_tol=1e-12,
+        ):
+            raise ValueError("production Bytecode decision disagrees with its scalar metric")
+        pair_records = result.get("pairs")
+        if not isinstance(pair_records, list) or len(pair_records) != len(local_pairs):
+            raise ValueError("production Bytecode result has incomplete raw pair records")
+        for index, (record, local_speedup) in enumerate(zip(pair_records, local_pairs)):
+            expected_order = (
+                ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+            )
+            if not isinstance(record, dict) or record.get("order") != expected_order:
+                raise ValueError("production Bytecode raw pair order is invalid")
+            arms = record.get("arms", {})
+            try:
+                cpu_member = arms["optimized"]["bytecode"]["member_ns"]
+                metal_member = arms["metal"]["bytecode"]["member_ns"]
+            except (KeyError, TypeError) as error:
+                raise ValueError("production Bytecode raw pair is incomplete") from error
+            if (
+                isinstance(cpu_member, bool)
+                or not isinstance(cpu_member, int)
+                or cpu_member <= 0
+                or isinstance(metal_member, bool)
+                or not isinstance(metal_member, int)
+                or metal_member <= 0
+                or not math.isclose(
+                    float(local_speedup), cpu_member / metal_member, rel_tol=1e-9
+                )
+            ):
+                raise ValueError("production Bytecode raw pair disagrees with its speedup")
     piop_speedup = metrics.get("piop_speedup")
     if (
         isinstance(piop_speedup, bool)
@@ -475,6 +735,8 @@ def validate_production_result(
         raise ValueError("production result has no fingerprint object")
     if fingerprint.get("git_revision") != expected_revision:
         raise ValueError("production result revision does not match the accepted source")
+    if local_kernel is not None and fingerprint.get("local_kernel") != local_kernel:
+        raise ValueError("production fingerprint used the wrong local kernel")
     if gate.get("require_clean_worktree") and (
         fingerprint.get("worktree_dirty") is not False or not current_worktree_clean
     ):
@@ -497,17 +759,12 @@ def validate_production_result(
         parameter = specification["parameter"]
         if parameter not in expected_params:
             raise ValueError(f"accepted parameters are missing {parameter}")
-        expected: Any = expected_params[parameter]
-        if specification["type"] == "int":
-            expected = int(expected)
-        elif specification["type"] == "bool01":
-            expected = expected == "1"
-        else:
-            raise ValueError(f"unknown fingerprint conversion for {name}")
+        expected = expected_fingerprint_value(specification, expected_params[parameter])
         if fingerprint.get(name) != expected:
             raise ValueError(f"production fingerprint does not match {parameter}")
     return {
         "metric": metric_name,
+        "paired_metric": paired_metric,
         "metric_value": float(metric),
         "minimum_local_speedup": float(gate["minimum_local_speedup"]),
         "pairs": len(pairs),
@@ -1185,12 +1442,51 @@ def run_production_evaluator(
     gate = config["final_validation"]["production_gate"]
     evaluator = gate["evaluator"]
     command = [str(item) for item in evaluator["command"]]
-    fingerprint = gate["expected_fingerprint"]
-    width_parameter = fingerprint["instruction_ra_materialize_width"]["parameter"]
-    reuse_parameter = fingerprint["instruction_ra_reuse_inverse"]["parameter"]
-    command.extend(["--instruction-ra-materialize-width", params[width_parameter]])
-    if params[reuse_parameter] == "1":
-        command.append("--instruction-ra-reuse-inverse")
+    local_kernel = gate.get("local_kernel")
+    if local_kernel is not None:
+        command.extend(["--mode", "production", "--local-kernel", local_kernel])
+    inherited = os.environ.copy()
+    lock_token = inherited.get(EVALUATOR_LOCK_HELD_ENV)
+    environment = {
+        name: value
+        for name, value in inherited.items()
+        if not name.startswith("JOLT_METAL_")
+        and not name.startswith("JOLT_AUTORESEARCH_")
+    }
+    if lock_token is not None:
+        environment[EVALUATOR_LOCK_HELD_ENV] = lock_token
+    environment.update(
+        {str(name): str(value) for name, value in evaluator.get("env", {}).items()}
+    )
+    bindings = evaluator.get("parameter_bindings")
+    if bindings is None:
+        fingerprint = gate.get("expected_fingerprint", {})
+        width = fingerprint.get("instruction_ra_materialize_width")
+        reuse = fingerprint.get("instruction_ra_reuse_inverse")
+        if width is not None and reuse is not None:
+            command.extend(
+                ["--instruction-ra-materialize-width", params[width["parameter"]]]
+            )
+            reuse_value = params[reuse["parameter"]]
+            if reuse_value not in {"0", "1"}:
+                raise ValueError("legacy production reuse parameter must be zero or one")
+            if reuse_value == "1":
+                command.append("--instruction-ra-reuse-inverse")
+        elif width is not None or reuse is not None:
+            raise ValueError("legacy production fingerprint must bind both Instruction RA flags")
+    else:
+        for binding in bindings:
+            value = params[binding["parameter"]]
+            destination = binding["destination"]
+            if destination == "argument":
+                command.extend(
+                    [binding["flag"], str(binding["value_format"]).format(value)]
+                )
+            elif destination == "boolean_flag":
+                if value == str(binding["true_value"]):
+                    command.append(binding["flag"])
+            elif destination == "environment":
+                environment[binding["name"]] = value
 
     attempts = run_dir / "production-attempts"
     attempts.mkdir(exist_ok=True)
@@ -1200,6 +1496,7 @@ def run_production_evaluator(
         completed = subprocess.run(
             command,
             cwd=root,
+            env=environment,
             timeout=int(evaluator["timeout_seconds"]),
             capture_output=True,
             text=True,
@@ -1214,7 +1511,12 @@ def run_production_evaluator(
     (attempt / "stderr.log").write_text(completed.stderr)
     if completed.returncode != 0:
         raise ValueError(f"production evaluator exited with status {completed.returncode}")
-    result = parse_schema_result(completed.stdout, 4)
+    result_schema = int(evaluator.get("schema_version", 4))
+    result = (
+        parse_unique_schema_result(completed.stdout, result_schema)
+        if result_schema == 5
+        else parse_schema_result(completed.stdout, result_schema)
+    )
     result_bytes = canonical_json(result)
     (attempt / "result.json").write_bytes(result_bytes)
     return result, result_bytes, attempt

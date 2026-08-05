@@ -9,6 +9,7 @@ import json
 import math
 import os
 import platform
+import re
 import shutil
 import statistics
 import subprocess
@@ -24,9 +25,52 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
+BYTECODE_KERNEL = "BytecodeReadRafCycle"
+BYTECODE_COMPONENTS = ("prepare", "prove_round", "finish_rounds", "output_claims")
+BYTECODE_METAL_PHASES = (
+    "prepare",
+    "allocation_plan",
+    "first_message",
+    "first_bind",
+    "dense_round",
+    "readback",
+    "cpu_tail",
+    "invalid_round",
+)
+BYTECODE_MIN_SPEEDUP = 4.0
+PRODUCTION_PAIRS = 5
+LOCAL_KERNELS = {
+    "BytecodeReadRafCycle": {
+        "name": BYTECODE_KERNEL,
+        "metric": "bytecode_read_raf_cycle_speedup",
+        "paired_metric": "paired_bytecode_read_raf_cycle_speedups",
+        "backend_prefix": "MetalBytecodeReadRafCycle::",
+    },
+    "InstructionRaVirtualization": {
+        "name": "InstructionRaVirtualization",
+        "metric": "instruction_ra_speedup",
+        "paired_metric": "paired_instruction_ra_speedups",
+        "backend_prefix": "MetalInstructionRaVirtualization::",
+    },
+}
+BYTECODE_CONFIG_RE = re.compile(
+    r"^BYTECODE_CYCLE_CONFIG requested=(?P<requested>\S+) "
+    r"effective=(?P<effective>\S+) log_t=(?P<log_t>\d+) "
+    r"log_k=(?P<log_k>\d+) chunk_bits=(?P<chunk_bits>\d+) "
+    r"num_ra=(?P<num_ra>\d+) degree=(?P<degree>\d+)$"
+)
+BYTECODE_METAL_CONFIG_RE = re.compile(
+    r"^BYTECODE_METAL_CONFIG backend=metal cpu_tail=(?P<cpu_tail>\S+) "
+    r"trace_cutoff=(?P<trace_cutoff>\d+) cutoff=(?P<cutoff>\d+) "
+    r"message_threads=(?P<message_threads>\d+) "
+    r"transition_threads=(?P<transition_threads>\d+) "
+    r"max_threadgroups=(?P<max_threadgroups>\d+)$"
+)
+MAX_RSS_RE = re.compile(r"^\s*(?P<bytes>\d+)\s+maximum resident set size\s*$", re.MULTILINE)
 
 
 def span_intervals_us(
@@ -51,6 +95,49 @@ def span_intervals_us(
             if not starts:
                 raise ValueError(f"trace has an unmatched end event for {name}")
             intervals.append((name, starts.pop(), float(event["ts"])))
+    if any(starts for starts in stacks.values()):
+        raise ValueError("trace has an unmatched begin event")
+    return intervals
+
+
+def strict_named_intervals(
+    events: list[dict[str, Any]], names: set[str]
+) -> dict[str, list[tuple[float, float]]]:
+    intervals = {name: [] for name in names}
+    stacks: dict[tuple[Any, Any, str], list[float]] = {}
+    for event in events:
+        name = event.get("name")
+        if name not in names:
+            continue
+        try:
+            timestamp = float(event["ts"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"{name} has an invalid timestamp") from error
+        if not math.isfinite(timestamp):
+            raise ValueError(f"{name} has a non-finite timestamp")
+        phase = event.get("ph")
+        if phase == "X":
+            try:
+                duration = float(event["dur"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"{name} has an invalid duration") from error
+            if not math.isfinite(duration) or duration <= 0.0:
+                raise ValueError(f"{name} has a non-positive duration")
+            intervals[name].append((timestamp, timestamp + duration))
+        elif phase == "B":
+            stacks.setdefault((event.get("pid"), event.get("tid"), name), []).append(
+                timestamp
+            )
+        elif phase == "E":
+            starts = stacks.get((event.get("pid"), event.get("tid"), name))
+            if not starts:
+                raise ValueError(f"{name} has an unmatched end event")
+            start = starts.pop()
+            if timestamp <= start:
+                raise ValueError(f"{name} has a non-positive duration")
+            intervals[name].append((start, timestamp))
+        else:
+            raise ValueError(f"{name} has unsupported trace phase {phase!r}")
     if any(starts for starts in stacks.values()):
         raise ValueError("trace has an unmatched begin event")
     return intervals
@@ -161,7 +248,249 @@ def kernel_wall_us(attribution: dict[str, Any], kernel: str) -> float:
     return matches[0]
 
 
-def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:
+def positive_span_count(events: list[dict[str, Any]], name: str) -> int:
+    intervals = span_intervals_us(events, name)
+    if any(not math.isfinite(end - start) or end <= start for _, start, end in intervals):
+        raise ValueError(f"trace contains a non-positive {name} span")
+    return len(intervals)
+
+
+def validate_bytecode_stdout(
+    stdout: str,
+    backend: str,
+    log_n: int,
+    message_threads: int = 256,
+    transition_threads: int = 128,
+    max_threadgroups: int = 8192,
+    cutoff_log2: int = 16,
+    trace_cutoff_log2: int = 18,
+) -> dict[str, Any]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := BYTECODE_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if len(configs) != 1:
+        raise ValueError("evaluator must emit exactly one Bytecode cycle config record")
+    parsed_config = configs[0].groupdict()
+    config = {
+        "requested": parsed_config["requested"],
+        "effective": parsed_config["effective"],
+        **{
+            name: int(parsed_config[name])
+            for name in ("log_t", "log_k", "chunk_bits", "num_ra", "degree")
+        },
+    }
+    expected = {
+        "requested": "q10",
+        "log_t": log_n,
+        "log_k": 13,
+    }
+    if log_n >= 25:
+        expected.update(
+            {
+                "effective": "q10",
+                "chunk_bits": 8,
+                "num_ra": 2,
+                "degree": 4,
+            }
+        )
+    for name, value in expected.items():
+        if config[name] != value:
+            raise ValueError(
+                f"Bytecode cycle config {name}={config[name]}, expected {value}"
+            )
+
+    proof_record = f"PROOF_VERIFIED backend={backend} value=true"
+    if stdout.splitlines().count(proof_record) != 1:
+        raise ValueError(f"evaluator must emit exactly one `{proof_record}` record")
+
+    metal_configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := BYTECODE_METAL_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if backend == "metal":
+        if len(metal_configs) != 1:
+            raise ValueError("Metal evaluator must emit exactly one Bytecode Metal config")
+        raw_metal_config = metal_configs[0].groupdict()
+        metal_config: Optional[dict[str, Any]] = {
+            "cpu_tail": raw_metal_config["cpu_tail"],
+            "trace_cutoff": int(raw_metal_config["trace_cutoff"]),
+            "cutoff": int(raw_metal_config["cutoff"]),
+            "message_threads": int(raw_metal_config["message_threads"]),
+            "transition_threads": int(raw_metal_config["transition_threads"]),
+            "max_threadgroups": int(raw_metal_config["max_threadgroups"]),
+        }
+        if metal_config != {
+            "cpu_tail": "q10",
+            "trace_cutoff": 1 << trace_cutoff_log2,
+            "cutoff": 1 << cutoff_log2,
+            "message_threads": message_threads,
+            "transition_threads": transition_threads,
+            "max_threadgroups": max_threadgroups,
+        }:
+            raise ValueError(f"unexpected Bytecode Metal config: {metal_config}")
+    elif metal_configs:
+        raise ValueError("optimized evaluator emitted a Bytecode Metal config")
+    else:
+        metal_config = None
+    return {"relation": config, "metal_runtime": metal_config}
+
+
+def interval_duration_us(interval: tuple[float, float]) -> float:
+    return interval[1] - interval[0]
+
+
+def require_contained(
+    child: tuple[float, float], parent: tuple[float, float], description: str
+) -> None:
+    if child[0] < parent[0] or child[1] > parent[1]:
+        raise ValueError(f"{description} is not contained in its outer member span")
+
+
+def unique_span_args(events: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    records = [
+        event
+        for event in events
+        if event.get("name") == name and event.get("ph") in {"B", "X"}
+    ]
+    if len(records) != 1 or not isinstance(records[0].get("args"), dict):
+        raise ValueError(f"trace must contain one argument record for {name}")
+    return records[0]["args"]
+
+
+def bytecode_member_breakdown(
+    events: list[dict[str, Any]], backend: str, log_n: int, cutoff_log2: int = 16
+) -> dict[str, Any]:
+    outer_names = {f"{BYTECODE_KERNEL}::{component}" for component in BYTECODE_COMPONENTS}
+    inner_names = {
+        f"Metal{BYTECODE_KERNEL}::{phase}" for phase in BYTECODE_METAL_PHASES
+    }
+    intervals = strict_named_intervals(events, outer_names | inner_names | {PIOP_SPAN})
+    if len(intervals[PIOP_SPAN]) != 1:
+        raise ValueError("trace must contain exactly one positive PIOP span")
+    piop = intervals[PIOP_SPAN][0]
+    by_component = {
+        component: sorted(intervals[f"{BYTECODE_KERNEL}::{component}"])
+        for component in BYTECODE_COMPONENTS
+    }
+    expected_outer_counts = {
+        "prepare": 1,
+        "prove_round": log_n,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }
+    outer_counts = {
+        component: len(component_intervals)
+        for component, component_intervals in by_component.items()
+    }
+    if outer_counts != expected_outer_counts:
+        raise ValueError(
+            f"Bytecode member span counts {outer_counts}, expected {expected_outer_counts}"
+        )
+
+    prepare = by_component["prepare"][0]
+    rounds = by_component["prove_round"]
+    finish = by_component["finish_rounds"][0]
+    output = by_component["output_claims"][0]
+    ordered = [prepare, *rounds, finish, output]
+    if any(start < piop[0] or end > piop[1] for start, end in ordered):
+        raise ValueError("a Bytecode member span lies outside PIOP")
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError("Bytecode member spans overlap or appear out of order")
+
+    inner = {
+        phase: sorted(intervals[f"Metal{BYTECODE_KERNEL}::{phase}"])
+        for phase in BYTECODE_METAL_PHASES
+    }
+    inner_counts = {phase: len(values) for phase, values in inner.items()}
+    if backend == "optimized":
+        if any(inner_counts.values()):
+            raise ValueError("optimized trace unexpectedly contains Bytecode Metal spans")
+    else:
+        expected_inner_counts = {
+            "prepare": 1,
+            "allocation_plan": 1,
+            "first_message": 1,
+            "first_bind": 1,
+            "dense_round": log_n - cutoff_log2 - 1,
+            "readback": 1,
+            "cpu_tail": cutoff_log2,
+            "invalid_round": 0,
+        }
+        if inner_counts != expected_inner_counts:
+            raise ValueError(
+                f"Bytecode Metal span counts {inner_counts}, expected {expected_inner_counts}"
+            )
+        dense_count = expected_inner_counts["dense_round"]
+        handoff_round = 2 + dense_count
+        require_contained(inner["prepare"][0], prepare, "Metal Bytecode prepare")
+        require_contained(
+            inner["allocation_plan"][0], prepare, "Metal Bytecode allocation plan"
+        )
+        require_contained(inner["first_message"][0], rounds[0], "first Metal message")
+        require_contained(inner["first_bind"][0], rounds[1], "first Metal bind")
+        for index, interval in enumerate(inner["dense_round"]):
+            require_contained(interval, rounds[index + 2], "dense Metal round")
+        require_contained(inner["readback"][0], rounds[handoff_round], "Metal readback")
+        for interval, outer_round in zip(inner["cpu_tail"][:-1], rounds[handoff_round:]):
+            require_contained(interval, outer_round, "Bytecode CPU-tail round")
+        require_contained(inner["cpu_tail"][-1], finish, "Bytecode CPU-tail finish")
+
+        allocation = unique_span_args(
+            events, f"Metal{BYTECODE_KERNEL}::allocation_plan"
+        )
+        expected_allocation_fields = {
+            "device_buffers",
+            "planned_device_bytes",
+            "current_device_bytes",
+            "recommended_device_bytes",
+        }
+        if set(allocation) != expected_allocation_fields:
+            raise ValueError("Bytecode allocation plan has unexpected fields")
+        allocation = {name: int(value) for name, value in allocation.items()}
+        if allocation["device_buffers"] != 17 or allocation["planned_device_bytes"] <= 0:
+            raise ValueError("Bytecode allocation plan has invalid buffer accounting")
+        if (
+            allocation["current_device_bytes"] + allocation["planned_device_bytes"]
+            > allocation["recommended_device_bytes"]
+        ):
+            raise ValueError("Bytecode allocation plan exceeds the admitted working set")
+        readback = unique_span_args(events, f"Metal{BYTECODE_KERNEL}::readback")
+        if readback != {"bytes": str(5 * (1 << cutoff_log2) * 16)}:
+            raise ValueError("Bytecode readback does not cover exactly five cutoff tables")
+
+    round_durations = [interval_duration_us(interval) for interval in rounds]
+    components = {
+        "prepare_us": interval_duration_us(prepare),
+        "rounds_us": round_durations,
+        "rounds_total_us": sum(round_durations),
+        "finish_us": interval_duration_us(finish),
+        "output_claims_us": interval_duration_us(output),
+    }
+    components["member_us"] = (
+        components["prepare_us"]
+        + components["rounds_total_us"]
+        + components["finish_us"]
+        + components["output_claims_us"]
+    )
+    scalar_components = [value for value in components.values() if not isinstance(value, list)]
+    if any(not math.isfinite(value) or value <= 0.0 for value in scalar_components):
+        raise ValueError("trace contains a non-positive Bytecode member duration")
+    return {
+        "components": components,
+        "outer_counts": outer_counts,
+        "metal_counts": inner_counts,
+        "resource_observation": (
+            {"allocation": allocation, "readback_bytes": int(readback["bytes"])}
+            if backend == "metal"
+            else None
+        ),
+    }
+
+
+def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     if not pairs:
         raise ValueError("at least one CPU/Metal pair is required")
     cpu = [float(pair["cpu_us"]) for pair in pairs]
@@ -170,18 +499,27 @@ def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:
     metal_prepare = [float(pair["metal_prepare_us"]) for pair in pairs]
     cpu_instruction_ra = [float(pair["cpu_instruction_ra_us"]) for pair in pairs]
     metal_instruction_ra = [float(pair["metal_instruction_ra_us"]) for pair in pairs]
+    cpu_bytecode = [float(pair["cpu_bytecode_us"]) for pair in pairs]
+    metal_bytecode = [float(pair["metal_bytecode_us"]) for pair in pairs]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
         raise ValueError("backend witness preparation durations must be finite and non-negative")
     if any(
         not math.isfinite(value) or value <= 0.0
-        for value in cpu_instruction_ra + metal_instruction_ra
+        for value in cpu_instruction_ra + metal_instruction_ra + cpu_bytecode + metal_bytecode
     ):
-        raise ValueError("Instruction RA durations must be finite and positive")
+        raise ValueError("kernel durations must be finite and positive")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
     instruction_ra_speedups = [
         cpu_us / metal_us for cpu_us, metal_us in zip(cpu_instruction_ra, metal_instruction_ra)
+    ]
+    bytecode_speedups = [
+        cpu_us / metal_us for cpu_us, metal_us in zip(cpu_bytecode, metal_bytecode)
+    ]
+    bytecode_improvements = [
+        1.0 - metal_us / cpu_us
+        for cpu_us, metal_us in zip(cpu_bytecode, metal_bytecode)
     ]
     paired_with_prepare = [
         (cpu_us + cpu_prepare_us) / (metal_us + metal_prepare_us)
@@ -189,9 +527,50 @@ def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:
             cpu, metal, cpu_prepare, metal_prepare
         )
     ]
+    bytecode_speedup_median = statistics.median(bytecode_speedups)
+    bytecode_improvement_median = statistics.median(bytecode_improvements)
+    bytecode_improvement_mad = statistics.median(
+        abs(value - bytecode_improvement_median) for value in bytecode_improvements
+    )
+    cpu_bytecode_median = statistics.median(cpu_bytecode)
+    metal_bytecode_median = statistics.median(metal_bytecode)
+    cpu_bytecode_mad = statistics.median(
+        abs(value - cpu_bytecode_median) for value in cpu_bytecode
+    )
+    metal_bytecode_mad = statistics.median(
+        abs(value - metal_bytecode_median) for value in metal_bytecode
+    )
+    enough_pairs = len(pairs) >= PRODUCTION_PAIRS
+    clears_speedup = bytecode_speedup_median >= BYTECODE_MIN_SPEEDUP
+    clears_fraction = bytecode_improvement_median >= 1.0 - 1.0 / BYTECODE_MIN_SPEEDUP
+    clears_noise = bytecode_improvement_median > 3.0 * bytecode_improvement_mad
+    lower_median = metal_bytecode_median < cpu_bytecode_median
+    optimized_first_speedups = [
+        speedup
+        for pair, speedup in zip(pairs, bytecode_speedups)
+        if pair.get("order") == ["optimized", "metal"]
+    ]
+    metal_first_speedups = [
+        speedup
+        for pair, speedup in zip(pairs, bytecode_speedups)
+        if pair.get("order") == ["metal", "optimized"]
+    ]
+    optimized_first_median = (
+        statistics.median(optimized_first_speedups) if optimized_first_speedups else None
+    )
+    metal_first_median = (
+        statistics.median(metal_first_speedups) if metal_first_speedups else None
+    )
+    clears_order_strata = (
+        optimized_first_median is not None
+        and metal_first_median is not None
+        and optimized_first_median >= BYTECODE_MIN_SPEEDUP
+        and metal_first_median >= BYTECODE_MIN_SPEEDUP
+    )
     return {
         "piop_speedup": statistics.median(paired_speedups),
         "instruction_ra_speedup": statistics.median(instruction_ra_speedups),
+        "bytecode_read_raf_cycle_speedup": bytecode_speedup_median,
         "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
@@ -199,11 +578,70 @@ def summarize_pairs(pairs: list[dict[str, float]]) -> dict[str, Any]:
         "metal_backend_witness_prepare_ms": statistics.median(metal_prepare) / 1000.0,
         "paired_speedups": paired_speedups,
         "paired_instruction_ra_speedups": instruction_ra_speedups,
+        "paired_bytecode_read_raf_cycle_speedups": bytecode_speedups,
+        "paired_bytecode_read_raf_cycle_fractional_improvements": bytecode_improvements,
         "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
         "cpu_backend_witness_prepare_ms_samples": [value / 1000.0 for value in cpu_prepare],
         "metal_backend_witness_prepare_ms_samples": [value / 1000.0 for value in metal_prepare],
+        "cpu_bytecode_read_raf_cycle_ms_samples": [
+            value / 1000.0 for value in cpu_bytecode
+        ],
+        "metal_bytecode_read_raf_cycle_ms_samples": [
+            value / 1000.0 for value in metal_bytecode
+        ],
+        "bytecode_read_raf_cycle_decision": {
+            "minimum_speedup": BYTECODE_MIN_SPEEDUP,
+            "minimum_pairs": PRODUCTION_PAIRS,
+            "median_speedup": bytecode_speedup_median,
+            "median_fractional_improvement": bytecode_improvement_median,
+            "mad_fractional_improvement": bytecode_improvement_mad,
+            "cpu_member_ms_median": cpu_bytecode_median / 1000.0,
+            "cpu_member_ms_mad": cpu_bytecode_mad / 1000.0,
+            "metal_member_ms_median": metal_bytecode_median / 1000.0,
+            "metal_member_ms_mad": metal_bytecode_mad / 1000.0,
+            "enough_pairs": enough_pairs,
+            "clears_speedup": clears_speedup,
+            "clears_fractional_improvement": clears_fraction,
+            "clears_noise": clears_noise,
+            "lower_metal_median": lower_median,
+            "optimized_first_median_speedup": optimized_first_median,
+            "metal_first_median_speedup": metal_first_median,
+            "clears_order_strata": clears_order_strata,
+            "clears": enough_pairs
+            and clears_speedup
+            and clears_fraction
+            and clears_noise
+            and lower_median
+            and clears_order_strata,
+        },
+    }
+
+
+def microseconds_to_nanoseconds(value: float) -> int:
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError("duration must be finite and positive")
+    return round(value * 1000.0)
+
+
+def member_record(member: dict[str, Any]) -> dict[str, Any]:
+    components = member["components"]
+    rounds_ns = [microseconds_to_nanoseconds(value) for value in components["rounds_us"]]
+    prepare_ns = microseconds_to_nanoseconds(components["prepare_us"])
+    finish_ns = microseconds_to_nanoseconds(components["finish_us"])
+    output_claims_ns = microseconds_to_nanoseconds(components["output_claims_us"])
+    rounds_total_ns = sum(rounds_ns)
+    return {
+        "prepare_ns": prepare_ns,
+        "rounds_ns": rounds_ns,
+        "rounds_total_ns": rounds_total_ns,
+        "finish_ns": finish_ns,
+        "output_claims_ns": output_claims_ns,
+        "member_ns": prepare_ns + rounds_total_ns + finish_ns + output_claims_ns,
+        "outer_counts": member["outer_counts"],
+        "metal_counts": member["metal_counts"],
+        "resource_observation": member["resource_observation"],
     }
 
 
@@ -214,27 +652,23 @@ def trace_path(root: Path, workload: str, log_n: int, backend: str) -> Path:
 
 def run_backend(
     root: Path,
+    binary: Path,
     artifact_dir: Path,
     workload: str,
     log_n: int,
     backend: str,
     instruction_ra_materialize_width: int,
     instruction_ra_reuse_inverse: bool,
+    bytecode_message_threads: int,
+    bytecode_transition_threads: int,
+    bytecode_max_threadgroups: int,
+    bytecode_cutoff_log2: int,
+    bytecode_trace_cutoff_log2: int,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    command = [
-        "cargo",
-        "run",
-        "--release",
-        "--quiet",
-        "-p",
-        "jolt-prover",
-        "--example",
-        "modular_benchmark",
-        "--features",
-        "metal,prover-fixtures",
-        "--",
+    benchmark_command = [
+        str(binary),
         "--name",
         workload,
         "--scale",
@@ -243,16 +677,29 @@ def run_backend(
         "chrome",
         "--backend",
         backend,
+        "--bytecode-cycle-algebra",
+        "q10",
+        "--bytecode-metal-message-threads",
+        str(bytecode_message_threads),
+        "--bytecode-metal-transition-threads",
+        str(bytecode_transition_threads),
+        "--bytecode-metal-max-threadgroups",
+        str(bytecode_max_threadgroups),
+        "--bytecode-metal-cutoff-log2",
+        str(bytecode_cutoff_log2),
+        "--bytecode-metal-trace-cutoff-log2",
+        str(bytecode_trace_cutoff_log2),
     ]
     if backend == "metal":
-        command.extend(
+        benchmark_command.extend(
             [
                 "--instruction-ra-materialize-width",
                 f"w{instruction_ra_materialize_width}",
             ]
         )
         if instruction_ra_reuse_inverse:
-            command.append("--instruction-ra-reuse-inverse")
+            benchmark_command.append("--instruction-ra-reuse-inverse")
+    command = ["/usr/bin/time", "-l", *benchmark_command]
     started_ns = time.time_ns()
     result = subprocess.run(
         command,
@@ -266,26 +713,123 @@ def run_backend(
     (artifact_dir / f"{label}.stderr").write_text(result.stderr)
     if result.returncode != 0:
         raise ValueError(f"{backend} evaluator exited with status {result.returncode}")
+    max_rss = parse_max_rss(result.stderr)
+    bytecode_config = validate_bytecode_stdout(
+        result.stdout,
+        backend,
+        log_n,
+        bytecode_message_threads,
+        bytecode_transition_threads,
+        bytecode_max_threadgroups,
+        bytecode_cutoff_log2,
+        bytecode_trace_cutoff_log2,
+    )
     source = trace_path(root, workload, log_n, backend)
-    if not source.is_file() or source.stat().st_mtime_ns < started_ns:
+    if not source.is_file() or source.stat().st_mtime_ns <= started_ns:
         raise ValueError(f"{backend} evaluator did not emit a fresh trace")
+    source_stat = source.stat()
+    source_sha256 = file_sha256(source)
     destination = artifact_dir / f"{label}.trace.json"
     shutil.copy2(source, destination)
+    final_source_stat = source.stat()
+    if (
+        final_source_stat.st_mtime_ns != source_stat.st_mtime_ns
+        or final_source_stat.st_size != source_stat.st_size
+        or file_sha256(destination) != source_sha256
+    ):
+        raise ValueError(f"{backend} trace changed while it was captured")
     events = load_trace_events(destination)
+    member = bytecode_member_breakdown(events, backend, log_n, bytecode_cutoff_log2)
+    attribution = trace_attribution(events)
+    attributed_member_us = kernel_wall_us(attribution, BYTECODE_KERNEL)
+    if not math.isclose(
+        attributed_member_us,
+        float(member["components"]["member_us"]),
+        rel_tol=1e-12,
+        abs_tol=1e-6,
+    ):
+        raise ValueError("Bytecode member parser disagrees with trace attribution")
+    stdout_path = artifact_dir / f"{label}.stdout"
+    stderr_path = artifact_dir / f"{label}.stderr"
     return {
         "piop_us": unique_span_duration_us(events),
         "backend_witness_prepare_us": unique_named_span_duration_us(
             events, BACKEND_WITNESS_PREP_SPAN
         ),
-        "attribution": trace_attribution(events),
+        "attribution": attribution,
+        "bytecode_config": bytecode_config,
+        "bytecode_member": member,
+        "command": command,
+        "max_rss_bytes": max_rss,
+        "artifacts": {
+            "stdout": {"path": stdout_path.name, "sha256": file_sha256(stdout_path)},
+            "stderr": {"path": stderr_path.name, "sha256": file_sha256(stderr_path)},
+            "trace": {"path": destination.name, "sha256": source_sha256},
+        },
     }
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while block := source.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def parse_max_rss(stderr: str) -> int:
+    matches = list(MAX_RSS_RE.finditer(stderr))
+    if len(matches) != 1:
+        raise ValueError("evaluator must emit exactly one maximum-RSS record")
+    value = int(matches[0].group("bytes"))
+    if value <= 0:
+        raise ValueError("evaluator maximum RSS must be positive")
+    return value
+
+
+def canonical_build_command() -> list[str]:
+    return [
+        "cargo",
+        "build",
+        "--release",
+        "--quiet",
+        "-p",
+        "jolt-prover",
+        "--example",
+        "modular_benchmark",
+        "--features",
+        FEATURES,
+    ]
+
+
+def build_binary(
+    root: Path, artifact_dir: Path, timeout_seconds: int
+) -> tuple[Path, list[str]]:
+    if os.environ.get("CARGO_TARGET_DIR"):
+        raise ValueError("canonical evaluator forbids CARGO_TARGET_DIR")
+    command = canonical_build_command()
+    completed = subprocess.run(
+        command,
+        cwd=root,
+        timeout=timeout_seconds,
+        capture_output=True,
+        text=True,
+    )
+    (artifact_dir / "build.stdout").write_text(completed.stdout)
+    (artifact_dir / "build.stderr").write_text(completed.stderr)
+    if completed.returncode != 0:
+        raise ValueError(f"evaluator build exited with status {completed.returncode}")
+    binary = root / "target" / "release" / "examples" / "modular_benchmark"
+    if not binary.is_file():
+        raise ValueError("evaluator binary is missing")
+    return binary, command
 
 
 def default_artifact_dir(root: Path) -> Path:
     configured = os.environ.get("JOLT_AUTORESEARCH_EVAL_DIR")
     if configured:
         return Path(configured).resolve()
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     return root / "benchmark-runs" / "metal-piop-eval" / timestamp
 
 
@@ -342,6 +886,10 @@ def source_fingerprint(root: Path) -> dict[str, Any]:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--root", default=Path(__file__).resolve().parents[1])
+    result.add_argument("--mode", choices=["diagnostic", "production"], default="diagnostic")
+    result.add_argument(
+        "--local-kernel", choices=sorted(LOCAL_KERNELS), default=BYTECODE_KERNEL
+    )
     result.add_argument(
         "--workload",
         choices=["fibonacci", "sha2-chain", "sha3-chain", "btreemap"],
@@ -357,8 +905,47 @@ def parser() -> argparse.ArgumentParser:
         default=16,
     )
     result.add_argument("--instruction-ra-reuse-inverse", action="store_true")
+    result.add_argument(
+        "--bytecode-metal-message-threads",
+        type=int,
+        choices=[32, 64, 128, 256, 512, 1024],
+        default=256,
+    )
+    result.add_argument(
+        "--bytecode-metal-transition-threads",
+        type=int,
+        choices=[32, 64, 128, 256, 512, 1024],
+        default=128,
+    )
+    result.add_argument(
+        "--bytecode-metal-max-threadgroups",
+        type=int,
+        choices=[1024, 2048, 4096, 8192],
+        default=8192,
+    )
+    result.add_argument(
+        "--bytecode-metal-cutoff-log2",
+        type=int,
+        choices=[12, 14, 16, 18, 20],
+        default=16,
+    )
+    result.add_argument(
+        "--bytecode-metal-trace-cutoff-log2",
+        type=int,
+        choices=[18, 20, 22, 24, 25],
+        default=18,
+    )
     result.add_argument("--trace", type=Path)
     return result
+
+
+def validate_run_class(mode: str, workload: str, log_n: int, repeats: int) -> None:
+    if mode == "production" and (
+        workload != "fibonacci" or log_n != 26 or repeats != PRODUCTION_PAIRS
+    ):
+        raise ValueError(
+            "production mode requires Fibonacci, log-n 26, and five pairs"
+        )
 
 
 def main() -> int:
@@ -373,17 +960,39 @@ def main() -> int:
     if args.log_n < 1 or args.repeats < 1 or args.timeout_seconds < 1:
         print("error: log-n, repeats, and timeout must be positive", file=sys.stderr)
         return 2
+    if args.log_n < 25:
+        print("error: Bytecode Metal PIOP evaluation requires log-n at least 25", file=sys.stderr)
+        return 2
+    if args.bytecode_metal_cutoff_log2 > args.log_n - 1:
+        print("error: Bytecode Metal cutoff must not exceed half the trace", file=sys.stderr)
+        return 2
+    if args.bytecode_metal_trace_cutoff_log2 > args.log_n:
+        print("error: Bytecode Metal trace cutoff disables the measured backend", file=sys.stderr)
+        return 2
     if args.instruction_ra_reuse_inverse and args.instruction_ra_materialize_width == 16:
         print("error: width-16 Instruction RA cannot reuse the inverse", file=sys.stderr)
         return 2
+    try:
+        validate_run_class(args.mode, args.workload, args.log_n, args.repeats)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     root = Path(args.root).resolve()
-    source = source_fingerprint(root)
+    local_kernel = LOCAL_KERNELS[args.local_kernel]
     artifact_dir = default_artifact_dir(root)
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_dir.mkdir(parents=True, exist_ok=False)
+    source = source_fingerprint(root)
     pairs = []
+    pair_records = []
     orders = []
     attributions = []
     try:
+        if args.mode == "production" and source["worktree_dirty"]:
+            raise ValueError("production evaluation requires a clean source worktree")
+        binary, build_command = build_binary(root, artifact_dir, args.timeout_seconds)
+        if source_fingerprint(root) != source:
+            raise ValueError("source worktree changed during the evaluator build")
+        binary_sha256 = file_sha256(binary)
         for index in range(args.repeats):
             order = ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
             orders.append(order)
@@ -391,17 +1000,24 @@ def main() -> int:
             for backend in order:
                 results[backend] = run_backend(
                     root,
+                    binary,
                     artifact_dir,
                     args.workload,
                     args.log_n,
                     backend,
                     args.instruction_ra_materialize_width,
                     args.instruction_ra_reuse_inverse,
+                    args.bytecode_metal_message_threads,
+                    args.bytecode_metal_transition_threads,
+                    args.bytecode_metal_max_threadgroups,
+                    args.bytecode_metal_cutoff_log2,
+                    args.bytecode_metal_trace_cutoff_log2,
                     index + 1,
                     args.timeout_seconds,
                 )
             pairs.append(
                 {
+                    "order": order,
                     "cpu_us": results["optimized"]["piop_us"],
                     "metal_us": results["metal"]["piop_us"],
                     "cpu_prepare_us": results["optimized"]["backend_witness_prepare_us"],
@@ -412,40 +1028,160 @@ def main() -> int:
                     "metal_instruction_ra_us": kernel_wall_us(
                         results["metal"]["attribution"], "InstructionRaVirtualization"
                     ),
+                    "cpu_bytecode_us": float(
+                        results["optimized"]["bytecode_member"]["components"]["member_us"]
+                    ),
+                    "metal_bytecode_us": float(
+                        results["metal"]["bytecode_member"]["components"]["member_us"]
+                    ),
                 }
             )
             attributions.append(
                 {
                     "optimized": results["optimized"]["attribution"],
                     "metal": results["metal"]["attribution"],
+                    "bytecode": {
+                        "optimized_config": results["optimized"]["bytecode_config"],
+                        "metal_config": results["metal"]["bytecode_config"],
+                        "optimized_member": results["optimized"]["bytecode_member"],
+                        "metal_member": results["metal"]["bytecode_member"],
+                    },
+                    "commands": {
+                        "optimized": results["optimized"]["command"],
+                        "metal": results["metal"]["command"],
+                    },
+                }
+            )
+            pair_records.append(
+                {
+                    "index": index + 1,
+                    "order": order,
+                    "arms": {
+                        backend: {
+                            "piop_ns": microseconds_to_nanoseconds(
+                                results[backend]["piop_us"]
+                            ),
+                            "backend_witness_prepare_ns": microseconds_to_nanoseconds(
+                                results[backend]["backend_witness_prepare_us"]
+                            ),
+                            "max_rss_bytes": results[backend]["max_rss_bytes"],
+                            "bytecode": member_record(
+                                results[backend]["bytecode_member"]
+                            ),
+                            "config": results[backend]["bytecode_config"],
+                            "command": results[backend]["command"],
+                            "artifacts": results[backend]["artifacts"],
+                        }
+                        for backend in ("optimized", "metal")
+                    },
                 }
             )
         metrics = summarize_pairs(pairs)
         if source_fingerprint(root) != source:
             raise ValueError("source worktree changed during the paired evaluation")
+        if file_sha256(binary) != binary_sha256:
+            raise ValueError("evaluator binary changed during the paired evaluation")
         output = {
             "schema_version": SCHEMA_VERSION,
             "kernel": "akita_piop",
+            "local_kernel": local_kernel["name"],
+            "local_metric": {
+                "metric": local_kernel["metric"],
+                "paired_metric": local_kernel["paired_metric"],
+            },
+            "run_class": {
+                "mode": args.mode,
+                "acceptance_eligible": args.mode == "production",
+            },
             "metrics": metrics,
+            "pairs": pair_records,
             "attribution_samples": attributions,
             "guards": {
                 "cpu_proofs_verified": True,
                 "metal_proofs_verified": True,
                 "unique_piop_span": True,
                 "unique_backend_witness_prepare_span": True,
-                "target_scale": args.log_n >= 26,
+                "target_scale": args.log_n == 26,
+                "bytecode_q10_cpu_control": True,
+                "bytecode_metal_backend_exercised": all(
+                    sample["bytecode"]["metal_member"]["metal_counts"]["first_message"]
+                    == 1
+                    for sample in attributions
+                ),
+                "bytecode_working_set_admitted": all(
+                    sample["bytecode"]["metal_member"]["resource_observation"]
+                    is not None
+                    for sample in attributions
+                ),
+                "bytecode_readback_exact": all(
+                    sample["bytecode"]["metal_member"]["resource_observation"][
+                        "readback_bytes"
+                    ]
+                    == 5 * (1 << args.bytecode_metal_cutoff_log2) * 16
+                    for sample in attributions
+                ),
+                "bytecode_command_buffers_completed": all(
+                    2
+                    + sample["bytecode"]["metal_member"]["metal_counts"][
+                        "dense_round"
+                    ]
+                    == args.log_n - args.bytecode_metal_cutoff_log2 + 1
+                    for sample in attributions
+                ),
+                "local_kernel_attributed": all(
+                    all(
+                        any(
+                            kernel["kernel"] == local_kernel["name"]
+                            for kernel in sample[backend]["kernels"]
+                        )
+                        for backend in ("optimized", "metal")
+                    )
+                    for sample in attributions
+                ),
+                "local_kernel_metal_backend_exercised": all(
+                    any(
+                        span["span"].startswith(local_kernel["backend_prefix"])
+                        for span in sample["metal"]["backend_spans"]
+                    )
+                    for sample in attributions
+                ),
+                "stable_source": True,
+                "stable_binary": True,
+                "production_contract": args.mode == "production",
+                "bytecode_local_gate": metrics["bytecode_read_raf_cycle_decision"][
+                    "clears"
+                ],
             },
             "resources": {
-                "gpu_seconds": sum(pair["metal_us"] for pair in pairs) / 1_000_000.0,
+                "metal_piop_seconds": sum(pair["metal_us"] for pair in pairs)
+                / 1_000_000.0,
+                "optimized_max_rss_bytes": [
+                    pair["arms"]["optimized"]["max_rss_bytes"] for pair in pair_records
+                ],
+                "metal_max_rss_bytes": [
+                    pair["arms"]["metal"]["max_rss_bytes"] for pair in pair_records
+                ],
             },
             "fingerprint": {
                 **source,
+                "binary_sha256": binary_sha256,
+                "build_command": build_command,
                 "machine": platform.machine(),
                 "platform": platform.platform(),
                 "workload": args.workload,
                 "log_n": args.log_n,
+                "local_kernel": local_kernel["name"],
                 "instruction_ra_materialize_width": args.instruction_ra_materialize_width,
                 "instruction_ra_reuse_inverse": args.instruction_ra_reuse_inverse,
+                "bytecode_metal_message_threads": args.bytecode_metal_message_threads,
+                "bytecode_metal_transition_threads": args.bytecode_metal_transition_threads,
+                "bytecode_metal_max_threadgroups": args.bytecode_metal_max_threadgroups,
+                "bytecode_metal_cutoff_log2": args.bytecode_metal_cutoff_log2,
+                "bytecode_metal_cutoff_elements": 1 << args.bytecode_metal_cutoff_log2,
+                "bytecode_metal_trace_cutoff_log2": args.bytecode_metal_trace_cutoff_log2,
+                "bytecode_metal_trace_cutoff_elements": 1
+                << args.bytecode_metal_trace_cutoff_log2,
+                "bytecode_cpu_tail_algebra": "q10",
                 "span": PIOP_SPAN,
                 "orders": orders,
             },

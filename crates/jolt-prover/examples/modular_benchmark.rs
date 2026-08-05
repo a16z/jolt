@@ -545,6 +545,24 @@ mod akita_benchmark {
         }
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct BytecodeMetalTuning {
+        message_threads: usize,
+        transition_threads: usize,
+        max_threadgroups: usize,
+        cutoff_log2: u32,
+        trace_cutoff_log2: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct BackendConfig {
+        backend: Backend,
+        instruction_ra_materialize_width: InstructionRaMaterializeWidth,
+        instruction_ra_reuse_inverse: bool,
+        bytecode_cycle_algebra: BytecodeCycleAlgebra,
+        bytecode_metal: BytecodeMetalTuning,
+    }
+
     #[derive(Parser, Debug)]
     struct Cli {
         #[clap(long, value_enum)]
@@ -570,6 +588,21 @@ mod akita_benchmark {
 
         #[clap(long, value_enum, default_value = "q10")]
         bytecode_cycle_algebra: BytecodeCycleAlgebra,
+
+        #[clap(long, default_value_t = 256)]
+        bytecode_metal_message_threads: usize,
+
+        #[clap(long, default_value_t = 128)]
+        bytecode_metal_transition_threads: usize,
+
+        #[clap(long, default_value_t = 8192)]
+        bytecode_metal_max_threadgroups: usize,
+
+        #[clap(long, default_value_t = 16)]
+        bytecode_metal_cutoff_log2: u32,
+
+        #[clap(long, default_value_t = 18)]
+        bytecode_metal_trace_cutoff_log2: u32,
     }
 
     pub fn run() {
@@ -604,26 +637,42 @@ mod akita_benchmark {
         );
         let _guards = setup_tracing(&formats, &trace_name);
 
-        run_benchmark(
-            cli.name,
-            scale,
-            cli.target_trace_size,
-            cli.backend,
-            cli.instruction_ra_materialize_width,
-            cli.instruction_ra_reuse_inverse,
-            cli.bytecode_cycle_algebra,
-        );
+        let backend_config = BackendConfig {
+            backend: cli.backend,
+            instruction_ra_materialize_width: cli.instruction_ra_materialize_width,
+            instruction_ra_reuse_inverse: cli.instruction_ra_reuse_inverse,
+            bytecode_cycle_algebra: cli.bytecode_cycle_algebra,
+            bytecode_metal: BytecodeMetalTuning {
+                message_threads: cli.bytecode_metal_message_threads,
+                transition_threads: cli.bytecode_metal_transition_threads,
+                max_threadgroups: cli.bytecode_metal_max_threadgroups,
+                cutoff_log2: cli.bytecode_metal_cutoff_log2,
+                trace_cutoff_log2: cli.bytecode_metal_trace_cutoff_log2,
+            },
+        };
+        run_benchmark(cli.name, scale, cli.target_trace_size, backend_config);
     }
 
     fn run_benchmark(
         bench: BenchName,
         scale: usize,
         target_trace_size: Option<usize>,
-        backend_choice: Backend,
-        instruction_ra_materialize_width: InstructionRaMaterializeWidth,
-        instruction_ra_reuse_inverse: bool,
-        bytecode_cycle_algebra: BytecodeCycleAlgebra,
+        backend_config: BackendConfig,
     ) {
+        let BackendConfig {
+            backend: backend_choice,
+            instruction_ra_materialize_width,
+            instruction_ra_reuse_inverse,
+            bytecode_cycle_algebra,
+            bytecode_metal:
+                BytecodeMetalTuning {
+                    message_threads: bytecode_metal_message_threads,
+                    transition_threads: bytecode_metal_transition_threads,
+                    max_threadgroups: bytecode_metal_max_threadgroups,
+                    cutoff_log2: bytecode_metal_cutoff_log2,
+                    trace_cutoff_log2: bytecode_metal_trace_cutoff_log2,
+                },
+        } = backend_config;
         let bench_name = bench.as_str();
         let max_trace_length = 1usize << scale;
         let bench_target =
@@ -681,6 +730,12 @@ mod akita_benchmark {
             log_k_chunk,
         };
         let bytecode_dimensions = dimensions.bytecode_read_raf;
+        let backend_label = match backend_choice {
+            Backend::Reference => "reference",
+            Backend::Optimized => "optimized",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Backend::Metal => "metal",
+        };
         let effective_bytecode_algebra = if backend_choice == Backend::Reference
             || bytecode_dimensions.num_committed_ra_polys() != 2
         {
@@ -735,7 +790,19 @@ mod akita_benchmark {
         let _ = (
             instruction_ra_materialize_width,
             instruction_ra_reuse_inverse,
+            bytecode_metal_message_threads,
+            bytecode_metal_transition_threads,
+            bytecode_metal_max_threadgroups,
+            bytecode_metal_cutoff_log2,
+            bytecode_metal_trace_cutoff_log2,
         );
+        let optimized_bytecode_algebra = match bytecode_cycle_algebra {
+            BytecodeCycleAlgebra::Generic => jolt_kernels::optimized::BytecodeCycleAlgebra::Generic,
+            BytecodeCycleAlgebra::Q10 => jolt_kernels::optimized::BytecodeCycleAlgebra::Q10,
+            BytecodeCycleAlgebra::Q10Accum => {
+                jolt_kernels::optimized::BytecodeCycleAlgebra::Q10Accum
+            }
+        };
         let mut backend = match backend_choice {
             Backend::Reference => akita::JoltAkitaBackend::reference(),
             Backend::Optimized => akita::JoltAkitaBackend::optimized(),
@@ -769,22 +836,40 @@ mod akita_benchmark {
                     .instruction_ra_virtualization
                     .dispatch
                     .reuse_inverse_for_dense = instruction_ra_reuse_inverse;
+                config.bytecode_read_raf_cycle.cpu_tail_algebra = optimized_bytecode_algebra;
+                config
+                    .bytecode_read_raf_cycle
+                    .dispatch
+                    .message_threads_per_threadgroup = Some(bytecode_metal_message_threads);
+                config
+                    .bytecode_read_raf_cycle
+                    .dispatch
+                    .transition_threads_per_threadgroup = Some(bytecode_metal_transition_threads);
+                config.bytecode_read_raf_cycle.dispatch.max_threadgroups =
+                    bytecode_metal_max_threadgroups;
+                config.bytecode_read_raf_cycle.cutoff_elements = 1usize
+                    .checked_shl(bytecode_metal_cutoff_log2)
+                    .expect("Bytecode Metal cutoff log2 must fit usize");
+                config.bytecode_read_raf_cycle.trace_cutoff_elements = 1usize
+                    .checked_shl(bytecode_metal_trace_cutoff_log2)
+                    .expect("Bytecode Metal trace cutoff log2 must fit usize");
+                println!(
+                    "BYTECODE_METAL_CONFIG backend=metal cpu_tail={} trace_cutoff={} cutoff={} message_threads={} transition_threads={} max_threadgroups={}",
+                    bytecode_cycle_algebra.as_str(),
+                    config.bytecode_read_raf_cycle.trace_cutoff_elements,
+                    config.bytecode_read_raf_cycle.cutoff_elements,
+                    bytecode_metal_message_threads,
+                    bytecode_metal_transition_threads,
+                    bytecode_metal_max_threadgroups,
+                );
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }
         };
-        if backend_choice != Backend::Reference {
-            let algebra = match bytecode_cycle_algebra {
-                BytecodeCycleAlgebra::Generic => {
-                    jolt_kernels::optimized::BytecodeCycleAlgebra::Generic
-                }
-                BytecodeCycleAlgebra::Q10 => jolt_kernels::optimized::BytecodeCycleAlgebra::Q10,
-                BytecodeCycleAlgebra::Q10Accum => {
-                    jolt_kernels::optimized::BytecodeCycleAlgebra::Q10Accum
-                }
-            };
-            backend.base.bytecode_read_raf_cycle = Box::new(
-                jolt_kernels::optimized::OptimizedBytecodeReadRafCycle::new(algebra),
-            );
+        if backend_choice == Backend::Optimized {
+            backend.base.bytecode_read_raf_cycle =
+                Box::new(jolt_kernels::optimized::OptimizedBytecodeReadRafCycle::new(
+                    optimized_bytecode_algebra,
+                ));
         }
 
         let now = Instant::now();
@@ -813,13 +898,8 @@ mod akita_benchmark {
             None,
         )
         .expect("modular Akita proof verifies");
+        println!("PROOF_VERIFIED backend={backend_label} value=true");
 
-        let backend_label = match backend_choice {
-            Backend::Reference => "reference",
-            Backend::Optimized => "optimized",
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            Backend::Metal => "metal",
-        };
         let proving_hz = trace_length as f64 / duration.as_secs_f64();
         let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
         println!(

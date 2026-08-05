@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import io
 import json
@@ -46,6 +47,15 @@ class MetalAutoresearchTests(unittest.TestCase):
     def test_result_parser_uses_last_schema_record(self) -> None:
         output = "compile noise\n{\"schema_version\": 1, \"metrics\": {\"x\": 2}}\n"
         self.assertEqual(metal_autoresearch.parse_result(output)["metrics"]["x"], 2)
+
+    def test_schema_five_parser_requires_one_result_record(self) -> None:
+        record = '{"schema_version": 5, "kernel": "akita_piop"}'
+        self.assertEqual(
+            metal_autoresearch.parse_unique_schema_result(record, 5)["kernel"],
+            "akita_piop",
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            metal_autoresearch.parse_unique_schema_result(f"{record}\n{record}", 5)
 
     def test_snapshot_restores_discarded_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -334,12 +344,23 @@ class MetalAutoresearchTests(unittest.TestCase):
             / "crates/jolt-kernels/autoresearch/instruction_ra_virtualization.template.json"
         )
         result = {
-            "schema_version": 4,
+            "schema_version": 5,
             "kernel": "akita_piop",
+            "local_kernel": "InstructionRaVirtualization",
+            "local_metric": {
+                "metric": "instruction_ra_speedup",
+                "paired_metric": "paired_instruction_ra_speedups",
+            },
+            "run_class": {"mode": "production", "acceptance_eligible": True},
             "guards": {
                 "cpu_proofs_verified": True,
                 "metal_proofs_verified": True,
                 "target_scale": True,
+                "production_contract": True,
+                "local_kernel_attributed": True,
+                "local_kernel_metal_backend_exercised": True,
+                "stable_source": True,
+                "stable_binary": True,
             },
             "metrics": {
                 "instruction_ra_speedup": 7.5,
@@ -352,6 +373,7 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "worktree_dirty": False,
                 "instruction_ra_materialize_width": 16,
                 "instruction_ra_reuse_inverse": False,
+                "local_kernel": "InstructionRaVirtualization",
                 "log_n": 26,
                 "orders": [["optimized", "metal"]] * 5,
                 "span": "jolt_prover::piop",
@@ -404,6 +426,145 @@ class MetalAutoresearchTests(unittest.TestCase):
             self.assertEqual(parsed, result)
             self.assertEqual(json.loads(encoded), result)
             self.assertTrue((attempt / "result.json").is_file())
+
+    def test_production_gate_supports_schema_five_and_named_local_pairs(self) -> None:
+        config = {
+            "final_validation": {
+                "production_gate": {
+                    "evaluator": {"schema_version": 5},
+                    "local_kernel": "BytecodeReadRafCycle",
+                    "metric": "bytecode_read_raf_cycle_speedup",
+                    "paired_metric": "paired_bytecode_read_raf_cycle_speedups",
+                    "minimum_local_speedup": 4.0,
+                    "minimum_log_n": 26,
+                    "minimum_pairs": 5,
+                    "require_alternating_orders": True,
+                    "require_clean_worktree": True,
+                    "workload": "fibonacci",
+                    "required_guards": ["bytecode_metal_backend_exercised"],
+                    "expected_fingerprint": {},
+                }
+            }
+        }
+        result = {
+            "schema_version": 5,
+            "kernel": "akita_piop",
+            "local_kernel": "BytecodeReadRafCycle",
+            "local_metric": {
+                "metric": "bytecode_read_raf_cycle_speedup",
+                "paired_metric": "paired_bytecode_read_raf_cycle_speedups",
+            },
+            "run_class": {"mode": "production", "acceptance_eligible": True},
+            "guards": {"bytecode_metal_backend_exercised": True},
+            "metrics": {
+                "bytecode_read_raf_cycle_speedup": 4.5,
+                "piop_speedup": 2.0,
+                "paired_speedups": [2.0] * 5,
+                "paired_bytecode_read_raf_cycle_speedups": [4.5] * 5,
+                "bytecode_read_raf_cycle_decision": {
+                    "clears": True,
+                    "median_speedup": 4.5,
+                },
+            },
+            "pairs": [
+                {
+                    "index": index + 1,
+                    "order": ["optimized", "metal"]
+                    if index % 2 == 0
+                    else ["metal", "optimized"],
+                    "arms": {
+                        "optimized": {"bytecode": {"member_ns": 450}},
+                        "metal": {"bytecode": {"member_ns": 100}},
+                    },
+                }
+                for index in range(5)
+            ],
+            "fingerprint": {
+                "git_revision": "abc",
+                "worktree_dirty": False,
+                "local_kernel": "BytecodeReadRafCycle",
+                "log_n": 26,
+                "orders": [
+                    ["optimized", "metal"],
+                    ["metal", "optimized"],
+                    ["optimized", "metal"],
+                    ["metal", "optimized"],
+                    ["optimized", "metal"],
+                ],
+                "span": "jolt_prover::piop",
+                "workload": "fibonacci",
+            },
+        }
+        evidence = metal_autoresearch.validate_production_result(
+            config, result, "abc", {}, True
+        )
+        self.assertEqual(
+            evidence["paired_metric"], "paired_bytecode_read_raf_cycle_speedups"
+        )
+
+    def test_production_evaluator_applies_generic_parameter_bindings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            root = temporary / "root"
+            root.mkdir()
+            run_dir = temporary / "run"
+            run_dir.mkdir()
+            program = (
+                "import json,os,sys;"
+                "print(json.dumps({'schema_version':5,'kernel':'akita_piop',"
+                "'argv':sys.argv[1:],'threads':os.environ['JOLT_METAL_KERNEL_THREADS']}))"
+            )
+            config = {
+                "final_validation": {
+                    "production_gate": {
+                        "local_kernel": "BytecodeReadRafCycle",
+                        "evaluator": {
+                            "command": [sys.executable, "-c", program],
+                            "schema_version": 5,
+                            "timeout_seconds": 30,
+                            "parameter_bindings": [
+                                {
+                                    "parameter": "width",
+                                    "destination": "argument",
+                                    "flag": "--width",
+                                    "value_format": "w{}",
+                                },
+                                {
+                                    "parameter": "reuse",
+                                    "destination": "boolean_flag",
+                                    "flag": "--reuse",
+                                    "true_value": "1",
+                                },
+                                {
+                                    "parameter": "threads",
+                                    "destination": "environment",
+                                    "name": "JOLT_METAL_KERNEL_THREADS",
+                                },
+                            ],
+                        },
+                        "expected_fingerprint": {},
+                    }
+                }
+            }
+            parsed, _, _ = metal_autoresearch.run_production_evaluator(
+                root,
+                run_dir,
+                config,
+                {"width": "32", "reuse": "1", "threads": "128"},
+            )
+            self.assertEqual(
+                parsed["argv"],
+                [
+                    "--mode",
+                    "production",
+                    "--local-kernel",
+                    "BytecodeReadRafCycle",
+                    "--width",
+                    "w32",
+                    "--reuse",
+                ],
+            )
+            self.assertEqual(parsed["threads"], "128")
 
     def test_production_rejection_replays_rollback_after_a_split_write(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -473,6 +634,69 @@ class MetalAutoresearchTests(unittest.TestCase):
             template["search_space"]["JOLT_METAL_INSTRUCTION_RA_REUSE_INVERSE"],
             [0],
         )
+
+    def test_schema_five_template_closes_local_metric_and_parameter_bindings(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/instruction_ra_virtualization.template.json"
+        )
+        wrong_metric = copy.deepcopy(template)
+        wrong_metric["final_validation"]["production_gate"]["paired_metric"] = (
+            "paired_bytecode_read_raf_cycle_speedups"
+        )
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            metal_autoresearch.validate_template(wrong_metric)
+
+        missing_fingerprint = copy.deepcopy(template)
+        missing_fingerprint["final_validation"]["production_gate"][
+            "expected_fingerprint"
+        ].pop("instruction_ra_reuse_inverse")
+        with self.assertRaisesRegex(ValueError, "must match"):
+            metal_autoresearch.validate_template(missing_fingerprint)
+
+        unknown_schema = copy.deepcopy(template)
+        unknown_schema["final_validation"]["production_gate"]["evaluator"][
+            "schema_version"
+        ] = 6
+        with self.assertRaisesRegex(ValueError, "must be 4 or 5"):
+            metal_autoresearch.validate_template(unknown_schema)
+
+        bytecode = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/bytecode_read_raf_cycle.template.json"
+        )
+        metal_autoresearch.validate_template(bytecode)
+        metal_autoresearch.validate_params(bytecode, bytecode["baseline_params"])
+        bindings = bytecode["final_validation"]["production_gate"]["evaluator"][
+            "parameter_bindings"
+        ]
+        self.assertEqual(
+            {binding["parameter"] for binding in bindings},
+            metal_autoresearch.PRODUCTION_LOCAL_KERNELS["BytecodeReadRafCycle"][
+                "parameters"
+            ],
+        )
+
+        missing_guard = copy.deepcopy(bytecode)
+        missing_guard["final_validation"]["production_gate"]["required_guards"].remove(
+            "bytecode_readback_exact"
+        )
+        with self.assertRaisesRegex(ValueError, "omits mandatory"):
+            metal_autoresearch.validate_template(missing_guard)
+
+        reserved_flag = copy.deepcopy(bytecode)
+        reserved_flag["final_validation"]["production_gate"]["evaluator"][
+            "command"
+        ].extend(["--mode", "diagnostic"])
+        with self.assertRaisesRegex(ValueError, "reserved controller flag"):
+            metal_autoresearch.validate_template(reserved_flag)
+
+        lock_override = copy.deepcopy(bytecode)
+        lock_override["final_validation"]["production_gate"]["evaluator"]["env"] = {
+            metal_autoresearch.EVALUATOR_LOCK_HELD_ENV: "forged"
+        }
+        with self.assertRaisesRegex(ValueError, "cannot override the lock token"):
+            metal_autoresearch.validate_template(lock_override)
+
         with self.assertRaisesRegex(ValueError, "is not one of"):
             metal_autoresearch.validate_params(
                 template,

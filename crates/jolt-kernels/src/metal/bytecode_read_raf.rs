@@ -9,12 +9,13 @@ use jolt_witness::JoltWitnessPlane;
 use super::instruction_read_raf::MetalBackend;
 use super::solinas::{
     BooleanityRows, BytecodeCycleRowInputs, BytecodeCycleRowSequence, BytecodeCycleSequenceConfig,
-    BytecodeCycleTablesMut,
+    BytecodeCycleTablesMut, MetalError,
 };
 use crate::optimized::bytecode_read_raf::{
     prepare_metal_bytecode_cycle_shell, BytecodeCycleAlgebra, BytecodeCycleDenseState, CycleKernel,
     OptimizedBytecodeReadRafCycle,
 };
+use crate::optimized::instruction_read_raf::{collect_instruction_cycle_rows, InstructionCycleRow};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -35,6 +36,38 @@ impl Default for BytecodeReadRafMetalConfig {
             dispatch: BytecodeCycleSequenceConfig::default(),
             cpu_tail_algebra: BytecodeCycleAlgebra::Q10Accum,
         }
+    }
+}
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct BytecodeReadRafResidentRows(BooleanityRows);
+
+impl BytecodeReadRafResidentRows {
+    #[doc(hidden)]
+    pub fn install(&self, session: &mut ProofSession) {
+        session.park(self.0.clone());
+    }
+}
+
+impl MetalBackend {
+    #[doc(hidden)]
+    pub fn prepare_bytecode_read_raf_resident_rows(
+        &self,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+        trace_elements: usize,
+    ) -> Result<BytecodeReadRafResidentRows, KernelError<AkitaField>> {
+        if trace_elements < 4 || !trace_elements.is_power_of_two() {
+            return Err(KernelError::InvariantViolation {
+                reason: "Bytecode evaluator trace length must be a power of two of at least four",
+            });
+        }
+        let rows = collect_instruction_cycle_rows(witness, trace_elements)?;
+        let resident_rows = self
+            .context
+            .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&rows))
+            .map_err(|error| KernelError::from(metal_error(error.to_string())))?;
+        Ok(BytecodeReadRafResidentRows(resident_rows))
     }
 }
 
@@ -81,22 +114,30 @@ impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBacken
             return fallback(session);
         }
 
+        let _span = tracing::info_span!("MetalBytecodeReadRafCycle::prepare").entered();
         let (cpu, metadata) =
             prepare_metal_bytecode_cycle_shell(cpu_inputs(), config.cpu_tail_algebra)?;
-        let sequence = self
-            .context
-            .prepare_bytecode_cycle_row_sequence(
-                rows,
-                BytecodeCycleRowInputs {
-                    stage_points: &metadata.stage_points,
-                    stage_weights: &metadata.stage_weights,
-                    entry_weight: metadata.entry_weight,
-                    ra0: &metadata.ra0,
-                    ra1: &metadata.ra1,
-                },
-                config.dispatch,
-            )
-            .map_err(|error| metal_error(error.to_string()))?;
+        let sequence = match self.context.prepare_bytecode_cycle_row_sequence(
+            rows,
+            BytecodeCycleRowInputs {
+                stage_points: &metadata.stage_points,
+                stage_weights: &metadata.stage_weights,
+                entry_weight: metadata.entry_weight,
+                ra0: &metadata.ra0,
+                ra1: &metadata.ra1,
+            },
+            config.dispatch,
+        ) {
+            Ok(sequence) => sequence,
+            Err(error) if bytecode_prepare_can_fallback(&error) => {
+                tracing::warn!(
+                    error = %error,
+                    "bytecode Metal preparation unavailable; using the optimized CPU kernel"
+                );
+                return fallback(session);
+            }
+            Err(error) => return Err(metal_error(error.to_string()).into()),
+        };
         Ok(Box::new(MetalBytecodeReadRafKernel::new(
             cpu,
             sequence,
@@ -139,6 +180,15 @@ impl MetalBytecodeReadRafKernel {
             ));
         }
         let elements = sequence.current_elements();
+        let readback_bytes = elements
+            .checked_mul(5 * std::mem::size_of::<AkitaField>())
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or_else(|| metal_error("bytecode cycle readback byte count overflowed"))?;
+        let _span = tracing::info_span!(
+            "MetalBytecodeReadRafCycle::readback",
+            bytes = readback_bytes
+        )
+        .entered();
         let mut tables = self
             .host_tail
             .take()
@@ -187,10 +237,20 @@ impl ProveRounds<AkitaField> for MetalBytecodeReadRafKernel {
             sequence.is_dense() && sequence.current_elements() <= self.cutoff_elements
         }) {
             self.restore_cpu_tail()?;
+            let _span = tracing::info_span!("MetalBytecodeReadRafCycle::cpu_tail").entered();
             return self.cpu.prove_round(bind, round, previous_claim);
         }
 
         if let Some(sequence) = self.sequence.as_mut() {
+            let span = match (bind.is_some(), sequence.is_dense()) {
+                (false, false) => {
+                    tracing::info_span!("MetalBytecodeReadRafCycle::first_message")
+                }
+                (true, false) => tracing::info_span!("MetalBytecodeReadRafCycle::first_bind"),
+                (true, true) => tracing::info_span!("MetalBytecodeReadRafCycle::dense_round"),
+                (false, true) => tracing::info_span!("MetalBytecodeReadRafCycle::invalid_round"),
+            };
+            let _span = span.enter();
             let evals = match bind {
                 None => sequence
                     .message()
@@ -206,6 +266,7 @@ impl ProveRounds<AkitaField> for MetalBytecodeReadRafKernel {
             return self.cpu.metal_message(evals, previous_claim);
         }
 
+        let _span = tracing::info_span!("MetalBytecodeReadRafCycle::cpu_tail").entered();
         self.cpu.prove_round(bind, round, previous_claim)
     }
 
@@ -213,6 +274,7 @@ impl ProveRounds<AkitaField> for MetalBytecodeReadRafKernel {
         if self.sequence.is_some() {
             self.restore_cpu_tail()?;
         }
+        let _span = tracing::info_span!("MetalBytecodeReadRafCycle::cpu_tail").entered();
         self.cpu.finish_rounds(bind)
     }
 }
@@ -234,6 +296,19 @@ fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
         backend: "metal",
         message: message.into(),
     }
+}
+
+fn bytecode_prepare_can_fallback(error: &MetalError) -> bool {
+    matches!(
+        error,
+        MetalError::InputTooLong(_)
+            | MetalError::BufferTooLong { .. }
+            | MetalError::WorkingSetTooLarge { .. }
+            | MetalError::FunctionLookup { .. }
+            | MetalError::PipelineCompilation { .. }
+            | MetalError::UnsupportedBytecodeCycleExecutionWidth { .. }
+            | MetalError::InvalidThreadgroupWidth { .. }
+    )
 }
 
 #[cfg(test)]

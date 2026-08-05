@@ -15,8 +15,17 @@ use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBacke
 use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
 
 /// Runs `f` against a small canned backend: an ADDI and a store, padded to `2^2`.
-#[expect(clippy::unwrap_used, reason = "test fixture construction")]
 pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R) -> R {
+    with_sample_backend_at_log_t(2, 4, f)
+}
+
+/// Runs the canned trace against a caller-selected padded cycle domain.
+#[expect(clippy::unwrap_used, reason = "test fixture construction")]
+pub fn with_sample_backend_at_log_t<R>(
+    log_t: usize,
+    log_k_chunk: u8,
+    f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
     let instruction = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::ADDI,
         address: 0x8000_0000,
@@ -50,7 +59,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
         .unwrap(),
         ram: RAMPreprocessing::default(),
         memory_layout: Default::default(),
-        max_padded_trace_length: 4,
+        max_padded_trace_length: 4.max(1usize << log_t),
     };
     let program = JoltProgram::default();
     let rows = vec![
@@ -95,10 +104,10 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
         },
     ];
     let config = JoltVmWitnessConfig::new(
-        2,
+        log_t,
         64,
         JoltOneHotConfig {
-            log_k_chunk: 4,
+            log_k_chunk,
             lookups_ra_virtual_log_k_chunk: 16,
         },
     );

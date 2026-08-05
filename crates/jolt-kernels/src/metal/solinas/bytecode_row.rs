@@ -9,12 +9,10 @@ use metal::{
 
 #[cfg(test)]
 use super::PipelineLimits;
-#[cfg(test)]
-use super::BYTECODE_CYCLE_TABLES;
 use super::{
     buffer_from_slice, command_buffer_timestamp, BooleanityRows, BytecodeCycleSequence,
     BytecodeCycleSequenceConfig, BytecodeCycleTablesMut, Fp128, MetalError, SolinasMetal,
-    BYTECODE_CYCLE_SAMPLES,
+    BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 
 pub(crate) const BYTECODE_ROW_STAGES: usize = 9;
@@ -108,6 +106,7 @@ impl SolinasMetal {
                 got: elements,
             });
         }
+        let row_count = u32::try_from(elements).map_err(|_| MetalError::InputTooLong(elements))?;
         if inputs.stage_points.len() != BYTECODE_ROW_STAGES
             || inputs.stage_weights.len() != BYTECODE_ROW_STAGES
         {
@@ -136,16 +135,26 @@ impl SolinasMetal {
             }
         }
 
-        let lo_bits = (elements.ilog2() as usize) / 2;
-        let hi_bits = elements.ilog2() as usize - lo_bits;
-        let lo_length = 1usize << lo_bits;
-        let hi_length = 1usize << hi_bits;
-        if hi_length > config.max_threadgroups {
-            return Err(MetalError::BytecodeCycleRowThreadgroups {
-                required: hi_length,
-                maximum: config.max_threadgroups,
-            });
+        let (_lo_bits, hi_bits, lo_length, hi_length) =
+            row_split(elements.ilog2() as usize, config.max_threadgroups)?;
+        let lo_length_u32 =
+            u32::try_from(lo_length).map_err(|_| MetalError::InputTooLong(lo_length))?;
+        let hi_length_u32 =
+            u32::try_from(hi_length).map_err(|_| MetalError::InputTooLong(hi_length))?;
+        let allocation = row_device_allocation(elements, lo_length, hi_length, config)?;
+        for bytes in allocation.buffer_bytes {
+            self.validate_buffer_length(bytes)?;
         }
+        let device = self.device_info();
+        let _allocation_span = tracing::info_span!(
+            "MetalBytecodeReadRafCycle::allocation_plan",
+            device_buffers = 17_u64,
+            planned_device_bytes = allocation.total_bytes,
+            current_device_bytes = device.current_allocated_size,
+            recommended_device_bytes = device.recommended_max_working_set_size,
+        )
+        .entered();
+        self.validate_additional_working_set(allocation.total_bytes)?;
 
         let pipelines = Pipelines {
             first_message: self.compile_named_pipeline(FIRST_MESSAGE_PIPELINE)?,
@@ -178,8 +187,10 @@ impl SolinasMetal {
         )?;
         let root_bind_threads = Self::resolve_threadgroup_width(None, bind_roots_limits)?;
 
-        let mut eq_lo = Vec::with_capacity(BYTECODE_ROW_STAGES * lo_length);
-        let mut weighted_eq_hi = Vec::with_capacity(BYTECODE_ROW_STAGES * hi_length);
+        let eq_lo_capacity = allocation.eq_lo_elements;
+        let weighted_eq_hi_capacity = allocation.weighted_eq_hi_elements;
+        let mut eq_lo = Vec::with_capacity(eq_lo_capacity);
+        let mut weighted_eq_hi = Vec::with_capacity(weighted_eq_hi_capacity);
         for (point, weight) in inputs.stage_points.iter().zip(inputs.stage_weights) {
             eq_lo.extend(EqPolynomial::<AkitaField>::evals(&point[hi_bits..], None));
             weighted_eq_hi.extend(EqPolynomial::<AkitaField>::evals(
@@ -196,9 +207,9 @@ impl SolinasMetal {
         self.validate_inputs("bytecode row RA0", &ra0)?;
         self.validate_inputs("bytecode row RA1", &ra1)?;
 
-        let bound_root_elements = BYTECODE_ROW_STAGES
-            .checked_mul(lo_length / 2)
-            .ok_or(MetalError::InputTooLong(lo_length))?;
+        let bound_root_elements = allocation.bound_eq_lo_elements;
+        let _ = u32::try_from(bound_root_elements)
+            .map_err(|_| MetalError::InputTooLong(bound_root_elements))?;
         let bound_root_bytes = byte_length(bound_root_elements)?;
         self.validate_buffer_length(bound_root_bytes)?;
         let dense = self.prepare_empty_bytecode_cycle_sequence_with_partial_capacity(
@@ -225,14 +236,14 @@ impl SolinasMetal {
             }),
             dense,
             params: Params {
-                rows: u32::try_from(elements).map_err(|_| MetalError::InputTooLong(elements))?,
-                lo_length: lo_length as u32,
-                hi_length: hi_length as u32,
+                rows: row_count,
+                lo_length: lo_length_u32,
+                hi_length: hi_length_u32,
                 reserved: 0,
             },
             root_bind_params: RootBindParams {
-                source_length: lo_length as u32,
-                output_length: (lo_length / 2) as u32,
+                source_length: lo_length_u32,
+                output_length: lo_length_u32 / 2,
                 reserved: [0; 2],
             },
             root_bind_elements: bound_root_elements,
@@ -437,6 +448,86 @@ impl BytecodeCycleRowSequence {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RowDeviceAllocation {
+    eq_lo_elements: usize,
+    bound_eq_lo_elements: usize,
+    weighted_eq_hi_elements: usize,
+    buffer_bytes: [u64; 7],
+    total_bytes: u64,
+}
+
+fn row_device_allocation(
+    elements: usize,
+    lo_length: usize,
+    hi_length: usize,
+    config: BytecodeCycleSequenceConfig,
+) -> Result<RowDeviceAllocation, MetalError> {
+    let eq_lo_elements = BYTECODE_ROW_STAGES
+        .checked_mul(lo_length)
+        .ok_or(MetalError::InputTooLong(lo_length))?;
+    let bound_eq_lo_elements = BYTECODE_ROW_STAGES
+        .checked_mul(lo_length / 2)
+        .ok_or(MetalError::InputTooLong(lo_length))?;
+    let weighted_eq_hi_elements = BYTECODE_ROW_STAGES
+        .checked_mul(hi_length)
+        .ok_or(MetalError::InputTooLong(hi_length))?;
+    let dense_a_elements = BYTECODE_CYCLE_TABLES
+        .checked_mul(elements / 2)
+        .ok_or(MetalError::InputTooLong(elements))?;
+    let dense_b_elements = BYTECODE_CYCLE_TABLES
+        .checked_mul(elements / 4)
+        .ok_or(MetalError::InputTooLong(elements))?;
+    let partial_elements = 2usize
+        .checked_mul(BYTECODE_CYCLE_SAMPLES)
+        .and_then(|value| value.checked_mul(config.max_threadgroups))
+        .ok_or(MetalError::InputTooLong(config.max_threadgroups))?;
+    let ra_elements = 2usize
+        .checked_mul(BYTECODE_ROW_RA_ENTRIES)
+        .ok_or(MetalError::InputTooLong(BYTECODE_ROW_RA_ENTRIES))?;
+    let buffer_bytes = [
+        byte_length(eq_lo_elements)?,
+        byte_length(bound_eq_lo_elements)?,
+        byte_length(weighted_eq_hi_elements)?,
+        byte_length(BYTECODE_ROW_RA_ENTRIES)?,
+        byte_length(BYTECODE_ROW_RA_ENTRIES)?,
+        byte_length(elements / 2)?,
+        byte_length(partial_elements / 2)?,
+    ];
+    let total_elements = [
+        eq_lo_elements,
+        bound_eq_lo_elements,
+        weighted_eq_hi_elements,
+        ra_elements,
+        dense_a_elements,
+        dense_b_elements,
+        partial_elements,
+    ]
+    .into_iter()
+    .try_fold(0usize, |total, value| total.checked_add(value))
+    .ok_or(MetalError::InputTooLong(elements))?;
+    Ok(RowDeviceAllocation {
+        eq_lo_elements,
+        bound_eq_lo_elements,
+        weighted_eq_hi_elements,
+        buffer_bytes,
+        total_bytes: byte_length(total_elements)?,
+    })
+}
+
+fn row_split(
+    log_t: usize,
+    max_threadgroups: usize,
+) -> Result<(usize, usize, usize, usize), MetalError> {
+    if max_threadgroups == 0 {
+        return Err(MetalError::InvalidBytecodeCycleThreadgroups(0));
+    }
+    let balanced_hi_bits = log_t - log_t / 2;
+    let hi_bits = balanced_hi_bits.min(max_threadgroups.ilog2() as usize);
+    let lo_bits = log_t - hi_bits;
+    Ok((lo_bits, hi_bits, 1usize << lo_bits, 1usize << hi_bits))
+}
+
 fn fields_to_fp128(values: &[AkitaField]) -> Vec<Fp128> {
     values.iter().map(Fp128::from_jolt_field).collect()
 }
@@ -544,6 +635,44 @@ mod tests {
     }
 
     #[test]
+    fn row_split_caps_the_high_domain_by_the_group_budget() {
+        assert_eq!(row_split(26, 1 << 13).unwrap(), (13, 13, 1 << 13, 1 << 13));
+        assert_eq!(row_split(27, 1 << 13).unwrap(), (14, 13, 1 << 14, 1 << 13));
+        assert_eq!(row_split(28, 1 << 13).unwrap(), (15, 13, 1 << 15, 1 << 13));
+        assert_eq!(row_split(28, 1 << 14).unwrap(), (14, 14, 1 << 14, 1 << 14));
+        assert_eq!(row_split(28, 10_000).unwrap(), (15, 13, 1 << 15, 1 << 13));
+        assert!(matches!(
+            row_split(26, 0),
+            Err(MetalError::InvalidBytecodeCycleThreadgroups(0))
+        ));
+    }
+
+    #[test]
+    fn row_allocation_plan_charges_every_prepared_device_buffer() {
+        let elements = 1usize << 26;
+        let (_, _, lo_length, hi_length) = row_split(26, 1 << 13).unwrap();
+        let config = BytecodeCycleSequenceConfig::default();
+        let allocation = row_device_allocation(elements, lo_length, hi_length, config).unwrap();
+        let expected_elements = BYTECODE_ROW_STAGES * lo_length
+            + BYTECODE_ROW_STAGES * (lo_length / 2)
+            + BYTECODE_ROW_STAGES * hi_length
+            + 2 * BYTECODE_ROW_RA_ENTRIES
+            + BYTECODE_CYCLE_TABLES * (elements / 2 + elements / 4)
+            + 2 * BYTECODE_CYCLE_SAMPLES * config.max_threadgroups;
+        assert_eq!(
+            allocation.total_bytes,
+            (expected_elements * size_of::<Fp128>()) as u64
+        );
+        assert_eq!(
+            allocation.buffer_bytes[0],
+            (BYTECODE_ROW_STAGES * lo_length * size_of::<Fp128>()) as u64
+        );
+
+        let tiny_group_plan = row_device_allocation(elements, elements, 1, config).unwrap();
+        assert!(tiny_group_plan.total_bytes > allocation.total_bytes);
+    }
+
+    #[test]
     fn row_derived_sequence_matches_dense_cpu() {
         let context = SolinasMetal::for_akita().unwrap();
         let log_t = 14;
@@ -622,7 +751,7 @@ mod tests {
                 BytecodeCycleSequenceConfig {
                     message_threads_per_threadgroup: Some(32),
                     transition_threads_per_threadgroup: Some(32),
-                    max_threadgroups: 1 << 13,
+                    max_threadgroups: 1 << 5,
                 },
             )
             .unwrap();

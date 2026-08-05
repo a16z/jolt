@@ -72,6 +72,21 @@
           "--repeats",
           "5"
         ],
+        "parameter_bindings": [
+          {
+            "destination": "argument",
+            "flag": "--instruction-ra-materialize-width",
+            "parameter": "JOLT_METAL_INSTRUCTION_RA_MATERIALIZE_WIDTH",
+            "value_format": "{}"
+          },
+          {
+            "destination": "boolean_flag",
+            "flag": "--instruction-ra-reuse-inverse",
+            "parameter": "JOLT_METAL_INSTRUCTION_RA_REUSE_INVERSE",
+            "true_value": "1"
+          }
+        ],
+        "schema_version": 5,
         "timeout_seconds": 7200
       },
       "expected_fingerprint": {
@@ -84,7 +99,9 @@
           "type": "bool01"
         }
       },
+      "local_kernel": "InstructionRaVirtualization",
       "metric": "instruction_ra_speedup",
+      "paired_metric": "paired_instruction_ra_speedups",
       "minimum_local_speedup": 7.0,
       "minimum_log_n": 26,
       "minimum_pairs": 5,
@@ -93,7 +110,12 @@
       "required_guards": [
         "cpu_proofs_verified",
         "metal_proofs_verified",
-        "target_scale"
+        "target_scale",
+        "production_contract",
+        "local_kernel_attributed",
+        "local_kernel_metal_backend_exercised",
+        "stable_source",
+        "stable_binary"
       ],
       "workload": "fibonacci"
     },

@@ -209,6 +209,8 @@ pub struct DeviceInfo {
     pub name: String,
     pub max_buffer_length: u64,
     pub max_threadgroup_memory_length: u64,
+    pub recommended_max_working_set_size: u64,
+    pub current_allocated_size: u64,
     pub offset: u32,
 }
 
@@ -236,6 +238,14 @@ pub enum MetalError {
     InputTooLong(usize),
     #[error("buffer requires {requested} bytes but the Metal device limit is {maximum}")]
     BufferTooLong { requested: u64, maximum: u64 },
+    #[error(
+        "Metal has {current} bytes allocated and the kernel needs {additional} more, exceeding the recommended working set of {maximum} bytes"
+    )]
+    WorkingSetTooLarge {
+        current: u64,
+        additional: u64,
+        maximum: u64,
+    },
     #[error("input {side}[{index}] is not canonical for 2^128 - {offset}")]
     NonCanonicalInput {
         side: &'static str,
@@ -515,8 +525,29 @@ impl SolinasMetal {
             name: self.device.name().to_owned(),
             max_buffer_length: self.device.max_buffer_length(),
             max_threadgroup_memory_length: self.device.max_threadgroup_memory_length(),
+            recommended_max_working_set_size: self.device.recommended_max_working_set_size(),
+            current_allocated_size: self.device.current_allocated_size(),
             offset: self.offset,
         }
+    }
+
+    pub(crate) fn validate_additional_working_set(
+        &self,
+        additional: u64,
+    ) -> Result<(), MetalError> {
+        let current = self.device.current_allocated_size();
+        let maximum = self.device.recommended_max_working_set_size();
+        if current
+            .checked_add(additional)
+            .is_none_or(|total| total > maximum)
+        {
+            return Err(MetalError::WorkingSetTooLarge {
+                current,
+                additional,
+                maximum,
+            });
+        }
+        Ok(())
     }
 
     pub fn pipeline_limits(&self, probe: Probe) -> Result<PipelineLimits, MetalError> {
