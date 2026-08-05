@@ -44,6 +44,8 @@ pub mod st6b_bench;
 pub mod testing;
 
 pub use buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec, PAGE_SIZE};
+#[cfg(feature = "bench-utils")]
+pub use commitment::{G1SegBenchCase, G1SegBenchFixture, G1SegBenchSample};
 pub use dory_folds::{
     g1_scalar_mul_add_device, g2_fixed_base_mul_device, g2_scalar_mul_add_device,
 };

@@ -10,7 +10,11 @@
 //!
 //! Legs (per `--iters` iteration, one JSON line each):
 //!
-//! - `commit`  — the Metal commit slot alone (production stage-0 grid/ids).
+//! - `commit`  — the Metal commit slot alone (production stage-0 grid/ids);
+//!   `commit-N` overrides the G1 segment cap for same-binary A/B.
+//! - `g1-N`    — one production-shaped `jk_g1_seg_sum` superchunk at segment
+//!   cap `N`, reporting device time, useful GB/s, and Fq Montgomery Gmul/s.
+//! - `g1s-N`   — the same dispatch through the retained serial A/B oracle.
 //! - `walk`    — the production background record walk alone
 //!   (`spawn_shared_record_collect` + the stage-1 join), on its capped pool.
 //! - `corun`   — the production shape: spawn the walk, run the commit, join.
@@ -51,6 +55,8 @@ mod harness {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_inlines_sha2 as _;
+    use jolt_kernels::metal::testing::gpu_lock;
+    use jolt_kernels::metal::{G1SegBenchCase, G1SegBenchFixture};
     use jolt_kernels::optimized::trace_record::{
         join_shared_record_for_bench, spawn_shared_record_collect,
     };
@@ -398,15 +404,112 @@ mod harness {
             assert_eq!(committed.len(), ids.len());
         };
 
-        for leg in cli.legs.split(',') {
+        let legs: Vec<&str> = cli.legs.split(',').collect();
+        let parse_g1_leg = |leg: &str| {
+            leg.strip_prefix("g1-")
+                .map(|cap| (cap, false))
+                .or_else(|| leg.strip_prefix("g1s-").map(|cap| (cap, true)))
+                .and_then(|(cap, serial)| cap.parse().ok().map(|cap| (cap, serial)))
+        };
+        let mut g1_caps: Vec<usize> = legs
+            .iter()
+            .filter_map(|leg| parse_g1_leg(leg).map(|(cap, _)| cap))
+            .collect();
+        g1_caps.sort_unstable();
+        g1_caps.dedup();
+        let g1_fixture = (!g1_caps.is_empty()).then(|| {
+            G1SegBenchFixture::new(
+                &witness as &dyn RowSource,
+                &ids,
+                grid,
+                &prover_preprocessing.pcs_setup,
+            )
+            .expect("G1 segment fixture")
+        });
+        let g1_cases: Vec<(usize, G1SegBenchCase)> =
+            g1_fixture.as_ref().map_or_else(Vec::new, |f| {
+                g1_caps
+                    .iter()
+                    .map(|&cap| (cap, f.build_case(cap).expect("G1 segment case")))
+                    .collect()
+            });
+        let _gpu_lock = gpu_lock();
+        if let Some(fixture) = &g1_fixture {
+            let cases: Vec<&G1SegBenchCase> = g1_cases.iter().map(|(_, case)| case).collect();
+            fixture
+                .assert_equivalent(&cases)
+                .expect("segment-cap tier-1 oracle");
+        }
+
+        for leg in legs {
             let mut totals = Vec::with_capacity(cli.iters);
             for iter in 0..cli.iters {
                 dirty_pages(cli.dirty_gb);
+                if let Some((cap, serial)) = parse_g1_leg(leg) {
+                    let fixture = g1_fixture.as_ref().expect("G1 fixture");
+                    let case = g1_cases
+                        .iter()
+                        .find(|(candidate, _)| *candidate == cap)
+                        .map(|(_, case)| case)
+                        .expect("requested G1 case");
+                    if serial {
+                        std::env::set_var("JOLT_METAL_G1_SEG_SERIAL", "1");
+                    }
+                    let sample = case.sample(fixture).expect("G1 segment dispatch");
+                    std::env::remove_var("JOLT_METAL_G1_SEG_SERIAL");
+                    println!(
+                        "{{\"leg\":\"{leg}\",\"iter\":{iter},\"gpu_s\":{:.6},\
+                         \"wall_s\":{:.6},\"segments\":{},\"additions\":{},\
+                         \"useful_gbps\":{:.3},\"gmul_s\":{:.3}}}",
+                        sample.gpu_s,
+                        sample.wall_s,
+                        sample.segments,
+                        sample.additions,
+                        sample.useful_gbps,
+                        sample.gmul_s,
+                    );
+                    totals.push(sample.gpu_s);
+                    continue;
+                }
                 let sample = match leg {
                     "commit" => timed_leg(|| {
                         commit_once();
                         (None, None)
                     }),
+                    _ if leg
+                        .strip_prefix("commit-s")
+                        .and_then(|cap| cap.parse::<usize>().ok())
+                        .is_some() =>
+                    {
+                        let cap = leg
+                            .strip_prefix("commit-s")
+                            .and_then(|cap| cap.parse::<usize>().ok())
+                            .expect("checked segment cap");
+                        timed_leg(|| {
+                            std::env::set_var("JOLT_METAL_G1_SEGMENT_LEN", cap.to_string());
+                            std::env::set_var("JOLT_METAL_G1_SEG_SERIAL", "1");
+                            commit_once();
+                            std::env::remove_var("JOLT_METAL_G1_SEG_SERIAL");
+                            std::env::remove_var("JOLT_METAL_G1_SEGMENT_LEN");
+                            (None, None)
+                        })
+                    }
+                    _ if leg
+                        .strip_prefix("commit-")
+                        .and_then(|cap| cap.parse::<usize>().ok())
+                        .is_some() =>
+                    {
+                        let cap = leg
+                            .strip_prefix("commit-")
+                            .and_then(|cap| cap.parse::<usize>().ok())
+                            .expect("checked segment cap");
+                        timed_leg(|| {
+                            std::env::set_var("JOLT_METAL_G1_SEGMENT_LEN", cap.to_string());
+                            commit_once();
+                            std::env::remove_var("JOLT_METAL_G1_SEGMENT_LEN");
+                            (None, None)
+                        })
+                    }
                     "walk" => timed_leg(|| {
                         let mut session = backend.begin_proof();
                         std::thread::scope(|scope| {
