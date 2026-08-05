@@ -65,7 +65,15 @@ baseline's window; baseline-window model ≈ 64 s.
   metal-w2-r4gate1.md.
 - st1 packing: legal but round loop already fused — prize small.
 
-## Wave 3 (open) — lanes
+## Wave 4 (open) — lanes
+
+| lane | task | scope | bar |
+|---|---|---|---|
+| fly | 5d0bb622 (fable-max) | MillerFly persistent-state spill quantification + restructure (planned spills / TG staging / two-kernel split) | ≥15% fly family / ≥0.6 s stage; kill at <8% first A/B |
+| dorypack | 8688c7a7 (kimi-k3) | typed-Dory packing re-pricing vs measured st6b/st7 anatomy — GO/NO-GO for wave 5 | docs deliverable |
+| watchdog | 73a18dfb (fable-low) | fresh-window probe (2^22 e2e ≤3.9 s) → wake for absolute record run | — |
+
+## Wave 3 (CLOSED) — lanes
 
 Doctrine: single-kernel + prepare→GPU. Off `3830f4da8`+.
 
