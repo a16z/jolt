@@ -109,3 +109,29 @@ slow ⇒ code exonerated; no zombie process, Renderer 1%, recoveryCount 0;
 ~100 min idle no recovery). Needs reboot/driver reset or spontaneous
 window flip. Watchdog continues 30-min probes; certification fires
 automatically at the next healthy window (<0.40 ms).
+
+## Wave-3 certification (same-window paired A/B, 08:02–08:40 UTC)
+
+Post-recovery window: FrBind 153 µs (faster than the 255 µs reference) but
+sustained e2e much slower than the wave-2 record window and in the LOW-RSS
+memory mode — absolute numbers not comparable across windows (identical
+wave-2 code: 95.11 s tonight vs its own 69.63 s record). Ambient axis is
+worth ±25 s; only same-window pairs are evidence (campaign rule upheld).
+
+**Paired A/B @2^27, same window, back-to-back:**
+
+| tree | prove | padded | RSS |
+|---|---:|---:|---:|
+| wave-2 certified (3830f4da8) | 95.11 s | 1.411 MHz | 76.93 GiB |
+| **wave-3 trunk** | **78.46 s** | **1.711 MHz** | **72.22 GiB** |
+
+**Wave-3 delta: −16.65 s / −17.5% code effect, RSS −4.7 GiB** — exceeds
+the −9.5..−10 model (window nonlinearity compounds the wins). st5 legacy-
+knob arm (78.67 s) ≈ new arm ⇒ the apparent st5 stage elevation is window
+skew, not the new kernels. 2^25 in-window: 20.05 s (st4 −0.47, st6b −0.39
+vs baseline; st5/st0 window-skewed).
+
+Wave-2-window-equivalent extrapolation: 69.63 × (78.46/95.11) ≈ **57.4 s
+(~2.34 MHz)** — labeled cross-window model; absolute record attempt
+deferred to the next fresh window (post-reboot). 69.63 s remains the best
+absolute measured. Wave 3 CLOSED.

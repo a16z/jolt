@@ -1,0 +1,11 @@
+{
+  "series": "jolt-metal-m5-sha2chain",
+  "wave": 3,
+  "date": "2026-08-05",
+  "branch": "scratch/metal-saturation",
+  "paired_ab_2e27": {"wave2_code_s": 95.11, "wave3_code_s": 78.46, "delta_s": -16.65, "delta_pct": -17.5, "rss_delta_gib": -4.71, "note": "same degraded window; identical w2 code ran 69.63 in its own window"},
+  "window_equivalent_model_s": 57.4,
+  "best_absolute_measured_s": 69.63,
+  "shipped": ["st5 phase+suffix scans", "st0 G1 XYZZ", "st4 GPU CSR prepare (W2B salvage)", "st6b IncCR prepare", "st8 parallel Miller fold"],
+  "battery": "green (clippy x2, muldiv x2, 444/480/445, metal 353/353)"
+}
