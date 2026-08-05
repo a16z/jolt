@@ -282,6 +282,9 @@ Final per-file actuals are recorded in the file-structure table below
    This matches the old umbrella (`Field` never carried serde bounds); every
    first-party type keeps its `impl_serde_bytes!` impls. Restore the bounds
    at the akita cutover when the bootstrap edge is deleted.
+   **Discharged by the cutover-completion PR** (stacked on Jolt #1684 and
+   Akita #307): the bootstrap edge is deleted and `JoltField` requires
+   `Serialize + DeserializeOwned` again.
 2. **`CanonicalEncoding` re-split**: byte surface extracted as a bare
    `CanonicalBytes` supertrait (transcript absorption and `NoCommitment`
    bind to bytes only; same decision as the baseline's ff5bf9c split).
@@ -330,6 +333,11 @@ validated by the following battery, all green:
    Akita rebind binds them at their new path.
 5. **Akita cutover follow-ups:** delete the `akita` bootstrap edge and
    restore `JoltField`'s serde bounds (deviation 1 above).
+   **Discharged by the cutover-completion PR** (stacked on Jolt #1684 and
+   Akita #307): `src/akita.rs`, the `akita` feature, and the optional
+   `akita-config`/`akita-field` dependencies are gone; the serde bounds are
+   back on the trait and the blanket impl; the shared-field identity check
+   rejects every `akita-field` identity.
 
 ## Design pillars
 
