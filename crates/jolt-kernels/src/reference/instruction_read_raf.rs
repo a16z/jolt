@@ -157,10 +157,10 @@ fn extension_eval<F: Field>(evals: &[F], b: usize, half: usize, c: usize) -> F {
 /// Cycle-indexed tables for the last `log_T` rounds: `eq(r_reduction, ·)`,
 /// the combined `Val + γ·RafVal` at the bound address, and the virtual `ra`
 /// chunk selectors.
-struct CycleTables<F: Field> {
-    eq_reduction: Polynomial<F>,
-    combined_val: Polynomial<F>,
-    ra: Vec<Polynomial<F>>,
+pub(crate) struct CycleTables<F: Field> {
+    pub(crate) eq_reduction: Polynomial<F>,
+    pub(crate) combined_val: Polynomial<F>,
+    pub(crate) ra: Vec<Polynomial<F>>,
 }
 
 pub struct InstructionReadRafKernel<F: Field> {
@@ -194,7 +194,7 @@ pub struct InstructionReadRafKernel<F: Field> {
     pub(crate) v_tables: Vec<Vec<F>>,
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
-    cycle_tables: Option<CycleTables<F>>,
+    pub(crate) cycle_tables: Option<CycleTables<F>>,
     pub(crate) rounds_bound: usize,
 }
 

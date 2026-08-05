@@ -8,6 +8,7 @@ mod address_driver;
 mod address_phase;
 mod combine;
 mod context;
+mod cycle_rounds;
 mod dense_product;
 mod device;
 mod error;

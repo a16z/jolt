@@ -10,6 +10,7 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::address_driver::DeviceAddressPhase;
 use super::context::CudaKernelContext;
+use super::cycle_rounds::DeviceCycleRounds;
 use super::device::{fr_into, require_fr};
 use super::{require_context, CudaBackend};
 use crate::reference::instruction_read_raf::{InstructionReadRafKernel, InstructionReadRafWitness};
@@ -24,6 +25,7 @@ const RAF_CHECKPOINTS: usize = 4;
 pub struct DeviceInstructionReadRaf<F: Field> {
     host: InstructionReadRafKernel<F>,
     device: Option<DeviceAddressPhase>,
+    cycle: Option<DeviceCycleRounds>,
     gamma: jolt_field::Fr,
     context: &'static CudaKernelContext,
     rounds_bound: usize,
@@ -89,6 +91,19 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
         self.host.v_tables = v_tables;
         self.host.rounds_bound = ADDRESS_BITS;
         self.host.init_cycle_rounds();
+
+        let tables = self.host.cycle_tables.as_ref().ok_or_else(failed)?;
+        let ra: Vec<Vec<F>> = tables.ra.iter().map(|ra| ra.evals().to_vec()).collect();
+        self.cycle = Some(
+            DeviceCycleRounds::new(
+                self.context,
+                tables.eq_reduction.evals(),
+                tables.combined_val.evals(),
+                &ra,
+                self.host.num_rounds() - ADDRESS_BITS,
+            )
+            .map_err(|_| failed())?,
+        );
         Ok(())
     }
 }
@@ -140,6 +155,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
         Ok(Box::new(DeviceInstructionReadRaf {
             host,
             device: Some(device),
+            cycle: None,
             gamma,
             context,
             rounds_bound: 0,
@@ -179,7 +195,17 @@ impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
             }
             host.to_vec()
         } else {
-            self.host.cycle_message()?
+            let cycle = self
+                .cycle
+                .as_ref()
+                .ok_or(SumcheckError::MissingEvaluationSource {
+                    kind: "cuda cycle rounds",
+                })?;
+            cycle.round_message(self.context).map_err(|_| {
+                SumcheckError::MissingEvaluationSource {
+                    kind: "cuda cycle round message",
+                }
+            })?
         };
         let round_sum = evals[0] + evals[1];
         if round_sum != previous_claim {
@@ -219,6 +245,19 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
             }
             Ok(())
         } else {
+            let scalar =
+                require_fr(challenge).map_err(|_| SumcheckError::MissingEvaluationSource {
+                    kind: "cuda cycle-round challenge",
+                })?;
+            self.cycle
+                .as_mut()
+                .ok_or(SumcheckError::MissingEvaluationSource {
+                    kind: "cuda cycle rounds",
+                })?
+                .bind(self.context, scalar)
+                .map_err(|_| SumcheckError::MissingEvaluationSource {
+                    kind: "cuda cycle-round bind",
+                })?;
             self.rounds_bound += 1;
             self.host.bind(challenge)
         }
