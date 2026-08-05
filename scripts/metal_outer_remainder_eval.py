@@ -23,9 +23,9 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA = "outer_remainder_v1"
-SCHEMA_VERSION = 1
-RUNNER_SCHEMA = "outer_remainder_runner_v1"
+SCHEMA = "outer_remainder_v2"
+SCHEMA_VERSION = 2
+RUNNER_SCHEMA = "outer_remainder_runner_v2"
 FEATURES = "metal,prover-fixtures"
 EXAMPLE = "metal-outer-remainder-eval"
 LOG_N = 26
@@ -35,6 +35,9 @@ OUTPUT_CLAIMS = 35
 FIELD_BYTES = 16
 COMPACT_ROW_BYTES = 48
 RESIDUAL_ROW_BYTES = 112
+STORAGE_BUFFERS = 9
+STORAGE_BYTES = 4_300_079_856
+MAXIMUM_STORAGE_BUFFER_BYTES = 2 * (1 << 30)
 MIN_SPEEDUP = 4.0
 RAYON_THREADS = 16
 TRACE_EPSILON_US = 1e-6
@@ -61,6 +64,8 @@ METAL_OUTPUT = "MetalOuterRemainder::output_claims"
 METAL_INVALID_ROUND = "MetalOuterRemainder::invalid_round"
 METAL_ROW_HANDOFF = "MetalOuterRemainder::row_handoff"
 METAL_ROW_RELEASE = "MetalOuterRemainder::row_release"
+METAL_STORAGE_PREPARE = "MetalOuterRemainder::storage_prepare"
+METAL_STORAGE_INITIALIZE = "MetalOuterRemainder::storage_initialize"
 
 ROW_PREPARE = "MetalInstructionInput::compact_rows_prepare"
 ROW_STAGE1_HANDOFF = "MetalInstructionInput::compact_rows_stage1_handoff"
@@ -71,6 +76,7 @@ SOURCE_PATHS = (
     "crates/jolt-prover/examples/metal-outer-remainder-eval.rs",
     "crates/jolt-prover/src/stages/stage1.rs",
     "crates/jolt-kernels/src/metal/spartan_outer.rs",
+    "crates/jolt-kernels/src/metal/solinas/mod.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder.metal",
     "crates/jolt-kernels/src/optimized/spartan_outer.rs",
@@ -238,6 +244,12 @@ def arg_bool(span: Span, name: str) -> bool:
     return trace_bool(span.args[name], f"{span.name}.{name}")
 
 
+def arg_string(span: Span, name: str) -> str:
+    if name not in span.args:
+        raise ValueError(f"{span.name} is missing {name}")
+    return trace_string(span.args[name], f"{span.name}.{name}")
+
+
 def nested(child: Span, parent: Span) -> bool:
     return parent.contains(child)
 
@@ -386,6 +398,10 @@ def parse_outer_remainder_member(
         for span in gpu_phases
     )
     rows = 1 << LOG_N
+    sequence_storage_ids = [
+        arg_int(sequence, f"storage_buffer_{index}", positive=True)
+        for index in range(STORAGE_BUFFERS)
+    ]
     sequence_exact = (
         arg_int(sequence, "resident_rows") == rows
         and arg_int(sequence, "rounds") == ROUNDS
@@ -393,9 +409,14 @@ def parse_outer_remainder_member(
         and arg_int(sequence, "trace_cutoff_elements") == 1 << trace_cutoff_log2
         and arg_int(sequence, "row_upload_bytes") == 0
         and arg_int(sequence, "full_domain_copy_dispatches") == 0
+        and arg_int(sequence, "sequence_device_buffer_allocations") == 0
         and arg_int(sequence, "round_device_buffer_allocations") == 0
-        and arg_int(sequence, "planned_device_bytes")
-        == arg_int(allocation, "additional_working_set_bytes")
+        and arg_bool(sequence, "storage_reused")
+        and arg_string(sequence, "storage_initialization_mode") == "full"
+        and arg_int(sequence, "planned_device_bytes") == STORAGE_BYTES
+        and arg_int(sequence, "preinitialized_device_bytes") == STORAGE_BYTES
+        and arg_int(sequence, "initialization_bytes") == STORAGE_BYTES
+        and len(set(sequence_storage_ids)) == STORAGE_BUFFERS
     )
     expected_table_elements = 2 * cutoff
     readback_exact = (
@@ -410,13 +431,13 @@ def parse_outer_remainder_member(
     resident_bytes = rows * (COMPACT_ROW_BYTES + RESIDUAL_ROW_BYTES)
     allocation_exact = (
         arg_bool(allocation, "admitted")
+        and arg_bool(allocation, "storage_reused")
         and arg_int(allocation, "existing_resident_bytes") == resident_bytes
-        and arg_int(allocation, "additional_working_set_bytes", positive=True)
-        >= 4 * (1 << 30)
+        and arg_int(allocation, "preallocated_device_bytes") == STORAGE_BYTES
+        and arg_int(allocation, "additional_working_set_bytes") == 0
         and arg_int(allocation, "current_device_bytes")
-        >= arg_int(allocation, "existing_resident_bytes")
+        >= arg_int(allocation, "existing_resident_bytes") + STORAGE_BYTES
         and arg_int(allocation, "current_device_bytes")
-        + arg_int(allocation, "additional_working_set_bytes")
         <= arg_int(allocation, "recommended_max_working_set_bytes", positive=True)
     )
     identity_exact = (
@@ -482,10 +503,74 @@ def parse_outer_remainder_member(
                 "handoff": row_handoff.args,
                 "sequence": sequence.args,
                 "release": row_release.args,
+                "storage_buffer_ids": sequence_storage_ids,
             },
         }
     )
     return result
+
+
+def parse_outer_remainder_storage(
+    spans: list[Span], arm: Span, member: Span
+) -> dict[str, Any]:
+    inside = descendants(spans, arm)
+    storage = unique(
+        descendants(inside, arm, METAL_STORAGE_PREPARE),
+        "outer-remainder storage preparation",
+    )
+    initialization = unique(
+        descendants(inside, storage, METAL_STORAGE_INITIALIZE),
+        "outer-remainder storage initialization",
+    )
+    storage_ids = [
+        arg_int(storage, f"buffer_{index}", positive=True)
+        for index in range(STORAGE_BUFFERS)
+    ]
+    initialization_ids = [
+        arg_int(initialization, f"buffer_{index}", positive=True)
+        for index in range(STORAGE_BUFFERS)
+    ]
+    initialization_wall_ns = arg_int(
+        storage, "initialization_wall_ns", positive=True
+    )
+    initialization_gpu_active_ns = arg_int(
+        storage, "initialization_gpu_active_ns", positive=True
+    )
+    current_bytes = arg_int(storage, "current_device_bytes")
+    recommended_bytes = arg_int(
+        storage, "recommended_max_working_set_bytes", positive=True
+    )
+    exact = (
+        arg_int(storage, "cycles") == 1 << LOG_N
+        and arg_int(storage, "planned_device_bytes") == STORAGE_BYTES
+        and arg_int(storage, "maximum_buffer_bytes")
+        == MAXIMUM_STORAGE_BUFFER_BYTES
+        and current_bytes + STORAGE_BYTES <= recommended_bytes
+        and arg_string(storage, "initialization_mode") == "full"
+        and arg_bool(storage, "admitted")
+        and arg_bool(storage, "initialized")
+        and arg_int(storage, "device_buffers") == STORAGE_BUFFERS
+        and arg_int(storage, "initialization_bytes") == STORAGE_BYTES
+        and initialization_gpu_active_ns <= initialization_wall_ns
+        and initialization_wall_ns <= round(storage.duration_us * 1000)
+        and arg_string(initialization, "mode") == "full"
+        and arg_int(initialization, "device_buffers") == STORAGE_BUFFERS
+        and arg_int(initialization, "bytes") == STORAGE_BYTES
+        and arg_int(initialization, "protocol_dispatches") == 0
+        and storage_ids == initialization_ids
+        and len(set(storage_ids)) == STORAGE_BUFFERS
+    )
+    outside_member = storage.end_us <= member.start_us + TRACE_EPSILON_US
+    return {
+        "storage_prepare_ns": round(storage.duration_us * 1000),
+        "storage_initialization_ns": round(initialization.duration_us * 1000),
+        "storage_initialization_wall_ns": initialization_wall_ns,
+        "storage_initialization_gpu_active_ns": initialization_gpu_active_ns,
+        "storage_exact": exact,
+        "storage_outside_member": outside_member,
+        "buffer_ids": storage_ids,
+        "args": storage.args,
+    }
 
 
 def arm_key(span: Span) -> tuple[int, str]:
@@ -508,7 +593,7 @@ def parse_outer_remainder_result(
     binary_sha256: str,
     artifact_dir: str,
 ) -> dict[str, Any]:
-    if runner.get("schema") != RUNNER_SCHEMA or runner.get("schema_version") != 1:
+    if runner.get("schema") != RUNNER_SCHEMA or runner.get("schema_version") != 2:
         raise ValueError("runner output has the wrong schema")
     if runner.get("log_n") != LOG_N or runner.get("pairs") != PAIRS:
         raise ValueError("runner output violates the frozen scale or pair count")
@@ -572,19 +657,25 @@ def parse_outer_remainder_result(
     parameters = runner.get("parameters")
     if not isinstance(parameters, dict):
         raise ValueError("runner output has no parameter fingerprint")
-    parameter_names = {
+    integer_parameter_names = {
         "materialize_threads",
         "transition_threads",
         "output_threads",
         "cutoff_log2",
         "trace_cutoff_log2",
     }
-    if set(parameters) != parameter_names:
+    if set(parameters) != integer_parameter_names | {"storage_initialization"}:
         raise ValueError("runner output has the wrong parameter fingerprint")
     parameters = {
         name: trace_int(parameters[name], name, positive=True)
-        for name in sorted(parameter_names)
+        for name in sorted(integer_parameter_names)
     }
+    storage_initialization = trace_string(
+        runner["parameters"]["storage_initialization"], "storage_initialization"
+    )
+    if storage_initialization != "full":
+        raise ValueError("frozen evaluator requires full storage initialization")
+    parameters["storage_initialization"] = storage_initialization
     cutoff_log2 = parameters["cutoff_log2"]
     trace_cutoff_log2 = parameters["trace_cutoff_log2"]
     if trace_cutoff_log2 > LOG_N or cutoff_log2 < 2 or cutoff_log2 >= ROUNDS - 1:
@@ -622,6 +713,16 @@ def parse_outer_remainder_result(
             )
             for backend in ("optimized", "metal")
         }
+        metal_arm = keyed[(pair, "metal")]
+        metal_member = unique(
+            descendants(descendants(spans, metal_arm), metal_arm, MEMBER),
+            "Metal member",
+        )
+        storage = parse_outer_remainder_storage(spans, metal_arm, metal_member)
+        parsed[pair]["metal"]["storage"] = storage
+        parsed[pair]["metal"]["cold_inclusive_ns"] = (
+            parsed[pair]["metal"]["member_ns"] + storage["storage_prepare_ns"]
+        )
 
     rows = 1 << LOG_N
     lifecycle_guards: list[bool] = []
@@ -635,9 +736,17 @@ def parse_outer_remainder_result(
             "downstream InstructionInput prepare",
         )
         member = unique(descendants(inside, metal_arm, MEMBER), "Metal member")
+        storage_prepare = unique(
+            descendants(inside, metal_arm, METAL_STORAGE_PREPARE),
+            "outer-remainder storage preparation",
+        )
         handoff_args = parsed[pair]["metal"]["lifecycle"]["handoff"]
         sequence_args = parsed[pair]["metal"]["lifecycle"]["sequence"]
         release_args = parsed[pair]["metal"]["lifecycle"]["release"]
+        storage_ids = parsed[pair]["metal"]["storage"]["buffer_ids"]
+        sequence_storage_ids = parsed[pair]["metal"]["lifecycle"][
+            "storage_buffer_ids"
+        ]
         compact_ids = [
             arg_int(production, "compact_rows_storage_id", positive=True),
             arg_int(stage1, "compact_rows_storage_id", positive=True),
@@ -674,7 +783,9 @@ def parse_outer_remainder_result(
             and trace_int(handoff_args.get("device_registry_id"), "row_handoff.device_registry_id", positive=True)
             == trace_int(sequence_args.get("device_registry_id"), "sequence.device_registry_id", positive=True)
             == trace_int(release_args.get("device_registry_id"), "row_release.device_registry_id", positive=True)
-            and production.end_us <= stage1.start_us + TRACE_EPSILON_US
+            and storage_ids == sequence_storage_ids
+            and production.end_us <= storage_prepare.start_us + TRACE_EPSILON_US
+            and storage_prepare.end_us <= stage1.start_us + TRACE_EPSILON_US
             and stage1.end_us <= member.start_us + TRACE_EPSILON_US
             and member.end_us <= instruction_input.start_us
         )
@@ -682,7 +793,17 @@ def parse_outer_remainder_result(
     timed_samples = [parsed[pair] for pair in range(PAIRS)]
     cpu_ns = [float(sample["optimized"]["member_ns"]) for sample in timed_samples]
     metal_ns = [float(sample["metal"]["member_ns"]) for sample in timed_samples]
+    storage_prepare_ns = [
+        float(sample["metal"]["storage"]["storage_prepare_ns"])
+        for sample in timed_samples
+    ]
+    cold_inclusive_ns = [
+        float(sample["metal"]["cold_inclusive_ns"]) for sample in timed_samples
+    ]
     paired_speedups = [cpu / gpu for cpu, gpu in zip(cpu_ns, metal_ns)]
+    cold_inclusive_speedups = [
+        cpu / gpu for cpu, gpu in zip(cpu_ns, cold_inclusive_ns)
+    ]
     improvements = [1.0 - gpu / cpu for cpu, gpu in zip(cpu_ns, metal_ns)]
     cpu_first = [paired_speedups[pair] for pair in range(PAIRS) if pair % 2 == 0]
     metal_first = [paired_speedups[pair] for pair in range(PAIRS) if pair % 2 == 1]
@@ -735,6 +856,14 @@ def parse_outer_remainder_result(
         "metal_working_set_admitted": all(
             sample["metal"]["allocation_plan_admitted"] for sample in parsed.values()
         ),
+        "metal_storage_preparation_exact": all(
+            sample["metal"]["storage"]["storage_exact"]
+            for sample in parsed.values()
+        ),
+        "metal_storage_preparation_outside_member": all(
+            sample["metal"]["storage"]["storage_outside_member"]
+            for sample in parsed.values()
+        ),
         "resident_row_lifecycle_exact": all(lifecycle_guards),
         "optimized_has_no_metal_member_spans": all(
             not sample["optimized"]["metal_backend_spans"] for sample in parsed.values()
@@ -781,9 +910,15 @@ def parse_outer_remainder_result(
             "cpu_member_ns_samples": cpu_ns,
             "metal_member_ns_samples": metal_ns,
             "paired_speedups": paired_speedups,
+            "storage_prepare_ns_samples": storage_prepare_ns,
+            "metal_cold_inclusive_ns_samples": cold_inclusive_ns,
+            "cold_inclusive_speedups": cold_inclusive_speedups,
             "median_cpu_member_ns": median(cpu_ns),
             "median_metal_member_ns": median(metal_ns),
             "median_paired_speedup": median_speedup,
+            "median_storage_prepare_ns": median(storage_prepare_ns),
+            "median_metal_cold_inclusive_ns": median(cold_inclusive_ns),
+            "median_cold_inclusive_speedup": median(cold_inclusive_speedups),
             "cpu_first_median_speedup": median(cpu_first),
             "metal_first_median_speedup": median(metal_first),
             "median_fractional_improvement": median_improvement,
@@ -800,7 +935,8 @@ def parse_outer_remainder_result(
             "compact_row_bytes": COMPACT_ROW_BYTES,
             "residual_row_bytes": RESIDUAL_ROW_BYTES,
             "resident_row_bytes": rows * (COMPACT_ROW_BYTES + RESIDUAL_ROW_BYTES),
-            "minimum_ping_pong_bytes": 4 * (1 << 30),
+            "outer_remainder_storage_bytes": STORAGE_BYTES,
+            "maximum_storage_buffer_bytes": MAXIMUM_STORAGE_BUFFER_BYTES,
             "table_readback_bytes": FIELD_BYTES * 2 * (1 << cutoff_log2),
             "output_readback_bytes": FIELD_BYTES * OUTPUT_CLAIMS,
         },
@@ -812,6 +948,7 @@ def parse_outer_remainder_result(
         },
         "oracle_limits": [
             "Chrome span wall time is authoritative; gpu_active_ns is implementation telemetry",
+            "cold_inclusive adds only OuterRemainder storage preparation to the resident member",
             "full-proof equality assumes deterministic clear Akita proving",
             "promotion still requires a separate five-pair production PIOP holdout",
         ],
@@ -888,7 +1025,7 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     if args.log_n != LOG_N or args.pairs != PAIRS:
-        raise ValueError("outer_remainder_v1 is frozen at log_n=26 and five pairs")
+        raise ValueError("outer_remainder_v2 is frozen at log_n=26 and five pairs")
     root = Path(__file__).resolve().parents[1]
     artifact_dir = args.artifact_dir or (
         root

@@ -85,9 +85,9 @@ struct Fixture<W> {
 fn main() {
     let cli = Cli::parse();
     assert_eq!(cli.log_n, 26, "the frozen evaluator targets log_n=26");
-    assert_eq!(
-        cli.pairs, 5,
-        "the frozen evaluator requires five timed pairs"
+    assert!(
+        (1..=5).contains(&cli.pairs),
+        "the runner supports one to five timed pairs"
     );
     assert_eq!(
         rayon::current_num_threads(),
@@ -121,6 +121,11 @@ fn main() {
         .spartan_outer_remainder
         .dispatch
         .opening_threads_per_threadgroup = Some(cli.output_threads);
+    metal_config
+        .spartan_outer_remainder
+        .dispatch
+        .storage_initialization =
+        jolt_kernels::metal::solinas::OuterRemainderStorageInitialization::Full;
     metal_config
         .spartan_outer_remainder
         .dispatch
@@ -161,8 +166,8 @@ fn main() {
     println!(
         "{}",
         json!({
-            "schema": "outer_remainder_runner_v1",
-            "schema_version": 1,
+            "schema": "outer_remainder_runner_v2",
+            "schema_version": 2,
             "fixture": "real-fibonacci-akita-proof",
             "log_n": cli.log_n,
             "trace_rows": fixture.trace_rows,
@@ -177,6 +182,7 @@ fn main() {
                 "output_threads": cli.output_threads,
                 "cutoff_log2": cli.cutoff_log2,
                 "trace_cutoff_log2": cli.trace_cutoff_log2,
+                "storage_initialization": "full",
             },
             "warmup": warmup,
             "samples": samples,

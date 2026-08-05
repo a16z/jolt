@@ -96,11 +96,12 @@ pub use instruction_ra_virtualization::{
 };
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
-    outer_remainder_sequence_storage_bytes_with_config,
+    outer_remainder_sequence_storage_bytes_with_config, OuterRemainderSequenceStorage,
 };
 pub use outer_remainder::{
     OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
-    OuterRemainderSequenceConfig, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
+    OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
+    OuterRemainderStorageInitializationStats, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,

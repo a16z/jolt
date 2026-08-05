@@ -31,7 +31,7 @@ use super::solinas::{
     outer_remainder_sequence_storage_bytes_with_config, spartan_outer_uniskip_invocation_bytes,
     spartan_outer_uniskip_row_bytes, InstructionInputRows, InstructionRaSequenceStorage,
     MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
-    SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
+    OuterRemainderSequenceStorage, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
 use crate::optimized::spartan_outer::{
@@ -115,7 +115,8 @@ fn resident_row_working_set(
     };
     row_bytes
         .checked_add(instruction_input_bytes)
-        .and_then(|bytes| bytes.checked_add(uniskip_bytes.max(remainder_bytes)))
+        .and_then(|bytes| bytes.checked_add(uniskip_bytes))
+        .and_then(|bytes| bytes.checked_add(remainder_bytes))
         .ok_or(MetalError::InputTooLong(cycles))
 }
 
@@ -183,6 +184,101 @@ impl Default for SpartanOuterUniskipMetalConfig {
         Self {
             trace_cutoff_elements: 1 << 18,
             dispatch: SpartanOuterUniskipConfig::default(),
+        }
+    }
+}
+
+impl MetalBackend {
+    fn prepare_outer_remainder_storage(
+        &self,
+        session: &mut ProofSession,
+        cycles: usize,
+    ) -> Result<(), KernelError<AkitaField>> {
+        let config = self.config.spartan_outer_remainder;
+        if cycles < config.trace_cutoff_elements
+            || session.state::<SpartanOuterUniskipRows>().is_none()
+        {
+            return Ok(());
+        }
+        let planned_device_bytes =
+            outer_remainder_sequence_storage_bytes_with_config(cycles, config.dispatch)
+                .map_err(metal_prepare_error)?;
+        let maximum_buffer_bytes =
+            outer_remainder_sequence_max_buffer_bytes_with_config(cycles, config.dispatch)
+                .map_err(metal_prepare_error)?;
+        let device = self.context.device_info();
+        let span = tracing::info_span!(
+            "MetalOuterRemainder::storage_prepare",
+            cycles,
+            planned_device_bytes,
+            maximum_buffer_bytes,
+            current_device_bytes = device.current_allocated_size,
+            recommended_max_working_set_bytes = device.recommended_max_working_set_size,
+            initialization_mode = config.dispatch.storage_initialization.as_str(),
+            admitted = tracing::field::Empty,
+            initialized = tracing::field::Empty,
+            device_buffers = tracing::field::Empty,
+            initialization_bytes = tracing::field::Empty,
+            initialization_wall_ns = tracing::field::Empty,
+            initialization_gpu_active_ns = tracing::field::Empty,
+            buffer_0 = tracing::field::Empty,
+            buffer_1 = tracing::field::Empty,
+            buffer_2 = tracing::field::Empty,
+            buffer_3 = tracing::field::Empty,
+            buffer_4 = tracing::field::Empty,
+            buffer_5 = tracing::field::Empty,
+            buffer_6 = tracing::field::Empty,
+            buffer_7 = tracing::field::Empty,
+            buffer_8 = tracing::field::Empty,
+        );
+        let _span = span.enter();
+        match self
+            .context
+            .prepare_outer_remainder_sequence_storage(cycles, config.dispatch)
+        {
+            Ok(storage) => {
+                let initialization = storage.initialization();
+                let ids = initialization.buffer_identities;
+                let _ = span.record("admitted", true);
+                let _ = span.record("initialized", initialization.bytes != 0);
+                let _ = span.record("device_buffers", initialization.device_buffers);
+                let _ = span.record("initialization_bytes", initialization.bytes);
+                let _ = span.record(
+                    "initialization_wall_ns",
+                    duration_nanos(initialization.wall),
+                );
+                let _ = span.record(
+                    "initialization_gpu_active_ns",
+                    duration_nanos(initialization.gpu_active),
+                );
+                let _ = span.record("buffer_0", ids[0]);
+                let _ = span.record("buffer_1", ids[1]);
+                let _ = span.record("buffer_2", ids[2]);
+                let _ = span.record("buffer_3", ids[3]);
+                let _ = span.record("buffer_4", ids[4]);
+                let _ = span.record("buffer_5", ids[5]);
+                let _ = span.record("buffer_6", ids[6]);
+                let _ = span.record("buffer_7", ids[7]);
+                let _ = span.record("buffer_8", ids[8]);
+                tracing::info!(
+                    target: "jolt::metal",
+                    bytes = storage.owned_bytes(),
+                    "admitted pre-touched outer-remainder Metal storage"
+                );
+                session.park(storage);
+                Ok(())
+            }
+            Err(error) if error.is_capacity_error() => {
+                let _ = span.record("admitted", false);
+                let _ = span.record("initialized", false);
+                tracing::warn!(
+                    target: "jolt::metal",
+                    error = %error,
+                    "outer-remainder Metal storage was not admitted"
+                );
+                Ok(())
+            }
+            Err(error) => Err(metal_prepare_error(error)),
         }
     }
 }
@@ -316,6 +412,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             }
         }
         self.prepare_instruction_input_storage(session, cycles)?;
+        self.prepare_outer_remainder_storage(session, cycles)?;
         if session.state::<PreparedInstructionInput>().is_none() {
             drop(session.take::<InstructionInputRows>());
             if let Some(mut rows) = session.take::<SpartanOuterUniskipRows>() {
@@ -488,9 +585,17 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             .ok_or(KernelError::InvariantViolation {
                 reason: "Spartan outer remainder trace length overflows usize",
             })?;
-        let resident = session.state::<SpartanOuterUniskipRows>().is_some();
+        let rows_present = session.state::<SpartanOuterUniskipRows>().is_some();
+        let storage_present = session.state::<OuterRemainderSequenceStorage>().is_some();
+        if storage_present && !rows_present {
+            return Err(KernelError::InvariantViolation {
+                reason: "Metal outer remainder retained storage without its resident rows",
+            });
+        }
+        let resident = rows_present && storage_present;
         if !use_metal_remainder(cycles, &self.config, resident) {
             drop(session.take::<SpartanOuterUniskipRows>());
+            drop(session.take::<OuterRemainderSequenceStorage>());
             return OptimizedOuterRemainder.prepare(session, witness, inputs);
         }
         let _metal_prepare = tracing::info_span!(
@@ -516,43 +621,32 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let planned_device_bytes =
             outer_remainder_sequence_storage_bytes_with_config(cycles, dispatch)
                 .map_err(metal_prepare_error)?;
+        let storage = session.state::<OuterRemainderSequenceStorage>().ok_or(
+            KernelError::InvariantViolation {
+                reason: "Metal outer remainder lost its prepared storage",
+            },
+        )?;
+        if !storage.matches(&self.context, cycles, dispatch)
+            || storage.owned_bytes() != planned_device_bytes
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "prepared outer-remainder storage disagrees with the relation geometry",
+            });
+        }
         let existing_resident_bytes =
             spartan_outer_uniskip_row_bytes(cycles).map_err(metal_prepare_error)?;
-        let allocation_span = tracing::info_span!(
+        let _allocation_span = tracing::info_span!(
             "MetalOuterRemainder::allocation_plan",
-            admitted = tracing::field::Empty,
+            admitted = true,
+            storage_reused = true,
             existing_resident_bytes,
-            additional_working_set_bytes = planned_device_bytes,
+            preallocated_device_bytes = planned_device_bytes,
+            additional_working_set_bytes = 0u64,
             current_device_bytes = device.current_allocated_size,
             recommended_max_working_set_bytes = device.recommended_max_working_set_size,
-        );
-        let _allocation_guard = allocation_span.enter();
-        let admission = outer_remainder_sequence_max_buffer_bytes_with_config(cycles, dispatch)
-            .and_then(|maximum_buffer| {
-                validate_resident_row_buffer(maximum_buffer, device.max_buffer_length)
-            })
-            .and_then(|()| {
-                self.context
-                    .validate_additional_working_set(planned_device_bytes)
-            });
-        match admission {
-            Ok(()) => {
-                let _ = allocation_span.record("admitted", true);
-            }
-            Err(error) if error.is_capacity_error() => {
-                let _ = allocation_span.record("admitted", false);
-                tracing::warn!(
-                    target: "jolt::metal",
-                    error = %error,
-                    cycles,
-                    "Metal outer remainder was not admitted; using optimized CPU"
-                );
-                drop(session.take::<SpartanOuterUniskipRows>());
-                return OptimizedOuterRemainder.prepare(session, witness, inputs);
-            }
-            Err(error) => return Err(metal_prepare_error(error)),
-        }
-        drop(_allocation_guard);
+        )
+        .entered();
+        drop(_allocation_span);
 
         let compact_rows_storage_id = rows.instruction_input_allocation_identity();
         let residual_rows_storage_id = rows.allocation_identity();
@@ -575,6 +669,13 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                     reason: "Metal outer remainder rows disappeared after admission",
                 })?
         };
+        let storage = session.take::<OuterRemainderSequenceStorage>().ok_or(
+            KernelError::InvariantViolation {
+                reason: "Metal outer remainder storage disappeared after validation",
+            },
+        )?;
+        let storage_initialization = storage.initialization();
+        let storage_buffer_ids = storage_initialization.buffer_identities;
         let sequence = {
             let _span = tracing::info_span!(
                 "MetalOuterRemainder::sequence_prepare",
@@ -586,32 +687,31 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 compact_rows_storage_id,
                 residual_rows_storage_id,
                 device_registry_id,
+                storage_reused = true,
+                storage_initialization_mode = dispatch.storage_initialization.as_str(),
+                preinitialized_device_bytes = planned_device_bytes,
+                initialization_bytes = storage_initialization.bytes,
+                storage_buffer_0 = storage_buffer_ids[0],
+                storage_buffer_1 = storage_buffer_ids[1],
+                storage_buffer_2 = storage_buffer_ids[2],
+                storage_buffer_3 = storage_buffer_ids[3],
+                storage_buffer_4 = storage_buffer_ids[4],
+                storage_buffer_5 = storage_buffer_ids[5],
+                storage_buffer_6 = storage_buffer_ids[6],
+                storage_buffer_7 = storage_buffer_ids[7],
+                storage_buffer_8 = storage_buffer_ids[8],
                 row_upload_bytes = 0u64,
                 full_domain_copy_dispatches = 0u64,
+                sequence_device_buffer_allocations = 0u64,
                 round_device_buffer_allocations = 0u64,
             )
             .entered();
-            match self
-                .context
-                .prepare_outer_remainder_sequence(rows, dispatch)
-            {
-                Ok(sequence) => sequence,
-                Err(error) if error.is_capacity_error() => {
-                    tracing::warn!(
-                        target: "jolt::metal",
-                        error = %error,
-                        cycles,
-                        "Metal outer remainder allocation failed; using optimized CPU"
-                    );
-                    return OptimizedOuterRemainder.prepare(session, witness, inputs);
-                }
-                Err(error) => return Err(metal_prepare_error(error)),
-            }
+            storage.attach(rows).map_err(metal_prepare_error)?
         };
 
-        // The CPU carry remains parked through every fallible capacity check.
-        // Once storage exists, subsequent device failures are terminal because
-        // the sumcheck state may already have advanced.
+        // Prepared storage and resident rows have now been consumed together.
+        // Subsequent device failures are terminal because the sumcheck state
+        // may already have advanced.
         let tau = take_metal_spartan_outer_tau(session, log_t)?;
         let host = MetalOuterRemainderHost::new(log_t, &tau, inputs.relation.uniskip_challenge())?;
         let mut sequence = sequence;
@@ -1130,15 +1230,7 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
             claimed
         };
-        let compact = sequence
-            .into_instruction_input_rows()
-            .map_err(metal_output_error)?;
-        if compact.allocation_identity() != self.compact_rows_storage_id {
-            return Err(SumcheckKernelError::InvariantViolation {
-                reason: "Metal outer remainder changed the shared compact allocation",
-            });
-        }
-        let _release = tracing::info_span!(
+        let release = tracing::info_span!(
             "MetalOuterRemainder::row_release",
             compact_rows_storage_id = self.compact_rows_storage_id,
             residual_rows_storage_id = self.residual_rows_storage_id,
@@ -1148,9 +1240,19 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             device_allocations = 0u64,
             residual_released = true,
             compact_retained = self.compact_retained,
-        )
-        .entered();
-        drop(compact);
+        );
+        {
+            let _release = release.enter();
+            let compact = sequence
+                .into_instruction_input_rows()
+                .map_err(metal_output_error)?;
+            if compact.allocation_identity() != self.compact_rows_storage_id {
+                return Err(SumcheckKernelError::InvariantViolation {
+                    reason: "Metal outer remainder changed the shared compact allocation",
+                });
+            }
+            drop(compact);
+        }
         self.host.output_claims(inputs, &claimed)
     }
 
@@ -1296,11 +1398,11 @@ mod tests {
     fn aggregate_instruction_input_working_set_matches_production_geometry() {
         assert_eq!(
             resident_row_working_set(1 << 26, true, true, true, true, Default::default(),).unwrap(),
-            21_480_932_080
+            21_482_505_104
         );
         assert_eq!(
             resident_row_working_set(1 << 28, true, true, true, true, Default::default(),).unwrap(),
-            85_906_686_704
+            85_909_832_592
         );
         assert_eq!(
             resident_row_working_set(1 << 26, false, true, false, false, Default::default(),)
@@ -1315,7 +1417,7 @@ mod tests {
         assert_eq!(
             resident_row_working_set(1 << 28, true, false, true, true, Default::default(),)
                 .unwrap(),
-            60_134_916_848
+            60_138_062_736
         );
     }
 
@@ -1460,7 +1562,15 @@ mod tests {
             .unwrap();
             let rows =
                 prepare_metal_spartan_outer_witness_rows(&metal.context, witness, cycles).unwrap();
+            let storage = metal
+                .context
+                .prepare_outer_remainder_sequence_storage(
+                    cycles,
+                    metal.config.spartan_outer_remainder.dispatch,
+                )
+                .unwrap();
             metal_session.park(rows);
+            metal_session.park(storage);
 
             let inputs = || ProverInputs {
                 relation: &relation,

@@ -42,6 +42,10 @@ def arm_events(
     order_position: int,
     *,
     wrong_compact_release: bool = False,
+    wrong_storage_id: bool = False,
+    omit_storage_initialization: bool = False,
+    storage_inside_member: bool = False,
+    nonzero_member_allocation: bool = False,
     omit_last_fs: bool = False,
 ) -> list[dict[str, Any]]:
     rows = 1 << EVAL.LOG_N
@@ -68,16 +72,43 @@ def arm_events(
         )
     ]
     if backend == "metal":
+        storage_ids = [20_000 + 100 * (pair + 1) + index for index in range(9)]
+        storage_start = member_start + 2 if storage_inside_member else base + 25
         events.extend(
             [
                 complete(
                     EVAL.ROW_PREPARE,
                     base + 10,
-                    20,
+                    10,
                     {
                         "compact_rows_storage_id": str(compact_id),
                         "residual_rows_storage_id": str(residual_id),
                         "resident_rows": str(rows),
+                    },
+                ),
+                complete(
+                    EVAL.METAL_STORAGE_PREPARE,
+                    storage_start,
+                    10,
+                    {
+                        "cycles": str(rows),
+                        "planned_device_bytes": str(EVAL.STORAGE_BYTES),
+                        "maximum_buffer_bytes": str(
+                            EVAL.MAXIMUM_STORAGE_BUFFER_BYTES
+                        ),
+                        "current_device_bytes": str(rows * 160),
+                        "recommended_max_working_set_bytes": str(32 * (1 << 30)),
+                        "initialization_mode": "full",
+                        "admitted": "true",
+                        "initialized": "true",
+                        "device_buffers": str(EVAL.STORAGE_BUFFERS),
+                        "initialization_bytes": str(EVAL.STORAGE_BYTES),
+                        "initialization_wall_ns": "8000",
+                        "initialization_gpu_active_ns": "6000",
+                        **{
+                            f"buffer_{index}": str(identity)
+                            for index, identity in enumerate(storage_ids)
+                        },
                     },
                 ),
                 complete(
@@ -101,6 +132,24 @@ def arm_events(
                 ),
             ]
         )
+        if not omit_storage_initialization:
+            events.append(
+                complete(
+                    EVAL.METAL_STORAGE_INITIALIZE,
+                    storage_start + 1,
+                    8,
+                    {
+                        "mode": "full",
+                        "device_buffers": str(EVAL.STORAGE_BUFFERS),
+                        "bytes": str(EVAL.STORAGE_BYTES),
+                        "protocol_dispatches": "0",
+                        **{
+                            f"buffer_{index}": str(identity)
+                            for index, identity in enumerate(storage_ids)
+                        },
+                    },
+                )
+            )
 
     events.append(complete(EVAL.MEMBER, member_start, member_duration))
     prepare_duration = member_duration * (0.50 if backend == "optimized" else 0.30)
@@ -154,9 +203,13 @@ def arm_events(
                 5,
                 {
                     "admitted": "true",
+                    "storage_reused": "true",
                     "existing_resident_bytes": str(rows * 160),
-                    "additional_working_set_bytes": str(4 * (1 << 30)),
-                    "current_device_bytes": str(rows * 160),
+                    "preallocated_device_bytes": str(EVAL.STORAGE_BYTES),
+                    "additional_working_set_bytes": str(
+                        1 if nonzero_member_allocation else 0
+                    ),
+                    "current_device_bytes": str(rows * 160 + EVAL.STORAGE_BYTES),
                     "recommended_max_working_set_bytes": str(32 * (1 << 30)),
                 },
             ),
@@ -182,12 +235,23 @@ def arm_events(
                     "rounds": str(EVAL.ROUNDS),
                     "cutoff_elements": str(1 << 16),
                     "trace_cutoff_elements": str(1 << 18),
-                    "planned_device_bytes": str(4 * (1 << 30)),
+                    "planned_device_bytes": str(EVAL.STORAGE_BYTES),
                     "compact_rows_storage_id": str(compact_id),
                     "residual_rows_storage_id": str(residual_id),
                     "device_registry_id": str(device_id),
+                    "storage_reused": "true",
+                    "storage_initialization_mode": "full",
+                    "preinitialized_device_bytes": str(EVAL.STORAGE_BYTES),
+                    "initialization_bytes": str(EVAL.STORAGE_BYTES),
+                    **{
+                        f"storage_buffer_{index}": str(
+                            identity + (1 if wrong_storage_id and index == 0 else 0)
+                        )
+                        for index, identity in enumerate(storage_ids)
+                    },
                     "row_upload_bytes": "0",
                     "full_domain_copy_dispatches": "0",
+                    "sequence_device_buffer_allocations": "0",
                     "round_device_buffer_allocations": "0",
                 },
             ),
@@ -270,7 +334,13 @@ def arm_events(
 
 
 def fixture(
-    *, wrong_compact_release: bool = False, omit_last_fs: bool = False
+    *,
+    wrong_compact_release: bool = False,
+    wrong_storage_id: bool = False,
+    omit_storage_initialization: bool = False,
+    storage_inside_member: bool = False,
+    nonzero_member_allocation: bool = False,
+    omit_last_fs: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     orders = [
         ["optimized", "metal"] if pair % 2 == 0 else ["metal", "optimized"]
@@ -300,6 +370,10 @@ def fixture(
                 200_000.0,
                 order.index("metal"),
                 wrong_compact_release=wrong_compact_release,
+                wrong_storage_id=wrong_storage_id,
+                omit_storage_initialization=omit_storage_initialization,
+                storage_inside_member=storage_inside_member,
+                nonzero_member_allocation=nonzero_member_allocation,
                 omit_last_fs=omit_last_fs,
             )
         )
@@ -315,7 +389,7 @@ def fixture(
         )
     runner = {
         "schema": EVAL.RUNNER_SCHEMA,
-        "schema_version": 1,
+        "schema_version": 2,
         "fixture": "real-fibonacci-akita-proof",
         "log_n": EVAL.LOG_N,
         "trace_rows": (1 << EVAL.LOG_N) - 100,
@@ -330,6 +404,7 @@ def fixture(
             "output_threads": 256,
             "cutoff_log2": 16,
             "trace_cutoff_log2": 18,
+            "storage_initialization": "full",
         },
         "warmup": runner_pairs[0],
         "samples": runner_pairs[1:],
@@ -353,6 +428,10 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
         self.assertTrue(result["all_exact"])
         self.assertTrue(result["promotion"]["eligible"])
         self.assertAlmostEqual(result["metrics"]["median_paired_speedup"], 4.5)
+        self.assertLess(
+            result["metrics"]["median_cold_inclusive_speedup"],
+            result["metrics"]["median_paired_speedup"],
+        )
         self.assertEqual(result["resources"]["output_readback_bytes"], 560)
 
     def test_proof_mismatch_fails_correctness_and_promotion(self) -> None:
@@ -417,6 +496,35 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
         result = self.parse(events, runner)
         self.assertFalse(result["guards"]["metal_phase_chronology_exact"])
         self.assertFalse(result["promotion"]["eligible"])
+
+    def test_storage_preparation_must_be_outside_the_member(self) -> None:
+        result = self.parse(*fixture(storage_inside_member=True))
+        self.assertFalse(
+            result["guards"]["metal_storage_preparation_outside_member"]
+        )
+        self.assertFalse(result["promotion"]["eligible"])
+
+    def test_storage_identity_must_survive_member_handoff(self) -> None:
+        result = self.parse(*fixture(wrong_storage_id=True))
+        self.assertFalse(result["guards"]["metal_sequence_geometry_exact"])
+        self.assertFalse(result["guards"]["resident_row_lifecycle_exact"])
+        self.assertFalse(result["promotion"]["eligible"])
+
+    def test_storage_initialization_span_is_required(self) -> None:
+        with self.assertRaisesRegex(ValueError, "storage initialization"):
+            self.parse(*fixture(omit_storage_initialization=True))
+
+    def test_member_must_allocate_no_device_storage(self) -> None:
+        result = self.parse(*fixture(nonzero_member_allocation=True))
+        self.assertFalse(result["guards"]["metal_working_set_admitted"])
+        self.assertFalse(result["promotion"]["eligible"])
+
+    def test_stale_runner_schema_is_rejected(self) -> None:
+        events, runner = fixture()
+        runner["schema"] = "outer_remainder_runner_v1"
+        runner["schema_version"] = 1
+        with self.assertRaisesRegex(ValueError, "wrong schema"):
+            self.parse(events, runner)
 
     def test_cutoff_one_is_rejected_before_round_indexing(self) -> None:
         events, runner = fixture()

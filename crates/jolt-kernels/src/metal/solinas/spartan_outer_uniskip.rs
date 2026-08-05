@@ -925,7 +925,9 @@ mod tests {
     use jolt_witness::BundleSource;
 
     use super::*;
-    use crate::metal::solinas::OuterRemainderSequenceConfig;
+    use crate::metal::solinas::{
+        OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
+    };
 
     #[test]
     fn resident_row_bytes_match_the_production_geometry() {
@@ -1350,6 +1352,25 @@ mod tests {
             )
             .unwrap();
         let storage_before_export = sequence.storage_stats().unwrap();
+        let initialization = sequence.storage_initialization();
+        assert_eq!(
+            initialization.mode,
+            OuterRemainderStorageInitialization::Full
+        );
+        assert_eq!(initialization.device_buffers, 9);
+        assert_eq!(initialization.bytes, storage_before_export.owned_bytes);
+        assert!(initialization.wall >= initialization.gpu_active);
+        assert!(initialization.gpu_active > std::time::Duration::ZERO);
+        assert_eq!(
+            initialization.buffer_identities,
+            storage_before_export.buffer_identities
+        );
+        assert!(initialization
+            .buffer_identities
+            .iter()
+            .enumerate()
+            .all(|(index, identity)| *identity != 0
+                && !initialization.buffer_identities[..index].contains(identity)));
         assert!(storage_before_export.buffer_identities[..2]
             .iter()
             .all(|identity| *identity != 0));

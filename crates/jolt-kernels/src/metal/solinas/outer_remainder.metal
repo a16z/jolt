@@ -4,6 +4,7 @@
 #define OUTER_REMAINDER_STREAM_ROWS 10u
 #define OUTER_REMAINDER_TILE_ROWS 64u
 #define OUTER_REMAINDER_SIMD_WIDTH 32u
+#define OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP 9u
 
 struct OuterRemainderPhaseParams {
     uint source_elements;
@@ -338,6 +339,23 @@ inline SolinasFp128 outer_fold_a(
     return sum;
 }
 
+inline SolinasFp128 outer_fold_b(
+    device const InstructionInputRow& compact,
+    device const SpartanOuterUniskipResidualRow& residual,
+    device const SolinasFp128* lagrange,
+    bool second_stream)
+{
+    uint count = second_stream ? 9u : 10u;
+    SolinasFp128 sum = solinas_zero();
+    for (uint row = 0; row < count; row++) {
+        SpartanSigned192 value = outer_b_row(compact, residual, row, second_stream);
+        sum = solinas_add(
+            sum,
+            solinas_mul_wide(lagrange[row], spartan_small_times_s192(1, value)));
+    }
+    return sum;
+}
+
 inline void outer_finish_two_columns(
     SolinasFp128 q_zero,
     SolinasFp128 q_infinity,
@@ -389,52 +407,33 @@ kernel void solinas_outer_remainder_materialize_b_and_message(
     uint simdgroup [[simdgroup_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]])
 {
-    uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
     bool accumulate = false;
     for (uint x_out = block;
          x_out < params.e_out_length;
          x_out += params.blocks) {
         SolinasFp128 q_zero = solinas_zero();
         SolinasFp128 q_infinity = solinas_zero();
-        for (uint x_in = simdgroup; x_in < params.e_in_length; x_in += simdgroups) {
+        for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
             uint cycle = x_out * params.e_in_length + x_in;
-            bool second_stream = lane >= 16u;
-            uint row = second_stream ? lane - 16u : lane;
-            bool active = second_stream ? row < 9u : row < 10u;
-            SolinasFp128 az = solinas_zero();
-            SolinasFp128 bz = solinas_zero();
-            if (active && cycle < (params.source_elements >> 1)) {
-                ulong flags = instruction_input_row_word(compact_rows[cycle], 5u);
-                int a = outer_a_row(flags, row, second_stream);
-                if (a != 0) {
-                    az = solinas_mul_wide(lagrange[row], outer_from_i32(a));
-                }
-                SpartanSigned192 b = outer_b_row(
-                    compact_rows[cycle], residual_rows[cycle], row, second_stream);
-                bz = solinas_mul_wide(lagrange[row], spartan_small_times_s192(1, b));
-            }
-
-            az = outer_half_simd_sum(az);
-            bz = outer_half_simd_sum(bz);
-            SolinasFp128 peer_az;
-            SolinasFp128 peer_bz;
-            peer_az.limb = simd_shuffle(az.limb, 16u);
-            peer_bz.limb = simd_shuffle(bz.limb, 16u);
-            if (lane == 0u) {
-                b_state[2u * cycle] = bz;
-                b_state[2u * cycle + 1u] = peer_bz;
-                SolinasFp128 weight = e_in[x_in];
-                q_zero = solinas_add(
-                    q_zero,
-                    solinas_mul_wide(weight, solinas_mul_wide(az, bz)));
-                q_infinity = solinas_add(
-                    q_infinity,
+            SolinasFp128 az_0 = outer_fold_a(compact_rows[cycle], lagrange, false);
+            SolinasFp128 az_1 = outer_fold_a(compact_rows[cycle], lagrange, true);
+            SolinasFp128 bz_0 = outer_fold_b(
+                compact_rows[cycle], residual_rows[cycle], lagrange, false);
+            SolinasFp128 bz_1 = outer_fold_b(
+                compact_rows[cycle], residual_rows[cycle], lagrange, true);
+            b_state[2u * cycle] = bz_0;
+            b_state[2u * cycle + 1u] = bz_1;
+            SolinasFp128 weight = e_in[x_in];
+            q_zero = solinas_add(
+                q_zero,
+                solinas_mul_wide(weight, solinas_mul_wide(az_0, bz_0)));
+            q_infinity = solinas_add(
+                q_infinity,
+                solinas_mul_wide(
+                    weight,
                     solinas_mul_wide(
-                        weight,
-                        solinas_mul_wide(
-                            solinas_sub(peer_az, az),
-                            solinas_sub(peer_bz, bz))));
-            }
+                        solinas_sub(az_1, az_0),
+                        solinas_sub(bz_1, bz_0))));
         }
         outer_finish_two_columns(
             q_zero,
@@ -690,12 +689,12 @@ kernel void solinas_outer_remainder_opening_tiles(
     threadgroup SolinasFp128* shard_sums [[threadgroup(2)]],
     uint block [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]])
 {
-    uint shards = threads / OUTER_REMAINDER_COLUMNS;
-    bool worker = tid < shards * OUTER_REMAINDER_COLUMNS;
-    uint column = worker ? tid % OUTER_REMAINDER_COLUMNS : 0u;
-    uint shard = worker ? tid / OUTER_REMAINDER_COLUMNS : 0u;
+    uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
+    (void)shard_sums;
     if (tid < OUTER_REMAINDER_COLUMNS) {
         partials[block * OUTER_REMAINDER_COLUMNS + tid] = solinas_zero();
     }
@@ -704,7 +703,12 @@ kernel void solinas_outer_remainder_opening_tiles(
     for (uint x_out = block;
          x_out < params.e_out_length;
          x_out += params.blocks) {
-        SolinasFp128 sum = solinas_zero();
+        SolinasFp128 sums[OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP];
+        for (uint slot = 0u;
+             slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
+             slot++) {
+            sums[slot] = solinas_zero();
+        }
         uint block_start = x_out * params.e_in_length;
         for (uint tile_start = 0u;
              tile_start < params.e_in_length;
@@ -726,38 +730,48 @@ kernel void solinas_outer_remainder_opening_tiles(
             }
             threadgroup_barrier(mem_flags::mem_threadgroup);
 
-            if (worker) {
-                for (uint tile_row = shard; tile_row < tile_count; tile_row += shards) {
-                    SolinasFp128 value = outer_opening_value(
-                        row_words, tile_row, column);
-                    SolinasFp128 contribution;
-                    if (outer_opening_is_boolean(column)) {
-                        bool set = value.limb[0] != 0u;
-                        contribution = set ? tile_weights[tile_row] : solinas_zero();
-                    } else {
-                        contribution = solinas_mul_wide(tile_weights[tile_row], value);
+            for (uint slot = 0u;
+                 slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
+                 slot++) {
+                uint column = simdgroup + slot * simdgroups;
+                if (column < OUTER_REMAINDER_COLUMNS) {
+                    SolinasFp128 sum = sums[slot];
+                    for (uint tile_row = lane;
+                         tile_row < tile_count;
+                         tile_row += OUTER_REMAINDER_SIMD_WIDTH) {
+                        SolinasFp128 value = outer_opening_value(
+                            row_words, tile_row, column);
+                        SolinasFp128 contribution;
+                        if (outer_opening_is_boolean(column)) {
+                            bool set = value.limb[0] != 0u;
+                            contribution = set
+                                ? tile_weights[tile_row]
+                                : solinas_zero();
+                        } else {
+                            contribution = solinas_mul_wide(
+                                tile_weights[tile_row], value);
+                        }
+                        sum = solinas_add(sum, contribution);
                     }
-                    sum = solinas_add(sum, contribution);
+                    sums[slot] = sum;
                 }
             }
             threadgroup_barrier(mem_flags::mem_threadgroup);
         }
 
-        if (worker) {
-            shard_sums[column * shards + shard] = sum;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        if (tid < OUTER_REMAINDER_COLUMNS) {
-            SolinasFp128 column_sum = solinas_zero();
-            for (uint current_shard = 0u; current_shard < shards; current_shard++) {
-                column_sum = solinas_add(
-                    column_sum,
-                    shard_sums[tid * shards + current_shard]);
+        for (uint slot = 0u;
+             slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
+             slot++) {
+            uint column = simdgroup + slot * simdgroups;
+            if (column < OUTER_REMAINDER_COLUMNS) {
+                SolinasFp128 column_sum = outer_simd_sum(sums[slot]);
+                if (lane == 0u) {
+                    uint output = block * OUTER_REMAINDER_COLUMNS + column;
+                    partials[output] = solinas_add(
+                        partials[output],
+                        solinas_mul_wide(e_out[x_out], column_sum));
+                }
             }
-            uint output = block * OUTER_REMAINDER_COLUMNS + tid;
-            partials[output] = solinas_add(
-                partials[output],
-                solinas_mul_wide(e_out[x_out], column_sum));
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }

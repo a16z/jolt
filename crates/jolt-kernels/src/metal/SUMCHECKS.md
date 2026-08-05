@@ -1223,6 +1223,17 @@ is 200 ms, the promotion floor is 226 ms (4x), and 181 ms is the 5x stretch targ
 The exact lifecycle, arithmetic schedule, capacity calculation, evaluator boundary,
 and correctness hazards are frozen in [`OUTER_REMAINDER.md`](OUTER_REMAINDER.md).
 
+The first exact `2^26` implementation exposed SIMD divergence rather than memory
+bandwidth: one SIMD group mapped different constraint rows to lanes and took about
+791 ms GPU-active for the first message. Mapping one cycle per thread reduced that
+phase to 84.6 ms, while assigning uniform opening columns per SIMD group reduced the
+opening scan to 62.1 ms. The resulting member still took about 310 ms because fresh
+2-GiB buffers were first-touched inside the PIOP. Reusable full-initialized storage
+now lives in backend witness preparation. A subsequent exact timed pair measured
+889.474 ms optimized CPU versus 217.138 ms resident Metal (4.096x); the separate
+77.959-ms storage preparation gives a 3.014x cold diagnostic. This is a
+mechanism-validating pair, not the required five-pair promotion result.
+
 ## Requirement map and open points
 
 | Requirement | Planned mechanism | Acceptance evidence |

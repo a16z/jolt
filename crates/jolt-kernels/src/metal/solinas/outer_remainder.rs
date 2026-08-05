@@ -1,9 +1,13 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{
+    mem::size_of,
+    slice,
+    time::{Duration, Instant},
+};
 
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
 use super::{
@@ -32,6 +36,7 @@ pub struct OuterRemainderSequenceConfig {
     pub opening_threads_per_threadgroup: Option<usize>,
     pub max_threadgroups: usize,
     pub cpu_tail_elements: usize,
+    pub storage_initialization: OuterRemainderStorageInitialization,
 }
 
 impl Default for OuterRemainderSequenceConfig {
@@ -43,6 +48,22 @@ impl Default for OuterRemainderSequenceConfig {
             opening_threads_per_threadgroup: Some(256),
             max_threadgroups: 8192,
             cpu_tail_elements: 1 << 18,
+            storage_initialization: OuterRemainderStorageInitialization::Full,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OuterRemainderStorageInitialization {
+    Lazy,
+    Full,
+}
+
+impl OuterRemainderStorageInitialization {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Lazy => "lazy",
+            Self::Full => "full",
         }
     }
 }
@@ -115,6 +136,16 @@ pub struct OuterRemainderStorageStats {
     pub compact_row_identity: usize,
     pub residual_row_identity: usize,
     pub row_device_registry_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OuterRemainderStorageInitializationStats {
+    pub mode: OuterRemainderStorageInitialization,
+    pub device_buffers: usize,
+    pub bytes: u64,
+    pub wall: Duration,
+    pub gpu_active: Duration,
+    pub buffer_identities: [usize; DEVICE_BUFFERS],
 }
 
 #[repr(C)]
@@ -203,6 +234,27 @@ impl Buffers {
             self.opening_output.as_ptr() as usize,
         ]
     }
+
+    fn all(&self) -> Result<[&Buffer; DEVICE_BUFFERS], MetalError> {
+        let dense = self
+            .dense
+            .as_ref()
+            .ok_or(MetalError::InvalidOuterRemainderState {
+                expected: "allocated dense storage",
+                got: "released dense storage",
+            })?;
+        Ok([
+            &dense.state_a,
+            &dense.state_b,
+            &self.e_in,
+            &self.e_out,
+            &self.lagrange,
+            &self.message_partials,
+            &self.message_output,
+            &self.opening_partials,
+            &self.opening_output,
+        ])
+    }
 }
 
 struct Storage {
@@ -215,6 +267,26 @@ struct Storage {
     max_threadgroups: usize,
     dense_bytes: u64,
     owned_bytes: u64,
+    initialization: OuterRemainderStorageInitializationStats,
+}
+
+pub(crate) struct OuterRemainderSequenceStorage {
+    storage: Storage,
+    cycles: usize,
+    config: OuterRemainderSequenceConfig,
+    current_elements: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for OuterRemainderSequenceStorage {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_storage"),
+            self.storage.owned_bytes as usize,
+        );
+        visitor.exit();
+    }
 }
 
 pub struct OuterRemainderSequence {
@@ -258,6 +330,18 @@ impl SolinasMetal {
                 expected: self.device_registry_id(),
                 got: rows.device_registry_id(),
             });
+        }
+        self.prepare_outer_remainder_sequence_storage(rows.len(), config)?
+            .attach(rows)
+    }
+
+    pub(crate) fn prepare_outer_remainder_sequence_storage(
+        &self,
+        cycles: usize,
+        config: OuterRemainderSequenceConfig,
+    ) -> Result<OuterRemainderSequenceStorage, MetalError> {
+        if cycles < 4 || !cycles.is_power_of_two() {
+            return Err(MetalError::InvalidOuterRemainderRows(cycles));
         }
         let geometry = storage_geometry(cycles, config)?;
         let current_elements = geometry.current_elements;
@@ -313,9 +397,9 @@ impl SolinasMetal {
             )?,
             reduction: Self::resolve_threadgroup_width(None, limits.reduction)?,
         };
-        if threads.opening < OUTER_REMAINDER_OPENINGS {
+        if threads.opening < 128 {
             return Err(MetalError::InvalidOuterRemainderConfig(
-                "opening threadgroup needs at least 35 threads",
+                "opening threadgroup needs at least 128 threads",
             ));
         }
         validate_opening_threadgroup_memory(self, limits.opening, threads.opening)?;
@@ -343,8 +427,9 @@ impl SolinasMetal {
             opening_partials: new_field_buffer(self, OUTER_REMAINDER_OPENINGS * max_threadgroups)?,
             opening_output: new_field_buffer(self, OUTER_REMAINDER_OPENINGS)?,
         };
+        let initialization = initialize_storage(self, &buffers, config.storage_initialization)?;
 
-        Ok(OuterRemainderSequence {
+        Ok(OuterRemainderSequenceStorage {
             storage: Storage {
                 context: self.clone(),
                 pipelines,
@@ -355,11 +440,54 @@ impl SolinasMetal {
                 max_threadgroups,
                 dense_bytes,
                 owned_bytes: geometry.owned_bytes,
+                initialization,
             },
-            rows: Some(rows),
+            cycles,
             config,
-            phase: OuterRemainderPhase::BeforeMaterialize,
             current_elements,
+        })
+    }
+}
+
+impl OuterRemainderSequenceStorage {
+    pub(crate) fn matches(
+        &self,
+        context: &SolinasMetal,
+        cycles: usize,
+        config: OuterRemainderSequenceConfig,
+    ) -> bool {
+        self.storage.context.device_registry_id() == context.device_registry_id()
+            && self.cycles == cycles
+            && self.config == config
+    }
+
+    pub(crate) const fn owned_bytes(&self) -> u64 {
+        self.storage.owned_bytes
+    }
+
+    pub(crate) const fn initialization(&self) -> OuterRemainderStorageInitializationStats {
+        self.storage.initialization
+    }
+
+    pub(crate) fn attach(
+        self,
+        rows: SpartanOuterUniskipRows,
+    ) -> Result<OuterRemainderSequence, MetalError> {
+        if rows.len() != self.cycles {
+            return Err(MetalError::InvalidOuterRemainderRows(rows.len()));
+        }
+        if rows.device_registry_id() != self.storage.context.device_registry_id() {
+            return Err(MetalError::OuterRemainderRowDevice {
+                expected: self.storage.context.device_registry_id(),
+                got: rows.device_registry_id(),
+            });
+        }
+        Ok(OuterRemainderSequence {
+            storage: self.storage,
+            rows: Some(rows),
+            config: self.config,
+            phase: OuterRemainderPhase::BeforeMaterialize,
+            current_elements: self.current_elements,
             dense_in_a: true,
             gpu_active: Duration::ZERO,
             dispatch_counts: OuterRemainderDispatchCounts::default(),
@@ -368,6 +496,10 @@ impl SolinasMetal {
 }
 
 impl OuterRemainderSequence {
+    pub const fn storage_initialization(&self) -> OuterRemainderStorageInitializationStats {
+        self.storage.initialization
+    }
+
     pub fn materialize_and_first_message(
         &mut self,
         stream_lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
@@ -997,6 +1129,91 @@ fn storage_geometry(
         max_threadgroups,
         element_counts,
         owned_bytes,
+    })
+}
+
+fn initialize_storage(
+    context: &SolinasMetal,
+    buffers: &Buffers,
+    mode: OuterRemainderStorageInitialization,
+) -> Result<OuterRemainderStorageInitializationStats, MetalError> {
+    let buffer_identities = buffers.identities();
+    let buffers = buffers.all()?;
+    let bytes = match mode {
+        OuterRemainderStorageInitialization::Lazy => 0,
+        OuterRemainderStorageInitialization::Full => {
+            buffers.iter().try_fold(0u64, |total, buffer| {
+                total
+                    .checked_add(buffer.length())
+                    .ok_or(MetalError::InvalidOuterRemainderConfig(
+                        "storage initialization byte count overflowed",
+                    ))
+            })?
+        }
+    };
+    let device_buffers =
+        usize::from(mode == OuterRemainderStorageInitialization::Full) * DEVICE_BUFFERS;
+    let span = tracing::info_span!(
+        "MetalOuterRemainder::storage_initialize",
+        mode = mode.as_str(),
+        device_buffers,
+        bytes,
+        protocol_dispatches = 0u64,
+        buffer_0 = buffer_identities[0],
+        buffer_1 = buffer_identities[1],
+        buffer_2 = buffer_identities[2],
+        buffer_3 = buffer_identities[3],
+        buffer_4 = buffer_identities[4],
+        buffer_5 = buffer_identities[5],
+        buffer_6 = buffer_identities[6],
+        buffer_7 = buffer_identities[7],
+        buffer_8 = buffer_identities[8],
+    );
+    let _entered = span.enter();
+    let started = Instant::now();
+    let gpu_active = match mode {
+        OuterRemainderStorageInitialization::Lazy => Duration::ZERO,
+        OuterRemainderStorageInitialization::Full => {
+            let command_buffer = context.queue.new_command_buffer();
+            autoreleasepool(|| {
+                let encoder = command_buffer.new_blit_command_encoder();
+                for buffer in buffers {
+                    encoder.fill_buffer(buffer, NSRange::new(0, buffer.length()), 0);
+                }
+                encoder.end_encoding();
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            });
+            if command_buffer.status() != MTLCommandBufferStatus::Completed {
+                return Err(MetalError::CommandFailed(command_buffer.status()));
+            }
+            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+                return Err(MetalError::InvalidGpuTimestamps { start, end });
+            }
+            Duration::from_secs_f64(end - start)
+        }
+    };
+    let wall = started.elapsed();
+    let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
+    let wall_ns = u64::try_from(wall.as_nanos()).unwrap_or(u64::MAX);
+    let completion = tracing::info_span!(
+        "MetalOuterRemainder::storage_initialize_complete",
+        mode = mode.as_str(),
+        command_completed = true,
+        bytes,
+        wall_ns,
+        gpu_active_ns,
+    );
+    let _completed = completion.enter();
+    Ok(OuterRemainderStorageInitializationStats {
+        mode,
+        device_buffers,
+        bytes,
+        wall,
+        gpu_active,
+        buffer_identities,
     })
 }
 

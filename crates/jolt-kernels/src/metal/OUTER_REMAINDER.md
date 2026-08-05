@@ -35,6 +35,13 @@ otherwise free implementation at about 4.5x. The first Metal design therefore ow
 preparation, the large round prefix, and all 35 output openings. Four times is the
 falsification bar, not the stopping point.
 
+The first target-scale resident candidate produced the same proof and verified in
+both arms. Its single timed pair measured 889.474 ms on optimized CPU and 217.138 ms
+on Metal, or 4.096x. Full initialization of its 4,300,079,856-byte scratch set took
+77.959 ms before the PIOP; charging that one phase gives a 295.097-ms, 3.014x cold
+diagnostic. This pair validates the mechanism but is not promotion evidence; the
+five-pair fixed evaluator remains authoritative.
+
 ## Resident lifetime
 
 Backend witness preparation already creates the split stage-1 row plane. The
@@ -43,6 +50,7 @@ completes. The remainder design instead applies this ownership sequence:
 
 ```text
 backend witness prepare
+    -> allocate and fully pre-touch reusable remainder storage
     -> stage-1 uni-skip use
     -> retain the same compact + residual handles
     -> OuterRemainder materialization and rounds
@@ -52,7 +60,9 @@ backend witness prepare
 ```
 
 Allocation identity, row count, and Metal device registry must match at every
-handoff. There is no row allocation or upload inside the timed remainder member.
+handoff. All nine scratch identities established during pre-touch must also match
+the active sequence. There is no row upload or device-buffer allocation inside the
+timed remainder member.
 The CPU `SpartanOuterCarry` remains available until the adapter has made its
 pre-submit admission decision, so an ineligible trace or capacity rejection can
 select the optimized kernel. Any error after command submission aborts the proof;
@@ -66,13 +76,12 @@ an unused residual allocation until the proof session drops.
 
 ### Materialize and emit the first message
 
-One SIMD group evaluates one cycle at a time. The 19 constraint rows occupy two
-16-lane halves: ten lanes for the first stream and nine for the second. Each active
-lane constructs its signed row magnitude directly from the 160-byte split ABI and
-multiplies it by the corresponding host-derived Lagrange weight. Boolean and small
-guard contributions use conditional additions. Wide products accumulate as signed
-limbs and reduce only after the SIMD reduction, matching the optimized CPU's
-deferred-reduction shape.
+One thread evaluates one cycle at a time. It folds the ten first-stream and nine
+second-stream rows in uniform loops, stores both `Bz` values, and accumulates its two
+message contributions. The SIMD group then reduces across cycles. This replaces
+the initial row-per-lane mapping, whose divergent row switch serialized nearly all
+19 paths and left only lane zero doing the final products. The remap reduced
+target-scale first-message GPU-active time from roughly 791 ms to 84.6 ms.
 
 The dispatch stores only `(Bz(0), Bz(1))` for each cycle. `Az` depends only on the
 compact flag word, so keeping both stream values would spend another 2 GiB on state
@@ -104,12 +113,13 @@ the source for both the device prefix and CPU tail.
 ### Evaluate the 35 openings
 
 After the final cycle point is known, one more resident-row scan computes the 35
-canonical R1CS-input evaluations. A baseline threadgroup tile loads 64 packed rows
-and their `E_in` weights once into roughly 11 KiB of shared memory, then assigns
-multiple shards to each opening column. Eighteen boolean columns conditionally add
-the weight. Thirteen `u64` and four signed or unsigned `u128` columns use
-width-specialized products and block-local deferred reduction. Each block result is
-scaled by one `E_out` value.
+canonical R1CS-input evaluations. A threadgroup tile loads 64 packed rows and their
+`E_in` weights once into roughly 11 KiB of shared memory. Each SIMD group owns a
+uniform subset of columns while its lanes walk tile rows, avoiding the baseline's
+35-way divergent column switch. Eighteen boolean columns conditionally add the
+weight. Thirteen `u64` and four signed or unsigned `u128` columns use
+width-specialized products and block-local reduction. Each block result is scaled
+by one `E_out` value.
 
 At the baseline cap, the first dispatch writes `35 * 8192` partial field sums, or
 4.375 MiB. A second dispatch reduces by column, and the host reads exactly 35
@@ -143,6 +153,8 @@ the opening partials add 4.375 MiB. Its largest allocation is 2 GiB, below this
 machine's measured 80.64-GiB per-buffer limit.
 Admission uses the live whole-proof allocation count, not these local sizes alone,
 because InstructionInput and Instruction-RA storage can already be resident.
+Because remainder storage now overlaps the temporary uni-skip invocation, aggregate
+admission sums those footprints rather than taking their maximum.
 
 The arithmetic roof is less certain than the traffic floor. Preparation performs
 about `23T = 1.544` billion signed wide or full field products plus cheap guard
@@ -160,10 +172,11 @@ pointwise multiplication is a conservative model, not the implementation plan.
 The authoritative isolated evaluator belongs in `jolt-prover`, because it needs the
 real generated stage-1 driver and a production Fibonacci witness. A `jolt-kernels`
 fixture would either introduce a dependency cycle or silently substitute a
-different member boundary. The harness constructs and pads one real `2^26` trace,
-resolves its immutable CPU row owner, and prepares the split Metal row allocation
-once before warmup. Both arms replay identical `tau`, uni-skip challenge, input
-claim, batch challenge, and transcript prefix.
+different member boundary. The harness constructs and pads one real `2^26` trace
+once. Each proof replay then repeats production backend preparation outside the
+member; the Metal arm creates the split row plane and fully pre-touches reusable
+scratch there. Both arms use the same immutable fixture and produce an exact full
+proof.
 
 The timed member starts before remainder preparation and ends after all output
 claims and recorder work. It includes:
@@ -174,18 +187,19 @@ claims and recorder work. It includes:
 - the final bind, 35 openings, derived-table validation, final-relation check, and
   transcript absorption.
 
-It excludes trace construction, shader compilation, uni-skip, and the one-time row
-packing from both arms. Those costs are reported separately, including an
-upload-inclusive diagnostic that never replaces the resident primary metric.
+It excludes trace construction, shader compilation, backend witness preparation,
+and uni-skip from both member arms. The evaluator separately reports the Metal
+scratch-preparation wall and a conservative `member + scratch preparation` cold
+diagnostic; neither replaces the resident PIOP metric.
 
 One excluded warmup precedes five alternating CPU/Metal pairs with Rayon fixed at
 16 threads. Promotion requires at least 4x in both order strata, a gain above the
 fixed noise threshold, exact component reconciliation, and equality of every round
 polynomial, host challenge, running claim, final claim, all 35 openings, derived
-value, and transcript digest. Resource guards cover row identities, zero member
-uploads, buffer sizes and identities, command and dispatch counts, per-round table
-lengths, one prefix-to-tail transition, one 35-field readback, and no round-time
-allocation.
+value, and transcript digest. Resource guards cover row and scratch identities,
+full initialization outside the member, zero member allocations/uploads, command
+and dispatch counts, per-round table lengths, one prefix-to-tail transition, and
+one 35-field readback.
 
 The production holdout remains five fresh alternating full-PIOP pairs at Fibonacci
 `2^26`, with both proofs verified and the same lifecycle topology. A local winner is
@@ -204,3 +218,9 @@ control), with 226 ms as the 4x floor and 181 ms as the 5x stretch target. If a
 correct run misses 4x because the opening scan or materialization cannot reach its
 modeled roof, the phase records that result and revisits the dataflow rather than
 tuning protocol-visible behavior.
+
+The resident remap is now below the 4x floor but above the original 200-ms working
+target. Its dominant GPU-active phases are the 84.6-ms first message, 25.0-ms first
+bind, and 62.1-ms opening scan. The next search removes field multiplications from
+the flag-only `Az` fold and treats the opening scan as a separate occupancy problem;
+the controller should continue toward 5x when those ceilings remain plausible.
