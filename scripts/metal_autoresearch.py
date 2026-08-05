@@ -4680,6 +4680,224 @@ def validate_production_hamming_weight_member(
     )
 
 
+def validate_production_outer_remainder_member(
+    member: Any,
+    backend: str,
+    log_n: int,
+    cutoff_log2: int,
+    trace_cutoff_log2: int,
+) -> int:
+    fields = {
+        "member_ns",
+        "outer_counts",
+        "metal_counts",
+        "resource_observation",
+        "row_lifecycle",
+    }
+    if not isinstance(member, dict) or set(member) != fields:
+        raise ValueError("production OuterRemainder member record is incomplete")
+    member_ns = member["member_ns"]
+    if type(member_ns) is not int or member_ns <= 0:
+        raise ValueError("production OuterRemainder member duration is invalid")
+    if member["outer_counts"] != {
+        "complete_member": 1,
+        "sumcheck_round": log_n + 1,
+        "host_fiat_shamir": log_n + 1,
+    }:
+        raise ValueError("production OuterRemainder round topology is invalid")
+    zero_counts = {
+        phase: 0
+        for phase in (
+            "storage_prepare",
+            "storage_initialize",
+            "storage_initialize_complete",
+            "prepare",
+            "allocation_plan",
+            "row_handoff",
+            "sequence_prepare",
+            "first_message",
+            "first_bind",
+            "dense_round",
+            "readback",
+            "cpu_tail",
+            "output_claims",
+            "row_release",
+        )
+    }
+    if backend == "optimized":
+        if (
+            member["metal_counts"] != zero_counts
+            or member["resource_observation"] is not None
+            or member["row_lifecycle"] is not None
+        ):
+            raise ValueError("optimized OuterRemainder member used Metal state")
+        return member_ns
+    if backend != "metal":
+        raise ValueError("production OuterRemainder backend is invalid")
+    expected_counts = {
+        **zero_counts,
+        "storage_prepare": 1,
+        "storage_initialize": 1,
+        "storage_initialize_complete": 1,
+        "prepare": 1,
+        "allocation_plan": 1,
+        "row_handoff": 1,
+        "sequence_prepare": 1,
+        "first_message": 1,
+        "first_bind": 1,
+        "dense_round": log_n - cutoff_log2,
+        "readback": 1,
+        "cpu_tail": cutoff_log2,
+        "output_claims": 1,
+        "row_release": 1,
+    }
+    if member["metal_counts"] != expected_counts:
+        raise ValueError("production OuterRemainder Metal topology is invalid")
+    resources = member["resource_observation"]
+    lifecycle = member["row_lifecycle"]
+    if (
+        not isinstance(resources, dict)
+        or set(resources) != {"storage", "sequence", "readback", "output"}
+        or not isinstance(lifecycle, dict)
+        or set(lifecycle) != {"handoff", "release"}
+    ):
+        raise ValueError("production OuterRemainder resource evidence is incomplete")
+    rows = 1 << log_n
+    weight_capacity = 1 << ((log_n + 1) // 2)
+    threadgroups = min(8192, weight_capacity)
+    elements = [
+        2 * rows,
+        2 * rows,
+        weight_capacity,
+        weight_capacity,
+        10,
+        2 * threadgroups,
+        2,
+        35 * threadgroups,
+        35,
+    ]
+    owned_bytes = 16 * sum(elements)
+    storage = resources["storage"]
+    sequence = resources["sequence"]
+    handoff = lifecycle["handoff"]
+    release = lifecycle["release"]
+    identity_fields = {
+        "compact_rows_storage_id",
+        "residual_rows_storage_id",
+        "device_registry_id",
+    }
+    if (
+        not isinstance(storage, dict)
+        or not isinstance(sequence, dict)
+        or not isinstance(handoff, dict)
+        or not isinstance(release, dict)
+    ):
+        raise ValueError("production OuterRemainder storage evidence is invalid")
+    try:
+        buffer_ids = [storage[f"buffer_{index}"] for index in range(9)]
+        sequence_ids = [sequence[f"storage_buffer_{index}"] for index in range(9)]
+    except KeyError as error:
+        raise ValueError("production OuterRemainder buffer identities are incomplete") from error
+    initialization = storage.get("initialization")
+    if (
+        storage.get("cycles") != rows
+        or storage.get("planned_device_bytes") != owned_bytes
+        or storage.get("maximum_buffer_bytes") != 16 * max(elements)
+        or storage.get("admitted") is not True
+        or storage.get("initialized") is not True
+        or storage.get("fallback_reason") != "none"
+        or storage.get("initialization_mode") != "full"
+        or storage.get("device_buffers") != 9
+        or storage.get("initialization_bytes") != owned_bytes
+        or type(storage.get("current_device_bytes")) is not int
+        or storage["current_device_bytes"] < 0
+        or type(storage.get("recommended_max_working_set_bytes")) is not int
+        or storage["recommended_max_working_set_bytes"] <= 0
+        or storage["current_device_bytes"] + owned_bytes
+        > storage["recommended_max_working_set_bytes"]
+        or not isinstance(initialization, dict)
+        or initialization
+        != {
+            "mode": "full",
+            "device_buffers": 9,
+            "bytes": owned_bytes,
+            "protocol_dispatches": 0,
+            "buffer_identities": buffer_ids,
+            "command_completed": True,
+            "wall_ns": storage.get("initialization_wall_ns"),
+            "gpu_active_ns": storage.get("initialization_gpu_active_ns"),
+        }
+        or type(storage.get("initialization_wall_ns")) is not int
+        or storage["initialization_wall_ns"] <= 0
+        or type(storage.get("initialization_gpu_active_ns")) is not int
+        or storage["initialization_gpu_active_ns"] <= 0
+        or storage["initialization_gpu_active_ns"]
+        > storage["initialization_wall_ns"]
+        or any(type(identity) is not int or identity <= 0 for identity in buffer_ids)
+        or len(set(buffer_ids)) != 9
+        or sequence_ids != buffer_ids
+        or sequence.get("resident_rows") != rows
+        or sequence.get("rounds") != log_n + 1
+        or sequence.get("cutoff_elements") != 1 << cutoff_log2
+        or sequence.get("trace_cutoff_elements") != 1 << trace_cutoff_log2
+        or sequence.get("planned_device_bytes") != owned_bytes
+        or sequence.get("storage_reused") is not True
+        or sequence.get("storage_initialization_mode") != "full"
+        or sequence.get("preinitialized_device_bytes") != owned_bytes
+        or sequence.get("initialization_bytes") != owned_bytes
+        or sequence.get("attached_owned_bytes") != owned_bytes
+        or any(sequence.get(field) != handoff.get(field) for field in identity_fields)
+        or any(
+            sequence.get(field) != 0
+            for field in (
+                "row_upload_bytes",
+                "full_domain_copy_dispatches",
+                "sequence_device_buffer_allocations",
+                "round_device_buffer_allocations",
+            )
+        )
+    ):
+        raise ValueError("production OuterRemainder storage evidence is inconsistent")
+    if (
+        any(
+            type(handoff.get(field)) is not int or handoff[field] <= 0
+            for field in identity_fields
+        )
+        or handoff.get("resident_rows") != rows
+        or handoff.get("row_upload_bytes") != 0
+        or handoff.get("device_allocations") != 0
+        or any(release.get(field) != value for field, value in handoff.items())
+        or release.get("release_completed") is not True
+        or release.get("residual_released") is not True
+        or release.get("compact_retained") is not True
+        or type(release.get("residual_row_bytes")) is not int
+        or release["residual_row_bytes"] <= 0
+        or release.get("remaining_sequence_storage_bytes") != owned_bytes
+        or release.get("compact_release_bytes") != 0
+        or release.get("released_owned_bytes")
+        != owned_bytes + release["residual_row_bytes"]
+    ):
+        raise ValueError("production OuterRemainder row lifecycle is inconsistent")
+    if resources["readback"] != {
+        "readbacks": 1,
+        "elements": 2 * (1 << cutoff_log2),
+        "bytes": 2 * (1 << cutoff_log2) * 16,
+    }:
+        raise ValueError("production OuterRemainder table readback is invalid")
+    output = resources["output"]
+    if (
+        not isinstance(output, dict)
+        or output.get("dispatch_wall_ns", 0) <= 0
+        or output.get("gpu_active_ns", 0) <= 0
+        or output.get("readbacks") != 1
+        or output.get("output_elements") != 35
+        or output.get("readback_bytes") != 560
+        or output.get("row_upload_bytes") != 0
+    ):
+        raise ValueError("production OuterRemainder output readback is invalid")
+    return member_ns
+
+
 def recompute_local_member_decision(
     pair_records: list[dict[str, Any]],
     cpu: list[int],
@@ -5772,6 +5990,136 @@ def validate_production_result(
             raise ValueError(
                 "production Hamming-weight decision disagrees with recomputed raw-pair decision"
             )
+    if local_kernel == "OuterRemainder":
+        outer_fingerprint = result.get("fingerprint")
+        if not isinstance(outer_fingerprint, dict):
+            raise ValueError("production OuterRemainder result has no fingerprint")
+        log_n = outer_fingerprint.get("log_n")
+        try:
+            cutoff_log2 = int(
+                expected_params["JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2"]
+            )
+            trace_cutoff_log2 = int(
+                expected_params["JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2"]
+            )
+        except (KeyError, ValueError) as error:
+            raise ValueError("accepted OuterRemainder parameters are incomplete") from error
+        if (
+            type(log_n) is not int
+            or not 1 <= cutoff_log2 < log_n
+            or not 1 <= trace_cutoff_log2 <= log_n
+        ):
+            raise ValueError("production OuterRemainder geometry is invalid")
+        decision = metrics.get("outer_remainder_decision")
+        if not isinstance(decision, dict) or decision.get("clears") is not True:
+            raise ValueError(
+                "production OuterRemainder result did not clear its fixed local decision"
+            )
+        if pair_records is None or len(pair_records) != len(local_pairs):
+            raise ValueError(
+                "production OuterRemainder result has incomplete raw pair records"
+            )
+        raw_cpu_members = []
+        raw_metal_members = []
+        for record, local_speedup in zip(pair_records, local_pairs):
+            arms = record.get("arms", {})
+            try:
+                cpu_record = arms["optimized"]["outer_remainder"]
+                metal_record = arms["metal"]["outer_remainder"]
+                cpu_local = arms["optimized"]["local"]
+                metal_local = arms["metal"]["local"]
+            except (KeyError, TypeError) as error:
+                raise ValueError(
+                    "production OuterRemainder raw pair is incomplete"
+                ) from error
+            cpu_member = validate_production_outer_remainder_member(
+                cpu_record,
+                "optimized",
+                log_n,
+                cutoff_log2,
+                trace_cutoff_log2,
+            )
+            metal_member = validate_production_outer_remainder_member(
+                metal_record,
+                "metal",
+                log_n,
+                cutoff_log2,
+                trace_cutoff_log2,
+            )
+            if (
+                cpu_local
+                != {"kernel": "OuterRemainder", "primary_ns": cpu_member}
+                or metal_local
+                != {"kernel": "OuterRemainder", "primary_ns": metal_member}
+                or cpu_member > arms["optimized"]["piop_ns"] + log_n + 4
+                or metal_member > arms["metal"]["piop_ns"] + log_n + 4
+                or not math.isclose(
+                    float(local_speedup), cpu_member / metal_member, rel_tol=1e-9
+                )
+            ):
+                raise ValueError(
+                    "production OuterRemainder raw pair disagrees with its speedup"
+                )
+            raw_cpu_members.append(cpu_member)
+            raw_metal_members.append(metal_member)
+        for name, raw_samples in (
+            ("cpu_outer_remainder_ms_samples", raw_cpu_members),
+            ("metal_outer_remainder_ms_samples", raw_metal_members),
+        ):
+            reported_samples = metrics.get(name)
+            if (
+                not isinstance(reported_samples, list)
+                or len(reported_samples) != len(raw_samples)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isclose(
+                        float(reported) * 1e6,
+                        raw,
+                        rel_tol=1e-12,
+                        abs_tol=0.500001,
+                    )
+                    for reported, raw in zip(reported_samples, raw_samples)
+                )
+            ):
+                raise ValueError("production OuterRemainder sample summary is invalid")
+        minimum_speedup = float(gate["minimum_local_speedup"])
+        recomputed_improvements, recomputed_decision = recompute_local_member_decision(
+            pair_records,
+            raw_cpu_members,
+            raw_metal_members,
+            minimum_speedup,
+            int(gate["minimum_pairs"]),
+        )
+        optimized_first_median = float(
+            recomputed_decision["optimized_first_median_speedup"]
+        )
+        metal_first_median = float(
+            recomputed_decision["metal_first_median_speedup"]
+        )
+        reported_improvements = metrics.get(
+            "paired_outer_remainder_fractional_improvements"
+        )
+        if (
+            not isinstance(reported_improvements, list)
+            or len(reported_improvements) != len(recomputed_improvements)
+            or any(
+                isinstance(reported, bool)
+                or not isinstance(reported, (int, float))
+                or not math.isclose(
+                    float(reported), expected, rel_tol=1e-9, abs_tol=1e-12
+                )
+                for reported, expected in zip(
+                    reported_improvements, recomputed_improvements
+                )
+            )
+            or recomputed_decision["clears_order_strata"] is not True
+            or recomputed_decision["clears"] is not True
+            or not decisions_match(decision, recomputed_decision)
+        ):
+            raise ValueError(
+                "production OuterRemainder decision disagrees with raw pairs"
+            )
     piop_speedup = metrics.get("piop_speedup")
     if (
         isinstance(piop_speedup, bool)
@@ -5830,6 +6178,7 @@ def validate_production_result(
                 "InstructionInput",
                 "BooleanityAddressPhase",
                 "HammingWeightClaimReduction",
+                "OuterRemainder",
             }
             else {}
         ),
@@ -7010,6 +7359,13 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     try:
+        if command_uses_v2(args):
+            try:
+                from metal_research.runner import main as v2_main
+            except ModuleNotFoundError:
+                from scripts.metal_research.runner import main as v2_main
+
+            return v2_main()
         if args.command in {"init", "trial", "recover", "validate-production"}:
             with evaluator_lock({"controller_command": args.command}):
                 return args.handler(args)
@@ -7017,6 +7373,27 @@ def main() -> int:
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+
+
+def command_uses_v2(args: argparse.Namespace) -> bool:
+    try:
+        if args.command == "init":
+            path = Path(args.template)
+        elif args.command in {
+            "trial",
+            "candidate-context",
+            "status",
+            "validate-production",
+            "recover",
+        }:
+            path = Path(args.run_dir) / "run.json"
+        elif args.command in {"goal-prompt", "goal-decision"}:
+            path = Path(args.contract)
+        else:
+            return False
+        return read_json(path).get("schema_version") == 2
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
 
 
 if __name__ == "__main__":

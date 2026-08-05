@@ -16,7 +16,8 @@ from .versions import (
 
 
 _ID = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
-_ROLES = {"correctness", "proxy", "representative", "holdout"}
+_ROLES = {"correctness", "proxy", "representative", "holdout", "transfer"}
+_RESULT_ADAPTERS = {"outer_remainder_v3", "metal_piop_v7"}
 
 
 def _relative_file(root: Path, value: Any, description: str) -> Path:
@@ -71,10 +72,14 @@ def validate_goal_contract(contract: dict[str, Any]) -> None:
     if not isinstance(promotion, list) or not promotion:
         raise ValueError("kernel promotion policy is empty")
     for item in promotion:
-        if _speedup(
+        minimum = _speedup(
             item.get("minimum_hybrid_speedup"), "kernel promotion floor"
-        ) < 5.0:
+        )
+        target = _speedup(item.get("target_hybrid_speedup"), "kernel target")
+        if minimum < 5.0:
             raise ValueError("every kernel promotion floor must be at least 5x")
+        if target < minimum:
+            raise ValueError("kernel targets cannot be below their promotion floor")
     overrides = contract["kernel_overrides"]
     instruction_ra = overrides.get("instruction_ra_virtualization", {})
     if _speedup(
@@ -113,6 +118,14 @@ def validate_goal_contract(contract: dict[str, Any]) -> None:
     )
     if trigger > floor:
         raise ValueError("the analytical headroom trigger cannot exceed the goal floor")
+    minimum_gain = continuation.get("minimum_projected_relative_gain_after_target")
+    if (
+        isinstance(minimum_gain, bool)
+        or not isinstance(minimum_gain, (int, float))
+        or not math.isfinite(minimum_gain)
+        or not 0 < minimum_gain < 1
+    ):
+        raise ValueError("the post-target continuation gain is invalid")
     orchestration = contract["orchestration"]
     if (
         orchestration.get("worktree_writer") != "root"
@@ -155,7 +168,7 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         or not evaluator["command"]
         or not all(isinstance(item, str) and item for item in evaluator["command"])
         or not isinstance(evaluator.get("result_adapter"), str)
-        or not evaluator["result_adapter"]
+        or evaluator["result_adapter"] not in _RESULT_ADAPTERS
         or not isinstance(evaluator.get("timeout_seconds"), (int, float))
         or evaluator["timeout_seconds"] <= 0
     ):
@@ -175,11 +188,47 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
     ):
         raise ValueError(f"tier {tier_id} cost limit is invalid")
     promotion = tier["promotion"]
+    kind = promotion.get("kind")
+    if role == "correctness" and kind != "all_guards":
+        raise ValueError(f"tier {tier_id} correctness promotion is invalid")
+    minimum_relative = promotion.get("minimum_relative_improvement")
+    noise_multiplier = promotion.get("noise_multiplier")
+    if role in {"proxy", "representative"} and (
+        kind != "relative_improvement"
+        or isinstance(minimum_relative, bool)
+        or not isinstance(minimum_relative, (int, float))
+        or not 0 < float(minimum_relative) < 1
+        or isinstance(noise_multiplier, bool)
+        or not isinstance(noise_multiplier, (int, float))
+        or float(noise_multiplier) < 1
+    ):
+        raise ValueError(f"tier {tier_id} relative promotion is invalid")
+    acceptance_kind = {
+        "holdout": "portfolio_acceptance",
+        "transfer": "transfer_acceptance",
+    }
+    if role in acceptance_kind and kind != acceptance_kind[role]:
+        raise ValueError(f"tier {tier_id} acceptance promotion is invalid")
+    if role in acceptance_kind and (
+        not isinstance(promotion.get("local_kernel"), str)
+        or not promotion["local_kernel"]
+        or not isinstance(promotion.get("local_metric"), str)
+        or not promotion["local_metric"]
+        or _speedup(
+            promotion.get("minimum_local_speedup"), "local-kernel floor"
+        )
+        < goal_floor
+    ):
+        raise ValueError(f"tier {tier_id} local-kernel promotion is invalid")
     minimum = promotion.get("minimum_accepted_speedup")
-    if role in {"representative", "holdout"} and (
+    if role in {"representative", "holdout", "transfer"} and (
         minimum is None or _speedup(minimum, "tier acceptance floor") < goal_floor
     ):
         raise ValueError(f"tier {tier_id} must retain the 5x acceptance floor")
+    if role in acceptance_kind and (
+        type(promotion.get("log_n")) is not int or promotion["log_n"] < 26
+    ):
+        raise ValueError(f"tier {tier_id} target scale is invalid")
 
 
 def validate_template(template: dict[str, Any], root: Path) -> None:
@@ -252,6 +301,7 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         raise ValueError("evaluation tiers are empty")
     ids: set[str] = set()
     roles: set[str] = set()
+    ordered_roles: list[str] = []
     for tier in tiers:
         _validate_tier(tier, floor)
         if tier["id"] in ids:
@@ -259,11 +309,51 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         ids.add(tier["id"])
         if tier.get("applicable") is True:
             roles.add(tier["role"])
-    if not {"representative", "holdout"} <= roles:
-        raise ValueError("evaluation requires representative and holdout tiers")
-    reserves = {reserve["tier_id"] for reserve in template["budget"]["reserves"]}
-    if not {tier["id"] for tier in tiers if tier.get("applicable") is True} & reserves:
-        raise ValueError("at least one executable tier must have a protected reserve")
+            ordered_roles.append(tier["role"])
+    if not {"representative", "holdout", "transfer"} <= roles:
+        raise ValueError("evaluation requires representative, holdout, and transfer tiers")
+    rank = {
+        "correctness": 0,
+        "proxy": 1,
+        "representative": 2,
+        "holdout": 3,
+        "transfer": 4,
+    }
+    if (
+        ordered_roles != sorted(ordered_roles, key=rank.__getitem__)
+        or ordered_roles.count("representative") != 1
+        or ordered_roles.count("holdout") != 1
+        or ordered_roles.count("transfer") != 1
+    ):
+        raise ValueError("evaluation tiers are not in canonical stage order")
+    executable = {
+        tier["role"]: tier for tier in tiers if tier.get("applicable") is True
+    }
+    holdout = executable["holdout"]
+    portfolio = goal["portfolio_acceptance"]
+    if (
+        holdout["promotion"]["log_n"] != portfolio["log_n"]
+        or holdout["replication"]["included_pairs"] != portfolio["pairs"]
+    ):
+        raise ValueError("holdout tier does not match portfolio acceptance")
+    transfer = executable["transfer"]
+    transfer_contract = goal["transfer_validation"]
+    if (
+        transfer["promotion"]["log_n"]
+        not in transfer_contract["required_log_trace_sizes"]
+        or transfer["replication"]["included_pairs"]
+        != transfer_contract["pairs"]
+        or float(transfer["promotion"]["minimum_accepted_speedup"])
+        < float(transfer_contract["minimum_speedup"])
+    ):
+        raise ValueError("transfer tier does not match transfer acceptance")
+    reserves = {reserve["id"] for reserve in template["budget"]["reserves"]}
+    if not {
+        "representative_revalidation",
+        "piop_holdout",
+        "piop_transfer",
+    } <= reserves:
+        raise ValueError("production validation reserves are incomplete")
     collaboration = template["collaboration"]
     if collaboration != {
         "proposal_agents": 3,
@@ -272,4 +362,3 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         "evaluator_concurrency": 1,
     }:
         raise ValueError("template collaboration policy is invalid")
-

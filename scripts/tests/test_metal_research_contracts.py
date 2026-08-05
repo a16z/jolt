@@ -76,7 +76,7 @@ def budget() -> dict[str, object]:
         },
         "reserves": [
             {
-                "tier_id": "representative",
+                "id": "representative_revalidation",
                 "invocations": 1,
                 "resources": {
                     "active_evaluator_seconds": 200,
@@ -85,7 +85,7 @@ def budget() -> dict[str, object]:
                 },
             },
             {
-                "tier_id": "piop_holdout",
+                "id": "piop_holdout",
                 "invocations": 1,
                 "resources": {
                     "active_evaluator_seconds": 500,
@@ -150,7 +150,6 @@ class BudgetContractTests(unittest.TestCase):
             admit_tier(
                 contract,
                 usage,
-                "screen",
                 {
                     "active_evaluator_seconds": 20,
                     "exclusive_machine_seconds": 20,
@@ -161,12 +160,12 @@ class BudgetContractTests(unittest.TestCase):
         admit_tier(
             contract,
             usage,
-            "representative",
             {
                 "active_evaluator_seconds": 200,
                 "exclusive_machine_seconds": 200,
                 "gpu_active_seconds": 50,
             },
+            "representative_revalidation",
         )
 
     def test_failed_attempt_wall_time_is_charged(self) -> None:
@@ -191,7 +190,43 @@ class BudgetContractTests(unittest.TestCase):
         self.assertEqual(usage["active_evaluator_seconds"], 10.0)
         self.assertEqual(usage["exclusive_machine_seconds"], 11.0)
         self.assertEqual(usage["gpu_active_seconds"], 10.0)
+        self.assertEqual(usage["gpu_active_estimated_seconds"], 10.0)
+        self.assertEqual(usage["gpu_active_validated_seconds"], 0.0)
         self.assertEqual(usage["failed_attempts"], 1)
+
+    def test_spent_reserve_does_not_forbid_a_budgeted_retry(self) -> None:
+        contract = budget()
+        usage = empty_usage()
+        charge_attempt(
+            usage,
+            {
+                "outcome": "timeout",
+                "budget_reserve": "representative_revalidation",
+                "controller": {
+                    "queue_wait_seconds": 0.0,
+                    "exclusive_lease_seconds": 1.0,
+                    "subprocess_wall_seconds": 1.0,
+                },
+                "resources": {
+                    "gpu_active_seconds": None,
+                    "gpu_active_charge_seconds": 1.0,
+                },
+            },
+        )
+
+        admit_tier(
+            contract,
+            usage,
+            {
+                "active_evaluator_seconds": 200,
+                "exclusive_machine_seconds": 200,
+                "gpu_active_seconds": 50,
+            },
+            "representative_revalidation",
+        )
+        self.assertEqual(
+            usage["reserve_invocations"]["representative_revalidation"], 1
+        )
 
 
 class VersionedContractTests(unittest.TestCase):
@@ -230,6 +265,27 @@ class VersionedContractTests(unittest.TestCase):
         tampered = copy.deepcopy(template)
         tampered["slot_id"] = "OuterRemainder"
         with self.assertRaisesRegex(ValueError, "registry slot"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        transfer = next(
+            tier
+            for tier in tampered["evaluation"]["tiers"]
+            if tier.get("role") == "transfer"
+        )
+        transfer["promotion"]["log_n"] = 26
+        with self.assertRaisesRegex(ValueError, "transfer acceptance"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        transfer = next(
+            tier
+            for tier in tampered["evaluation"]["tiers"]
+            if tier.get("role") == "transfer"
+        )
+        transfer["replication"]["included_pairs"] = 3
+        transfer["replication"]["minimum_pairs_per_order_stratum"] = 1
+        with self.assertRaisesRegex(ValueError, "transfer acceptance"):
             validate_template(tampered, ROOT)
 
     def test_schema_one_goal_and_template_remain_readable_by_legacy_controller(self) -> None:

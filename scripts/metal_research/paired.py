@@ -30,8 +30,6 @@ def _finite_positive(value: Any, description: str) -> float:
 
 
 def validate_replication(descriptor: dict[str, Any], role: str) -> None:
-    if descriptor == {"mode": "single"}:
-        return
     if not isinstance(descriptor, dict) or set(descriptor) != _PAIRED_FIELDS:
         raise ValueError("internal paired replication fields are incomplete")
     if descriptor["mode"] != "internal_paired":

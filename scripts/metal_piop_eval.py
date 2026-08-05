@@ -79,6 +79,25 @@ BOOLEANITY_ADDRESS_MIN_SPEEDUP = 4.0
 HAMMING_WEIGHT_KERNEL = "HammingWeightClaimReduction"
 HAMMING_WEIGHT_METAL_PHASES = BOOLEANITY_ADDRESS_METAL_PHASES
 HAMMING_WEIGHT_MIN_SPEEDUP = 4.0
+OUTER_REMAINDER_KERNEL = "OuterRemainder"
+OUTER_REMAINDER_COMPLETE_MEMBER = "OuterRemainder::complete_member"
+OUTER_REMAINDER_METAL_PHASES = (
+    "storage_prepare",
+    "storage_initialize",
+    "storage_initialize_complete",
+    "prepare",
+    "allocation_plan",
+    "row_handoff",
+    "sequence_prepare",
+    "first_message",
+    "first_bind",
+    "dense_round",
+    "readback",
+    "cpu_tail",
+    "output_claims",
+    "row_release",
+)
+OUTER_REMAINDER_MIN_SPEEDUP = 5.0
 OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE = (
     "OptimizedHammingWeightClaimReduction::row_source"
 )
@@ -107,6 +126,12 @@ METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF = (
 )
 PRODUCTION_PAIRS = 5
 LOCAL_KERNELS = {
+    "OuterRemainder": {
+        "name": OUTER_REMAINDER_KERNEL,
+        "metric": "outer_remainder_speedup",
+        "paired_metric": "paired_outer_remainder_speedups",
+        "backend_prefix": "MetalOuterRemainder::",
+    },
     "BytecodeReadRafCycle": {
         "name": BYTECODE_KERNEL,
         "metric": "bytecode_read_raf_cycle_speedup",
@@ -208,6 +233,15 @@ HAMMING_WEIGHT_METAL_CONFIG_RE = re.compile(
     r"selectors_per_tile=(?P<selectors_per_tile>\d+) "
     r"tile_threads=(?P<tile_threads>\d+) "
     r"finalize_threads=(?P<finalize_threads>\d+)$"
+)
+OUTER_REMAINDER_METAL_CONFIG_RE = re.compile(
+    r"^OUTER_REMAINDER_METAL_CONFIG backend=metal "
+    r"trace_cutoff=(?P<trace_cutoff>\d+) cutoff=(?P<cutoff>\d+) "
+    r"materialize_threads=(?P<materialize_threads>\d+) "
+    r"transition_threads=(?P<transition_threads>\d+) "
+    r"output_threads=(?P<output_threads>\d+) "
+    r"max_threadgroups=(?P<max_threadgroups>\d+) "
+    r"storage_initialization=(?P<storage_initialization>\S+)$"
 )
 PIOP_EXECUTION_CONFIG_RE = re.compile(
     r"^PIOP_EXECUTION_CONFIG rayon_threads=(?P<rayon_threads>\d+)$"
@@ -598,6 +632,55 @@ def validate_hamming_weight_stdout(
     return config
 
 
+def validate_outer_remainder_stdout(
+    stdout: str,
+    backend: str,
+    materialize_threads: int = 256,
+    transition_threads: int = 128,
+    output_threads: int = 256,
+    cutoff_log2: int = 16,
+    trace_cutoff_log2: int = 18,
+) -> Optional[dict[str, Any]]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := OUTER_REMAINDER_METAL_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if backend == "optimized":
+        if configs:
+            raise ValueError("optimized evaluator emitted an OuterRemainder Metal config")
+        return None
+    if len(configs) != 1:
+        raise ValueError("Metal evaluator must emit exactly one OuterRemainder config")
+    raw = configs[0].groupdict()
+    config = {
+        **{
+            name: int(raw[name])
+            for name in (
+                "trace_cutoff",
+                "cutoff",
+                "materialize_threads",
+                "transition_threads",
+                "output_threads",
+                "max_threadgroups",
+            )
+        },
+        "storage_initialization": raw["storage_initialization"],
+    }
+    expected = {
+        "trace_cutoff": 1 << trace_cutoff_log2,
+        "cutoff": 1 << cutoff_log2,
+        "materialize_threads": materialize_threads,
+        "transition_threads": transition_threads,
+        "output_threads": output_threads,
+        "max_threadgroups": 8192,
+        "storage_initialization": "full",
+    }
+    if config != expected:
+        raise ValueError(f"unexpected OuterRemainder Metal config: {config}")
+    return config
+
+
 def validate_piop_execution_stdout(stdout: str) -> dict[str, int]:
     configs = [
         match
@@ -850,6 +933,439 @@ def exact_span_args(
     if set(args) != fields:
         raise ValueError(f"{name} has unexpected argument fields")
     return args
+
+
+def required_span_args(
+    events: list[dict[str, Any]], name: str, fields: set[str]
+) -> dict[str, Any]:
+    args = unique_span_args(events, name)
+    missing = fields - args.keys()
+    if missing:
+        raise ValueError(f"{name} is missing argument fields: {sorted(missing)}")
+    return {field: args[field] for field in fields}
+
+
+def outer_remainder_storage_geometry(log_n: int) -> dict[str, Any]:
+    rows = 1 << log_n
+    weight_capacity = 1 << ((log_n + 1) // 2)
+    threadgroups = min(8192, weight_capacity)
+    elements = [
+        2 * rows,
+        2 * rows,
+        weight_capacity,
+        weight_capacity,
+        10,
+        2 * threadgroups,
+        2,
+        35 * threadgroups,
+        35,
+    ]
+    return {
+        "element_counts": elements,
+        "owned_bytes": 16 * sum(elements),
+        "maximum_buffer_bytes": 16 * max(elements),
+    }
+
+
+def outer_remainder_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    cutoff_log2: int = 16,
+    trace_cutoff_log2: int = 18,
+) -> dict[str, Any]:
+    if backend not in {"optimized", "metal"}:
+        raise ValueError(f"unsupported OuterRemainder backend {backend!r}")
+    if not 1 <= cutoff_log2 < log_n or not 1 <= trace_cutoff_log2 <= log_n:
+        raise ValueError("invalid OuterRemainder evaluator geometry")
+    metal_names = {
+        f"MetalOuterRemainder::{phase}" for phase in OUTER_REMAINDER_METAL_PHASES
+    }
+    unknown = {
+        name
+        for event in events
+        if isinstance((name := event.get("name")), str)
+        and name.startswith("MetalOuterRemainder::")
+        and name not in metal_names
+    }
+    if unknown:
+        raise ValueError(
+            f"OuterRemainder trace contains unknown Metal phases: {sorted(unknown)}"
+        )
+    intervals = strict_named_intervals(
+        events,
+        metal_names
+        | {
+            PIOP_SPAN,
+            OUTER_REMAINDER_COMPLETE_MEMBER,
+            SUMCHECK_ROUND_SPAN,
+            SUMCHECK_HOST_FIAT_SHAMIR_SPAN,
+        },
+    )
+    if len(intervals[PIOP_SPAN]) != 1 or len(
+        intervals[OUTER_REMAINDER_COMPLETE_MEMBER]
+    ) != 1:
+        raise ValueError("trace must contain one PIOP and OuterRemainder member span")
+    piop = intervals[PIOP_SPAN][0]
+    member = intervals[OUTER_REMAINDER_COMPLETE_MEMBER][0]
+    require_contained(member, piop, "OuterRemainder complete member")
+    rounds = [
+        interval
+        for interval in intervals[SUMCHECK_ROUND_SPAN]
+        if member[0] <= interval[0] and interval[1] <= member[1]
+    ]
+    host_fiat_shamir = [
+        interval
+        for interval in intervals[SUMCHECK_HOST_FIAT_SHAMIR_SPAN]
+        if member[0] <= interval[0] and interval[1] <= member[1]
+    ]
+    if len(rounds) != log_n + 1 or len(host_fiat_shamir) != log_n + 1:
+        raise ValueError("OuterRemainder round or host Fiat-Shamir topology is incomplete")
+    if any(
+        len(
+            [
+                fiat_shamir
+                for fiat_shamir in host_fiat_shamir
+                if round_interval[0] <= fiat_shamir[0]
+                and fiat_shamir[1] <= round_interval[1]
+            ]
+        )
+        != 1
+        for round_interval in rounds
+    ):
+        raise ValueError("OuterRemainder rounds do not each own one Fiat-Shamir span")
+
+    metal_counts = {
+        phase: len(intervals[f"MetalOuterRemainder::{phase}"])
+        for phase in OUTER_REMAINDER_METAL_PHASES
+    }
+    if backend == "optimized":
+        if any(metal_counts.values()):
+            raise ValueError("optimized trace unexpectedly contains OuterRemainder Metal spans")
+        resource_observation = None
+        row_lifecycle = None
+    else:
+        expected_counts = {
+            "storage_prepare": 1,
+            "storage_initialize": 1,
+            "storage_initialize_complete": 1,
+            "prepare": 1,
+            "allocation_plan": 1,
+            "row_handoff": 1,
+            "sequence_prepare": 1,
+            "first_message": 1,
+            "first_bind": 1,
+            "dense_round": log_n - cutoff_log2,
+            "readback": 1,
+            "cpu_tail": cutoff_log2,
+            "output_claims": 1,
+            "row_release": 1,
+        }
+        if metal_counts != expected_counts:
+            raise ValueError(
+                f"OuterRemainder Metal span counts {metal_counts}, expected {expected_counts}"
+            )
+        setup_phases = {
+            "storage_prepare",
+            "storage_initialize",
+            "storage_initialize_complete",
+        }
+        for phase in OUTER_REMAINDER_METAL_PHASES:
+            if phase not in setup_phases:
+                for interval in intervals[f"MetalOuterRemainder::{phase}"]:
+                    require_contained(interval, member, f"OuterRemainder {phase}")
+
+        rows = 1 << log_n
+        geometry = outer_remainder_storage_geometry(log_n)
+        storage_fields = {
+            "cycles",
+            "planned_device_bytes",
+            "maximum_buffer_bytes",
+            "current_device_bytes",
+            "recommended_max_working_set_bytes",
+            "initialization_mode",
+            "admitted",
+            "initialized",
+            "fallback_reason",
+            "device_buffers",
+            "initialization_bytes",
+            "initialization_wall_ns",
+            "initialization_gpu_active_ns",
+            *{f"buffer_{index}" for index in range(9)},
+        }
+        storage_raw = required_span_args(
+            events, "MetalOuterRemainder::storage_prepare", storage_fields
+        )
+        storage = {
+            field: nonnegative_trace_integer(storage_raw[field], field)
+            for field in storage_fields
+            if field
+            not in {"initialization_mode", "admitted", "initialized", "fallback_reason"}
+        }
+        storage.update(
+            {
+                "initialization_mode": trace_string(
+                    storage_raw["initialization_mode"], "initialization_mode"
+                ),
+                "admitted": trace_boolean(storage_raw["admitted"]),
+                "initialized": trace_boolean(storage_raw["initialized"]),
+                "fallback_reason": trace_string(
+                    storage_raw["fallback_reason"], "fallback_reason"
+                ),
+            }
+        )
+        buffer_ids = [storage[f"buffer_{index}"] for index in range(9)]
+        initialization_fields = {
+            "mode",
+            "device_buffers",
+            "bytes",
+            "protocol_dispatches",
+            *{f"buffer_{index}" for index in range(9)},
+        }
+        initialization_raw = exact_span_args(
+            events,
+            "MetalOuterRemainder::storage_initialize",
+            initialization_fields,
+        )
+        initialization = {
+            field: nonnegative_trace_integer(initialization_raw[field], field)
+            for field in initialization_fields
+            if field != "mode"
+        }
+        initialization["mode"] = trace_string(initialization_raw["mode"], "mode")
+        completion_raw = exact_span_args(
+            events,
+            "MetalOuterRemainder::storage_initialize_complete",
+            {"mode", "command_completed", "bytes", "wall_ns", "gpu_active_ns"},
+        )
+        completion = {
+            "mode": trace_string(completion_raw["mode"], "mode"),
+            "command_completed": trace_boolean(completion_raw["command_completed"]),
+            **{
+                field: nonnegative_trace_integer(completion_raw[field], field)
+                for field in ("bytes", "wall_ns", "gpu_active_ns")
+            },
+        }
+        initialization_ids = [
+            initialization[f"buffer_{index}"] for index in range(9)
+        ]
+        if (
+            storage["cycles"] != rows
+            or storage["planned_device_bytes"] != geometry["owned_bytes"]
+            or storage["maximum_buffer_bytes"] != geometry["maximum_buffer_bytes"]
+            or storage["admitted"] is not True
+            or storage["initialized"] is not True
+            or storage["fallback_reason"] != "none"
+            or storage["initialization_mode"] != "full"
+            or storage["device_buffers"] != 9
+            or storage["initialization_bytes"] != geometry["owned_bytes"]
+            or storage["current_device_bytes"] + storage["planned_device_bytes"]
+            > storage["recommended_max_working_set_bytes"]
+            or any(identity <= 0 for identity in buffer_ids)
+            or len(set(buffer_ids)) != 9
+            or initialization["mode"] != "full"
+            or initialization["device_buffers"] != 9
+            or initialization["bytes"] != geometry["owned_bytes"]
+            or initialization["protocol_dispatches"] != 0
+            or initialization_ids != buffer_ids
+            or completion["mode"] != "full"
+            or completion["command_completed"] is not True
+            or completion["bytes"] != geometry["owned_bytes"]
+            or completion["wall_ns"] <= 0
+            or completion["gpu_active_ns"] <= 0
+            or completion["gpu_active_ns"] > completion["wall_ns"]
+            or storage["initialization_wall_ns"] != completion["wall_ns"]
+            or storage["initialization_gpu_active_ns"] != completion["gpu_active_ns"]
+        ):
+            raise ValueError("OuterRemainder storage preparation is inconsistent")
+        storage["initialization"] = {
+            "mode": initialization["mode"],
+            "device_buffers": initialization["device_buffers"],
+            "bytes": initialization["bytes"],
+            "protocol_dispatches": initialization["protocol_dispatches"],
+            "buffer_identities": initialization_ids,
+            "command_completed": completion["command_completed"],
+            "wall_ns": completion["wall_ns"],
+            "gpu_active_ns": completion["gpu_active_ns"],
+        }
+
+        handoff_fields = {
+            "compact_rows_storage_id",
+            "residual_rows_storage_id",
+            "device_registry_id",
+            "resident_rows",
+            "row_upload_bytes",
+            "device_allocations",
+        }
+        handoff = {
+            field: nonnegative_trace_integer(value, field)
+            for field, value in required_span_args(
+                events, "MetalOuterRemainder::row_handoff", handoff_fields
+            ).items()
+        }
+        sequence_fields = {
+            "resident_rows",
+            "rounds",
+            "cutoff_elements",
+            "trace_cutoff_elements",
+            "planned_device_bytes",
+            "compact_rows_storage_id",
+            "residual_rows_storage_id",
+            "device_registry_id",
+            "storage_reused",
+            "storage_initialization_mode",
+            "preinitialized_device_bytes",
+            "initialization_bytes",
+            "attached_owned_bytes",
+            "row_upload_bytes",
+            "full_domain_copy_dispatches",
+            "sequence_device_buffer_allocations",
+            "round_device_buffer_allocations",
+            *{f"storage_buffer_{index}" for index in range(9)},
+        }
+        sequence_raw = required_span_args(
+            events, "MetalOuterRemainder::sequence_prepare", sequence_fields
+        )
+        sequence = {
+            field: nonnegative_trace_integer(sequence_raw[field], field)
+            for field in sequence_fields
+            if field not in {"storage_reused", "storage_initialization_mode"}
+        }
+        sequence["storage_reused"] = trace_boolean(sequence_raw["storage_reused"])
+        sequence["storage_initialization_mode"] = trace_string(
+            sequence_raw["storage_initialization_mode"],
+            "storage_initialization_mode",
+        )
+        sequence_buffers = [
+            sequence[f"storage_buffer_{index}"] for index in range(9)
+        ]
+        if (
+            handoff["resident_rows"] != rows
+            or handoff["row_upload_bytes"] != 0
+            or handoff["device_allocations"] != 0
+            or min(
+                handoff["compact_rows_storage_id"],
+                handoff["residual_rows_storage_id"],
+                handoff["device_registry_id"],
+            )
+            <= 0
+            or sequence["resident_rows"] != rows
+            or sequence["rounds"] != log_n + 1
+            or sequence["cutoff_elements"] != 1 << cutoff_log2
+            or sequence["trace_cutoff_elements"] != 1 << trace_cutoff_log2
+            or sequence["planned_device_bytes"] != geometry["owned_bytes"]
+            or sequence["storage_reused"] is not True
+            or sequence["storage_initialization_mode"] != "full"
+            or sequence["preinitialized_device_bytes"] != geometry["owned_bytes"]
+            or sequence["initialization_bytes"] != geometry["owned_bytes"]
+            or sequence["attached_owned_bytes"] != geometry["owned_bytes"]
+            or any(
+                sequence[field] != 0
+                for field in (
+                    "row_upload_bytes",
+                    "full_domain_copy_dispatches",
+                    "sequence_device_buffer_allocations",
+                    "round_device_buffer_allocations",
+                )
+            )
+            or sequence_buffers != buffer_ids
+            or any(
+                sequence[field] != handoff[field]
+                for field in (
+                    "compact_rows_storage_id",
+                    "residual_rows_storage_id",
+                    "device_registry_id",
+                )
+            )
+        ):
+            raise ValueError("OuterRemainder resident sequence is inconsistent")
+
+        readback = {
+            field: nonnegative_trace_integer(value, field)
+            for field, value in required_span_args(
+                events,
+                "MetalOuterRemainder::readback",
+                {"readbacks", "elements", "bytes"},
+            ).items()
+        }
+        output_raw = required_span_args(
+            events,
+            "MetalOuterRemainder::output_claims",
+            {
+                "dispatch_wall_ns",
+                "gpu_active_ns",
+                "readbacks",
+                "output_elements",
+                "readback_bytes",
+                "row_upload_bytes",
+            },
+        )
+        output = {
+            field: nonnegative_trace_integer(value, field)
+            for field, value in output_raw.items()
+        }
+        if readback != {
+            "readbacks": 1,
+            "elements": 2 * (1 << cutoff_log2),
+            "bytes": 2 * (1 << cutoff_log2) * 16,
+        } or (
+            output["dispatch_wall_ns"] <= 0
+            or output["gpu_active_ns"] <= 0
+            or output["readbacks"] != 1
+            or output["output_elements"] != 35
+            or output["readback_bytes"] != 35 * 16
+            or output["row_upload_bytes"] != 0
+        ):
+            raise ValueError("OuterRemainder readback accounting is inconsistent")
+
+        release_fields = handoff_fields | {
+            "residual_row_bytes",
+            "remaining_sequence_storage_bytes",
+            "compact_release_bytes",
+            "released_owned_bytes",
+            "release_completed",
+            "residual_released",
+            "compact_retained",
+        }
+        release_raw = required_span_args(
+            events, "MetalOuterRemainder::row_release", release_fields
+        )
+        release = {
+            field: nonnegative_trace_integer(release_raw[field], field)
+            for field in release_fields
+            if field not in {"release_completed", "residual_released", "compact_retained"}
+        }
+        for field in ("release_completed", "residual_released", "compact_retained"):
+            release[field] = trace_boolean(release_raw[field])
+        if (
+            any(release[field] != handoff[field] for field in handoff_fields)
+            or release["release_completed"] is not True
+            or release["residual_released"] is not True
+            or release["compact_retained"] is not True
+        ):
+            raise ValueError("OuterRemainder resident row release is inconsistent")
+        resource_observation = {
+            "storage": storage,
+            "sequence": sequence,
+            "readback": readback,
+            "output": output,
+        }
+        row_lifecycle = {"handoff": handoff, "release": release}
+
+    member_us = interval_duration_us(member)
+    if not math.isfinite(member_us) or member_us <= 0.0:
+        raise ValueError("OuterRemainder complete-member duration is invalid")
+    return {
+        "components": {"member_us": member_us},
+        "outer_counts": {
+            "complete_member": 1,
+            "sumcheck_round": len(rounds),
+            "host_fiat_shamir": len(host_fiat_shamir),
+        },
+        "metal_counts": metal_counts,
+        "resource_observation": resource_observation,
+        "row_lifecycle": row_lifecycle,
+    }
 
 
 def booleanity_address_member_breakdown(
@@ -2437,6 +2953,14 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     metal_hamming_weight_service = [
         float(pair["metal_hamming_weight_service_us"]) for pair in pairs
     ]
+    cpu_outer_remainder = [
+        float(pair.get("cpu_outer_remainder_us", pair["cpu_hamming_weight_us"]))
+        for pair in pairs
+    ]
+    metal_outer_remainder = [
+        float(pair.get("metal_outer_remainder_us", pair["metal_hamming_weight_us"]))
+        for pair in pairs
+    ]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
@@ -2457,6 +2981,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_hamming_weight
         + cpu_hamming_weight_service
         + metal_hamming_weight_service
+        + cpu_outer_remainder
+        + metal_outer_remainder
     ):
         raise ValueError("kernel durations must be finite and positive")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
@@ -2508,6 +3034,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             cpu_hamming_weight_service, metal_hamming_weight_service
         )
     ]
+    (
+        outer_remainder_speedups,
+        outer_remainder_improvements,
+        outer_remainder_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_outer_remainder,
+        metal_outer_remainder,
+        OUTER_REMAINDER_MIN_SPEEDUP,
+    )
     paired_with_prepare = [
         (cpu_us + cpu_prepare_us) / (metal_us + metal_prepare_us)
         for cpu_us, metal_us, cpu_prepare_us, metal_prepare_us in zip(
@@ -2573,6 +3109,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "hamming_weight_claim_reduction_service_speedup": statistics.median(
             hamming_weight_service_speedups
         ),
+        "outer_remainder_speedup": statistics.median(outer_remainder_speedups),
         "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
@@ -2590,6 +3127,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_hamming_weight_claim_reduction_speedups": hamming_weight_speedups,
         "paired_hamming_weight_claim_reduction_fractional_improvements": hamming_weight_improvements,
         "paired_hamming_weight_claim_reduction_service_speedups": hamming_weight_service_speedups,
+        "paired_outer_remainder_speedups": outer_remainder_speedups,
+        "paired_outer_remainder_fractional_improvements": outer_remainder_improvements,
         "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
@@ -2631,9 +3170,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_hamming_weight_claim_reduction_service_ms_samples": [
             value / 1000.0 for value in metal_hamming_weight_service
         ],
+        "cpu_outer_remainder_ms_samples": [
+            value / 1000.0 for value in cpu_outer_remainder
+        ],
+        "metal_outer_remainder_ms_samples": [
+            value / 1000.0 for value in metal_outer_remainder
+        ],
         "instruction_input_kernel_service_decision": instruction_input_decision,
         "booleanity_address_phase_decision": booleanity_address_decision,
         "hamming_weight_claim_reduction_decision": hamming_weight_decision,
+        "outer_remainder_decision": outer_remainder_decision,
         "bytecode_read_raf_cycle_decision": {
             "minimum_speedup": BYTECODE_MIN_SPEEDUP,
             "minimum_pairs": PRODUCTION_PAIRS,
@@ -2723,6 +3269,42 @@ def member_record(
     return record
 
 
+def outer_remainder_member_record(member: dict[str, Any]) -> dict[str, Any]:
+    member_ns = microseconds_to_nanoseconds(member["components"]["member_us"])
+    return {
+        "member_ns": member_ns,
+        "outer_counts": member["outer_counts"],
+        "metal_counts": member["metal_counts"],
+        "resource_observation": member["resource_observation"],
+        "row_lifecycle": member["row_lifecycle"],
+    }
+
+
+def local_kernel_primary_us(result: dict[str, Any], kernel: str) -> float:
+    if kernel == BYTECODE_KERNEL:
+        value = result["bytecode_member"]["components"]["member_us"]
+    elif kernel == "InstructionRaVirtualization":
+        value = kernel_wall_us(result["attribution"], kernel)
+    elif kernel == INSTRUCTION_INPUT_KERNEL:
+        value = result["instruction_input_member"]["components"]["service_us"]
+    elif kernel == BOOLEANITY_ADDRESS_KERNEL:
+        value = member_record(result["booleanity_address_member"])[
+            "normalized_member_ns"
+        ] / 1000.0
+    elif kernel == HAMMING_WEIGHT_KERNEL:
+        value = member_record(result["hamming_weight_member"])[
+            "normalized_member_ns"
+        ] / 1000.0
+    elif kernel == OUTER_REMAINDER_KERNEL:
+        value = result["outer_remainder_member"]["components"]["member_us"]
+    else:
+        raise ValueError(f"unsupported local kernel {kernel}")
+    value = float(value)
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(f"{kernel} local member duration is invalid")
+    return value
+
+
 def trace_path(root: Path, workload: str, log_n: int, backend: str) -> Path:
     name = workload.replace("-", "_")
     return root / "benchmark-runs" / "perfetto_traces" / f"akita_{name}_{log_n}_{backend}.json"
@@ -2757,6 +3339,11 @@ def run_backend(
     hamming_weight_tile_threads: int,
     hamming_weight_finalize_threads: int,
     hamming_weight_trace_cutoff_log2: int,
+    outer_remainder_materialize_threads: int,
+    outer_remainder_transition_threads: int,
+    outer_remainder_output_threads: int,
+    outer_remainder_cutoff_log2: int,
+    outer_remainder_trace_cutoff_log2: int,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -2812,6 +3399,16 @@ def run_backend(
         str(hamming_weight_finalize_threads),
         "--hamming-weight-metal-trace-cutoff-log2",
         str(hamming_weight_trace_cutoff_log2),
+        "--outer-remainder-metal-materialize-threads",
+        str(outer_remainder_materialize_threads),
+        "--outer-remainder-metal-transition-threads",
+        str(outer_remainder_transition_threads),
+        "--outer-remainder-metal-output-threads",
+        str(outer_remainder_output_threads),
+        "--outer-remainder-metal-cutoff-log2",
+        str(outer_remainder_cutoff_log2),
+        "--outer-remainder-metal-trace-cutoff-log2",
+        str(outer_remainder_trace_cutoff_log2),
     ]
     if backend == "metal":
         benchmark_command.extend(
@@ -2878,6 +3475,15 @@ def run_backend(
         hamming_weight_finalize_threads,
         hamming_weight_trace_cutoff_log2,
     )
+    outer_remainder_config = validate_outer_remainder_stdout(
+        result.stdout,
+        backend,
+        outer_remainder_materialize_threads,
+        outer_remainder_transition_threads,
+        outer_remainder_output_threads,
+        outer_remainder_cutoff_log2,
+        outer_remainder_trace_cutoff_log2,
+    )
     source = trace_path(root, workload, log_n, backend)
     if not source.is_file() or source.stat().st_mtime_ns <= started_ns:
         raise ValueError(f"{backend} evaluator did not emit a fresh trace")
@@ -2917,6 +3523,13 @@ def run_backend(
         hamming_weight_tile_threads,
         hamming_weight_finalize_threads,
     )
+    outer_remainder_member = outer_remainder_member_breakdown(
+        events,
+        backend,
+        log_n,
+        outer_remainder_cutoff_log2,
+        outer_remainder_trace_cutoff_log2,
+    )
     attribution = trace_attribution(events)
     for name, member in (
         (BYTECODE_KERNEL, bytecode_member),
@@ -2936,6 +3549,9 @@ def run_backend(
             abs_tol=1e-6,
         ):
             raise ValueError(f"{name} member parser disagrees with trace attribution")
+    complete_member_us = float(outer_remainder_member["components"]["member_us"])
+    if complete_member_us > unique_span_duration_us(events):
+        raise ValueError("OuterRemainder member exceeds the PIOP span")
     stdout_path = artifact_dir / f"{label}.stdout"
     stderr_path = artifact_dir / f"{label}.stderr"
     return {
@@ -2952,6 +3568,8 @@ def run_backend(
         "booleanity_address_member": booleanity_address_member,
         "hamming_weight_config": hamming_weight_config,
         "hamming_weight_member": hamming_weight_member,
+        "outer_remainder_config": outer_remainder_config,
+        "outer_remainder_member": outer_remainder_member,
         "execution_config": execution_config,
         "command": command,
         "max_rss_bytes": max_rss,
@@ -3219,16 +3837,46 @@ def parser() -> argparse.ArgumentParser:
         choices=[18, 20, 22, 24, 25, 26, 27, 28],
         default=18,
     )
+    result.add_argument(
+        "--outer-remainder-metal-materialize-threads",
+        type=int,
+        choices=[128, 256, 512],
+        default=256,
+    )
+    result.add_argument(
+        "--outer-remainder-metal-transition-threads",
+        type=int,
+        choices=[64, 128, 256],
+        default=128,
+    )
+    result.add_argument(
+        "--outer-remainder-metal-output-threads",
+        type=int,
+        choices=[128, 256, 512],
+        default=256,
+    )
+    result.add_argument(
+        "--outer-remainder-metal-cutoff-log2",
+        type=int,
+        choices=[14, 15, 16, 17, 18],
+        default=16,
+    )
+    result.add_argument(
+        "--outer-remainder-metal-trace-cutoff-log2",
+        type=int,
+        choices=[18, 20, 22, 24, 25, 26, 27, 28],
+        default=18,
+    )
     result.add_argument("--trace", type=Path)
     return result
 
 
 def validate_run_class(mode: str, workload: str, log_n: int, repeats: int) -> None:
     if mode == "production" and (
-        workload != "fibonacci" or log_n != 26 or repeats != PRODUCTION_PAIRS
+        workload != "fibonacci" or log_n not in {26, 27} or repeats != PRODUCTION_PAIRS
     ):
         raise ValueError(
-            "production mode requires Fibonacci, log-n 26, and five pairs"
+            "production mode requires Fibonacci, log-n 26 or 27, and five pairs"
         )
 
 
@@ -3277,6 +3925,15 @@ def main() -> int:
     if args.hamming_weight_metal_trace_cutoff_log2 > args.log_n:
         print(
             "error: Hamming-weight trace cutoff disables the measured backend",
+            file=sys.stderr,
+        )
+        return 2
+    if args.outer_remainder_metal_cutoff_log2 > args.log_n - 1:
+        print("error: OuterRemainder cutoff must not exceed half the trace", file=sys.stderr)
+        return 2
+    if args.outer_remainder_metal_trace_cutoff_log2 > args.log_n:
+        print(
+            "error: OuterRemainder trace cutoff disables the measured backend",
             file=sys.stderr,
         )
         return 2
@@ -3338,6 +3995,11 @@ def main() -> int:
                     args.hamming_weight_metal_tile_threads,
                     args.hamming_weight_metal_finalize_threads,
                     args.hamming_weight_metal_trace_cutoff_log2,
+                    args.outer_remainder_metal_materialize_threads,
+                    args.outer_remainder_metal_transition_threads,
+                    args.outer_remainder_metal_output_threads,
+                    args.outer_remainder_metal_cutoff_log2,
+                    args.outer_remainder_metal_trace_cutoff_log2,
                     index + 1,
                     args.timeout_seconds,
                 )
@@ -3347,6 +4009,12 @@ def main() -> int:
             }
             hamming_weight_records = {
                 backend: member_record(results[backend]["hamming_weight_member"])
+                for backend in ("optimized", "metal")
+            }
+            outer_remainder_records = {
+                backend: outer_remainder_member_record(
+                    results[backend]["outer_remainder_member"]
+                )
                 for backend in ("optimized", "metal")
             }
             pairs.append(
@@ -3412,6 +4080,14 @@ def main() -> int:
                         hamming_weight_records["metal"]["member_ns"]
                     )
                     / 1000.0,
+                    "cpu_outer_remainder_us": float(
+                        outer_remainder_records["optimized"]["member_ns"]
+                    )
+                    / 1000.0,
+                    "metal_outer_remainder_us": float(
+                        outer_remainder_records["metal"]["member_ns"]
+                    )
+                    / 1000.0,
                 }
             )
             attributions.append(
@@ -3454,6 +4130,16 @@ def main() -> int:
                         ],
                         "metal_member": results["metal"]["hamming_weight_member"],
                     },
+                    "outer_remainder": {
+                        "optimized_config": results["optimized"][
+                            "outer_remainder_config"
+                        ],
+                        "metal_config": results["metal"]["outer_remainder_config"],
+                        "optimized_member": results["optimized"][
+                            "outer_remainder_member"
+                        ],
+                        "metal_member": results["metal"]["outer_remainder_member"],
+                    },
                     "execution": {
                         "optimized": results["optimized"]["execution_config"],
                         "metal": results["metal"]["execution_config"],
@@ -3495,6 +4181,18 @@ def main() -> int:
                             "hamming_weight_row_lifecycle": results[backend][
                                 "hamming_weight_member"
                             ]["row_lifecycle"],
+                            "outer_remainder": outer_remainder_records[backend],
+                            "outer_remainder_row_lifecycle": results[backend][
+                                "outer_remainder_member"
+                            ]["row_lifecycle"],
+                            "local": {
+                                "kernel": local_kernel["name"],
+                                "primary_ns": microseconds_to_nanoseconds(
+                                    local_kernel_primary_us(
+                                        results[backend], local_kernel["name"]
+                                    )
+                                ),
+                            },
                             "config": results[backend]["bytecode_config"],
                             "command": results[backend]["command"],
                             "artifacts": results[backend]["artifacts"],
@@ -3536,7 +4234,7 @@ def main() -> int:
                     }
                     for sample in attributions
                 ),
-                "target_scale": args.log_n == 26,
+                "target_scale": args.log_n in {26, 27},
                 "bytecode_q10_cpu_control": True,
                 "bytecode_metal_backend_exercised": all(
                     sample["bytecode"]["metal_member"]["metal_counts"]["first_message"]
@@ -3565,9 +4263,16 @@ def main() -> int:
                 ),
                 "local_kernel_attributed": all(
                     all(
-                        any(
-                            kernel["kernel"] == local_kernel["name"]
-                            for kernel in sample[backend]["kernels"]
+                        (
+                            sample["outer_remainder"][f"{backend}_member"][
+                                "components"
+                            ]["member_us"]
+                            > 0.0
+                            if local_kernel["name"] == OUTER_REMAINDER_KERNEL
+                            else any(
+                                kernel["kernel"] == local_kernel["name"]
+                                for kernel in sample[backend]["kernels"]
+                            )
                         )
                         for backend in ("optimized", "metal")
                     )
@@ -4026,6 +4731,83 @@ def main() -> int:
                 "hamming_weight_local_gate": metrics[
                     "hamming_weight_claim_reduction_decision"
                 ]["clears"],
+                "outer_remainder_cpu_control": all(
+                    sample["outer_remainder"]["optimized_config"] is None
+                    and not any(
+                        sample["outer_remainder"]["optimized_member"][
+                            "metal_counts"
+                        ].values()
+                    )
+                    and sample["outer_remainder"]["optimized_member"][
+                        "resource_observation"
+                    ]
+                    is None
+                    for sample in attributions
+                ),
+                "outer_remainder_metal_backend_exercised": all(
+                    sample["outer_remainder"]["metal_member"]["metal_counts"][
+                        "first_message"
+                    ]
+                    == 1
+                    and sample["outer_remainder"]["metal_member"]["metal_counts"][
+                        "output_claims"
+                    ]
+                    == 1
+                    for sample in attributions
+                ),
+                "outer_remainder_round_topology_exact": all(
+                    all(
+                        sample["outer_remainder"][f"{backend}_member"][
+                            "outer_counts"
+                        ]
+                        == {
+                            "complete_member": 1,
+                            "sumcheck_round": args.log_n + 1,
+                            "host_fiat_shamir": args.log_n + 1,
+                        }
+                        for backend in ("optimized", "metal")
+                    )
+                    for sample in attributions
+                ),
+                "outer_remainder_resident_lifecycle_exact": all(
+                    sample["outer_remainder"]["metal_member"]["row_lifecycle"]
+                    is not None
+                    for sample in attributions
+                ),
+                "outer_remainder_working_set_admitted": all(
+                    sample["outer_remainder"]["metal_member"][
+                        "resource_observation"
+                    ]["storage"]["admitted"]
+                    is True
+                    for sample in attributions
+                ),
+                "outer_remainder_readback_exact": all(
+                    sample["outer_remainder"]["metal_member"][
+                        "resource_observation"
+                    ]["readback"]
+                    == {
+                        "readbacks": 1,
+                        "elements": 2 * (1 << args.outer_remainder_metal_cutoff_log2),
+                        "bytes": 2
+                        * (1 << args.outer_remainder_metal_cutoff_log2)
+                        * 16,
+                    }
+                    for sample in attributions
+                ),
+                "outer_remainder_zero_member_allocations": all(
+                    sample["outer_remainder"]["metal_member"][
+                        "resource_observation"
+                    ]["sequence"]["sequence_device_buffer_allocations"]
+                    == 0
+                    and sample["outer_remainder"]["metal_member"][
+                        "resource_observation"
+                    ]["sequence"]["round_device_buffer_allocations"]
+                    == 0
+                    for sample in attributions
+                ),
+                "outer_remainder_local_gate": metrics[
+                    "outer_remainder_decision"
+                ]["clears"],
             },
             "resources": {
                 "metal_piop_seconds": sum(pair["metal_us"] for pair in pairs)
@@ -4083,6 +4865,15 @@ def main() -> int:
                 "hamming_weight_metal_trace_cutoff_log2": args.hamming_weight_metal_trace_cutoff_log2,
                 "hamming_weight_metal_trace_cutoff_elements": 1
                 << args.hamming_weight_metal_trace_cutoff_log2,
+                "outer_remainder_metal_materialize_threads": args.outer_remainder_metal_materialize_threads,
+                "outer_remainder_metal_transition_threads": args.outer_remainder_metal_transition_threads,
+                "outer_remainder_metal_output_threads": args.outer_remainder_metal_output_threads,
+                "outer_remainder_metal_cutoff_log2": args.outer_remainder_metal_cutoff_log2,
+                "outer_remainder_metal_cutoff_elements": 1
+                << args.outer_remainder_metal_cutoff_log2,
+                "outer_remainder_metal_trace_cutoff_log2": args.outer_remainder_metal_trace_cutoff_log2,
+                "outer_remainder_metal_trace_cutoff_elements": 1
+                << args.outer_remainder_metal_trace_cutoff_log2,
                 "span": PIOP_SPAN,
                 "orders": orders,
             },

@@ -582,6 +582,15 @@ mod akita_benchmark {
     }
 
     #[derive(Debug, Clone, Copy)]
+    struct OuterRemainderMetalTuning {
+        materialize_threads: usize,
+        transition_threads: usize,
+        output_threads: usize,
+        cutoff_log2: u32,
+        trace_cutoff_log2: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
     struct BackendConfig {
         backend: Backend,
         instruction_ra_materialize_width: InstructionRaMaterializeWidth,
@@ -591,6 +600,7 @@ mod akita_benchmark {
         instruction_input_metal: InstructionInputMetalTuning,
         booleanity_address_metal: BooleanityAddressMetalTuning,
         hamming_weight_metal: HammingWeightMetalTuning,
+        outer_remainder_metal: OuterRemainderMetalTuning,
     }
 
     #[derive(Parser, Debug)]
@@ -678,6 +688,21 @@ mod akita_benchmark {
 
         #[clap(long, default_value_t = 18)]
         hamming_weight_metal_trace_cutoff_log2: u32,
+
+        #[clap(long, default_value_t = 256)]
+        outer_remainder_metal_materialize_threads: usize,
+
+        #[clap(long, default_value_t = 128)]
+        outer_remainder_metal_transition_threads: usize,
+
+        #[clap(long, default_value_t = 256)]
+        outer_remainder_metal_output_threads: usize,
+
+        #[clap(long, default_value_t = 16)]
+        outer_remainder_metal_cutoff_log2: u32,
+
+        #[clap(long, default_value_t = 18)]
+        outer_remainder_metal_trace_cutoff_log2: u32,
     }
 
     pub fn run() {
@@ -745,6 +770,13 @@ mod akita_benchmark {
                 finalize_threads: cli.hamming_weight_metal_finalize_threads,
                 trace_cutoff_log2: cli.hamming_weight_metal_trace_cutoff_log2,
             },
+            outer_remainder_metal: OuterRemainderMetalTuning {
+                materialize_threads: cli.outer_remainder_metal_materialize_threads,
+                transition_threads: cli.outer_remainder_metal_transition_threads,
+                output_threads: cli.outer_remainder_metal_output_threads,
+                cutoff_log2: cli.outer_remainder_metal_cutoff_log2,
+                trace_cutoff_log2: cli.outer_remainder_metal_trace_cutoff_log2,
+            },
         };
         run_benchmark(cli.name, scale, cli.target_trace_size, backend_config);
     }
@@ -791,6 +823,14 @@ mod akita_benchmark {
                     tile_threads: hamming_weight_metal_tile_threads,
                     finalize_threads: hamming_weight_metal_finalize_threads,
                     trace_cutoff_log2: hamming_weight_metal_trace_cutoff_log2,
+                },
+            outer_remainder_metal:
+                OuterRemainderMetalTuning {
+                    materialize_threads: outer_remainder_metal_materialize_threads,
+                    transition_threads: outer_remainder_metal_transition_threads,
+                    output_threads: outer_remainder_metal_output_threads,
+                    cutoff_log2: outer_remainder_metal_cutoff_log2,
+                    trace_cutoff_log2: outer_remainder_metal_trace_cutoff_log2,
                 },
         } = backend_config;
         let bench_name = bench.as_str();
@@ -934,6 +974,11 @@ mod akita_benchmark {
             hamming_weight_metal_tile_threads,
             hamming_weight_metal_finalize_threads,
             hamming_weight_metal_trace_cutoff_log2,
+            outer_remainder_metal_materialize_threads,
+            outer_remainder_metal_transition_threads,
+            outer_remainder_metal_output_threads,
+            outer_remainder_metal_cutoff_log2,
+            outer_remainder_metal_trace_cutoff_log2,
         );
         let optimized_bytecode_algebra = match bytecode_cycle_algebra {
             BytecodeCycleAlgebra::Generic => jolt_kernels::optimized::BytecodeCycleAlgebra::Generic,
@@ -1045,6 +1090,31 @@ mod akita_benchmark {
                 config.hamming_weight_claim_reduction.trace_cutoff_elements = 1usize
                     .checked_shl(hamming_weight_metal_trace_cutoff_log2)
                     .expect("Hamming-weight Metal trace cutoff log2 must fit usize");
+                config
+                    .spartan_outer_remainder
+                    .dispatch
+                    .materialize_threads_per_threadgroup =
+                    Some(outer_remainder_metal_materialize_threads);
+                config
+                    .spartan_outer_remainder
+                    .dispatch
+                    .stream_bind_threads_per_threadgroup =
+                    Some(outer_remainder_metal_transition_threads);
+                config
+                    .spartan_outer_remainder
+                    .dispatch
+                    .transition_threads_per_threadgroup =
+                    Some(outer_remainder_metal_transition_threads);
+                config
+                    .spartan_outer_remainder
+                    .dispatch
+                    .opening_threads_per_threadgroup = Some(outer_remainder_metal_output_threads);
+                config.spartan_outer_remainder.dispatch.cpu_tail_elements = 1usize
+                    .checked_shl(outer_remainder_metal_cutoff_log2)
+                    .expect("outer-remainder Metal cutoff log2 must fit usize");
+                config.spartan_outer_remainder.trace_cutoff_elements = 1usize
+                    .checked_shl(outer_remainder_metal_trace_cutoff_log2)
+                    .expect("outer-remainder Metal trace cutoff log2 must fit usize");
                 println!(
                     "BYTECODE_METAL_CONFIG backend=metal cpu_tail={} trace_cutoff={} cutoff={} message_threads={} transition_threads={} max_threadgroups={}",
                     bytecode_cycle_algebra.as_str(),
@@ -1084,6 +1154,20 @@ mod akita_benchmark {
                     hamming_weight_metal_selectors_per_tile,
                     hamming_weight_metal_tile_threads,
                     hamming_weight_metal_finalize_threads,
+                );
+                println!(
+                    "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} materialize_threads={} transition_threads={} output_threads={} max_threadgroups={} storage_initialization={}",
+                    config.spartan_outer_remainder.trace_cutoff_elements,
+                    config.spartan_outer_remainder.dispatch.cpu_tail_elements,
+                    outer_remainder_metal_materialize_threads,
+                    outer_remainder_metal_transition_threads,
+                    outer_remainder_metal_output_threads,
+                    config.spartan_outer_remainder.dispatch.max_threadgroups,
+                    config
+                        .spartan_outer_remainder
+                        .dispatch
+                        .storage_initialization
+                        .as_str(),
                 );
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }

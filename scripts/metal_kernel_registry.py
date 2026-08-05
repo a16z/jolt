@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -28,11 +29,47 @@ ARTIFACT_KINDS = {
 }
 
 
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def read_registry(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text())
     if not isinstance(value, dict):
         raise ValueError("kernel registry must be a JSON object")
     return value
+
+
+def resolve_template_binding(
+    root: Path, registry: dict[str, Any], template_path: Path
+) -> dict[str, str]:
+    root = root.resolve()
+    template_path = template_path.resolve()
+    try:
+        relative = template_path.relative_to(root).as_posix()
+    except ValueError as error:
+        raise ValueError("template path must stay within the repository") from error
+    matches = [
+        artifact
+        for artifact in registry["artifacts"]["templates"]
+        if artifact["path"] == relative
+    ]
+    if len(matches) != 1:
+        raise ValueError("template path must resolve to exactly one registry artifact")
+    artifact = matches[0]
+    owning_slots = [
+        slot["id"]
+        for slot in registry["slots"]
+        if artifact["id"] in slot["artifacts"]["templates"]
+    ]
+    if owning_slots != [artifact["slot_id"]]:
+        raise ValueError("template ownership is inconsistent")
+    encoded = json.dumps(registry, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "artifact_id": artifact["id"],
+        "slot_id": artifact["slot_id"],
+        "registry_sha256": sha256(encoded),
+    }
 
 
 def _exact_keys(value: dict[str, Any], expected: set[str], description: str) -> None:

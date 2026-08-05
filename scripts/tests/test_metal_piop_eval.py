@@ -721,7 +721,214 @@ def complete_hamming_weight_trace(
     return events
 
 
+def complete_outer_remainder_trace(
+    log_n: int, backend: str, cutoff_log2: int = 16
+) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    events = [
+        event("jolt_prover::piop", 0.0, 20_000.0),
+        event("OuterRemainder::complete_member", 100.0, 10_000.0),
+    ]
+    round_starts = [200.0 + 300.0 * index for index in range(log_n + 1)]
+    for timestamp in round_starts:
+        events.append(event("sumcheck_round", timestamp, 240.0))
+        events.append(event("sumcheck_host_fiat_shamir", timestamp + 180.0, 20.0))
+    if backend == "optimized":
+        return events
+
+    rows = 1 << log_n
+    geometry = metal_piop_eval.outer_remainder_storage_geometry(log_n)
+    ids = list(range(1_001, 1_010))
+    storage_args: dict[str, object] = {
+        "cycles": rows,
+        "planned_device_bytes": geometry["owned_bytes"],
+        "maximum_buffer_bytes": geometry["maximum_buffer_bytes"],
+        "current_device_bytes": 1_000,
+        "recommended_max_working_set_bytes": geometry["owned_bytes"] + 2_000,
+        "initialization_mode": "full",
+        "admitted": True,
+        "initialized": True,
+        "fallback_reason": "none",
+        "device_buffers": 9,
+        "initialization_bytes": geometry["owned_bytes"],
+        "initialization_wall_ns": 100,
+        "initialization_gpu_active_ns": 80,
+        **{f"buffer_{index}": identity for index, identity in enumerate(ids)},
+    }
+    handoff = {
+        "compact_rows_storage_id": 201,
+        "residual_rows_storage_id": 202,
+        "device_registry_id": 203,
+        "resident_rows": rows,
+        "row_upload_bytes": 0,
+        "device_allocations": 0,
+    }
+    sequence = {
+        "resident_rows": rows,
+        "rounds": log_n + 1,
+        "cutoff_elements": 1 << cutoff_log2,
+        "trace_cutoff_elements": 1 << 18,
+        "planned_device_bytes": geometry["owned_bytes"],
+        "compact_rows_storage_id": 201,
+        "residual_rows_storage_id": 202,
+        "device_registry_id": 203,
+        "storage_reused": True,
+        "storage_initialization_mode": "full",
+        "preinitialized_device_bytes": geometry["owned_bytes"],
+        "initialization_bytes": geometry["owned_bytes"],
+        "attached_owned_bytes": geometry["owned_bytes"],
+        "row_upload_bytes": 0,
+        "full_domain_copy_dispatches": 0,
+        "sequence_device_buffer_allocations": 0,
+        "round_device_buffer_allocations": 0,
+        **{
+            f"storage_buffer_{index}": identity
+            for index, identity in enumerate(ids)
+        },
+    }
+    events.extend(
+        [
+            event("MetalOuterRemainder::storage_prepare", -200.0, 100.0, storage_args),
+            event(
+                "MetalOuterRemainder::storage_initialize",
+                -190.0,
+                40.0,
+                {
+                    "mode": "full",
+                    "device_buffers": 9,
+                    "bytes": geometry["owned_bytes"],
+                    "protocol_dispatches": 0,
+                    **{
+                        f"buffer_{index}": identity
+                        for index, identity in enumerate(ids)
+                    },
+                },
+            ),
+            event(
+                "MetalOuterRemainder::storage_initialize_complete",
+                -145.0,
+                5.0,
+                {
+                    "mode": "full",
+                    "command_completed": True,
+                    "bytes": geometry["owned_bytes"],
+                    "wall_ns": 100,
+                    "gpu_active_ns": 80,
+                },
+            ),
+            event("MetalOuterRemainder::prepare", 110.0, 80.0),
+            event("MetalOuterRemainder::allocation_plan", 115.0, 10.0),
+            event("MetalOuterRemainder::row_handoff", 125.0, 10.0, handoff),
+            event("MetalOuterRemainder::sequence_prepare", 135.0, 20.0, sequence),
+            event("MetalOuterRemainder::first_message", 160.0, 20.0),
+            event("MetalOuterRemainder::first_bind", round_starts[1] + 20.0, 20.0),
+        ]
+    )
+    events.extend(
+        event("MetalOuterRemainder::dense_round", round_starts[round] + 20.0, 20.0)
+        for round in range(2, log_n - cutoff_log2 + 2)
+    )
+    handoff_round = log_n - cutoff_log2 + 2
+    events.append(
+        event(
+            "MetalOuterRemainder::readback",
+            round_starts[handoff_round] + 10.0,
+            5.0,
+            {
+                "readbacks": 1,
+                "elements": 2 * (1 << cutoff_log2),
+                "bytes": 2 * (1 << cutoff_log2) * 16,
+            },
+        )
+    )
+    events.extend(
+        event("MetalOuterRemainder::cpu_tail", round_starts[round] + 20.0, 20.0)
+        for round in range(handoff_round, log_n + 1)
+    )
+    terminal = round_starts[-1] + 250.0
+    events.append(event("MetalOuterRemainder::cpu_tail", terminal, 20.0))
+    output_args = {
+        "dispatch_wall_ns": 100,
+        "gpu_active_ns": 80,
+        "readbacks": 1,
+        "output_elements": 35,
+        "readback_bytes": 560,
+        "row_upload_bytes": 0,
+    }
+    release = {
+        **handoff,
+        "residual_row_bytes": rows * 112,
+        "remaining_sequence_storage_bytes": geometry["owned_bytes"],
+        "compact_release_bytes": 0,
+        "released_owned_bytes": geometry["owned_bytes"] + rows * 112,
+        "release_completed": True,
+        "residual_released": True,
+        "compact_retained": True,
+    }
+    events.append(event("MetalOuterRemainder::output_claims", terminal + 30.0, 80.0, output_args))
+    events.append(event("MetalOuterRemainder::row_release", terminal + 40.0, 20.0, release))
+    return events
+
+
 class MetalPiopEvalTests(unittest.TestCase):
+    def test_outer_remainder_complete_member_is_the_local_timing_boundary(self) -> None:
+        optimized = metal_piop_eval.outer_remainder_member_breakdown(
+            complete_outer_remainder_trace(26, "optimized"), "optimized", 26
+        )
+        metal = metal_piop_eval.outer_remainder_member_breakdown(
+            complete_outer_remainder_trace(26, "metal"), "metal", 26
+        )
+
+        self.assertEqual(optimized["components"]["member_us"], 10_000.0)
+        self.assertEqual(metal["components"]["member_us"], 10_000.0)
+        self.assertEqual(metal["metal_counts"]["dense_round"], 10)
+        self.assertEqual(metal["metal_counts"]["cpu_tail"], 16)
+        self.assertEqual(metal["outer_counts"]["host_fiat_shamir"], 27)
+
+    def test_outer_remainder_rejects_storage_identity_drift(self) -> None:
+        events = complete_outer_remainder_trace(26, "metal")
+        sequence = next(
+            event
+            for event in events
+            if event["name"] == "MetalOuterRemainder::sequence_prepare"
+        )
+        sequence["args"]["storage_buffer_8"] = 9999
+        with self.assertRaisesRegex(ValueError, "resident sequence"):
+            metal_piop_eval.outer_remainder_member_breakdown(
+                events, "metal", 26
+            )
+
+    def test_validates_outer_remainder_runtime_config(self) -> None:
+        stdout = (
+            "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff=262144 "
+            "cutoff=65536 materialize_threads=256 transition_threads=128 "
+            "output_threads=256 max_threadgroups=8192 storage_initialization=full"
+        )
+        config = metal_piop_eval.validate_outer_remainder_stdout(
+            stdout, "metal"
+        )
+        self.assertEqual(config["cutoff"], 1 << 16)
+        self.assertIsNone(
+            metal_piop_eval.validate_outer_remainder_stdout("", "optimized")
+        )
+
     def test_worktree_digest_binds_untracked_paths_and_contents(self) -> None:
         first = metal_piop_eval.worktree_state_digest(
             b"diff", [(b"b.rs", b"two"), (b"a.rs", b"one")]

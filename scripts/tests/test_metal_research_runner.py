@@ -1,0 +1,842 @@
+import copy
+import json
+import signal
+import subprocess
+import tempfile
+import unittest
+from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from scripts.metal_research.attempt import EvaluatorLeaseTimeout, run_attempt
+from scripts.metal_research.paired import paired_summary
+from scripts.metal_research.results import adapt_result, validate_tier_result
+from scripts.metal_research import runner
+from scripts import metal_autoresearch
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def evaluator() -> dict[str, object]:
+    return {
+        "command": ["unused"],
+        "env": {"JOLT_METAL_DECLARED": "yes"},
+        "result_adapter": "test",
+        "timeout_seconds": 30,
+    }
+
+
+@contextmanager
+def fake_lease(
+    _owner: dict[str, object], _timeout_seconds: object = None
+):
+    telemetry = {
+        "queue_wait_seconds": 2.0,
+        "exclusive_lease_seconds": 0.0,
+    }
+    yield telemetry
+    telemetry["exclusive_lease_seconds"] = 11.0
+
+
+def descriptor(warmups: int = 0) -> dict[str, object]:
+    return {
+        "mode": "internal_paired",
+        "included_pairs": 5,
+        "excluded_warmup_pairs": warmups,
+        "order_policy": "alternating",
+        "first_order": ["control", "treatment"],
+        "minimum_pairs_per_order_stratum": 2,
+        "input_policy": {
+            "within_pair": "identical",
+            "across_pairs": "same_fixture",
+        },
+        "effect": "control_over_treatment",
+        "aggregate": "median_of_pair_effects",
+    }
+
+
+class AttemptTests(unittest.TestCase):
+    def test_tier_cost_limit_checks_every_accounting_dimension(self) -> None:
+        tier = {
+            "cost_limit": {
+                "active_evaluator_seconds": 2.0,
+                "exclusive_machine_seconds": 3.0,
+                "gpu_active_seconds": 4.0,
+            }
+        }
+        attempt = {
+            "controller": {
+                "subprocess_wall_seconds": 2.1,
+                "exclusive_lease_seconds": 3.1,
+            },
+            "resources": {"gpu_active_charge_seconds": 4.1},
+        }
+        self.assertEqual(
+            runner.cost_limit_overages(tier, attempt),
+            [
+                "active_evaluator_seconds",
+                "exclusive_machine_seconds",
+                "gpu_active_seconds",
+            ],
+        )
+
+    def test_nonzero_attempt_keeps_wall_and_lease_time(self) -> None:
+        process = SimpleNamespace(
+            returncode=7,
+            pid=123,
+            communicate=mock.Mock(return_value=("partial\n", "bad\n")),
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen", return_value=process
+        ), mock.patch(
+            "scripts.metal_research.attempt.time.monotonic",
+            side_effect=[10.0, 13.5],
+        ):
+            attempt, output = run_attempt(
+                Path(directory),
+                evaluator(),
+                {},
+                Path(directory) / "evaluation",
+                "representative",
+            )
+
+        self.assertIsNone(output)
+        self.assertEqual(attempt["outcome"], "nonzero_exit")
+        self.assertEqual(attempt["controller"]["subprocess_wall_seconds"], 3.5)
+        self.assertEqual(attempt["controller"]["exclusive_lease_seconds"], 11.0)
+        self.assertEqual(
+            attempt["resources"]["gpu_active_charge_kind"],
+            "conservative_wall_upper_bound",
+        )
+        self.assertEqual(attempt["resources"]["gpu_active_charge_seconds"], 3.5)
+
+    def test_timeout_keeps_partial_logs_and_wall_time(self) -> None:
+        process = SimpleNamespace(
+            returncode=None,
+            pid=123,
+            communicate=mock.Mock(
+                side_effect=[
+                    subprocess.TimeoutExpired(["unused"], 30),
+                    ("partial-out", "partial-err"),
+                ]
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen", return_value=process
+        ), mock.patch(
+            "scripts.metal_research.attempt.os.killpg"
+        ) as killpg, mock.patch(
+            "scripts.metal_research.attempt.time.monotonic",
+            side_effect=[20.0, 50.0],
+        ):
+            evaluation_dir = Path(directory) / "evaluation"
+            attempt, output = run_attempt(
+                Path(directory), evaluator(), {}, evaluation_dir, "representative"
+            )
+
+            self.assertEqual((evaluation_dir / "stdout").read_text(), "partial-out")
+            self.assertEqual((evaluation_dir / "stderr").read_text(), "partial-err")
+        self.assertIsNone(output)
+        self.assertEqual(attempt["outcome"], "timeout")
+        self.assertEqual(attempt["controller"]["subprocess_wall_seconds"], 30.0)
+        killpg.assert_called_once_with(123, signal.SIGTERM)
+
+    def test_cancellation_drains_the_process_group_before_releasing_lease(self) -> None:
+        process = SimpleNamespace(
+            returncode=None,
+            pid=456,
+            communicate=mock.Mock(
+                side_effect=[KeyboardInterrupt(), ("partial-out", "partial-err")]
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen", return_value=process
+        ), mock.patch(
+            "scripts.metal_research.attempt.os.killpg"
+        ) as killpg:
+            with self.assertRaises(KeyboardInterrupt):
+                run_attempt(
+                    Path(directory),
+                    evaluator(),
+                    {},
+                    Path(directory) / "evaluation",
+                    "representative",
+                )
+
+        killpg.assert_called_once_with(456, signal.SIGTERM)
+
+    def test_lease_timeout_is_a_charged_failed_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease",
+            side_effect=EvaluatorLeaseTimeout(7.0),
+        ):
+            attempt, output = run_attempt(
+                Path(directory),
+                evaluator(),
+                {},
+                Path(directory) / "evaluation",
+                "representative",
+                queue_timeout_seconds=7.0,
+            )
+
+        self.assertIsNone(output)
+        self.assertEqual(attempt["outcome"], "lease_timeout")
+        self.assertEqual(attempt["controller"]["queue_wait_seconds"], 7.0)
+
+    def test_successful_attempt_scrubs_ambient_metal_state(self) -> None:
+        def process(*_args: object, **kwargs: object) -> SimpleNamespace:
+            environment = kwargs["env"]
+            output = {
+                "schema_version": 1,
+                "ambient": environment.get("JOLT_METAL_AMBIENT"),
+                "declared": environment.get("JOLT_METAL_DECLARED"),
+                "parameter": environment.get("JOLT_METAL_PARAMETER"),
+            }
+            return SimpleNamespace(
+                returncode=0,
+                pid=123,
+                communicate=mock.Mock(return_value=(json.dumps(output) + "\n", "")),
+            )
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            "os.environ", {"JOLT_METAL_AMBIENT": "forged"}, clear=False
+        ), mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen", side_effect=process
+        ), mock.patch(
+            "scripts.metal_research.attempt.time.monotonic",
+            side_effect=[10.0, 11.0],
+        ):
+            attempt, output = run_attempt(
+                Path(directory),
+                evaluator(),
+                {"JOLT_METAL_PARAMETER": "candidate"},
+                Path(directory) / "evaluation",
+                "representative",
+            )
+
+        self.assertEqual(attempt["outcome"], "success")
+        self.assertIsNone(output["ambient"])
+        self.assertEqual(output["declared"], "yes")
+        self.assertEqual(output["parameter"], "candidate")
+
+
+class ResultAdapterTests(unittest.TestCase):
+    def test_outer_remainder_adapter_recomputes_raw_pairs(self) -> None:
+        orders = [
+            ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+            for index in range(5)
+        ]
+        samples = [
+            {
+                "pair": index,
+                "order": orders[index],
+                "optimized": {"member_ns": 400 + 20 * index},
+                "metal": {"member_ns": 100 + 5 * index},
+            }
+            for index in range(5)
+        ]
+        output = {
+            "schema": "outer_remainder_v3",
+            "schema_version": 3,
+            "kernel": "OuterRemainder",
+            "fingerprint": {
+                "fixture": "fixed",
+                "orders": orders,
+                "source_sha256": "a" * 64,
+                "binary_sha256": "b" * 64,
+            },
+            "metrics": {
+                "hybrid_speedup": 4.0,
+                "paired_speedups": [4.0] * 5,
+            },
+            "samples": samples,
+            "excluded_warmup": {
+                "optimized": {"member_ns": 400},
+                "metal": {"member_ns": 100},
+            },
+            "guards": {"all_exact": True},
+            "all_exact": True,
+            "resources": {"gpu_seconds": 0.5},
+        }
+        tier = {
+            "id": "representative",
+            "role": "representative",
+            "replication": descriptor(warmups=1),
+            "evaluator": {"result_adapter": "outer_remainder_v3"},
+        }
+
+        result, charge = adapt_result(tier, output, "outer_remainder")
+        validate_tier_result(result, tier)
+
+        self.assertEqual(result["primary"]["value"], 4.0)
+        self.assertEqual(result["replication"]["summary"]["median"], 4.0)
+        self.assertEqual(charge["gpu_active_charge_seconds"], 0.5)
+        self.assertEqual(charge["gpu_active_charge_kind"], "treatment_wall_upper_bound")
+
+    def test_piop_adapter_recomputes_overall_and_order_strata(self) -> None:
+        pairs = []
+        for index in range(5):
+            order = (
+                ["optimized", "metal"]
+                if index % 2 == 0
+                else ["metal", "optimized"]
+            )
+            pairs.append(
+                {
+                    "index": index + 1,
+                    "order": order,
+                    "arms": {
+                        "optimized": {
+                            "piop_ns": 500,
+                            "local": {
+                                "kernel": "OuterRemainder",
+                                "primary_ns": 250,
+                            },
+                        },
+                        "metal": {
+                            "piop_ns": 100,
+                            "local": {
+                                "kernel": "OuterRemainder",
+                                "primary_ns": 50,
+                            },
+                        },
+                    },
+                }
+            )
+        output = {
+            "schema_version": 7,
+            "kernel": "akita_piop",
+            "local_kernel": "OuterRemainder",
+            "local_metric": {
+                "metric": "outer_remainder_speedup",
+                "paired_metric": "paired_outer_remainder_speedups",
+            },
+            "run_class": {"mode": "production", "acceptance_eligible": True},
+            "metrics": {
+                "piop_speedup": 5.0,
+                "paired_speedups": [5.0] * 5,
+                "outer_remainder_speedup": 5.0,
+                "paired_outer_remainder_speedups": [5.0] * 5,
+            },
+            "pairs": pairs,
+            "guards": {
+                "cpu_proofs_verified": True,
+                "metal_proofs_verified": True,
+                "production_contract": True,
+                "stable_source": True,
+                "stable_binary": True,
+                "target_scale": True,
+            },
+            "resources": {"metal_piop_seconds": 0.0000005},
+            "fingerprint": {
+                "workload": "fibonacci",
+                "log_n": 26,
+                "source_sha256": "a" * 64,
+                "binary_sha256": "b" * 64,
+            },
+        }
+        tier = {
+            "id": "piop_holdout",
+            "role": "holdout",
+            "replication": descriptor(),
+            "evaluator": {"result_adapter": "metal_piop_v7"},
+            "promotion": {
+                "local_kernel": "OuterRemainder",
+                "local_metric": "outer_remainder_speedup",
+                "log_n": 26,
+            },
+        }
+
+        result, _ = adapt_result(tier, output, "outer_remainder")
+        observed = validate_tier_result(result, tier)
+
+        self.assertEqual(observed, paired_summary(result["replication"]["pairs"], descriptor()))
+        self.assertEqual(observed["control_first_median"], 5.0)
+        self.assertEqual(observed["treatment_first_median"], 5.0)
+
+    def test_piop_closure_delegates_to_the_full_schema_seven_validator(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        tier = next(
+            item
+            for item in template["evaluation"]["tiers"]
+            if item.get("role") == "holdout"
+        )
+        params = {name: str(value) for name, value in template["baseline_params"].items()}
+        output: dict[str, object] = {}
+        with mock.patch.object(
+            metal_autoresearch, "validate_production_result"
+        ) as validate, mock.patch.object(
+            metal_autoresearch, "git_head", return_value="revision"
+        ), mock.patch.object(
+            metal_autoresearch, "git_worktree_clean", return_value=True
+        ):
+            runner._validate_closed_result(ROOT, tier, output, params)
+
+        gate = validate.call_args.args[0]["final_validation"]["production_gate"]
+        self.assertEqual(gate["minimum_local_speedup"], 5.0)
+        self.assertEqual(gate["minimum_log_n"], 26)
+        self.assertIn("outer_remainder_readback_exact", gate["required_guards"])
+        self.assertEqual(validate.call_args.args[1:], (output, "revision", params, True))
+
+
+class RunnerIntegrationTests(unittest.TestCase):
+    def outer_output(self) -> dict[str, object]:
+        from scripts.tests.test_metal_autoresearch import MetalAutoresearchTests
+
+        return MetalAutoresearchTests().outer_remainder_local_contract_fixture()[2]
+
+    def successful_attempt(
+        self, output: dict[str, object], launches: list[str]
+    ):
+        def attempt(
+            _root: Path,
+            _evaluator: dict[str, object],
+            _params: dict[str, str],
+            evaluation_dir: Path,
+            tier_id: str,
+            **_kwargs: object,
+        ) -> tuple[dict[str, object], dict[str, object]]:
+            evaluation_dir.mkdir(parents=True, exist_ok=False)
+            launches.append(tier_id)
+            return (
+                {
+                    "schema_version": 1,
+                    "tier_id": tier_id,
+                    "outcome": "success",
+                    "error": None,
+                    "command": ["mocked"],
+                    "started_at": "2026-08-05T00:00:00Z",
+                    "controller": {
+                        "queue_wait_seconds": 0.0,
+                        "exclusive_lease_seconds": 1.0,
+                        "subprocess_wall_seconds": 1.0,
+                    },
+                    "resources": {
+                        "gpu_active_seconds": None,
+                        "gpu_active_charge_seconds": 1.0,
+                        "gpu_active_charge_kind": "conservative_wall_upper_bound",
+                    },
+                    "result_sha256": "a" * 64,
+                },
+                output,
+            )
+
+        return attempt
+
+    def tier_result(
+        self, tier: dict[str, object], speedup: float = 5.0
+    ) -> dict[str, object]:
+        replication = tier["replication"]
+        raw_pairs = [
+            {
+                "index": index,
+                "input_id": "fixed",
+                "order": (
+                    ["control", "treatment"]
+                    if index % 2 == 0
+                    else ["treatment", "control"]
+                ),
+                "arms": {
+                    "control": {"primary_ns": 500.0},
+                    "treatment": {"primary_ns": 500.0 / speedup},
+                },
+                "effect": speedup,
+                "guards": {"exact": True},
+            }
+            for index in range(5)
+        ]
+        summary = paired_summary(raw_pairs, replication)
+        required = tier["promotion"].get("required_guards", ["all_exact"])
+        result: dict[str, object] = {
+            "primary": {"name": "speedup", "value": speedup},
+            "replication": {"pairs": raw_pairs, "summary": summary},
+            "guards": {name: True for name in required},
+        }
+        if tier["role"] in {"holdout", "transfer"}:
+            result["local"] = {
+                "kernel": "OuterRemainder",
+                "primary": {"value": speedup},
+                "replication": {"pairs": raw_pairs, "summary": summary},
+            }
+        return result
+
+    def test_init_and_trial_launch_one_internally_paired_process_each(self) -> None:
+        output = self.outer_output()
+        launches: list[str] = []
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, launches),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            state["usage"] = runner.empty_usage()
+            runner.write_state(run_dir, state)
+            reconstructed = runner.load_state(run_dir)
+            self.assertEqual(reconstructed["usage"]["active_evaluator_seconds"], 1.0)
+            decision, state = runner.trial(
+                ROOT, run_dir, [], "repeat the baseline candidate"
+            )
+
+            self.assertEqual(launches, ["representative", "representative"])
+            self.assertEqual(state["accepted_parent"]["id"], "baseline")
+            self.assertEqual(decision["verdict"], "discard")
+            self.assertEqual(state["usage"]["candidates_admitted"], 1)
+            self.assertEqual(
+                len((run_dir / "tier-events.jsonl").read_text().splitlines()), 2
+            )
+
+    def test_recovery_conservatively_charges_an_unsealed_attempt(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            state = runner.load_state(run_dir)
+            (run_dir / "inflight.json").write_bytes(
+                runner.canonical_json(
+                    {
+                        "schema_version": 2,
+                        "kind": "candidate",
+                        "candidate_id": "candidate-001",
+                        "evaluation_id": "candidate-001-representative",
+                        "tier_id": "representative",
+                        "params": state["accepted_parent"]["params"],
+                        "editable_paths_sha256": state["fingerprint"][
+                            "editable_paths_sha256"
+                        ],
+                        "started_at": runner.utc_now(),
+                    }
+                )
+            )
+
+            recovered = runner.recover(ROOT, run_dir)
+
+            self.assertEqual(recovered["usage"]["failed_attempts"], 1)
+            self.assertGreaterEqual(
+                recovered["usage"]["gpu_active_estimated_seconds"], 0.0
+            )
+            self.assertFalse((run_dir / "inflight.json").exists())
+
+    def test_proxy_rejection_skips_the_representative_tier(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("id") == "representative"
+            )
+            screen = copy.deepcopy(representative)
+            screen["id"] = "screen"
+            screen["role"] = "proxy"
+            state["template"]["evaluation"]["tiers"][0] = screen
+            state["accepted_parent"]["tiers"]["screen"] = copy.deepcopy(
+                state["accepted_parent"]["tiers"]["representative"]
+            )
+            runner.write_state(run_dir, state)
+            screen_result, _ = adapt_result(screen, output, "outer_remainder")
+            launches: list[str] = []
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                _params: dict[str, str],
+                _evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                launches.append(str(tier["id"]))
+                return (
+                    {"attempt": {"error": None, "outcome": "success"}},
+                    screen_result,
+                )
+
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(runner, "execute_tier", side_effect=execute):
+                decision, _ = runner.trial(
+                    ROOT, run_dir, [], "candidate rejected by the proxy"
+                )
+
+            self.assertEqual(launches, ["screen"])
+            self.assertEqual(decision["verdict"], "discard")
+
+    def test_production_runs_revalidation_holdout_transfer_once(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("role") == "representative"
+            )
+            accepted = self.tier_result(representative)
+            state["accepted_parent"]["metric"] = 5.0
+            state["accepted_parent"]["paired_summary"] = accepted["replication"][
+                "summary"
+            ]
+            runner.write_state(run_dir, state)
+            launches: list[str] = []
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                _params: dict[str, str],
+                _evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                launches.append(str(tier["role"]))
+                return (
+                    {"attempt": {"error": None, "outcome": "success"}},
+                    self.tier_result(tier),
+                )
+
+            with mock.patch.object(
+                metal_autoresearch, "git_worktree_clean", return_value=True
+            ), mock.patch.object(
+                metal_autoresearch, "validate_production_revision_scope"
+            ), mock.patch.object(runner, "execute_tier", side_effect=execute):
+                record, state = runner.validate_production(ROOT, run_dir)
+                repeated, repeated_state = runner.validate_production(ROOT, run_dir)
+
+            self.assertEqual(launches, ["representative", "holdout", "transfer"])
+            self.assertEqual(record["role"], "transfer")
+            self.assertEqual(repeated, record)
+            self.assertEqual(state["status"], "transferred")
+            self.assertEqual(repeated_state["status"], "transferred")
+
+    def test_transfer_retry_does_not_rerun_accepted_holdout(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("role") == "representative"
+            )
+            accepted = self.tier_result(representative)
+            state["accepted_parent"]["metric"] = 5.0
+            state["accepted_parent"]["paired_summary"] = accepted["replication"][
+                "summary"
+            ]
+            runner.write_state(run_dir, state)
+            launches: list[str] = []
+            transfer_attempts = 0
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                _params: dict[str, str],
+                _evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                nonlocal transfer_attempts
+                role = str(tier["role"])
+                launches.append(role)
+                speedup = 5.0
+                if role == "transfer":
+                    transfer_attempts += 1
+                    if transfer_attempts == 1:
+                        speedup = 4.9
+                return (
+                    {"attempt": {"error": None, "outcome": "success"}},
+                    self.tier_result(tier, speedup),
+                )
+
+            with mock.patch.object(
+                metal_autoresearch, "git_worktree_clean", return_value=True
+            ), mock.patch.object(
+                metal_autoresearch, "validate_production_revision_scope"
+            ), mock.patch.object(runner, "execute_tier", side_effect=execute):
+                with self.assertRaisesRegex(ValueError, "did not clear 5x"):
+                    runner.validate_production(ROOT, run_dir)
+                self.assertEqual(runner.load_state(run_dir)["status"], "portfolio_accepted")
+                _, state = runner.validate_production(ROOT, run_dir)
+
+            self.assertEqual(
+                launches, ["representative", "holdout", "transfer", "transfer"]
+            )
+            self.assertEqual(state["status"], "transferred")
+
+    def test_state_digest_is_committed_inside_the_atomic_state_file(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            raw = json.loads((run_dir / "run.json").read_text())
+            self.assertIn("state_sha256", raw)
+            self.assertFalse((run_dir / "run.sha256").exists())
+            raw["status"] = "forged"
+            (run_dir / "run.json").write_text(json.dumps(raw))
+            with self.assertRaisesRegex(ValueError, "state digest"):
+                runner.load_state(run_dir)
+
+    def test_recovered_kept_candidate_returns_to_unvalidated_active_state(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            state["status"] = "transferred"
+            runner.write_state(run_dir, state)
+            candidate_id = "candidate-001"
+            editable_digest = metal_autoresearch.path_digest(
+                ROOT, state["template"]["scope"]["editable"]
+            )
+            runner.append_event(
+                run_dir / "decision-events.jsonl",
+                {
+                    "event": "candidate_decided",
+                    "candidate_id": candidate_id,
+                    "verdict": "keep",
+                    "params": state["accepted_parent"]["params"],
+                    "primary": {"value": 5.1},
+                    "paired_summary": state["accepted_parent"]["paired_summary"],
+                    "tier_results": state["accepted_parent"]["tiers"],
+                },
+            )
+            recovered, _ = runner._recover_committed_candidate(
+                ROOT,
+                run_dir,
+                state,
+                {
+                    "candidate_id": candidate_id,
+                    "editable_paths_sha256": editable_digest,
+                },
+            )
+
+            self.assertTrue(recovered)
+            self.assertEqual(state["accepted_parent"]["id"], candidate_id)
+            self.assertEqual(state["status"], "active")
+
+
+class DispatchAndGoalTests(unittest.TestCase):
+    def test_canonical_controller_dispatches_only_schema_two_contracts(self) -> None:
+        self.assertTrue(
+            metal_autoresearch.command_uses_v2(
+                SimpleNamespace(
+                    command="init",
+                    template=ROOT
+                    / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                )
+            )
+        )
+        self.assertFalse(
+            metal_autoresearch.command_uses_v2(
+                SimpleNamespace(
+                    command="init",
+                    template=ROOT
+                    / "crates/jolt-kernels/autoresearch/outer_remainder.template.json",
+                )
+            )
+        )
+
+    def test_goal_continues_below_five_and_pursues_clear_headroom(self) -> None:
+        contract = json.loads(
+            (
+                ROOT / "crates/jolt-kernels/autoresearch/piop_goal.v2.json"
+            ).read_text()
+        )
+        below = runner.goal_decision(contract, 4.99, [])
+        self.assertTrue(below["continue"])
+        self.assertFalse(below["floor_met"])
+
+        above = runner.goal_decision(
+            contract,
+            5.1,
+            [
+                {
+                    "kernel": "outer_remainder",
+                    "current_piop_share": 0.01,
+                    "conservative_local_speedup": 5.5,
+                }
+            ],
+        )
+        self.assertTrue(above["continue"])
+        self.assertTrue(above["clear_headroom"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -976,6 +976,21 @@
     ],
     "documents": [
       {
+        "id": "autoresearch_harness",
+        "path": "crates/jolt-kernels/autoresearch/HARNESS.md",
+        "covers_slots": [
+          "spartan_outer_uniskip",
+          "spartan_outer_remainder",
+          "instruction_input",
+          "instruction_read_raf",
+          "booleanity_address",
+          "bytecode_read_raf_cycle",
+          "booleanity_cycle",
+          "instruction_ra_virtualization",
+          "hamming_weight_claim_reduction"
+        ]
+      },
+      {
         "id": "booleanity_address_design",
         "path": "crates/jolt-kernels/src/metal/BOOLEANITY_ADDRESS.md",
         "covers_slots": ["booleanity_address"]

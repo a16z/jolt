@@ -9,30 +9,39 @@
   "budget": {
     "reserves": [
       {
-        "invocations": 2,
+        "id": "representative_revalidation",
+        "invocations": 1,
         "resources": {
-          "active_evaluator_seconds": 3600,
-          "exclusive_machine_seconds": 3600,
-          "gpu_active_seconds": 3600
-        },
-        "tier_id": "representative"
+          "active_evaluator_seconds": 1800,
+          "exclusive_machine_seconds": 1800,
+          "gpu_active_seconds": 1800
+        }
       },
       {
+        "id": "piop_holdout",
         "invocations": 1,
         "resources": {
           "active_evaluator_seconds": 7200,
           "exclusive_machine_seconds": 7200,
           "gpu_active_seconds": 7200
-        },
-        "tier_id": "piop_holdout"
+        }
+      },
+      {
+        "id": "piop_transfer",
+        "invocations": 1,
+        "resources": {
+          "active_evaluator_seconds": 14400,
+          "exclusive_machine_seconds": 14400,
+          "gpu_active_seconds": 14400
+        }
       }
     ],
     "total": {
-      "max_active_evaluator_seconds": 28800,
-      "max_calendar_seconds": 43200,
+      "max_active_evaluator_seconds": 43200,
+      "max_calendar_seconds": 57600,
       "max_candidates_admitted": 12,
-      "max_exclusive_machine_seconds": 28800,
-      "max_gpu_active_seconds": 21600,
+      "max_exclusive_machine_seconds": 43200,
+      "max_gpu_active_seconds": 36000,
       "max_monetary_usd": 0,
       "max_tokens": 0
     }
@@ -115,7 +124,11 @@
             "--log-n",
             "26",
             "--repeats",
-            "5"
+            "5",
+            "--mode",
+            "production",
+            "--local-kernel",
+            "OuterRemainder"
           ],
           "parameter_bindings": [
             {
@@ -145,8 +158,30 @@
         "id": "piop_holdout",
         "promotion": {
           "kind": "portfolio_acceptance",
+          "log_n": 26,
+          "local_kernel": "OuterRemainder",
+          "local_metric": "outer_remainder_speedup",
           "minimum_accepted_speedup": 5.0,
-          "minimum_local_speedup": 5.0
+          "minimum_local_speedup": 5.0,
+          "required_guards": [
+            "cpu_proofs_verified",
+            "metal_proofs_verified",
+            "production_contract",
+            "local_kernel_attributed",
+            "local_kernel_metal_backend_exercised",
+            "stable_source",
+            "stable_binary",
+            "target_scale",
+            "outer_remainder_cpu_control",
+            "outer_remainder_metal_backend_exercised",
+            "outer_remainder_round_topology_exact",
+            "outer_remainder_resident_lifecycle_exact",
+            "outer_remainder_working_set_admitted",
+            "outer_remainder_readback_exact",
+            "outer_remainder_zero_member_allocations",
+            "outer_remainder_local_gate",
+            "rayon_threads_pinned"
+          ]
         },
         "replication": {
           "aggregate": "median_of_pair_effects",
@@ -166,6 +201,100 @@
           "order_policy": "alternating"
         },
         "role": "holdout"
+      },
+      {
+        "applicable": true,
+        "cost_limit": {
+          "active_evaluator_seconds": 14400,
+          "exclusive_machine_seconds": 14400,
+          "gpu_active_seconds": 14400
+        },
+        "evaluator": {
+          "command": [
+            "python3",
+            "scripts/metal_piop_eval.py",
+            "--workload",
+            "fibonacci",
+            "--log-n",
+            "27",
+            "--repeats",
+            "5",
+            "--mode",
+            "production",
+            "--local-kernel",
+            "OuterRemainder"
+          ],
+          "parameter_bindings": [
+            {
+              "flag": "--outer-remainder-metal-materialize-threads",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS"
+            },
+            {
+              "flag": "--outer-remainder-metal-transition-threads",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS"
+            },
+            {
+              "flag": "--outer-remainder-metal-output-threads",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS"
+            },
+            {
+              "flag": "--outer-remainder-metal-cutoff-log2",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2"
+            },
+            {
+              "flag": "--outer-remainder-metal-trace-cutoff-log2",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2"
+            }
+          ],
+          "result_adapter": "metal_piop_v7",
+          "timeout_seconds": 14400
+        },
+        "id": "piop_transfer",
+        "promotion": {
+          "kind": "transfer_acceptance",
+          "local_kernel": "OuterRemainder",
+          "local_metric": "outer_remainder_speedup",
+          "log_n": 27,
+          "minimum_accepted_speedup": 5.0,
+          "minimum_local_speedup": 5.0,
+          "required_guards": [
+            "cpu_proofs_verified",
+            "metal_proofs_verified",
+            "production_contract",
+            "local_kernel_attributed",
+            "local_kernel_metal_backend_exercised",
+            "stable_source",
+            "stable_binary",
+            "target_scale",
+            "outer_remainder_cpu_control",
+            "outer_remainder_metal_backend_exercised",
+            "outer_remainder_round_topology_exact",
+            "outer_remainder_resident_lifecycle_exact",
+            "outer_remainder_working_set_admitted",
+            "outer_remainder_readback_exact",
+            "outer_remainder_zero_member_allocations",
+            "outer_remainder_local_gate",
+            "rayon_threads_pinned"
+          ]
+        },
+        "replication": {
+          "aggregate": "median_of_pair_effects",
+          "effect": "control_over_treatment",
+          "excluded_warmup_pairs": 0,
+          "first_order": [
+            "control",
+            "treatment"
+          ],
+          "included_pairs": 5,
+          "input_policy": {
+            "across_pairs": "same_fixture",
+            "within_pair": "identical"
+          },
+          "minimum_pairs_per_order_stratum": 2,
+          "mode": "internal_paired",
+          "order_policy": "alternating"
+        },
+        "role": "transfer"
       }
     ]
   },
@@ -186,7 +315,9 @@
     ],
     "frozen": [
       "crates/jolt-field/src/akita.rs",
+      "crates/jolt-kernels/autoresearch/HARNESS.md",
       "crates/jolt-kernels/autoresearch/outer_remainder.template.json",
+      "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
       "crates/jolt-kernels/autoresearch/piop_goal.v2.json",
       "crates/jolt-kernels/src/metal/OUTER_REMAINDER.md",
       "crates/jolt-kernels/src/metal/kernel_registry.json",
@@ -200,7 +331,15 @@
       "crates/jolt-prover/src/stages/stage1.rs",
       "scripts/metal_outer_remainder_eval.py",
       "scripts/metal_piop_eval.py",
-      "scripts/metal_research/contracts.py"
+      "scripts/metal_autoresearch.py",
+      "scripts/metal_kernel_registry.py",
+      "scripts/metal_research/attempt.py",
+      "scripts/metal_research/budget.py",
+      "scripts/metal_research/contracts.py",
+      "scripts/metal_research/paired.py",
+      "scripts/metal_research/results.py",
+      "scripts/metal_research/runner.py",
+      "scripts/metal_research/versions.py"
     ]
   },
   "search_space": {

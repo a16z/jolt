@@ -2209,6 +2209,30 @@ class MetalAutoresearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
             metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)
 
+    def test_outer_remainder_production_member_is_closed_from_raw_evidence(self) -> None:
+        from scripts.tests.test_metal_piop_eval import (
+            complete_outer_remainder_trace,
+            metal_piop_eval,
+        )
+
+        member = metal_piop_eval.outer_remainder_member_record(
+            metal_piop_eval.outer_remainder_member_breakdown(
+                complete_outer_remainder_trace(26, "metal"), "metal", 26
+            )
+        )
+        observed = metal_autoresearch.validate_production_outer_remainder_member(
+            member, "metal", 26, 16, 18
+        )
+        self.assertEqual(observed, member["member_ns"])
+
+        member["resource_observation"]["sequence"][
+            "round_device_buffer_allocations"
+        ] = 1
+        with self.assertRaisesRegex(ValueError, "storage evidence"):
+            metal_autoresearch.validate_production_outer_remainder_member(
+                member, "metal", 26, 16, 18
+            )
+
     def test_hamming_weight_template_and_closed_local_result(self) -> None:
         config, params, output = self.hamming_weight_local_contract_fixture()
         metal_autoresearch.validate_template(config, ROOT)

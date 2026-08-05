@@ -1,4 +1,5 @@
 import copy
+import json
 import unittest
 from pathlib import Path
 
@@ -60,6 +61,25 @@ class MetalKernelRegistryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "template ownership"):
             metal_kernel_registry.validate_registry(ROOT, registry)
+
+    def test_template_binding_resolves_canonical_slot_and_digest(self) -> None:
+        registry = metal_kernel_registry.read_registry(REGISTRY)
+        binding = metal_kernel_registry.resolve_template_binding(
+            ROOT,
+            registry,
+            ROOT
+            / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+        )
+
+        self.assertEqual(binding["artifact_id"], "outer_remainder_search_v2")
+        self.assertEqual(binding["slot_id"], "spartan_outer_remainder")
+        self.assertEqual(len(binding["registry_sha256"]), 64)
+        self.assertEqual(
+            binding["registry_sha256"],
+            metal_kernel_registry.sha256(
+                json.dumps(registry, sort_keys=True, separators=(",", ":")).encode()
+            ),
+        )
 
 
 if __name__ == "__main__":
