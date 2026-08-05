@@ -384,3 +384,67 @@ Lane state at adoption + first outcomes:
 Fleet: e371fb72 (st3) · bdcc152e (r4 Gate-1) · c42e074e (st6b) ·
 d6c80e49 (st0) · oracle 3dbb9c10e48a. Estimated shipped-but-uncertified
 delta so far: -0.78 s.
+
+### Wake 1 (2026-08-05 00:29 UTC): three oracle verdicts + st6b RETAIN
+
+**Orphaned wave-1 pro jobs delivered after adoption** — not lost:
+
+- `ec0b50d07d63` (typed quaternary Dory factor): **GO with mandatory
+  conditions.** Dory commitment itself is extension-agnostic; verifier holds
+  one four-weight factor across two consecutive reduce rounds
+  (`α₂α₁l₀+α₁l₁+α₂l₂+l₃`, inverse-α on s₂); factor must not straddle the
+  row/column split; verifier recomputes Lagrange weights; descriptor must be
+  FS-bound before Dory alphas; challenge z must be transcript-linked, never
+  prover-supplied. This UNLOCKS the deferred st6b/st7 packing door (map §5)
+  — now also satisfied on the measurement side by c42e074e's st6b anatomy.
+  Wave-3 candidate, not scheduled now.
+- `20b0ff781369` (stage-4 corrected shape): **GO-WITH-MANDATORY-CHANGES** —
+  agrees with the fresh gate: one aggregate polynomial per fused round
+  (never per-member polys sharing r), canonical 10-coefficient encoding for
+  generic d=3 (deg ≤ 9; our site's exact bound is 6), typed factor
+  propagation with no Radix4→binary-point conversion anywhere, PCS
+  noninterference as a typed-API invariant, extensive test matrix.
+
+**Gate 0 (fresh job `3dbb9c10e48a`): protocol SOUND, one spec gap.**
+
+- Q1 packed round: SOUND. D-sum functional `(4,2,6,8,18,32,66)` verified;
+  absorb-full-coeffs-then-one-squeeze is correct FS ordering; error 6/|F|
+  at the exact degree-6 site (ordinary ROM grinding caveat only).
+- Q2 address-first + activation join: SOUND. `128·C /4/4/4/2 = C` exactly,
+  RLC-linear, join-adjacent single harmless; schedule must stay
+  config-derived + transcript-bound (already the map's design).
+- Q3 run-length Val state: **GAP — level-0 temporal convention
+  underspecified** (write effective at j vs j+1, same-cycle read/write
+  pre/post-state, cycle-0 runs, final-cycle writes, x0, coincident-
+  breakpoint atomic merge). Fold algebra itself PROVEN correct (piecewise-
+  constancy survives repeated quaternary folds by induction). Becomes SOUND
+  once the convention is pinned normatively to the production Val semantics
+  with boundary tests.
+- Q4 typed-factor surface: SOUND; extra tamper/negative-API/boundary tests
+  mandated (folded into the campaign test matrix).
+- Overall: NO-GO for production code until Q3 spec + tests exist; the
+  protocol shape itself is cleared.
+
+**Action:** steered Gate-1 lane `bdcc152e` mid-flight: derive the level-0
+convention from production code (file:line citations), implement BOTH its
+run lists and its dense reference against that convention, and cover the
+oracle's boundary-case list in the parity suite ("Level-0 Val temporal
+convention (normative)" section in its report). Gate-1 kill line unchanged.
+
+**st6b lane c42e074e: RETAIN, merged.** Root cause of the st6b tail mode:
+round-3 dense adoption — three serialized synchronous `jk_ra_materialize`
+dispatches inside `begin_round` (17.19 s of the 30.96 s tail-mode close vs
+1.55 s good mode @2^27; fresh ~28.5 GiB ping-pong, blocked≈2×gpu, then the
+round message re-reads the 8 GiB just written). Fix: RavDriver defers
+adoption one lazy round and lands it at T/16 as ONE detached
+`jk_rav_adopt_round` (gather once → dense write + message lanes fused);
+Rav adoption alloc+write halved, begin_round 64.3→0.47 ms @2^24, isolated
+total −7.2..−8.6% at 2^24 (two agreeing quiet runs), byte-parity CPU-twin
+oracle, wire bytes unchanged, `JOLT_RAV_DEFERRED_ADOPT=0` legacy knob.
+Modeled −0.5..−1.5 s good-mode st6b @2^27, more in tail mode. Bool driver
+(20 polys, 15 GiB) = follow-up door. Merged as `9c4699c56`; targeted
+rav/lazy_ra parity 9/9 and muldiv e2e (host) 3/3 pass on the merged trunk.
+
+Fleet after wake 1: bdcc152e (Gate-1, steered) · e371fb72 (st3) ·
+d6c80e49 (st0). Estimated shipped-but-uncertified: st7 −0.78 s + st6b
+−0.5..−1.5 s (good mode) + tail-mode variance kill.
