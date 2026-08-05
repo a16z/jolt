@@ -668,6 +668,73 @@ pub fn multi_pair_device(ps: &[ArkG1], qs: &[ArkG2]) -> Option<ArkGT> {
     Some(ArkGT(gt))
 }
 
+/// Several multi-pairings served by ONE device dispatch (W4 st8 bundle).
+/// Dory's reduce rounds issue their per-message multi-pairs (4 first, 2
+/// second, each n/2 pairs) as separate hook calls: separate command
+/// buffers, and per-call sizes that starve the device mid-ladder (4096-
+/// and 2048-pair dispatches) then fall under the 2048-pair gate entirely
+/// (rounds 7-8). Concatenating the calls into one dispatch exposes their
+/// SUM of threads and gates on it.
+///
+/// Each returned GT is the exact value of the corresponding
+/// `multi_pair_device` call: partials are per-pair, the partial buffer is
+/// partitioned back by call range, and batch normalization inverts the
+/// same field elements (inverses are unique) — identical bytes. Declines
+/// (`None`) below the TOTAL-pairs gate or on any device error; callers
+/// keep their per-call fallback. The CPU-share knob does not apply here
+/// (measured NO-GO, default 0).
+#[tracing::instrument(
+    skip_all,
+    name = "miller_fly_device_batch",
+    fields(calls = calls.len(), pairs = tracing::field::Empty)
+)]
+pub fn multi_pair_device_batch(calls: &[(&[ArkG1], &[ArkG2])]) -> Option<Vec<ArkGT>> {
+    let total: usize = calls.iter().map(|(ps, _)| ps.len()).sum();
+    let _ = tracing::Span::current().record("pairs", total as u64);
+    if total == 0 || !super::metal_gate("miller_fly", total << MILLER_FLY_WORK_PER_PAIR_LOG2) {
+        return None;
+    }
+    let ctx = MetalContext::global().ok()?;
+    let mut ps_proj = Vec::with_capacity(total);
+    let mut qs_proj = Vec::with_capacity(total);
+    for (ps, qs) in calls {
+        assert_eq!(ps.len(), qs.len(), "multi-pair calls need equal sides");
+        ps_proj.extend(ps.iter().map(|p| p.0));
+        qs_proj.extend(qs.iter().map(|q| q.0));
+    }
+    let ps_affine = G1Projective::normalize_batch(&ps_proj);
+    let qs_affine = G2Projective::normalize_batch(&qs_proj);
+    let partials = match miller_fly_device_partials(ctx, &ps_affine, &qs_affine) {
+        Ok(partials) => partials,
+        Err(error) => {
+            tracing::warn!(%error, "batched multi-pair failed; falling back to per-call hooks");
+            return None;
+        }
+    };
+    super::testing::note_miller_dispatch();
+    let mut ranges = Vec::with_capacity(calls.len());
+    let mut at = 0usize;
+    for (ps, _) in calls {
+        ranges.push(at * FQ12_U32S..(at + ps.len()) * FQ12_U32S);
+        at += ps.len();
+    }
+    let fold_one = |range: std::ops::Range<usize>| {
+        Bn254::final_exponentiation(MillerLoopOutput(product_of_partials_par(&partials[range])))
+            .map(ArkGT)
+    };
+    #[cfg(feature = "parallel")]
+    let gts: Option<Vec<ArkGT>> = {
+        use rayon::prelude::*;
+        ranges.into_par_iter().map(fold_one).collect()
+    };
+    #[cfg(not(feature = "parallel"))]
+    let gts: Option<Vec<ArkGT>> = ranges.into_iter().map(fold_one).collect();
+    // A `None` final exponentiation (zero Miller product) cannot arise from
+    // well-formed pairs; decline the whole batch and let the CPU path
+    // handle it identically.
+    gts
+}
+
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
@@ -1058,6 +1125,43 @@ mod tests {
             assert_eq!(split.0, cpu.0, "cpu share {pct}%");
         }
         std::env::remove_var(ENV_MILLER_CPU_PCT);
+    }
+
+    /// One batched dispatch = the per-call hook GTs = dory's CPU
+    /// `multi_pair`, on ragged ranges with aliased inputs (the reduce
+    /// rounds reuse g1/g2 slices across calls) and identities inside
+    /// ranges. st8 is consensus-critical — every GT must be exact.
+    #[test]
+    fn multi_pair_device_batch_matches_singles() {
+        let _lock = gpu_lock();
+        std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER_FLY", "1");
+        let mut rng = rng();
+        let point = |rng: &mut ChaCha20Rng| ArkG1(ark_bn254::G1Projective::rand(rng));
+        let g2point = |rng: &mut ChaCha20Rng| ArkG2(ark_bn254::G2Projective::rand(rng));
+        let mut v1: Vec<ArkG1> = (0..300).map(|_| point(&mut rng)).collect();
+        let mut v2: Vec<ArkG2> = (0..300).map(|_| g2point(&mut rng)).collect();
+        let g1: Vec<ArkG1> = (0..150).map(|_| point(&mut rng)).collect();
+        let g2: Vec<ArkG2> = (0..150).map(|_| g2point(&mut rng)).collect();
+        v1[7] = ArkG1(ark_bn254::G1Projective::zero());
+        v2[203] = ArkG2(ark_bn254::G2Projective::zero());
+
+        // The first-message shape: g2/g1 aliased across ranges, ragged
+        // halves (150 + 150 + 150 + 150 = 600 total pairs).
+        let calls: [(&[ArkG1], &[ArkG2]); 4] = [
+            (&v1[..150], &g2),
+            (&v1[150..], &g2),
+            (&g1, &v2[..150]),
+            (&g1, &v2[150..]),
+        ];
+        let batch = multi_pair_device_batch(&calls).expect("gate forced open");
+        assert_eq!(batch.len(), 4);
+        for (i, ((ps, qs), got)) in calls.iter().zip(&batch).enumerate() {
+            let single = multi_pair_device(ps, qs).expect("single hook serves");
+            assert_eq!(got.0, single.0, "batch/single drift at call {i}");
+            let cpu = <dory::backends::arkworks::BN254 as
+                dory::primitives::arithmetic::PairingCurve>::multi_pair(ps, qs);
+            assert_eq!(got.0, cpu.0, "batch/CPU drift at call {i}");
+        }
     }
 
     /// The parallel partial fold is the sequential fold (associative +

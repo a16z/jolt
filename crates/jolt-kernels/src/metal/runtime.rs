@@ -328,31 +328,65 @@ impl KernelId {
     /// registers instead of spilling; dispatch width adapts via
     /// [`ComputePass::dispatch`].
     ///
-    /// **Default uncapped — measured below the retention bar (W4-fly).**
-    /// The trade is real but regime-bound. Fly at 8192 pairs (µs/pair):
-    /// caps 1024/256 codegen-inert at 3.47, 128 → 3.08, 64 → 3.05
-    /// (plateau), 32 → 3.07. At the saturated production shape (2^17
-    /// hook call) the gain collapses: uncapped 359.2 ms, cap 64 349.2
-    /// (−2.8%), cap 128 360.8 (parity) — full occupancy already hides the
-    /// spill traffic once the device is saturated, so registers only buy
-    /// back serial ladder latency on small dispatches (2^13 call: −8.6%).
-    /// Modeled ≈ 0.2 s st8 @2^27 < the 0.6 s bar. `jk_miller_table`
-    /// measured 4.44 → 3.39 µs/pair at cap 32 (8192-pair commit shape) —
-    /// evidence handed to the stage-0 lane, same saturation caveat.
-    /// `JOLT_METAL_PAIRING_TG_CAP` caps the pairing family for
-    /// experiments (`0`/unset = uncapped), read once at context build.
+    /// **Default: cap 64 for the stage-8 fly kernels ONLY; everything
+    /// else uncapped.** The trade is real but regime- and context-bound
+    /// (W4-fly, W4 bundle):
+    ///
+    /// - Fly at 8192 pairs (µs/pair): caps 1024/256 codegen-inert at
+    ///   3.47, 128 → 3.08, 64 → 3.05 (plateau), 32 → 3.07. Hook walls:
+    ///   2^13 −8.6%, 2^17 −2.8% — registers buy back serial ladder
+    ///   latency; at saturation full occupancy already hides the spill.
+    /// - `jk_miller_fly` runs solo-dominant in stage-8 reduce rounds →
+    ///   capped (with `MillerFlyLines`/`Fold`, same lane).
+    /// - `jk_miller_fly_indexed` co-runs with `jk_g1_seg_sum` waves in
+    ///   the stage-0 commit pipeline, where the isolated −12% INVERTS:
+    ///   commit wall 1.207 → 1.233 s at cap 64 (+2%), Miller CB device
+    ///   time +2.5%; cap 32 parity. The freed occupancy is consumed by
+    ///   the co-scheduled G1 threadgroups — uncapped, as is
+    ///   `jk_miller_table` (its isolated −24% @cap 32 carries the same
+    ///   co-run caveat; stage-0's call).
+    ///
+    /// `JOLT_METAL_PAIRING_TG_CAP` overrides the WHOLE pairing family for
+    /// experiments (`0` = uncapped everywhere), read once at context
+    /// build.
     fn thread_cap(self) -> Option<usize> {
+        const FLY_TG_CAP: usize = 64;
+        #[derive(Clone, Copy)]
+        enum CapOverride {
+            /// Env unset: per-kernel defaults below.
+            Defaults,
+            /// `0`: uncapped everywhere (the W3-baseline ablation arm).
+            Uncapped,
+            /// `N`: the whole pairing family capped at N.
+            Family(usize),
+        }
         if !self.is_pairing_family() {
             return None;
         }
-        static OVERRIDE: OnceLock<Option<usize>> = OnceLock::new();
-        *OVERRIDE.get_or_init(|| {
-            let cap = std::env::var("JOLT_METAL_PAIRING_TG_CAP")
+        static OVERRIDE: OnceLock<CapOverride> = OnceLock::new();
+        let env_cap = *OVERRIDE.get_or_init(|| {
+            match std::env::var("JOLT_METAL_PAIRING_TG_CAP")
                 .ok()
                 .and_then(|value| value.trim().parse::<usize>().ok())
-                .unwrap_or(0);
-            (cap != 0).then(|| cap.next_power_of_two().clamp(32, 1024))
-        })
+            {
+                None => CapOverride::Defaults,
+                Some(0) => CapOverride::Uncapped,
+                Some(cap) => CapOverride::Family(cap.next_power_of_two().clamp(32, 1024)),
+            }
+        });
+        match env_cap {
+            CapOverride::Family(cap) => Some(cap),
+            CapOverride::Uncapped => None,
+            CapOverride::Defaults
+                if matches!(
+                    self,
+                    Self::MillerFly | Self::MillerFlyLines | Self::MillerFlyFold
+                ) =>
+            {
+                Some(FLY_TG_CAP)
+            }
+            CapOverride::Defaults => None,
+        }
     }
 }
 

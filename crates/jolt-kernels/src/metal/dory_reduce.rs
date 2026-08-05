@@ -578,6 +578,17 @@ fn downcast(state: &mut ResidentRoundState) -> &mut ResidentLoop {
         .expect("resident Dory state type")
 }
 
+/// Merged-dispatch toggle for the reduce rounds' multi-pairings
+/// (`JOLT_MILLER_MERGE_DISPATCH=0` restores one hook call per pairing —
+/// the W3 shape). Merging a message's calls into one device dispatch
+/// (`multi_pair_device_batch`) exposes their thread SUM — the mid-ladder
+/// singles (4096/2048 pairs) sit under the device's saturation knee — and
+/// extends device service to rounds whose singles fall below the 2048-pair
+/// gate. Read per message; the benches A/B it in-process.
+fn merge_dispatch_enabled() -> bool {
+    !std::env::var("JOLT_MILLER_MERGE_DISPATCH").is_ok_and(|value| value.trim() == "0")
+}
+
 fn start(v1: &[ArkG1], v2: &[ArkG2], g1: &[ArkG1], g2: &[ArkG2]) -> Option<ResidentRoundStart> {
     let rounds = plan(v1.len());
     if rounds == 0 {
@@ -611,6 +622,20 @@ fn first_message(
     let g1 = &state.g1()[..n2];
     let g2 = &state.g2()[..n2];
     let pairings = || {
+        if merge_dispatch_enabled() {
+            if let Some(mut gts) = super::miller::multi_pair_device_batch(&[
+                (v1_l, g2),
+                (v1_r, g2),
+                (g1, v2_l),
+                (g1, v2_r),
+            ]) {
+                let d2_right = gts.pop().expect("four GTs");
+                let d2_left = gts.pop().expect("four GTs");
+                let d1_right = gts.pop().expect("four GTs");
+                let d1_left = gts.pop().expect("four GTs");
+                return ((d1_left, d1_right), (d2_left, d2_right));
+            }
+        }
         join(
             || {
                 join(
@@ -670,6 +695,15 @@ fn second_message(
     let (s1_l, s1_r) = s1.split_at(n2);
     let (s2_l, s2_r) = s2.split_at(n2);
     let pairings = || {
+        if merge_dispatch_enabled() {
+            if let Some(mut gts) =
+                super::miller::multi_pair_device_batch(&[(v1_l, v2_r), (v1_r, v2_l)])
+            {
+                let c_minus = gts.pop().expect("two GTs");
+                let c_plus = gts.pop().expect("two GTs");
+                return (c_plus, c_minus);
+            }
+        }
         join(
             || InnerBN254::multi_pair(v1_l, v2_r),
             || InnerBN254::multi_pair(v1_r, v2_l),
@@ -807,6 +841,59 @@ mod tests {
             .collect();
         assert_eq!(state.v1(), expected_g1);
         assert_eq!(state.v2(), expected_g2);
+    }
+
+    /// Merged-dispatch reduce messages = per-call messages = the CPU trait
+    /// path (no hook installed in unit tests, so the unmerged arm IS the
+    /// CPU reference). Every GT and every MSM leg must be exact — these
+    /// values are absorbed into the transcript.
+    #[test]
+    fn reduce_messages_merged_match_unmerged() {
+        let _lock = gpu_lock();
+        std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER_FLY", "1");
+        let mut rng = ChaCha20Rng::seed_from_u64(0xd0_73);
+        let n = 2048usize;
+        let mut v1: Vec<ArkG1> = (0..n)
+            .map(|_| ArkG1(G1Projective::rand(&mut rng)))
+            .collect();
+        let mut v2: Vec<ArkG2> = (0..n)
+            .map(|_| ArkG2(G2Projective::rand(&mut rng)))
+            .collect();
+        let g1: Vec<ArkG1> = (0..n)
+            .map(|_| ArkG1(G1Projective::rand(&mut rng)))
+            .collect();
+        let g2: Vec<ArkG2> = (0..n)
+            .map(|_| ArkG2(G2Projective::rand(&mut rng)))
+            .collect();
+        v1[3] = ArkG1(G1Projective::zero());
+        v2[n / 2 + 5] = ArkG2(G2Projective::zero());
+        let s1: Vec<ArkFr> = (0..n).map(|_| ArkFr(Fr::rand(&mut rng))).collect();
+        let s2: Vec<ArkFr> = (0..n).map(|_| ArkFr(Fr::rand(&mut rng))).collect();
+
+        let message_pair = |merge: &str| {
+            std::env::set_var("JOLT_MILLER_MERGE_DISPATCH", merge);
+            let mut state: ResidentRoundState =
+                Box::new(ResidentLoop::start(&v1, &v2, &g1, &g2, 1).expect("resident loop starts"));
+            let first = first_message(&mut state, &s1, &s2);
+            let second = second_message(&mut state, &s1, &s2);
+            (first, second)
+        };
+        let (first_merged, second_merged) = message_pair("1");
+        let (first_single, second_single) = message_pair("0");
+        std::env::remove_var("JOLT_MILLER_MERGE_DISPATCH");
+
+        assert_eq!(first_merged.d1_left.0, first_single.d1_left.0);
+        assert_eq!(first_merged.d1_right.0, first_single.d1_right.0);
+        assert_eq!(first_merged.d2_left.0, first_single.d2_left.0);
+        assert_eq!(first_merged.d2_right.0, first_single.d2_right.0);
+        assert_eq!(first_merged.e1_beta.0, first_single.e1_beta.0);
+        assert_eq!(first_merged.e2_beta.0, first_single.e2_beta.0);
+        assert_eq!(second_merged.c_plus.0, second_single.c_plus.0);
+        assert_eq!(second_merged.c_minus.0, second_single.c_minus.0);
+        assert_eq!(second_merged.e1_plus.0, second_single.e1_plus.0);
+        assert_eq!(second_merged.e1_minus.0, second_single.e1_minus.0);
+        assert_eq!(second_merged.e2_plus.0, second_single.e2_plus.0);
+        assert_eq!(second_merged.e2_minus.0, second_single.e2_minus.0);
     }
 
     #[test]

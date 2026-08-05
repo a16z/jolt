@@ -3264,6 +3264,7 @@ dependencies = [
  "clap",
  "common",
  "criterion",
+ "dory-pcs 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "enumset",
  "eyre",
  "hex",
