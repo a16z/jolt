@@ -86,7 +86,7 @@
             "true_value": "1"
           }
         ],
-        "schema_version": 5,
+        "schema_version": 6,
         "timeout_seconds": 7200
       },
       "expected_fingerprint": {

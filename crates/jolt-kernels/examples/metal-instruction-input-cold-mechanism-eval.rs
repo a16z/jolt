@@ -212,7 +212,11 @@ fn main() -> EvalResult<()> {
         e_in_elements: 0,
         e_out_elements: 0,
         wall: Duration::ZERO,
+        submit_wall: Duration::ZERO,
+        overlap_wall: Duration::ZERO,
+        join_wall: Duration::ZERO,
         gpu_active: Duration::ZERO,
+        completed_before_join: false,
         resident_row_identity: 0,
         storage_buffer_identities: [0; 6],
     });

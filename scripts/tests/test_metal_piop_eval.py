@@ -194,6 +194,31 @@ def complete_instruction_input_trace(
                     },
                 ),
                 event(
+                    "MetalInstructionInput::storage_initialize",
+                    220.0,
+                    100.0,
+                    {
+                        "mode": "minimal",
+                        "device_buffers": "6",
+                        "bytes": "96",
+                        "protocol_dispatches": "0",
+                        **{
+                            f"buffer_{index}": str(301 + index)
+                            for index in range(6)
+                        },
+                    },
+                ),
+                event(
+                    "MetalInstructionInput::storage_initialize_complete",
+                    300.0,
+                    1.0,
+                    {
+                        "mode": "minimal",
+                        "command_completed": "true",
+                        "gpu_active_ns": "50000",
+                    },
+                ),
+                event(
                     "MetalInstructionInput::resident_rows_stage1_use",
                     1_020.0,
                     30.0,
@@ -203,6 +228,24 @@ def complete_instruction_input_trace(
                     },
                 ),
                 event(
+                    "MetalInstructionInput::native_primer_submit",
+                    1_060.0,
+                    10.0,
+                    {
+                        "source_elements": "64",
+                        "e_in_elements": "1",
+                        "e_out_elements": "32",
+                        "resident_rows_storage_id": "202",
+                        **{
+                            f"storage_buffer_{index}": str(301 + index)
+                            for index in range(6)
+                        },
+                        "command_committed": "true",
+                        "protocol_state_advanced": "false",
+                    },
+                ),
+                event("SpartanShift::prepare", 1_080.0, 10.0),
+                event(
                     "MetalInstructionInput::prepare",
                     1_110.0,
                     20.0,
@@ -211,6 +254,52 @@ def complete_instruction_input_trace(
                         "round_device_buffer_allocations": "0",
                         "resident_rows_storage_id": "202",
                         "resident_rows": str(1 << log_n),
+                        "storage_initialization": "minimal",
+                        "storage_initialization_bytes": "96",
+                        "native_primer": "async",
+                        **{
+                            f"storage_buffer_{index}": str(301 + index)
+                            for index in range(6)
+                        },
+                    },
+                ),
+                event(
+                    "MetalInstructionInput::native_primer_join",
+                    round_starts[0] + 5.0,
+                    2.0,
+                    {
+                        "source_elements": "64",
+                        "e_in_elements": "1",
+                        "e_out_elements": "32",
+                        "resident_rows_storage_id": "202",
+                        **{
+                            f"storage_buffer_{index}": str(301 + index)
+                            for index in range(6)
+                        },
+                    },
+                ),
+                event(
+                    "MetalInstructionInput::native_primer_complete",
+                    round_starts[0] + 8.0,
+                    1.0,
+                    {
+                        "source_elements": "64",
+                        "e_in_elements": "1",
+                        "e_out_elements": "32",
+                        "resident_rows_storage_id": "202",
+                        **{
+                            f"storage_buffer_{index}": str(301 + index)
+                            for index in range(6)
+                        },
+                        "command_completed": "true",
+                        "produced_zero": "true",
+                        "protocol_state_advanced": "false",
+                        "completed_before_join": "true",
+                        "submit_wall_ns": "5000",
+                        "overlap_wall_ns": "140000",
+                        "join_wall_ns": "2000",
+                        "lifecycle_wall_ns": "147000",
+                        "gpu_active_ns": "100000",
                     },
                 ),
                 event(
@@ -381,6 +470,20 @@ class MetalPiopEvalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly one"):
             metal_piop_eval.validate_bytecode_stdout(metal + "\n" + metal, "metal", 26)
 
+    def test_validates_instruction_input_runtime_record(self) -> None:
+        record = "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff=33554432 cutoff=65536 native_message_threads=256 native_transition_threads=128 dense_transition_threads=128 storage_initialization=minimal native_primer=async"
+        self.assertIsNone(
+            metal_piop_eval.validate_instruction_input_stdout("", "optimized")
+        )
+        observed = metal_piop_eval.validate_instruction_input_stdout(record, "metal")
+        assert observed is not None
+        self.assertEqual(observed["storage_initialization"], "minimal")
+        self.assertEqual(observed["native_primer"], "async")
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            metal_piop_eval.validate_instruction_input_stdout(
+                record + "\n" + record, "metal"
+            )
+
     def test_requires_exact_target_bytecode_member_and_metal_spans(self) -> None:
         observed = metal_piop_eval.bytecode_member_breakdown(
             complete_bytecode_trace(26, "metal"), "metal", 26
@@ -418,6 +521,17 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(observed["outer_counts"]["prove_round"], 26)
         self.assertEqual(observed["metal_counts"]["dense_round"], 9)
         self.assertEqual(observed["metal_counts"]["cpu_tail"], 16)
+        self.assertEqual(observed["components"]["prefetch_submit_us"], 10.0)
+        self.assertEqual(
+            observed["components"]["service_us"],
+            observed["components"]["member_us"] + 10.0,
+        )
+        self.assertEqual(
+            observed["resource_observation"]["native_primer"]["timings"][
+                "submit_span_wall_ns"
+            ],
+            10_000,
+        )
         self.assertEqual(
             observed["resource_observation"]["host_tail_bytes"],
             8 * (1 << 16) * 16,
@@ -436,6 +550,23 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "stage1_storage_id": 202,
                 "stage3_storage_id": 202,
             },
+        )
+
+    def test_schema_six_service_fields_are_instruction_input_only(self) -> None:
+        bytecode = metal_piop_eval.bytecode_member_breakdown(
+            complete_bytecode_trace(26, "metal"), "metal", 26
+        )
+        self.assertNotIn("service_ns", metal_piop_eval.member_record(bytecode))
+
+        instruction_input = metal_piop_eval.instruction_input_member_breakdown(
+            complete_instruction_input_trace(26, "metal"), "metal", 26, 16
+        )
+        record = metal_piop_eval.member_record(
+            instruction_input, include_prefetch=True
+        )
+        self.assertEqual(record["prefetch_submit_ns"], 10_000)
+        self.assertEqual(
+            record["service_ns"], record["member_ns"] + record["prefetch_submit_ns"]
         )
 
         with self.assertRaisesRegex(ValueError, "unexpectedly contains"):
@@ -531,6 +662,108 @@ class MetalPiopEvalTests(unittest.TestCase):
                     metal_piop_eval.instruction_input_member_breakdown(
                         mismatched, backend, 26, 16
                     )
+
+    def test_rejects_instruction_input_primer_contract_drift(self) -> None:
+        unknown = complete_instruction_input_trace(26, "metal")
+        unknown.append(
+            {
+                "name": "MetalInstructionInput::unknown_startup_phase",
+                "ph": "X",
+                "pid": 1,
+                "tid": 0,
+                "ts": 1_075.0,
+                "dur": 1.0,
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "unknown Metal phases"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                unknown, "metal", 26, 16
+            )
+
+        missing = complete_instruction_input_trace(26, "metal")
+        missing.remove(
+            next(
+                event
+                for event in missing
+                if event["name"] == "MetalInstructionInput::native_primer_join"
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "span counts"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                missing, "metal", 26, 16
+            )
+
+        wrong_geometry = complete_instruction_input_trace(26, "metal")
+        submit = next(
+            event
+            for event in wrong_geometry
+            if event["name"] == "MetalInstructionInput::native_primer_submit"
+        )
+        submit["args"]["source_elements"] = "32"  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "invalid geometry"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                wrong_geometry, "metal", 26, 16
+            )
+
+        advanced = complete_instruction_input_trace(26, "metal")
+        completion = next(
+            event
+            for event in advanced
+            if event["name"] == "MetalInstructionInput::native_primer_complete"
+        )
+        completion["args"]["protocol_state_advanced"] = "true"  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "completion is inconsistent"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                advanced, "metal", 26, 16
+            )
+
+        mismatched_buffer = complete_instruction_input_trace(26, "metal")
+        join = next(
+            event
+            for event in mismatched_buffer
+            if event["name"] == "MetalInstructionInput::native_primer_join"
+        )
+        join["args"]["storage_buffer_0"] = "999"  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "row lifecycle"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                mismatched_buffer, "metal", 26, 16
+            )
+
+        invalid_timing = complete_instruction_input_trace(26, "metal")
+        completion = next(
+            event
+            for event in invalid_timing
+            if event["name"] == "MetalInstructionInput::native_primer_complete"
+        )
+        completion["args"]["lifecycle_wall_ns"] = "1000"  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "completion is inconsistent"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                invalid_timing, "metal", 26, 16
+            )
+
+        undercharged_submit = complete_instruction_input_trace(26, "metal")
+        completion = next(
+            event
+            for event in undercharged_submit
+            if event["name"] == "MetalInstructionInput::native_primer_complete"
+        )
+        completion["args"]["submit_wall_ns"] = "11000"  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "completion is inconsistent"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                undercharged_submit, "metal", 26, 16
+            )
+
+        late_submit = complete_instruction_input_trace(26, "metal")
+        submit = next(
+            event
+            for event in late_submit
+            if event["name"] == "MetalInstructionInput::native_primer_submit"
+        )
+        submit["ts"] = 1_085.0
+        with self.assertRaisesRegex(ValueError, "before stage-3 Shift preparation"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                late_submit, "metal", 26, 16
+            )
 
     def test_rejects_incomplete_or_misattributed_instruction_input_cpu_tail(
         self,

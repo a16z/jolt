@@ -547,8 +547,10 @@ class MetalAutoresearchTests(unittest.TestCase):
         }
 
     def production_instruction_input_member_fixture(
-        self, backend: str, member_ns: int, log_n: int = 26, cutoff_log2: int = 16
+        self, backend: str, service_ns: int, log_n: int = 26, cutoff_log2: int = 16
     ) -> dict[str, object]:
+        prefetch_submit_ns = 1 if backend == "metal" else 0
+        member_ns = service_ns - prefetch_submit_ns
         prepare_ns = 1
         rounds_ns = [1] * log_n
         finish_ns = 1
@@ -563,6 +565,11 @@ class MetalAutoresearchTests(unittest.TestCase):
             "dense_round": 0,
             "readback": 0,
             "cpu_tail": 0,
+            "storage_initialize": 0,
+            "storage_initialize_complete": 0,
+            "native_primer_submit": 0,
+            "native_primer_join": 0,
+            "native_primer_complete": 0,
         }
         resource = None
         if backend == "metal":
@@ -576,8 +583,14 @@ class MetalAutoresearchTests(unittest.TestCase):
                     "dense_round": log_n - cutoff_log2 - 1,
                     "readback": 1,
                     "cpu_tail": cutoff_log2,
+                    "storage_initialize": 1,
+                    "storage_initialize_complete": 1,
+                    "native_primer_submit": 1,
+                    "native_primer_join": 1,
+                    "native_primer_complete": 1,
                 }
             )
+            buffer_identities = [301, 302, 303, 304, 305, 306]
             resource = {
                 "allocation": {
                     "current_device_bytes": 160 * (1 << log_n),
@@ -595,6 +608,35 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "resident_rows_reused": True,
                 "round_device_buffer_allocations": 0,
                 "readback_bytes": 8 * (1 << cutoff_log2) * 16,
+                "storage_initialization": {
+                    "mode": "minimal",
+                    "device_buffers": 6,
+                    "bytes": 96,
+                    "protocol_dispatches": 0,
+                    "buffer_identities": buffer_identities,
+                    "gpu_active_ns": 1,
+                    "wall_ns": 10,
+                },
+                "native_primer": {
+                    "source_elements": 64,
+                    "e_in_elements": 1,
+                    "e_out_elements": 32,
+                    "resident_rows_storage_id": 202,
+                    "storage_buffer_identities": buffer_identities,
+                    "command_committed": True,
+                    "protocol_state_advanced": False,
+                    "timings": {
+                        "submit_wall_ns": 1,
+                        "submit_span_wall_ns": 1,
+                        "overlap_wall_ns": 100,
+                        "join_wall_ns": 1,
+                        "lifecycle_wall_ns": 102,
+                        "gpu_active_ns": 1,
+                    },
+                    "completed_before_join": True,
+                    "command_completed": True,
+                    "produced_zero": True,
+                },
             }
         return {
             "prepare_ns": prepare_ns,
@@ -603,6 +645,8 @@ class MetalAutoresearchTests(unittest.TestCase):
             "finish_ns": finish_ns,
             "output_claims_ns": output_claims_ns,
             "member_ns": member_ns,
+            "prefetch_submit_ns": prefetch_submit_ns,
+            "service_ns": service_ns,
             "outer_counts": {
                 "prepare": 1,
                 "prove_round": log_n,
@@ -649,8 +693,10 @@ class MetalAutoresearchTests(unittest.TestCase):
         cutoff_log2 = int(
             params["JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2"]
         )
-        cpu_piop_ns = 200
-        metal_piop_ns = 100
+        cpu_piop_ns = 1_000
+        metal_piop_ns = 200
+        cpu_prepare_ns = 10
+        metal_prepare_ns = 20
         cpu_member_ns = 500
         metal_member_ns = 100
         local_speedup = cpu_member_ns / metal_member_ns
@@ -659,7 +705,7 @@ class MetalAutoresearchTests(unittest.TestCase):
             for index in range(pairs)
         ]
         result = {
-            "schema_version": 5,
+            "schema_version": gate["evaluator"]["schema_version"],
             "kernel": "akita_piop",
             "local_kernel": "InstructionInput",
             "local_metric": {
@@ -671,9 +717,30 @@ class MetalAutoresearchTests(unittest.TestCase):
             "metrics": {
                 "instruction_input_kernel_service_speedup": local_speedup,
                 "piop_speedup": cpu_piop_ns / metal_piop_ns,
+                "cpu_piop_ms": cpu_piop_ns / 1e6,
+                "metal_piop_ms": metal_piop_ns / 1e6,
+                "cpu_backend_witness_prepare_ms": cpu_prepare_ns / 1e6,
+                "metal_backend_witness_prepare_ms": metal_prepare_ns / 1e6,
                 "paired_speedups": [cpu_piop_ns / metal_piop_ns] * pairs,
                 "cpu_piop_ms_samples": [cpu_piop_ns / 1e6] * pairs,
                 "metal_piop_ms_samples": [metal_piop_ns / 1e6] * pairs,
+                "cpu_backend_witness_prepare_ms_samples": [
+                    cpu_prepare_ns / 1e6
+                ]
+                * pairs,
+                "metal_backend_witness_prepare_ms_samples": [
+                    metal_prepare_ns / 1e6
+                ]
+                * pairs,
+                "paired_speedups_with_backend_witness_prepare": [
+                    (cpu_piop_ns + cpu_prepare_ns)
+                    / (metal_piop_ns + metal_prepare_ns)
+                ]
+                * pairs,
+                "piop_plus_backend_witness_prepare_speedup": (
+                    cpu_piop_ns + cpu_prepare_ns
+                )
+                / (metal_piop_ns + metal_prepare_ns),
                 "paired_instruction_input_kernel_service_speedups": [local_speedup]
                 * pairs,
                 "cpu_instruction_input_kernel_service_ms_samples": [cpu_member_ns / 1e6]
@@ -697,6 +764,7 @@ class MetalAutoresearchTests(unittest.TestCase):
                     "arms": {
                         "optimized": {
                             "piop_ns": cpu_piop_ns,
+                            "backend_witness_prepare_ns": cpu_prepare_ns,
                             "instruction_input": self.production_instruction_input_member_fixture(
                                 "optimized", cpu_member_ns, log_n, cutoff_log2
                             ),
@@ -706,6 +774,7 @@ class MetalAutoresearchTests(unittest.TestCase):
                         },
                         "metal": {
                             "piop_ns": metal_piop_ns,
+                            "backend_witness_prepare_ns": metal_prepare_ns,
                             "instruction_input": self.production_instruction_input_member_fixture(
                                 "metal", metal_member_ns, log_n, cutoff_log2
                             ),
@@ -736,6 +805,8 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "instruction_input_metal_trace_cutoff_log2": int(
                     params["JOLT_METAL_INSTRUCTION_INPUT_TRACE_CUTOFF_LOG2"]
                 ),
+                "instruction_input_storage_initialization": "minimal",
+                "instruction_input_native_primer": "async",
                 "orders": orders,
                 "span": "jolt_prover::piop",
                 "workload": "fibonacci",
@@ -1824,8 +1895,13 @@ class MetalAutoresearchTests(unittest.TestCase):
             ROOT
             / "crates/jolt-kernels/autoresearch/instruction_ra_virtualization.template.json"
         )
+        template["final_validation"]["production_gate"]["evaluator"][
+            "schema_version"
+        ] = 5
         result = {
-            "schema_version": 5,
+            "schema_version": template["final_validation"]["production_gate"][
+                "evaluator"
+            ]["schema_version"],
             "kernel": "akita_piop",
             "local_kernel": "InstructionRaVirtualization",
             "local_metric": {
@@ -2275,6 +2351,47 @@ class MetalAutoresearchTests(unittest.TestCase):
                 ].__setitem__(0, 1.0),
                 "sample summary",
             ),
+            (
+                "charged submit span",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"]["native_primer"]["timings"].__setitem__(
+                    "submit_span_wall_ns", 2
+                ),
+                "native primer record",
+            ),
+            (
+                "join exceeds round zero",
+                lambda value: (
+                    value["pairs"][0]["arms"]["metal"]["instruction_input"][
+                        "resource_observation"
+                    ]["native_primer"]["timings"].__setitem__("join_wall_ns", 2),
+                    value["pairs"][0]["arms"]["metal"]["instruction_input"][
+                        "resource_observation"
+                    ]["native_primer"]["timings"].__setitem__(
+                        "lifecycle_wall_ns", 103
+                    ),
+                ),
+                "native primer record",
+            ),
+            (
+                "initialization exceeds preparation",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"]["storage_initialization"].__setitem__(
+                    "wall_ns", 22
+                ),
+                "startup timing",
+            ),
+            (
+                "primer lifecycle exceeds PIOP",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"]["native_primer"]["timings"].__setitem__(
+                    "lifecycle_wall_ns", 1_000
+                ),
+                "startup timing",
+            ),
         )
         for name, mutate, message in mutations:
             with self.subTest(name=name):
@@ -2284,6 +2401,73 @@ class MetalAutoresearchTests(unittest.TestCase):
                     metal_autoresearch.validate_production_result(
                         config, tampered, "abc", params, True
                     )
+
+        impossible_service = copy.deepcopy(result)
+        impossible_service["pairs"][0]["arms"]["optimized"]["piop_ns"] = 400
+        impossible_service["metrics"]["paired_speedups"][0] = 2.0
+        impossible_service["metrics"]["cpu_piop_ms_samples"][0] = 400 / 1e6
+        impossible_service["metrics"][
+            "paired_speedups_with_backend_witness_prepare"
+        ][0] = (400 + 10) / (200 + 20)
+        with self.assertRaisesRegex(ValueError, "service timing exceeds"):
+            metal_autoresearch.validate_production_result(
+                config, impossible_service, "abc", params, True
+            )
+
+        wrong_prepare_median = copy.deepcopy(result)
+        wrong_prepare_median["metrics"]["metal_backend_witness_prepare_ms"] = 1.0
+        with self.assertRaisesRegex(ValueError, "median summary"):
+            metal_autoresearch.validate_production_result(
+                config, wrong_prepare_median, "abc", params, True
+            )
+
+    def test_schema_five_instruction_input_result_remains_readable(self) -> None:
+        config, params, result = self.production_instruction_input_result_fixture()
+        gate = config["final_validation"]["production_gate"]
+        gate["evaluator"]["schema_version"] = 5
+        for guard in (
+            "instruction_input_minimal_initialization_exact",
+            "instruction_input_storage_buffers_stable",
+            "instruction_input_native_primer_exact_and_protocol_inert",
+        ):
+            gate["required_guards"].remove(guard)
+        result["schema_version"] = 5
+        result["fingerprint"].pop("instruction_input_storage_initialization")
+        result["fingerprint"].pop("instruction_input_native_primer")
+        for pair in result["pairs"]:
+            for backend in ("optimized", "metal"):
+                member = pair["arms"][backend]["instruction_input"]
+                if backend == "metal":
+                    member["member_ns"] += member["prefetch_submit_ns"]
+                    member["output_claims_ns"] += member["prefetch_submit_ns"]
+                member.pop("prefetch_submit_ns")
+                member.pop("service_ns")
+                for phase in (
+                    "storage_initialize",
+                    "storage_initialize_complete",
+                    "native_primer_submit",
+                    "native_primer_join",
+                    "native_primer_complete",
+                ):
+                    member["metal_counts"].pop(phase)
+                if backend == "metal":
+                    member["resource_observation"].pop("storage_initialization")
+                    member["resource_observation"].pop("native_primer")
+        evidence = metal_autoresearch.validate_production_result(
+            config, result, "abc", params, True
+        )
+        self.assertEqual(evidence["pairs"], 5)
+
+    def test_new_instruction_input_run_requires_current_production_schema(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        metal_autoresearch.validate_new_run_template(template)
+        template["final_validation"]["production_gate"]["evaluator"][
+            "schema_version"
+        ] = 5
+        with self.assertRaisesRegex(ValueError, "current production result schema"):
+            metal_autoresearch.validate_new_run_template(template)
 
     def test_production_v3_defers_absolute_bar_to_actual_pairs(self) -> None:
         config, _, _ = self.production_instruction_input_result_fixture()
@@ -2332,6 +2516,7 @@ class MetalAutoresearchTests(unittest.TestCase):
             member = pair["arms"]["optimized"]["instruction_input"]
             member_ns = round(speedup * 100)
             member["member_ns"] = member_ns
+            member["service_ns"] = member_ns + member["prefetch_submit_ns"]
             member["output_claims_ns"] = (
                 member_ns
                 - member["prepare_ns"]
@@ -2789,7 +2974,7 @@ class MetalAutoresearchTests(unittest.TestCase):
             [0],
         )
 
-    def test_schema_five_template_closes_local_metric_and_parameter_bindings(self) -> None:
+    def test_production_template_closes_local_metric_and_parameter_bindings(self) -> None:
         template = metal_autoresearch.read_json(
             ROOT
             / "crates/jolt-kernels/autoresearch/instruction_ra_virtualization.template.json"
@@ -2811,8 +2996,8 @@ class MetalAutoresearchTests(unittest.TestCase):
         unknown_schema = copy.deepcopy(template)
         unknown_schema["final_validation"]["production_gate"]["evaluator"][
             "schema_version"
-        ] = 6
-        with self.assertRaisesRegex(ValueError, "must be 4 or 5"):
+        ] = 7
+        with self.assertRaisesRegex(ValueError, "must be 4, 5, or 6"):
             metal_autoresearch.validate_template(unknown_schema)
 
         bytecode = metal_autoresearch.read_json(

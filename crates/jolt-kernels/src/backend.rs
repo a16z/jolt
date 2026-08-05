@@ -92,6 +92,11 @@ where
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
+    /// Starts optional work that can overlap the host's setup before `prepare`.
+    fn prefetch(&self, _session: &mut ProofSession) -> Result<(), KernelError<F>> {
+        Ok(())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -385,8 +390,15 @@ mod kernel_slots_derive_tests {
     use super::*;
 
     struct StubPrepare;
+    #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+    struct Prefetched;
 
     impl PrepareKernel<Fr, SpartanShift<Fr>> for StubPrepare {
+        fn prefetch(&self, session: &mut ProofSession) -> Result<(), KernelError<Fr>> {
+            session.park(Prefetched);
+            Ok(())
+        }
+
         fn prepare(
             &self,
             _session: &mut ProofSession,
@@ -403,10 +415,8 @@ mod kernel_slots_derive_tests {
     // Compiling proves the derive's wiring end to end: the generic bound
     // resolves (a delegating impl exists for the kernel field) and the
     // non-kernel fields were skipped (an impl emitted for them would not
-    // type-check). No behavioral probe is needed: the emitted body delegates
-    // to the one field of the matching slot type, and a second slot for the
-    // same relation would be a conflicting-impl error, so a mis-wired
-    // delegation is unrepresentable.
+    // type-check). A second slot for the same relation would be a
+    // conflicting-impl error.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
     struct ToyRegistry<F: Field> {
@@ -424,5 +434,14 @@ mod kernel_slots_derive_tests {
         };
         assert_eq!(registry.label, "toy");
         assert_eq!(registry.slot_count, 1);
+        let mut session = ProofSession::default();
+        assert!(
+            <ToyRegistry<Fr> as PrepareKernel<Fr, SpartanShift<Fr>>>::prefetch(
+                &registry,
+                &mut session
+            )
+            .is_ok()
+        );
+        assert!(session.state::<Prefetched>().is_some());
     }
 }

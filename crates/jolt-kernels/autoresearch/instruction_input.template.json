@@ -11,7 +11,8 @@
     "residency_warmup": "one exact full-sequence run reusing the first protocol tape; excluded from the primary metric but included in the GPU budget",
     "resident_input": "the exact stage-1 160-byte packed row allocation, uploaded before the primary timer",
     "sample_grid": [0, 1, 2, 3],
-    "timed_member": "resident reset, every Metal and CPU-tail round, host Fiat-Shamir, one readback, finish, and output extraction"
+    "timed_member": "one steady-state resident hybrid sequence after the excluded full-sequence warmup: every Metal and CPU-tail round, host Fiat-Shamir, one readback, finish, and output extraction",
+    "production_startup": "minimal 96-byte binding across six reusable buffers and one protocol-inert 64/1/32 native-message primer submitted inside PIOP before stage-3 Shift preparation"
   },
   "baseline_params": {
     "JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2": "16",
@@ -115,7 +116,7 @@
             "value_format": "{}"
           }
         ],
-        "schema_version": 5,
+        "schema_version": 6,
         "timeout_seconds": 7200
       },
       "expected_fingerprint": {
@@ -163,6 +164,9 @@
         "instruction_input_readback_exact",
         "instruction_input_host_readback_preallocated_outside_piop",
         "instruction_input_no_round_device_buffer_allocations",
+        "instruction_input_minimal_initialization_exact",
+        "instruction_input_storage_buffers_stable",
+        "instruction_input_native_primer_exact_and_protocol_inert",
         "instruction_input_local_gate",
         "stable_source",
         "stable_binary"
@@ -199,7 +203,7 @@
       "all_exact"
     ]
   },
-  "hypothesis": "the retained stage-1 row allocation, fused native transition, and resident dense transitions can reach the 5x member target without device Fiat-Shamir",
+  "hypothesis": "minimal buffer binding and a protocol-inert async native-pipeline primer can hide first-use latency behind stage-3 Shift work, while retained rows and resident transitions preserve a path beyond the 4x member floor",
   "kernel": "instruction_input",
   "metric": {
     "direction": "max",
@@ -218,13 +222,17 @@
     "frozen": [
       "crates/jolt-field/src/akita.rs",
       "crates/jolt-kernels/autoresearch/piop_goal.json",
+      "crates/jolt-kernels-derive/src/lib.rs",
       "crates/jolt-kernels/examples/metal-instruction-input-eval.rs",
       "crates/jolt-kernels/examples/support/instruction_input.rs",
       "crates/jolt-kernels/src/metal/INSTRUCTION_INPUT.md",
+      "crates/jolt-kernels/src/backend.rs",
       "crates/jolt-kernels/src/metal/instruction_input.rs",
       "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
+      "crates/jolt-kernels/src/metal/solinas/mod.rs",
       "crates/jolt-kernels/src/optimized/instruction_input.rs",
       "crates/jolt-prover/examples/modular_benchmark.rs",
+      "crates/jolt-prover/src/stages/stage3.rs",
       "scripts/metal_autoresearch.py",
       "scripts/metal_piop_eval.py"
     ]

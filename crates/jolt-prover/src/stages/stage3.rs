@@ -11,7 +11,7 @@
 use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, PrepareKernel, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -74,6 +74,7 @@ where
         instruction_input: InstructionInput::new(trace_dimensions, product_remainder_point),
         registers_claim_reduction: RegistersClaimReduction::new(trace_dimensions, product_tau_low),
     };
+    <JoltBackend<F, PCS> as PrepareKernel<F, InstructionInput<F>>>::prefetch(backend, session)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
     let input_points = sumchecks.empty_input_points();
     let inputs = stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);

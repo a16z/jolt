@@ -25,10 +25,11 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
+SPARTAN_SHIFT_PREPARE_SPAN = "SpartanShift::prepare"
 BYTECODE_KERNEL = "BytecodeReadRafCycle"
 BYTECODE_COMPONENTS = ("prepare", "prove_round", "finish_rounds", "output_claims")
 BYTECODE_METAL_PHASES = (
@@ -47,7 +48,12 @@ INSTRUCTION_INPUT_COMPONENTS = ("prepare", "prove_round", "finish_rounds", "outp
 INSTRUCTION_INPUT_METAL_PHASES = (
     "storage_prepare",
     "allocation_plan",
+    "storage_initialize",
+    "storage_initialize_complete",
+    "native_primer_submit",
     "prepare",
+    "native_primer_join",
+    "native_primer_complete",
     "first_message",
     "first_bind",
     "dense_round",
@@ -115,7 +121,9 @@ INSTRUCTION_INPUT_METAL_CONFIG_RE = re.compile(
     r"trace_cutoff=(?P<trace_cutoff>\d+) cutoff=(?P<cutoff>\d+) "
     r"native_message_threads=(?P<native_message_threads>\d+) "
     r"native_transition_threads=(?P<native_transition_threads>\d+) "
-    r"dense_transition_threads=(?P<dense_transition_threads>\d+)$"
+    r"dense_transition_threads=(?P<dense_transition_threads>\d+) "
+    r"storage_initialization=(?P<storage_initialization>\S+) "
+    r"native_primer=(?P<native_primer>\S+)$"
 )
 MAX_RSS_RE = re.compile(r"^\s*(?P<bytes>\d+)\s+maximum resident set size\s*$", re.MULTILINE)
 
@@ -393,7 +401,7 @@ def validate_instruction_input_stdout(
     dense_transition_threads: int = 128,
     cutoff_log2: int = 16,
     trace_cutoff_log2: int = 25,
-) -> Optional[dict[str, int]]:
+) -> Optional[dict[str, Any]]:
     configs = [
         match
         for line in stdout.splitlines()
@@ -407,13 +415,24 @@ def validate_instruction_input_stdout(
         raise ValueError(
             "Metal evaluator must emit exactly one InstructionInput Metal config"
         )
-    config = {name: int(value) for name, value in configs[0].groupdict().items()}
+    raw_config = configs[0].groupdict()
+    config = {
+        "trace_cutoff": int(raw_config["trace_cutoff"]),
+        "cutoff": int(raw_config["cutoff"]),
+        "native_message_threads": int(raw_config["native_message_threads"]),
+        "native_transition_threads": int(raw_config["native_transition_threads"]),
+        "dense_transition_threads": int(raw_config["dense_transition_threads"]),
+        "storage_initialization": raw_config["storage_initialization"],
+        "native_primer": raw_config["native_primer"],
+    }
     expected = {
         "trace_cutoff": 1 << trace_cutoff_log2,
         "cutoff": 1 << cutoff_log2,
         "native_message_threads": native_message_threads,
         "native_transition_threads": native_transition_threads,
         "dense_transition_threads": dense_transition_threads,
+        "storage_initialization": "minimal",
+        "native_primer": "async",
     }
     if config != expected:
         raise ValueError(f"unexpected InstructionInput Metal config: {config}")
@@ -580,6 +599,20 @@ def trace_boolean(value: Any) -> Optional[bool]:
     return None
 
 
+def trace_string(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"InstructionInput trace has invalid {field}")
+    if value.startswith('"'):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"InstructionInput trace has invalid {field}") from error
+        if not isinstance(decoded, str):
+            raise ValueError(f"InstructionInput trace has invalid {field}")
+        return decoded
+    return value
+
+
 def positive_trace_integer(value: Any, field: str) -> int:
     if type(value) is int:
         parsed = value
@@ -623,12 +656,24 @@ def instruction_input_member_breakdown(
         OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE,
         METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE,
     }
+    allowed_metal_names = inner_names | {METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE}
+    unknown_metal_names = {
+        name
+        for event in events
+        if isinstance((name := event.get("name")), str)
+        and name.startswith(f"Metal{INSTRUCTION_INPUT_KERNEL}::")
+        and name not in allowed_metal_names
+    }
+    if unknown_metal_names:
+        raise ValueError(
+            f"InstructionInput trace contains unknown Metal phases: {sorted(unknown_metal_names)}"
+        )
     intervals = strict_named_intervals(
         events,
         outer_names
         | inner_names
         | lifecycle_names
-        | {PIOP_SPAN, BACKEND_WITNESS_PREP_SPAN},
+        | {PIOP_SPAN, BACKEND_WITNESS_PREP_SPAN, SPARTAN_SHIFT_PREPARE_SPAN},
     )
     if len(intervals[PIOP_SPAN]) != 1:
         raise ValueError("trace must contain exactly one positive PIOP span")
@@ -674,6 +719,7 @@ def instruction_input_member_breakdown(
     inner_counts = {phase: len(values) for phase, values in inner.items()}
     resource_observation = None
     row_lifecycle = None
+    prefetch_submit_us = 0.0
     if backend == "optimized":
         if any(inner_counts.values()):
             raise ValueError(
@@ -747,7 +793,12 @@ def instruction_input_member_breakdown(
         expected_inner_counts = {
             "storage_prepare": 1,
             "allocation_plan": 1,
+            "storage_initialize": 1,
+            "storage_initialize_complete": 1,
+            "native_primer_submit": 1,
             "prepare": 1,
+            "native_primer_join": 1,
+            "native_primer_complete": 1,
             "first_message": 1,
             "first_bind": 1,
             "dense_round": log_n - cutoff_log2 - 1,
@@ -760,7 +811,17 @@ def instruction_input_member_breakdown(
             )
         storage_prepare = inner["storage_prepare"][0]
         allocation_plan = inner["allocation_plan"][0]
+        storage_initialize = inner["storage_initialize"][0]
+        storage_initialize_complete = inner["storage_initialize_complete"][0]
+        primer_submit = inner["native_primer_submit"][0]
+        primer_submit_us = interval_duration_us(primer_submit)
+        primer_join = inner["native_primer_join"][0]
+        primer_complete = inner["native_primer_complete"][0]
         rows_stage1 = intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE][0]
+        shift_prepares = intervals[SPARTAN_SHIFT_PREPARE_SPAN]
+        if len(shift_prepares) != 1:
+            raise ValueError("Metal trace must contain exactly one SpartanShift prepare span")
+        shift_prepare = shift_prepares[0]
         if (
             storage_prepare[0] < backend_prepare[0]
             or storage_prepare[1] > backend_prepare[1]
@@ -772,11 +833,42 @@ def instruction_input_member_breakdown(
         require_contained(
             allocation_plan, storage_prepare, "InstructionInput allocation plan"
         )
+        require_contained(
+            storage_initialize,
+            allocation_plan,
+            "InstructionInput minimal storage initialization",
+        )
+        require_contained(
+            storage_initialize_complete,
+            storage_initialize,
+            "InstructionInput storage initialization completion",
+        )
         if rows_stage1[0] < piop[0] or rows_stage1[1] > prepare[0]:
             raise ValueError(
                 "Metal InstructionInput stage-1 row use is outside its lifecycle"
             )
+        require_contained(primer_submit, piop, "InstructionInput native primer submit")
+        require_contained(shift_prepare, piop, "SpartanShift preparation")
+        if (
+            rows_stage1[1] > primer_submit[0]
+            or primer_submit[1] > shift_prepare[0]
+            or shift_prepare[1] > prepare[0]
+        ):
+            raise ValueError(
+                "InstructionInput native primer was not submitted before stage-3 Shift preparation"
+            )
         require_contained(inner["prepare"][0], prepare, "Metal InstructionInput prepare")
+        require_contained(primer_join, rounds[0], "InstructionInput native primer join")
+        require_contained(
+            primer_complete, rounds[0], "InstructionInput native primer completion"
+        )
+        if (
+            primer_join[1] > primer_complete[0]
+            or primer_complete[1] > inner["first_message"][0][0]
+        ):
+            raise ValueError(
+                "InstructionInput native primer did not complete before the first message"
+            )
         require_contained(
             inner["first_message"][0], rounds[0], "first InstructionInput Metal message"
         )
@@ -858,6 +950,227 @@ def instruction_input_member_breakdown(
                 "InstructionInput allocation plan exceeds the admitted working set"
             )
 
+        storage_initialization_args = unique_span_args(
+            events, f"Metal{INSTRUCTION_INPUT_KERNEL}::storage_initialize"
+        )
+        initialization_fields = {
+            "mode",
+            "device_buffers",
+            "bytes",
+            "protocol_dispatches",
+            *(f"buffer_{index}" for index in range(6)),
+        }
+        if set(storage_initialization_args) != initialization_fields:
+            raise ValueError(
+                "InstructionInput storage initialization has unexpected fields"
+            )
+        initialization_buffer_ids = [
+            positive_trace_integer(
+                storage_initialization_args[f"buffer_{index}"],
+                f"storage initialization buffer {index}",
+            )
+            for index in range(6)
+        ]
+        storage_initialization = {
+            "mode": trace_string(
+                storage_initialization_args["mode"], "storage initialization mode"
+            ),
+            "device_buffers": nonnegative_trace_integer(
+                storage_initialization_args["device_buffers"],
+                "storage initialization device buffers",
+            ),
+            "bytes": nonnegative_trace_integer(
+                storage_initialization_args["bytes"],
+                "storage initialization bytes",
+            ),
+            "protocol_dispatches": nonnegative_trace_integer(
+                storage_initialization_args["protocol_dispatches"],
+                "storage initialization protocol dispatches",
+            ),
+            "buffer_identities": initialization_buffer_ids,
+        }
+        if (
+            storage_initialization["mode"] != "minimal"
+            or storage_initialization["device_buffers"] != 6
+            or storage_initialization["bytes"] != 96
+            or storage_initialization["protocol_dispatches"] != 0
+            or len(set(initialization_buffer_ids)) != 6
+        ):
+            raise ValueError(
+                "InstructionInput storage initialization is not the exact minimal control"
+            )
+        storage_initialization_complete_args = unique_span_args(
+            events,
+            f"Metal{INSTRUCTION_INPUT_KERNEL}::storage_initialize_complete",
+        )
+        if set(storage_initialization_complete_args) != {
+            "mode",
+            "command_completed",
+            "gpu_active_ns",
+        }:
+            raise ValueError(
+                "InstructionInput storage initialization completion has unexpected fields"
+            )
+        initialization_gpu_active_ns = positive_trace_integer(
+            storage_initialization_complete_args["gpu_active_ns"],
+            "storage initialization GPU active time",
+        )
+        if (
+            trace_string(
+                storage_initialization_complete_args["mode"],
+                "storage initialization completion mode",
+            )
+            != "minimal"
+            or trace_boolean(
+                storage_initialization_complete_args["command_completed"]
+            )
+            is not True
+        ):
+            raise ValueError(
+                "InstructionInput minimal storage initialization did not complete"
+            )
+        initialization_wall_ns = round(
+            interval_duration_us(storage_initialize) * 1000.0
+        )
+        if initialization_gpu_active_ns > initialization_wall_ns:
+            raise ValueError(
+                "InstructionInput storage initialization GPU time exceeds wall time"
+            )
+        storage_initialization["gpu_active_ns"] = initialization_gpu_active_ns
+        storage_initialization["wall_ns"] = initialization_wall_ns
+
+        primer_resource_fields = {
+            "source_elements",
+            "e_in_elements",
+            "e_out_elements",
+            "resident_rows_storage_id",
+            *(f"storage_buffer_{index}" for index in range(6)),
+        }
+
+        def primer_resources(
+            args: dict[str, Any], expected_extra: set[str], phase: str
+        ) -> dict[str, Any]:
+            if set(args) != primer_resource_fields | expected_extra:
+                raise ValueError(
+                    f"InstructionInput native primer {phase} has unexpected fields"
+                )
+            resources = {
+                "source_elements": positive_trace_integer(
+                    args["source_elements"], "primer source elements"
+                ),
+                "e_in_elements": positive_trace_integer(
+                    args["e_in_elements"], "primer e_in elements"
+                ),
+                "e_out_elements": positive_trace_integer(
+                    args["e_out_elements"], "primer e_out elements"
+                ),
+                "resident_rows_storage_id": positive_trace_integer(
+                    args["resident_rows_storage_id"], "primer resident row identity"
+                ),
+                "storage_buffer_identities": [
+                    positive_trace_integer(
+                        args[f"storage_buffer_{index}"],
+                        f"primer storage buffer {index}",
+                    )
+                    for index in range(6)
+                ],
+            }
+            if (
+                resources["source_elements"] != 64
+                or resources["e_in_elements"] != 1
+                or resources["e_out_elements"] != 32
+            ):
+                raise ValueError(
+                    f"InstructionInput native primer {phase} has invalid geometry"
+                )
+            return resources
+
+        primer_submit_args = unique_span_args(
+            events, f"Metal{INSTRUCTION_INPUT_KERNEL}::native_primer_submit"
+        )
+        primer_submit = primer_resources(
+            primer_submit_args,
+            {"command_committed", "protocol_state_advanced"},
+            "submit",
+        )
+        if (
+            trace_boolean(primer_submit_args["command_committed"]) is not True
+            or trace_boolean(primer_submit_args["protocol_state_advanced"])
+            is not False
+        ):
+            raise ValueError(
+                "InstructionInput native primer submission is not protocol-inert"
+            )
+        primer_submit["command_committed"] = True
+        primer_submit["protocol_state_advanced"] = False
+        primer_join_args = unique_span_args(
+            events, f"Metal{INSTRUCTION_INPUT_KERNEL}::native_primer_join"
+        )
+        primer_join_resources = primer_resources(primer_join_args, set(), "join")
+        primer_complete_args = unique_span_args(
+            events, f"Metal{INSTRUCTION_INPUT_KERNEL}::native_primer_complete"
+        )
+        primer_complete = primer_resources(
+            primer_complete_args,
+            {
+                "command_completed",
+                "produced_zero",
+                "protocol_state_advanced",
+                "completed_before_join",
+                "submit_wall_ns",
+                "overlap_wall_ns",
+                "join_wall_ns",
+                "lifecycle_wall_ns",
+                "gpu_active_ns",
+            },
+            "completion",
+        )
+        primer_timings = {
+            "submit_wall_ns": positive_trace_integer(
+                primer_complete_args["submit_wall_ns"], "primer submit wall time"
+            ),
+            "overlap_wall_ns": positive_trace_integer(
+                primer_complete_args["overlap_wall_ns"], "primer overlap time"
+            ),
+            "join_wall_ns": positive_trace_integer(
+                primer_complete_args["join_wall_ns"], "primer join wall time"
+            ),
+            "lifecycle_wall_ns": positive_trace_integer(
+                primer_complete_args["lifecycle_wall_ns"], "primer lifecycle wall time"
+            ),
+            "gpu_active_ns": positive_trace_integer(
+                primer_complete_args["gpu_active_ns"], "primer GPU active time"
+            ),
+            "submit_span_wall_ns": round(primer_submit_us * 1000.0),
+        }
+        completed_before_join = trace_boolean(
+            primer_complete_args["completed_before_join"]
+        )
+        if (
+            trace_boolean(primer_complete_args["command_completed"]) is not True
+            or trace_boolean(primer_complete_args["produced_zero"]) is not True
+            or trace_boolean(primer_complete_args["protocol_state_advanced"])
+            is not False
+            or completed_before_join is None
+            or primer_timings["submit_wall_ns"]
+            + primer_timings["overlap_wall_ns"]
+            + primer_timings["join_wall_ns"]
+            > primer_timings["lifecycle_wall_ns"]
+            or primer_timings["gpu_active_ns"]
+            > primer_timings["lifecycle_wall_ns"]
+            or primer_timings["submit_span_wall_ns"] <= 0
+            or primer_timings["submit_wall_ns"]
+            > primer_timings["submit_span_wall_ns"] + 1
+        ):
+            raise ValueError(
+                "InstructionInput native primer completion is inconsistent"
+            )
+        primer_submit["timings"] = primer_timings
+        primer_submit["completed_before_join"] = completed_before_join
+        primer_submit["command_completed"] = True
+        primer_submit["produced_zero"] = True
+        prefetch_submit_us = primer_submit_us
+
         prepare_args = unique_span_args(
             events, f"Metal{INSTRUCTION_INPUT_KERNEL}::prepare"
         )
@@ -866,6 +1179,10 @@ def instruction_input_member_breakdown(
             "round_device_buffer_allocations",
             "resident_rows_storage_id",
             "resident_rows",
+            "storage_initialization",
+            "storage_initialization_bytes",
+            "native_primer",
+            *(f"storage_buffer_{index}" for index in range(6)),
         }:
             raise ValueError("InstructionInput Metal prepare has unexpected fields")
         resident_rows_reused = trace_boolean(prepare_args["resident_rows_reused"])
@@ -879,6 +1196,32 @@ def instruction_input_member_breakdown(
         stage3_rows = positive_trace_integer(
             prepare_args["resident_rows"], "Metal stage-3 row count"
         )
+        prepare_buffer_ids = [
+            positive_trace_integer(
+                prepare_args[f"storage_buffer_{index}"],
+                f"Metal stage-3 storage buffer {index}",
+            )
+            for index in range(6)
+        ]
+        if (
+            trace_string(
+                prepare_args["storage_initialization"],
+                "Metal stage-3 storage initialization mode",
+            )
+            != "minimal"
+            or nonnegative_trace_integer(
+                prepare_args["storage_initialization_bytes"],
+                "Metal stage-3 storage initialization bytes",
+            )
+            != 96
+            or trace_string(
+                prepare_args["native_primer"], "Metal stage-3 native primer mode"
+            )
+            != "async"
+        ):
+            raise ValueError(
+                "InstructionInput Metal prepare did not preserve the selected startup controls"
+            )
         stage1_args = unique_span_args(
             events, METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE
         )
@@ -891,6 +1234,11 @@ def instruction_input_member_breakdown(
             stage1_args["resident_rows"], "Metal stage-1 row count"
         )
         prepare_storage_id = storage["resident_rows_storage_id"]
+        primer_resource_records = [
+            primer_submit,
+            primer_join_resources,
+            primer_complete,
+        ]
         if (
             resident_rows_reused is not True
             or round_allocations != 0
@@ -898,6 +1246,13 @@ def instruction_input_member_breakdown(
             or stage3_rows != stage1_rows
             or stage1_storage_id != prepare_storage_id
             or stage3_storage_id != prepare_storage_id
+            or any(
+                record["resident_rows_storage_id"] != prepare_storage_id
+                or record["storage_buffer_identities"]
+                != initialization_buffer_ids
+                for record in primer_resource_records
+            )
+            or prepare_buffer_ids != initialization_buffer_ids
         ):
             raise ValueError(
                 "InstructionInput Metal row lifecycle did not preserve residency"
@@ -920,6 +1275,8 @@ def instruction_input_member_breakdown(
             )
         resource_observation = {
             "allocation": allocation,
+            "storage_initialization": storage_initialization,
+            "native_primer": primer_submit,
             "host_tail_bytes": storage["host_tail_bytes"],
             "readback_bytes": int(readback["bytes"]),
             "resident_rows_reused": resident_rows_reused,
@@ -943,6 +1300,8 @@ def instruction_input_member_breakdown(
     scalar_components = [value for value in components.values() if not isinstance(value, list)]
     if any(not math.isfinite(value) or value <= 0.0 for value in scalar_components):
         raise ValueError("trace contains a non-positive InstructionInput member duration")
+    components["prefetch_submit_us"] = prefetch_submit_us
+    components["service_us"] = components["member_us"] + prefetch_submit_us
     return {
         "components": components,
         "outer_counts": outer_counts,
@@ -1190,24 +1549,32 @@ def microseconds_to_nanoseconds(value: float) -> int:
     return round(value * 1000.0)
 
 
-def member_record(member: dict[str, Any]) -> dict[str, Any]:
+def member_record(
+    member: dict[str, Any], *, include_prefetch: bool = False
+) -> dict[str, Any]:
     components = member["components"]
     rounds_ns = [microseconds_to_nanoseconds(value) for value in components["rounds_us"]]
     prepare_ns = microseconds_to_nanoseconds(components["prepare_us"])
     finish_ns = microseconds_to_nanoseconds(components["finish_us"])
     output_claims_ns = microseconds_to_nanoseconds(components["output_claims_us"])
     rounds_total_ns = sum(rounds_ns)
-    return {
+    prefetch_submit_ns = round(float(components.get("prefetch_submit_us", 0.0)) * 1000.0)
+    member_ns = prepare_ns + rounds_total_ns + finish_ns + output_claims_ns
+    record = {
         "prepare_ns": prepare_ns,
         "rounds_ns": rounds_ns,
         "rounds_total_ns": rounds_total_ns,
         "finish_ns": finish_ns,
         "output_claims_ns": output_claims_ns,
-        "member_ns": prepare_ns + rounds_total_ns + finish_ns + output_claims_ns,
+        "member_ns": member_ns,
         "outer_counts": member["outer_counts"],
         "metal_counts": member["metal_counts"],
         "resource_observation": member["resource_observation"],
     }
+    if include_prefetch:
+        record["prefetch_submit_ns"] = prefetch_submit_ns
+        record["service_ns"] = member_ns + prefetch_submit_ns
+    return record
 
 
 def trace_path(root: Path, workload: str, log_n: int, backend: str) -> Path:
@@ -1679,12 +2046,12 @@ def main() -> int:
                     ),
                     "cpu_instruction_input_us": float(
                         results["optimized"]["instruction_input_member"]["components"][
-                            "member_us"
+                            "service_us"
                         ]
                     ),
                     "metal_instruction_input_us": float(
                         results["metal"]["instruction_input_member"]["components"][
-                            "member_us"
+                            "service_us"
                         ]
                     ),
                 }
@@ -1732,7 +2099,8 @@ def main() -> int:
                                 results[backend]["bytecode_member"]
                             ),
                             "instruction_input": member_record(
-                                results[backend]["instruction_input_member"]
+                                results[backend]["instruction_input_member"],
+                                include_prefetch=True,
                             ),
                             "instruction_input_row_lifecycle": results[backend][
                                 "instruction_input_member"
@@ -1908,6 +2276,76 @@ def main() -> int:
                     == 0
                     for sample in attributions
                 ),
+                "instruction_input_minimal_initialization_exact": all(
+                    sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["storage_initialization"]["mode"]
+                    == "minimal"
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["storage_initialization"]["bytes"]
+                    == 96
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["storage_initialization"]["device_buffers"]
+                    == 6
+                    for sample in attributions
+                ),
+                "instruction_input_storage_buffers_stable": all(
+                    len(
+                        set(
+                            sample["instruction_input"]["metal_member"][
+                                "resource_observation"
+                            ]["storage_initialization"]["buffer_identities"]
+                        )
+                    )
+                    == 6
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["storage_initialization"]["buffer_identities"]
+                    == sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["storage_buffer_identities"]
+                    for sample in attributions
+                ),
+                "instruction_input_native_primer_exact_and_protocol_inert": all(
+                    sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["source_elements"]
+                    == 64
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["e_in_elements"]
+                    == 1
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["e_out_elements"]
+                    == 32
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["command_committed"]
+                    is True
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["command_completed"]
+                    is True
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["produced_zero"]
+                    is True
+                    and sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["protocol_state_advanced"]
+                    is False
+                    for sample in attributions
+                ),
+                "instruction_input_native_primer_completed_before_join": all(
+                    sample["instruction_input"]["metal_member"][
+                        "resource_observation"
+                    ]["native_primer"]["completed_before_join"]
+                    is True
+                    for sample in attributions
+                ),
                 "instruction_input_local_gate": metrics[
                     "instruction_input_kernel_service_decision"
                 ]["clears"],
@@ -1951,6 +2389,8 @@ def main() -> int:
                 "instruction_input_metal_trace_cutoff_log2": args.instruction_input_metal_trace_cutoff_log2,
                 "instruction_input_metal_trace_cutoff_elements": 1
                 << args.instruction_input_metal_trace_cutoff_log2,
+                "instruction_input_storage_initialization": "minimal",
+                "instruction_input_native_primer": "async",
                 "span": PIOP_SPAN,
                 "orders": orders,
             },

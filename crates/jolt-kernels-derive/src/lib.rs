@@ -3,8 +3,8 @@
 //! [`macro@KernelSlots`] turns a plainly declared kernel registry — a struct
 //! whose sumcheck slots are `Box<dyn PrepareKernel<F, R>>` fields — into its
 //! type-indexed resolution: one `jolt_kernels::PrepareKernel<F, R>` impl per
-//! slot, delegating `prepare` to `self.<field>`. The field's own type IS the
-//! relation→slot mapping — declared once, restated nowhere. Every other
+//! slot, delegating its lifecycle methods to `self.<field>`. The field's own
+//! type IS the relation→slot mapping — declared once, restated nowhere. Every other
 //! field (bespoke slots such as commitment streaming or the joint opening)
 //! is skipped silently, so a mis-declared slot surfaces as a
 //! missing-`PrepareKernel` bound error at the consuming stage impl, never as
@@ -26,8 +26,8 @@ use syn::{
 };
 
 /// Emit one `jolt_kernels::PrepareKernel<F, R>` impl per `Box<dyn
-/// PrepareKernel<F, R>>` field of the registry struct, delegating `prepare`
-/// to that field. Fields of any other type are skipped silently.
+/// PrepareKernel<F, R>>` field of the registry struct, delegating lifecycle
+/// methods to that field. Fields of any other type are skipped silently.
 /// `#[kernel_slots(crate = "...")]` overrides the `::jolt_kernels` path the
 /// impls name the trait crate by (the defining crate passes `"crate"`). See
 /// the crate-level docs.
@@ -69,6 +69,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             impl #impl_generics #krate::PrepareKernel<#f, #r> for #name #ty_generics
             #where_clause
             {
+                fn prefetch(
+                    &self,
+                    session: &mut #krate::ProofSession,
+                ) -> ::core::result::Result<(), #krate::KernelError<#f>> {
+                    self.#ident.prefetch(session)
+                }
+
                 fn prepare(
                     &self,
                     session: &mut #krate::ProofSession,

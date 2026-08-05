@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 
 SCHEMA_VERSION = 1
+CURRENT_PIOP_RESULT_SCHEMA = 6
 VERDICTS = {"keep", "discard", "crash", "invalid"}
 CANDIDATE_STATUSES = {"queued", "accepted_parent", "promoted", "rejected"}
 EVALUATOR_LOCK_PATH = Path("/private/tmp/jolt-metal-autoresearch-evaluator.lock")
@@ -97,6 +98,11 @@ PRODUCTION_LOCAL_KERNELS = {
             "instruction_input_host_readback_preallocated_outside_piop",
             "instruction_input_no_round_device_buffer_allocations",
             "instruction_input_local_gate",
+        },
+        "schema6_required_guards": {
+            "instruction_input_minimal_initialization_exact",
+            "instruction_input_storage_buffers_stable",
+            "instruction_input_native_primer_exact_and_protocol_inert",
         },
     },
 }
@@ -583,13 +589,15 @@ def validate_template(template: dict[str, Any]) -> None:
         if int(evaluator.get("timeout_seconds", 0)) < 1:
             raise ValueError("production evaluator timeout must be positive")
         result_schema = int(evaluator.get("schema_version", 4))
-        if result_schema not in {4, 5}:
-            raise ValueError("production evaluator schema must be 4 or 5")
+        if result_schema not in {4, 5, 6}:
+            raise ValueError("production evaluator schema must be 4, 5, or 6")
         local_kernel = gate.get("local_kernel")
-        if local_kernel is not None and result_schema != 5:
-            raise ValueError("named local-kernel production gates require schema 5")
-        if result_schema == 5 and local_kernel not in PRODUCTION_LOCAL_KERNELS:
-            raise ValueError("schema-5 production gates require a known local kernel")
+        if local_kernel is not None and result_schema not in {5, 6}:
+            raise ValueError("named local-kernel production gates require schema 5 or 6")
+        if result_schema in {5, 6} and local_kernel not in PRODUCTION_LOCAL_KERNELS:
+            raise ValueError(
+                "schema-5/6 production gates require a known local kernel"
+            )
         if local_kernel is not None:
             descriptor = PRODUCTION_LOCAL_KERNELS.get(local_kernel)
             if descriptor is None:
@@ -598,8 +606,11 @@ def validate_template(template: dict[str, Any]) -> None:
                 raise ValueError("production scalar metric does not match the local kernel")
             if gate.get("paired_metric") != descriptor["paired_metric"]:
                 raise ValueError("production paired metric does not match the local kernel")
+            required_guards = set(descriptor["required_guards"])
+            if result_schema >= 6:
+                required_guards.update(descriptor.get("schema6_required_guards", set()))
             missing_guards = sorted(
-                descriptor["required_guards"] - set(gate.get("required_guards", []))
+                required_guards - set(gate.get("required_guards", []))
             )
             if missing_guards:
                 raise ValueError(
@@ -709,6 +720,18 @@ def validate_template(template: dict[str, Any]) -> None:
             raise ValueError("production evaluator command contains a reserved controller flag")
         if EVALUATOR_LOCK_HELD_ENV in evaluator.get("env", {}):
             raise ValueError("production evaluator environment cannot override the lock token")
+
+
+def validate_new_run_template(template: dict[str, Any]) -> None:
+    if template.get("kernel") != "instruction_input":
+        return
+    result_schema = template["final_validation"]["production_gate"]["evaluator"].get(
+        "schema_version", 4
+    )
+    if result_schema != CURRENT_PIOP_RESULT_SCHEMA:
+        raise ValueError(
+            "new InstructionInput runs require the current production result schema"
+        )
 
 
 def validate_goal_contract(contract: dict[str, Any]) -> None:
@@ -1989,7 +2012,11 @@ def validate_production_instruction_input_row_lifecycle(
 
 
 def validate_production_instruction_input_member(
-    member: Any, backend: str, log_n: int, cutoff_log2: int
+    member: Any,
+    backend: str,
+    log_n: int,
+    cutoff_log2: int,
+    result_schema: int,
 ) -> int:
     fields = {
         "prepare_ns",
@@ -2002,6 +2029,8 @@ def validate_production_instruction_input_member(
         "metal_counts",
         "resource_observation",
     }
+    if result_schema >= 6:
+        fields |= {"prefetch_submit_ns", "service_ns"}
     if not isinstance(member, dict) or set(member) != fields:
         raise ValueError("production InstructionInput member record is incomplete")
     scalar_names = (
@@ -2013,6 +2042,13 @@ def validate_production_instruction_input_member(
     )
     if any(type(member[name]) is not int or member[name] <= 0 for name in scalar_names):
         raise ValueError("production InstructionInput member timing is invalid")
+    if result_schema >= 6 and (
+        type(member["prefetch_submit_ns"]) is not int
+        or member["prefetch_submit_ns"] < 0
+        or type(member["service_ns"]) is not int
+        or member["service_ns"] <= 0
+    ):
+        raise ValueError("production InstructionInput service timing is invalid")
     rounds = member["rounds_ns"]
     if (
         not isinstance(rounds, list)
@@ -2024,6 +2060,11 @@ def validate_production_instruction_input_member(
         + member["rounds_total_ns"]
         + member["finish_ns"]
         + member["output_claims_ns"]
+        or (
+            result_schema >= 6
+            and member["service_ns"]
+            != member["member_ns"] + member["prefetch_submit_ns"]
+        )
     ):
         raise ValueError("production InstructionInput member timing is not reconciled")
     if member["outer_counts"] != {
@@ -2044,6 +2085,16 @@ def validate_production_instruction_input_member(
         "readback": 0,
         "cpu_tail": 0,
     }
+    if result_schema >= 6:
+        expected_metal_counts.update(
+            {
+                "storage_initialize": 0,
+                "storage_initialize_complete": 0,
+                "native_primer_submit": 0,
+                "native_primer_join": 0,
+                "native_primer_complete": 0,
+            }
+        )
     if backend == "metal":
         expected_metal_counts.update(
             {
@@ -2057,6 +2108,16 @@ def validate_production_instruction_input_member(
                 "cpu_tail": cutoff_log2,
             }
         )
+        if result_schema >= 6:
+            expected_metal_counts.update(
+                {
+                    "storage_initialize": 1,
+                    "storage_initialize_complete": 1,
+                    "native_primer_submit": 1,
+                    "native_primer_join": 1,
+                    "native_primer_complete": 1,
+                }
+            )
     if member["metal_counts"] != expected_metal_counts:
         raise ValueError("production InstructionInput Metal schedule is invalid")
 
@@ -2064,6 +2125,13 @@ def validate_production_instruction_input_member(
     if backend == "optimized":
         if observation is not None:
             raise ValueError("production optimized InstructionInput arm has Metal resources")
+        if result_schema >= 6 and (
+            member["prefetch_submit_ns"] != 0
+            or member["service_ns"] != member["member_ns"]
+        ):
+            raise ValueError(
+                "production optimized InstructionInput has Metal prefetch service"
+            )
     else:
         observation_fields = {
             "allocation",
@@ -2072,6 +2140,8 @@ def validate_production_instruction_input_member(
             "resident_rows_reused",
             "round_device_buffer_allocations",
         }
+        if result_schema >= 6:
+            observation_fields |= {"storage_initialization", "native_primer"}
         if not isinstance(observation, dict) or set(observation) != observation_fields:
             raise ValueError(
                 "production InstructionInput Metal resource record is incomplete"
@@ -2116,7 +2186,101 @@ def validate_production_instruction_input_member(
             raise ValueError(
                 "production InstructionInput Metal resource accounting is invalid"
             )
-    return member["member_ns"]
+        if result_schema >= 6:
+            initialization = observation["storage_initialization"]
+            initialization_fields = {
+                "mode",
+                "device_buffers",
+                "bytes",
+                "protocol_dispatches",
+                "buffer_identities",
+                "gpu_active_ns",
+                "wall_ns",
+            }
+            if (
+                not isinstance(initialization, dict)
+                or set(initialization) != initialization_fields
+            ):
+                raise ValueError(
+                    "production InstructionInput initialization record is incomplete"
+                )
+            initialization_ids = initialization["buffer_identities"]
+            if (
+                initialization["mode"] != "minimal"
+                or initialization["device_buffers"] != 6
+                or initialization["bytes"] != 96
+                or initialization["protocol_dispatches"] != 0
+                or not isinstance(initialization_ids, list)
+                or len(initialization_ids) != 6
+                or any(type(value) is not int or value <= 0 for value in initialization_ids)
+                or len(set(initialization_ids)) != 6
+                or type(initialization["gpu_active_ns"]) is not int
+                or initialization["gpu_active_ns"] <= 0
+                or type(initialization["wall_ns"]) is not int
+                or initialization["wall_ns"] <= 0
+                or initialization["gpu_active_ns"] > initialization["wall_ns"]
+            ):
+                raise ValueError(
+                    "production InstructionInput minimal initialization is invalid"
+                )
+
+            primer = observation["native_primer"]
+            primer_fields = {
+                "source_elements",
+                "e_in_elements",
+                "e_out_elements",
+                "resident_rows_storage_id",
+                "storage_buffer_identities",
+                "command_committed",
+                "protocol_state_advanced",
+                "timings",
+                "completed_before_join",
+                "command_completed",
+                "produced_zero",
+            }
+            if not isinstance(primer, dict) or set(primer) != primer_fields:
+                raise ValueError(
+                    "production InstructionInput native primer record is incomplete"
+                )
+            timings = primer["timings"]
+            timing_fields = {
+                "submit_wall_ns",
+                "submit_span_wall_ns",
+                "overlap_wall_ns",
+                "join_wall_ns",
+                "lifecycle_wall_ns",
+                "gpu_active_ns",
+            }
+            if not isinstance(timings, dict) or set(timings) != timing_fields:
+                raise ValueError(
+                    "production InstructionInput native primer timing is incomplete"
+                )
+            if (
+                primer["source_elements"] != 64
+                or primer["e_in_elements"] != 1
+                or primer["e_out_elements"] != 32
+                or type(primer["resident_rows_storage_id"]) is not int
+                or primer["resident_rows_storage_id"] <= 0
+                or primer["storage_buffer_identities"] != initialization_ids
+                or primer["command_committed"] is not True
+                or primer["protocol_state_advanced"] is not False
+                or primer["command_completed"] is not True
+                or primer["produced_zero"] is not True
+                or type(primer["completed_before_join"]) is not bool
+                or any(type(timings[name]) is not int or timings[name] <= 0 for name in timing_fields)
+                or timings["submit_wall_ns"]
+                + timings["overlap_wall_ns"]
+                + timings["join_wall_ns"]
+                > timings["lifecycle_wall_ns"]
+                or timings["gpu_active_ns"] > timings["lifecycle_wall_ns"]
+                or timings["submit_wall_ns"] > timings["submit_span_wall_ns"] + 1
+                or member["prefetch_submit_ns"] != timings["submit_span_wall_ns"]
+                or timings["join_wall_ns"] > member["rounds_ns"][0]
+            ):
+                raise ValueError(
+                    "production InstructionInput native primer record is invalid"
+                )
+    return member["service_ns"] if result_schema >= 6 else member["member_ns"]
 
 
 def validate_production_result(
@@ -2192,6 +2356,8 @@ def validate_production_result(
             raise ValueError("production result has incomplete raw PIOP pair records")
         raw_cpu_piop = []
         raw_metal_piop = []
+        raw_cpu_prepare = []
+        raw_metal_prepare = []
         for index, (record, reported_speedup) in enumerate(zip(pair_records, pairs)):
             expected_order = (
                 ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
@@ -2223,6 +2389,25 @@ def validate_production_result(
                 raise ValueError("production raw PIOP pair disagrees with its speedup")
             raw_cpu_piop.append(cpu_piop)
             raw_metal_piop.append(metal_piop)
+            if result_schema >= 6:
+                try:
+                    cpu_prepare = arms["optimized"]["backend_witness_prepare_ns"]
+                    metal_prepare = arms["metal"]["backend_witness_prepare_ns"]
+                except (KeyError, TypeError) as error:
+                    raise ValueError(
+                        "production raw backend preparation pair is incomplete"
+                    ) from error
+                if (
+                    type(cpu_prepare) is not int
+                    or cpu_prepare <= 0
+                    or type(metal_prepare) is not int
+                    or metal_prepare <= 0
+                ):
+                    raise ValueError(
+                        "production raw backend preparation timing is invalid"
+                    )
+                raw_cpu_prepare.append(cpu_prepare)
+                raw_metal_prepare.append(metal_prepare)
         for name, raw_samples in (
             ("cpu_piop_ms_samples", raw_cpu_piop),
             ("metal_piop_ms_samples", raw_metal_piop),
@@ -2245,6 +2430,89 @@ def validate_production_result(
                 )
             ):
                 raise ValueError("production PIOP sample summary is invalid")
+        if result_schema >= 6:
+            for name, raw_samples in (
+                ("cpu_backend_witness_prepare_ms_samples", raw_cpu_prepare),
+                ("metal_backend_witness_prepare_ms_samples", raw_metal_prepare),
+            ):
+                reported_samples = metrics.get(name)
+                if (
+                    not isinstance(reported_samples, list)
+                    or len(reported_samples) != len(raw_samples)
+                    or any(
+                        isinstance(reported, bool)
+                        or not isinstance(reported, (int, float))
+                        or not math.isfinite(reported)
+                        or not math.isclose(
+                            float(reported) * 1e6,
+                            raw,
+                            rel_tol=1e-12,
+                            abs_tol=0.500001,
+                        )
+                        for reported, raw in zip(reported_samples, raw_samples)
+                    )
+                ):
+                    raise ValueError(
+                        "production backend preparation sample summary is invalid"
+                    )
+            for name, raw_samples in (
+                ("cpu_piop_ms", raw_cpu_piop),
+                ("metal_piop_ms", raw_metal_piop),
+                ("cpu_backend_witness_prepare_ms", raw_cpu_prepare),
+                ("metal_backend_witness_prepare_ms", raw_metal_prepare),
+            ):
+                reported = metrics.get(name)
+                expected = statistics.median(raw_samples) / 1e6
+                if (
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isfinite(reported)
+                    or not math.isclose(
+                        float(reported), expected, rel_tol=1e-12, abs_tol=0.500001e-6
+                    )
+                ):
+                    raise ValueError(
+                        "production PIOP/backend preparation median summary is invalid"
+                    )
+            paired_with_prepare = [
+                (cpu_piop + cpu_prepare) / (metal_piop + metal_prepare)
+                for cpu_piop, metal_piop, cpu_prepare, metal_prepare in zip(
+                    raw_cpu_piop,
+                    raw_metal_piop,
+                    raw_cpu_prepare,
+                    raw_metal_prepare,
+                )
+            ]
+            reported_pairs_with_prepare = metrics.get(
+                "paired_speedups_with_backend_witness_prepare"
+            )
+            reported_prepare_speedup = metrics.get(
+                "piop_plus_backend_witness_prepare_speedup"
+            )
+            if (
+                not isinstance(reported_pairs_with_prepare, list)
+                or len(reported_pairs_with_prepare) != len(paired_with_prepare)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isclose(
+                        float(reported), expected, rel_tol=1e-12
+                    )
+                    for reported, expected in zip(
+                        reported_pairs_with_prepare, paired_with_prepare
+                    )
+                )
+                or isinstance(reported_prepare_speedup, bool)
+                or not isinstance(reported_prepare_speedup, (int, float))
+                or not math.isclose(
+                    float(reported_prepare_speedup),
+                    statistics.median(paired_with_prepare),
+                    rel_tol=1e-12,
+                )
+            ):
+                raise ValueError(
+                    "production PIOP plus backend preparation summary is invalid"
+                )
         resources = result.get("resources")
         reported_metal_seconds = (
             resources.get("metal_piop_seconds") if isinstance(resources, dict) else None
@@ -2363,6 +2631,17 @@ def validate_production_result(
             or not 1 <= cutoff_log2 <= log_n - 2
         ):
             raise ValueError("production InstructionInput result has invalid cycle geometry")
+        if result_schema >= 6 and (
+            instruction_input_fingerprint.get(
+                "instruction_input_storage_initialization"
+            )
+            != "minimal"
+            or instruction_input_fingerprint.get("instruction_input_native_primer")
+            != "async"
+        ):
+            raise ValueError(
+                "production InstructionInput result used the wrong startup controls"
+            )
         decision = metrics.get("instruction_input_kernel_service_decision")
         if not isinstance(decision, dict) or decision.get("clears") is not True:
             raise ValueError(
@@ -2409,10 +2688,10 @@ def validate_production_result(
                     "production InstructionInput raw pair is incomplete"
                 ) from error
             cpu_member = validate_production_instruction_input_member(
-                cpu_record, "optimized", log_n, cutoff_log2
+                cpu_record, "optimized", log_n, cutoff_log2, result_schema
             )
             metal_member = validate_production_instruction_input_member(
-                metal_record, "metal", log_n, cutoff_log2
+                metal_record, "metal", log_n, cutoff_log2, result_schema
             )
             validate_production_instruction_input_row_lifecycle(
                 cpu_row_lifecycle, "optimized", log_n
@@ -2420,6 +2699,34 @@ def validate_production_result(
             validate_production_instruction_input_row_lifecycle(
                 metal_row_lifecycle, "metal", log_n
             )
+            if result_schema >= 6 and metal_record["resource_observation"][
+                "native_primer"
+            ]["resident_rows_storage_id"] != metal_row_lifecycle["stage3_storage_id"]:
+                raise ValueError(
+                    "production InstructionInput primer used the wrong resident rows"
+                )
+            rounding_slack_ns = log_n + 4
+            if (
+                cpu_member
+                > arms["optimized"]["piop_ns"] + rounding_slack_ns
+                or metal_member > arms["metal"]["piop_ns"] + rounding_slack_ns
+            ):
+                raise ValueError(
+                    "production InstructionInput service timing exceeds its PIOP span"
+                )
+            if result_schema >= 6:
+                metal_resources = metal_record["resource_observation"]
+                if (
+                    metal_resources["storage_initialization"]["wall_ns"]
+                    > arms["metal"]["backend_witness_prepare_ns"] + 1
+                    or metal_resources["native_primer"]["timings"][
+                        "lifecycle_wall_ns"
+                    ]
+                    > arms["metal"]["piop_ns"] + rounding_slack_ns
+                ):
+                    raise ValueError(
+                        "production InstructionInput startup timing exceeds its enclosing span"
+                    )
             if not math.isclose(
                 float(local_speedup), cpu_member / metal_member, rel_tol=1e-9
             ):
@@ -2898,6 +3205,7 @@ def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     template = read_json(Path(args.template))
     validate_template(template)
+    validate_new_run_template(template)
     goal_contract = read_json(root / template["portfolio_contract"])
     validate_goal_contract(goal_contract)
     run_dir = Path(args.run_dir).resolve()

@@ -12,7 +12,10 @@ use jolt_witness::JoltWitnessPlane;
 use super::instruction_read_raf::MetalBackend;
 use super::solinas::{
     instruction_input_weight_capacities, InstructionInputSequence, InstructionInputSequenceConfig,
-    InstructionInputSequenceStorage, MetalError, SpartanOuterUniskipRows, INSTRUCTION_INPUT_TABLES,
+    InstructionInputSequenceStorage, InstructionInputStorageInitialization, MetalError,
+    PendingInstructionInputPrimer, SpartanOuterUniskipRows, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
+    INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+    INSTRUCTION_INPUT_TABLES,
 };
 use crate::optimized::instruction_input::{
     OptimizedInstructionInput, OptimizedInstructionInputKernel,
@@ -33,32 +36,46 @@ impl Default for InstructionInputMetalConfig {
         Self {
             trace_cutoff_elements: 1 << 25,
             cutoff_elements: 1 << 16,
-            dispatch: InstructionInputSequenceConfig::default(),
+            dispatch: InstructionInputSequenceConfig {
+                storage_initialization: InstructionInputStorageInitialization::Minimal,
+                ..InstructionInputSequenceConfig::default()
+            },
         }
     }
 }
 
+enum PreparedInstructionInputDevice {
+    Storage(InstructionInputSequenceStorage),
+    Priming(PendingInstructionInputPrimer),
+}
+
 pub(super) struct PreparedInstructionInput {
-    storage: InstructionInputSequenceStorage,
+    device: PreparedInstructionInputDevice,
     host_tail: Vec<AkitaField>,
 }
 
-fn pair_prepared_metal_state<P, R>(
-    prepared: Option<P>,
-    resident_rows: Option<R>,
-) -> Result<Option<(P, R)>, &'static str> {
-    match (prepared, resident_rows) {
-        (Some(prepared), Some(resident_rows)) => Ok(Some((prepared, resident_rows))),
-        (None, None) => Ok(None),
-        _ => Err("InstructionInput Metal preparation lost one half of its resident state"),
-    }
+fn native_primer_supported(
+    trace_elements: usize,
+    e_in_capacity: usize,
+    e_out_capacity: usize,
+) -> bool {
+    trace_elements >= INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS
+        && e_in_capacity >= INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS
+        && e_out_capacity >= INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS
 }
 
 #[cfg(feature = "allocative")]
 impl allocative::Allocative for PreparedInstructionInput {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_field(allocative::Key::new("storage"), &self.storage);
+        match &self.device {
+            PreparedInstructionInputDevice::Storage(storage) => {
+                visitor.visit_field(allocative::Key::new("storage"), storage);
+            }
+            PreparedInstructionInputDevice::Priming(primer) => {
+                visitor.visit_field(allocative::Key::new("primer"), primer);
+            }
+        }
         visitor.visit_simple(
             allocative::Key::new("host_tail"),
             crate::backend::vec_heap_bytes(&self.host_tail),
@@ -118,7 +135,7 @@ impl MetalBackend {
                     "admitted InstructionInput Metal storage"
                 );
                 session.park(PreparedInstructionInput {
-                    storage,
+                    device: PreparedInstructionInputDevice::Storage(storage),
                     host_tail: vec![AkitaField::zero(); host_elements],
                 });
                 Ok(())
@@ -136,9 +153,111 @@ impl MetalBackend {
             Err(error) => Err(metal_prepare_error(error)),
         }
     }
+
+    fn prefetch_instruction_input(
+        &self,
+        session: &mut ProofSession,
+    ) -> Result<(), KernelError<AkitaField>> {
+        let prepared = session.take::<PreparedInstructionInput>();
+        let resident_rows = session.take::<SpartanOuterUniskipRows>();
+        let (prepared, resident_rows) = match (prepared, resident_rows) {
+            (None, None) => return Ok(()),
+            (
+                Some(
+                    prepared @ PreparedInstructionInput {
+                        device: PreparedInstructionInputDevice::Storage(_),
+                        ..
+                    },
+                ),
+                Some(resident_rows),
+            ) => (prepared, resident_rows),
+            (
+                Some(
+                    prepared @ PreparedInstructionInput {
+                        device: PreparedInstructionInputDevice::Priming(_),
+                        ..
+                    },
+                ),
+                None,
+            ) => {
+                session.park(prepared);
+                return Err(KernelError::InvariantViolation {
+                    reason: "InstructionInput Metal primer was submitted twice",
+                });
+            }
+            _ => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "InstructionInput Metal prefetch lost one half of its resident state",
+                });
+            }
+        };
+        let PreparedInstructionInput { device, host_tail } = prepared;
+        let PreparedInstructionInputDevice::Storage(storage) = device else {
+            return Err(KernelError::InvariantViolation {
+                reason: "InstructionInput Metal prefetch expected unprimed storage",
+            });
+        };
+        let trace_elements = resident_rows.len();
+        let config = self.config.instruction_input;
+        let (e_in_capacity, e_out_capacity) =
+            instruction_input_weight_capacities(trace_elements).map_err(metal_prepare_error)?;
+        if !native_primer_supported(trace_elements, e_in_capacity, e_out_capacity) {
+            session.park(PreparedInstructionInput {
+                device: PreparedInstructionInputDevice::Storage(storage),
+                host_tail,
+            });
+            session.park(resident_rows);
+            return Ok(());
+        }
+        if !storage.matches(
+            &self.context,
+            trace_elements,
+            e_in_capacity,
+            e_out_capacity,
+            config.dispatch,
+        ) {
+            return Err(KernelError::InvariantViolation {
+                reason: "InstructionInput Metal storage disagrees with the prefetched geometry",
+            });
+        }
+        let sequence = storage.attach(resident_rows).map_err(metal_prepare_error)?;
+        let resident_rows_storage_id = sequence.resident_row_identity();
+        let initialization = sequence.storage_initialization();
+        let buffer_identities = initialization.buffer_identities;
+        let submit_span = tracing::info_span!(
+            "MetalInstructionInput::native_primer_submit",
+            source_elements = INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+            e_in_elements = INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
+            e_out_elements = INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
+            resident_rows_storage_id,
+            storage_buffer_0 = buffer_identities[0],
+            storage_buffer_1 = buffer_identities[1],
+            storage_buffer_2 = buffer_identities[2],
+            storage_buffer_3 = buffer_identities[3],
+            storage_buffer_4 = buffer_identities[4],
+            storage_buffer_5 = buffer_identities[5],
+            command_committed = true,
+            protocol_state_advanced = false,
+        );
+        let pending = {
+            let _span = submit_span.enter();
+            sequence
+                .submit_native_pipeline_primer()
+                .map_err(metal_prepare_error)?
+        };
+        session.park(PreparedInstructionInput {
+            device: PreparedInstructionInputDevice::Priming(pending),
+            host_tail,
+        });
+        Ok(())
+    }
 }
 
 impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
+    fn prefetch(&self, session: &mut ProofSession) -> Result<(), KernelError<AkitaField>> {
+        self.prefetch_instruction_input(session)
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -161,14 +280,12 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
             >>::prepare(&OptimizedInstructionInput, session, witness, inputs);
         }
 
-        let prepared_pair = pair_prepared_metal_state(
-            session.take::<PreparedInstructionInput>(),
-            session.take::<SpartanOuterUniskipRows>(),
-        )
-        .map_err(|reason| KernelError::InvariantViolation { reason })?;
-        let (prepared, resident_rows) = match prepared_pair {
-            Some(pair) => pair,
-            None => {
+        let (e_in_capacity, e_out_capacity) =
+            instruction_input_weight_capacities(trace_elements).map_err(metal_prepare_error)?;
+        let prepared = session.take::<PreparedInstructionInput>();
+        let resident_rows = session.take::<SpartanOuterUniskipRows>();
+        let (device, host_tail) = match (prepared, resident_rows) {
+            (None, None) => {
                 return <OptimizedInstructionInput as PrepareKernel<
                     AkitaField,
                     InstructionInput<AkitaField>,
@@ -176,39 +293,82 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
                     &OptimizedInstructionInput, session, witness, inputs
                 );
             }
+            (
+                Some(PreparedInstructionInput {
+                    device: PreparedInstructionInputDevice::Storage(storage),
+                    host_tail,
+                }),
+                Some(resident_rows),
+            ) => {
+                if !storage.matches(
+                    &self.context,
+                    trace_elements,
+                    e_in_capacity,
+                    e_out_capacity,
+                    config.dispatch,
+                ) {
+                    return Err(KernelError::InvariantViolation {
+                        reason:
+                            "InstructionInput Metal storage disagrees with the stage-3 geometry",
+                    });
+                }
+                let resident_identity = resident_rows.allocation_identity();
+                let sequence = storage.attach(resident_rows).map_err(metal_prepare_error)?;
+                if sequence.resident_row_identity() != resident_identity {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "InstructionInput did not retain the stage-1 Metal row allocation",
+                    });
+                }
+                (PreparedMetalSequence::Ready(sequence), host_tail)
+            }
+            (
+                Some(PreparedInstructionInput {
+                    device: PreparedInstructionInputDevice::Priming(pending),
+                    host_tail,
+                }),
+                None,
+            ) => {
+                if !pending.matches(
+                    &self.context,
+                    trace_elements,
+                    e_in_capacity,
+                    e_out_capacity,
+                    config.dispatch,
+                ) {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "InstructionInput Metal primer disagrees with the stage-3 geometry",
+                    });
+                }
+                (PreparedMetalSequence::Priming(pending), host_tail)
+            }
+            _ => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "InstructionInput Metal preparation has an invalid primer/row state",
+                });
+            }
         };
-        let PreparedInstructionInput { storage, host_tail } = prepared;
-        let (e_in_capacity, e_out_capacity) =
-            instruction_input_weight_capacities(trace_elements).map_err(metal_prepare_error)?;
-        if !storage.matches(
-            &self.context,
-            trace_elements,
-            e_in_capacity,
-            e_out_capacity,
-            config.dispatch,
-        ) {
-            return Err(KernelError::InvariantViolation {
-                reason: "InstructionInput Metal storage disagrees with the stage-3 geometry",
-            });
-        }
-        let resident_identity = resident_rows.allocation_identity();
-        let sequence = storage.attach(resident_rows).map_err(metal_prepare_error)?;
-        if sequence.resident_row_identity() != resident_identity {
-            return Err(KernelError::InvariantViolation {
-                reason: "InstructionInput did not retain the stage-1 Metal row allocation",
-            });
-        }
-        let round_device_buffer_allocations = sequence.round_device_buffer_allocations();
-        let initialization = sequence.storage_initialization();
+        let resident_identity =
+            device
+                .resident_row_identity()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "InstructionInput Metal sequence lost its resident row identity",
+                })?;
+        let initialization =
+            device
+                .storage_initialization()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "InstructionInput Metal sequence lost its initialization record",
+                })?;
         let buffer_identities = initialization.buffer_identities;
         let _prepare_span = tracing::info_span!(
             "MetalInstructionInput::prepare",
             resident_rows_reused = true,
-            round_device_buffer_allocations,
+            round_device_buffer_allocations = 0,
             resident_rows_storage_id = resident_identity,
             resident_rows = trace_elements,
-            storage_initialization = initialization.mode.as_str(),
+            storage_initialization = %initialization.mode.as_str(),
             storage_initialization_bytes = initialization.bytes,
+            native_primer = %device.primer_mode(),
             storage_buffer_0 = buffer_identities[0],
             storage_buffer_1 = buffer_identities[1],
             storage_buffer_2 = buffer_identities[2],
@@ -221,7 +381,7 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
             OptimizedInstructionInputKernel::new_offloaded(r_product, inputs.challenges.gamma);
         let kernel = MetalInstructionInputKernel::new(
             cpu,
-            sequence,
+            device,
             host_tail,
             inputs.challenges.gamma,
             config.cutoff_elements,
@@ -230,9 +390,40 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
     }
 }
 
+enum PreparedMetalSequence {
+    Ready(InstructionInputSequence),
+    Priming(PendingInstructionInputPrimer),
+}
+
+impl PreparedMetalSequence {
+    fn resident_row_identity(&self) -> Option<usize> {
+        match self {
+            Self::Ready(sequence) => Some(sequence.resident_row_identity()),
+            Self::Priming(pending) => pending.resident_row_identity(),
+        }
+    }
+
+    fn storage_initialization(
+        &self,
+    ) -> Option<super::solinas::InstructionInputStorageInitializationStats> {
+        match self {
+            Self::Ready(sequence) => Some(sequence.storage_initialization()),
+            Self::Priming(pending) => pending.storage_initialization(),
+        }
+    }
+
+    const fn primer_mode(&self) -> &'static str {
+        match self {
+            Self::Ready(_) => "none",
+            Self::Priming(_) => "async",
+        }
+    }
+}
+
 struct MetalInstructionInputKernel {
     cpu: OptimizedInstructionInputKernel<AkitaField>,
     sequence: Option<InstructionInputSequence>,
+    primer: Option<PendingInstructionInputPrimer>,
     host_tail: Option<Vec<AkitaField>>,
     gamma: AkitaField,
     cutoff_elements: usize,
@@ -245,6 +436,9 @@ impl allocative::Allocative for MetalInstructionInputKernel {
         visitor.visit_field(allocative::Key::new("cpu"), &self.cpu);
         if let Some(sequence) = &self.sequence {
             visitor.visit_field(allocative::Key::new("sequence"), sequence);
+        }
+        if let Some(primer) = &self.primer {
+            visitor.visit_field(allocative::Key::new("primer"), primer);
         }
         if let Some(host_tail) = &self.host_tail {
             visitor.visit_simple(
@@ -259,7 +453,7 @@ impl allocative::Allocative for MetalInstructionInputKernel {
 impl MetalInstructionInputKernel {
     fn new(
         cpu: OptimizedInstructionInputKernel<AkitaField>,
-        sequence: InstructionInputSequence,
+        device: PreparedMetalSequence,
         host_tail: Vec<AkitaField>,
         gamma: AkitaField,
         cutoff_elements: usize,
@@ -272,13 +466,95 @@ impl MetalInstructionInputKernel {
                 "InstructionInput prepared host-tail capacity is invalid",
             ));
         }
+        let (sequence, primer) = match device {
+            PreparedMetalSequence::Ready(sequence) => (Some(sequence), None),
+            PreparedMetalSequence::Priming(primer) => (None, Some(primer)),
+        };
         Ok(Self {
             cpu,
-            sequence: Some(sequence),
+            sequence,
+            primer,
             host_tail: Some(host_tail),
             gamma,
             cutoff_elements,
         })
+    }
+
+    fn join_primer(
+        &mut self,
+        bind: Option<&AkitaField>,
+        round: usize,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        let Some(pending) = self.primer.take() else {
+            return Ok(());
+        };
+        if round != 0 || bind.is_some() || self.sequence.is_some() {
+            return Err(metal_error(
+                "InstructionInput Metal primer must join before the first unbound message",
+            ));
+        }
+        let resident_rows_storage_id = pending.resident_row_identity().ok_or_else(|| {
+            metal_error("InstructionInput Metal primer lost its resident row identity")
+        })?;
+        let initialization = pending.storage_initialization().ok_or_else(|| {
+            metal_error("InstructionInput Metal primer lost its storage identities")
+        })?;
+        let buffer_identities = initialization.buffer_identities;
+        let (sequence, stats) = {
+            let _span = tracing::info_span!(
+                "MetalInstructionInput::native_primer_join",
+                source_elements = INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+                e_in_elements = INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
+                e_out_elements = INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
+                resident_rows_storage_id,
+                storage_buffer_0 = buffer_identities[0],
+                storage_buffer_1 = buffer_identities[1],
+                storage_buffer_2 = buffer_identities[2],
+                storage_buffer_3 = buffer_identities[3],
+                storage_buffer_4 = buffer_identities[4],
+                storage_buffer_5 = buffer_identities[5],
+            )
+            .entered();
+            pending
+                .join()
+                .map_err(|error| metal_error(error.to_string()))?
+        };
+        if stats.resident_row_identity != resident_rows_storage_id
+            || stats.storage_buffer_identities != buffer_identities
+            || sequence.is_dense()
+            || sequence.current_elements() < INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS
+        {
+            return Err(metal_error(
+                "InstructionInput Metal primer changed its resources or protocol state",
+            ));
+        }
+        {
+            let _span = tracing::info_span!(
+                "MetalInstructionInput::native_primer_complete",
+                source_elements = stats.source_elements,
+                e_in_elements = stats.e_in_elements,
+                e_out_elements = stats.e_out_elements,
+                resident_rows_storage_id = stats.resident_row_identity,
+                storage_buffer_0 = stats.storage_buffer_identities[0],
+                storage_buffer_1 = stats.storage_buffer_identities[1],
+                storage_buffer_2 = stats.storage_buffer_identities[2],
+                storage_buffer_3 = stats.storage_buffer_identities[3],
+                storage_buffer_4 = stats.storage_buffer_identities[4],
+                storage_buffer_5 = stats.storage_buffer_identities[5],
+                command_completed = true,
+                produced_zero = true,
+                protocol_state_advanced = false,
+                completed_before_join = stats.completed_before_join,
+                submit_wall_ns = stats.submit_wall.as_nanos() as u64,
+                overlap_wall_ns = stats.overlap_wall.as_nanos() as u64,
+                join_wall_ns = stats.join_wall.as_nanos() as u64,
+                lifecycle_wall_ns = stats.wall.as_nanos() as u64,
+                gpu_active_ns = stats.gpu_active.as_nanos() as u64,
+            )
+            .entered();
+        }
+        self.sequence = Some(sequence);
+        Ok(())
     }
 
     fn restore_cpu_tail(&mut self) -> Result<(), SumcheckError<AkitaField>> {
@@ -326,6 +602,7 @@ impl ProveRounds<AkitaField> for MetalInstructionInputKernel {
         round: usize,
         previous_claim: AkitaField,
     ) -> Result<jolt_poly::UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        self.join_primer(bind.as_ref(), round)?;
         if self.sequence.as_ref().is_some_and(|sequence| {
             sequence.is_dense() && sequence.current_elements() <= self.cutoff_elements
         }) {
@@ -378,6 +655,11 @@ impl ProveRounds<AkitaField> for MetalInstructionInputKernel {
     }
 
     fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
+        if self.primer.is_some() {
+            return Err(metal_error(
+                "InstructionInput Metal primer was not joined before round completion",
+            ));
+        }
         if self.sequence.is_some() {
             self.restore_cpu_tail()?;
         }
@@ -422,16 +704,11 @@ fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
 
 #[cfg(test)]
 mod tests {
-    use super::pair_prepared_metal_state;
+    use super::native_primer_supported;
 
     #[test]
-    fn prepared_metal_state_is_all_or_nothing() {
-        assert_eq!(
-            pair_prepared_metal_state(Some(1), Some(2)),
-            Ok(Some((1, 2)))
-        );
-        assert_eq!(pair_prepared_metal_state::<u8, u8>(None, None), Ok(None));
-        assert!(pair_prepared_metal_state(Some(1), None::<u8>).is_err());
-        assert!(pair_prepared_metal_state(None::<u8>, Some(2)).is_err());
+    fn fixed_primer_requires_its_full_weight_shape() {
+        assert!(!native_primer_supported(512, 1, 16));
+        assert!(native_primer_supported(1024, 1, 32));
     }
 }

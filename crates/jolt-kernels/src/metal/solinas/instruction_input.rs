@@ -6,8 +6,8 @@ use std::{
 
 use jolt_field::AkitaField;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
 use super::{
@@ -24,6 +24,10 @@ const NATIVE_MESSAGE_PIPELINE: &str = "solinas_instruction_input_native_message"
 const NATIVE_TRANSITION_PIPELINE: &str = "solinas_instruction_input_native_transition";
 const DENSE_TRANSITION_PIPELINE: &str = "solinas_instruction_input_dense_transition";
 const REDUCTION_PIPELINE: &str = "solinas_instruction_input_reduce";
+pub(crate) const INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS: usize = 64;
+pub(crate) const INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS: usize = 1;
+pub(crate) const INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS: usize =
+    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS / 2;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum InstructionInputStorageInitialization {
@@ -59,9 +63,98 @@ pub struct InstructionInputPrimerStats {
     pub e_in_elements: usize,
     pub e_out_elements: usize,
     pub wall: Duration,
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
     pub gpu_active: Duration,
+    pub completed_before_join: bool,
     pub resident_row_identity: usize,
     pub storage_buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
+}
+
+struct InstructionInputNativePrimerCommand {
+    command_buffer: CommandBuffer,
+    submitted_at: Instant,
+    submit_wall: Duration,
+    resident_row_identity: usize,
+    storage_buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
+}
+
+#[must_use = "a submitted Metal primer must be joined before the sequence is used"]
+pub(crate) struct PendingInstructionInputPrimer {
+    sequence: Option<InstructionInputSequence>,
+    command: Option<InstructionInputNativePrimerCommand>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PendingInstructionInputPrimer {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(sequence) = &self.sequence {
+            visitor.visit_field(allocative::Key::new("sequence"), sequence);
+        }
+        visitor.exit();
+    }
+}
+
+impl Drop for PendingInstructionInputPrimer {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl PendingInstructionInputPrimer {
+    pub(crate) fn matches(
+        &self,
+        context: &SolinasMetal,
+        rows: usize,
+        e_in_capacity: usize,
+        e_out_capacity: usize,
+        config: InstructionInputSequenceConfig,
+    ) -> bool {
+        self.sequence.as_ref().is_some_and(|sequence| {
+            sequence
+                .storage
+                .matches(context, rows, e_in_capacity, e_out_capacity, config)
+        })
+    }
+
+    pub(crate) fn resident_row_identity(&self) -> Option<usize> {
+        self.sequence
+            .as_ref()
+            .map(InstructionInputSequence::resident_row_identity)
+    }
+
+    pub(crate) fn storage_initialization(
+        &self,
+    ) -> Option<InstructionInputStorageInitializationStats> {
+        self.sequence
+            .as_ref()
+            .map(InstructionInputSequence::storage_initialization)
+    }
+
+    pub(crate) fn join(
+        mut self,
+    ) -> Result<(InstructionInputSequence, InstructionInputPrimerStats), MetalError> {
+        let sequence = self
+            .sequence
+            .take()
+            .ok_or(MetalError::InvalidInstructionInputState(
+                "native pipeline primer lost its sequence",
+            ))?;
+        let command = self
+            .command
+            .take()
+            .ok_or(MetalError::InvalidInstructionInputState(
+                "native pipeline primer lost its command",
+            ))?;
+        let stats = sequence
+            .storage
+            .complete_native_pipeline_primer(&sequence.resident_rows, command)?;
+        Ok((sequence, stats))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -408,6 +501,162 @@ impl InstructionInputSequenceStorage {
             && self.config == config
     }
 
+    fn submit_native_pipeline_primer(
+        &self,
+        resident_rows: &SpartanOuterUniskipRows,
+    ) -> Result<InstructionInputNativePrimerCommand, MetalError> {
+        if resident_rows.len() != self.rows
+            || self.rows < INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS
+            || self.e_in_capacity < INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS
+            || self.e_out_capacity < INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS
+        {
+            return Err(MetalError::InvalidInstructionInputRows(resident_rows.len()));
+        }
+        if resident_rows.device_registry_id() != self.context.device_registry_id() {
+            return Err(MetalError::InstructionInputRowsDevice {
+                expected: self.context.device_registry_id(),
+                got: resident_rows.device_registry_id(),
+            });
+        }
+
+        let submitted_at = Instant::now();
+        let zeros_in = [AkitaField::zero(); INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS];
+        let zeros_out = [AkitaField::zero(); INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS];
+        write_fields(&self.buffers.e_in, self.e_in_capacity, &zeros_in)?;
+        write_fields(&self.buffers.e_out, self.e_out_capacity, &zeros_out)?;
+        let params = InstructionInputParams {
+            source_elements: INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS as u32,
+            e_in_length: INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS as u32,
+            e_out_length: INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS as u32,
+            reserved: 0,
+        };
+        let reduction_params = ReductionParams {
+            input_count: INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS as u32,
+            output_count: 1,
+            reserved: [0; 2],
+        };
+        let gamma = Fp128::from_jolt_field(&AkitaField::zero());
+        let command_buffer = self.context.queue.new_command_buffer().to_owned();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.pipelines.native_message);
+            encoder.set_buffer(0, Some(resident_rows.buffer()), 0);
+            encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+            encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+            encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 4, &gamma);
+            set_inline_bytes(encoder, 5, &params);
+            encoder.set_threadgroup_memory_length(
+                0,
+                (INSTRUCTION_INPUT_COEFFICIENTS
+                    * (self.native_message_threads / SIMD_WIDTH)
+                    * size_of::<Fp128>()) as u64,
+            );
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.native_message_threads as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.set_compute_pipeline_state(&self.pipelines.reduction);
+            encoder.set_buffer(0, Some(&self.buffers.partial_a), 0);
+            encoder.set_buffer(1, Some(&self.buffers.partial_b), 0);
+            set_inline_bytes(encoder, 2, &reduction_params);
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: 1,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.reduction_limits.thread_execution_width as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.end_encoding();
+            command_buffer.commit();
+        });
+        Ok(InstructionInputNativePrimerCommand {
+            command_buffer,
+            submitted_at,
+            submit_wall: submitted_at.elapsed(),
+            resident_row_identity: resident_rows.allocation_identity(),
+            storage_buffer_identities: self.buffers.identities(),
+        })
+    }
+
+    fn complete_native_pipeline_primer(
+        &self,
+        resident_rows: &SpartanOuterUniskipRows,
+        primer: InstructionInputNativePrimerCommand,
+    ) -> Result<InstructionInputPrimerStats, MetalError> {
+        if resident_rows.allocation_identity() != primer.resident_row_identity
+            || self.buffers.identities() != primer.storage_buffer_identities
+        {
+            return Err(MetalError::InvalidInstructionInputState(
+                "native pipeline primer resources changed before completion",
+            ));
+        }
+        let completed_before_join =
+            primer.command_buffer.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(primer.submitted_at)
+            .saturating_sub(primer.submit_wall);
+        primer.command_buffer.wait_until_completed();
+        if primer.command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(primer.command_buffer.status()));
+        }
+        let gpu_start = command_buffer_timestamp(&primer.command_buffer, "GPUStartTime")?;
+        let gpu_end = command_buffer_timestamp(&primer.command_buffer, "GPUEndTime")?;
+        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
+        {
+            return Err(MetalError::InvalidGpuTimestamps {
+                start: gpu_start,
+                end: gpu_end,
+            });
+        }
+        // SAFETY: the completed reduction wrote three fields at the start of
+        // partial_b, and no subsequent InstructionInput command has started.
+        let output = unsafe {
+            slice::from_raw_parts(
+                self.buffers.partial_b.contents().cast::<Fp128>(),
+                INSTRUCTION_INPUT_COEFFICIENTS,
+            )
+        };
+        self.context
+            .validate_inputs("instruction input native primer", output)?;
+        if output
+            .iter()
+            .any(|value| value.into_jolt_field::<AkitaField>() != AkitaField::zero())
+        {
+            return Err(MetalError::InvalidInstructionInputState(
+                "native pipeline primer produced a nonzero message",
+            ));
+        }
+        let join_wall = join_started.elapsed();
+        Ok(InstructionInputPrimerStats {
+            source_elements: INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+            e_in_elements: INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
+            e_out_elements: INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
+            wall: primer.submitted_at.elapsed(),
+            submit_wall: primer.submit_wall,
+            overlap_wall,
+            join_wall,
+            gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
+            completed_before_join,
+            resident_row_identity: primer.resident_row_identity,
+            storage_buffer_identities: primer.storage_buffer_identities,
+        })
+    }
+
     pub(crate) fn attach(
         self,
         resident_rows: SpartanOuterUniskipRows,
@@ -445,135 +694,36 @@ impl InstructionInputSequence {
         self.gpu_active_time = Duration::ZERO;
     }
 
-    /// Runs the actual native-message and reduction pipelines on a zero-weighted
-    /// 64-row prefix without advancing the protocol state.
-    pub fn prime_native_pipeline(&mut self) -> Result<InstructionInputPrimerStats, MetalError> {
-        const SOURCE_ELEMENTS: usize = 64;
-        const E_IN_ELEMENTS: usize = 1;
-        const E_OUT_ELEMENTS: usize = SOURCE_ELEMENTS / 2;
-
+    pub(crate) fn submit_native_pipeline_primer(
+        self,
+    ) -> Result<PendingInstructionInputPrimer, MetalError> {
         if self.phase != SequencePhase::BeforeMessage {
             return Err(MetalError::InvalidInstructionInputState(
                 "native pipeline primer requires the initial sequence state",
             ));
         }
-        if self.storage.rows < SOURCE_ELEMENTS
-            || self.storage.e_in_capacity < E_IN_ELEMENTS
-            || self.storage.e_out_capacity < E_OUT_ELEMENTS
-        {
-            return Err(MetalError::InvalidInstructionInputRows(self.storage.rows));
-        }
+        let command = self
+            .storage
+            .submit_native_pipeline_primer(&self.resident_rows)?;
+        Ok(PendingInstructionInputPrimer {
+            sequence: Some(self),
+            command: Some(command),
+        })
+    }
 
-        let started = Instant::now();
-        let zeros_in = [AkitaField::zero(); E_IN_ELEMENTS];
-        let zeros_out = [AkitaField::zero(); E_OUT_ELEMENTS];
-        write_fields(
-            &self.storage.buffers.e_in,
-            self.storage.e_in_capacity,
-            &zeros_in,
-        )?;
-        write_fields(
-            &self.storage.buffers.e_out,
-            self.storage.e_out_capacity,
-            &zeros_out,
-        )?;
-        let params = InstructionInputParams {
-            source_elements: SOURCE_ELEMENTS as u32,
-            e_in_length: E_IN_ELEMENTS as u32,
-            e_out_length: E_OUT_ELEMENTS as u32,
-            reserved: 0,
-        };
-        let reduction_params = ReductionParams {
-            input_count: E_OUT_ELEMENTS as u32,
-            output_count: 1,
-            reserved: [0; 2],
-        };
-        let gamma = Fp128::from_jolt_field(&AkitaField::zero());
-        let command_buffer = self.storage.context.queue.new_command_buffer();
-        autoreleasepool(|| {
-            let encoder = command_buffer.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&self.storage.pipelines.native_message);
-            encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-            encoder.set_buffer(1, Some(&self.storage.buffers.e_in), 0);
-            encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
-            encoder.set_buffer(3, Some(&self.storage.buffers.partial_a), 0);
-            set_inline_bytes(encoder, 4, &gamma);
-            set_inline_bytes(encoder, 5, &params);
-            let threads = self.storage.native_message_threads;
-            encoder.set_threadgroup_memory_length(
-                0,
-                (INSTRUCTION_INPUT_COEFFICIENTS * (threads / SIMD_WIDTH) * size_of::<Fp128>())
-                    as u64,
-            );
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: E_OUT_ELEMENTS as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: threads as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            encoder.set_compute_pipeline_state(&self.storage.pipelines.reduction);
-            encoder.set_buffer(0, Some(&self.storage.buffers.partial_a), 0);
-            encoder.set_buffer(1, Some(&self.storage.buffers.partial_b), 0);
-            set_inline_bytes(encoder, 2, &reduction_params);
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: 1,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: self.storage.reduction_limits.thread_execution_width as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            encoder.end_encoding();
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-        });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        // SAFETY: the synchronous reduction wrote three fields at the start of
-        // partial_b, and no GPU command remains active.
-        let output = unsafe {
-            slice::from_raw_parts(
-                self.storage.buffers.partial_b.contents().cast::<Fp128>(),
-                INSTRUCTION_INPUT_COEFFICIENTS,
-            )
-        };
-        self.storage
-            .context
-            .validate_inputs("instruction input native primer", output)?;
-        if output
-            .iter()
-            .any(|value| value.into_jolt_field::<AkitaField>() != AkitaField::zero())
-        {
+    /// Runs the actual native-message and reduction pipelines on a zero-weighted
+    /// 64-row prefix without advancing the protocol state.
+    pub fn prime_native_pipeline(&mut self) -> Result<InstructionInputPrimerStats, MetalError> {
+        if self.phase != SequencePhase::BeforeMessage {
             return Err(MetalError::InvalidInstructionInputState(
-                "native pipeline primer produced a nonzero message",
+                "native pipeline primer requires the initial sequence state",
             ));
         }
-        let wall = started.elapsed();
-        Ok(InstructionInputPrimerStats {
-            source_elements: SOURCE_ELEMENTS,
-            e_in_elements: E_IN_ELEMENTS,
-            e_out_elements: E_OUT_ELEMENTS,
-            wall,
-            gpu_active: Duration::from_secs_f64(end - start),
-            resident_row_identity: self.resident_rows.allocation_identity(),
-            storage_buffer_identities: self.storage.buffers.identities(),
-        })
+        let command = self
+            .storage
+            .submit_native_pipeline_primer(&self.resident_rows)?;
+        self.storage
+            .complete_native_pipeline_primer(&self.resident_rows, command)
     }
 
     pub fn message(
@@ -955,7 +1105,7 @@ fn initialize_storage(
         * INSTRUCTION_INPUT_DEVICE_BUFFERS;
     let span = tracing::info_span!(
         "MetalInstructionInput::storage_initialize",
-        mode = mode.as_str(),
+        mode = %mode.as_str(),
         device_buffers,
         bytes,
         protocol_dispatches = 0,
@@ -993,7 +1143,7 @@ fn initialize_storage(
         let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
         let completion = tracing::info_span!(
             "MetalInstructionInput::storage_initialize_complete",
-            mode = mode.as_str(),
+            mode = %mode.as_str(),
             command_completed = true,
             gpu_active_ns,
         );
@@ -1311,7 +1461,7 @@ mod tests {
             .collect::<Vec<_>>();
         let gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
-        let mut sequence = context
+        let sequence = context
             .prepare_instruction_input_sequence(
                 &rows,
                 InstructionInputSequenceConfig {
@@ -1323,15 +1473,22 @@ mod tests {
         let resident_identity = sequence.resident_row_identity();
         let storage_identities = sequence.static_buffer_identity();
 
-        let primer = sequence
-            .prime_native_pipeline()
-            .expect("native pipeline should prime");
+        let pending = sequence
+            .submit_native_pipeline_primer()
+            .expect("native pipeline primer should submit");
+        let (mut sequence, primer) = pending
+            .join()
+            .expect("native pipeline primer should complete");
 
         assert_eq!(primer.source_elements, 64);
         assert_eq!(primer.e_in_elements, 1);
         assert_eq!(primer.e_out_elements, 32);
         assert_eq!(primer.resident_row_identity, resident_identity);
         assert_eq!(primer.storage_buffer_identities, storage_identities);
+        assert!(primer.submit_wall <= primer.wall);
+        assert!(primer.overlap_wall <= primer.wall);
+        assert!(primer.join_wall <= primer.wall);
+        assert!(primer.submit_wall + primer.overlap_wall + primer.join_wall <= primer.wall);
         assert!(primer.gpu_active > Duration::ZERO);
         assert!(primer.gpu_active <= primer.wall);
         assert_eq!(sequence.resident_row_identity(), resident_identity);
@@ -1349,7 +1506,7 @@ mod tests {
             .expect("first protocol message should execute after the primer");
         assert_eq!(actual, expected);
         assert!(matches!(
-            sequence.prime_native_pipeline(),
+            sequence.submit_native_pipeline_primer(),
             Err(MetalError::InvalidInstructionInputState(_))
         ));
     }

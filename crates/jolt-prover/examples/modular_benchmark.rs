@@ -929,12 +929,17 @@ mod akita_benchmark {
                     bytecode_metal_max_threadgroups,
                 );
                 println!(
-                    "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} native_message_threads={} native_transition_threads={} dense_transition_threads={}",
+                    "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} native_message_threads={} native_transition_threads={} dense_transition_threads={} storage_initialization={} native_primer=async",
                     config.instruction_input.trace_cutoff_elements,
                     config.instruction_input.cutoff_elements,
                     instruction_input_metal_native_message_threads,
                     instruction_input_metal_native_transition_threads,
                     instruction_input_metal_dense_transition_threads,
+                    config
+                        .instruction_input
+                        .dispatch
+                        .storage_initialization
+                        .as_str(),
                 );
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }
