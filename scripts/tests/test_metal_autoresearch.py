@@ -194,6 +194,9 @@ class MetalAutoresearchTests(unittest.TestCase):
         )
         repeats = int(config["evaluator"]["env"]["JOLT_METAL_EVAL_REPEATS"])
         seed = int(config["evaluator"]["env"]["JOLT_METAL_EVAL_SEED"])
+        cpu_reference_ns = int(
+            config["evaluator"]["env"]["JOLT_METAL_EVAL_CPU_REFERENCE_NS"]
+        )
         cutoff_log2 = int(params["JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2"])
         trace_cutoff_log2 = int(
             params["JOLT_METAL_INSTRUCTION_INPUT_TRACE_CUTOFF_LOG2"]
@@ -225,6 +228,9 @@ class MetalAutoresearchTests(unittest.TestCase):
         ]
         resident_paired = [
             cpu / resident for cpu, resident in zip(cpu_samples, resident_samples)
+        ]
+        reference_paired = [
+            cpu_reference_ns / hybrid for hybrid in hybrid_samples
         ]
         sequence_bytes = metal_autoresearch.instruction_input_sequence_storage_bytes(
             log_n
@@ -270,14 +276,16 @@ class MetalAutoresearchTests(unittest.TestCase):
             )
         }
         output = {
-            "schema": "instruction_input_v2",
-            "schema_version": 2,
+            "schema": "instruction_input_v3",
+            "schema_version": 3,
             "kernel": "instruction_input",
             "metrics": {
                 "hybrid_speedup": statistics.median(paired),
                 "resident_speedup": statistics.median(resident_paired),
+                "frozen_cpu_reference_ratio": statistics.median(reference_paired),
                 "paired_hybrid_speedups": paired,
                 "paired_resident_speedups": resident_paired,
+                "paired_frozen_cpu_reference_ratios": reference_paired,
                 "cpu_ns_samples": cpu_samples,
                 "hybrid_ns_samples": hybrid_samples,
                 "resident_ns_samples": resident_samples,
@@ -391,6 +399,10 @@ class MetalAutoresearchTests(unittest.TestCase):
                 ),
                 "host_fiat_shamir": True,
                 "primary_timing": "after one excluded full-sequence residency warmup: resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
+                "primary_metric": "timed complete-member throughput normalized by a frozen CPU reference",
+                "frozen_cpu_reference_ns": cpu_reference_ns,
+                "frozen_cpu_reference_provenance": metal_autoresearch.INSTRUCTION_INPUT_V3_CPU_REFERENCE_PROVENANCE,
+                "live_cpu_controls_in_primary_metric": False,
                 "workload_preparation_in_primary_metric": False,
                 "sequence_preparation_in_primary_metric": False,
                 "resident_source_materialization_in_primary_metric": False,
@@ -424,6 +436,7 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "validation_log_n": validation_log_n,
                 "repeats": repeats,
                 "seed": seed,
+                "frozen_cpu_reference_ns": cpu_reference_ns,
                 "cutoff_log2": cutoff_log2,
                 "trace_cutoff_log2": trace_cutoff_log2,
                 "native_message_threads": int(
@@ -452,6 +465,28 @@ class MetalAutoresearchTests(unittest.TestCase):
                 ],
             },
         }
+        return config, params, output
+
+    def instruction_input_v2_local_contract_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        config, params, output = self.instruction_input_local_contract_fixture()
+        config["evaluator"]["result_contract"] = "instruction_input_v2"
+        config["evaluator"]["result_schema_version"] = 2
+        config["metric"]["name"] = "hybrid_speedup"
+        del config["evaluator"]["env"]["JOLT_METAL_EVAL_CPU_REFERENCE_NS"]
+        output["schema"] = "instruction_input_v2"
+        output["schema_version"] = 2
+        del output["metrics"]["frozen_cpu_reference_ratio"]
+        del output["metrics"]["paired_frozen_cpu_reference_ratios"]
+        for name in (
+            "primary_metric",
+            "frozen_cpu_reference_ns",
+            "frozen_cpu_reference_provenance",
+            "live_cpu_controls_in_primary_metric",
+        ):
+            del output["workload"][name]
+        del output["fingerprint"]["frozen_cpu_reference_ns"]
         return config, params, output
 
     def production_bytecode_member_fixture(
@@ -919,8 +954,37 @@ class MetalAutoresearchTests(unittest.TestCase):
         config, params, output = self.instruction_input_local_contract_fixture()
         metal_autoresearch.validate_local_result_contract(config, output, params)
 
-    def test_instruction_input_run_evaluator_accepts_schema_two(self) -> None:
+    def test_instruction_input_run_evaluator_accepts_schema_three(self) -> None:
         config, params, output = self.instruction_input_local_contract_fixture()
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(output) + "\n",
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            with mock.patch.object(
+                metal_autoresearch.subprocess, "run", return_value=completed
+            ):
+                parsed, _ = metal_autoresearch.run_evaluator(
+                    path, config, params, path, "instruction-input-v3"
+                )
+        self.assertEqual(parsed["schema_version"], 3)
+
+    def test_instruction_input_template_pins_schema_three(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        template["evaluator"]["result_schema_version"] = 1
+        with self.assertRaisesRegex(ValueError, "schema version mismatches"):
+            metal_autoresearch.validate_template(template)
+
+    def test_instruction_input_local_result_keeps_v2_history_readable(self) -> None:
+        config, params, output = self.instruction_input_v2_local_contract_fixture()
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+
+    def test_instruction_input_run_evaluator_keeps_schema_two_readable(self) -> None:
+        config, params, output = self.instruction_input_v2_local_contract_fixture()
         completed = SimpleNamespace(
             returncode=0,
             stdout=json.dumps(output) + "\n",
@@ -936,13 +1000,72 @@ class MetalAutoresearchTests(unittest.TestCase):
                 )
         self.assertEqual(parsed["schema_version"], 2)
 
-    def test_instruction_input_template_pins_schema_two(self) -> None:
-        template = metal_autoresearch.read_json(
-            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+    def test_instruction_input_v3_reference_derives_from_a2_samples(self) -> None:
+        samples = [
+            861_240_375,
+            778_143_459,
+            777_036_000,
+            772_410_208,
+            774_448_458,
+            871_609_708,
+            775_459_791,
+            770_859_125,
+            771_844_000,
+            799_733_000,
+            815_094_584,
+            789_479_208,
+            791_994_542,
+            794_477_583,
+            801_751_375,
+            841_780_209,
+            820_155_667,
+            814_395_125,
+            825_222_917,
+            849_530_667,
+            865_644_958,
+            842_593_708,
+            854_701_250,
+            846_923_666,
+            851_209_375,
+        ]
+        encoded = json.dumps(samples, separators=(",", ":")).encode()
+        self.assertEqual(
+            statistics.median(samples),
+            metal_autoresearch.INSTRUCTION_INPUT_V3_CPU_REFERENCE_NS,
         )
-        template["evaluator"]["result_schema_version"] = 1
-        with self.assertRaisesRegex(ValueError, "schema version mismatches"):
-            metal_autoresearch.validate_template(template)
+        self.assertEqual(
+            metal_autoresearch.sha256(encoded),
+            "59f9946b7d1a3c05d3094528e853d2228ae5ec0d94a5dae2c63d5713a560a966",
+        )
+
+    def test_instruction_input_v3_primary_ignores_live_cpu_drift(self) -> None:
+        config, params, output = self.instruction_input_local_contract_fixture()
+        primary = output["metrics"]["frozen_cpu_reference_ratio"]
+        cpu_samples = [5_000 + 1_000 * index for index in range(5)]
+        hybrid_samples = output["metrics"]["hybrid_ns_samples"]
+        resident_samples = output["metrics"]["resident_ns_samples"]
+        paired = [
+            cpu / hybrid for cpu, hybrid in zip(cpu_samples, hybrid_samples)
+        ]
+        resident_paired = [
+            cpu / resident for cpu, resident in zip(cpu_samples, resident_samples)
+        ]
+        output["metrics"]["cpu_ns_samples"] = cpu_samples
+        output["metrics"]["paired_hybrid_speedups"] = paired
+        output["metrics"]["paired_resident_speedups"] = resident_paired
+        output["metrics"]["hybrid_speedup"] = statistics.median(paired)
+        output["metrics"]["resident_speedup"] = statistics.median(resident_paired)
+        output["metrics"]["cpu_million_rows_per_second"] = (
+            output["workload"]["rows"]
+            / (statistics.median(cpu_samples) / 1e9)
+            / 1e6
+        )
+        output["timings"]["cpu_median_seconds"] = (
+            statistics.median(cpu_samples) / 1e9
+        )
+
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+        self.assertEqual(output["metrics"]["frozen_cpu_reference_ratio"], primary)
 
     def test_instruction_input_local_result_rejects_schema_extensions(self) -> None:
         config, params, output = self.instruction_input_local_contract_fixture()
@@ -975,6 +1098,34 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "median",
                 lambda output: output["metrics"].__setitem__("hybrid_speedup", 99.0),
                 "hybrid_speedup",
+            ),
+            (
+                "frozen reference sample",
+                lambda output: output["metrics"][
+                    "paired_frozen_cpu_reference_ratios"
+                ].__setitem__(0, 99.0),
+                "paired_frozen_cpu_reference_ratios",
+            ),
+            (
+                "frozen reference median",
+                lambda output: output["metrics"].__setitem__(
+                    "frozen_cpu_reference_ratio", 99.0
+                ),
+                "frozen_cpu_reference_ratio",
+            ),
+            (
+                "frozen reference fingerprint",
+                lambda output: output["fingerprint"].__setitem__(
+                    "frozen_cpu_reference_ns", 1
+                ),
+                "fingerprint does not match frozen_cpu_reference_ns",
+            ),
+            (
+                "frozen reference workload",
+                lambda output: output["workload"].__setitem__(
+                    "frozen_cpu_reference_provenance", "changed"
+                ),
+                "workload fingerprint diverged",
             ),
             (
                 "timing median",
@@ -1071,6 +1222,13 @@ class MetalAutoresearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "correctness guard"):
             metal_autoresearch.validate_local_result_contract(config, output, params)
 
+    def test_instruction_input_v3_pins_phase_machine(self) -> None:
+        config, params, output = self.instruction_input_local_contract_fixture()
+        config["fingerprint"] = {"evaluator": copy.deepcopy(output["fingerprint"])}
+        output["fingerprint"]["device"] = "different Metal device"
+        with self.assertRaisesRegex(ValueError, "phase machine diverged at device"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
     def test_instruction_input_local_result_enforces_gpu_time_budget(self) -> None:
         for name, active, gpu_wall, hybrid, message in (
             ("zero active", 0, 50, 100, "samples"),
@@ -1141,6 +1299,21 @@ class MetalAutoresearchTests(unittest.TestCase):
         )
         template["evaluator"]["env"]["JOLT_METAL_EVAL_REPEATS"] = "3"
         with self.assertRaisesRegex(ValueError, "at least five odd"):
+            metal_autoresearch.validate_template(template)
+
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        template["evaluator"]["env"]["JOLT_METAL_EVAL_CPU_REFERENCE_NS"] = "1"
+        with self.assertRaisesRegex(ValueError, "frozen a2 baseline"):
+            metal_autoresearch.validate_template(template)
+
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        template["metric"]["target"] = 5.0
+        template["metric"]["unit"] = "x"
+        with self.assertRaisesRegex(ValueError, "relative-only search proxy"):
             metal_autoresearch.validate_template(template)
 
     def test_snapshot_restores_discarded_candidate(self) -> None:
@@ -2112,8 +2285,11 @@ class MetalAutoresearchTests(unittest.TestCase):
                         config, tampered, "abc", params, True
                     )
 
-    def test_production_requires_full_protocol_local_parent_bar(self) -> None:
+    def test_production_v3_defers_absolute_bar_to_actual_pairs(self) -> None:
         config, _, _ = self.production_instruction_input_result_fixture()
+        metal_autoresearch.validate_accepted_parent_for_production(config, 0.01)
+
+        config["evaluator"]["result_contract"] = "instruction_input_v2"
         metal_autoresearch.validate_accepted_parent_for_production(config, 4.0)
         with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
             metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)

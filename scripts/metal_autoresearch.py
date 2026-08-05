@@ -100,10 +100,15 @@ PRODUCTION_LOCAL_KERNELS = {
         },
     },
 }
-LOCAL_RESULT_CONTRACTS = {"bytecode_read_raf_cycle_v1", "instruction_input_v2"}
+LOCAL_RESULT_CONTRACTS = {
+    "bytecode_read_raf_cycle_v1",
+    "instruction_input_v2",
+    "instruction_input_v3",
+}
 LOCAL_RESULT_SCHEMA_VERSIONS = {
     "bytecode_read_raf_cycle_v1": 1,
     "instruction_input_v2": 2,
+    "instruction_input_v3": 3,
 }
 BYTECODE_LOCAL_FINGERPRINT_PARAMETERS = {
     "message_threads": "JOLT_METAL_BYTECODE_MESSAGE_THREADS",
@@ -130,6 +135,15 @@ INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV = {
     "repeats": "JOLT_METAL_EVAL_REPEATS",
     "seed": "JOLT_METAL_EVAL_SEED",
 }
+INSTRUCTION_INPUT_V3_FINGERPRINT_ENV = {
+    "frozen_cpu_reference_ns": "JOLT_METAL_EVAL_CPU_REFERENCE_NS",
+}
+INSTRUCTION_INPUT_V3_CPU_REFERENCE_NS = 814_395_125
+INSTRUCTION_INPUT_V3_CPU_REFERENCE_PROVENANCE = (
+    "median of 25 CPU ns samples from immutable instruction-input-a2-2f87d8b6a8 at "
+    "2f87d8b6a81f1bb253c27795badc7da7baa3d0d8; compact-JSON sample SHA256 "
+    "59f9946b7d1a3c05d3094528e853d2228ae5ec0d94a5dae2c63d5713a560a966"
+)
 
 
 def instruction_input_sequence_storage_bytes(log_n: int) -> int:
@@ -433,7 +447,7 @@ def validate_template(template: dict[str, Any]) -> None:
         raise ValueError("the Bytecode evaluator requires its closed result contract")
     if (
         template["kernel"] == "instruction_input"
-        and result_contract != "instruction_input_v2"
+        and result_contract != "instruction_input_v3"
     ):
         raise ValueError("the InstructionInput evaluator requires its closed result contract")
     if result_contract is not None and result_contract not in LOCAL_RESULT_CONTRACTS:
@@ -460,15 +474,15 @@ def validate_template(template: dict[str, Any]) -> None:
             raise ValueError(
                 "the Bytecode result contract requires every launch parameter in the search space and baseline"
             )
-    if result_contract == "instruction_input_v2":
+    if result_contract in {"instruction_input_v2", "instruction_input_v3"}:
         if template["kernel"] != "instruction_input":
             raise ValueError(
                 "the InstructionInput result contract requires the InstructionInput kernel"
             )
-        missing_env = sorted(
-            set(INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV.values())
-            - set(evaluator.get("env", {}))
-        )
+        required_env = set(INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV.values())
+        if result_contract == "instruction_input_v3":
+            required_env.update(INSTRUCTION_INPUT_V3_FINGERPRINT_ENV.values())
+        missing_env = sorted(required_env - set(evaluator.get("env", {})))
         if missing_env:
             raise ValueError(
                 "the InstructionInput result contract is missing evaluator environment: "
@@ -484,6 +498,36 @@ def validate_template(template: dict[str, Any]) -> None:
             raise ValueError(
                 "the InstructionInput evaluator requires at least five odd paired repeats"
             )
+        if result_contract == "instruction_input_v3":
+            try:
+                cpu_reference_ns = int(
+                    evaluator["env"]["JOLT_METAL_EVAL_CPU_REFERENCE_NS"]
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    "the InstructionInput v3 evaluator requires an integer CPU reference"
+                ) from error
+            if cpu_reference_ns <= 0:
+                raise ValueError(
+                    "the InstructionInput v3 evaluator CPU reference must be positive"
+                )
+            if cpu_reference_ns != INSTRUCTION_INPUT_V3_CPU_REFERENCE_NS:
+                raise ValueError(
+                    "the InstructionInput v3 evaluator CPU reference must match the frozen a2 baseline"
+                )
+            metric = template.get("metric", {})
+            if metric.get("name") != "frozen_cpu_reference_ratio":
+                raise ValueError(
+                    "the InstructionInput v3 evaluator requires its drift-free primary metric"
+                )
+            if (
+                metric.get("role") != "search_proxy"
+                or metric.get("target") is not None
+                or metric.get("unit") != "normalized_ratio"
+            ):
+                raise ValueError(
+                    "the InstructionInput v3 evaluator metric must remain a relative-only search proxy"
+                )
         required_params = set(INSTRUCTION_INPUT_LOCAL_FINGERPRINT_PARAMETERS.values())
         if required_params - set(template["search_space"]) or required_params - set(
             template.get("baseline_params", {})
@@ -855,6 +899,14 @@ def validate_bytecode_phase_sample(
 def validate_instruction_input_local_result(
     config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
 ) -> None:
+    result_contract = config["evaluator"].get("result_contract")
+    if result_contract not in {"instruction_input_v2", "instruction_input_v3"}:
+        raise ValueError("InstructionInput evaluator has an unknown result contract")
+    has_frozen_cpu_reference = result_contract == "instruction_input_v3"
+    expected_schema = (
+        "instruction_input_v3" if has_frozen_cpu_reference else "instruction_input_v2"
+    )
+    expected_schema_version = 3 if has_frozen_cpu_reference else 2
     top_fields = {
         "schema",
         "schema_version",
@@ -869,8 +921,8 @@ def validate_instruction_input_local_result(
     }
     if (
         set(output) != top_fields
-        or output.get("schema") != "instruction_input_v2"
-        or output.get("schema_version") != 2
+        or output.get("schema") != expected_schema
+        or output.get("schema_version") != expected_schema_version
         or output.get("kernel") != "instruction_input"
     ):
         raise ValueError("InstructionInput evaluator result violates its top-level schema")
@@ -881,6 +933,13 @@ def validate_instruction_input_local_result(
             field: int(environment[name])
             for field, name in INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV.items()
         }
+        if has_frozen_cpu_reference:
+            expected.update(
+                {
+                    field: int(environment[name])
+                    for field, name in INSTRUCTION_INPUT_V3_FINGERPRINT_ENV.items()
+                }
+            )
         expected.update(
             {
                 field: int(params[name])
@@ -891,6 +950,12 @@ def validate_instruction_input_local_result(
         raise ValueError(
             f"InstructionInput evaluator parameters are missing {error.args[0]}"
         ) from error
+    if (
+        has_frozen_cpu_reference
+        and expected["frozen_cpu_reference_ns"]
+        != INSTRUCTION_INPUT_V3_CPU_REFERENCE_NS
+    ):
+        raise ValueError("InstructionInput evaluator CPU reference is not the frozen a2 value")
     repeats = expected["repeats"]
     if repeats < 5 or repeats % 2 == 0:
         raise ValueError("InstructionInput evaluator requires at least five odd repeats")
@@ -922,6 +987,8 @@ def validate_instruction_input_local_result(
         "protocol_seeds",
         "protocol_transcript_states",
     }
+    if has_frozen_cpu_reference:
+        fingerprint_fields.add("frozen_cpu_reference_ns")
     if not isinstance(fingerprint, dict) or set(fingerprint) != fingerprint_fields:
         raise ValueError("InstructionInput evaluator fingerprint is incomplete")
     for name, value in expected.items():
@@ -986,6 +1053,18 @@ def validate_instruction_input_local_result(
         or fingerprint["current_allocated_size"] < 0
     ):
         raise ValueError("InstructionInput evaluator machine fingerprint is invalid")
+    phase_fingerprint = config.get("fingerprint", {}).get("evaluator")
+    if has_frozen_cpu_reference and isinstance(phase_fingerprint, dict):
+        for name in (
+            "device",
+            "cpu_threads",
+            "max_buffer_length",
+            "recommended_max_working_set_size",
+        ):
+            if fingerprint[name] != phase_fingerprint.get(name):
+                raise ValueError(
+                    f"InstructionInput evaluator phase machine diverged at {name}"
+                )
 
     workload = output["workload"]
     workload_fields = {
@@ -1021,6 +1100,15 @@ def validate_instruction_input_local_result(
         "cpu_control",
         "metal_control",
     }
+    if has_frozen_cpu_reference:
+        workload_fields.update(
+            {
+                "primary_metric",
+                "frozen_cpu_reference_ns",
+                "frozen_cpu_reference_provenance",
+                "live_cpu_controls_in_primary_metric",
+            }
+        )
     if not isinstance(workload, dict) or set(workload) != workload_fields:
         raise ValueError("InstructionInput evaluator workload contract is incomplete")
     expected_workload = {
@@ -1056,6 +1144,15 @@ def validate_instruction_input_local_result(
         "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
         "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage",
     }
+    if has_frozen_cpu_reference:
+        expected_workload.update(
+            {
+                "primary_metric": "timed complete-member throughput normalized by a frozen CPU reference",
+                "frozen_cpu_reference_ns": expected["frozen_cpu_reference_ns"],
+                "frozen_cpu_reference_provenance": INSTRUCTION_INPUT_V3_CPU_REFERENCE_PROVENANCE,
+                "live_cpu_controls_in_primary_metric": False,
+            }
+        )
     if workload != expected_workload:
         raise ValueError("InstructionInput evaluator workload fingerprint diverged")
 
@@ -1071,6 +1168,13 @@ def validate_instruction_input_local_result(
         "cpu_million_rows_per_second",
         "hybrid_million_rows_per_second",
     }
+    if has_frozen_cpu_reference:
+        metric_fields.update(
+            {
+                "frozen_cpu_reference_ratio",
+                "paired_frozen_cpu_reference_ratios",
+            }
+        )
     if not isinstance(metrics, dict) or set(metrics) != metric_fields:
         raise ValueError("InstructionInput evaluator metric record is incomplete")
 
@@ -1101,10 +1205,23 @@ def validate_instruction_input_local_result(
     recomputed_resident = [
         cpu / metal for cpu, metal in zip(cpu_samples, resident_samples)
     ]
-    for name, actual, wanted in (
+    paired_records = [
         ("paired_hybrid_speedups", paired, recomputed),
         ("paired_resident_speedups", resident_paired, recomputed_resident),
-    ):
+    ]
+    recomputed_reference: list[float] = []
+    if has_frozen_cpu_reference:
+        recomputed_reference = [
+            expected["frozen_cpu_reference_ns"] / metal for metal in hybrid_samples
+        ]
+        paired_records.append(
+            (
+                "paired_frozen_cpu_reference_ratios",
+                metrics["paired_frozen_cpu_reference_ratios"],
+                recomputed_reference,
+            )
+        )
+    for name, actual, wanted in paired_records:
         if (
             not isinstance(actual, list)
             or len(actual) != repeats
@@ -1117,7 +1234,7 @@ def validate_instruction_input_local_result(
             )
         ):
             raise ValueError(f"InstructionInput evaluator {name} are invalid")
-    for name, wanted in (
+    scalar_records = [
         ("hybrid_speedup", statistics.median(recomputed)),
         ("resident_speedup", statistics.median(recomputed_resident)),
         (
@@ -1128,7 +1245,15 @@ def validate_instruction_input_local_result(
             "hybrid_million_rows_per_second",
             rows / (statistics.median(hybrid_samples) / 1e9) / 1e6,
         ),
-    ):
+    ]
+    if has_frozen_cpu_reference:
+        scalar_records.append(
+            (
+                "frozen_cpu_reference_ratio",
+                statistics.median(recomputed_reference),
+            )
+        )
+    for name, wanted in scalar_records:
         value = metrics.get(name)
         if (
             isinstance(value, bool)
@@ -1437,7 +1562,7 @@ def validate_local_result_contract(
     contract = config["evaluator"].get("result_contract")
     if contract is None:
         return
-    if contract == "instruction_input_v2":
+    if contract in {"instruction_input_v2", "instruction_input_v3"}:
         validate_instruction_input_local_result(config, output, params)
         return
     if contract != "bytecode_read_raf_cycle_v1":

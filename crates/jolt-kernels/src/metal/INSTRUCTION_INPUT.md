@@ -31,8 +31,10 @@ The implementation must satisfy these requirements:
   witness preparation and reuses that exact allocation in stage 3. Production traces
   require matching preparation/use allocation identities for both backends.
 - The standalone complete-member search metric includes command waits, host
-  Fiat-Shamir, one dense-table readback, and the CPU tail, and must reach at least
-  4x. The working target is 5x; a measured 6-8x path remains in scope.
+  Fiat-Shamir, one dense-table readback, and the CPU tail. Shader candidates are
+  ranked by complete-member Metal throughput; actual CPU speedup is decided only by
+  the production PIOP gate. The minimum remains 4x, the working target is 5x, and a
+  measured 6-8x path remains in scope.
 - Missing resident state, unsupported geometry, or a trace below the configured
   cutoff selects the optimized CPU slot before any transcript message is absorbed.
 
@@ -117,11 +119,20 @@ allocations, and finite wall/GPU-active timings. Small adversarial rows cover si
 `i128` immediates, selector combinations, loads with canonical zero `rs2`, and values
 that would expose a packed-row mismatch.
 
-A pre-freeze `2^26` console check at the baseline `256/128/128` threadgroup widths
-and `2^16` CPU cutoff measured about 4.9x paired steady-state speedup. Its excluded
-first Metal pass spent roughly 235 ms outside GPU-active execution. This diagnostic
-only tests the evaluator hypothesis; the immutable run ledger establishes the local
-baseline, and the production PIOP gate establishes any speedup claim.
+The immutable a2 baseline at `2^26`, `256/128/128` threadgroup widths, and a `2^16`
+CPU cutoff measured a 157.908 ms controller-level complete-member Metal median and
+424.988 million rows/s. Its 25 CPU controls had an 814.395125 ms pooled median but a
+4.31% relative MAD, while the five process-level Metal throughputs had a 0.21%
+relative MAD. A dense transition width of 64 reduced Metal wall time by less than 1%,
+but CPU drift made the old paired score appear 7.09% better and falsely accepted it.
+
+Schema v3 ranks candidates by `814395125 / complete_member_metal_ns`. The numerator
+is the pooled a2 CPU median; the 25-sample vector's compact-JSON SHA256 is
+`59f9946b7d1a3c05d3094528e853d2228ae5ec0d94a5dae2c63d5713a560a966`. This ratio
+is a fixed normalization of Metal throughput, so it has the same candidate ordering
+and relative changes as million rows/s. It is not a contemporaneous speedup claim.
+Live CPU runs remain exactness and drift controls, and the separate-process
+production gate remains the only speedup arbiter.
 
 A real `2^18` traced smoke run validates the serialized contract: the CPU preparation
 and stage-3 identities match, the Metal preparation/stage-1/stage-3 identities match,
@@ -130,24 +141,26 @@ CPU finish span. This is protocol and telemetry evidence, not target-scale perfo
 evidence.
 
 The search uses matched CPU/Metal protocol tapes at `2^26`, a fixed empirical noise
-gate, and one accepted parent. The first baseline showed a repeatable 170--250 ms
-outside GPU timestamps when a multi-gigabyte CPU trial immediately preceded a Metal
-trial. The fixed search schedule therefore runs all CPU controls first, performs one
-exact full-sequence Metal residency warmup, and then runs the timed Metal trials
-back-to-back. Resident rows and sequence storage are materialized only after the CPU
-batch. The warmup is reported and charged to the GPU budget but excluded from the
-primary metric. This single-process steady-state result ranks shader candidates; it
-is neither a first-use latency claim nor a replacement for the separate-process
-production control.
-Threadgroup widths and the CPU cutoff are the first phase; the Rust allocation and
-telemetry wrapper is frozen, and an algebra or evaluator change starts a new run.
-An accepted parent must clear 4x on the complete standalone metric before it can run
-five alternating production PIOP pairs with both proofs verified. Production reports
-the actual optimized-versus-Metal kernel-service spans separately; those spans omit
-shared sumcheck-driver Fiat-Shamir, so their metric is explicitly named
-`instruction_input_kernel_service_speedup`. The PIOP span remains the end-to-end
-arbiter. If the complete search metric or actual kernel-service control cannot clear
-4x, the Metal slot is removed while the negative result remains in the ledger.
+gate, and one accepted parent. A baseline showed a repeatable 170--250 ms outside GPU
+timestamps when a multi-gigabyte CPU trial immediately preceded a Metal trial. The
+fixed schedule therefore runs all CPU controls first, performs one exact full-sequence
+Metal residency warmup, and then runs the timed Metal trials back-to-back. Resident
+rows and sequence storage are materialized only after the CPU batch. The warmup is
+reported and charged to the GPU budget but excluded from the primary metric. This
+single-process steady-state result ranks shader candidates; it is neither a first-use
+latency claim nor a replacement for the separate-process production control.
+
+The a2 width sweep rejected native-message 128 and native-transition 64. Dense 64's
+sub-percent change did not clear the corrected 3% gate, so the v3 source phase resets
+to production defaults `256/128/128`. The Rust allocation and telemetry wrapper is
+frozen; an algebra or evaluator change starts another run. The normalized search
+score has no absolute speedup threshold. A locally accepted parent proceeds to five
+alternating production PIOP pairs with both proofs verified, where 4x is enforced on
+the actual contemporaneous CPU/Metal measurements. Production reports kernel-service
+spans separately; those spans omit shared sumcheck-driver Fiat-Shamir, so their metric
+is explicitly named `instruction_input_kernel_service_speedup`. The PIOP span remains
+the end-to-end arbiter. If the production control cannot clear 4x, the Metal slot is
+removed while the negative result remains in the ledger.
 
 ## Implementation map
 

@@ -2,6 +2,7 @@
     clippy::print_stdout,
     reason = "the evaluator emits one machine-readable result"
 )]
+#![recursion_limit = "256"]
 
 use std::collections::HashSet;
 use std::env;
@@ -20,6 +21,10 @@ use instruction_input::{
     run_actual_optimized, run_cpu, run_hybrid, Capture, EvalResult, SequenceDispatch, TimedTrace,
     Trace, Workload, TABLES,
 };
+
+const FROZEN_CPU_REFERENCE_NS: u64 = 814_395_125;
+const FROZEN_CPU_REFERENCE_PROVENANCE: &str =
+    "median of 25 CPU ns samples from immutable instruction-input-a2-2f87d8b6a8 at 2f87d8b6a81f1bb253c27795badc7da7baa3d0d8; compact-JSON sample SHA256 59f9946b7d1a3c05d3094528e853d2228ae5ec0d94a5dae2c63d5713a560a966";
 
 #[derive(Clone, Copy, Debug)]
 struct Guards {
@@ -142,6 +147,10 @@ fn main() -> EvalResult<()> {
     let validation_log_n = env_usize("JOLT_METAL_EVAL_VALIDATE_LOG_N", 12)?;
     let repeats = env_usize("JOLT_METAL_EVAL_REPEATS", 5)?;
     let seed = env_usize("JOLT_METAL_EVAL_SEED", 1)? as u64;
+    let frozen_cpu_reference_ns = env_usize(
+        "JOLT_METAL_EVAL_CPU_REFERENCE_NS",
+        FROZEN_CPU_REFERENCE_NS as usize,
+    )? as u64;
     let cutoff_log2 = env_usize("JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2", 16)?;
     let trace_cutoff_log2 = env_usize("JOLT_METAL_INSTRUCTION_INPUT_TRACE_CUTOFF_LOG2", 25)?;
     let native_message_threads =
@@ -159,10 +168,12 @@ fn main() -> EvalResult<()> {
         || trace_cutoff_log2 > log_n
         || repeats < 5
         || repeats.is_multiple_of(2)
+        || frozen_cpu_reference_ns != FROZEN_CPU_REFERENCE_NS
     {
         return Err("log sizes, cutoff, or repeats are outside the evaluator domain".into());
     }
     let cutoff = 1usize << cutoff_log2;
+    let frozen_cpu_reference = Duration::from_nanos(frozen_cpu_reference_ns);
     let validation_cutoff_log2 = cutoff_log2.min(validation_log_n - 1);
     let validation_cutoff = 1usize << validation_cutoff_log2;
     let dispatch = SequenceDispatch {
@@ -229,6 +240,7 @@ fn main() -> EvalResult<()> {
     let mut gpu_active_times = Vec::with_capacity(repeats);
     let mut paired_hybrid_speedups = Vec::with_capacity(repeats);
     let mut paired_resident_speedups = Vec::with_capacity(repeats);
+    let mut paired_frozen_cpu_reference_ratios = Vec::with_capacity(repeats);
     let mut timed_gpu_active_total = Duration::ZERO;
     let mut protocol_tapes = HashSet::with_capacity(repeats);
     let mut protocol_transcript_states = Vec::with_capacity(repeats);
@@ -289,6 +301,8 @@ fn main() -> EvalResult<()> {
         let resident_wall = hybrid.wall.saturating_sub(hybrid.reset);
         paired_hybrid_speedups.push(cpu.wall.as_secs_f64() / hybrid.wall.as_secs_f64());
         paired_resident_speedups.push(cpu.wall.as_secs_f64() / resident_wall.as_secs_f64());
+        paired_frozen_cpu_reference_ratios
+            .push(frozen_cpu_reference.as_secs_f64() / hybrid.wall.as_secs_f64());
         cpu_times.push(cpu.wall);
         hybrid_times.push(hybrid.wall);
         resident_times.push(resident_wall);
@@ -336,6 +350,7 @@ fn main() -> EvalResult<()> {
     let cpu_tail_median = median(&cpu_tail_times);
     let hybrid_speedup = median_f64(&paired_hybrid_speedups);
     let resident_speedup = median_f64(&paired_resident_speedups);
+    let frozen_cpu_reference_ratio = median_f64(&paired_frozen_cpu_reference_ratios);
     let rows = workload.rows();
     let cpu_row_bytes = size_of::<instruction_input::CpuInstructionInputRow>() * rows;
     let resident_row_bytes = size_of::<SpartanOuterUniskipRow>() * rows;
@@ -399,17 +414,19 @@ fn main() -> EvalResult<()> {
         return Err("InstructionInput evaluator correctness guard failed".into());
     }
 
-    // `instruction_input_v2` is a closed schema: every emitted field is declared here,
+    // `instruction_input_v3` is a closed schema: every emitted field is declared here,
     // with no extension/property map whose keys vary between runs.
     let output = json!({
-        "schema": "instruction_input_v2",
-        "schema_version": 2,
+        "schema": "instruction_input_v3",
+        "schema_version": 3,
         "kernel": "instruction_input",
         "metrics": {
             "hybrid_speedup": hybrid_speedup,
             "resident_speedup": resident_speedup,
+            "frozen_cpu_reference_ratio": frozen_cpu_reference_ratio,
             "paired_hybrid_speedups": paired_hybrid_speedups,
             "paired_resident_speedups": paired_resident_speedups,
+            "paired_frozen_cpu_reference_ratios": paired_frozen_cpu_reference_ratios,
             "cpu_ns_samples": cpu_ns_samples,
             "hybrid_ns_samples": hybrid_ns_samples,
             "resident_ns_samples": resident_ns_samples,
@@ -512,6 +529,10 @@ fn main() -> EvalResult<()> {
             "dense_transition_threads": dense_transition_threads,
             "host_fiat_shamir": true,
             "primary_timing": "after one excluded full-sequence residency warmup: resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
+            "primary_metric": "timed complete-member throughput normalized by a frozen CPU reference",
+            "frozen_cpu_reference_ns": frozen_cpu_reference_ns,
+            "frozen_cpu_reference_provenance": FROZEN_CPU_REFERENCE_PROVENANCE,
+            "live_cpu_controls_in_primary_metric": false,
             "workload_preparation_in_primary_metric": false,
             "sequence_preparation_in_primary_metric": false,
             "resident_source_materialization_in_primary_metric": false,
@@ -545,6 +566,7 @@ fn main() -> EvalResult<()> {
             "validation_log_n": validation_log_n,
             "repeats": repeats,
             "seed": seed,
+            "frozen_cpu_reference_ns": frozen_cpu_reference_ns,
             "protocol_seeds": protocol_seeds,
             "protocol_transcript_states": protocol_transcript_states,
             "cutoff_log2": cutoff_log2,

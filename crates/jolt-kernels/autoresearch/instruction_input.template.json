@@ -1,6 +1,7 @@
 {
   "algorithm_contract": {
     "cpu_control": "standalone target-scale mirror pinned to OptimizedInstructionInputKernel on an adversarial validation workload",
+    "cpu_reference": "814395125 ns, the median of 25 CPU samples in immutable instruction-input-a2-2f87d8b6a8 at 2f87d8b6a81f1bb253c27795badc7da7baa3d0d8 (compact-JSON sample SHA256 59f9946b7d1a3c05d3094528e853d2228ae5ec0d94a5dae2c63d5713a560a966); used only as a monotone throughput normalization so live CPU denominator drift cannot promote without a corresponding timed-Metal improvement",
     "cpu_tail": "one eight-table readback followed by the exact four-sample optimized schedule",
     "fiat_shamir": "Blake2b challenges drawn on the host and included in the primary metric",
     "arm_schedule": "run every CPU control first, one excluded exact full-sequence Metal residency warmup second, and every timed resident Metal trial last",
@@ -49,6 +50,7 @@
     ],
     "env": {
       "JOLT_METAL_EVAL_LOG_N": "26",
+      "JOLT_METAL_EVAL_CPU_REFERENCE_NS": "814395125",
       "JOLT_METAL_EVAL_REPEATS": "5",
       "JOLT_METAL_EVAL_SEED": "1",
       "JOLT_METAL_EVAL_VALIDATE_LOG_N": "12"
@@ -62,9 +64,9 @@
       "crates/jolt-kernels/src/optimized/instruction_input.rs",
       "scripts/metal_autoresearch.py"
     ],
-    "parser": "exactly one schema-version 2 instruction_input_v2 JSON object on stdout",
-    "result_contract": "instruction_input_v2",
-    "result_schema_version": 2,
+    "parser": "exactly one schema-version 3 instruction_input_v3 JSON object on stdout",
+    "result_contract": "instruction_input_v3",
+    "result_schema_version": 3,
     "timeout_seconds": 900
   },
   "final_validation": {
@@ -202,10 +204,10 @@
   "metric": {
     "direction": "max",
     "minimum_relative_improvement": 0.03,
-    "name": "hybrid_speedup",
+    "name": "frozen_cpu_reference_ratio",
     "role": "search_proxy",
-    "target": 5.0,
-    "unit": "x"
+    "target": null,
+    "unit": "normalized_ratio"
   },
   "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.json",
   "schema_version": 1,
