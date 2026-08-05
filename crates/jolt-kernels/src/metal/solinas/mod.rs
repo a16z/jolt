@@ -33,6 +33,7 @@ const INSTRUCTION_INPUT_SOURCE: &str = include_str!("instruction_input.metal");
 const BYTECODE_CYCLE_SOURCE: &str = include_str!("bytecode_cycle.metal");
 const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
+const OUTER_REMAINDER_SOURCE: &str = include_str!("outer_remainder.metal");
 
 mod address_raf;
 mod address_raf_direct;
@@ -46,6 +47,7 @@ mod bytecode_row;
 mod instruction_input;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
+mod outer_remainder;
 mod product5;
 mod spartan_outer_uniskip;
 
@@ -91,6 +93,10 @@ pub use instruction_ra_sequence::{
 };
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
+};
+pub use outer_remainder::{
+    OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
+    OuterRemainderSequenceConfig, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
@@ -506,6 +512,50 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
+    #[error("outer remainder needs a power-of-two cycle count of at least four, got {0}")]
+    InvalidOuterRemainderRows(usize),
+    #[error("outer remainder rows belong to Metal device {got}, but the kernel uses {expected}")]
+    OuterRemainderRowDevice { expected: u64, got: u64 },
+    #[error("invalid outer remainder configuration: {0}")]
+    InvalidOuterRemainderConfig(&'static str),
+    #[error("invalid outer remainder state: expected {expected}, got {got}")]
+    InvalidOuterRemainderState {
+        expected: &'static str,
+        got: &'static str,
+    },
+    #[error(
+        "outer remainder {phase} weights have e_in={e_in}, e_out={e_out}; expected product {expected}"
+    )]
+    OuterRemainderWeightShape {
+        phase: &'static str,
+        expected: usize,
+        e_in: usize,
+        e_out: usize,
+    },
+    #[error("outer remainder {name} storage has capacity {capacity}, got {got} values")]
+    OuterRemainderStorageLength {
+        name: &'static str,
+        capacity: usize,
+        got: usize,
+    },
+    #[error("outer remainder CPU tail needs {expected} Az/Bz values, got az={az}, bz={bz}")]
+    OuterRemainderTailLength {
+        expected: usize,
+        az: usize,
+        bz: usize,
+    },
+    #[error(
+        "outer remainder pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedOuterRemainderExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "outer remainder opening kernel needs {requested} bytes of threadgroup memory, device limit is {maximum}"
+    )]
+    OuterRemainderThreadgroupMemory { requested: u64, maximum: u64 },
     #[error("invalid booleanity sequence state: {0}")]
     InvalidBooleanityState(&'static str),
     #[error(
@@ -563,7 +613,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)

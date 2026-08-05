@@ -925,6 +925,7 @@ mod tests {
     use jolt_witness::BundleSource;
 
     use super::*;
+    use crate::metal::solinas::OuterRemainderSequenceConfig;
 
     #[test]
     fn resident_row_bytes_match_the_production_geometry() {
@@ -1157,6 +1158,266 @@ mod tests {
             }
         }
         output
+    }
+
+    fn outer_tables(
+        rows: &[SpartanOuterUniskipRow],
+        lagrange: &[AkitaField; 10],
+    ) -> (Vec<AkitaField>, Vec<AkitaField>) {
+        let mut az = Vec::with_capacity(2 * rows.len());
+        let mut bz = Vec::with_capacity(2 * rows.len());
+        for &row in rows {
+            let (a_first, a_second, b_first, b_second) = row_groups(row);
+            az.push(
+                lagrange
+                    .iter()
+                    .zip(a_first)
+                    .map(|(&weight, value)| weight * AkitaField::from_i64(value))
+                    .sum(),
+            );
+            bz.push(
+                lagrange
+                    .iter()
+                    .zip(b_first)
+                    .map(|(&weight, value)| weight * value)
+                    .sum(),
+            );
+            az.push(
+                lagrange[..9]
+                    .iter()
+                    .zip(a_second)
+                    .map(|(&weight, value)| weight * AkitaField::from_i64(value))
+                    .sum(),
+            );
+            bz.push(
+                lagrange[..9]
+                    .iter()
+                    .zip(b_second)
+                    .map(|(&weight, value)| weight * value)
+                    .sum(),
+            );
+        }
+        (az, bz)
+    }
+
+    fn outer_endpoints(
+        az: &[AkitaField],
+        bz: &[AkitaField],
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> [AkitaField; 2] {
+        let mut output = [AkitaField::zero(); 2];
+        for (x_out, &outer) in e_out.iter().enumerate() {
+            for (x_in, &inner) in e_in.iter().enumerate() {
+                let pair = 2 * (x_out * e_in.len() + x_in);
+                output[0] += outer * inner * az[pair] * bz[pair];
+                output[1] += outer * inner * (az[pair + 1] - az[pair]) * (bz[pair + 1] - bz[pair]);
+            }
+        }
+        output
+    }
+
+    fn bind_table(values: &[AkitaField], challenge: AkitaField) -> Vec<AkitaField> {
+        values
+            .chunks_exact(2)
+            .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+            .collect()
+    }
+
+    fn outer_opening_values(row: SpartanOuterUniskipRow) -> [AkitaField; 35] {
+        let words = row.words();
+        let flags = words[19];
+        let load = flag(flags, FLAG_LOAD) != 0;
+        let store = flag(flags, FLAG_STORE) != 0;
+        let ram_address = if load {
+            words[10]
+        } else if store {
+            words[12]
+        } else {
+            0
+        };
+        let rs2 = if load { 0 } else { words[10] };
+        let rd_write = if store { 0 } else { words[12] };
+        let ram_read = if load {
+            words[12]
+        } else if store {
+            words[11]
+        } else {
+            0
+        };
+        let ram_write = if load {
+            words[12]
+        } else if store {
+            words[10]
+        } else {
+            0
+        };
+        let bit = |bit| AkitaField::from_i64(flag(flags, bit));
+        let unsigned128 =
+            |low, high| AkitaField::from_u128(u128::from(low) | (u128::from(high) << 64));
+        [
+            AkitaField::from_u64(words[0]),
+            field_signed_magnitude(
+                words[1],
+                words[2],
+                flag(flags, FLAG_RIGHT_INPUT_POSITIVE) != 0,
+            ),
+            field_signed_magnitude(words[3], words[4], flag(flags, FLAG_PRODUCT_POSITIVE) != 0),
+            bit(FLAG_SHOULD_BRANCH),
+            AkitaField::from_u64(words[5]),
+            AkitaField::from_u64(words[6]),
+            field_signed_magnitude(words[7], words[8], flag(flags, FLAG_IMM_POSITIVE) != 0),
+            AkitaField::from_u64(ram_address),
+            AkitaField::from_u64(words[9]),
+            AkitaField::from_u64(rs2),
+            AkitaField::from_u64(rd_write),
+            AkitaField::from_u64(ram_read),
+            AkitaField::from_u64(ram_write),
+            AkitaField::from_u64(words[13]),
+            unsigned128(words[14], words[15]),
+            AkitaField::from_u64(words[16]),
+            AkitaField::from_u64(words[17]),
+            bit(FLAG_NEXT_VIRTUAL),
+            bit(FLAG_NEXT_FIRST),
+            AkitaField::from_u64(words[18]),
+            bit(FLAG_SHOULD_JUMP),
+            bit(FLAG_ADD),
+            bit(FLAG_SUB),
+            bit(FLAG_MUL),
+            bit(FLAG_LOAD),
+            bit(FLAG_STORE),
+            bit(FLAG_JUMP),
+            bit(FLAG_WRITE_LOOKUP),
+            bit(FLAG_VIRTUAL),
+            bit(FLAG_ASSERT),
+            bit(FLAG_DO_NOT_UPDATE),
+            bit(FLAG_ADVICE),
+            bit(FLAG_COMPRESSED),
+            bit(FLAG_IS_FIRST),
+            bit(FLAG_IS_LAST),
+        ]
+    }
+
+    fn outer_openings(
+        rows: &[SpartanOuterUniskipRow],
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> [AkitaField; 35] {
+        let mut output = [AkitaField::zero(); 35];
+        for (x_out, &outer) in e_out.iter().enumerate() {
+            for (x_in, &inner) in e_in.iter().enumerate() {
+                let values = outer_opening_values(rows[x_out * e_in.len() + x_in]);
+                for (output, value) in output.iter_mut().zip(values) {
+                    *output += outer * inner * value;
+                }
+            }
+        }
+        output
+    }
+
+    #[test]
+    fn outer_remainder_sequence_matches_field_oracle() {
+        let mut packed = rows(16);
+        for (index, row) in packed.iter_mut().enumerate() {
+            let mut words = row.words();
+            words[19] |= ((index & 1) as u64) << FLAG_IS_FIRST;
+            *row = SpartanOuterUniskipRow::from_words(words);
+        }
+        let lagrange = std::array::from_fn(|index| {
+            AkitaField::from_u64(splitmix(0x600d_f00d ^ index as u64) & ((1 << 48) - 1))
+        });
+        let initial_in = (0..4)
+            .map(|index| AkitaField::from_u64(3 + index))
+            .collect::<Vec<_>>();
+        let initial_out = (0..4)
+            .map(|index| AkitaField::from_u64(11 + index))
+            .collect::<Vec<_>>();
+        let (mut az, mut bz) = outer_tables(&packed, &lagrange);
+        let expected_first = outer_endpoints(&az, &bz, &initial_in, &initial_out);
+
+        let context = SolinasMetal::for_akita().unwrap();
+        let resident = context.prepare_spartan_outer_uniskip_rows(&packed).unwrap();
+        let compact_id = resident.instruction_input_allocation_identity();
+        let residual_id = resident.allocation_identity();
+        let mut sequence = context
+            .prepare_outer_remainder_sequence(
+                resident,
+                OuterRemainderSequenceConfig {
+                    max_threadgroups: 2,
+                    cpu_tail_elements: 4,
+                    ..OuterRemainderSequenceConfig::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            sequence
+                .materialize_and_first_message(&lagrange, &initial_in, &initial_out)
+                .unwrap(),
+            expected_first
+        );
+
+        let stream_challenge = AkitaField::from_u64(101);
+        az = bind_table(&az, stream_challenge);
+        bz = bind_table(&bz, stream_challenge);
+        let stream_in = [AkitaField::from_u64(17), AkitaField::from_u64(19)];
+        let stream_out = [
+            AkitaField::from_u64(23),
+            AkitaField::from_u64(29),
+            AkitaField::from_u64(31),
+            AkitaField::from_u64(37),
+        ];
+        assert_eq!(
+            sequence
+                .bind_stream_and_message(stream_challenge, &lagrange, &stream_in, &stream_out,)
+                .unwrap(),
+            outer_endpoints(&az, &bz, &stream_in, &stream_out)
+        );
+
+        for (challenge, e_in, e_out) in [
+            (
+                AkitaField::from_u64(103),
+                vec![AkitaField::from_u64(41), AkitaField::from_u64(43)],
+                vec![AkitaField::from_u64(47), AkitaField::from_u64(53)],
+            ),
+            (
+                AkitaField::from_u64(107),
+                vec![AkitaField::from_u64(59)],
+                vec![AkitaField::from_u64(61), AkitaField::from_u64(67)],
+            ),
+        ] {
+            az = bind_table(&az, challenge);
+            bz = bind_table(&bz, challenge);
+            assert_eq!(
+                sequence.bind_and_message(challenge, &e_in, &e_out).unwrap(),
+                outer_endpoints(&az, &bz, &e_in, &e_out)
+            );
+        }
+
+        let mut actual_az = vec![AkitaField::zero(); 4];
+        let mut actual_bz = vec![AkitaField::zero(); 4];
+        sequence
+            .export_cpu_tail(&mut actual_az, &mut actual_bz)
+            .unwrap();
+        assert_eq!(actual_az, az);
+        assert_eq!(actual_bz, bz);
+
+        let opening_in = (0..4)
+            .map(|index| AkitaField::from_u64(71 + index))
+            .collect::<Vec<_>>();
+        let opening_out = (0..4)
+            .map(|index| AkitaField::from_u64(79 + index))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sequence
+                .evaluate_openings(&opening_in, &opening_out)
+                .unwrap(),
+            outer_openings(&packed, &opening_in, &opening_out)
+        );
+        let stats = sequence.storage_stats().unwrap();
+        assert_eq!(stats.compact_row_identity, compact_id);
+        assert_eq!(stats.residual_row_identity, residual_id);
+        let compact = sequence.into_instruction_input_rows().unwrap();
+        assert_eq!(compact.allocation_identity(), compact_id);
     }
 
     #[test]

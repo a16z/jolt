@@ -1,0 +1,794 @@
+// Candidate source. Concatenate after spartan_outer_uniskip.metal.
+
+#define OUTER_REMAINDER_COLUMNS 35u
+#define OUTER_REMAINDER_STREAM_ROWS 10u
+#define OUTER_REMAINDER_TILE_ROWS 64u
+#define OUTER_REMAINDER_SIMD_WIDTH 32u
+
+struct OuterRemainderPhaseParams {
+    uint source_elements;
+    uint e_in_length;
+    uint e_out_length;
+    uint blocks;
+};
+
+struct OuterRemainderOpeningParams {
+    uint rows;
+    uint e_in_length;
+    uint e_out_length;
+    uint blocks;
+};
+
+struct OuterRemainderReduceParams {
+    uint input_count;
+    uint columns;
+    uint reserved_0;
+    uint reserved_1;
+};
+
+inline int outer_flag(ulong flags, uint bit) {
+    return (int)((flags >> bit) & 1ul);
+}
+
+inline SolinasFp128 outer_from_u64(ulong value) {
+    SolinasFp128 result = solinas_zero();
+    result.limb[0] = (uint)value;
+    result.limb[1] = (uint)(value >> 32);
+    return result;
+}
+
+inline SolinasFp128 outer_from_i32(int value) {
+    bool negative = value < 0;
+    uint magnitude = negative ? (uint)(-value) : (uint)value;
+    SolinasFp128 result = outer_from_u64((ulong)magnitude);
+    return negative ? solinas_sub(solinas_zero(), result) : result;
+}
+
+inline SolinasFp128 outer_from_signed_u128(
+    ulong low,
+    ulong high,
+    bool positive)
+{
+    SpartanSigned192 value = spartan_scaled_u128(low, high, 1u);
+    if (!positive) {
+        value = spartan_s192_negate(value);
+    }
+    return spartan_small_times_s192(1, value);
+}
+
+inline SolinasFp128 outer_bind(
+    SolinasFp128 low,
+    SolinasFp128 high,
+    SolinasFp128 challenge)
+{
+    return solinas_add(
+        low,
+        solinas_mul_wide(challenge, solinas_sub(high, low)));
+}
+
+inline SolinasFp128 outer_half_simd_sum(SolinasFp128 value) {
+    for (ushort offset = 8; offset > 0; offset >>= 1) {
+        SolinasFp128 other;
+        other.limb = simd_shuffle_down(value.limb, offset);
+        value = solinas_add(value, other);
+    }
+    return value;
+}
+
+inline SolinasFp128 outer_simd_sum(SolinasFp128 value) {
+    for (ushort offset = 16; offset > 0; offset >>= 1) {
+        SolinasFp128 other;
+        other.limb = simd_shuffle_down(value.limb, offset);
+        value = solinas_add(value, other);
+    }
+    return value;
+}
+
+inline int outer_a_row(ulong flags, uint row, bool second_stream) {
+    int load = outer_flag(flags, 0u);
+    int store = outer_flag(flags, 1u);
+    int add = outer_flag(flags, 2u);
+    int sub = outer_flag(flags, 3u);
+    int mul = outer_flag(flags, 4u);
+    int jump = outer_flag(flags, 5u);
+    int should_branch = outer_flag(flags, 6u);
+
+    if (!second_stream) {
+        switch (row) {
+            case 0u: return 1 - load - store;
+            case 1u: return load;
+            case 2u: return load;
+            case 3u: return store;
+            case 4u: return add + sub + mul;
+            case 5u: return 1 - add - sub - mul;
+            case 6u: return outer_flag(flags, 7u);
+            case 7u: return outer_flag(flags, 8u);
+            case 8u: return outer_flag(flags, 9u) - outer_flag(flags, 10u);
+            default: return outer_flag(flags, 11u) - outer_flag(flags, 12u);
+        }
+    }
+
+    switch (row) {
+        case 0u: return load + store;
+        case 1u: return add;
+        case 2u: return sub;
+        case 3u: return mul;
+        case 4u: return 1 - add - sub - mul - outer_flag(flags, 13u);
+        case 5u: return outer_flag(flags, 14u);
+        case 6u: return jump;
+        case 7u: return should_branch;
+        default: return 1 - should_branch - jump;
+    }
+}
+
+inline void outer_row_memory(
+    device const InstructionInputRow& compact,
+    device const SpartanOuterUniskipResidualRow& residual,
+    thread ulong& ram_address,
+    thread ulong& rs2,
+    thread ulong& rd_write,
+    thread ulong& ram_read,
+    thread ulong& ram_write)
+{
+    ulong flags = instruction_input_row_word(compact, 5u);
+    bool load = outer_flag(flags, 0u) != 0;
+    bool store = outer_flag(flags, 1u) != 0;
+    ulong memory_0 = spartan_outer_residual_word(residual, 6u);
+    ulong memory_1 = spartan_outer_residual_word(residual, 7u);
+    rs2 = instruction_input_row_word(compact, 2u);
+    ram_address = load || store ? memory_0 : 0ul;
+    rd_write = store ? 0ul : (load ? memory_1 : memory_0);
+    ram_read = load || store ? memory_1 : 0ul;
+    ram_write = load ? memory_1 : (store ? rs2 : 0ul);
+}
+
+inline SpartanSigned192 outer_b_row(
+    device const InstructionInputRow& compact,
+    device const SpartanOuterUniskipResidualRow& residual,
+    uint row,
+    bool second_stream)
+{
+    ulong flags = instruction_input_row_word(compact, 5u);
+    ulong ram_address;
+    ulong rs2;
+    ulong rd_write;
+    ulong ram_read;
+    ulong ram_write;
+    outer_row_memory(
+        compact, residual, ram_address, rs2, rd_write, ram_read, ram_write);
+
+    SpartanSigned192 value = spartan_s192_zero();
+    if (!second_stream) {
+        switch (row) {
+            case 0u:
+                spartan_accumulate_scaled_u64(value, ram_address, 1);
+                break;
+            case 1u:
+                spartan_accumulate_scaled_u64(value, ram_read, 1);
+                spartan_accumulate_scaled_u64(value, ram_write, -1);
+                break;
+            case 2u:
+                spartan_accumulate_scaled_u64(value, ram_read, 1);
+                spartan_accumulate_scaled_u64(value, rd_write, -1);
+                break;
+            case 3u:
+                spartan_accumulate_scaled_u64(value, rs2, 1);
+                spartan_accumulate_scaled_u64(value, ram_write, -1);
+                break;
+            case 4u:
+                spartan_accumulate_scaled_u64(
+                    value, spartan_outer_residual_word(residual, 8u), 1);
+                break;
+            case 5u:
+                spartan_accumulate_scaled_u64(
+                    value, spartan_outer_residual_word(residual, 8u), 1);
+                spartan_accumulate_scaled_u64(
+                    value, spartan_outer_residual_word(residual, 0u), -1);
+                break;
+            case 6u:
+                spartan_accumulate_scaled_u64(
+                    value, spartan_outer_residual_word(residual, 13u), 1);
+                spartan_accumulate_i32(value, -1);
+                break;
+            case 7u:
+                spartan_accumulate_scaled_u64(
+                    value, spartan_outer_residual_word(residual, 11u), 1);
+                spartan_accumulate_scaled_u64(
+                    value, spartan_outer_residual_word(residual, 13u), -1);
+                break;
+            case 8u:
+                spartan_accumulate_scaled_u64(
+                    value, spartan_outer_residual_word(residual, 12u), 1);
+                spartan_accumulate_scaled_u64(
+                    value, spartan_outer_residual_word(residual, 5u), -1);
+                spartan_accumulate_i32(value, -1);
+                break;
+            default:
+                spartan_accumulate_i32(value, 1 - outer_flag(flags, 15u));
+                break;
+        }
+        return value;
+    }
+
+    switch (row) {
+        case 0u:
+            spartan_accumulate_scaled_u64(value, ram_address, 1);
+            spartan_accumulate_scaled_u64(
+                value, instruction_input_row_word(compact, 0u), -1);
+            spartan_accumulate_scaled_u128(
+                value,
+                instruction_input_row_word(compact, 3u),
+                instruction_input_row_word(compact, 4u),
+                outer_flag(flags, 18u) != 0,
+                -1);
+            break;
+        case 1u:
+            spartan_accumulate_scaled_u128(
+                value,
+                spartan_outer_residual_word(residual, 9u),
+                spartan_outer_residual_word(residual, 10u),
+                true,
+                1);
+            spartan_accumulate_scaled_u64(
+                value, spartan_outer_residual_word(residual, 0u), -1);
+            spartan_accumulate_scaled_u128(
+                value,
+                spartan_outer_residual_word(residual, 1u),
+                spartan_outer_residual_word(residual, 2u),
+                outer_flag(flags, 17u) != 0,
+                -1);
+            break;
+        case 2u:
+            spartan_accumulate_scaled_u128(
+                value,
+                spartan_outer_residual_word(residual, 9u),
+                spartan_outer_residual_word(residual, 10u),
+                true,
+                1);
+            spartan_accumulate_scaled_u64(
+                value, spartan_outer_residual_word(residual, 0u), -1);
+            spartan_accumulate_scaled_u128(
+                value,
+                spartan_outer_residual_word(residual, 1u),
+                spartan_outer_residual_word(residual, 2u),
+                outer_flag(flags, 17u) != 0,
+                1);
+            spartan_accumulate_pow64(value, -1);
+            break;
+        case 3u:
+            spartan_accumulate_scaled_u128(
+                value,
+                spartan_outer_residual_word(residual, 9u),
+                spartan_outer_residual_word(residual, 10u),
+                true,
+                1);
+            spartan_accumulate_scaled_u128(
+                value,
+                spartan_outer_residual_word(residual, 3u),
+                spartan_outer_residual_word(residual, 4u),
+                outer_flag(flags, 19u) != 0,
+                -1);
+            break;
+        case 4u:
+            spartan_accumulate_scaled_u128(
+                value,
+                spartan_outer_residual_word(residual, 9u),
+                spartan_outer_residual_word(residual, 10u),
+                true,
+                1);
+            spartan_accumulate_scaled_u128(
+                value,
+                spartan_outer_residual_word(residual, 1u),
+                spartan_outer_residual_word(residual, 2u),
+                outer_flag(flags, 17u) != 0,
+                -1);
+            break;
+        case 5u:
+            spartan_accumulate_scaled_u64(value, rd_write, 1);
+            spartan_accumulate_scaled_u64(
+                value, spartan_outer_residual_word(residual, 13u), -1);
+            break;
+        case 6u:
+            spartan_accumulate_scaled_u64(value, rd_write, 1);
+            spartan_accumulate_scaled_u64(
+                value, instruction_input_row_word(compact, 1u), -1);
+            spartan_accumulate_i32(value, -4 + 2 * outer_flag(flags, 16u));
+            break;
+        case 7u:
+            spartan_accumulate_scaled_u64(
+                value, spartan_outer_residual_word(residual, 11u), 1);
+            spartan_accumulate_scaled_u64(
+                value, instruction_input_row_word(compact, 1u), -1);
+            spartan_accumulate_scaled_u128(
+                value,
+                instruction_input_row_word(compact, 3u),
+                instruction_input_row_word(compact, 4u),
+                outer_flag(flags, 18u) != 0,
+                -1);
+            break;
+        default:
+            spartan_accumulate_scaled_u64(
+                value, spartan_outer_residual_word(residual, 11u), 1);
+            spartan_accumulate_scaled_u64(
+                value, instruction_input_row_word(compact, 1u), -1);
+            spartan_accumulate_i32(
+                value,
+                -4 + 4 * outer_flag(flags, 15u) + 2 * outer_flag(flags, 16u));
+            break;
+    }
+    return value;
+}
+
+inline SolinasFp128 outer_fold_a(
+    device const InstructionInputRow& compact,
+    device const SolinasFp128* lagrange,
+    bool second_stream)
+{
+    ulong flags = instruction_input_row_word(compact, 5u);
+    uint count = second_stream ? 9u : 10u;
+    SolinasFp128 sum = solinas_zero();
+    for (uint row = 0; row < count; row++) {
+        int scalar = outer_a_row(flags, row, second_stream);
+        if (scalar != 0) {
+            sum = solinas_add(
+                sum,
+                solinas_mul_wide(lagrange[row], outer_from_i32(scalar)));
+        }
+    }
+    return sum;
+}
+
+inline void outer_finish_two_columns(
+    SolinasFp128 q_zero,
+    SolinasFp128 q_infinity,
+    SolinasFp128 outer_weight,
+    device SolinasFp128* partials,
+    uint block,
+    threadgroup SolinasFp128* shared,
+    uint tid,
+    uint lane,
+    uint simdgroup,
+    uint threads,
+    bool accumulate)
+{
+    q_zero = outer_simd_sum(q_zero);
+    q_infinity = outer_simd_sum(q_infinity);
+    if (lane == 0u) {
+        shared[2u * simdgroup] = q_zero;
+        shared[2u * simdgroup + 1u] = q_infinity;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (simdgroup == 0u && lane < 2u) {
+        uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
+        SolinasFp128 sum = solinas_zero();
+        for (uint group = 0; group < simdgroups; group++) {
+            sum = solinas_add(sum, shared[2u * group + lane]);
+        }
+        SolinasFp128 weighted = solinas_mul_wide(outer_weight, sum);
+        partials[2u * block + lane] = accumulate
+            ? solinas_add(partials[2u * block + lane], weighted)
+            : weighted;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+}
+
+kernel void solinas_outer_remainder_materialize_b_and_message(
+    device const InstructionInputRow* compact_rows [[buffer(0)]],
+    device const SpartanOuterUniskipResidualRow* residual_rows [[buffer(1)]],
+    device const SolinasFp128* lagrange [[buffer(2)]],
+    device const SolinasFp128* e_in [[buffer(3)]],
+    device const SolinasFp128* e_out [[buffer(4)]],
+    device SolinasFp128* b_state [[buffer(5)]],
+    device SolinasFp128* partials [[buffer(6)]],
+    constant OuterRemainderPhaseParams& params [[buffer(7)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint block [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
+    bool accumulate = false;
+    for (uint x_out = block;
+         x_out < params.e_out_length;
+         x_out += params.blocks) {
+        SolinasFp128 q_zero = solinas_zero();
+        SolinasFp128 q_infinity = solinas_zero();
+        for (uint x_in = simdgroup; x_in < params.e_in_length; x_in += simdgroups) {
+            uint cycle = x_out * params.e_in_length + x_in;
+            bool second_stream = lane >= 16u;
+            uint row = second_stream ? lane - 16u : lane;
+            bool active = second_stream ? row < 9u : row < 10u;
+            SolinasFp128 az = solinas_zero();
+            SolinasFp128 bz = solinas_zero();
+            if (active && cycle < (params.source_elements >> 1)) {
+                ulong flags = instruction_input_row_word(compact_rows[cycle], 5u);
+                int a = outer_a_row(flags, row, second_stream);
+                if (a != 0) {
+                    az = solinas_mul_wide(lagrange[row], outer_from_i32(a));
+                }
+                SpartanSigned192 b = outer_b_row(
+                    compact_rows[cycle], residual_rows[cycle], row, second_stream);
+                bz = solinas_mul_wide(lagrange[row], spartan_small_times_s192(1, b));
+            }
+
+            az = outer_half_simd_sum(az);
+            bz = outer_half_simd_sum(bz);
+            SolinasFp128 peer_az;
+            SolinasFp128 peer_bz;
+            peer_az.limb = simd_shuffle(az.limb, 16u);
+            peer_bz.limb = simd_shuffle(bz.limb, 16u);
+            if (lane == 0u) {
+                b_state[2u * cycle] = bz;
+                b_state[2u * cycle + 1u] = peer_bz;
+                SolinasFp128 weight = e_in[x_in];
+                q_zero = solinas_add(
+                    q_zero,
+                    solinas_mul_wide(weight, solinas_mul_wide(az, bz)));
+                q_infinity = solinas_add(
+                    q_infinity,
+                    solinas_mul_wide(
+                        weight,
+                        solinas_mul_wide(
+                            solinas_sub(peer_az, az),
+                            solinas_sub(peer_bz, bz))));
+            }
+        }
+        outer_finish_two_columns(
+            q_zero,
+            q_infinity,
+            e_out[x_out],
+            partials,
+            block,
+            shared,
+            tid,
+            lane,
+            simdgroup,
+            threads,
+            accumulate);
+        accumulate = true;
+    }
+}
+
+kernel void solinas_outer_remainder_stream_bind_and_message(
+    device const InstructionInputRow* compact_rows [[buffer(0)]],
+    device const SolinasFp128* b_source [[buffer(1)]],
+    device SolinasFp128* destination [[buffer(2)]],
+    device const SolinasFp128* lagrange [[buffer(3)]],
+    device const SolinasFp128* e_in [[buffer(4)]],
+    device const SolinasFp128* e_out [[buffer(5)]],
+    device SolinasFp128* partials [[buffer(6)]],
+    constant SolinasFp128& challenge [[buffer(7)]],
+    constant OuterRemainderPhaseParams& params [[buffer(8)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint block [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    bool accumulate = false;
+    for (uint x_out = block;
+         x_out < params.e_out_length;
+         x_out += params.blocks) {
+      SolinasFp128 q_zero = solinas_zero();
+      SolinasFp128 q_infinity = solinas_zero();
+      for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
+        uint pair = x_out * params.e_in_length + x_in;
+        uint cycle_0 = 2u * pair;
+        uint cycle_1 = cycle_0 + 1u;
+        SolinasFp128 az_00 = outer_fold_a(compact_rows[cycle_0], lagrange, false);
+        SolinasFp128 az_01 = outer_fold_a(compact_rows[cycle_0], lagrange, true);
+        SolinasFp128 az_10 = outer_fold_a(compact_rows[cycle_1], lagrange, false);
+        SolinasFp128 az_11 = outer_fold_a(compact_rows[cycle_1], lagrange, true);
+        SolinasFp128 az_0 = outer_bind(az_00, az_01, challenge);
+        SolinasFp128 az_1 = outer_bind(az_10, az_11, challenge);
+        SolinasFp128 bz_0 = outer_bind(
+            b_source[2u * cycle_0], b_source[2u * cycle_0 + 1u], challenge);
+        SolinasFp128 bz_1 = outer_bind(
+            b_source[2u * cycle_1], b_source[2u * cycle_1 + 1u], challenge);
+        destination[2u * cycle_0] = az_0;
+        destination[2u * cycle_0 + 1u] = bz_0;
+        destination[2u * cycle_1] = az_1;
+        destination[2u * cycle_1 + 1u] = bz_1;
+
+        SolinasFp128 weight = e_in[x_in];
+        q_zero = solinas_add(
+            q_zero,
+            solinas_mul_wide(weight, solinas_mul_wide(az_0, bz_0)));
+        q_infinity = solinas_add(
+            q_infinity,
+            solinas_mul_wide(
+                weight,
+                solinas_mul_wide(
+                    solinas_sub(az_1, az_0),
+                    solinas_sub(bz_1, bz_0))));
+      }
+      outer_finish_two_columns(
+        q_zero,
+        q_infinity,
+        e_out[x_out],
+        partials,
+        block,
+        shared,
+        tid,
+        lane,
+        simdgroup,
+        threads,
+        accumulate);
+      accumulate = true;
+    }
+}
+
+kernel void solinas_outer_remainder_bind_and_message(
+    device const SolinasFp128* source [[buffer(0)]],
+    device SolinasFp128* destination [[buffer(1)]],
+    device const SolinasFp128* e_in [[buffer(2)]],
+    device const SolinasFp128* e_out [[buffer(3)]],
+    device SolinasFp128* partials [[buffer(4)]],
+    constant SolinasFp128& challenge [[buffer(5)]],
+    constant OuterRemainderPhaseParams& params [[buffer(6)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint block [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    bool accumulate = false;
+    for (uint x_out = block;
+         x_out < params.e_out_length;
+         x_out += params.blocks) {
+      SolinasFp128 q_zero = solinas_zero();
+      SolinasFp128 q_infinity = solinas_zero();
+      for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
+        uint pair = x_out * params.e_in_length + x_in;
+        uint source_cell = 4u * pair;
+        uint destination_cell = 2u * pair;
+        SolinasFp128 az_0 = outer_bind(
+            source[2u * source_cell], source[2u * (source_cell + 1u)], challenge);
+        SolinasFp128 bz_0 = outer_bind(
+            source[2u * source_cell + 1u],
+            source[2u * (source_cell + 1u) + 1u],
+            challenge);
+        SolinasFp128 az_1 = outer_bind(
+            source[2u * (source_cell + 2u)],
+            source[2u * (source_cell + 3u)],
+            challenge);
+        SolinasFp128 bz_1 = outer_bind(
+            source[2u * (source_cell + 2u) + 1u],
+            source[2u * (source_cell + 3u) + 1u],
+            challenge);
+        destination[2u * destination_cell] = az_0;
+        destination[2u * destination_cell + 1u] = bz_0;
+        destination[2u * (destination_cell + 1u)] = az_1;
+        destination[2u * (destination_cell + 1u) + 1u] = bz_1;
+
+        SolinasFp128 weight = e_in[x_in];
+        q_zero = solinas_add(
+            q_zero,
+            solinas_mul_wide(weight, solinas_mul_wide(az_0, bz_0)));
+        q_infinity = solinas_add(
+            q_infinity,
+            solinas_mul_wide(
+                weight,
+                solinas_mul_wide(
+                    solinas_sub(az_1, az_0),
+                    solinas_sub(bz_1, bz_0))));
+      }
+      outer_finish_two_columns(
+        q_zero,
+        q_infinity,
+        e_out[x_out],
+        partials,
+        block,
+        shared,
+        tid,
+        lane,
+        simdgroup,
+        threads,
+        accumulate);
+      accumulate = true;
+    }
+}
+
+inline ulong outer_staged_word(
+    threadgroup const ulong* row_words,
+    uint row,
+    uint word)
+{
+    return row_words[row * 20u + word];
+}
+
+inline SolinasFp128 outer_opening_value(
+    threadgroup const ulong* row_words,
+    uint row,
+    uint column)
+{
+    ulong flags = outer_staged_word(row_words, row, 5u);
+    bool load = outer_flag(flags, 0u) != 0;
+    bool store = outer_flag(flags, 1u) != 0;
+    ulong rs2 = outer_staged_word(row_words, row, 2u);
+    ulong memory_0 = outer_staged_word(row_words, row, 12u);
+    ulong memory_1 = outer_staged_word(row_words, row, 13u);
+    ulong ram_address = load || store ? memory_0 : 0ul;
+    ulong rd_write = store ? 0ul : (load ? memory_1 : memory_0);
+    ulong ram_read = load || store ? memory_1 : 0ul;
+    ulong ram_write = load ? memory_1 : (store ? rs2 : 0ul);
+
+    switch (column) {
+        case 0u: return outer_from_u64(outer_staged_word(row_words, row, 6u));
+        case 1u:
+            return outer_from_signed_u128(
+                outer_staged_word(row_words, row, 7u),
+                outer_staged_word(row_words, row, 8u),
+                outer_flag(flags, 17u) != 0);
+        case 2u:
+            return outer_from_signed_u128(
+                outer_staged_word(row_words, row, 9u),
+                outer_staged_word(row_words, row, 10u),
+                outer_flag(flags, 19u) != 0);
+        case 3u: return outer_from_u64((ulong)outer_flag(flags, 6u));
+        case 4u: return outer_from_u64(outer_staged_word(row_words, row, 11u));
+        case 5u: return outer_from_u64(outer_staged_word(row_words, row, 1u));
+        case 6u:
+            return outer_from_signed_u128(
+                outer_staged_word(row_words, row, 3u),
+                outer_staged_word(row_words, row, 4u),
+                outer_flag(flags, 18u) != 0);
+        case 7u: return outer_from_u64(ram_address);
+        case 8u: return outer_from_u64(outer_staged_word(row_words, row, 0u));
+        case 9u: return outer_from_u64(rs2);
+        case 10u: return outer_from_u64(rd_write);
+        case 11u: return outer_from_u64(ram_read);
+        case 12u: return outer_from_u64(ram_write);
+        case 13u: return outer_from_u64(outer_staged_word(row_words, row, 14u));
+        case 14u:
+            return outer_from_signed_u128(
+                outer_staged_word(row_words, row, 15u),
+                outer_staged_word(row_words, row, 16u),
+                true);
+        case 15u: return outer_from_u64(outer_staged_word(row_words, row, 17u));
+        case 16u: return outer_from_u64(outer_staged_word(row_words, row, 18u));
+        case 17u: return outer_from_u64((ulong)outer_flag(flags, 11u));
+        case 18u: return outer_from_u64((ulong)outer_flag(flags, 12u));
+        case 19u: return outer_from_u64(outer_staged_word(row_words, row, 19u));
+        case 20u: return outer_from_u64((ulong)outer_flag(flags, 8u));
+        case 21u: return outer_from_u64((ulong)outer_flag(flags, 2u));
+        case 22u: return outer_from_u64((ulong)outer_flag(flags, 3u));
+        case 23u: return outer_from_u64((ulong)outer_flag(flags, 4u));
+        case 24u: return outer_from_u64((ulong)outer_flag(flags, 0u));
+        case 25u: return outer_from_u64((ulong)outer_flag(flags, 1u));
+        case 26u: return outer_from_u64((ulong)outer_flag(flags, 5u));
+        case 27u: return outer_from_u64((ulong)outer_flag(flags, 14u));
+        case 28u: return outer_from_u64((ulong)outer_flag(flags, 9u));
+        case 29u: return outer_from_u64((ulong)outer_flag(flags, 7u));
+        case 30u: return outer_from_u64((ulong)outer_flag(flags, 15u));
+        case 31u: return outer_from_u64((ulong)outer_flag(flags, 13u));
+        case 32u: return outer_from_u64((ulong)outer_flag(flags, 16u));
+        case 33u: return outer_from_u64((ulong)outer_flag(flags, 24u));
+        default: return outer_from_u64((ulong)outer_flag(flags, 10u));
+    }
+}
+
+inline bool outer_opening_is_boolean(uint column) {
+    return column == 3u || column == 17u || column == 18u ||
+        column == 20u || column >= 21u;
+}
+
+kernel void solinas_outer_remainder_opening_tiles(
+    device const InstructionInputRow* compact_rows [[buffer(0)]],
+    device const SpartanOuterUniskipResidualRow* residual_rows [[buffer(1)]],
+    device const SolinasFp128* e_in [[buffer(2)]],
+    device const SolinasFp128* e_out [[buffer(3)]],
+    device SolinasFp128* partials [[buffer(4)]],
+    constant OuterRemainderOpeningParams& params [[buffer(5)]],
+    threadgroup ulong* row_words [[threadgroup(0)]],
+    threadgroup SolinasFp128* tile_weights [[threadgroup(1)]],
+    threadgroup SolinasFp128* shard_sums [[threadgroup(2)]],
+    uint block [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    uint shards = threads / OUTER_REMAINDER_COLUMNS;
+    bool worker = tid < shards * OUTER_REMAINDER_COLUMNS;
+    uint column = worker ? tid % OUTER_REMAINDER_COLUMNS : 0u;
+    uint shard = worker ? tid / OUTER_REMAINDER_COLUMNS : 0u;
+    if (tid < OUTER_REMAINDER_COLUMNS) {
+        partials[block * OUTER_REMAINDER_COLUMNS + tid] = solinas_zero();
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint x_out = block;
+         x_out < params.e_out_length;
+         x_out += params.blocks) {
+        SolinasFp128 sum = solinas_zero();
+        uint block_start = x_out * params.e_in_length;
+        for (uint tile_start = 0u;
+             tile_start < params.e_in_length;
+             tile_start += OUTER_REMAINDER_TILE_ROWS) {
+            uint tile_count = min(
+                OUTER_REMAINDER_TILE_ROWS,
+                params.e_in_length - tile_start);
+            for (uint flat = tid; flat < tile_count * 20u; flat += threads) {
+                uint tile_row = flat / 20u;
+                uint word = flat - tile_row * 20u;
+                uint source_row = block_start + tile_start + tile_row;
+                row_words[flat] = word < 6u
+                    ? instruction_input_row_word(compact_rows[source_row], word)
+                    : spartan_outer_residual_word(
+                        residual_rows[source_row], word - 6u);
+            }
+            for (uint tile_row = tid; tile_row < tile_count; tile_row += threads) {
+                tile_weights[tile_row] = e_in[tile_start + tile_row];
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+
+            if (worker) {
+                for (uint tile_row = shard; tile_row < tile_count; tile_row += shards) {
+                    SolinasFp128 value = outer_opening_value(
+                        row_words, tile_row, column);
+                    SolinasFp128 contribution;
+                    if (outer_opening_is_boolean(column)) {
+                        bool set = value.limb[0] != 0u;
+                        contribution = set ? tile_weights[tile_row] : solinas_zero();
+                    } else {
+                        contribution = solinas_mul_wide(tile_weights[tile_row], value);
+                    }
+                    sum = solinas_add(sum, contribution);
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+        }
+
+        if (worker) {
+            shard_sums[column * shards + shard] = sum;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (tid < OUTER_REMAINDER_COLUMNS) {
+            SolinasFp128 column_sum = solinas_zero();
+            for (uint current_shard = 0u; current_shard < shards; current_shard++) {
+                column_sum = solinas_add(
+                    column_sum,
+                    shard_sums[tid * shards + current_shard]);
+            }
+            uint output = block * OUTER_REMAINDER_COLUMNS + tid;
+            partials[output] = solinas_add(
+                partials[output],
+                solinas_mul_wide(e_out[x_out], column_sum));
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
+kernel void solinas_outer_remainder_reduce_columns(
+    device const SolinasFp128* partials [[buffer(0)]],
+    device SolinasFp128* output [[buffer(1)]],
+    constant OuterRemainderReduceParams& params [[buffer(2)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint column [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    SolinasFp128 sum = solinas_zero();
+    for (uint block = tid; block < params.input_count; block += threads) {
+        sum = solinas_add(sum, partials[block * params.columns + column]);
+    }
+    sum = outer_simd_sum(sum);
+    if (lane == 0u) {
+        shared[simdgroup] = sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simdgroup == 0u) {
+        uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
+        sum = lane < simdgroups ? shared[lane] : solinas_zero();
+        sum = outer_simd_sum(sum);
+        if (lane == 0u) {
+            output[column] = sum;
+        }
+    }
+}
