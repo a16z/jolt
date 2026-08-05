@@ -84,6 +84,7 @@ impl<F: Field> Stage2BatchOutputPoints<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage2ClearOutput<F: Field> {
     /// The produced batch opening *values* (wire form); later stages read each
     /// opening's value directly off these fields.

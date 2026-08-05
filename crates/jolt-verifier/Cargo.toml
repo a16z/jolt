@@ -13,6 +13,9 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b"]
+# Heap flamegraph visitation of the stage clear-output carriers (profile
+# harness's per-stage SVGs).
+allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = ["jolt-prover-legacy/host"]
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
 zk = ["jolt-prover-legacy/zk"]
@@ -25,6 +28,7 @@ transcript-keccak = []
 transcript-poseidon = []
 
 [dependencies]
+allocative = { workspace = true, optional = true }
 ark-serialize.workspace = true
 common.workspace = true
 jolt-blindfold.workspace = true
