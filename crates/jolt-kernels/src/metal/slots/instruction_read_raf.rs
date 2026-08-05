@@ -194,6 +194,7 @@ struct AddressState {
     suffix_out: OwnedDeviceBuffer<Fr>,
     num_sgs_raf: usize,
     rows_per_sg_raf: usize,
+    phase_scan_kernel: KernelId,
     num_sgs_suffix: usize,
 }
 
@@ -301,6 +302,13 @@ impl DeviceIrrScanner {
                 ))?,
                 num_sgs_raf,
                 rows_per_sg_raf,
+                phase_scan_kernel: if std::env::var_os("JOLT_IRR_PHASE_SCAN_LEGACY")
+                    .is_some_and(|value| value != "0")
+                {
+                    KernelId::IrrPhaseScanLegacy
+                } else {
+                    KernelId::IrrPhaseScan
+                },
                 num_sgs_suffix,
             }),
             cycle: None,
@@ -366,43 +374,89 @@ impl AddressState {
         let suffix_meta = self.suffix_meta.device_buffer();
         let raf_group = self.raf_group.device_buffer();
         let suffix_group = self.suffix_group.device_buffer();
+        let raf_threads = self.num_sgs_raf * SIMD_WIDTH;
 
-        let mut pass = context.begin_pass()?;
-        pass.dispatch(
-            KernelId::IrrPhaseScan,
-            &scan_params,
-            &[&rows_buffer, &u_evals_buffer, &v_prev, &partials],
-            self.num_sgs_raf * SIMD_WIDTH,
-        );
-        pass.dispatch(
-            KernelId::IrrReduce,
-            &raf_reduce_params,
-            &[&partials, &raf_group, &raf_out],
-            RAF_CELLS,
-        );
-        if !self.slots.is_empty() {
+        // Attribution-only split: GPU timestamps are per command buffer, so
+        // separate buffers name the phase and suffix owners without changing
+        // either kernel's inputs or outputs.
+        if std::env::var_os("JOLT_IRR_SPLIT_TRACE").is_some_and(|value| value != "0") {
+            let mut pass = context.begin_pass()?;
             pass.dispatch(
-                KernelId::IrrSuffixScan,
-                &suffix_params,
-                &[
-                    &rows_buffer,
-                    &u_evals_buffer,
-                    &bucket_buffer,
-                    &sg_slot,
-                    &sg_range,
-                    &suffix_meta,
-                    &partials,
-                ],
-                self.num_sgs_suffix * SIMD_WIDTH,
+                self.phase_scan_kernel,
+                &scan_params,
+                &[&rows_buffer, &u_evals_buffer, &v_prev, &partials],
+                raf_threads,
             );
             pass.dispatch(
                 KernelId::IrrReduce,
-                &suffix_reduce_params,
-                &[&partials, &suffix_group, &suffix_out],
-                suffix_cells,
+                &raf_reduce_params,
+                &[&partials, &raf_group, &raf_out],
+                RAF_CELLS,
             );
+            pass.run()?;
+
+            let mut pass = context.begin_pass()?;
+            if !self.slots.is_empty() {
+                pass.dispatch(
+                    KernelId::IrrSuffixScan,
+                    &suffix_params,
+                    &[
+                        &rows_buffer,
+                        &u_evals_buffer,
+                        &bucket_buffer,
+                        &sg_slot,
+                        &sg_range,
+                        &suffix_meta,
+                        &partials,
+                    ],
+                    self.num_sgs_suffix * SIMD_WIDTH,
+                );
+                pass.dispatch(
+                    KernelId::IrrReduce,
+                    &suffix_reduce_params,
+                    &[&partials, &suffix_group, &suffix_out],
+                    suffix_cells,
+                );
+            }
+            pass.run()?;
+        } else {
+            let mut pass = context.begin_pass()?;
+            pass.dispatch(
+                self.phase_scan_kernel,
+                &scan_params,
+                &[&rows_buffer, &u_evals_buffer, &v_prev, &partials],
+                raf_threads,
+            );
+            pass.dispatch(
+                KernelId::IrrReduce,
+                &raf_reduce_params,
+                &[&partials, &raf_group, &raf_out],
+                RAF_CELLS,
+            );
+            if !self.slots.is_empty() {
+                pass.dispatch(
+                    KernelId::IrrSuffixScan,
+                    &suffix_params,
+                    &[
+                        &rows_buffer,
+                        &u_evals_buffer,
+                        &bucket_buffer,
+                        &sg_slot,
+                        &sg_range,
+                        &suffix_meta,
+                        &partials,
+                    ],
+                    self.num_sgs_suffix * SIMD_WIDTH,
+                );
+                pass.dispatch(
+                    KernelId::IrrReduce,
+                    &suffix_reduce_params,
+                    &[&partials, &suffix_group, &suffix_out],
+                    suffix_cells,
+                );
+            }
+            pass.run()?;
         }
-        pass.run()?;
         testing::note_device_round();
         Ok(true)
     }
@@ -842,6 +896,223 @@ fn cycle_init_params(
     params
 }
 
+#[cfg(feature = "bench-utils")]
+pub mod bench {
+    use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
+    use jolt_lookup_tables::LookupBits;
+    use rayon::prelude::*;
+
+    use super::*;
+
+    pub struct IrrPhaseScanFixture {
+        rows: PageAlignedVec<InstructionCycleRow>,
+        u_evals: PageAlignedVec<Fr>,
+        v_prev: PageAlignedVec<Fr>,
+        partials: PageAlignedVec<Fr>,
+        out: PageAlignedVec<Fr>,
+        group: PageAlignedVec<u32>,
+        params: Vec<u32>,
+        reduce_params: Vec<u32>,
+        threads: usize,
+    }
+
+    pub struct IrrPhaseScanBuffers<'a> {
+        context: &'static MetalContext,
+        rows: DeviceBuffer<'a>,
+        u_evals: DeviceBuffer<'a>,
+        v_prev: DeviceBuffer<'a>,
+        partials: DeviceBuffer<'a>,
+        params: &'a [u32],
+        threads: usize,
+    }
+
+    impl IrrPhaseScanFixture {
+        pub fn production_geometry(log_t: usize) -> Result<Self, MetalError> {
+            let n = 1usize << log_t;
+            let rows_per_sg = div_ceil_pos(n, TARGET_SIMDGROUPS).max(MIN_ROWS_PER_SIMDGROUP);
+            let num_sgs = div_ceil_pos(n, rows_per_sg);
+            let mut state = 0x4952_5250_4841_5345u64 ^ log_t as u64;
+            let rows = PageAlignedVec::from_fn(n, |j| {
+                let lo = splitmix(&mut state);
+                let hi = splitmix(&mut state);
+                InstructionCycleRow::new(
+                    (u128::from(hi) << 64) | u128::from(lo),
+                    Some(j % 5),
+                    j % 3 == 0,
+                    None,
+                    None,
+                )
+            });
+            let u_evals = PageAlignedVec::from_fn(n, |_| Fr::from_u64(splitmix(&mut state)));
+            let v_prev =
+                PageAlignedVec::from_fn(CHUNK_SIZE, |_| Fr::from_u64(splitmix(&mut state)));
+            let zero = Fr::from_u64(0);
+            Ok(Self {
+                rows,
+                u_evals,
+                v_prev,
+                partials: PageAlignedVec::from_elem(zero, num_sgs * RAF_CELLS),
+                out: PageAlignedVec::from_elem(zero, RAF_CELLS),
+                group: PageAlignedVec::from_slice(&[0, num_sgs as u32]),
+                params: vec![
+                    n as u32,
+                    rows_per_sg as u32,
+                    num_sgs as u32,
+                    64,
+                    0,
+                    0,
+                    u32::from(CANONICAL_INSTRUCTION_ADDRESS),
+                    0,
+                ],
+                reduce_params: vec![RAF_CELLS as u32, RAF_CELLS as u32, RAF_CELLS as u32],
+                threads: num_sgs * SIMD_WIDTH,
+            })
+        }
+
+        pub fn assert_oracle(&mut self) -> Result<(), MetalError> {
+            let context = MetalContext::global()?;
+            {
+                let rows = self.rows.device_buffer(context)?;
+                let u_evals = self.u_evals.device_buffer(context)?;
+                let v_prev = self.v_prev.device_buffer(context)?;
+                let partials = self.partials.device_buffer_mut(context)?;
+                let out = self.out.device_buffer_mut(context)?;
+                let group = self.group.device_buffer(context)?;
+                let mut pass = context.begin_pass()?;
+                pass.dispatch(
+                    KernelId::IrrPhaseScan,
+                    &self.params,
+                    &[&rows, &u_evals, &v_prev, &partials],
+                    self.threads,
+                );
+                pass.dispatch(
+                    KernelId::IrrReduce,
+                    &self.reduce_params,
+                    &[&partials, &group, &out],
+                    RAF_CELLS,
+                );
+                pass.run()?;
+            }
+
+            let expected = self
+                .rows
+                .par_iter()
+                .zip(self.u_evals.par_iter())
+                .fold(
+                    || vec![Fr::from_u64(0); RAF_CELLS],
+                    |mut sums, (row, &u)| {
+                        let suffix = row.lookup_index & u64::MAX as u128;
+                        let chunk = ((row.lookup_index >> 64) as usize) & (CHUNK_SIZE - 1);
+                        if row.raf_flag {
+                            sums[3 * CHUNK_SIZE + chunk] += u;
+                            sums[4 * CHUNK_SIZE + chunk] += u * Fr::from_u128(suffix);
+                            if CANONICAL_INSTRUCTION_ADDRESS {
+                                sums[5 * CHUNK_SIZE + chunk] += u;
+                            }
+                        } else {
+                            let (left, right) = LookupBits::new(suffix, 64).uninterleave();
+                            sums[chunk] += u;
+                            sums[CHUNK_SIZE + chunk] += u * Fr::from_u64(u64::from(left));
+                            sums[2 * CHUNK_SIZE + chunk] += u * Fr::from_u64(u64::from(right));
+                        }
+                        sums
+                    },
+                )
+                .reduce(
+                    || vec![Fr::from_u64(0); RAF_CELLS],
+                    |mut left, right| {
+                        for (left, right) in left.iter_mut().zip(right) {
+                            *left += right;
+                        }
+                        left
+                    },
+                );
+            let r_mont = Fr::from_u64(1).mul_pow_2(128).mul_pow_2(128);
+            for (index, (&got, &expected)) in self.out.iter().zip(&expected).enumerate() {
+                let got = if matches!(index / CHUNK_SIZE, 1 | 2 | 4) {
+                    got * r_mont
+                } else {
+                    got
+                };
+                assert_eq!(got, expected, "phase-scan cell {index}");
+            }
+
+            {
+                let rows = self.rows.device_buffer(context)?;
+                let u_evals = self.u_evals.device_buffer(context)?;
+                let v_prev = self.v_prev.device_buffer(context)?;
+                let partials = self.partials.device_buffer_mut(context)?;
+                let out = self.out.device_buffer_mut(context)?;
+                let group = self.group.device_buffer(context)?;
+                let mut pass = context.begin_pass()?;
+                pass.dispatch(
+                    KernelId::IrrPhaseScanLegacy,
+                    &self.params,
+                    &[&rows, &u_evals, &v_prev, &partials],
+                    self.threads,
+                );
+                pass.dispatch(
+                    KernelId::IrrReduce,
+                    &self.reduce_params,
+                    &[&partials, &group, &out],
+                    RAF_CELLS,
+                );
+                pass.run()?;
+            }
+            for (index, (&got, &expected)) in self.out.iter().zip(&expected).enumerate() {
+                let got = if matches!(index / CHUNK_SIZE, 1 | 2 | 4) {
+                    got * r_mont
+                } else {
+                    got
+                };
+                assert_eq!(got, expected, "legacy phase-scan cell {index}");
+            }
+            Ok(())
+        }
+
+        pub fn buffers(&mut self) -> Result<IrrPhaseScanBuffers<'_>, MetalError> {
+            let context = MetalContext::global()?;
+            Ok(IrrPhaseScanBuffers {
+                context,
+                rows: self.rows.device_buffer(context)?,
+                u_evals: self.u_evals.device_buffer(context)?,
+                v_prev: self.v_prev.device_buffer(context)?,
+                partials: self.partials.device_buffer_mut(context)?,
+                params: &self.params,
+                threads: self.threads,
+            })
+        }
+    }
+
+    impl IrrPhaseScanBuffers<'_> {
+        pub fn run(&self) -> Result<(), MetalError> {
+            self.context.run_once(
+                KernelId::IrrPhaseScan,
+                self.params,
+                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
+                self.threads,
+            )
+        }
+
+        pub fn run_legacy(&self) -> Result<(), MetalError> {
+            self.context.run_once(
+                KernelId::IrrPhaseScanLegacy,
+                self.params,
+                &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
+                self.threads,
+            )
+        }
+    }
+
+    fn splitmix(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+}
+
 /// Device-vs-CPU parity: the suffix MLE library case by case, then the full
 /// kernel round loop with the scanner forced on.
 #[cfg(test)]
@@ -1147,6 +1418,17 @@ mod tests {
     fn scanner_parity_random_indices_two_phase() {
         let _lock = gpu_lock();
         assert_scanner_parity(13, 12345, false, 0, 13, true);
+    }
+
+    #[test]
+    #[ignore = "large attribution fixture; run explicitly"]
+    fn scanner_attribution_scale() {
+        let _lock = gpu_lock();
+        let log_t = std::env::var("JOLT_IRR_ATTR_LOG_T")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(22);
+        assert_scanner_parity(log_t, 12345, false, 0, log_t, true);
     }
 
     #[test]

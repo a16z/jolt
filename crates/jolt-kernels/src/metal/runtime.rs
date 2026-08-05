@@ -76,6 +76,7 @@ pub enum KernelId {
     OpeningFoldDense,
     OpeningFoldOneHot,
     IrrPhaseScan,
+    IrrPhaseScanLegacy,
     IrrSuffixScan,
     IrrReduce,
     IrrCycleInit,
@@ -122,7 +123,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 71] = [
+    pub const ALL: [Self; 72] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -151,6 +152,7 @@ impl KernelId {
         Self::OpeningFoldDense,
         Self::OpeningFoldOneHot,
         Self::IrrPhaseScan,
+        Self::IrrPhaseScanLegacy,
         Self::IrrSuffixScan,
         Self::IrrReduce,
         Self::IrrCycleInit,
@@ -226,6 +228,7 @@ impl KernelId {
             Self::OpeningFoldDense => "jk_opening_fold_dense",
             Self::OpeningFoldOneHot => "jk_opening_fold_onehot",
             Self::IrrPhaseScan => "jk_irr_phase_scan",
+            Self::IrrPhaseScanLegacy => "jk_irr_phase_scan_legacy",
             Self::IrrSuffixScan => "jk_irr_suffix_scan",
             Self::IrrReduce => "jk_irr_reduce",
             Self::IrrCycleInit => "jk_irr_cycle_init",
