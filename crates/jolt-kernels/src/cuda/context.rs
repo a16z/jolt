@@ -41,8 +41,6 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("kernels/combine.cu"),
     "\n",
-    include_str!("kernels/read_raf_address.cu"),
-    "\n",
     include_str!("kernels/address_phase.cu"),
 );
 
@@ -81,7 +79,6 @@ pub struct CudaKernelContext {
     pfx_eval_batch: CudaFunction,
     pfx_default_checkpoints: CudaFunction,
     cmb_combine: CudaFunction,
-    irr_address_message: CudaFunction,
     ap_raf_keys: CudaFunction,
     ap_table_keys: CudaFunction,
     ap_histogram: CudaFunction,
@@ -141,7 +138,6 @@ impl CudaKernelContext {
             pfx_eval_batch: module.load_function("pfx_eval_batch_kernel")?,
             pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
             cmb_combine: module.load_function("cmb_combine_kernel")?,
-            irr_address_message: module.load_function("irr_address_message_kernel")?,
             ap_raf_keys: module.load_function("ap_raf_keys_kernel")?,
             ap_table_keys: module.load_function("ap_table_keys_kernel")?,
             ap_histogram: module.load_function("ap_histogram_kernel")?,
@@ -305,10 +301,6 @@ impl CudaKernelContext {
 
     pub(super) const fn cmb_combine(&self) -> &CudaFunction {
         &self.cmb_combine
-    }
-
-    pub(super) const fn irr_address_message(&self) -> &CudaFunction {
-        &self.irr_address_message
     }
 
     pub(super) const fn ap_raf_keys(&self) -> &CudaFunction {

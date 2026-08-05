@@ -191,7 +191,7 @@ pub struct InstructionReadRafKernel<F: Field> {
     pub(crate) raf_upper_all_ones: RafDecomposition<F>,
     /// Completed phases' bound-challenge eq tables (`v[p][x] =
     /// eq(phase-p challenges, x)`, MSB-first).
-    v_tables: Vec<Vec<F>>,
+    pub(crate) v_tables: Vec<Vec<F>>,
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
     cycle_tables: Option<CycleTables<F>>,
@@ -640,7 +640,7 @@ impl<F: Field> InstructionReadRafKernel<F> {
     /// checkpoints collapse each table's `Val` MLE to a constant, the RAF
     /// checkpoints to the γ-weighted operand/identity constants, and the
     /// per-phase eq tables materialize the virtual `ra` selectors.
-    fn init_cycle_rounds(&mut self) {
+    pub(crate) fn init_cycle_rounds(&mut self) {
         let gamma_sqr = self.gamma * self.gamma;
         let empty_bits = LookupBits::new(0, 0);
         let table_values: Vec<F> = LookupTableKind::<RISCV_XLEN>::iter()
