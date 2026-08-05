@@ -58,7 +58,10 @@ pub use runtime::{
     ComputePass, KernelId, MetalContext, PendingPass, MAX_EVAL_POINTS, THREADGROUP_SIZE,
 };
 #[cfg(feature = "bench-utils")]
-pub use slots::{InstructionInputRound0Fixture, SpartanOuterClaimsFixture};
+pub use slots::{
+    registers_rw_bench as st4_registers_rw_bench, InstructionInputRound0Fixture,
+    SpartanOuterClaimsFixture,
+};
 pub use slots::{
     MetalBooleanityCycle, MetalBytecodeReadRafCycle, MetalHammingWeightClaimReduction,
     MetalIncClaimReduction, MetalInstructionClaimReduction, MetalInstructionInput,

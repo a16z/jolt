@@ -20,6 +20,86 @@ struct JkRegRwEntryF {
     uchar pad[7];
 };
 
+struct JkRegRwBuildParams {
+    uint rows;
+};
+
+kernel void jk_reg_rw_build(
+    device const uchar* rs1_index [[buffer(0)]],
+    device const uchar* rs2_index [[buffer(1)]],
+    device const uchar* rd_index [[buffer(2)]],
+    device const ulong* rs1_value [[buffer(3)]],
+    device const ulong* rs2_value [[buffer(4)]],
+    device const ulong* rd_pre_value [[buffer(5)]],
+    device const ulong* rd_post_value [[buffer(6)]],
+    device const uint* row_offsets [[buffer(7)]],
+    device JkRegRwEntryIdx* entries [[buffer(8)]],
+    constant JkRegRwBuildParams& p [[buffer(9)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= p.rows) return;
+    JkRegRwEntryIdx row[3];
+    uint len = 0u;
+    uchar rs1 = rs1_index[gid];
+    uchar rs2 = rs2_index[gid];
+    uchar rd = rd_index[gid];
+    if (rs1 != 0xff) {
+        JkRegRwEntryIdx entry = {};
+        entry.val = jk_fr_mont_from_u64(rs1_value[gid]);
+        entry.prev_val = rs1_value[gid];
+        entry.next_val = rs1_value[gid];
+        entry.ra = 1u;
+        entry.col = rs1;
+        row[len++] = entry;
+    }
+    if (rs2 != 0xff) {
+        int found = -1;
+        for (uint i = 0u; i < len; ++i) {
+            if (row[i].col == rs2) found = int(i);
+        }
+        if (found >= 0) {
+            row[found].ra = 3u;
+        } else {
+            JkRegRwEntryIdx entry = {};
+            entry.val = jk_fr_mont_from_u64(rs2_value[gid]);
+            entry.prev_val = rs2_value[gid];
+            entry.next_val = rs2_value[gid];
+            entry.ra = 2u;
+            entry.col = rs2;
+            row[len++] = entry;
+        }
+    }
+    if (rd != 0xff) {
+        int found = -1;
+        for (uint i = 0u; i < len; ++i) {
+            if (row[i].col == rd) found = int(i);
+        }
+        if (found >= 0) {
+            row[found].wa = 1u;
+            row[found].next_val = rd_post_value[gid];
+        } else {
+            JkRegRwEntryIdx entry = {};
+            entry.val = jk_fr_mont_from_u64(rd_pre_value[gid]);
+            entry.prev_val = rd_pre_value[gid];
+            entry.next_val = rd_post_value[gid];
+            entry.wa = 1u;
+            entry.col = rd;
+            row[len++] = entry;
+        }
+    }
+    for (uint i = 1u; i < len; ++i) {
+        JkRegRwEntryIdx entry = row[i];
+        uint j = i;
+        while (j > 0u && row[j - 1u].col > entry.col) {
+            row[j] = row[j - 1u];
+            --j;
+        }
+        row[j] = entry;
+    }
+    uint dst = row_offsets[gid];
+    for (uint i = 0u; i < len; ++i) entries[dst + i] = row[i];
+}
+
 inline void jk_reg_rw_accumulate(
     Fr256 ra0, Fr256 ra1, Fr256 wa0, Fr256 wa1,
     Fr256 val0, Fr256 val1, Fr256 inc0, Fr256 inc1,

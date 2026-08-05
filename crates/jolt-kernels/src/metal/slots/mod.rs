@@ -62,6 +62,8 @@ pub use ra_lazy::{
 pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 pub use ram_raf_evaluation::MetalRamRafEvaluation;
 pub use ram_read_write::MetalRamReadWriteChecking;
+#[cfg(feature = "bench-utils")]
+pub use registers_read_write::bench as registers_rw_bench;
 pub use registers_read_write::MetalRegistersReadWriteChecking;
 #[cfg(feature = "bench-utils")]
 pub use spartan_outer::bench::SpartanOuterClaimsFixture;

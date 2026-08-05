@@ -20,7 +20,7 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+    MTLBarrierScope, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
     MTLComputeCommandEncoder, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice,
     MTLLibrary, MTLSize,
 };
@@ -106,6 +106,7 @@ pub enum KernelId {
     IcrRound,
     RamRwMessage,
     RamRwBind,
+    RegRwBuild,
     RegRwMessageIdx,
     RegRwMessageF,
     RegRwBindIdx,
@@ -122,7 +123,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 71] = [
+    pub const ALL: [Self; 72] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -181,6 +182,7 @@ impl KernelId {
         Self::IcrRound,
         Self::RamRwMessage,
         Self::RamRwBind,
+        Self::RegRwBuild,
         Self::RegRwMessageIdx,
         Self::RegRwMessageF,
         Self::RegRwBindIdx,
@@ -256,6 +258,7 @@ impl KernelId {
             Self::IcrRound => "jk_icr_round",
             Self::RamRwMessage => "jk_ram_rw_message",
             Self::RamRwBind => "jk_ram_rw_bind",
+            Self::RegRwBuild => "jk_reg_rw_build",
             Self::RegRwMessageIdx => "jk_reg_rw_message_idx",
             Self::RegRwMessageF => "jk_reg_rw_message_f",
             Self::RegRwBindIdx => "jk_reg_rw_bind_idx",
@@ -483,6 +486,8 @@ impl<'b> ComputePass<'_, 'b> {
     ) {
         assert!(width.is_power_of_two());
         assert!(width <= self.ctx.pipelines[kernel.index()].maxTotalThreadsPerThreadgroup());
+        #[cfg(any(test, feature = "bench-utils"))]
+        super::testing::note_device_dispatch();
         if let Some(trace) = &mut self.trace {
             trace.dispatches.push((kernel, threads));
         }
@@ -517,6 +522,12 @@ impl<'b> ComputePass<'_, 'b> {
         };
         self.encoder
             .dispatchThreadgroups_threadsPerThreadgroup(groups, per_group);
+    }
+
+    /// Make buffer writes visible before a dependent dispatch in this pass.
+    pub fn buffer_barrier(&mut self) {
+        self.encoder
+            .memoryBarrierWithScope(MTLBarrierScope::Buffers);
     }
 
     /// Commit and block until the GPU finishes; surfaces device-side errors.
