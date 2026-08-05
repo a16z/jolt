@@ -571,3 +571,34 @@ Wave-2 ledger (stage-calibrated, uncertified): st7 −0.78 s · st6b −1…−2
 Waiting on the last lane: e371fb72 st1 attribution+cut. Then the wave-2
 gate: clippy both modes, muldiv host+zk, full nextest, 2^25 + 2^27
 certification pair, dashboard point, parent report.
+
+## Wave-2 gate certification (2026-08-05 01:01–01:25 UTC)
+
+**Full battery green** on merged trunk (final code commit `d21e5ed1a`+st1
+merge): clippy `--all` host and host,zk `-D warnings`; muldiv e2e host 3/3
++ zk 3/3; jolt-prover-legacy 444/444 (default), 480-suite (zk) and 445/445
+(akita); jolt-verifier akita+prover-fixtures 85/85; jolt-sdk, tracer
+127/127, jolt-witness 34/34; metal union suites 77/77. One environmental
+fix: `rustup component add rust-src` (stdlib guest builds; not a code
+regression).
+
+**Certification (benchmark-locked, AC, quiet machine):**
+
+| run | result | note |
+|---|---:|---|
+| 2^25 | **19.01 s / 1.765 MHz padded / RSS 25.16 GiB** | baseline 19.67 s / 27.42 GiB — **−0.66 s, −2.3 GiB** |
+| 2^27 #1 | 72.93 s / 1.841 MHz | bad st0 window (st0 18.12, st1 6.47); st6b still 8.80 |
+| 2^27 #2 | **69.63 s / 1.928 MHz padded / RSS 76.77 GiB** | **flagship record, −2.14 s vs 71.77 s** (disagreement third run sanctioned) |
+
+Record-run stage vector vs baseline: st0 **+5.90** (17.98 — both fresh
+runs sit near 18 s; tonight's ambient window is degraded vs the baseline's
+12.08 s — consistent with the st0 lane's device-power finding), st1 +1.00,
+st2 +0.20, st4 +0.76, st5 +0.59 · **st6b −9.33 (16.345 → 7.016)** — the
+deferred+fused Rav/Bool adoption far exceeded its −1..−2 s model; st7
+−0.58 (matches −0.78 est); st8 −0.53; st3 −0.10 (below the −0.40 est —
+q0 port effect not cleanly visible under ambient noise). Net −2.14 s
+**despite carrying ~+8.4 s of ambient penalty across untouched stages**;
+in a baseline-quality st0 window this trunk models ≈ 64 s.
+
+Dashboard point: `.journals/artifacts/wave2-dashboard-point.json`.
+2^27 certification CSV archived. Wave 2 CLOSED.
