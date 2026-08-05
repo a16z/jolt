@@ -130,19 +130,15 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
         let _ = builder.arg(&raf_count);
         let _ = builder.arg(&half_count);
         let _ = builder.arg(partials.limbs_mut());
-        // SAFETY: for each of `lanes` lanes, thread `b < half` reads
-        // `evals[b]`/`evals[b + half]` of tables addressed by the three pointer
-        // arrays — every prefix table and every suffix column holds `2 * half`
-        // elements at this round, and the pointer arrays hold exactly the handle
-        // counts uploaded above, all of which outlive the launch in this frame.
-        // Term indices come from `term_layout`: `prefix_ids` are `Prefixes`
-        // discriminants (or `NO_PREFIX`, never dereferenced) and
-        // `suffix_bases[t] + suffix_slots[term]` is within the flattened suffix
-        // handle list by construction. Writes: thread 0 writes
-        // `partials[lane * gridDim.x + blockIdx.x]`, one slot per (lane, block) of
-        // `lanes * blocks`. Shared memory is `BLOCK * LIMBS` u64s matching
-        // `shared_mem_bytes`, with `__syncthreads()` between tree levels and after
-        // each lane's write.
+        // SAFETY: thread `b < half` reads `evals[b]`/`evals[b + half]` of tables
+        // holding `2 * half` elements this round, reached through pointer arrays
+        // sized to the handles uploaded above, which outlive the launch. Term
+        // indices come from `term_layout`: `prefix_ids` are `Prefixes`
+        // discriminants (`NO_PREFIX` is never dereferenced) and
+        // `suffix_bases[t] + suffix_slots[term]` indexes the flattened handle
+        // list. Thread 0 writes `partials[lane * gridDim.x + blockIdx.x]` of
+        // `lanes * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
+        // `shared_mem_bytes`.
         let _ = unsafe {
             builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),

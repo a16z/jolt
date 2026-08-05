@@ -91,12 +91,9 @@ fn segment_rows(
     let _ = builder.arg(keys);
     let _ = builder.arg(&mut counts);
     let _ = builder.arg(&count);
-    // SAFETY: thread `j < rows` reads only `keys[j]` of the `rows`-element key
-    // buffer and, unless the key is `SKIP`, atomically increments
-    // `counts[keys[j]]`. Every non-`SKIP` key is `< buckets` by construction in
-    // the two key kernels, and `counts` holds `buckets` u32s zeroed by
-    // `alloc_u32`. Concurrent increments are `atomicAdd`, so the accumulation is
-    // race-free; threads with `j >= rows` return first.
+    // SAFETY: thread `j < rows` reads `keys[j]` of `rows` and increments
+    // `counts[keys[j]]`; live keys are `< buckets` and `counts` holds `buckets`
+    // u32s. Concurrent increments are `atomicAdd`.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
     context.stream().synchronize()?;
 
@@ -113,14 +110,11 @@ fn segment_rows(
     let _ = builder.arg(&mut cursors);
     let _ = builder.arg(&mut order);
     let _ = builder.arg(&count);
-    // SAFETY: thread `j < rows` reads `keys[j]`, and for a non-`SKIP` key claims
-    // a unique slot via `atomicAdd(&cursors[key], 1)` before writing
-    // `order[offsets[key] + slot]`. `offsets` is the exclusive scan of the
-    // histogram just computed from the same keys, so per key the claimed slots
-    // run over `[0, counts[key])` and `offsets[key] + slot` stays inside that
-    // key's segment; segments partition `[0, total)` and `order` holds
-    // `max(total, 1)` u32s. Distinct keys own disjoint segments and the atomic
-    // makes slots unique within a key, so every write goes to a distinct index.
+    // SAFETY: thread `j < rows` reads `keys[j]` of `rows` and writes
+    // `order[offsets[key] + slot]`. Since `offsets` is the exclusive scan of
+    // this key set's histogram and `slot` comes from `atomicAdd(&cursors[key])`,
+    // slots stay in `[0, counts[key])`, so each write lands in that key's
+    // segment of the partition of `[0, total)` and no two threads share a slot.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
     context.stream().synchronize()?;
 
@@ -154,9 +148,8 @@ pub fn init_raf_buckets(
     let _ = builder.arg(&suffix_len_arg);
     let _ = builder.arg(&mut keys);
     let _ = builder.arg(&count);
-    // SAFETY: thread `j < rows.cycles` reads `lookup_index[2j]`/`[2j+1]` of a
-    // `2 * cycles` buffer and writes only `keys[j]` of `cycles`. The written
-    // value is masked to `CHUNK_SIZE - 1`, so it is a valid bucket index.
+    // SAFETY: thread `j < cycles` reads `lookup_index[2j]`/`[2j+1]` of
+    // `2 * cycles` and writes only `keys[j]` of `cycles`.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
     context.stream().synchronize()?;
 
@@ -181,15 +174,12 @@ pub fn init_raf_buckets(
     let _ = builder.arg(&upper_suffix_bits);
     let _ = builder.arg(&canonical);
     let _ = builder.arg(buckets.limbs_mut());
-    // SAFETY: block `bucket < CHUNK_SIZE` reads its own segment
-    // `order[offsets[bucket] .. + counts[bucket]]` — the partition built by
-    // `segment_rows` from keys `< CHUNK_SIZE` — and each element is a row index
-    // `< cycles`, so the `lookup_index` (`2 * cycles`), `raf_flag` (`cycles`) and
-    // `u_evals` (`cycles`) reads are in range. Writes: thread 0 writes
-    // `buckets[lane * CHUNK_SIZE + bucket]` for `lane < RAF_LANES`, one slot per
-    // (lane, bucket) of `RAF_LANES * CHUNK_SIZE`. Shared memory is
-    // `BLOCK * LIMBS` u64s matching `shared_mem_bytes`, with `__syncthreads()`
-    // between tree levels and after each lane's write.
+    // SAFETY: block `bucket < CHUNK_SIZE` reads `order[offsets[bucket] ..
+    // + counts[bucket]]`, whose elements are row indices `< cycles`, bounding the
+    // `lookup_index` (`2 * cycles`), `raf_flag` and `u_evals` (`cycles`) reads.
+    // Thread 0 writes `buckets[lane * CHUNK_SIZE + bucket]` for
+    // `lane < RAF_LANES`, one slot per (lane, bucket) of `RAF_LANES * CHUNK_SIZE`.
+    // Shared memory is `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`.
     let _ = unsafe {
         builder.launch(LaunchConfig {
             grid_dim: (chunk_count, 1, 1),
@@ -207,9 +197,8 @@ pub fn init_raf_buckets(
     let _ = builder.arg(half_scale.limbs());
     let _ = builder.arg(full_scale.limbs());
     // SAFETY: thread `i < CHUNK_SIZE` read-modify-writes exactly `buckets[i]` and
-    // `buckets[CHUNK_SIZE + i]` — the two shift lanes, one thread per element so
-    // uncontended — and reads the two single-element scale buffers. `buckets`
-    // holds `RAF_LANES * CHUNK_SIZE` elements.
+    // `buckets[CHUNK_SIZE + i]` of `RAF_LANES * CHUNK_SIZE` — one thread per
+    // element, so uncontended — and reads the two single-element scale buffers.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(chunk_count)) }?;
     context.stream().synchronize()?;
 
@@ -282,12 +271,10 @@ pub fn init_suffix_buckets(
     let _ = builder.arg(&suffix_len_arg);
     let _ = builder.arg(&mut keys);
     let _ = builder.arg(&count);
-    // SAFETY: thread `j < rows.cycles` reads `lookup_index[2j]`/`[2j+1]` of a
-    // `2 * cycles` buffer, `table_index[j]` of `cycles`, and — only after
-    // bounds-checking it against `table_count` — `table_slots[table]` of
-    // `table_count`. It writes only `keys[j]` of `cycles`, either `SKIP` or
-    // `slot * CHUNK_SIZE + chunk` with `slot < present.len()` and
-    // `chunk < CHUNK_SIZE`, so a live key is `< present.len() * CHUNK_SIZE`.
+    // SAFETY: thread `j < cycles` reads `lookup_index[2j]`/`[2j+1]` of
+    // `2 * cycles`, `table_index[j]` of `cycles`, and `table_slots[table]` of
+    // `table_count` only after bounds-checking `table` against it. Writes only
+    // `keys[j]` of `cycles`.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
     context.stream().synchronize()?;
 
@@ -311,20 +298,17 @@ pub fn init_suffix_buckets(
     let _ = builder.arg(&device_suffix_counts);
     let _ = builder.arg(&suffix_len_arg);
     let _ = builder.arg(buckets.limbs_mut());
-    // SAFETY: block `blockIdx.x < present.len() * CHUNK_SIZE` derives
-    // `slot = blockIdx.x / CHUNK_SIZE < present.len()`, so its reads of
-    // `suffix_offsets`/`suffix_counts` (both `present.len()` u32s) are in range,
-    // and `suffix_ids[family_base + s]` for `s < suffix_counts[slot]` stays
-    // inside the flattened `suffix_ids` by construction. It reads its own
-    // segment of `order` (the partition from `segment_rows` over the same
-    // bucket count), whose elements are row indices `< cycles`, bounding the
-    // `lookup_index` and `u_evals` reads. Writes: thread 0 writes
-    // `buckets[(family_base + s) * CHUNK_SIZE + bucket]`, one slot per
-    // (family, bucket) of `suffix_ids.len() * CHUNK_SIZE`, and distinct blocks
-    // have distinct `(slot, bucket)` hence distinct targets. `acc` is indexed by
+    // SAFETY: block `blockIdx.x < present.len() * CHUNK_SIZE` gives
+    // `slot = blockIdx.x / CHUNK_SIZE < present.len()`, bounding its
+    // `suffix_offsets`/`suffix_counts` reads, and `suffix_ids[family_base + s]`
+    // for `s < suffix_counts[slot]` stays inside `suffix_ids`. Its segment of
+    // `order` holds row indices `< cycles`, bounding the `lookup_index` and
+    // `u_evals` reads. Thread 0 writes
+    // `buckets[(family_base + s) * CHUNK_SIZE + bucket]` of
+    // `suffix_ids.len() * CHUNK_SIZE`; distinct blocks have distinct
+    // `(slot, bucket)`, so targets are distinct. `acc` is indexed by
     // `s < families <= MAX_SUFFIXES`, its declared extent. Shared memory is
-    // `BLOCK * LIMBS` u64s matching `shared_mem_bytes`, with `__syncthreads()`
-    // between tree levels and after each family's write.
+    // `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`.
     let _ = unsafe {
         builder.launch(LaunchConfig {
             grid_dim: (blocks, 1, 1),
@@ -382,12 +366,11 @@ pub fn condense_u_evals(
     let _ = builder.arg(v_prev.limbs());
     let _ = builder.arg(&suffix_len_arg);
     let _ = builder.arg(&count);
-    // SAFETY: thread `j < rows.cycles` reads `lookup_index[2j]`/`[2j+1]` of a
-    // `2 * cycles` buffer and `v_prev[chunk]` with `chunk` masked to
-    // `CHUNK_SIZE - 1` (and `v_prev` length-checked as `CHUNK_SIZE` above), then
-    // read-modify-writes exactly `u_evals[j]` of `cycles`. The update is
-    // in-place but one thread per element, so it is uncontended, and no thread
-    // reads another's target.
+    // SAFETY: thread `j < cycles` reads `lookup_index[2j]`/`[2j+1]` of
+    // `2 * cycles` and `v_prev[chunk]` with `chunk` masked to `CHUNK_SIZE - 1`
+    // and `v_prev` length-checked above, then read-modify-writes exactly
+    // `u_evals[j]` of `cycles`. In-place but one thread per element, so no
+    // thread reads another's target.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
     context.stream().synchronize()?;
     Ok(())
