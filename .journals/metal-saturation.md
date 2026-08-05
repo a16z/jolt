@@ -330,3 +330,57 @@ bounds and `sum degree/|F|` are unchanged, and downstream opening coordinates
 must be permuted explicitly. Retention would require an FS-absorbed protocol
 axis, fail-closed verifier validation, e2e accept, round/config/opening tamper
 rejection, and the full integrated suite.
+
+## Wave 2 (orchestrator handover 2026-08-04 23:45 UTC, task dade2763)
+
+Claude orchestrator adopted the five wave-2 lanes mid-flight. Prior
+orchestrator's pro-model jobs `ec0b50d07d63` (typed Dory bridge) and
+`20b0ff781369` (stage-4 shape audit) died with it; results unrecovered.
+
+Lane state at adoption + first outcomes:
+
+- **c177d0a5 harness (codex): SHIPPED.** jolt-eval single-kernel harness
+  integrated from upstream `fa303e27f` (`966fc3f4d`): runtime
+  `callgrind:<bench>:instructions` objectives, Metal Criterion template with
+  `gpu_lock()` + synchronous single command buffer, `sync_targets.sh`.
+  Verified: fmt/check/clippy/nextest 4-pass; `metal_fr_bind` 2^20 ~255 µs.
+  Valgrind unavailable on this host — callgrind parse paths compile-verified
+  only. Merged to trunk as `7dc76f732`.
+- **e371fb72 hostgaps (codex): SHIPPED st7.** Stage-7 Hamming-weight
+  pushforward rebuilt on stage-6a's split-eq deferred-bucket algorithm
+  (extracted to `optimized::one_hot_pushforward`), four outer blocks per
+  Rayon worker (`929927102`). Isolated 2^22: 79.82 -> 46.80 ms, **1.71x**,
+  non-overlapping CIs; stage-calibrated estimate **-0.78 s @2^27** (st7
+  1.887 -> ~1.106 s), ~1.09% whole-proof. Merged as `3c2ee6a48`
+  (Cargo.lock union regenerated via `cargo metadata`; jolt-eval+kernels
+  targeted tests 20/20 on the merged trunk). E2e effect certifies at the
+  wave gate. Lane resumed onto st3 `InstructionInput::prove_batch` round-0
+  (2.140 s host-serial): attribute -> cut -> isolated measure; retention bar
+  >= 0.3 s stage gain.
+- **1b0dc99d radix4 (claude): Phase-1 map complete** (`5be1f5036`,
+  `metal-w2-radix4-map.md`). Verdict: **no unconditional radix-4 GO in the
+  live prover.** Sole conditional GO: stage-4 RegistersRW **address-first**
+  quaternary address phase `[P4,P4,P4,S | S x27]` — deg-6 `q(Z)`,
+  D={-1,0,1,2}, PCS-clean factor (final-point provenance re-verified: st6
+  IncCR cycle + st7 HWCR address challenges only), run-length folded-Val
+  O(T) state algorithm (map §3.4) closes the r4-pin blocker. Honest split:
+  the 1.5-2.5 s prize belongs to address-first dense-cycle collapse
+  (replaces the 5.86 s / 30.5%-GPU / 3.73 s-idle sparse prefix); radix-4's
+  own increment ~0.1-0.3 s. st1/st2/st3/st5/st6b/st7 all NO-GO with reasons
+  (map §2); st4 cycle-prefix stays killed.
+- **Gate 0 re-dispatched:** pro-model job `3dbb9c10e48a` (~20 min) carries
+  the full corrected construction inline (packed round, address-first
+  permutation + x128/(4,4,4,2) activation-join algebra, run-length Val
+  reconstruction vs partially-bound MLE, consumer/tamper surface). No
+  production code before its verdict.
+- **Gate 1 dispatched in parallel (measurement only): lane bdcc152e**
+  (codex sol-xhigh, worktree `metal-w2-r4gate1` off merged trunk) — jolt-eval
+  `RegistersAddressPhase` objective, binary vs radix-4 arms with dense
+  brute-force parity at 2^12, kill line: phase <= 0.15 s @2^24 AND radix4 <=
+  binary.
+- **c42e074e st6b, d6c80e49 st0 (claude): still running** — resumed by main
+  session pre-handover; monitoring.
+
+Fleet: e371fb72 (st3) · bdcc152e (r4 Gate-1) · c42e074e (st6b) ·
+d6c80e49 (st0) · oracle 3dbb9c10e48a. Estimated shipped-but-uncertified
+delta so far: -0.78 s.
