@@ -4,6 +4,7 @@ use jolt_openings::CommitmentScheme;
 use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
+mod address_phase;
 mod combine;
 mod context;
 mod dense_product;
@@ -24,6 +25,7 @@ mod suffixes;
 mod testing;
 pub mod xfer_stats;
 
+pub use address_phase::{init_raf_buckets, init_suffix_buckets, DeviceRows};
 pub use context::{shared_context, CudaKernelContext};
 pub use device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
 pub use error::CudaError;

@@ -360,6 +360,18 @@ impl<F: Field> InstructionReadRafKernel<F> {
         self.dimensions.instruction_address_bits()
     }
 
+    pub(crate) fn rows(&self) -> &[InstructionReadRafWitness] {
+        &self.rows
+    }
+
+    pub(crate) fn u_evals(&self) -> &[F] {
+        &self.u_evals
+    }
+
+    pub(crate) fn v_table(&self, phase: usize) -> &[F] {
+        &self.v_tables[phase]
+    }
+
     pub(crate) fn phases(&self) -> usize {
         self.address_bits() / CHUNK_LEN
     }

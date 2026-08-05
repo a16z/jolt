@@ -46,6 +46,7 @@ jolt-program.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
 proptest.workspace = true
+rayon.workspace = true
 strum.workspace = true
 
 [[example]]
@@ -54,4 +55,8 @@ required-features = ["cuda"]
 
 [[example]]
 name = "cuda_lt_bench"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda_address_phase_bench"
 required-features = ["cuda"]

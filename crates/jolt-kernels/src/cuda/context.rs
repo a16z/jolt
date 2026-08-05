@@ -42,6 +42,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/combine.cu"),
     "\n",
     include_str!("kernels/read_raf_address.cu"),
+    "\n",
+    include_str!("kernels/address_phase.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -80,6 +82,14 @@ pub struct CudaKernelContext {
     pfx_default_checkpoints: CudaFunction,
     cmb_combine: CudaFunction,
     irr_address_message: CudaFunction,
+    ap_raf_keys: CudaFunction,
+    ap_table_keys: CudaFunction,
+    ap_histogram: CudaFunction,
+    ap_scatter: CudaFunction,
+    ap_raf_reduce: CudaFunction,
+    ap_suffix_reduce: CudaFunction,
+    ap_scale_shift: CudaFunction,
+    ap_condense: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -128,6 +138,14 @@ impl CudaKernelContext {
             pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
             cmb_combine: module.load_function("cmb_combine_kernel")?,
             irr_address_message: module.load_function("irr_address_message_kernel")?,
+            ap_raf_keys: module.load_function("ap_raf_keys_kernel")?,
+            ap_table_keys: module.load_function("ap_table_keys_kernel")?,
+            ap_histogram: module.load_function("ap_histogram_kernel")?,
+            ap_scatter: module.load_function("ap_scatter_kernel")?,
+            ap_raf_reduce: module.load_function("ap_raf_reduce_kernel")?,
+            ap_suffix_reduce: module.load_function("ap_suffix_reduce_kernel")?,
+            ap_scale_shift: module.load_function("ap_scale_shift_kernel")?,
+            ap_condense: module.load_function("ap_condense_kernel")?,
         })
     }
 
@@ -283,6 +301,38 @@ impl CudaKernelContext {
 
     pub(super) const fn irr_address_message(&self) -> &CudaFunction {
         &self.irr_address_message
+    }
+
+    pub(super) const fn ap_raf_keys(&self) -> &CudaFunction {
+        &self.ap_raf_keys
+    }
+
+    pub(super) const fn ap_table_keys(&self) -> &CudaFunction {
+        &self.ap_table_keys
+    }
+
+    pub(super) const fn ap_histogram(&self) -> &CudaFunction {
+        &self.ap_histogram
+    }
+
+    pub(super) const fn ap_scatter(&self) -> &CudaFunction {
+        &self.ap_scatter
+    }
+
+    pub(super) const fn ap_raf_reduce(&self) -> &CudaFunction {
+        &self.ap_raf_reduce
+    }
+
+    pub(super) const fn ap_suffix_reduce(&self) -> &CudaFunction {
+        &self.ap_suffix_reduce
+    }
+
+    pub(super) const fn ap_scale_shift(&self) -> &CudaFunction {
+        &self.ap_scale_shift
+    }
+
+    pub(super) const fn ap_condense(&self) -> &CudaFunction {
+        &self.ap_condense
     }
 
     pub(super) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
