@@ -14,6 +14,15 @@ pub enum VerifierError {
         got: JoltProtocolConfig,
     },
 
+    #[error(
+        "the configured protocol axis `{axis}` is not verifiable yet: {pending} (fail-closed \
+         until the corresponding verifier stage slices land)"
+    )]
+    ProtocolAxisUnimplemented {
+        axis: &'static str,
+        pending: &'static str,
+    },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

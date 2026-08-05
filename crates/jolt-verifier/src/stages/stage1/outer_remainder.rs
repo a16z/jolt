@@ -131,7 +131,12 @@ pub struct OuterRemainder<F: Field> {
 
 impl<F: Field> OuterRemainder<F> {
     pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
-        let variable_count = dimensions.variables().len();
+        // Sized from the selected R1CS composition (jolt-r1cs), not from the
+        // rv64-only symbolic dimensions: under `field-inline` the composed
+        // coefficient table carries the appended FR columns, and the weight
+        // vectors must match it. FR-off the two sources agree (35 columns).
+        let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        debug_assert!(variable_count >= dimensions.variables().len());
         Self {
             symbolic: relations::spartan::OuterRemainder::new(dimensions),
             variable_count,
@@ -386,11 +391,44 @@ mod tests {
         }
     }
 
+    /// Under `field-inline` the composed coefficient table carries 48 columns
+    /// while the rv64 symbolic relation still names 35 openings; the expanded
+    /// relation-form equivalence below is an rv64-only property (the composed
+    /// clear check is a pending field-inline verifier slice, and FR-on
+    /// verification fail-closes at `require_field_inline_slices`). This pins the
+    /// sizing invariant that used to panic: weight vectors follow the composed
+    /// jolt-r1cs column count, never the symbolic rv64 count.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn weight_vectors_follow_composed_column_count() {
+        let log_t = 3usize;
+        let dimensions = SpartanOuterDimensions::rv64(log_t);
+        let tau = (0..log_t + 2).map(|i| Fr::from_u64(2 + i as u64)).collect();
+        let relation = OuterRemainder::<Fr>::new(dimensions, tau, Fr::from_u64(17));
+
+        assert_eq!(
+            relation.variable_count,
+            jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len()
+        );
+
+        let remainder_challenges = (0..1 + log_t)
+            .map(|i| Fr::from_u64(100 + i as u64))
+            .collect::<Vec<_>>();
+        let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        let _ = relation
+            .derive_opening_points(&remainder_challenges, &input_points)
+            .unwrap();
+        // The composed coefficient table builds without the out-of-bounds write
+        // the rv64-sized weight vectors used to hit.
+        assert!(relation.coefficients().is_ok());
+    }
+
     /// The relation's expanded `expected_output` evaluates bit-identically to the
     /// factored `JoltSpartanOuterRemainder::expected_output_claim` on the production
     /// 35-variable rv64 shape. This is the equivalence the clear stage-1 path now
     /// relies on (it switched from the factored matrix form to the expanded relation
     /// form); muldiv non-ZK is the end-to-end gate, this pins it at unit level.
+    #[cfg(not(feature = "field-inline"))]
     #[test]
     fn expected_output_matches_factored_form_on_rv64_shape() {
         let log_t = 3usize;

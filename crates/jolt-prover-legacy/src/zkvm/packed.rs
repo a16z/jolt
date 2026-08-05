@@ -1655,6 +1655,7 @@ impl AkitaPackedProver<'_> {
             protocol: JoltProtocolConfig {
                 zk: ZkConfig::Transparent,
                 commitment: CommitmentConfig::Packed,
+                field_inline: jolt_verifier::config::FieldInlineConfig::disabled(),
             },
             commitments: commitment,
             stages,

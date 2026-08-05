@@ -1,10 +1,12 @@
 //! Verifier-selected protocol configuration.
 //!
-//! Both protocol axes are fixed at compile time — the `zk` feature selects
-//! BlindFold, the `akita` feature selects the packed commitment mode — so one
+//! Every protocol axis is fixed at compile time — the `zk` feature selects
+//! BlindFold, the `akita` feature selects the packed commitment mode, the
+//! `field-inline` feature enables the native field-register extension — so one
 //! compiled verifier runs exactly one protocol. A proof self-describes its
 //! axes and [`validate_proof_config`] rejects a mismatch fail-closed.
 
+pub use jolt_claims::protocols::field_inline::FieldInlineConfig;
 use serde::{Deserialize, Serialize};
 
 use crate::VerifierError;
@@ -13,6 +15,13 @@ use crate::VerifierError;
 compile_error!(
     "the `zk` and `akita` features are mutually exclusive: no zk protocol exists over the \
      packed commitment axis (a lattice-friendly hiding commitment is a future workstream)"
+);
+
+#[cfg(all(feature = "field-inline", feature = "akita"))]
+compile_error!(
+    "the `field-inline` and `akita` features are mutually exclusive: the field-register \
+     commitment (`FieldRdInc`) is specified for the homomorphic RLC opening path only; its \
+     packed-commitment treatment is a future workstream"
 );
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +46,7 @@ pub enum CommitmentConfig {
 pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
     pub commitment: CommitmentConfig,
+    pub field_inline: FieldInlineConfig,
 }
 
 impl JoltProtocolConfig {
@@ -48,6 +58,7 @@ impl JoltProtocolConfig {
                 ZkConfig::Transparent
             },
             commitment: SELECTED_COMMITMENT_CONFIG,
+            field_inline: SELECTED_FIELD_INLINE_CONFIG,
         }
     }
 }
@@ -64,10 +75,17 @@ pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Packe
 #[cfg(not(feature = "akita"))]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Homomorphic;
 
+#[cfg(feature = "field-inline")]
+pub const SELECTED_FIELD_INLINE_CONFIG: FieldInlineConfig = FieldInlineConfig::enabled();
+
+#[cfg(not(feature = "field-inline"))]
+pub const SELECTED_FIELD_INLINE_CONFIG: FieldInlineConfig = FieldInlineConfig::disabled();
+
 /// The one protocol this build verifies.
 pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
     zk: SELECTED_ZK_CONFIG,
     commitment: SELECTED_COMMITMENT_CONFIG,
+    field_inline: SELECTED_FIELD_INLINE_CONFIG,
 };
 
 pub fn validate_proof_config(
@@ -82,4 +100,45 @@ pub fn validate_proof_config(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matching_protocol_config_is_accepted() {
+        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_CONFIG).is_ok());
+    }
+
+    /// A proof declaring the opposite field-inline axis rejects fail-closed, in
+    /// both FR-off builds (proof claims enabled) and FR-on builds (proof claims
+    /// disabled).
+    #[test]
+    fn mismatched_field_inline_axis_is_rejected() {
+        let mut protocol = JOLT_VERIFIER_CONFIG;
+        protocol.field_inline = if JOLT_VERIFIER_CONFIG.field_inline.enabled {
+            FieldInlineConfig::disabled()
+        } else {
+            FieldInlineConfig::enabled()
+        };
+
+        assert!(matches!(
+            validate_proof_config(&JOLT_VERIFIER_CONFIG, protocol),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    /// A proof declaring a different FR register-file size rejects even when the
+    /// enabled bit matches: the whole config participates in the equality gate.
+    #[test]
+    fn mismatched_field_register_log_k_is_rejected() {
+        let mut protocol = JOLT_VERIFIER_CONFIG;
+        protocol.field_inline.field_register_log_k += 1;
+
+        assert!(matches!(
+            validate_proof_config(&JOLT_VERIFIER_CONFIG, protocol),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
 }

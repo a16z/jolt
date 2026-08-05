@@ -621,6 +621,24 @@ impl<
         C: crate::zkvm::proof::ProofCurve<F>,
         PCS: crate::zkvm::proof::ProofCommitmentScheme<F>,
     {
+        // Field-inline cycles have no legacy proving semantics (no circuit flags,
+        // no lookups, no FR memory checking in this prover), so a "proof" of an
+        // FR-active trace would leave every FR effect — including StoreToX
+        // x-register writes — unconstrained. Fail closed; the modular jolt-prover
+        // owns field-inline proving.
+        #[cfg(feature = "field-inline")]
+        if self
+            .trace
+            .iter()
+            .any(|cycle| cycle.field_inline_trace().is_some())
+        {
+            return Err(jolt_verifier::VerifierError::ProtocolAxisUnimplemented {
+                axis: "field-inline",
+                pending: "the legacy prover has no field-inline semantics; use the modular \
+                          jolt-prover once its field-inline slices land",
+            });
+        }
+
         let (proof, debug_info) = self.prove_parts();
         let proof = crate::zkvm::proof::proof_parts_into_verifier(proof)?;
         Ok((proof, debug_info))
