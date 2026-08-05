@@ -107,6 +107,8 @@ impl BoolBenchConfig {
 pub struct PassTiming {
     /// Per round: (`begin_round` seconds, `collect_round` seconds).
     pub rounds: Vec<(f64, f64)>,
+    /// Whether `begin_round` launched a device command buffer for each round.
+    pub launched: Vec<bool>,
     /// The first round served from fresh dense state: 3 for the legacy arm,
     /// 4 for the deferred arm.
     pub adopt_round: usize,
@@ -134,6 +136,42 @@ impl PassTiming {
     /// Sum of every round's `begin_round` wall.
     pub fn begin_serial_s(&self) -> f64 {
         self.rounds.iter().map(|(begin, _)| begin).sum()
+    }
+
+    pub fn launched_wait_s(&self) -> f64 {
+        self.rounds
+            .iter()
+            .zip(&self.launched)
+            .filter(|(_, launched)| **launched)
+            .map(|((_, collect), _)| collect)
+            .sum()
+    }
+
+    pub fn lazy_span_s(&self) -> f64 {
+        self.rounds[..self.adopt_round]
+            .iter()
+            .map(|(begin, collect)| begin + collect)
+            .sum()
+    }
+
+    pub fn dense_device_span_s(&self) -> f64 {
+        self.rounds
+            .iter()
+            .zip(&self.launched)
+            .skip(self.adopt_round + 1)
+            .filter(|(_, launched)| **launched)
+            .map(|((begin, collect), _)| begin + collect)
+            .sum()
+    }
+
+    pub fn host_tail_span_s(&self) -> f64 {
+        self.rounds
+            .iter()
+            .zip(&self.launched)
+            .skip(self.adopt_round + 1)
+            .filter(|(_, launched)| !**launched)
+            .map(|((begin, collect), _)| begin + collect)
+            .sum()
     }
 }
 
@@ -292,18 +330,20 @@ fn drive_rounds(
     let started = Instant::now();
     let mut claim = Fr::from_u64(0xBEEF);
     let mut rounds = Vec::with_capacity(log_t);
+    let mut launched = Vec::with_capacity(log_t);
     let mut polys = Vec::with_capacity(log_t);
     for round in 0..log_t {
         let bind = round.checked_sub(1).map(challenge);
         let begin_at = Instant::now();
         #[expect(clippy::unwrap_used, reason = "bench harness: fail loudly")]
-        let _launched = kernel.begin_round(bind, round, claim).unwrap();
+        let device_launched = kernel.begin_round(bind, round, claim).unwrap();
         let begin_s = begin_at.elapsed().as_secs_f64();
         let collect_at = Instant::now();
         #[expect(clippy::unwrap_used, reason = "bench harness: fail loudly")]
         let poly = kernel.collect_round(bind, round, claim).unwrap();
         let collect_s = collect_at.elapsed().as_secs_f64();
         rounds.push((begin_s, collect_s));
+        launched.push(device_launched);
         claim = poly.evaluate(challenge(round));
         polys.push(poly.coefficients().to_vec());
     }
@@ -312,6 +352,7 @@ fn drive_rounds(
     (
         PassTiming {
             rounds,
+            launched,
             adopt_round,
             adopt_alloc_bytes: adopt_alloc,
             total_s: started.elapsed().as_secs_f64(),
