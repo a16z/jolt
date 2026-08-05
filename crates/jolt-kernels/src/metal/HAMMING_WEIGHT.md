@@ -1,6 +1,6 @@
 # Hamming-weight claim reduction on Metal
 
-Stage 7 will reuse the production Booleanity address pushforward to build the
+Stage 7 reuses the production Booleanity address pushforward to build the
 Hamming-weight `G` tables. The shader and selector ABI do not change. The Metal
 backend retains the stage-6b `BooleanityRows` allocation through stage 7, evaluates
 the pushforward at Hamming's newly sampled cycle point, reads 29 small tables once,
@@ -16,9 +16,9 @@ G_i[k] = sum_j eq(r_cycle, j) [hot_i(row_j) = k].
 
 This is the same operation and production selector order as Booleanity address: 16
 instruction bytes, two bytecode bytes, two RAM bytes, eight fused-increment bytes,
-and the fused-increment carry. The point is not reusable: `r_cycle` is the 26-round
-Booleanity output point and is known only after stage 6b finishes. The resident rows
-and the shader are reusable.
+and the fused-increment carry. The point is not reusable: `r_cycle` has `log_t`
+coordinates (26 at the target `2^26` trace) and is known only after stage 6b
+finishes. The resident rows and the shader are reusable.
 
 The Akita relation represents the implicit default lane separately. After readback,
 the backend sets `G_i[0] = 0` for all 29 tables, matching the optimized kernel. It
@@ -28,22 +28,29 @@ remain unchanged.
 
 ## Residency and failure behavior
 
-Stage 5 prepares the row plane when any enabled downstream consumer needs it. When
-the Hamming cutoff admits the trace, stage 6b leaves an `Arc` clone of that
-`BooleanityRows` allocation for stage 7 even if the Booleanity cycle itself selects
-CPU. The clone must have the same allocation identity, row count, and Metal device
-registry. Hamming takes that clone, so the 2.5-GiB row plane is released after its
-invocation completes.
+Stage 5 prepares the row plane when any enabled downstream consumer needs it. An
+admitted Hamming consumer can be the reason for that producer-side upload; raw PIOP
+timing includes the upload. When the Hamming cutoff admits the trace, stage 6b leaves
+an `Arc` clone of the `BooleanityRows` allocation for stage 7 even if the Booleanity
+cycle itself selects CPU. The clone must have the same allocation identity, row
+count, and Metal device registry. Hamming takes that clone, so the 2.5-GiB row plane
+is released after its invocation completes.
 
 Missing rows, an ineligible trace, unsupported geometry, or a capacity rejection
-before command submission selects the optimized CPU kernel. No row upload is
-allowed solely for Hamming. A failure after command submission returns a Metal
+before command submission selects the optimized CPU kernel. The Hamming adapter
+itself performs no row upload; its equal-input local benchmark starts with the same
+pre-existing rows on both arms. A failure after command submission returns a Metal
 compute error; it cannot retry after consuming device state.
 
-The first integration phase may change the Hamming host adapter, row lifetime,
-configuration, evaluator, and tests. It may not change the accepted
-`booleanity_address.metal` shader. Shader tuning, if measurement requires it, starts
-a new logged phase.
+The stage-5 producer, stage-6b retention path, and stage-7 Metal consumer form one
+residency-coupled slot family. `with_metal_compute` installs them coherently. A
+backend assembled by replacing slots individually must preserve that family:
+installing the producer and retention slots while leaving stage 7 on the optimized
+CPU leaves the private row carry allocated until the `ProofSession` is dropped.
+
+The integration phase changed the Hamming host adapter, row lifetime, configuration,
+evaluator, and tests without changing the accepted `booleanity_address.metal`
+shader. Shader tuning, if measurement requires it, is a separate logged phase.
 
 The implementation map is:
 
@@ -55,15 +62,19 @@ The implementation map is:
 | Unchanged rounds and output mapping | existing optimized Hamming kernel | reference lockstep and transcript parity |
 | Performance and resource gates | fixed local evaluator and PIOP evaluator | append-only run plus production validation |
 
-The only unresolved measurement fact is the equal-input CPU denominator. A nested
-CPU row-source span will measure it before promotion; it does not change the
-algorithm or the timed Metal boundary.
+The nested CPU row-source span is implemented. The equal-input production CPU
+denominator has not yet been measured; promotion waits for that measurement. The
+span does not change the algorithm or the timed Metal boundary.
 
 ## Throughput ceiling
 
-At `T = 2^26` and `K = 256`, the retained pushforward performs `29*T = 1.946`
-billion useful selector contributions in five selector tiles. Its logical traffic
-and owned scratch are identical to Booleanity address:
+At `T = 2^26` and `K = 256`, the retained pushforward presents `29*T = 1.946`
+billion selector-row opportunities. The evaluator reports this rate and the smaller
+rate of structurally nonzero recentered contributions separately: an opportunity is
+excluded from the latter when its optional selector is absent or its selected lane
+is bucket zero. With the baseline width of six selectors per tile, the command uses
+five tiles; a width `w` uses `ceil(29 / w)`. Logical traffic and owned scratch at the
+baseline width are identical to Booleanity address:
 
 | Quantity | Value |
 |---|---:|
@@ -83,10 +94,12 @@ denominator. Expected PIOP recovery is 0.40--0.48 s.
 
 ## Fixed evaluator and promotion
 
-The local scalar is the median of paired optimized-CPU member wall time divided by
-complete Metal-hybrid member wall time at `2^26`; larger is better. One excluded
-warmup precedes five alternating pairs. Resident-row construction is outside both
-timed members. The Metal member includes equality-table preparation, command
+The standalone local scalar is the median paired wall-time ratio between a
+production-shaped shared-row CPU mirror and the complete Metal member at `2^26`;
+larger is better. The production PIOP evaluator supplies the real comparison between
+the optimized `PrepareKernel` and the deployed Metal adapter. One excluded warmup
+precedes five alternating local pairs. Resident-row construction is outside both
+local timed members. The Metal member includes equality-table preparation, command
 encoding/submission/completion, readback, recentering, `W_i` construction, all host
 rounds, and unattributed timer remainder.
 
@@ -95,8 +108,9 @@ Promotion requires:
 - equality of all `29*256` recentered `G` values;
 - equality of every round polynomial, challenge, final claim, output opening, and
   transcript state;
-- one retained row allocation, one command completion, five ordered
-  tile/finalize pairs, one readback, and no new row upload;
+- one retained row allocation, one command completion, `ceil(29 / w)` ordered
+  tile/finalize pairs for selector width `w` (five at width six), one readback, and
+  no Hamming-adapter row upload;
 - exact buffer, pipeline, threadgroup, component-accounting, and sample-cardinality
   guards;
 - at least five alternating `2^26` pairs and at least 4x local paired speedup;

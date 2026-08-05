@@ -1,14 +1,18 @@
+#[cfg(any(test, feature = "test-utils"))]
+use std::sync::atomic::AtomicUsize;
 use std::{mem::size_of, sync::Arc};
 
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::AkitaField;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, PolynomialEncoding};
 
 use super::booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
 use super::bytecode_read_raf::BytecodeReadRafMetalConfig;
+use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::solinas::{
@@ -65,6 +69,8 @@ pub struct MetalConfig {
     pub bytecode_read_raf_cycle: BytecodeReadRafMetalConfig,
     /// Stage-6b instruction RA virtualization settings.
     pub instruction_ra_virtualization: InstructionRaVirtualizationMetalConfig,
+    /// Stage-7 Hamming-weight claim-reduction settings.
+    pub hamming_weight_claim_reduction: HammingWeightMetalConfig,
 }
 
 /// Shared Metal device state used by the installed sumcheck slots.
@@ -72,6 +78,8 @@ pub struct MetalConfig {
 pub struct MetalBackend {
     pub(super) context: Arc<SolinasMetal>,
     pub(super) config: MetalConfig,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) hamming_dispatches: Arc<AtomicUsize>,
 }
 
 impl MetalBackend {
@@ -96,6 +104,7 @@ impl MetalBackend {
             config.bytecode_read_raf_cycle.cutoff_elements,
             config.instruction_ra_virtualization.trace_cutoff_elements,
             config.instruction_ra_virtualization.cutoff_elements,
+            config.hamming_weight_claim_reduction.trace_cutoff_elements,
         ] {
             if cutoff < 2 || !cutoff.is_power_of_two() {
                 return Err(MetalError::InvalidHybridCutoff(cutoff));
@@ -111,7 +120,16 @@ impl MetalBackend {
         Ok(Self {
             context: Arc::new(SolinasMetal::for_akita()?),
             config,
+            #[cfg(any(test, feature = "test-utils"))]
+            hamming_dispatches: Arc::new(AtomicUsize::new(0)),
         })
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
+    pub fn hamming_dispatches(&self) -> usize {
+        self.hamming_dispatches
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -128,6 +146,7 @@ where
         self.bytecode_read_raf_cycle = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());
         self.instruction_ra_virtualization = Box::new(metal.clone());
+        self.hamming_weight_claim_reduction = Box::new(metal.clone());
         self
     }
 }
@@ -142,7 +161,8 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         Box<dyn SumcheckKernel<AkitaField, Relation = InstructionReadRaf<AkitaField>>>,
         KernelError<AkitaField>,
     > {
-        let trace_elements = 1usize << inputs.relation.dimensions().log_t();
+        let dimensions = inputs.relation.dimensions();
+        let trace_elements = 1usize << dimensions.log_t();
         let use_metal_address =
             trace_elements >= self.config.instruction_read_raf.address_cutoff_elements;
         let retain_lookup_plane = trace_elements
@@ -151,13 +171,20 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 .instruction_ra_virtualization
                 .trace_cutoff_elements;
         let cpu = prepare_metal_instruction_read_raf(session, witness, inputs, use_metal_address)?;
-        let resident_row_cutoff = self
-            .config
-            .booleanity_address
-            .trace_cutoff_elements
-            .min(self.config.booleanity_cycle.trace_cutoff_elements)
-            .min(self.config.bytecode_read_raf_cycle.trace_cutoff_elements);
-        if trace_elements >= resident_row_cutoff && session.state::<BooleanityRows>().is_none() {
+        let hamming_log_k_chunk = committed_hamming_log_k_chunk(witness, dimensions.log_t());
+        let hamming_rows_requested = hamming_log_k_chunk.is_some_and(|log_k_chunk| {
+            self.config.hamming_weight_claim_reduction.admits(
+                trace_elements,
+                dimensions.log_t(),
+                log_k_chunk,
+            )
+        });
+        let resident_rows_requested = trace_elements
+            >= self.config.booleanity_address.trace_cutoff_elements
+            || trace_elements >= self.config.booleanity_cycle.trace_cutoff_elements
+            || trace_elements >= self.config.bytecode_read_raf_cycle.trace_cutoff_elements
+            || hamming_rows_requested;
+        if resident_rows_requested && session.state::<BooleanityRows>().is_none() {
             match cpu.metal_prepare_booleanity_rows(&self.context) {
                 Ok(rows) => {
                     let lifecycle_span = tracing::info_span!(
@@ -192,6 +219,17 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             retain_lookup_plane,
         )?))
     }
+}
+
+fn committed_hamming_log_k_chunk(
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    log_t: usize,
+) -> Option<usize> {
+    witness
+        .shape(JoltCommittedPolynomial::InstructionRa(0).into())
+        .ok()
+        .filter(|shape| shape.encoding == PolynomialEncoding::OneHot)
+        .and_then(|shape| shape.log_rows.checked_sub(log_t))
 }
 
 pub(crate) struct MetalInstructionReadRafKernel {
@@ -436,5 +474,22 @@ fn backend_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
     SumcheckError::ComputeBackend {
         backend: "metal",
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_witness::testing::with_sample_backend_at_log_t;
+
+    use super::committed_hamming_log_k_chunk;
+
+    #[test]
+    fn derives_committed_chunk_width_from_the_witness_grid() {
+        with_sample_backend_at_log_t(3, 8, |backend| {
+            assert_eq!(committed_hamming_log_k_chunk(backend, 3), Some(8));
+        });
+        with_sample_backend_at_log_t(3, 4, |backend| {
+            assert_eq!(committed_hamming_log_k_chunk(backend, 3), Some(4));
+        });
     }
 }

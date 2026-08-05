@@ -34,7 +34,9 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
-use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
+use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
+    HammingWeightClaimReduction, HammingWeightClaimReductionChallenges,
+};
 use jolt_witness::witnesses::RaChunkSelector;
 #[cfg(feature = "akita")]
 use jolt_witness::witnesses::UnsignedIncLane;
@@ -46,6 +48,8 @@ use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
 use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals};
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::BooleanitySelector;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -79,6 +83,45 @@ impl FamilySelectors {
             unsigned_inc: Vec::new(),
         })
     }
+
+    fn len(&self) -> usize {
+        self.instruction.len() + self.bytecode.len() + self.ram.len() + {
+            #[cfg(feature = "akita")]
+            {
+                self.unsigned_inc.len()
+            }
+            #[cfg(not(feature = "akita"))]
+            {
+                0
+            }
+        }
+    }
+
+    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+    fn metal_selectors(&self) -> Vec<BooleanitySelector> {
+        self.instruction
+            .iter()
+            .map(|selector| BooleanitySelector::Lookup {
+                shift: selector.shift() as u32,
+            })
+            .chain(
+                self.bytecode
+                    .iter()
+                    .map(|selector| BooleanitySelector::Bytecode {
+                        shift: selector.shift() as u32,
+                    }),
+            )
+            .chain(self.ram.iter().map(|selector| BooleanitySelector::Ram {
+                shift: selector.shift() as u32,
+            }))
+            .chain(self.unsigned_inc.iter().map(|lane| match lane {
+                UnsignedIncLane::Chunk { width, index } => BooleanitySelector::FusedInc {
+                    shift: (width * index) as u32,
+                },
+                UnsignedIncLane::Msb { .. } => BooleanitySelector::FusedIncMsb,
+            }))
+            .collect()
+    }
 }
 
 /// All `N` pushforwards from one bundle walk against the shared cycle-eq
@@ -89,16 +132,7 @@ fn pushforwards<F: Field>(
     selectors: &FamilySelectors,
     k_chunk: usize,
 ) -> Vec<Vec<F>> {
-    let total = selectors.instruction.len() + selectors.bytecode.len() + selectors.ram.len() + {
-        #[cfg(feature = "akita")]
-        {
-            selectors.unsigned_inc.len()
-        }
-        #[cfg(not(feature = "akita"))]
-        {
-            0
-        }
-    };
+    let total = selectors.len();
     let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
         let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
         for j in range {
@@ -156,24 +190,24 @@ fn pushforwards<F: Field>(
     }
 }
 
-/// Stage-7 Hamming-weight claim reduction: `PrepareKernel` front of the
-/// optimized kernel.
-pub struct OptimizedHammingWeightClaimReduction;
+pub(crate) struct HammingWeightPreparePlan<F: Field> {
+    rounds: usize,
+    reference_cycle: Vec<F>,
+    selectors: FamilySelectors,
+    k_chunk: usize,
+    weight_tables: Vec<Polynomial<F>>,
+    #[cfg(feature = "akita")]
+    baseline_table: Polynomial<F>,
+    output_openings: Vec<JoltOpeningId>,
+}
 
-impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
-    for OptimizedHammingWeightClaimReduction
-{
-    fn prepare(
-        &self,
-        session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
-    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
-    {
-        let relation = inputs.relation;
+impl<F: Field> HammingWeightPreparePlan<F> {
+    pub(crate) fn new(
+        relation: &HammingWeightClaimReduction<F>,
+        challenges: &HammingWeightClaimReductionChallenges<F>,
+    ) -> Result<Self, KernelError<F>> {
         let dimensions = relation.dimensions();
         let layout = dimensions.layout;
-        let r_cycle = relation.r_cycle();
         let r_address = relation.r_address();
         let virtualization_points = relation.virtualization_points();
         if r_address.len() != dimensions.log_k_chunk
@@ -184,10 +218,6 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             });
         }
         let k_chunk = 1usize << dimensions.log_k_chunk;
-        let cycles = 1usize << r_cycle.len();
-
-        let rows = shared_instruction_rows(session, witness, cycles)?;
-        let eq_cycle = eq_table(r_cycle);
         let selectors = FamilySelectors::new(
             (layout.instruction(), layout.bytecode(), layout.ram()),
             dimensions.log_k_chunk,
@@ -208,16 +238,8 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
                 width: dimensions.log_k_chunk,
             });
         }
-        let g_evals = pushforwards(&rows, &eq_cycle, &selectors, k_chunk);
-        #[cfg(feature = "akita")]
-        let mut g_evals = g_evals;
-        #[cfg(feature = "akita")]
-        for table in &mut g_evals {
-            table[0] = F::zero();
-        }
-        let g_tables = g_evals.into_iter().map(Polynomial::new).collect();
 
-        let gamma = inputs.challenges.gamma;
+        let gamma = challenges.gamma;
         #[cfg(not(feature = "akita"))]
         let mut gamma_powers = vec![F::one(); 3 * layout.total()];
         #[cfg(not(feature = "akita"))]
@@ -346,16 +368,132 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
                 jolt_claims::protocols::jolt::lattice::relations::hamming_weight::reduced_unsigned_inc_msb_opening(),
             );
         }
+        debug_assert_eq!(selectors.len(), weight_tables.len());
+        debug_assert_eq!(selectors.len(), output_openings.len());
 
-        Ok(Box::new(HammingWeightKernel {
+        Ok(Self {
             rounds: relation.rounds(),
-            g_tables,
+            reference_cycle: relation.r_cycle().to_vec(),
+            selectors,
+            k_chunk,
             weight_tables,
             #[cfg(feature = "akita")]
             baseline_table,
             output_openings,
+        })
+    }
+
+    pub(crate) fn cycles(&self) -> usize {
+        1usize << self.reference_cycle.len()
+    }
+
+    pub(crate) fn k_chunk(&self) -> usize {
+        self.k_chunk
+    }
+
+    pub(crate) fn reference_cycle(&self) -> &[F] {
+        &self.reference_cycle
+    }
+
+    fn selectors(&self) -> &FamilySelectors {
+        &self.selectors
+    }
+
+    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+    pub(crate) fn metal_selectors(&self) -> Vec<BooleanitySelector> {
+        self.selectors.metal_selectors()
+    }
+
+    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+    pub(crate) fn finish_flat(
+        self,
+        flat_g_evals: Vec<F>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
+    {
+        let expected = self
+            .selectors
+            .len()
+            .checked_mul(self.k_chunk)
+            .ok_or_else(|| KernelError::InvalidGeometry {
+                reason: "Hamming-weight pushforward mass count overflows usize".to_owned(),
+            })?;
+        if flat_g_evals.len() != expected {
+            return Err(KernelError::TableSizeMismatch {
+                table: "Metal Hamming-weight pushforward masses".to_owned(),
+                expected,
+                got: flat_g_evals.len(),
+            });
+        }
+        let g_evals = flat_g_evals
+            .chunks_exact(self.k_chunk)
+            .map(<[F]>::to_vec)
+            .collect();
+        self.finish(g_evals)
+    }
+
+    pub(crate) fn finish(
+        self,
+        g_evals: Vec<Vec<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
+    {
+        if g_evals.len() != self.selectors.len() {
+            return Err(KernelError::TableSizeMismatch {
+                table: "Hamming-weight pushforward table count".to_owned(),
+                expected: self.selectors.len(),
+                got: g_evals.len(),
+            });
+        }
+        for (index, table) in g_evals.iter().enumerate() {
+            if table.len() != self.k_chunk {
+                return Err(KernelError::TableSizeMismatch {
+                    table: format!("Hamming-weight pushforward table {index}"),
+                    expected: self.k_chunk,
+                    got: table.len(),
+                });
+            }
+        }
+        #[cfg(feature = "akita")]
+        let mut g_evals = g_evals;
+        #[cfg(feature = "akita")]
+        for table in &mut g_evals {
+            table[0] = F::zero();
+        }
+        let g_tables = g_evals.into_iter().map(Polynomial::new).collect();
+        Ok(Box::new(HammingWeightKernel {
+            rounds: self.rounds,
+            g_tables,
+            weight_tables: self.weight_tables,
+            #[cfg(feature = "akita")]
+            baseline_table: self.baseline_table,
+            output_openings: self.output_openings,
             rounds_bound: 0,
         }))
+    }
+}
+
+/// Stage-7 Hamming-weight claim reduction: `PrepareKernel` front of the
+/// optimized kernel.
+pub struct OptimizedHammingWeightClaimReduction;
+
+impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
+    for OptimizedHammingWeightClaimReduction
+{
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
+    {
+        let plan = HammingWeightPreparePlan::new(inputs.relation, inputs.challenges)?;
+        let rows = {
+            let _span =
+                tracing::info_span!("OptimizedHammingWeightClaimReduction::row_source").entered();
+            shared_instruction_rows(session, witness, plan.cycles())?
+        };
+        let eq_cycle = eq_table(plan.reference_cycle());
+        let g_evals = pushforwards(&rows, &eq_cycle, plan.selectors(), plan.k_chunk());
+        plan.finish(g_evals)
     }
 }
 

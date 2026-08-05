@@ -4,6 +4,7 @@
 
 mod booleanity;
 mod bytecode_read_raf;
+mod hamming_weight_claim_reduction;
 mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
@@ -12,6 +13,7 @@ mod spartan_outer;
 
 pub use booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
 pub use bytecode_read_raf::{BytecodeReadRafMetalConfig, BytecodeReadRafResidentRows};
+pub use hamming_weight_claim_reduction::HammingWeightMetalConfig;
 pub use instruction_input::InstructionInputMetalConfig;
 pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 #[cfg(test)]

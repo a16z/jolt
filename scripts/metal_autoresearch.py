@@ -134,10 +134,40 @@ PRODUCTION_LOCAL_KERNELS = {
             "rayon_threads_pinned",
         },
     },
+    "HammingWeightClaimReduction": {
+        "metric": "hamming_weight_claim_reduction_speedup",
+        "paired_metric": "paired_hamming_weight_claim_reduction_speedups",
+        "parameters": frozenset(
+            {
+                "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2",
+                "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE",
+                "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS",
+                "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS",
+                "JOLT_METAL_HAMMING_WEIGHT_TRACE_CUTOFF_LOG2",
+            }
+        ),
+        "required_guards": COMMON_PRODUCTION_GUARDS
+        | {
+            "hamming_weight_cpu_control",
+            "hamming_weight_cpu_row_source_attributed",
+            "hamming_weight_metal_backend_exercised",
+            "hamming_weight_resident_rows_reused",
+            "hamming_weight_zero_row_upload",
+            "hamming_weight_terminal_carry_removed",
+            "hamming_weight_k256_schedule_exact",
+            "hamming_weight_working_set_admitted",
+            "hamming_weight_readback_exact",
+            "hamming_weight_dispatch_exact",
+            "hamming_weight_command_completed",
+            "hamming_weight_local_gate",
+            "rayon_threads_pinned",
+        },
+    },
 }
 LOCAL_RESULT_CONTRACTS = {
     "bytecode_read_raf_cycle_v1",
     "booleanity_address_v1",
+    "hamming_weight_claim_reduction_v1",
     "instruction_input_v2",
     "instruction_input_v3",
     "instruction_input_v4",
@@ -145,6 +175,7 @@ LOCAL_RESULT_CONTRACTS = {
 LOCAL_RESULT_SCHEMA_VERSIONS = {
     "bytecode_read_raf_cycle_v1": 1,
     "booleanity_address_v1": 1,
+    "hamming_weight_claim_reduction_v1": 1,
     "instruction_input_v2": 2,
     "instruction_input_v3": 3,
     "instruction_input_v4": 4,
@@ -169,6 +200,19 @@ BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_PARAMETERS = {
     "trace_cutoff_log2": "JOLT_METAL_BOOLEANITY_ADDRESS_TRACE_CUTOFF_LOG2",
 }
 BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_ENV = {
+    "log_n": "JOLT_METAL_EVAL_LOG_N",
+    "repeats": "JOLT_METAL_EVAL_REPEATS",
+    "seed": "JOLT_METAL_EVAL_SEED",
+    "cpu_threads": "RAYON_NUM_THREADS",
+}
+HAMMING_WEIGHT_LOCAL_FINGERPRINT_PARAMETERS = {
+    "inner_log2": "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2",
+    "selectors_per_tile": "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE",
+    "tile_threads": "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS",
+    "finalize_threads": "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS",
+    "trace_cutoff_log2": "JOLT_METAL_HAMMING_WEIGHT_TRACE_CUTOFF_LOG2",
+}
+HAMMING_WEIGHT_LOCAL_FINGERPRINT_ENV = {
     "log_n": "JOLT_METAL_EVAL_LOG_N",
     "repeats": "JOLT_METAL_EVAL_REPEATS",
     "seed": "JOLT_METAL_EVAL_SEED",
@@ -954,6 +998,13 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
             "the Booleanity address evaluator requires its closed result contract"
         )
     if (
+        template["kernel"] == "hamming_weight_claim_reduction"
+        and result_contract != "hamming_weight_claim_reduction_v1"
+    ):
+        raise ValueError(
+            "the Hamming-weight evaluator requires its closed result contract"
+        )
+    if (
         template["kernel"] == "instruction_input"
         and result_contract != "instruction_input_v4"
     ):
@@ -1032,6 +1083,55 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
         ):
             raise ValueError(
                 "the Booleanity address final-validation contract targets the wrong scale"
+            )
+    if result_contract == "hamming_weight_claim_reduction_v1":
+        if template["kernel"] != "hamming_weight_claim_reduction":
+            raise ValueError(
+                "the Hamming-weight result contract requires the Hamming-weight kernel"
+            )
+        missing_env = sorted(
+            set(HAMMING_WEIGHT_LOCAL_FINGERPRINT_ENV.values())
+            - set(evaluator.get("env", {}))
+        )
+        if missing_env:
+            raise ValueError(
+                "the Hamming-weight result contract is missing evaluator environment: "
+                f"{missing_env}"
+            )
+        try:
+            evaluator_repeats = int(evaluator["env"]["JOLT_METAL_EVAL_REPEATS"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "the Hamming-weight evaluator requires an integer repeat count"
+            ) from error
+        if evaluator_repeats < 5 or evaluator_repeats % 2 == 0:
+            raise ValueError(
+                "the Hamming-weight evaluator requires at least five odd paired repeats"
+            )
+        required_params = set(HAMMING_WEIGHT_LOCAL_FINGERPRINT_PARAMETERS.values())
+        if required_params - set(template["search_space"]) or required_params - set(
+            template.get("baseline_params", {})
+        ):
+            raise ValueError(
+                "the Hamming-weight result contract requires every launch parameter in the search space and baseline"
+            )
+        if template.get("scope", {}).get("editable") != [
+            "crates/jolt-kernels/src/metal/solinas/booleanity_address.metal"
+        ]:
+            raise ValueError("the Hamming-weight search scope must remain shader-only")
+        final_validation = template.get("final_validation")
+        if not isinstance(final_validation, dict) or set(final_validation) != {
+            "primary_log_n",
+            "production_gate",
+        }:
+            raise ValueError(
+                "the Hamming-weight final-validation contract contains inert checks"
+            )
+        if final_validation["primary_log_n"] != int(
+            evaluator["env"]["JOLT_METAL_EVAL_LOG_N"]
+        ):
+            raise ValueError(
+                "the Hamming-weight final-validation contract targets the wrong scale"
             )
     if result_contract in {
         "instruction_input_v2",
@@ -2748,6 +2848,237 @@ def validate_booleanity_address_local_result(
         raise ValueError("Booleanity address evaluator oracle-limit record is invalid")
 
 
+def validate_hamming_weight_local_result(
+    config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
+) -> None:
+    output_fields = {
+        "schema",
+        "schema_version",
+        "kernel",
+        "workload",
+        "fingerprint",
+        "metrics",
+        "timings",
+        "guards",
+        "all_exact",
+        "resources",
+        "pipelines",
+        "promotion",
+        "oracle_limits",
+    }
+    if (
+        set(output) != output_fields
+        or output.get("schema") != "hamming_weight_claim_reduction_v1"
+        or output.get("schema_version") != 1
+        or output.get("kernel") != "hamming_weight_claim_reduction"
+    ):
+        raise ValueError("Hamming-weight evaluator result contract is incomplete")
+
+    environment = config["evaluator"].get("env", {})
+    try:
+        expected = {
+            field: int(environment[name])
+            for field, name in HAMMING_WEIGHT_LOCAL_FINGERPRINT_ENV.items()
+        }
+        expected.update(
+            {
+                field: int(params[name])
+                for field, name in HAMMING_WEIGHT_LOCAL_FINGERPRINT_PARAMETERS.items()
+            }
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "Hamming-weight evaluator launch parameters are incomplete"
+        ) from error
+
+    rows = 1 << expected["log_n"]
+    opportunities = rows * 29
+    workload = output["workload"]
+    metrics = output["metrics"]
+    if not isinstance(workload, dict) or not isinstance(metrics, dict):
+        raise ValueError("Hamming-weight evaluator workload or metrics are invalid")
+    nonzero = workload.get("nonzero_recentered_contributions")
+    if (
+        workload.get("selector_row_opportunities") != opportunities
+        or type(nonzero) is not int
+        or not 0 < nonzero <= opportunities
+        or metrics.get("selector_row_opportunities") != opportunities
+        or metrics.get("nonzero_recentered_contributions") != nonzero
+    ):
+        raise ValueError("Hamming-weight contribution accounting is invalid")
+
+    expected_cpu_contract = (
+        "optimized shared-row tensor-equality pushforward mirror, bucket-zero "
+        "recentering, W/baseline construction, and eight host Fiat-Shamir rounds"
+    )
+    expected_metal_contract = (
+        "cycle-equality preparation and upload over resident rows, one command "
+        "encode/submit/wait, one result readback, bucket-zero recentering, and the "
+        "same W/baseline and eight host Fiat-Shamir rounds"
+    )
+    if (
+        workload.get("hamming_address_rounds") != 8
+        or workload.get("resident_row_upload_bytes_inside_metal_member") != 0
+        or workload.get("cpu_member_contract") != expected_cpu_contract
+        or workload.get("metal_member_contract") != expected_metal_contract
+    ):
+        raise ValueError("Hamming-weight evaluator member boundary diverged")
+
+    fingerprint = output["fingerprint"]
+    if not isinstance(fingerprint, dict) or fingerprint.get("cpu_control") != (
+        "standalone parallel optimized TensorEqTable/AkitaAccumulator pushforward mirror"
+    ) or fingerprint.get("host_round_oracle") != (
+        "identical deterministic W/baseline and host-round implementation"
+    ):
+        raise ValueError("Hamming-weight evaluator oracle fingerprint diverged")
+
+    metric_extras = {
+        "selector_row_opportunities",
+        "nonzero_recentered_contributions",
+        "cpu_selector_row_opportunities_per_second",
+        "metal_selector_row_opportunities_per_second",
+        "cpu_nonzero_recentered_contributions_per_second",
+        "metal_nonzero_recentered_contributions_per_second",
+    }
+    if not metric_extras <= set(metrics):
+        raise ValueError("Hamming-weight throughput metrics are incomplete")
+    cpu_samples = positive_integer_samples(
+        metrics, "cpu_member_ns_samples", expected["repeats"]
+    )
+    metal_samples = positive_integer_samples(
+        metrics, "metal_member_ns_samples", expected["repeats"]
+    )
+    cpu_median = statistics.median(cpu_samples)
+    metal_median = statistics.median(metal_samples)
+    expected_rates = {
+        "cpu_selector_row_opportunities_per_second": opportunities * 1e9 / cpu_median,
+        "metal_selector_row_opportunities_per_second": opportunities
+        * 1e9
+        / metal_median,
+        "cpu_nonzero_recentered_contributions_per_second": nonzero * 1e9 / cpu_median,
+        "metal_nonzero_recentered_contributions_per_second": nonzero
+        * 1e9
+        / metal_median,
+    }
+    for name, wanted in expected_rates.items():
+        actual = metrics.get(name)
+        if (
+            isinstance(actual, bool)
+            or not isinstance(actual, (int, float))
+            or not math.isfinite(actual)
+            or not math.isclose(float(actual), wanted, rel_tol=1e-12)
+        ):
+            raise ValueError(f"Hamming-weight evaluator {name} is invalid")
+
+    guards = output["guards"]
+    hamming_guard_extras = {
+        "recentered_bucket_zero_exact",
+        "nonzero_recentered_values_present",
+        "nonzero_contribution_count_admitted",
+        "output_claim_count_exact",
+    }
+    if (
+        not isinstance(guards, dict)
+        or not hamming_guard_extras <= set(guards)
+        or any(guards[name] is not True for name in hamming_guard_extras)
+        or guards.get("exact_skipped_q_evals") is not True
+        or guards.get("resident_rows_stable_for_stage7_handoff") is not True
+    ):
+        raise ValueError("Hamming-weight evaluator protocol guards are incomplete")
+
+    resources = output["resources"]
+    if not isinstance(resources, dict) or "hamming_owned_device_bytes" not in resources:
+        raise ValueError("Hamming-weight evaluator resource record is incomplete")
+    oracle_limits = output["oracle_limits"]
+    expected_oracle_limits = {
+        "cpu_denominator_is_production_kernel": False,
+        "cpu_denominator_scope": "standalone optimized shared-row pushforward mirror plus identical W/baseline and host rounds",
+        "host_rounds_are_independently_implemented": False,
+        "mass_oracle_independent_of_metal_shader": True,
+        "command_and_readback_counts_are_runtime_counters": False,
+        "requires_production_piop_holdout": True,
+    }
+    if oracle_limits != expected_oracle_limits:
+        raise ValueError("Hamming-weight evaluator oracle-limit record is invalid")
+
+    canonical = dict(output)
+    canonical["schema"] = "booleanity_address_v1"
+    canonical["kernel"] = "booleanity_address"
+    canonical_workload = dict(workload)
+    canonical_workload["address_rounds"] = canonical_workload.pop(
+        "hamming_address_rounds"
+    )
+    canonical_workload.pop("selector_row_opportunities")
+    canonical_workload.pop("nonzero_recentered_contributions")
+    canonical_workload.pop("resident_row_upload_bytes_inside_metal_member")
+    canonical_workload["cpu_member_contract"] = (
+        "parallel tensor-equality pushforward mirror plus host address rounds"
+    )
+    canonical_workload["metal_member_contract"] = (
+        "weight preparation and upload plus one command encode/submit/wait plus one "
+        "result readback plus host address rounds"
+    )
+    canonical["workload"] = canonical_workload
+
+    canonical_fingerprint = dict(fingerprint)
+    canonical_fingerprint["cpu_control"] = (
+        "standalone parallel TensorEqTable/AkitaAccumulator mirror"
+    )
+    canonical_fingerprint["host_round_oracle"] = (
+        "shared deterministic evaluator implementation"
+    )
+    canonical["fingerprint"] = canonical_fingerprint
+
+    canonical_metrics = dict(metrics)
+    for name in metric_extras:
+        canonical_metrics.pop(name)
+    canonical["metrics"] = canonical_metrics
+
+    canonical_guards = dict(guards)
+    for name in hamming_guard_extras:
+        canonical_guards.pop(name)
+    canonical_guards["exact_four_sample_q_evals"] = canonical_guards.pop(
+        "exact_skipped_q_evals"
+    )
+    canonical_guards["resident_rows_stable_for_cycle_handoff"] = canonical_guards.pop(
+        "resident_rows_stable_for_stage7_handoff"
+    )
+    canonical["guards"] = canonical_guards
+
+    canonical_resources = dict(resources)
+    canonical_resources["address_owned_device_bytes"] = canonical_resources.pop(
+        "hamming_owned_device_bytes"
+    )
+    canonical["resources"] = canonical_resources
+    canonical["oracle_limits"] = {
+        **expected_oracle_limits,
+        "cpu_denominator_scope": "standalone optimized pushforward mirror plus the same host-round routine",
+    }
+    canonical_config = {
+        "evaluator": {
+            "env": {
+                name: str(environment[source])
+                for name, source in {
+                    "JOLT_METAL_EVAL_LOG_N": "JOLT_METAL_EVAL_LOG_N",
+                    "JOLT_METAL_EVAL_REPEATS": "JOLT_METAL_EVAL_REPEATS",
+                    "JOLT_METAL_EVAL_SEED": "JOLT_METAL_EVAL_SEED",
+                    "RAYON_NUM_THREADS": "RAYON_NUM_THREADS",
+                }.items()
+            }
+        }
+    }
+    canonical_params = {
+        destination: str(params[source])
+        for destination, source in zip(
+            BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_PARAMETERS.values(),
+            HAMMING_WEIGHT_LOCAL_FINGERPRINT_PARAMETERS.values(),
+        )
+    }
+    validate_booleanity_address_local_result(
+        canonical_config, canonical, canonical_params
+    )
+
+
 def validate_local_result_contract(
     config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
 ) -> None:
@@ -2763,6 +3094,9 @@ def validate_local_result_contract(
         return
     if contract == "booleanity_address_v1":
         validate_booleanity_address_local_result(config, output, params)
+        return
+    if contract == "hamming_weight_claim_reduction_v1":
+        validate_hamming_weight_local_result(config, output, params)
         return
     if contract != "bytecode_read_raf_cycle_v1":
         raise ValueError("unknown local evaluator result contract")
@@ -3544,6 +3878,73 @@ def validate_production_booleanity_address_row_lifecycle(
         raise ValueError("production Booleanity address row lifecycle is invalid")
 
 
+def validate_production_hamming_weight_row_lifecycle(
+    lifecycle: Any, backend: str, log_n: int
+) -> None:
+    if backend == "optimized":
+        if lifecycle is not None:
+            raise ValueError(
+                "production optimized Hamming-weight arm has a resident-row lifecycle"
+            )
+        return
+
+    fields = {
+        "kind",
+        "rows",
+        "row_bytes",
+        "device_registry_id",
+        "stage5_storage_id",
+        "stage6a_storage_id",
+        "stage6b_storage_id",
+        "stage6b_retain_storage_id",
+        "stage7_storage_id",
+        "stage5",
+        "stage6a",
+        "stage6b",
+        "stage6b_retain",
+        "stage7",
+        "terminal_consumer",
+        "terminal_carry_removed",
+    }
+    if not isinstance(lifecycle, dict) or set(lifecycle) != fields:
+        raise ValueError("production Hamming-weight row lifecycle record is incomplete")
+    stage_fields = {"row_allocations", "row_upload_bytes"}
+    stages = ("stage5", "stage6a", "stage6b", "stage6b_retain", "stage7")
+    if any(
+        not isinstance(lifecycle[name], dict)
+        or set(lifecycle[name]) != stage_fields
+        for name in stages
+    ):
+        raise ValueError("production Hamming-weight row lifecycle is invalid")
+    rows = 1 << log_n
+    row_bytes = 40
+    storage_ids = [
+        lifecycle["stage5_storage_id"],
+        lifecycle["stage6a_storage_id"],
+        lifecycle["stage6b_storage_id"],
+        lifecycle["stage6b_retain_storage_id"],
+        lifecycle["stage7_storage_id"],
+    ]
+    if (
+        lifecycle["kind"] != "metal_hamming_resident"
+        or lifecycle["rows"] != rows
+        or lifecycle["row_bytes"] != row_bytes
+        or type(lifecycle["device_registry_id"]) is not int
+        or lifecycle["device_registry_id"] <= 0
+        or any(type(value) is not int or value <= 0 for value in storage_ids)
+        or len(set(storage_ids)) != 1
+        or lifecycle["stage5"]
+        != {"row_allocations": 1, "row_upload_bytes": rows * row_bytes}
+        or any(
+            lifecycle[stage] != {"row_allocations": 0, "row_upload_bytes": 0}
+            for stage in stages[1:]
+        )
+        or lifecycle["terminal_consumer"] is not True
+        or lifecycle["terminal_carry_removed"] is not True
+    ):
+        raise ValueError("production Hamming-weight row lifecycle is invalid")
+
+
 def validate_production_booleanity_address_member(
     member: Any,
     lifecycle: Any,
@@ -3758,6 +4159,43 @@ def validate_production_booleanity_address_member(
     if readback != {"elements": 29 * 256, "bytes": 29 * 256 * 16, "readbacks": 1}:
         raise ValueError("production Booleanity address readback is invalid")
     return member["normalized_member_ns"]
+
+
+def validate_production_hamming_weight_member(
+    member: Any,
+    lifecycle: Any,
+    backend: str,
+    log_n: int,
+    inner_log2: int,
+    selectors_per_tile: int,
+    tile_threads: int,
+    finalize_threads: int,
+) -> int:
+    validate_production_hamming_weight_row_lifecycle(lifecycle, backend, log_n)
+    projected_lifecycle = None
+    if backend == "metal":
+        projected_lifecycle = {
+            "kind": "metal_booleanity_resident",
+            "rows": lifecycle["rows"],
+            "row_bytes": lifecycle["row_bytes"],
+            "device_registry_id": lifecycle["device_registry_id"],
+            "stage5_storage_id": lifecycle["stage5_storage_id"],
+            "stage6a_storage_id": lifecycle["stage6a_storage_id"],
+            "stage6b_storage_id": lifecycle["stage6b_storage_id"],
+            "stage5": lifecycle["stage5"],
+            "stage6a": lifecycle["stage6a"],
+            "stage6b": lifecycle["stage6b"],
+        }
+    return validate_production_booleanity_address_member(
+        member,
+        projected_lifecycle,
+        backend,
+        log_n,
+        inner_log2,
+        selectors_per_tile,
+        tile_threads,
+        finalize_threads,
+    )
 
 
 def recompute_local_member_decision(
@@ -4620,6 +5058,238 @@ def validate_production_result(
             raise ValueError(
                 "production Booleanity address decision disagrees with recomputed raw-pair decision"
             )
+    if local_kernel == "HammingWeightClaimReduction":
+        hamming_fingerprint = result.get("fingerprint")
+        if not isinstance(hamming_fingerprint, dict):
+            raise ValueError("production Hamming-weight result has no fingerprint")
+        log_n = hamming_fingerprint.get("log_n")
+        parameter_names = {
+            "inner_log2": "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2",
+            "selectors_per_tile": "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE",
+            "tile_threads": "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS",
+            "finalize_threads": "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS",
+        }
+        try:
+            geometry = {
+                name: int(expected_params[parameter])
+                for name, parameter in parameter_names.items()
+            }
+        except (KeyError, ValueError) as error:
+            raise ValueError("accepted Hamming-weight parameters are incomplete") from error
+        if (
+            type(log_n) is not int
+            or log_n < 1
+            or not 0 <= geometry["inner_log2"] <= min(log_n, 16)
+            or not 1 <= geometry["selectors_per_tile"] <= 6
+            or geometry["tile_threads"] <= 0
+            or geometry["tile_threads"] % 32 != 0
+            or geometry["finalize_threads"] < 256
+            or geometry["finalize_threads"] % 256 != 0
+        ):
+            raise ValueError("production Hamming-weight geometry is invalid")
+        decision = metrics.get("hamming_weight_claim_reduction_decision")
+        if not isinstance(decision, dict) or decision.get("clears") is not True:
+            raise ValueError(
+                "production Hamming-weight result did not clear its fixed local decision"
+            )
+        decision_speedup = decision.get("median_speedup")
+        if not math.isclose(
+            float(decision_speedup)
+            if isinstance(decision_speedup, (int, float))
+            and not isinstance(decision_speedup, bool)
+            else math.nan,
+            float(metric),
+            rel_tol=1e-12,
+        ):
+            raise ValueError(
+                "production Hamming-weight decision disagrees with its scalar metric"
+            )
+        if pair_records is None or len(pair_records) != len(local_pairs):
+            raise ValueError(
+                "production Hamming-weight result has incomplete raw pair records"
+            )
+        raw_cpu_members = []
+        raw_metal_members = []
+        raw_cpu_services = []
+        raw_metal_services = []
+        for record, local_speedup in zip(pair_records, local_pairs):
+            arms = record.get("arms", {})
+            try:
+                cpu_record = arms["optimized"]["hamming_weight"]
+                metal_record = arms["metal"]["hamming_weight"]
+                cpu_lifecycle = arms["optimized"]["hamming_weight_row_lifecycle"]
+                metal_lifecycle = arms["metal"]["hamming_weight_row_lifecycle"]
+            except (KeyError, TypeError) as error:
+                raise ValueError(
+                    "production Hamming-weight raw pair is incomplete"
+                ) from error
+            cpu_member = validate_production_hamming_weight_member(
+                cpu_record,
+                cpu_lifecycle,
+                "optimized",
+                log_n,
+                geometry["inner_log2"],
+                geometry["selectors_per_tile"],
+                geometry["tile_threads"],
+                geometry["finalize_threads"],
+            )
+            metal_member = validate_production_hamming_weight_member(
+                metal_record,
+                metal_lifecycle,
+                "metal",
+                log_n,
+                geometry["inner_log2"],
+                geometry["selectors_per_tile"],
+                geometry["tile_threads"],
+                geometry["finalize_threads"],
+            )
+            rounding_slack_ns = 12
+            if (
+                cpu_record["member_ns"]
+                > arms["optimized"]["piop_ns"] + rounding_slack_ns
+                or metal_record["member_ns"]
+                > arms["metal"]["piop_ns"] + rounding_slack_ns
+            ):
+                raise ValueError(
+                    "production Hamming-weight member timing exceeds its PIOP span"
+                )
+            if not math.isclose(
+                float(local_speedup), cpu_member / metal_member, rel_tol=1e-9
+            ):
+                raise ValueError(
+                    "production Hamming-weight raw pair disagrees with its speedup"
+                )
+            raw_cpu_members.append(cpu_member)
+            raw_metal_members.append(metal_member)
+            raw_cpu_services.append(cpu_record["member_ns"])
+            raw_metal_services.append(metal_record["member_ns"])
+        for name, raw_samples in (
+            ("cpu_hamming_weight_claim_reduction_ms_samples", raw_cpu_members),
+            ("metal_hamming_weight_claim_reduction_ms_samples", raw_metal_members),
+        ):
+            reported_samples = metrics.get(name)
+            if (
+                not isinstance(reported_samples, list)
+                or len(reported_samples) != len(raw_samples)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isfinite(reported)
+                    or not math.isclose(
+                        float(reported) * 1e6,
+                        raw,
+                        rel_tol=1e-12,
+                        abs_tol=0.500001,
+                    )
+                    for reported, raw in zip(reported_samples, raw_samples)
+                )
+            ):
+                raise ValueError("production Hamming-weight sample summary is invalid")
+        service_speedups = [
+            cpu / metal for cpu, metal in zip(raw_cpu_services, raw_metal_services)
+        ]
+        reported_service_speedups = metrics.get(
+            "paired_hamming_weight_claim_reduction_service_speedups"
+        )
+        reported_service_median = metrics.get(
+            "hamming_weight_claim_reduction_service_speedup"
+        )
+        if (
+            not isinstance(reported_service_speedups, list)
+            or len(reported_service_speedups) != len(service_speedups)
+            or any(
+                isinstance(reported, bool)
+                or not isinstance(reported, (int, float))
+                or not math.isclose(float(reported), expected, rel_tol=1e-9)
+                for reported, expected in zip(
+                    reported_service_speedups, service_speedups
+                )
+            )
+            or isinstance(reported_service_median, bool)
+            or not isinstance(reported_service_median, (int, float))
+            or not math.isclose(
+                float(reported_service_median),
+                statistics.median(service_speedups),
+                rel_tol=1e-12,
+            )
+        ):
+            raise ValueError("production Hamming-weight service speedup is invalid")
+        for name, raw_samples in (
+            (
+                "cpu_hamming_weight_claim_reduction_service_ms_samples",
+                raw_cpu_services,
+            ),
+            (
+                "metal_hamming_weight_claim_reduction_service_ms_samples",
+                raw_metal_services,
+            ),
+        ):
+            reported_samples = metrics.get(name)
+            if (
+                not isinstance(reported_samples, list)
+                or len(reported_samples) != len(raw_samples)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isclose(
+                        float(reported) * 1e6,
+                        raw,
+                        rel_tol=1e-12,
+                        abs_tol=0.500001,
+                    )
+                    for reported, raw in zip(reported_samples, raw_samples)
+                )
+            ):
+                raise ValueError(
+                    "production Hamming-weight service sample summary is invalid"
+                )
+        minimum_speedup = float(gate["minimum_local_speedup"])
+        recomputed_improvements, recomputed_decision = recompute_local_member_decision(
+            pair_records,
+            raw_cpu_members,
+            raw_metal_members,
+            minimum_speedup,
+            int(gate["minimum_pairs"]),
+        )
+        optimized_first_median = float(
+            recomputed_decision["optimized_first_median_speedup"]
+        )
+        metal_first_median = float(
+            recomputed_decision["metal_first_median_speedup"]
+        )
+        reported_improvements = metrics.get(
+            "paired_hamming_weight_claim_reduction_fractional_improvements"
+        )
+        if (
+            not isinstance(reported_improvements, list)
+            or len(reported_improvements) != len(recomputed_improvements)
+            or any(
+                isinstance(reported, bool)
+                or not isinstance(reported, (int, float))
+                or not math.isfinite(reported)
+                or not math.isclose(
+                    float(reported), expected, rel_tol=1e-9, abs_tol=1e-12
+                )
+                for reported, expected in zip(
+                    reported_improvements, recomputed_improvements
+                )
+            )
+        ):
+            raise ValueError(
+                "production Hamming-weight fractional improvements disagree with raw pairs"
+            )
+        if recomputed_decision["clears_order_strata"] is not True:
+            raise ValueError(
+                "production Hamming-weight order stratum does not clear the local gate"
+            )
+        if recomputed_decision["clears"] is not True:
+            raise ValueError(
+                "production Hamming-weight raw pairs do not clear the fixed local decision"
+            )
+        if not decisions_match(decision, recomputed_decision):
+            raise ValueError(
+                "production Hamming-weight decision disagrees with recomputed raw-pair decision"
+            )
     piop_speedup = metrics.get("piop_speedup")
     if (
         isinstance(piop_speedup, bool)
@@ -4677,6 +5347,7 @@ def validate_production_result(
                 "BytecodeReadRafCycle",
                 "InstructionInput",
                 "BooleanityAddressPhase",
+                "HammingWeightClaimReduction",
             }
             else {}
         ),
@@ -4809,6 +5480,7 @@ def validate_accepted_parent_for_production(
     if result_contract not in {
         "instruction_input_v2",
         "booleanity_address_v1",
+        "hamming_weight_claim_reduction_v1",
     }:
         return
     minimum = float(

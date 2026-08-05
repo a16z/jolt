@@ -119,6 +119,124 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     group.finish();
 }
 
+pub fn bench_hamming(c: &mut Criterion, context: &SolinasMetal) {
+    let config = hamming_config();
+    let mut group = c.benchmark_group("metal_sumcheck/hamming_weight_claim_reduction");
+    let _ = group
+        .sample_size(10)
+        .warm_up_time(Duration::from_secs(2))
+        .measurement_time(Duration::from_secs(5));
+
+    for elements in hamming_cases(config.inner_log2) {
+        let log_n = elements.ilog2() as usize;
+        let selectors = selectors();
+        assert_eq!(selectors.len(), POLYS);
+        let rows = rows(elements, 1);
+        let reference_cycle = point(log_n, 0xc1c1_e5e5);
+        let selector_row_opportunities = u64::try_from(elements * selectors.len())
+            .expect("Hamming selector-row opportunities should fit in u64");
+        let nonzero_recentered_contributions = u64::try_from(
+            rows.par_iter()
+                .map(|row| {
+                    selectors
+                        .iter()
+                        .copied()
+                        .filter(|selector| hot_index(*row, *selector).is_some_and(|hot| hot != 0))
+                        .count()
+                })
+                .sum::<usize>(),
+        )
+        .expect("Hamming nonzero contribution count should fit in u64");
+        assert!(nonzero_recentered_contributions > 0);
+        assert!(nonzero_recentered_contributions <= selector_row_opportunities);
+
+        let resident_rows = context
+            .prepare_booleanity_rows(&rows)
+            .expect("Hamming rows should become resident");
+        let resident_identity = resident_rows.allocation_identity();
+        let invocation = context
+            .prepare_booleanity_address_pushforward(
+                resident_rows.clone(),
+                &selectors,
+                &reference_cycle,
+                config,
+            )
+            .expect("Hamming pushforward should prepare");
+        assert_eq!(invocation.resident_row_identity(), resident_identity);
+
+        let mut expected = cpu_pushforward(&rows, &selectors, &reference_cycle);
+        recenter(&mut expected);
+        invocation
+            .execute()
+            .expect("Hamming validation should execute");
+        let mut readback = vec![AkitaField::zero(); invocation.output_elements()];
+        invocation
+            .read_masses_into(&mut readback)
+            .expect("Hamming validation masses should be readable");
+        recenter(&mut readback);
+        assert_eq!(readback, expected);
+        assert_eq!(resident_rows.allocation_identity(), resident_identity);
+        drop(expected);
+        drop(rows);
+
+        let resident_row_bytes = u64::try_from(elements * size_of::<BooleanityRow>())
+            .expect("Hamming resident rows should fit in u64");
+        let row_scan_bytes =
+            u64::try_from(elements * size_of::<BooleanityRow>() * invocation.selector_tiles())
+                .expect("Hamming row traffic should fit in u64");
+        let readback_bytes = u64::try_from(invocation.output_elements() * size_of::<AkitaField>())
+            .expect("Hamming readback should fit in u64");
+        eprintln!(
+            "hamming_weight_claim_reduction log_n={log_n} rows={elements} selectors={} selector_tiles={} selector_row_opportunities={selector_row_opportunities} nonzero_recentered_contributions={nonzero_recentered_contributions} resident_row_bytes={resident_row_bytes} logical_row_scan_bytes={row_scan_bytes} readback_bytes={readback_bytes} inner_log2={} e_in_elements={} e_out_elements={} tile_threads={} finalize_threads={} production_specialized={} exact=true timed_boundary=prepared_execute_readback_recenter",
+            selectors.len(),
+            invocation.selector_tiles(),
+            config.inner_log2,
+            invocation.e_in_length(),
+            invocation.e_out_length(),
+            invocation.tile_threads_per_threadgroup(),
+            invocation.finalize_threads_per_threadgroup(),
+            invocation.uses_production_specialization(),
+        );
+
+        let geometry = format!(
+            "log{log_n}_i{}_s{}_tile{}_final{}",
+            config.inner_log2,
+            config.selectors_per_tile,
+            invocation.tile_threads_per_threadgroup(),
+            invocation.finalize_threads_per_threadgroup(),
+        );
+        for (metric, throughput) in [
+            ("selector_row_opportunities", selector_row_opportunities),
+            (
+                "nonzero_recentered_contributions",
+                nonzero_recentered_contributions,
+            ),
+        ] {
+            let _ = group.throughput(Throughput::Elements(throughput));
+            let id = BenchmarkId::new(metric, &geometry);
+            let _ = group.bench_function(id, |bench| {
+                bench.iter_custom(|iterations| {
+                    let mut measured = Duration::ZERO;
+                    for _ in 0..iterations {
+                        let started = Instant::now();
+                        invocation
+                            .execute()
+                            .expect("Hamming pushforward should execute");
+                        invocation
+                            .read_masses_into(&mut readback)
+                            .expect("Hamming masses should be readable");
+                        recenter(&mut readback);
+                        measured += started.elapsed();
+                        let _ = black_box(readback.as_slice());
+                    }
+                    measured
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
 fn config() -> BooleanityAddressPushforwardConfig {
     let defaults = BooleanityAddressPushforwardConfig::default();
     BooleanityAddressPushforwardConfig {
@@ -138,6 +256,29 @@ fn config() -> BooleanityAddressPushforwardConfig {
         )),
         finalize_threads_per_threadgroup: Some(env_usize(
             "JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS",
+            defaults
+                .finalize_threads_per_threadgroup
+                .expect("default finalize width should be explicit"),
+        )),
+    }
+}
+
+fn hamming_config() -> BooleanityAddressPushforwardConfig {
+    let defaults = BooleanityAddressPushforwardConfig::default();
+    BooleanityAddressPushforwardConfig {
+        inner_log2: env_usize("JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2", defaults.inner_log2),
+        selectors_per_tile: env_usize(
+            "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE",
+            defaults.selectors_per_tile,
+        ),
+        tile_threads_per_threadgroup: Some(env_usize(
+            "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS",
+            defaults
+                .tile_threads_per_threadgroup
+                .expect("default tile width should be explicit"),
+        )),
+        finalize_threads_per_threadgroup: Some(env_usize(
+            "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS",
             defaults
                 .finalize_threads_per_threadgroup
                 .expect("default finalize width should be explicit"),
@@ -294,6 +435,12 @@ fn biased_inc(words: [u64; 5]) -> (u64, i32) {
     }
 }
 
+fn recenter(masses: &mut [AkitaField]) {
+    for table in masses.chunks_exact_mut(K) {
+        table[0] = AkitaField::zero();
+    }
+}
+
 fn cases(inner_log2: usize) -> Vec<usize> {
     let log_n = env::var("JOLT_METAL_BOOLEANITY_ADDRESS_LOG_N").ok();
     let elements = env::var("JOLT_SOLINAS_BENCH_ELEMENTS").ok();
@@ -319,6 +466,35 @@ fn cases(inner_log2: usize) -> Vec<usize> {
             .iter()
             .all(|elements| elements.is_power_of_two() && elements.ilog2() as usize >= inner_log2),
         "Booleanity address sizes must be powers of two with log_n >= inner_log2"
+    );
+    cases
+}
+
+fn hamming_cases(inner_log2: usize) -> Vec<usize> {
+    let log_n = env::var("JOLT_METAL_HAMMING_WEIGHT_LOG_N").ok();
+    let elements = env::var("JOLT_SOLINAS_BENCH_ELEMENTS").ok();
+    assert!(
+        log_n.is_none() || elements.is_none(),
+        "set either JOLT_METAL_HAMMING_WEIGHT_LOG_N or JOLT_SOLINAS_BENCH_ELEMENTS"
+    );
+    let cases = if let Some(log_n) = log_n {
+        let log_n = log_n
+            .parse::<usize>()
+            .expect("Hamming log_n should be a positive integer");
+        assert!(log_n < usize::BITS as usize, "log_n is too large");
+        vec![1usize << log_n]
+    } else if let Some(elements) = elements {
+        vec![elements
+            .parse::<usize>()
+            .expect("JOLT_SOLINAS_BENCH_ELEMENTS should be a positive integer")]
+    } else {
+        DEFAULT_ELEMENTS.to_vec()
+    };
+    assert!(
+        cases
+            .iter()
+            .all(|elements| elements.is_power_of_two() && elements.ilog2() as usize >= inner_log2),
+        "Hamming sizes must be powers of two with log_n >= inner_log2"
     );
     cases
 }

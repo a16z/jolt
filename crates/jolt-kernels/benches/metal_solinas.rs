@@ -146,6 +146,9 @@ mod macos {
                 }
                 "booleanity-message" => booleanity::bench_message(c, &context),
                 "booleanity-address" => booleanity_address::bench(c, &context),
+                "hamming-weight-claim-reduction" => {
+                    booleanity_address::bench_hamming(c, &context);
+                }
                 "bytecode-cycle-dense" => bytecode_cycle::bench(c, &context),
                 "spartan-outer-uniskip" => spartan_outer_uniskip::bench(c, &context),
                 "product5" => {

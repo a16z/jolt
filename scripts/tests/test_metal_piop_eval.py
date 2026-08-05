@@ -542,6 +542,185 @@ def complete_booleanity_address_trace(
     return events
 
 
+def complete_hamming_weight_trace(
+    log_n: int,
+    backend: str,
+    inner_log2: int = 15,
+    selectors_per_tile: int = 6,
+    tile_threads: int = 512,
+    finalize_threads: int = 1024,
+) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    events = [
+        event("jolt_prover::piop", 0.0, 10_000.0),
+        event("InstructionReadRaf::prepare", 90.0, 60.0),
+        event("BooleanityAddressPhase::prepare", 1_000.0, 600.0),
+        event("Booleanity::prepare", 1_700.0, 200.0),
+        event("HammingWeightClaimReduction::prepare", 2_000.0, 600.0),
+    ]
+    round_starts = [2_700.0 + 100.0 * index for index in range(8)]
+    for timestamp in round_starts:
+        events.extend(
+            [
+                event("sumcheck_round", timestamp - 5.0, 95.0),
+                event("HammingWeightClaimReduction::prove_round", timestamp, 80.0),
+                event("sumcheck_host_fiat_shamir", timestamp + 85.0, 5.0),
+            ]
+        )
+    events.extend(
+        [
+            event("HammingWeightClaimReduction::finish_rounds", 3_500.0, 80.0),
+            event("HammingWeightClaimReduction::output_claims", 3_600.0, 40.0),
+        ]
+    )
+    if backend == "optimized":
+        events.append(
+            event("OptimizedHammingWeightClaimReduction::row_source", 2_050.0, 300.0)
+        )
+        return events
+
+    rows = 1 << log_n
+    row_bytes = 40
+    polys = 29
+    k = 256
+    e_in = 1 << inner_log2
+    e_out = rows // e_in
+    selector_tiles = (polys + selectors_per_tile - 1) // selectors_per_tile
+    planned_bytes = metal_piop_eval.booleanity_address_sequence_storage_bytes(
+        log_n, inner_log2, selectors_per_tile
+    )
+    lifecycle_args = {
+        "resident_rows_storage_id": "401",
+        "resident_rows": str(rows),
+        "resident_row_bytes": str(row_bytes),
+        "device_registry_id": "17",
+        "row_allocations": "0",
+        "row_upload_bytes": "0",
+    }
+    events.extend(
+        [
+            event(
+                "MetalBooleanityRows::stage5_prepare",
+                100.0,
+                20.0,
+                {
+                    **lifecycle_args,
+                    "row_allocations": "1",
+                    "row_upload_bytes": str(rows * row_bytes),
+                },
+            ),
+            event(
+                "MetalBooleanityRows::stage6a_address_use",
+                1_002.0,
+                2.0,
+                {**lifecycle_args},
+            ),
+            event(
+                "MetalBooleanityRows::stage6b_cycle_use",
+                1_710.0,
+                20.0,
+                {**lifecycle_args},
+            ),
+            event(
+                "MetalBooleanityRows::stage6b_retain_for_stage7",
+                1_740.0,
+                20.0,
+                {**lifecycle_args},
+            ),
+            event(
+                "MetalBooleanityRows::stage7_hamming_use",
+                2_202.0,
+                300.0,
+                {
+                    **lifecycle_args,
+                    "terminal_consumer": "true",
+                    "terminal_carry_removed": "true",
+                },
+            ),
+            event("MetalHammingWeightClaimReduction::prepare", 2_005.0, 580.0),
+            event(
+                "MetalHammingWeightClaimReduction::sequence_prepare",
+                2_010.0,
+                190.0,
+                {
+                    "resident_rows_storage_id": "401",
+                    "resident_rows": str(rows),
+                    "resident_row_bytes": str(row_bytes),
+                    "row_upload_bytes": "0",
+                    "polys": str(polys),
+                    "k": str(k),
+                    "e_in_elements": str(e_in),
+                    "e_out_elements": str(e_out),
+                    "requested_inner_log2": str(inner_log2),
+                    "effective_inner_log2": str(inner_log2),
+                    "requested_selectors_per_tile": str(selectors_per_tile),
+                    "effective_selectors_per_tile": str(selectors_per_tile),
+                    "requested_tile_threads": str(tile_threads),
+                    "effective_tile_threads": str(tile_threads),
+                    "requested_finalize_threads": str(finalize_threads),
+                    "effective_finalize_threads": str(finalize_threads),
+                    "selector_tiles": str(selector_tiles),
+                    "production_specialized": str(
+                        selectors_per_tile in {3, 6}
+                    ).lower(),
+                },
+            ),
+            event(
+                "MetalHammingWeightClaimReduction::allocation_plan",
+                2_020.0,
+                80.0,
+                {
+                    "device_buffers": "5",
+                    "planned_device_bytes": str(planned_bytes),
+                    "current_device_bytes": str(rows * row_bytes),
+                    "recommended_device_bytes": str(rows * row_bytes + planned_bytes),
+                },
+            ),
+            event(
+                "MetalHammingWeightClaimReduction::dispatch",
+                2_210.0,
+                190.0,
+                {
+                    "command_buffers": "1",
+                    "tile_dispatches": str(selector_tiles),
+                    "finalize_dispatches": str(selector_tiles),
+                    "command_completed": "true",
+                    "gpu_active_ns": "150000",
+                    "resident_rows_storage_id": "401",
+                },
+            ),
+            event(
+                "MetalHammingWeightClaimReduction::readback",
+                2_410.0,
+                90.0,
+                {
+                    "elements": str(polys * k),
+                    "bytes": str(polys * k * 16),
+                    "readbacks": "1",
+                },
+            ),
+        ]
+    )
+    return events
+
+
 class MetalPiopEvalTests(unittest.TestCase):
     def test_worktree_digest_binds_untracked_paths_and_contents(self) -> None:
         first = metal_piop_eval.worktree_state_digest(
@@ -618,8 +797,7 @@ class MetalPiopEvalTests(unittest.TestCase):
             metal_piop_eval.unique_span_duration_us(events)
 
     def test_speedup_is_median_of_interleaved_pairs(self) -> None:
-        metrics = metal_piop_eval.summarize_pairs(
-            [
+        pairs = [
                 {
                     "cpu_us": 100.0,
                     "metal_us": 20.0,
@@ -633,6 +811,10 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_instruction_input_us": 16.0,
                     "cpu_booleanity_address_us": 60.0,
                     "metal_booleanity_address_us": 10.0,
+                    "cpu_hamming_weight_us": 45.0,
+                    "metal_hamming_weight_us": 9.0,
+                    "cpu_hamming_weight_service_us": 50.0,
+                    "metal_hamming_weight_service_us": 10.0,
                 },
                 {
                     "cpu_us": 120.0,
@@ -647,9 +829,13 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_instruction_input_us": 30.0,
                     "cpu_booleanity_address_us": 70.0,
                     "metal_booleanity_address_us": 14.0,
+                    "cpu_hamming_weight_us": 36.0,
+                    "metal_hamming_weight_us": 12.0,
+                    "cpu_hamming_weight_service_us": 42.0,
+                    "metal_hamming_weight_service_us": 14.0,
                 },
             ]
-        )
+        metrics = metal_piop_eval.summarize_pairs(pairs)
         self.assertEqual(metrics["paired_speedups"], [5.0, 4.0])
         self.assertEqual(metrics["paired_instruction_ra_speedups"], [5.0, 4.0])
         self.assertEqual(metrics["instruction_ra_speedup"], 4.5)
@@ -662,10 +848,19 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(metrics["instruction_input_kernel_service_speedup"], 4.0)
         self.assertEqual(metrics["paired_booleanity_address_phase_speedups"], [6.0, 5.0])
         self.assertEqual(metrics["booleanity_address_phase_speedup"], 5.5)
+        self.assertEqual(
+            metrics["paired_hamming_weight_claim_reduction_speedups"], [5.0, 3.0]
+        )
+        self.assertEqual(metrics["hamming_weight_claim_reduction_speedup"], 4.0)
         self.assertFalse(metrics["bytecode_read_raf_cycle_decision"]["enough_pairs"])
         self.assertEqual(metrics["piop_speedup"], 4.5)
         self.assertEqual(metrics["paired_speedups_with_backend_witness_prepare"], [4.0, 3.0])
         self.assertEqual(metrics["piop_plus_backend_witness_prepare_speedup"], 3.5)
+
+        incomplete = [dict(pair) for pair in pairs]
+        incomplete[0].pop("cpu_hamming_weight_us")
+        with self.assertRaisesRegex(ValueError, "missing Hamming-weight timing"):
+            metal_piop_eval.summarize_pairs(incomplete)
 
     def test_validates_target_bytecode_records(self) -> None:
         optimized = "\n".join(
@@ -727,6 +922,20 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(observed["selectors_per_tile"], 6)
         with self.assertRaisesRegex(ValueError, "exactly one"):
             metal_piop_eval.validate_booleanity_address_stdout(
+                record + "\n" + record, "metal"
+            )
+
+    def test_validates_hamming_weight_runtime_record(self) -> None:
+        record = "HAMMING_WEIGHT_METAL_CONFIG backend=metal trace_cutoff=262144 inner_log2=15 selectors_per_tile=6 tile_threads=512 finalize_threads=1024"
+        self.assertIsNone(
+            metal_piop_eval.validate_hamming_weight_stdout("", "optimized")
+        )
+        observed = metal_piop_eval.validate_hamming_weight_stdout(record, "metal")
+        assert observed is not None
+        self.assertEqual(observed["inner_log2"], 15)
+        self.assertEqual(observed["selectors_per_tile"], 6)
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            metal_piop_eval.validate_hamming_weight_stdout(
                 record + "\n" + record, "metal"
             )
 
@@ -836,6 +1045,202 @@ class MetalPiopEvalTests(unittest.TestCase):
             tuned["resource_observation"]["allocation"]["planned_device_bytes"],
             metal_piop_eval.booleanity_address_sequence_storage_bytes(25, 14, 4),
         )
+
+    def test_requires_exact_hamming_weight_member_resources_and_terminal_lifecycle(
+        self,
+    ) -> None:
+        optimized = metal_piop_eval.hamming_weight_member_breakdown(
+            complete_hamming_weight_trace(26, "optimized"),
+            "optimized",
+            26,
+        )
+        self.assertIsNone(optimized["row_lifecycle"])
+        self.assertEqual(optimized["components"]["row_source_us"], 300.0)
+        self.assertEqual(
+            optimized["components"]["normalized_member_us"],
+            optimized["components"]["member_us"] - 300.0,
+        )
+
+        observed = metal_piop_eval.hamming_weight_member_breakdown(
+            complete_hamming_weight_trace(26, "metal"),
+            "metal",
+            26,
+        )
+        self.assertEqual(observed["components"]["row_source_us"], 0.0)
+        self.assertEqual(
+            observed["components"]["normalized_member_us"],
+            observed["components"]["member_us"],
+        )
+        self.assertEqual(
+            observed["metal_counts"],
+            {
+                "prepare": 1,
+                "sequence_prepare": 1,
+                "allocation_plan": 1,
+                "dispatch": 1,
+                "readback": 1,
+            },
+        )
+        self.assertEqual(
+            observed["resource_observation"]["readback"],
+            {"elements": 7_424, "bytes": 118_784, "readbacks": 1},
+        )
+        self.assertEqual(
+            observed["row_lifecycle"],
+            {
+                "kind": "metal_hamming_resident",
+                "rows": 1 << 26,
+                "row_bytes": 40,
+                "device_registry_id": 17,
+                "stage5_storage_id": 401,
+                "stage6a_storage_id": 401,
+                "stage6b_storage_id": 401,
+                "stage6b_retain_storage_id": 401,
+                "stage7_storage_id": 401,
+                "stage5": {
+                    "row_allocations": 1,
+                    "row_upload_bytes": 40 * (1 << 26),
+                },
+                "stage6a": {"row_allocations": 0, "row_upload_bytes": 0},
+                "stage6b": {"row_allocations": 0, "row_upload_bytes": 0},
+                "stage6b_retain": {
+                    "row_allocations": 0,
+                    "row_upload_bytes": 0,
+                },
+                "stage7": {"row_allocations": 0, "row_upload_bytes": 0},
+                "terminal_consumer": True,
+                "terminal_carry_removed": True,
+            },
+        )
+
+    def test_rejects_hamming_weight_trace_contract_drift(self) -> None:
+        def named(
+            events: list[dict[str, object]], name: str
+        ) -> dict[str, object]:
+            return next(event for event in events if event.get("name") == name)
+
+        def remove_named(events: list[dict[str, object]], name: str) -> None:
+            events[:] = [event for event in events if event.get("name") != name]
+
+        optimized = complete_hamming_weight_trace(26, "optimized")
+        remove_named(
+            optimized, "OptimizedHammingWeightClaimReduction::row_source"
+        )
+        with self.assertRaisesRegex(ValueError, "row-source"):
+            metal_piop_eval.hamming_weight_member_breakdown(
+                optimized, "optimized", 26
+            )
+
+        cases = (
+            (
+                "missing retain",
+                lambda events: remove_named(
+                    events, "MetalBooleanityRows::stage6b_retain_for_stage7"
+                ),
+                "lifecycle",
+            ),
+            (
+                "wrong terminal storage",
+                lambda events: named(
+                    events, "MetalBooleanityRows::stage7_hamming_use"
+                )["args"].__setitem__("resident_rows_storage_id", "402"),
+                "lifecycle",
+            ),
+            (
+                "terminal upload",
+                lambda events: named(
+                    events, "MetalBooleanityRows::stage7_hamming_use"
+                )["args"].__setitem__("row_upload_bytes", "1"),
+                "lifecycle",
+            ),
+            (
+                "terminal carry retained",
+                lambda events: named(
+                    events, "MetalBooleanityRows::stage7_hamming_use"
+                )["args"].__setitem__("terminal_carry_removed", "false"),
+                "lifecycle",
+            ),
+            (
+                "terminal use before sequence completes",
+                lambda events: named(
+                    events, "MetalBooleanityRows::stage7_hamming_use"
+                ).__setitem__("ts", 2_100.0),
+                "out of order",
+            ),
+            (
+                "terminal use starts after dispatch",
+                lambda events: named(
+                    events, "MetalBooleanityRows::stage7_hamming_use"
+                ).__setitem__("ts", 2_220.0),
+                "dispatch",
+            ),
+            (
+                "terminal use ends before readback",
+                lambda events: named(
+                    events, "MetalBooleanityRows::stage7_hamming_use"
+                ).__setitem__("dur", 200.0),
+                "readback",
+            ),
+            (
+                "command incomplete",
+                lambda events: named(
+                    events, "MetalHammingWeightClaimReduction::dispatch"
+                )["args"].__setitem__("command_completed", "false"),
+                "command",
+            ),
+            (
+                "wrong dispatch count",
+                lambda events: named(
+                    events, "MetalHammingWeightClaimReduction::dispatch"
+                )["args"].__setitem__("tile_dispatches", "4"),
+                "dispatch",
+            ),
+            (
+                "wrong readback",
+                lambda events: named(
+                    events, "MetalHammingWeightClaimReduction::readback"
+                )["args"].__setitem__("bytes", "1"),
+                "readback",
+            ),
+            (
+                "unknown phase",
+                lambda events: events.append(
+                    {
+                        "name": "MetalHammingWeightClaimReduction::hidden_copy",
+                        "ph": "X",
+                        "pid": 1,
+                        "tid": 0,
+                        "ts": 2_100.0,
+                        "dur": 1.0,
+                    }
+                ),
+                "unknown Metal phases",
+            ),
+        )
+        for name, mutate, message in cases:
+            with self.subTest(name=name):
+                events = complete_hamming_weight_trace(26, "metal")
+                mutate(events)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_piop_eval.hamming_weight_member_breakdown(
+                        events, "metal", 26
+                    )
+
+        metal_with_cpu_source = complete_hamming_weight_trace(26, "metal")
+        metal_with_cpu_source.append(
+            {
+                "name": "OptimizedHammingWeightClaimReduction::row_source",
+                "ph": "X",
+                "pid": 1,
+                "tid": 0,
+                "ts": 2_050.0,
+                "dur": 1.0,
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "optimized row-source"):
+            metal_piop_eval.hamming_weight_member_breakdown(
+                metal_with_cpu_source, "metal", 26
+            )
 
     def test_rejects_booleanity_address_trace_contract_drift(self) -> None:
         cases = [
@@ -1455,6 +1860,10 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_instruction_input_us": 200.0,
             "cpu_booleanity_address_us": 1_000.0,
             "metal_booleanity_address_us": 200.0,
+            "cpu_hamming_weight_us": 900.0,
+            "metal_hamming_weight_us": 180.0,
+            "cpu_hamming_weight_service_us": 990.0,
+            "metal_hamming_weight_service_us": 180.0,
         }
         pairs = [
             {
@@ -1500,6 +1909,10 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_instruction_input_us": 200.0,
                     "cpu_booleanity_address_us": 1_000.0,
                     "metal_booleanity_address_us": 200.0,
+                    "cpu_hamming_weight_us": 900.0,
+                    "metal_hamming_weight_us": 180.0,
+                    "cpu_hamming_weight_service_us": 990.0,
+                    "metal_hamming_weight_service_us": 180.0,
                 }
             )
         decision = metal_piop_eval.summarize_pairs(pairs)[
@@ -1529,6 +1942,10 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "metal_instruction_input_us": 160.0,
                 "cpu_booleanity_address_us": 1_000.0,
                 "metal_booleanity_address_us": 200.0,
+                "cpu_hamming_weight_us": 900.0,
+                "metal_hamming_weight_us": 180.0,
+                "cpu_hamming_weight_service_us": 990.0,
+                "metal_hamming_weight_service_us": 180.0,
             }
             for index in range(5)
         ]
@@ -1561,10 +1978,54 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_booleanity_address_us": 10_000.0
                     if metal_first
                     else 200.0,
+                    "cpu_hamming_weight_us": 900.0,
+                    "metal_hamming_weight_us": 180.0,
+                    "cpu_hamming_weight_service_us": 990.0,
+                    "metal_hamming_weight_service_us": 180.0,
                 }
             )
         decision = metal_piop_eval.summarize_pairs(pairs)[
             "booleanity_address_phase_decision"
+        ]
+        self.assertEqual(decision["median_speedup"], 5.0)
+        self.assertEqual(decision["optimized_first_median_speedup"], 5.0)
+        self.assertEqual(decision["metal_first_median_speedup"], 0.1)
+        self.assertFalse(decision["clears_order_strata"])
+        self.assertFalse(decision["clears"])
+
+    def test_hamming_weight_gate_requires_both_order_strata(self) -> None:
+        pairs = []
+        for index in range(5):
+            metal_first = index % 2 == 1
+            pairs.append(
+                {
+                    "order": ["metal", "optimized"]
+                    if metal_first
+                    else ["optimized", "metal"],
+                    "cpu_us": 1_000.0,
+                    "metal_us": 500.0,
+                    "cpu_prepare_us": 1.0,
+                    "metal_prepare_us": 1.0,
+                    "cpu_instruction_ra_us": 700.0,
+                    "metal_instruction_ra_us": 100.0,
+                    "cpu_bytecode_us": 1_000.0,
+                    "metal_bytecode_us": 200.0,
+                    "cpu_instruction_input_us": 800.0,
+                    "metal_instruction_input_us": 160.0,
+                    "cpu_booleanity_address_us": 1_000.0,
+                    "metal_booleanity_address_us": 200.0,
+                    "cpu_hamming_weight_us": 1_000.0,
+                    "metal_hamming_weight_us": 10_000.0
+                    if metal_first
+                    else 200.0,
+                    "cpu_hamming_weight_service_us": 1_100.0,
+                    "metal_hamming_weight_service_us": 10_000.0
+                    if metal_first
+                    else 200.0,
+                }
+            )
+        decision = metal_piop_eval.summarize_pairs(pairs)[
+            "hamming_weight_claim_reduction_decision"
         ]
         self.assertEqual(decision["median_speedup"], 5.0)
         self.assertEqual(decision["optimized_first_median_speedup"], 5.0)

@@ -18,6 +18,7 @@ akita = ["jolt-claims/akita", "jolt-field/akita", "jolt-verifier/akita"]
 allocative = ["dep:allocative"]
 metal = ["akita", "dep:metal"]
 parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
+test-utils = []
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
@@ -99,4 +100,8 @@ required-features = ["metal", "parallel"]
 
 [[example]]
 name = "metal-booleanity-address-eval"
+required-features = ["metal", "parallel"]
+
+[[example]]
+name = "metal-hamming-weight-claim-reduction-eval"
 required-features = ["metal", "parallel"]

@@ -469,6 +469,85 @@ class MetalAutoresearchTests(unittest.TestCase):
         }
         return config, params, output
 
+    def hamming_weight_local_contract_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        _, _, output = self.booleanity_address_local_contract_fixture()
+        config = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/hamming_weight_claim_reduction.template.json"
+        )
+        params = {
+            name: str(value) for name, value in config["baseline_params"].items()
+        }
+        rows = output["workload"]["rows"]
+        opportunities = rows * 29
+        nonzero = opportunities - rows
+
+        output["schema"] = "hamming_weight_claim_reduction_v1"
+        output["kernel"] = "hamming_weight_claim_reduction"
+        workload = output["workload"]
+        workload["hamming_address_rounds"] = workload.pop("address_rounds")
+        workload.update(
+            {
+                "selector_row_opportunities": opportunities,
+                "nonzero_recentered_contributions": nonzero,
+                "resident_row_upload_bytes_inside_metal_member": 0,
+                "cpu_member_contract": "optimized shared-row tensor-equality pushforward mirror, bucket-zero recentering, W/baseline construction, and eight host Fiat-Shamir rounds",
+                "metal_member_contract": "cycle-equality preparation and upload over resident rows, one command encode/submit/wait, one result readback, bucket-zero recentering, and the same W/baseline and eight host Fiat-Shamir rounds",
+            }
+        )
+        output["fingerprint"].update(
+            {
+                "cpu_control": "standalone parallel optimized TensorEqTable/AkitaAccumulator pushforward mirror",
+                "host_round_oracle": "identical deterministic W/baseline and host-round implementation",
+            }
+        )
+        metrics = output["metrics"]
+        cpu_median = statistics.median(metrics["cpu_member_ns_samples"])
+        metal_median = statistics.median(metrics["metal_member_ns_samples"])
+        metrics.update(
+            {
+                "selector_row_opportunities": opportunities,
+                "nonzero_recentered_contributions": nonzero,
+                "cpu_selector_row_opportunities_per_second": opportunities
+                * 1e9
+                / cpu_median,
+                "metal_selector_row_opportunities_per_second": opportunities
+                * 1e9
+                / metal_median,
+                "cpu_nonzero_recentered_contributions_per_second": nonzero
+                * 1e9
+                / cpu_median,
+                "metal_nonzero_recentered_contributions_per_second": nonzero
+                * 1e9
+                / metal_median,
+            }
+        )
+        guards = output["guards"]
+        guards["exact_skipped_q_evals"] = guards.pop(
+            "exact_four_sample_q_evals"
+        )
+        guards["resident_rows_stable_for_stage7_handoff"] = guards.pop(
+            "resident_rows_stable_for_cycle_handoff"
+        )
+        guards.update(
+            {
+                "recentered_bucket_zero_exact": True,
+                "nonzero_recentered_values_present": True,
+                "nonzero_contribution_count_admitted": True,
+                "output_claim_count_exact": True,
+            }
+        )
+        resources = output["resources"]
+        resources["hamming_owned_device_bytes"] = resources.pop(
+            "address_owned_device_bytes"
+        )
+        output["oracle_limits"]["cpu_denominator_scope"] = (
+            "standalone optimized shared-row pushforward mirror plus identical W/baseline and host rounds"
+        )
+        return config, params, output
+
     def instruction_input_local_contract_fixture(
         self,
     ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
@@ -1485,6 +1564,120 @@ class MetalAutoresearchTests(unittest.TestCase):
         }
         return config, params, result
 
+    def production_hamming_weight_member_fixture(
+        self,
+        backend: str,
+        member_ns: int,
+        params: dict[str, str],
+        log_n: int = 26,
+    ) -> tuple[dict[str, object], object]:
+        booleanity_params = {
+            "JOLT_METAL_BOOLEANITY_ADDRESS_INNER_LOG2": params[
+                "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2"
+            ],
+            "JOLT_METAL_BOOLEANITY_ADDRESS_SELECTORS_PER_TILE": params[
+                "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE"
+            ],
+            "JOLT_METAL_BOOLEANITY_ADDRESS_TILE_THREADS": params[
+                "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS"
+            ],
+            "JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS": params[
+                "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS"
+            ],
+        }
+        member, lifecycle = self.production_booleanity_address_member_fixture(
+            backend, member_ns, booleanity_params, log_n
+        )
+        if backend == "metal":
+            assert isinstance(lifecycle, dict)
+            storage_id = lifecycle["stage5_storage_id"]
+            lifecycle.update(
+                {
+                    "kind": "metal_hamming_resident",
+                    "stage6b_retain_storage_id": storage_id,
+                    "stage7_storage_id": storage_id,
+                    "stage6b_retain": {
+                        "row_allocations": 0,
+                        "row_upload_bytes": 0,
+                    },
+                    "stage7": {"row_allocations": 0, "row_upload_bytes": 0},
+                    "terminal_consumer": True,
+                    "terminal_carry_removed": True,
+                }
+            )
+        return member, lifecycle
+
+    def production_hamming_weight_result_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        config = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/hamming_weight_claim_reduction.template.json"
+        )
+        params = {
+            name: str(value) for name, value in config["baseline_params"].items()
+        }
+        gate = config["final_validation"]["production_gate"]
+        _, _, booleanity_result = self.production_booleanity_address_result_fixture()
+        result = copy.deepcopy(booleanity_result)
+        result["local_kernel"] = "HammingWeightClaimReduction"
+        result["local_metric"] = {
+            "metric": "hamming_weight_claim_reduction_speedup",
+            "paired_metric": "paired_hamming_weight_claim_reduction_speedups",
+        }
+        result["guards"] = {name: True for name in gate["required_guards"]}
+        metric_names = {
+            "booleanity_address_phase_speedup": "hamming_weight_claim_reduction_speedup",
+            "booleanity_address_phase_service_speedup": "hamming_weight_claim_reduction_service_speedup",
+            "paired_booleanity_address_phase_speedups": "paired_hamming_weight_claim_reduction_speedups",
+            "paired_booleanity_address_phase_service_speedups": "paired_hamming_weight_claim_reduction_service_speedups",
+            "paired_booleanity_address_phase_fractional_improvements": "paired_hamming_weight_claim_reduction_fractional_improvements",
+            "cpu_booleanity_address_phase_ms_samples": "cpu_hamming_weight_claim_reduction_ms_samples",
+            "metal_booleanity_address_phase_ms_samples": "metal_hamming_weight_claim_reduction_ms_samples",
+            "cpu_booleanity_address_phase_service_ms_samples": "cpu_hamming_weight_claim_reduction_service_ms_samples",
+            "metal_booleanity_address_phase_service_ms_samples": "metal_hamming_weight_claim_reduction_service_ms_samples",
+            "booleanity_address_phase_decision": "hamming_weight_claim_reduction_decision",
+        }
+        result["metrics"] = {
+            metric_names.get(name, name): value
+            for name, value in result["metrics"].items()
+        }
+        for pair in result["pairs"]:
+            for backend, member_ns in (("optimized", 500), ("metal", 100)):
+                arm = pair["arms"][backend]
+                arm.pop("booleanity_address")
+                arm.pop("booleanity_address_row_lifecycle")
+                member, lifecycle = self.production_hamming_weight_member_fixture(
+                    backend, member_ns, params
+                )
+                arm["hamming_weight"] = member
+                arm["hamming_weight_row_lifecycle"] = lifecycle
+        fingerprint = result["fingerprint"]
+        fingerprint["local_kernel"] = "HammingWeightClaimReduction"
+        for name in tuple(fingerprint):
+            if name.startswith("booleanity_address_metal_"):
+                fingerprint.pop(name)
+        fingerprint.update(
+            {
+                "hamming_weight_metal_inner_log2": int(
+                    params["JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2"]
+                ),
+                "hamming_weight_metal_selectors_per_tile": int(
+                    params["JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE"]
+                ),
+                "hamming_weight_metal_tile_threads": int(
+                    params["JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS"]
+                ),
+                "hamming_weight_metal_finalize_threads": int(
+                    params["JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS"]
+                ),
+                "hamming_weight_metal_trace_cutoff_log2": int(
+                    params["JOLT_METAL_HAMMING_WEIGHT_TRACE_CUTOFF_LOG2"]
+                ),
+            }
+        )
+        return config, params, result
+
     def test_schema_five_parser_requires_one_result_record(self) -> None:
         record = '{"schema_version": 5, "kernel": "akita_piop"}'
         self.assertEqual(
@@ -1809,6 +2002,121 @@ class MetalAutoresearchTests(unittest.TestCase):
         passed, reason = metal_autoresearch.guards_pass(config, output)
         self.assertTrue(passed, reason)
         self.assertTrue(output["all_exact"])
+
+    def test_hamming_weight_template_and_closed_local_result(self) -> None:
+        config, params, output = self.hamming_weight_local_contract_fixture()
+        metal_autoresearch.validate_template(config, ROOT)
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+        passed, reason = metal_autoresearch.guards_pass(config, output)
+        self.assertTrue(passed, reason)
+
+    def test_hamming_weight_local_result_recomputes_specific_evidence(self) -> None:
+        config, params, output = self.hamming_weight_local_contract_fixture()
+        mutations = (
+            (
+                "throughput rate",
+                lambda value: value["metrics"].__setitem__(
+                    "metal_nonzero_recentered_contributions_per_second", 1.0
+                ),
+                "contributions_per_second",
+            ),
+            (
+                "contribution count",
+                lambda value: value["metrics"].__setitem__(
+                    "nonzero_recentered_contributions", 1
+                ),
+                "contribution accounting",
+            ),
+            (
+                "recenter guard",
+                lambda value: value["guards"].__setitem__(
+                    "recentered_bucket_zero_exact", False
+                ),
+                "protocol guards",
+            ),
+            (
+                "owned bytes",
+                lambda value: value["resources"].__setitem__(
+                    "hamming_owned_device_bytes", 1
+                ),
+                "resource geometry",
+            ),
+            (
+                "extra schema field",
+                lambda value: value.__setitem__("unsupported", True),
+                "contract is incomplete",
+            ),
+        )
+        for name, mutate, message in mutations:
+            with self.subTest(name=name):
+                tampered = copy.deepcopy(output)
+                mutate(tampered)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_local_result_contract(
+                        config, tampered, params
+                    )
+
+    def test_hamming_weight_local_result_binds_all_five_parameters(self) -> None:
+        config, params, output = self.hamming_weight_local_contract_fixture()
+        for parameter in (
+            "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2",
+            "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE",
+            "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS",
+            "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS",
+            "JOLT_METAL_HAMMING_WEIGHT_TRACE_CUTOFF_LOG2",
+        ):
+            with self.subTest(parameter=parameter):
+                tampered_params = dict(params)
+                tampered_params[parameter] = str(int(tampered_params[parameter]) + 1)
+                with self.assertRaisesRegex(ValueError, "fingerprint|geometry"):
+                    metal_autoresearch.validate_local_result_contract(
+                        config, output, tampered_params
+                    )
+
+    def test_hamming_weight_exact_sub_floor_result_remains_searchable(self) -> None:
+        config, params, output = self.hamming_weight_local_contract_fixture()
+        metrics = output["metrics"]
+        metal_samples = metrics["metal_member_ns_samples"]
+        cpu_samples = [3 * value for value in metal_samples]
+        cpu_prepare = output["timings"]["cpu_prepare_ns_samples"]
+        cpu_host = output["timings"]["cpu_host_rounds_ns_samples"]
+        cpu_unattributed = [
+            total - prepare - host
+            for total, prepare, host in zip(cpu_samples, cpu_prepare, cpu_host)
+        ]
+        metrics.update(
+            {
+                "hybrid_speedup": 3.0,
+                "ratio_of_member_medians": 3.0,
+                "paired_speedups": [3.0] * len(metal_samples),
+                "paired_speedup_mad": 0.0,
+                "cpu_member_ns_samples": cpu_samples,
+                "cpu_selector_row_opportunities_per_second": metrics[
+                    "selector_row_opportunities"
+                ]
+                * 1e9
+                / statistics.median(cpu_samples),
+                "cpu_nonzero_recentered_contributions_per_second": metrics[
+                    "nonzero_recentered_contributions"
+                ]
+                * 1e9
+                / statistics.median(cpu_samples),
+            }
+        )
+        output["timings"].update(
+            {
+                "cpu_member_median_ns": statistics.median(cpu_samples),
+                "cpu_unattributed_median_ns": statistics.median(cpu_unattributed),
+                "cpu_unattributed_ns_samples": cpu_unattributed,
+            }
+        )
+        output["promotion"].update(
+            {"speedup_eligible": False, "local_eligible": False}
+        )
+
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+        passed, reason = metal_autoresearch.guards_pass(config, output)
+        self.assertTrue(passed, reason)
 
     def test_instruction_input_local_result_accepts_closed_contract(self) -> None:
         config, params, output = self.instruction_input_local_contract_fixture()
@@ -3490,6 +3798,12 @@ class MetalAutoresearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
             metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)
 
+    def test_hamming_weight_production_requires_equal_input_local_bar(self) -> None:
+        config, _, _ = self.hamming_weight_local_contract_fixture()
+        metal_autoresearch.validate_accepted_parent_for_production(config, 4.0)
+        with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
+            metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)
+
     def test_production_instruction_input_gate_requires_precise_guard(self) -> None:
         config, params, result = self.production_instruction_input_result_fixture()
         del result["guards"][
@@ -3631,6 +3945,153 @@ class MetalAutoresearchTests(unittest.TestCase):
                     metal_autoresearch.validate_production_result(
                         config, tampered, "abc", params, True
                     )
+
+    def test_production_hamming_weight_gate_recomputes_terminal_raw_members(
+        self,
+    ) -> None:
+        config, params, result = self.production_hamming_weight_result_fixture()
+        evidence = metal_autoresearch.validate_production_result(
+            config, result, "abc", params, True
+        )
+        self.assertEqual(evidence["metric"], "hamming_weight_claim_reduction_speedup")
+        self.assertEqual(evidence["metric_value"], 5.0)
+        self.assertEqual(evidence["optimized_first_median_speedup"], 5.0)
+        self.assertEqual(evidence["metal_first_median_speedup"], 5.0)
+
+        mutations = (
+            (
+                "readback bytes",
+                lambda value: value["pairs"][0]["arms"]["metal"]["hamming_weight"][
+                    "resource_observation"
+                ]["readback"].__setitem__("bytes", 1),
+                "readback",
+            ),
+            (
+                "wrong K",
+                lambda value: value["pairs"][0]["arms"]["metal"]["hamming_weight"][
+                    "resource_observation"
+                ]["sequence"].__setitem__("k", 16),
+                "sequence",
+            ),
+            (
+                "wrong terminal storage",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "hamming_weight_row_lifecycle"
+                ].__setitem__("stage7_storage_id", 402),
+                "row lifecycle",
+            ),
+            (
+                "terminal upload",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "hamming_weight_row_lifecycle"
+                ]["stage7"].__setitem__("row_upload_bytes", 1),
+                "row lifecycle",
+            ),
+            (
+                "terminal carry retained",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "hamming_weight_row_lifecycle"
+                ].__setitem__("terminal_carry_removed", False),
+                "row lifecycle",
+            ),
+            (
+                "extra lifecycle field",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "hamming_weight_row_lifecycle"
+                ].__setitem__("uncontracted", True),
+                "lifecycle record is incomplete",
+            ),
+            (
+                "extra member field",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "hamming_weight"
+                ].__setitem__("uncontracted", True),
+                "member record is incomplete",
+            ),
+            (
+                "reported local sample",
+                lambda value: value["metrics"][
+                    "metal_hamming_weight_claim_reduction_ms_samples"
+                ].__setitem__(0, 1.0),
+                "sample summary",
+            ),
+            (
+                "reported service sample",
+                lambda value: value["metrics"][
+                    "cpu_hamming_weight_claim_reduction_service_ms_samples"
+                ].__setitem__(0, 1.0),
+                "service sample summary",
+            ),
+            (
+                "reported improvement",
+                lambda value: value["metrics"][
+                    "paired_hamming_weight_claim_reduction_fractional_improvements"
+                ].__setitem__(0, 0.5),
+                "fractional improvements",
+            ),
+            (
+                "forged decision",
+                lambda value: value["metrics"][
+                    "hamming_weight_claim_reduction_decision"
+                ].__setitem__("clears_noise", False),
+                "raw-pair decision",
+            ),
+        )
+        for name, mutate, message in mutations:
+            with self.subTest(name=name):
+                tampered = copy.deepcopy(result)
+                mutate(tampered)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_production_result(
+                        config, tampered, "abc", params, True
+                    )
+
+    def test_production_hamming_weight_gate_requires_both_order_strata(self) -> None:
+        config, params, result = self.production_hamming_weight_result_fixture()
+        speedups = [5.0, 3.0, 5.0, 3.0, 5.0]
+        metrics = result["metrics"]
+        metrics["paired_hamming_weight_claim_reduction_speedups"] = speedups
+        metrics["paired_hamming_weight_claim_reduction_fractional_improvements"] = [
+            1.0 - 1.0 / speedup for speedup in speedups
+        ]
+        metrics["cpu_hamming_weight_claim_reduction_ms_samples"] = [
+            speedup * 100 / 1e6 for speedup in speedups
+        ]
+        metrics["cpu_hamming_weight_claim_reduction_service_ms_samples"] = [
+            (speedup * 100 + 40) / 1e6 for speedup in speedups
+        ]
+        service_speedups = [(speedup * 100 + 40) / 100 for speedup in speedups]
+        metrics["paired_hamming_weight_claim_reduction_service_speedups"] = (
+            service_speedups
+        )
+        metrics["hamming_weight_claim_reduction_service_speedup"] = statistics.median(
+            service_speedups
+        )
+        metrics["hamming_weight_claim_reduction_decision"].update(
+            {
+                "median_speedup": 5.0,
+                "optimized_first_median_speedup": 5.0,
+                "metal_first_median_speedup": 3.0,
+                "clears_order_strata": True,
+                "clears": True,
+            }
+        )
+        for pair, speedup in zip(result["pairs"], speedups):
+            member = pair["arms"]["optimized"]["hamming_weight"]
+            normalized_member_ns = round(speedup * 100)
+            member["normalized_member_ns"] = normalized_member_ns
+            member["member_ns"] = normalized_member_ns + member["row_source_ns"]
+            member["output_claims_ns"] = (
+                member["member_ns"]
+                - member["prepare_ns"]
+                - member["rounds_total_ns"]
+                - member["host_fiat_shamir_total_ns"]
+                - member["finish_ns"]
+            )
+        with self.assertRaisesRegex(ValueError, "order stratum"):
+            metal_autoresearch.validate_production_result(
+                config, result, "abc", params, True
+            )
 
     def test_booleanity_address_template_closes_schema_scope_and_bindings(self) -> None:
         template = metal_autoresearch.read_json(

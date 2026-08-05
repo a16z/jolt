@@ -1,0 +1,301 @@
+{
+  "algorithm_contract": {
+    "cpu_control": "the authoritative local search gate is the optimized shared-row pushforward mirror over the same pre-existing rows; production additionally reports an equal-input CPU member normalized by its exact nested row-source span",
+    "fiat_shamir": "all eight Hamming address challenges are derived on the host and included in the complete member metric",
+    "production_metric_boundary": "raw deployed service includes the full HammingWeightClaimReduction member and host Fiat-Shamir; the equal-input metric subtracts only the optimized CPU arm's contained row-source span, while PIOP remains raw",
+    "relation": "the 29 by 256 pushforwards are recentered with G_i[0] = 0, combined with the canonical W_i tables and Akita baseline, then proved by the unchanged eight-round Hamming claim reduction",
+    "resident_input": "the exact 40-byte stage-5 Booleanity cycle row allocation is retained through stages 6a and 6b, then consumed terminally by stage 7 without another row upload",
+    "result": "29 by 256 exact recentered Akita-field masses, one 118784-byte host readback, then the existing optimized CPU W/baseline and address-round kernel",
+    "schedule": "five selector tiles at the production 6-selector width, each followed by one finalize dispatch, in one command buffer",
+    "timed_member": "local speedup covers equal pre-existing rows, split-equality preparation, one Metal command completion, one result readback, recentering, W/baseline construction, eight host rounds, and host Fiat-Shamir"
+  },
+  "baseline_params": {
+    "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS": "1024",
+    "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2": "15",
+    "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE": "6",
+    "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS": "512",
+    "JOLT_METAL_HAMMING_WEIGHT_TRACE_CUTOFF_LOG2": "18"
+  },
+  "baseline_repeats": 5,
+  "budget": {
+    "max_gpu_seconds": 600,
+    "max_seconds": 1800,
+    "max_trials": 12,
+    "monetary_usd": 0,
+    "token_budget": 0
+  },
+  "candidate_repeats": 5,
+  "collaboration": {
+    "evaluator_lock": "/private/tmp/jolt-metal-autoresearch-evaluator.lock",
+    "local_acceptance_status": "accepted_parent",
+    "portfolio_promotion": "requires the executable schema-7 production gate",
+    "promotion_owner": "root"
+  },
+  "evaluator": {
+    "command": [
+      "cargo",
+      "run",
+      "--release",
+      "-q",
+      "-p",
+      "jolt-kernels",
+      "--features",
+      "metal,parallel",
+      "--example",
+      "metal-hamming-weight-claim-reduction-eval"
+    ],
+    "env": {
+      "JOLT_METAL_EVAL_LOG_N": "26",
+      "JOLT_METAL_EVAL_REPEATS": "5",
+      "JOLT_METAL_EVAL_SEED": "1",
+      "RAYON_NUM_THREADS": "16"
+    },
+    "frozen_paths": [
+      "crates/jolt-kernels/examples/metal-hamming-weight-claim-reduction-eval.rs",
+      "crates/jolt-kernels/src/metal/HAMMING_WEIGHT.md",
+      "crates/jolt-kernels/src/metal/booleanity.rs",
+      "crates/jolt-kernels/src/metal/hamming_weight_claim_reduction.rs",
+      "crates/jolt-kernels/src/metal/instruction_read_raf.rs",
+      "crates/jolt-kernels/src/metal/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/booleanity.metal",
+      "crates/jolt-kernels/src/metal/solinas/booleanity.rs",
+      "crates/jolt-kernels/src/metal/solinas/booleanity_address.rs",
+      "crates/jolt-kernels/src/metal/solinas/deferred_sum.metal",
+      "crates/jolt-kernels/src/metal/solinas/mod.rs",
+      "crates/jolt-kernels/src/optimized/hamming_weight_claim_reduction.rs",
+      "crates/jolt-prover/examples/modular_benchmark.rs",
+      "scripts/metal_autoresearch.py",
+      "scripts/metal_piop_eval.py"
+    ],
+    "parser": "exactly one hamming_weight_claim_reduction_v1 schema-version 1 JSON object on stdout",
+    "result_contract": "hamming_weight_claim_reduction_v1",
+    "result_schema_version": 1,
+    "timeout_seconds": 1800
+  },
+  "final_validation": {
+    "primary_log_n": 26,
+    "production_gate": {
+      "evaluator": {
+        "command": [
+          "python3",
+          "scripts/metal_piop_eval.py",
+          "--workload",
+          "fibonacci",
+          "--log-n",
+          "26",
+          "--repeats",
+          "5"
+        ],
+        "parameter_bindings": [
+          {
+            "destination": "argument",
+            "flag": "--hamming-weight-metal-inner-log2",
+            "parameter": "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2",
+            "value_format": "{}"
+          },
+          {
+            "destination": "argument",
+            "flag": "--hamming-weight-metal-selectors-per-tile",
+            "parameter": "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE",
+            "value_format": "{}"
+          },
+          {
+            "destination": "argument",
+            "flag": "--hamming-weight-metal-tile-threads",
+            "parameter": "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS",
+            "value_format": "{}"
+          },
+          {
+            "destination": "argument",
+            "flag": "--hamming-weight-metal-finalize-threads",
+            "parameter": "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS",
+            "value_format": "{}"
+          },
+          {
+            "destination": "argument",
+            "flag": "--hamming-weight-metal-trace-cutoff-log2",
+            "parameter": "JOLT_METAL_HAMMING_WEIGHT_TRACE_CUTOFF_LOG2",
+            "value_format": "{}"
+          }
+        ],
+        "schema_version": 7,
+        "timeout_seconds": 7200
+      },
+      "expected_fingerprint": {
+        "hamming_weight_metal_finalize_threads": {
+          "parameter": "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS",
+          "type": "int"
+        },
+        "hamming_weight_metal_inner_log2": {
+          "parameter": "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2",
+          "type": "int"
+        },
+        "hamming_weight_metal_selectors_per_tile": {
+          "parameter": "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE",
+          "type": "int"
+        },
+        "hamming_weight_metal_tile_threads": {
+          "parameter": "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS",
+          "type": "int"
+        },
+        "hamming_weight_metal_trace_cutoff_log2": {
+          "parameter": "JOLT_METAL_HAMMING_WEIGHT_TRACE_CUTOFF_LOG2",
+          "type": "int"
+        }
+      },
+      "local_kernel": "HammingWeightClaimReduction",
+      "metric": "hamming_weight_claim_reduction_speedup",
+      "minimum_local_speedup": 4.0,
+      "minimum_log_n": 26,
+      "minimum_pairs": 5,
+      "paired_metric": "paired_hamming_weight_claim_reduction_speedups",
+      "require_alternating_orders": true,
+      "require_clean_worktree": true,
+      "required_guards": [
+        "cpu_proofs_verified",
+        "metal_proofs_verified",
+        "target_scale",
+        "production_contract",
+        "local_kernel_attributed",
+        "local_kernel_metal_backend_exercised",
+        "rayon_threads_pinned",
+        "hamming_weight_cpu_control",
+        "hamming_weight_cpu_row_source_attributed",
+        "hamming_weight_metal_backend_exercised",
+        "hamming_weight_resident_rows_reused",
+        "hamming_weight_zero_row_upload",
+        "hamming_weight_terminal_carry_removed",
+        "hamming_weight_k256_schedule_exact",
+        "hamming_weight_working_set_admitted",
+        "hamming_weight_readback_exact",
+        "hamming_weight_dispatch_exact",
+        "hamming_weight_command_completed",
+        "hamming_weight_local_gate",
+        "stable_source",
+        "stable_binary"
+      ],
+      "workload": "fibonacci"
+    }
+  },
+  "goal": "maximize exact HammingWeightClaimReduction complete-member throughput at log 26; 4x is a floor, not a cap, and pursue clearly available headroom",
+  "guards": {
+    "required_true": [
+      "all_exact",
+      "reference_mass_lengths_exact",
+      "timed_mass_lengths_exact",
+      "expected_mass_count_exact",
+      "exact_masses",
+      "recentered_bucket_zero_exact",
+      "nonzero_recentered_values_present",
+      "nonzero_contribution_count_admitted",
+      "exact_skipped_q_evals",
+      "exact_round_polynomials",
+      "exact_host_fiat_shamir_challenges",
+      "exact_final_claim",
+      "exact_output_claims",
+      "output_claim_count_exact",
+      "exact_final_relations",
+      "exact_transcript_state",
+      "timed_samples_match_reference",
+      "correctness_exact",
+      "sample_cardinality_exact",
+      "alternating_orders_exact",
+      "cpu_component_timings_reconciled",
+      "metal_component_timings_reconciled",
+      "warmup_cpu_component_timings_reconciled",
+      "warmup_metal_component_timings_reconciled",
+      "gpu_active_nested_in_dispatch_wall",
+      "member_durations_positive",
+      "speedups_finite_positive",
+      "resident_rows_reused",
+      "resident_rows_stable_for_stage7_handoff",
+      "metal_shape_stable_across_samples",
+      "row_count_exact",
+      "polynomial_count_exact",
+      "production_selector_schedule_exact",
+      "selector_tile_width_exact",
+      "selector_tile_count_exact",
+      "e_in_size_exact",
+      "e_out_size_exact",
+      "output_size_exact",
+      "partial_size_exact",
+      "production_specialization_exact",
+      "requested_effective_tile_threads_exact",
+      "requested_effective_finalize_threads_exact",
+      "tile_pipeline_simd_width_exact",
+      "finalize_pipeline_simd_width_exact",
+      "tile_pipeline_thread_limit_admits_dispatch",
+      "finalize_pipeline_thread_limit_admits_dispatch",
+      "tile_threadgroup_memory_admitted",
+      "finalize_threadgroup_memory_admitted",
+      "static_device_buffers_stable",
+      "static_device_buffers_distinct",
+      "buffer_lengths_admitted",
+      "working_set_admitted",
+      "solinas_offset_exact",
+      "field_and_row_sizes_exact",
+      "one_execute_timed_call_per_member",
+      "single_command_completion_contract",
+      "single_result_readback_contract",
+      "no_per_row_contribution_buffer_contract",
+      "host_fiat_shamir",
+      "production_trace_cutoff_admits_target"
+    ]
+  },
+  "hypothesis": "reusing the resident 40-byte row plane makes the 29-table Hamming pushforward a single read-heavy command; with only a 118784-byte readback, host W/baseline algebra and eight small rounds should leave a local 4x floor with additional geometry headroom",
+  "kernel": "hamming_weight_claim_reduction",
+  "metric": {
+    "direction": "max",
+    "minimum_relative_improvement": 0.03,
+    "name": "hybrid_speedup",
+    "role": "search_proxy",
+    "target": 4.0,
+    "unit": "x"
+  },
+  "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.json",
+  "schema_version": 1,
+  "scope": {
+    "editable": [
+      "crates/jolt-kernels/src/metal/solinas/booleanity_address.metal"
+    ],
+    "frozen": [
+      "crates/jolt-field/src/akita.rs",
+      "crates/jolt-kernels/autoresearch/piop_goal.json",
+      "crates/jolt-kernels/examples/metal-hamming-weight-claim-reduction-eval.rs",
+      "crates/jolt-kernels/src/metal/HAMMING_WEIGHT.md",
+      "crates/jolt-kernels/src/metal/booleanity.rs",
+      "crates/jolt-kernels/src/metal/hamming_weight_claim_reduction.rs",
+      "crates/jolt-kernels/src/metal/instruction_read_raf.rs",
+      "crates/jolt-kernels/src/metal/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/booleanity.metal",
+      "crates/jolt-kernels/src/metal/solinas/booleanity.rs",
+      "crates/jolt-kernels/src/metal/solinas/booleanity_address.rs",
+      "crates/jolt-kernels/src/metal/solinas/deferred_sum.metal",
+      "crates/jolt-kernels/src/metal/solinas/mod.rs",
+      "crates/jolt-kernels/src/optimized/hamming_weight_claim_reduction.rs",
+      "crates/jolt-prover/examples/modular_benchmark.rs",
+      "scripts/metal_autoresearch.py",
+      "scripts/metal_piop_eval.py"
+    ]
+  },
+  "search_space": {
+    "JOLT_METAL_HAMMING_WEIGHT_FINALIZE_THREADS": [256, 512, 768, 1024],
+    "JOLT_METAL_HAMMING_WEIGHT_INNER_LOG2": [14, 15, 16],
+    "JOLT_METAL_HAMMING_WEIGHT_SELECTORS_PER_TILE": [3, 4, 5, 6],
+    "JOLT_METAL_HAMMING_WEIGHT_TILE_THREADS": [256, 512, 1024],
+    "JOLT_METAL_HAMMING_WEIGHT_TRACE_CUTOFF_LOG2": [18]
+  },
+  "stopping_conditions": [
+    "trial or wall-clock budget is exhausted",
+    "no candidate clears the noise-qualified 3 percent promotion threshold",
+    "a correctness, exact-path, resident-handoff, or resource guard fails",
+    "a candidate regresses the production relation below its 4x local bar",
+    "the measured bottleneck requires a different accumulation architecture and therefore a new frozen phase",
+    "continue beyond 4x whenever the measured ceiling or profile shows clear headroom"
+  ],
+  "working_targets": {
+    "raw_cpu_service_log26_ms_provisional": 594.168,
+    "raw_service_4x_ceiling_ms_provisional": 148.542,
+    "projected_metal_complete_member_ms": [120, 150]
+  }
+}

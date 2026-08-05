@@ -76,6 +76,12 @@ BOOLEANITY_ADDRESS_METAL_PHASES = (
     "readback",
 )
 BOOLEANITY_ADDRESS_MIN_SPEEDUP = 4.0
+HAMMING_WEIGHT_KERNEL = "HammingWeightClaimReduction"
+HAMMING_WEIGHT_METAL_PHASES = BOOLEANITY_ADDRESS_METAL_PHASES
+HAMMING_WEIGHT_MIN_SPEEDUP = 4.0
+OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE = (
+    "OptimizedHammingWeightClaimReduction::row_source"
+)
 SUMCHECK_ROUND_SPAN = "sumcheck_round"
 SUMCHECK_HOST_FIAT_SHAMIR_SPAN = "sumcheck_host_fiat_shamir"
 OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE = "OptimizedBooleanityAddress::row_source"
@@ -83,6 +89,12 @@ PRODUCTION_RAYON_THREADS = 16
 METAL_BOOLEANITY_ROWS_STAGE5_PREPARE = "MetalBooleanityRows::stage5_prepare"
 METAL_BOOLEANITY_ROWS_STAGE6A_USE = "MetalBooleanityRows::stage6a_address_use"
 METAL_BOOLEANITY_ROWS_STAGE6B_USE = "MetalBooleanityRows::stage6b_cycle_use"
+METAL_BOOLEANITY_ROWS_STAGE6B_RETAIN = (
+    "MetalBooleanityRows::stage6b_retain_for_stage7"
+)
+METAL_BOOLEANITY_ROWS_STAGE7_HAMMING_USE = (
+    "MetalBooleanityRows::stage7_hamming_use"
+)
 OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE = "OptimizedInstructionInput::rows_prepare"
 OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE = (
     "OptimizedInstructionInput::rows_stage3_use"
@@ -118,6 +130,12 @@ LOCAL_KERNELS = {
         "metric": "booleanity_address_phase_speedup",
         "paired_metric": "paired_booleanity_address_phase_speedups",
         "backend_prefix": "MetalBooleanityAddressPhase::",
+    },
+    "HammingWeightClaimReduction": {
+        "name": HAMMING_WEIGHT_KERNEL,
+        "metric": "hamming_weight_claim_reduction_speedup",
+        "paired_metric": "paired_hamming_weight_claim_reduction_speedups",
+        "backend_prefix": "MetalHammingWeightClaimReduction::",
     },
 }
 
@@ -177,6 +195,14 @@ INSTRUCTION_INPUT_METAL_CONFIG_RE = re.compile(
 )
 BOOLEANITY_ADDRESS_METAL_CONFIG_RE = re.compile(
     r"^BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal "
+    r"trace_cutoff=(?P<trace_cutoff>\d+) "
+    r"inner_log2=(?P<inner_log2>\d+) "
+    r"selectors_per_tile=(?P<selectors_per_tile>\d+) "
+    r"tile_threads=(?P<tile_threads>\d+) "
+    r"finalize_threads=(?P<finalize_threads>\d+)$"
+)
+HAMMING_WEIGHT_METAL_CONFIG_RE = re.compile(
+    r"^HAMMING_WEIGHT_METAL_CONFIG backend=metal "
     r"trace_cutoff=(?P<trace_cutoff>\d+) "
     r"inner_log2=(?P<inner_log2>\d+) "
     r"selectors_per_tile=(?P<selectors_per_tile>\d+) "
@@ -537,6 +563,41 @@ def validate_booleanity_address_stdout(
     return config
 
 
+def validate_hamming_weight_stdout(
+    stdout: str,
+    backend: str,
+    inner_log2: int = 15,
+    selectors_per_tile: int = 6,
+    tile_threads: int = 512,
+    finalize_threads: int = 1024,
+    trace_cutoff_log2: int = 18,
+) -> Optional[dict[str, Any]]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := HAMMING_WEIGHT_METAL_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if backend == "optimized":
+        if configs:
+            raise ValueError("optimized evaluator emitted a Hamming-weight Metal config")
+        return None
+    if len(configs) != 1:
+        raise ValueError(
+            "Metal evaluator must emit exactly one Hamming-weight Metal config"
+        )
+    config = {name: int(value) for name, value in configs[0].groupdict().items()}
+    expected = {
+        "trace_cutoff": 1 << trace_cutoff_log2,
+        "inner_log2": inner_log2,
+        "selectors_per_tile": selectors_per_tile,
+        "tile_threads": tile_threads,
+        "finalize_threads": finalize_threads,
+    }
+    if config != expected:
+        raise ValueError(f"unexpected Hamming-weight Metal config: {config}")
+    return config
+
+
 def validate_piop_execution_stdout(stdout: str) -> dict[str, int]:
     configs = [
         match
@@ -799,6 +860,10 @@ def booleanity_address_member_breakdown(
     selectors_per_tile: int = 6,
     tile_threads: int = 512,
     finalize_threads: int = 1024,
+    *,
+    kernel: str = BOOLEANITY_ADDRESS_KERNEL,
+    row_source_span: str = OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE,
+    require_hamming_lifecycle: bool = False,
 ) -> dict[str, Any]:
     if backend not in {"optimized", "metal"}:
         raise ValueError(f"unsupported Booleanity address backend {backend!r}")
@@ -814,11 +879,11 @@ def booleanity_address_member_breakdown(
     ):
         raise ValueError("invalid Booleanity address evaluator geometry")
     outer_names = {
-        f"{BOOLEANITY_ADDRESS_KERNEL}::{component}"
+        f"{kernel}::{component}"
         for component in BOOLEANITY_ADDRESS_COMPONENTS
     }
     inner_names = {
-        f"Metal{BOOLEANITY_ADDRESS_KERNEL}::{phase}"
+        f"Metal{kernel}::{phase}"
         for phase in BOOLEANITY_ADDRESS_METAL_PHASES
     }
     lifecycle_names = {
@@ -826,13 +891,17 @@ def booleanity_address_member_breakdown(
         METAL_BOOLEANITY_ROWS_STAGE6A_USE,
         METAL_BOOLEANITY_ROWS_STAGE6B_USE,
     }
-    allowed_metal_names = inner_names | lifecycle_names
+    hamming_lifecycle_names = {
+        METAL_BOOLEANITY_ROWS_STAGE6B_RETAIN,
+        METAL_BOOLEANITY_ROWS_STAGE7_HAMMING_USE,
+    }
+    allowed_metal_names = inner_names | lifecycle_names | hamming_lifecycle_names
     unknown_metal_names = {
         name
         for event in events
         if isinstance((name := event.get("name")), str)
         and (
-            name.startswith(f"Metal{BOOLEANITY_ADDRESS_KERNEL}::")
+            name.startswith(f"Metal{kernel}::")
             or name.startswith("MetalBooleanityRows::")
         )
         and name not in allowed_metal_names
@@ -843,24 +912,27 @@ def booleanity_address_member_breakdown(
             f"{sorted(unknown_metal_names)}"
         )
     parent_names = {"InstructionReadRaf::prepare", "Booleanity::prepare"}
+    if require_hamming_lifecycle:
+        parent_names.add(f"{BOOLEANITY_ADDRESS_KERNEL}::prepare")
     intervals = strict_named_intervals(
         events,
         outer_names
         | inner_names
         | lifecycle_names
+        | hamming_lifecycle_names
         | parent_names
         | {
             PIOP_SPAN,
             SUMCHECK_ROUND_SPAN,
             SUMCHECK_HOST_FIAT_SHAMIR_SPAN,
-            OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE,
+            row_source_span,
         },
     )
     if len(intervals[PIOP_SPAN]) != 1:
         raise ValueError("trace must contain exactly one positive PIOP span")
     piop = intervals[PIOP_SPAN][0]
     by_component = {
-        component: sorted(intervals[f"{BOOLEANITY_ADDRESS_KERNEL}::{component}"])
+        component: sorted(intervals[f"{kernel}::{component}"])
         for component in BOOLEANITY_ADDRESS_COMPONENTS
     }
     expected_outer_counts = {
@@ -922,15 +994,17 @@ def booleanity_address_member_breakdown(
         raise ValueError("Booleanity address rounds reuse a host Fiat-Shamir span")
 
     inner = {
-        phase: sorted(intervals[f"Metal{BOOLEANITY_ADDRESS_KERNEL}::{phase}"])
+        phase: sorted(intervals[f"Metal{kernel}::{phase}"])
         for phase in BOOLEANITY_ADDRESS_METAL_PHASES
     }
     inner_counts = {phase: len(values) for phase, values in inner.items()}
     row_lifecycle = None
     resource_observation = None
-    row_source_intervals = intervals[OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE]
+    row_source_intervals = intervals[row_source_span]
     if backend == "optimized":
-        if any(inner_counts.values()) or any(intervals[name] for name in lifecycle_names):
+        if any(inner_counts.values()) or any(
+            intervals[name] for name in lifecycle_names | hamming_lifecycle_names
+        ):
             raise ValueError(
                 "optimized trace unexpectedly contains Booleanity address Metal spans"
             )
@@ -954,9 +1028,33 @@ def booleanity_address_member_breakdown(
             )
         if any(len(intervals[name]) != 1 for name in lifecycle_names):
             raise ValueError("Booleanity address resident-row lifecycle is incomplete")
+        hamming_lifecycle_counts = {
+            name: len(intervals[name]) for name in hamming_lifecycle_names
+        }
+        allowed_hamming_lifecycle_counts = (
+            {
+                METAL_BOOLEANITY_ROWS_STAGE6B_RETAIN: 0,
+                METAL_BOOLEANITY_ROWS_STAGE7_HAMMING_USE: 0,
+            },
+            {
+                METAL_BOOLEANITY_ROWS_STAGE6B_RETAIN: 1,
+                METAL_BOOLEANITY_ROWS_STAGE7_HAMMING_USE: 1,
+            },
+        )
+        if (
+            require_hamming_lifecycle
+            and hamming_lifecycle_counts != allowed_hamming_lifecycle_counts[1]
+        ) or (
+            not require_hamming_lifecycle
+            and hamming_lifecycle_counts not in allowed_hamming_lifecycle_counts
+        ):
+            raise ValueError("Booleanity Hamming resident-row lifecycle is incomplete")
         if len(intervals["InstructionReadRaf::prepare"]) != 1 or len(
             intervals["Booleanity::prepare"]
-        ) != 1:
+        ) != 1 or (
+            require_hamming_lifecycle
+            and len(intervals[f"{BOOLEANITY_ADDRESS_KERNEL}::prepare"]) != 1
+        ):
             raise ValueError("Booleanity address resident-row lifecycle parents are incomplete")
 
         metal_prepare = inner["prepare"][0]
@@ -992,8 +1090,13 @@ def booleanity_address_member_breakdown(
             intervals["InstructionReadRaf::prepare"][0],
             "Booleanity stage-5 resident-row preparation",
         )
+        stage6a_parent = (
+            intervals[f"{BOOLEANITY_ADDRESS_KERNEL}::prepare"][0]
+            if require_hamming_lifecycle
+            else prepare
+        )
         require_contained(
-            stage6a_interval, prepare, "Booleanity stage-6a resident-row use"
+            stage6a_interval, stage6a_parent, "Booleanity stage-6a resident-row use"
         )
         require_contained(
             stage6b_interval,
@@ -1005,6 +1108,37 @@ def booleanity_address_member_breakdown(
             and stage6a_interval[1] <= stage6b_interval[0]
         ):
             raise ValueError("Booleanity address resident-row lifecycle is out of order")
+        if require_hamming_lifecycle:
+            stage6b_retain_interval = intervals[
+                METAL_BOOLEANITY_ROWS_STAGE6B_RETAIN
+            ][0]
+            stage7_interval = intervals[METAL_BOOLEANITY_ROWS_STAGE7_HAMMING_USE][0]
+            require_contained(
+                stage6b_retain_interval,
+                intervals["Booleanity::prepare"][0],
+                "Booleanity stage-6b Hamming retention",
+            )
+            require_contained(
+                stage7_interval,
+                metal_prepare,
+                "Hamming stage-7 resident-row terminal use",
+            )
+            if not (
+                stage6b_interval[1] <= stage6b_retain_interval[0]
+                and stage6b_retain_interval[1] <= stage7_interval[0]
+                and sequence_interval[1] <= stage7_interval[0]
+            ):
+                raise ValueError("Hamming resident-row lifecycle is out of order")
+            require_contained(
+                dispatch_interval,
+                stage7_interval,
+                "Hamming stage-7 resident-row dispatch",
+            )
+            require_contained(
+                readback_interval,
+                stage7_interval,
+                "Hamming stage-7 resident-row readback",
+            )
 
         lifecycle_fields = {
             "resident_rows_storage_id",
@@ -1025,22 +1159,41 @@ def booleanity_address_member_breakdown(
                 events, METAL_BOOLEANITY_ROWS_STAGE6B_USE, lifecycle_fields
             ),
         }
+        if require_hamming_lifecycle:
+            lifecycle_args["stage6b_retain"] = exact_span_args(
+                events,
+                METAL_BOOLEANITY_ROWS_STAGE6B_RETAIN,
+                lifecycle_fields,
+            )
+            lifecycle_args["stage7"] = exact_span_args(
+                events,
+                METAL_BOOLEANITY_ROWS_STAGE7_HAMMING_USE,
+                lifecycle_fields
+                | {"terminal_consumer", "terminal_carry_removed"},
+            )
         parsed_lifecycle = {
             stage: {
                 field: booleanity_trace_integer(value, f"{stage} {field}", allow_zero=True)
                 for field, value in args.items()
+                if field in lifecycle_fields
             }
             for stage, args in lifecycle_args.items()
         }
+        lifecycle_stages = tuple(parsed_lifecycle)
         rows = 1 << log_n
         storage_ids = [
             parsed_lifecycle[stage]["resident_rows_storage_id"]
-            for stage in ("stage5", "stage6a", "stage6b")
+            for stage in lifecycle_stages
         ]
         registries = [
             parsed_lifecycle[stage]["device_registry_id"]
-            for stage in ("stage5", "stage6a", "stage6b")
+            for stage in lifecycle_stages
         ]
+        terminal_exact = not require_hamming_lifecycle or (
+            trace_boolean(lifecycle_args["stage7"]["terminal_consumer"]) is True
+            and trace_boolean(lifecycle_args["stage7"]["terminal_carry_removed"])
+            is True
+        )
         if (
             any(storage_id <= 0 for storage_id in storage_ids)
             or len(set(storage_ids)) != 1
@@ -1049,19 +1202,25 @@ def booleanity_address_member_breakdown(
             or any(
                 parsed_lifecycle[stage]["resident_rows"] != rows
                 or parsed_lifecycle[stage]["resident_row_bytes"] != 40
-                for stage in ("stage5", "stage6a", "stage6b")
+                for stage in lifecycle_stages
             )
             or parsed_lifecycle["stage5"]["row_allocations"] != 1
             or parsed_lifecycle["stage5"]["row_upload_bytes"] != rows * 40
             or any(
                 parsed_lifecycle[stage]["row_allocations"] != 0
                 or parsed_lifecycle[stage]["row_upload_bytes"] != 0
-                for stage in ("stage6a", "stage6b")
+                for stage in lifecycle_stages
+                if stage != "stage5"
             )
+            or not terminal_exact
         ):
             raise ValueError("Booleanity address resident-row lifecycle is inconsistent")
         row_lifecycle = {
-            "kind": "metal_booleanity_resident",
+            "kind": (
+                "metal_hamming_resident"
+                if require_hamming_lifecycle
+                else "metal_booleanity_resident"
+            ),
             "rows": rows,
             "row_bytes": 40,
             "device_registry_id": registries[0],
@@ -1073,9 +1232,18 @@ def booleanity_address_member_breakdown(
                     "row_allocations": parsed_lifecycle[stage]["row_allocations"],
                     "row_upload_bytes": parsed_lifecycle[stage]["row_upload_bytes"],
                 }
-                for stage in ("stage5", "stage6a", "stage6b")
+                for stage in lifecycle_stages
             },
         }
+        if require_hamming_lifecycle:
+            row_lifecycle.update(
+                {
+                    "stage6b_retain_storage_id": storage_ids[3],
+                    "stage7_storage_id": storage_ids[4],
+                    "terminal_consumer": True,
+                    "terminal_carry_removed": True,
+                }
+            )
 
         sequence_fields = {
             "resident_rows_storage_id",
@@ -1099,7 +1267,7 @@ def booleanity_address_member_breakdown(
         }
         sequence_args = exact_span_args(
             events,
-            f"Metal{BOOLEANITY_ADDRESS_KERNEL}::sequence_prepare",
+            f"Metal{kernel}::sequence_prepare",
             sequence_fields,
         )
         production_specialized = trace_boolean(sequence_args["production_specialized"])
@@ -1147,7 +1315,7 @@ def booleanity_address_member_breakdown(
         }
         allocation_args = exact_span_args(
             events,
-            f"Metal{BOOLEANITY_ADDRESS_KERNEL}::allocation_plan",
+            f"Metal{kernel}::allocation_plan",
             allocation_fields,
         )
         allocation = {
@@ -1176,7 +1344,7 @@ def booleanity_address_member_breakdown(
         }
         dispatch_args = exact_span_args(
             events,
-            f"Metal{BOOLEANITY_ADDRESS_KERNEL}::dispatch",
+            f"Metal{kernel}::dispatch",
             dispatch_fields,
         )
         command_completed = trace_boolean(dispatch_args["command_completed"])
@@ -1200,7 +1368,7 @@ def booleanity_address_member_breakdown(
         readback_fields = {"elements", "bytes", "readbacks"}
         readback_args = exact_span_args(
             events,
-            f"Metal{BOOLEANITY_ADDRESS_KERNEL}::readback",
+            f"Metal{kernel}::readback",
             readback_fields,
         )
         readback = {
@@ -1272,6 +1440,29 @@ def booleanity_address_member_breakdown(
         "resource_observation": resource_observation,
         "row_lifecycle": row_lifecycle,
     }
+
+
+def hamming_weight_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    inner_log2: int = 15,
+    selectors_per_tile: int = 6,
+    tile_threads: int = 512,
+    finalize_threads: int = 1024,
+) -> dict[str, Any]:
+    return booleanity_address_member_breakdown(
+        events,
+        backend,
+        log_n,
+        inner_log2,
+        selectors_per_tile,
+        tile_threads,
+        finalize_threads,
+        kernel=HAMMING_WEIGHT_KERNEL,
+        row_source_span=OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE,
+        require_hamming_lifecycle=True,
+    )
 
 
 def instruction_input_member_breakdown(
@@ -2186,6 +2377,18 @@ def local_member_decision(
 def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     if not pairs:
         raise ValueError("at least one CPU/Metal pair is required")
+    hamming_fields = {
+        "cpu_hamming_weight_us",
+        "metal_hamming_weight_us",
+        "cpu_hamming_weight_service_us",
+        "metal_hamming_weight_service_us",
+    }
+    for index, pair in enumerate(pairs, 1):
+        missing = hamming_fields - pair.keys()
+        if missing:
+            raise ValueError(
+                f"pair {index} is missing Hamming-weight timing fields: {sorted(missing)}"
+            )
     cpu = [float(pair["cpu_us"]) for pair in pairs]
     metal = [float(pair["metal_us"]) for pair in pairs]
     cpu_prepare = [float(pair["cpu_prepare_us"]) for pair in pairs]
@@ -2222,6 +2425,18 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         )
         for pair in pairs
     ]
+    cpu_hamming_weight = [
+        float(pair["cpu_hamming_weight_us"]) for pair in pairs
+    ]
+    metal_hamming_weight = [
+        float(pair["metal_hamming_weight_us"]) for pair in pairs
+    ]
+    cpu_hamming_weight_service = [
+        float(pair["cpu_hamming_weight_service_us"]) for pair in pairs
+    ]
+    metal_hamming_weight_service = [
+        float(pair["metal_hamming_weight_service_us"]) for pair in pairs
+    ]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
@@ -2238,6 +2453,10 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_booleanity_address
         + cpu_booleanity_address_service
         + metal_booleanity_address_service
+        + cpu_hamming_weight
+        + metal_hamming_weight
+        + cpu_hamming_weight_service
+        + metal_hamming_weight_service
     ):
         raise ValueError("kernel durations must be finite and positive")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
@@ -2273,6 +2492,20 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         cpu_us / metal_us
         for cpu_us, metal_us in zip(
             cpu_booleanity_address_service, metal_booleanity_address_service
+        )
+    ]
+    hamming_weight_speedups, hamming_weight_improvements, hamming_weight_decision = (
+        local_member_decision(
+            pairs,
+            cpu_hamming_weight,
+            metal_hamming_weight,
+            HAMMING_WEIGHT_MIN_SPEEDUP,
+        )
+    )
+    hamming_weight_service_speedups = [
+        cpu_us / metal_us
+        for cpu_us, metal_us in zip(
+            cpu_hamming_weight_service, metal_hamming_weight_service
         )
     ]
     paired_with_prepare = [
@@ -2334,6 +2567,12 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "booleanity_address_phase_service_speedup": statistics.median(
             booleanity_address_service_speedups
         ),
+        "hamming_weight_claim_reduction_speedup": statistics.median(
+            hamming_weight_speedups
+        ),
+        "hamming_weight_claim_reduction_service_speedup": statistics.median(
+            hamming_weight_service_speedups
+        ),
         "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
@@ -2348,6 +2587,9 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_booleanity_address_phase_speedups": booleanity_address_speedups,
         "paired_booleanity_address_phase_fractional_improvements": booleanity_address_improvements,
         "paired_booleanity_address_phase_service_speedups": booleanity_address_service_speedups,
+        "paired_hamming_weight_claim_reduction_speedups": hamming_weight_speedups,
+        "paired_hamming_weight_claim_reduction_fractional_improvements": hamming_weight_improvements,
+        "paired_hamming_weight_claim_reduction_service_speedups": hamming_weight_service_speedups,
         "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
@@ -2377,8 +2619,21 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_booleanity_address_phase_service_ms_samples": [
             value / 1000.0 for value in metal_booleanity_address_service
         ],
+        "cpu_hamming_weight_claim_reduction_ms_samples": [
+            value / 1000.0 for value in cpu_hamming_weight
+        ],
+        "metal_hamming_weight_claim_reduction_ms_samples": [
+            value / 1000.0 for value in metal_hamming_weight
+        ],
+        "cpu_hamming_weight_claim_reduction_service_ms_samples": [
+            value / 1000.0 for value in cpu_hamming_weight_service
+        ],
+        "metal_hamming_weight_claim_reduction_service_ms_samples": [
+            value / 1000.0 for value in metal_hamming_weight_service
+        ],
         "instruction_input_kernel_service_decision": instruction_input_decision,
         "booleanity_address_phase_decision": booleanity_address_decision,
+        "hamming_weight_claim_reduction_decision": hamming_weight_decision,
         "bytecode_read_raf_cycle_decision": {
             "minimum_speedup": BYTECODE_MIN_SPEEDUP,
             "minimum_pairs": PRODUCTION_PAIRS,
@@ -2497,6 +2752,11 @@ def run_backend(
     booleanity_address_tile_threads: int,
     booleanity_address_finalize_threads: int,
     booleanity_address_trace_cutoff_log2: int,
+    hamming_weight_inner_log2: int,
+    hamming_weight_selectors_per_tile: int,
+    hamming_weight_tile_threads: int,
+    hamming_weight_finalize_threads: int,
+    hamming_weight_trace_cutoff_log2: int,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -2542,6 +2802,16 @@ def run_backend(
         str(booleanity_address_finalize_threads),
         "--booleanity-address-metal-trace-cutoff-log2",
         str(booleanity_address_trace_cutoff_log2),
+        "--hamming-weight-metal-inner-log2",
+        str(hamming_weight_inner_log2),
+        "--hamming-weight-metal-selectors-per-tile",
+        str(hamming_weight_selectors_per_tile),
+        "--hamming-weight-metal-tile-threads",
+        str(hamming_weight_tile_threads),
+        "--hamming-weight-metal-finalize-threads",
+        str(hamming_weight_finalize_threads),
+        "--hamming-weight-metal-trace-cutoff-log2",
+        str(hamming_weight_trace_cutoff_log2),
     ]
     if backend == "metal":
         benchmark_command.extend(
@@ -2599,6 +2869,15 @@ def run_backend(
         booleanity_address_finalize_threads,
         booleanity_address_trace_cutoff_log2,
     )
+    hamming_weight_config = validate_hamming_weight_stdout(
+        result.stdout,
+        backend,
+        hamming_weight_inner_log2,
+        hamming_weight_selectors_per_tile,
+        hamming_weight_tile_threads,
+        hamming_weight_finalize_threads,
+        hamming_weight_trace_cutoff_log2,
+    )
     source = trace_path(root, workload, log_n, backend)
     if not source.is_file() or source.stat().st_mtime_ns <= started_ns:
         raise ValueError(f"{backend} evaluator did not emit a fresh trace")
@@ -2629,14 +2908,24 @@ def run_backend(
         booleanity_address_tile_threads,
         booleanity_address_finalize_threads,
     )
+    hamming_weight_member = hamming_weight_member_breakdown(
+        events,
+        backend,
+        log_n,
+        hamming_weight_inner_log2,
+        hamming_weight_selectors_per_tile,
+        hamming_weight_tile_threads,
+        hamming_weight_finalize_threads,
+    )
     attribution = trace_attribution(events)
     for name, member in (
         (BYTECODE_KERNEL, bytecode_member),
         (INSTRUCTION_INPUT_KERNEL, instruction_input_member),
         (BOOLEANITY_ADDRESS_KERNEL, booleanity_address_member),
+        (HAMMING_WEIGHT_KERNEL, hamming_weight_member),
     ):
         attributed_us = kernel_wall_us(attribution, name)
-        if name == BOOLEANITY_ADDRESS_KERNEL:
+        if name in {BOOLEANITY_ADDRESS_KERNEL, HAMMING_WEIGHT_KERNEL}:
             attributed_us += float(
                 member["components"]["host_fiat_shamir_total_us"]
             )
@@ -2661,6 +2950,8 @@ def run_backend(
         "instruction_input_member": instruction_input_member,
         "booleanity_address_config": booleanity_address_config,
         "booleanity_address_member": booleanity_address_member,
+        "hamming_weight_config": hamming_weight_config,
+        "hamming_weight_member": hamming_weight_member,
         "execution_config": execution_config,
         "command": command,
         "max_rss_bytes": max_rss,
@@ -2898,6 +3189,36 @@ def parser() -> argparse.ArgumentParser:
         choices=[18, 20, 22, 24, 25, 26, 27, 28],
         default=18,
     )
+    result.add_argument(
+        "--hamming-weight-metal-inner-log2",
+        type=int,
+        choices=[12, 13, 14, 15, 16],
+        default=15,
+    )
+    result.add_argument(
+        "--hamming-weight-metal-selectors-per-tile",
+        type=int,
+        choices=[1, 2, 3, 4, 5, 6],
+        default=6,
+    )
+    result.add_argument(
+        "--hamming-weight-metal-tile-threads",
+        type=int,
+        choices=[32, 64, 128, 256, 512, 1024],
+        default=512,
+    )
+    result.add_argument(
+        "--hamming-weight-metal-finalize-threads",
+        type=int,
+        choices=[256, 512, 768, 1024],
+        default=1024,
+    )
+    result.add_argument(
+        "--hamming-weight-metal-trace-cutoff-log2",
+        type=int,
+        choices=[18, 20, 22, 24, 25, 26, 27, 28],
+        default=18,
+    )
     result.add_argument("--trace", type=Path)
     return result
 
@@ -2947,6 +3268,15 @@ def main() -> int:
     if args.booleanity_address_metal_trace_cutoff_log2 > args.log_n:
         print(
             "error: Booleanity address trace cutoff disables the measured backend",
+            file=sys.stderr,
+        )
+        return 2
+    if args.hamming_weight_metal_inner_log2 > args.log_n:
+        print("error: Hamming-weight inner split exceeds the trace", file=sys.stderr)
+        return 2
+    if args.hamming_weight_metal_trace_cutoff_log2 > args.log_n:
+        print(
+            "error: Hamming-weight trace cutoff disables the measured backend",
             file=sys.stderr,
         )
         return 2
@@ -3003,11 +3333,20 @@ def main() -> int:
                     args.booleanity_address_metal_tile_threads,
                     args.booleanity_address_metal_finalize_threads,
                     args.booleanity_address_metal_trace_cutoff_log2,
+                    args.hamming_weight_metal_inner_log2,
+                    args.hamming_weight_metal_selectors_per_tile,
+                    args.hamming_weight_metal_tile_threads,
+                    args.hamming_weight_metal_finalize_threads,
+                    args.hamming_weight_metal_trace_cutoff_log2,
                     index + 1,
                     args.timeout_seconds,
                 )
             booleanity_address_records = {
                 backend: member_record(results[backend]["booleanity_address_member"])
+                for backend in ("optimized", "metal")
+            }
+            hamming_weight_records = {
+                backend: member_record(results[backend]["hamming_weight_member"])
                 for backend in ("optimized", "metal")
             }
             pairs.append(
@@ -3057,6 +3396,22 @@ def main() -> int:
                         booleanity_address_records["metal"]["member_ns"]
                     )
                     / 1000.0,
+                    "cpu_hamming_weight_us": float(
+                        hamming_weight_records["optimized"]["normalized_member_ns"]
+                    )
+                    / 1000.0,
+                    "metal_hamming_weight_us": float(
+                        hamming_weight_records["metal"]["normalized_member_ns"]
+                    )
+                    / 1000.0,
+                    "cpu_hamming_weight_service_us": float(
+                        hamming_weight_records["optimized"]["member_ns"]
+                    )
+                    / 1000.0,
+                    "metal_hamming_weight_service_us": float(
+                        hamming_weight_records["metal"]["member_ns"]
+                    )
+                    / 1000.0,
                 }
             )
             attributions.append(
@@ -3088,6 +3443,16 @@ def main() -> int:
                             "booleanity_address_member"
                         ],
                         "metal_member": results["metal"]["booleanity_address_member"],
+                    },
+                    "hamming_weight": {
+                        "optimized_config": results["optimized"][
+                            "hamming_weight_config"
+                        ],
+                        "metal_config": results["metal"]["hamming_weight_config"],
+                        "optimized_member": results["optimized"][
+                            "hamming_weight_member"
+                        ],
+                        "metal_member": results["metal"]["hamming_weight_member"],
                     },
                     "execution": {
                         "optimized": results["optimized"]["execution_config"],
@@ -3125,6 +3490,10 @@ def main() -> int:
                             "booleanity_address": booleanity_address_records[backend],
                             "booleanity_address_row_lifecycle": results[backend][
                                 "booleanity_address_member"
+                            ]["row_lifecycle"],
+                            "hamming_weight": hamming_weight_records[backend],
+                            "hamming_weight_row_lifecycle": results[backend][
+                                "hamming_weight_member"
                             ]["row_lifecycle"],
                             "config": results[backend]["bytecode_config"],
                             "command": results[backend]["command"],
@@ -3518,6 +3887,145 @@ def main() -> int:
                 "booleanity_address_local_gate": metrics[
                     "booleanity_address_phase_decision"
                 ]["clears"],
+                "hamming_weight_cpu_control": all(
+                    not any(
+                        sample["hamming_weight"]["optimized_member"][
+                            "metal_counts"
+                        ].values()
+                    )
+                    and sample["hamming_weight"]["optimized_member"]["row_lifecycle"]
+                    is None
+                    for sample in attributions
+                ),
+                "hamming_weight_cpu_row_source_attributed": all(
+                    sample["hamming_weight"]["optimized_member"]["components"][
+                        "row_source_us"
+                    ]
+                    > 0.0
+                    and sample["hamming_weight"]["optimized_member"]["components"][
+                        "normalized_member_us"
+                    ]
+                    < sample["hamming_weight"]["optimized_member"]["components"][
+                        "member_us"
+                    ]
+                    and sample["hamming_weight"]["metal_member"]["components"][
+                        "row_source_us"
+                    ]
+                    == 0.0
+                    and sample["hamming_weight"]["metal_member"]["components"][
+                        "normalized_member_us"
+                    ]
+                    == sample["hamming_weight"]["metal_member"]["components"][
+                        "member_us"
+                    ]
+                    for sample in attributions
+                ),
+                "hamming_weight_metal_backend_exercised": all(
+                    sample["hamming_weight"]["metal_member"]["metal_counts"]
+                    == {
+                        "prepare": 1,
+                        "sequence_prepare": 1,
+                        "allocation_plan": 1,
+                        "dispatch": 1,
+                        "readback": 1,
+                    }
+                    for sample in attributions
+                ),
+                "hamming_weight_resident_rows_reused": all(
+                    (lifecycle := sample["hamming_weight"]["metal_member"]["row_lifecycle"])
+                    is not None
+                    and lifecycle["kind"] == "metal_hamming_resident"
+                    and lifecycle["stage5_storage_id"]
+                    == lifecycle["stage6a_storage_id"]
+                    == lifecycle["stage6b_storage_id"]
+                    == lifecycle["stage6b_retain_storage_id"]
+                    == lifecycle["stage7_storage_id"]
+                    and all(
+                        lifecycle[stage]
+                        == {"row_allocations": 0, "row_upload_bytes": 0}
+                        for stage in ("stage6a", "stage6b", "stage6b_retain", "stage7")
+                    )
+                    for sample in attributions
+                ),
+                "hamming_weight_zero_row_upload": all(
+                    sample["hamming_weight"]["metal_member"]["resource_observation"][
+                        "sequence"
+                    ]["row_upload_bytes"]
+                    == 0
+                    and sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                        "stage7"
+                    ]["row_upload_bytes"]
+                    == 0
+                    for sample in attributions
+                ),
+                "hamming_weight_terminal_carry_removed": all(
+                    sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                        "terminal_consumer"
+                    ]
+                    is True
+                    and sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                        "terminal_carry_removed"
+                    ]
+                    is True
+                    for sample in attributions
+                ),
+                "hamming_weight_k256_schedule_exact": all(
+                    sample["hamming_weight"]["metal_member"]["resource_observation"][
+                        "sequence"
+                    ]["polys"]
+                    == 29
+                    and sample["hamming_weight"]["metal_member"][
+                        "resource_observation"
+                    ]["sequence"]["k"]
+                    == 256
+                    for sample in attributions
+                ),
+                "hamming_weight_working_set_admitted": all(
+                    (
+                        observation := sample["hamming_weight"]["metal_member"][
+                            "resource_observation"
+                        ]
+                    )
+                    is not None
+                    and observation["allocation"]["current_device_bytes"]
+                    + observation["allocation"]["planned_device_bytes"]
+                    <= observation["allocation"]["recommended_device_bytes"]
+                    for sample in attributions
+                ),
+                "hamming_weight_readback_exact": all(
+                    sample["hamming_weight"]["metal_member"]["resource_observation"][
+                        "readback"
+                    ]
+                    == {"elements": 29 * 256, "bytes": 29 * 256 * 16, "readbacks": 1}
+                    for sample in attributions
+                ),
+                "hamming_weight_dispatch_exact": all(
+                    sample["hamming_weight"]["metal_member"]["resource_observation"][
+                        "dispatch"
+                    ]["command_buffers"]
+                    == 1
+                    and sample["hamming_weight"]["metal_member"][
+                        "resource_observation"
+                    ]["dispatch"]["tile_dispatches"]
+                    == (29 + args.hamming_weight_metal_selectors_per_tile - 1)
+                    // args.hamming_weight_metal_selectors_per_tile
+                    and sample["hamming_weight"]["metal_member"][
+                        "resource_observation"
+                    ]["dispatch"]["finalize_dispatches"]
+                    == (29 + args.hamming_weight_metal_selectors_per_tile - 1)
+                    // args.hamming_weight_metal_selectors_per_tile
+                    for sample in attributions
+                ),
+                "hamming_weight_command_completed": all(
+                    sample["hamming_weight"]["metal_member"]["resource_observation"][
+                        "dispatch"
+                    ]["command_completed"]
+                    is True
+                    for sample in attributions
+                ),
+                "hamming_weight_local_gate": metrics[
+                    "hamming_weight_claim_reduction_decision"
+                ]["clears"],
             },
             "resources": {
                 "metal_piop_seconds": sum(pair["metal_us"] for pair in pairs)
@@ -3568,6 +4076,13 @@ def main() -> int:
                 "booleanity_address_metal_trace_cutoff_log2": args.booleanity_address_metal_trace_cutoff_log2,
                 "booleanity_address_metal_trace_cutoff_elements": 1
                 << args.booleanity_address_metal_trace_cutoff_log2,
+                "hamming_weight_metal_inner_log2": args.hamming_weight_metal_inner_log2,
+                "hamming_weight_metal_selectors_per_tile": args.hamming_weight_metal_selectors_per_tile,
+                "hamming_weight_metal_tile_threads": args.hamming_weight_metal_tile_threads,
+                "hamming_weight_metal_finalize_threads": args.hamming_weight_metal_finalize_threads,
+                "hamming_weight_metal_trace_cutoff_log2": args.hamming_weight_metal_trace_cutoff_log2,
+                "hamming_weight_metal_trace_cutoff_elements": 1
+                << args.hamming_weight_metal_trace_cutoff_log2,
                 "span": PIOP_SPAN,
                 "orders": orders,
             },

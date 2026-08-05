@@ -573,6 +573,15 @@ mod akita_benchmark {
     }
 
     #[derive(Debug, Clone, Copy)]
+    struct HammingWeightMetalTuning {
+        inner_log2: usize,
+        selectors_per_tile: usize,
+        tile_threads: usize,
+        finalize_threads: usize,
+        trace_cutoff_log2: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
     struct BackendConfig {
         backend: Backend,
         instruction_ra_materialize_width: InstructionRaMaterializeWidth,
@@ -581,6 +590,7 @@ mod akita_benchmark {
         bytecode_metal: BytecodeMetalTuning,
         instruction_input_metal: InstructionInputMetalTuning,
         booleanity_address_metal: BooleanityAddressMetalTuning,
+        hamming_weight_metal: HammingWeightMetalTuning,
     }
 
     #[derive(Parser, Debug)]
@@ -653,6 +663,21 @@ mod akita_benchmark {
 
         #[clap(long, default_value_t = 18)]
         booleanity_address_metal_trace_cutoff_log2: u32,
+
+        #[clap(long, default_value_t = 15)]
+        hamming_weight_metal_inner_log2: usize,
+
+        #[clap(long, default_value_t = 6)]
+        hamming_weight_metal_selectors_per_tile: usize,
+
+        #[clap(long, default_value_t = 512)]
+        hamming_weight_metal_tile_threads: usize,
+
+        #[clap(long, default_value_t = 1024)]
+        hamming_weight_metal_finalize_threads: usize,
+
+        #[clap(long, default_value_t = 18)]
+        hamming_weight_metal_trace_cutoff_log2: u32,
     }
 
     pub fn run() {
@@ -713,6 +738,13 @@ mod akita_benchmark {
                 finalize_threads: cli.booleanity_address_metal_finalize_threads,
                 trace_cutoff_log2: cli.booleanity_address_metal_trace_cutoff_log2,
             },
+            hamming_weight_metal: HammingWeightMetalTuning {
+                inner_log2: cli.hamming_weight_metal_inner_log2,
+                selectors_per_tile: cli.hamming_weight_metal_selectors_per_tile,
+                tile_threads: cli.hamming_weight_metal_tile_threads,
+                finalize_threads: cli.hamming_weight_metal_finalize_threads,
+                trace_cutoff_log2: cli.hamming_weight_metal_trace_cutoff_log2,
+            },
         };
         run_benchmark(cli.name, scale, cli.target_trace_size, backend_config);
     }
@@ -751,6 +783,14 @@ mod akita_benchmark {
                     tile_threads: booleanity_address_metal_tile_threads,
                     finalize_threads: booleanity_address_metal_finalize_threads,
                     trace_cutoff_log2: booleanity_address_metal_trace_cutoff_log2,
+                },
+            hamming_weight_metal:
+                HammingWeightMetalTuning {
+                    inner_log2: hamming_weight_metal_inner_log2,
+                    selectors_per_tile: hamming_weight_metal_selectors_per_tile,
+                    tile_threads: hamming_weight_metal_tile_threads,
+                    finalize_threads: hamming_weight_metal_finalize_threads,
+                    trace_cutoff_log2: hamming_weight_metal_trace_cutoff_log2,
                 },
         } = backend_config;
         let bench_name = bench.as_str();
@@ -889,6 +929,11 @@ mod akita_benchmark {
             booleanity_address_metal_tile_threads,
             booleanity_address_metal_finalize_threads,
             booleanity_address_metal_trace_cutoff_log2,
+            hamming_weight_metal_inner_log2,
+            hamming_weight_metal_selectors_per_tile,
+            hamming_weight_metal_tile_threads,
+            hamming_weight_metal_finalize_threads,
+            hamming_weight_metal_trace_cutoff_log2,
         );
         let optimized_bytecode_algebra = match bytecode_cycle_algebra {
             BytecodeCycleAlgebra::Generic => jolt_kernels::optimized::BytecodeCycleAlgebra::Generic,
@@ -983,6 +1028,23 @@ mod akita_benchmark {
                 config.booleanity_address.trace_cutoff_elements = 1usize
                     .checked_shl(booleanity_address_metal_trace_cutoff_log2)
                     .expect("Booleanity address Metal trace cutoff log2 must fit usize");
+                config.hamming_weight_claim_reduction.dispatch.inner_log2 =
+                    hamming_weight_metal_inner_log2;
+                config
+                    .hamming_weight_claim_reduction
+                    .dispatch
+                    .selectors_per_tile = hamming_weight_metal_selectors_per_tile;
+                config
+                    .hamming_weight_claim_reduction
+                    .dispatch
+                    .tile_threads_per_threadgroup = Some(hamming_weight_metal_tile_threads);
+                config
+                    .hamming_weight_claim_reduction
+                    .dispatch
+                    .finalize_threads_per_threadgroup = Some(hamming_weight_metal_finalize_threads);
+                config.hamming_weight_claim_reduction.trace_cutoff_elements = 1usize
+                    .checked_shl(hamming_weight_metal_trace_cutoff_log2)
+                    .expect("Hamming-weight Metal trace cutoff log2 must fit usize");
                 println!(
                     "BYTECODE_METAL_CONFIG backend=metal cpu_tail={} trace_cutoff={} cutoff={} message_threads={} transition_threads={} max_threadgroups={}",
                     bytecode_cycle_algebra.as_str(),
@@ -1012,6 +1074,16 @@ mod akita_benchmark {
                     booleanity_address_metal_selectors_per_tile,
                     booleanity_address_metal_tile_threads,
                     booleanity_address_metal_finalize_threads,
+                );
+                println!(
+                    "HAMMING_WEIGHT_METAL_CONFIG backend=metal trace_cutoff={} inner_log2={} selectors_per_tile={} tile_threads={} finalize_threads={}",
+                    config
+                        .hamming_weight_claim_reduction
+                        .trace_cutoff_elements,
+                    hamming_weight_metal_inner_log2,
+                    hamming_weight_metal_selectors_per_tile,
+                    hamming_weight_metal_tile_threads,
+                    hamming_weight_metal_finalize_threads,
                 );
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }

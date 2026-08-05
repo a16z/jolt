@@ -14,7 +14,7 @@ workspace = true
 [features]
 default = ["parallel"]
 parallel = ["jolt-kernels/parallel", "dep:rayon"]
-prover-fixtures = ["jolt-prover-legacy/host"]
+prover-fixtures = ["jolt-kernels/test-utils", "jolt-prover-legacy/host"]
 # The packed lattice protocol. One compiled prover produces exactly one PCS
 # envelope; this feature replaces the Dory-specific stage 0/8 path.
 akita = [

@@ -278,6 +278,15 @@ mod muldiv {
                     cutoff_elements: 2,
                     ..Default::default()
                 },
+            hamming_weight_claim_reduction: jolt_kernels::metal::HammingWeightMetalConfig {
+                trace_cutoff_elements: 2,
+                dispatch: jolt_kernels::metal::solinas::BooleanityAddressPushforwardConfig {
+                    inner_log2: 2,
+                    selectors_per_tile: 6,
+                    tile_threads_per_threadgroup: Some(256),
+                    finalize_threads_per_threadgroup: Some(256),
+                },
+            },
         })
         .expect("Metal backend should initialize");
         #[cfg(not(all(feature = "metal", target_os = "macos")))]
@@ -415,7 +424,29 @@ mod muldiv {
             committed_program: None,
         };
 
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let (backend, metal) = {
+            let metal = jolt_kernels::metal::MetalBackend::new(jolt_kernels::metal::MetalConfig {
+                hamming_weight_claim_reduction: jolt_kernels::metal::HammingWeightMetalConfig {
+                    trace_cutoff_elements: 2,
+                    dispatch: jolt_kernels::metal::solinas::BooleanityAddressPushforwardConfig {
+                        inner_log2: 2,
+                        selectors_per_tile: 6,
+                        tile_threads_per_threadgroup: Some(256),
+                        finalize_threads_per_threadgroup: Some(256),
+                    },
+                },
+                ..Default::default()
+            })
+            .expect("Metal backend should initialize");
+            let mut backend = akita::JoltAkitaBackend::optimized();
+            backend.base = backend.base.with_metal_compute(&metal);
+            (backend, metal)
+        };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
         let backend = akita::JoltAkitaBackend::optimized();
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        assert_eq!(metal.hamming_dispatches(), 0);
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -434,6 +465,8 @@ mod muldiv {
             None,
         )
         .expect("packed verifier should accept the forced-K256 proof");
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        assert_eq!(metal.hamming_dispatches(), 1);
     }
 }
 

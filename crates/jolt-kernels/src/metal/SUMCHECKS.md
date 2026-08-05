@@ -191,7 +191,7 @@ order after the first slot establishes the harness.
 | 6b/7 | untrusted-advice cycle/address | resident two-phase reduction | analyze |
 | 6b/7 | bytecode-reduction cycle/address | resident two-phase reduction | analyze |
 | 6b/7 | program-image cycle/address | resident two-phase reduction | analyze |
-| 7 | `hamming_weight_claim_reduction` | reuse resident 29-selector pushforward, host address rounds | spec frozen; integration next |
+| 7 | `hamming_weight_claim_reduction` | reuse resident 29-selector pushforward, host address rounds | [integrated; local search and production validation pending](HAMMING_WEIGHT.md) |
 
 The four shared precommitted implementations account for eight backend slots. Their
 cycle state already crosses stages through `ProofSession`; the Metal version must
