@@ -91,6 +91,7 @@ pub enum KernelId {
     BytecodeAdopt,
     BytecodeDenseRound,
     BytecodeOffsetProbe,
+    InstrInputQ0,
     InstrInputBindNative,
     InstrInputRound,
     OuterT1,
@@ -118,7 +119,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 67] = [
+    pub const ALL: [Self; 68] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -162,6 +163,7 @@ impl KernelId {
         Self::BytecodeAdopt,
         Self::BytecodeDenseRound,
         Self::BytecodeOffsetProbe,
+        Self::InstrInputQ0,
         Self::InstrInputBindNative,
         Self::InstrInputRound,
         Self::OuterT1,
@@ -233,6 +235,7 @@ impl KernelId {
             Self::BytecodeAdopt => "jk_bytecode_adopt",
             Self::BytecodeDenseRound => "jk_bytecode_dense_round",
             Self::BytecodeOffsetProbe => "jk_bytecode_offset_probe",
+            Self::InstrInputQ0 => "jk_instr_input_q0",
             Self::InstrInputBindNative => "jk_instr_input_bind_native",
             Self::InstrInputRound => "jk_instr_input_round",
             Self::OuterT1 => "jk_outer_t1",

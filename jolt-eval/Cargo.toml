@@ -102,6 +102,12 @@ name = "prover_time_sha2_chain"
 harness = false
 
 [[bench]]
+name = "instruction_input_round0"
+path = "benches/metal/instruction_input_round0.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
 name = "metal_fr_bind"
 path = "benches/metal/metal_fr_bind.rs"
 harness = false

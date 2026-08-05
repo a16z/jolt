@@ -56,6 +56,8 @@ pub use g2::{g2_bases_as_u32s, g2_jac_from_device_limbs, G2_JAC_U32S};
 pub use runtime::{
     ComputePass, KernelId, MetalContext, PendingPass, MAX_EVAL_POINTS, THREADGROUP_SIZE,
 };
+#[cfg(feature = "bench-utils")]
+pub use slots::InstructionInputRound0Fixture;
 pub use slots::{
     MetalBooleanityCycle, MetalBytecodeReadRafCycle, MetalHammingWeightClaimReduction,
     MetalIncClaimReduction, MetalInstructionClaimReduction, MetalInstructionInput,

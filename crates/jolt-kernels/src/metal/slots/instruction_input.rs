@@ -2,10 +2,11 @@
 //! [`OptimizedInstructionInput`], byte-identical round polynomials by
 //! construction.
 //!
-//! Round 0 stays on the host — the optimized kernel's own exact-integer
-//! pipeline over the shared trace record ([`native_q_evals`]), rayon-cheap
-//! and not worth a T-sized device promotion. The device enters at the first
-//! bind, where the optimized tier pays its big bill (eight dense `T/2`
+//! Round 0 reduces three coefficients on the device directly from the shared
+//! trace record: Boolean endpoint selection yields q(0), q(1), while flag
+//! transitions times operand slopes yield the quadratic coefficient; the
+//! host reconstructs q(2), q(3). The first bind then pays the optimized
+//! tier's big bill (eight dense `T/2`
 //! tables materialized through per-row field promotion): one
 //! `jk_instr_input_bind_native` dispatch reads the record's native lanes
 //! in place (u64 values, i128 immediates, packed flag words — all
@@ -54,6 +55,21 @@ use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutput
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 
 const KIND: &str = "instruction_input";
+
+fn native_q0_params(gruen: &GruenSplitEqPolynomial<Fr>, gamma: Fr, len: usize) -> Vec<u32> {
+    let groups = len / 2;
+    let mut params = vec![
+        groups as u32,
+        num_threadgroups(groups) as u32,
+        gruen.e_in_current().len().trailing_zeros(),
+        TraceRecord::instruction_flag_bit(InstructionFlags::LeftOperandIsRs1Value),
+        TraceRecord::instruction_flag_bit(InstructionFlags::LeftOperandIsPC),
+        TraceRecord::instruction_flag_bit(InstructionFlags::RightOperandIsRs2Value),
+        TraceRecord::instruction_flag_bit(InstructionFlags::RightOperandIsImm),
+    ];
+    params.extend_from_slice(&fr_to_u32_limbs(gamma));
+    params
+}
 
 /// Slot front: device kernel above the [`metal_gate`] threshold, the
 /// optimized fallback below it or on any device failure.
@@ -154,7 +170,7 @@ impl MetalInstructionInputKernel {
             state: State::Native(record),
             cur: alloc(NUM_TABLES * (t / 2))?,
             nxt: alloc(NUM_TABLES * (t / 4))?,
-            partials: Partials::new(context, 4, t / 4)?,
+            partials: Partials::new(context, 4, t / 2)?,
             device: DeviceRound::new(context, KIND),
         })
     }
@@ -175,6 +191,84 @@ impl MetalInstructionInputKernel {
     fn bind_bookkeeping(&mut self) {
         self.len /= 2;
         self.rounds_bound += 1;
+    }
+
+    fn expand_q0(q0: Fr, q1: Fr, quadratic: Fr) -> [Fr; 4] {
+        let q2 = q1 + q1 - q0 + quadratic + quadratic;
+        let q3 = q1 + q1 + q1 - q0 - q0
+            + quadratic
+            + quadratic
+            + quadratic
+            + quadratic
+            + quadratic
+            + quadratic;
+        [q0, q1, q2, q3]
+    }
+
+    /// Round 0 over native lanes: endpoint selection plus one quadratic
+    /// coefficient, reduced on device and expanded to q(0..=3) on host.
+    fn dispatch_native_q0(
+        &self,
+        context: &MetalContext,
+        record: &TraceRecord,
+    ) -> Result<[Fr; 4], MetalError> {
+        let e_in = self.gruen.e_in_current();
+        let e_out = self.gruen.e_out_current();
+        let groups = self.len / 2;
+        let num_tgs = num_threadgroups(groups);
+        let params = native_q0_params(&self.gruen, self.gamma, self.len);
+
+        let flags = context.wrap_slice(record.flags.as_slice())?;
+        let rs1 = context.wrap_slice(record.registers.rs1_value.as_slice())?;
+        let upc = context.wrap_slice(record.unexpanded_pc.as_slice())?;
+        let rs2 = context.wrap_slice(record.registers.rs2_value.as_slice())?;
+        let imm = context.wrap_slice(record.imm.as_slice())?;
+        let e_in_buffer = context.wrap_slice(fr_as_u32s(e_in))?;
+        let e_out_buffer = context.wrap_slice(fr_as_u32s(e_out))?;
+        testing::note_copied_buffers(
+            u64::from(flags.was_copied())
+                + u64::from(rs1.was_copied())
+                + u64::from(upc.was_copied())
+                + u64::from(rs2.was_copied())
+                + u64::from(imm.was_copied())
+                + u64::from(e_in_buffer.was_copied())
+                + u64::from(e_out_buffer.was_copied()),
+        );
+        let partials = self.partials.buffer().device_buffer();
+        let mut pass = context.begin_pass()?;
+        pass.dispatch(
+            KernelId::InstrInputQ0,
+            &params,
+            &[
+                &flags,
+                &rs1,
+                &upc,
+                &rs2,
+                &imm,
+                &e_in_buffer,
+                &e_out_buffer,
+                &partials,
+            ],
+            groups,
+        );
+        pass.run()?;
+        testing::note_device_round();
+        let sums = self.partials.sums(num_tgs);
+        Ok(Self::expand_q0(sums[0], sums[1], sums[2]))
+    }
+
+    fn round0_evals(&mut self) -> [Fr; 4] {
+        let record = match &self.state {
+            State::Native(record) => Arc::clone(record),
+            State::Dense => return self.cpu_dense_evals(),
+        };
+        if let Some(context) = self.device.gated(self.len / 2) {
+            match self.dispatch_native_q0(context, &record) {
+                Ok(evals) => return evals,
+                Err(error) => self.device.failed(&error),
+            }
+        }
+        native_q_evals(&self.gruen, self.gamma, &RecordRows::Record(record))
     }
 
     /// The fused first-bind dispatch: native lanes → dense `cur` plus the
@@ -431,16 +525,7 @@ impl ProveRounds<Fr> for MetalInstructionInputKernel {
             self.gruen.bind(challenge);
         }
         let q_evals = match bind {
-            // Round 0 — the optimized kernel's own exact-integer pipeline
-            // over the native rows.
-            None => match &self.state {
-                State::Native(record) => native_q_evals(
-                    &self.gruen,
-                    self.gamma,
-                    &RecordRows::Record(Arc::clone(record)),
-                ),
-                State::Dense => self.cpu_dense_evals(),
-            },
+            None => self.round0_evals(),
             Some(challenge) => self.binding_round_evals(challenge),
         };
         assemble_message(&self.gruen, q_evals, round, previous_claim)
@@ -517,6 +602,214 @@ impl SumcheckKernel<Fr> for MetalInstructionInputKernel {
             return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
         }
         Ok(())
+    }
+}
+
+#[cfg(feature = "bench-utils")]
+pub mod bench {
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+    use jolt_riscv::InstructionFlags;
+    use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, UnexpandedPc};
+
+    use super::{
+        fr_to_u32_limbs, native_q0_params, native_q_evals, num_threadgroups, own_uninit_frs,
+        InstructionInputRow, MetalInstructionInputKernel, Partials, RecordRows, TraceRecord,
+        NUM_TABLES,
+    };
+    use crate::metal::{KernelId, MetalContext, MetalError, OwnedDeviceBuffer, PageAlignedVec};
+
+    pub struct InstructionInputRound0Fixture {
+        context: &'static MetalContext,
+        len: usize,
+        gamma: Fr,
+        gruen: GruenSplitEqPolynomial<Fr>,
+        rows: RecordRows<InstructionInputRow>,
+        flags: OwnedDeviceBuffer<u32>,
+        rs1: OwnedDeviceBuffer<u64>,
+        upc: OwnedDeviceBuffer<u64>,
+        rs2: OwnedDeviceBuffer<u64>,
+        imm: OwnedDeviceBuffer<i128>,
+        e_in: OwnedDeviceBuffer<Fr>,
+        e_out: OwnedDeviceBuffer<Fr>,
+        bound_e_in: OwnedDeviceBuffer<Fr>,
+        bound_e_out: OwnedDeviceBuffer<Fr>,
+        dense: OwnedDeviceBuffer<Fr>,
+        partials: Partials,
+        q0_params: Vec<u32>,
+        bind_params: Vec<u32>,
+        expected: [Fr; 4],
+    }
+
+    impl InstructionInputRound0Fixture {
+        pub fn production_geometry(log_t: usize) -> Result<Self, MetalError> {
+            let context = MetalContext::global()?;
+            let len = 1usize << log_t;
+            let gamma = Fr::from_u64(0xdada_cafe);
+            let r_product = (0..log_t)
+                .map(|i| Fr::from_u64(0x100 + 17 * i as u64))
+                .collect::<Vec<_>>();
+            let gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
+            let rows = RecordRows::Collected(
+                (0..len)
+                    .map(|index| {
+                        let a = mix64(index as u64 ^ 0x243f_6a88_85a3_08d3);
+                        let b = mix64(index as u64 ^ 0x1319_8a2e_0370_7344);
+                        InstructionInputRow {
+                            is_rs1: InstructionFlag(a & 1 != 0),
+                            rs1_value: Rs1Value(a),
+                            is_pc: InstructionFlag(a & 2 != 0),
+                            unexpanded_pc: UnexpandedPc(b),
+                            is_rs2: InstructionFlag(a & 4 != 0),
+                            rs2_value: Rs2Value(a.rotate_left(29) ^ b),
+                            is_imm: InstructionFlag(a & 8 != 0),
+                            imm: Imm((((a as u128) << 64) | b as u128) as i128),
+                        }
+                    })
+                    .collect(),
+            );
+            let expected = native_q_evals(&gruen, gamma, &rows);
+
+            let flags = context.own_page_aligned(PageAlignedVec::from_fn(len, |index| {
+                pack_flags(&rows.row(index))
+            }))?;
+            let rs1 = context.own_page_aligned(PageAlignedVec::from_fn(len, |index| {
+                rows.row(index).rs1_value.0
+            }))?;
+            let upc = context.own_page_aligned(PageAlignedVec::from_fn(len, |index| {
+                rows.row(index).unexpanded_pc.0
+            }))?;
+            let rs2 = context.own_page_aligned(PageAlignedVec::from_fn(len, |index| {
+                rows.row(index).rs2_value.0
+            }))?;
+            let imm = context
+                .own_page_aligned(PageAlignedVec::from_fn(len, |index| rows.row(index).imm.0))?;
+            let e_in =
+                context.own_page_aligned(PageAlignedVec::from_slice(gruen.e_in_current()))?;
+            let e_out =
+                context.own_page_aligned(PageAlignedVec::from_slice(gruen.e_out_current()))?;
+
+            let bind = Fr::from_u64(0x1234_5678);
+            let mut bound_gruen = gruen.clone();
+            bound_gruen.bind(bind);
+            let bound_e_in =
+                context.own_page_aligned(PageAlignedVec::from_slice(bound_gruen.e_in_current()))?;
+            let bound_e_out = context
+                .own_page_aligned(PageAlignedVec::from_slice(bound_gruen.e_out_current()))?;
+            let dense = own_uninit_frs(context, NUM_TABLES * (len / 2))?
+                .ok_or(MetalError::UnsupportedShape("empty dense fixture"))?;
+            let partials = Partials::new(context, 4, len / 2)?;
+            let q0_params = native_q0_params(&gruen, gamma, len);
+            let groups = len / 4;
+            let mut bind_params = vec![
+                groups as u32,
+                num_threadgroups(groups) as u32,
+                bound_gruen.e_in_current().len().trailing_zeros(),
+                (len / 2) as u32,
+                TraceRecord::instruction_flag_bit(InstructionFlags::LeftOperandIsRs1Value),
+                TraceRecord::instruction_flag_bit(InstructionFlags::LeftOperandIsPC),
+                TraceRecord::instruction_flag_bit(InstructionFlags::RightOperandIsRs2Value),
+                TraceRecord::instruction_flag_bit(InstructionFlags::RightOperandIsImm),
+            ];
+            bind_params.extend_from_slice(&fr_to_u32_limbs(bind));
+            bind_params.extend_from_slice(&fr_to_u32_limbs(gamma));
+
+            Ok(Self {
+                context,
+                len,
+                gamma,
+                gruen,
+                rows,
+                flags,
+                rs1,
+                upc,
+                rs2,
+                imm,
+                e_in,
+                e_out,
+                bound_e_in,
+                bound_e_out,
+                dense,
+                partials,
+                q0_params,
+                bind_params,
+                expected,
+            })
+        }
+
+        pub fn host_message(&self) -> [Fr; 4] {
+            native_q_evals(&self.gruen, self.gamma, &self.rows)
+        }
+
+        pub fn metal_message(&self) -> Result<[Fr; 4], MetalError> {
+            let groups = self.len / 2;
+            let num_tgs = num_threadgroups(groups);
+            let flags = self.flags.device_buffer();
+            let rs1 = self.rs1.device_buffer();
+            let upc = self.upc.device_buffer();
+            let rs2 = self.rs2.device_buffer();
+            let imm = self.imm.device_buffer();
+            let e_in = self.e_in.device_buffer();
+            let e_out = self.e_out.device_buffer();
+            let partials = self.partials.buffer().device_buffer();
+            self.context.run_once(
+                KernelId::InstrInputQ0,
+                &self.q0_params,
+                &[&flags, &rs1, &upc, &rs2, &imm, &e_in, &e_out, &partials],
+                groups,
+            )?;
+            let sums = self.partials.sums(num_tgs);
+            Ok(MetalInstructionInputKernel::expand_q0(
+                sums[0], sums[1], sums[2],
+            ))
+        }
+
+        pub fn dense_bind(&self) -> Result<(), MetalError> {
+            let flags = self.flags.device_buffer();
+            let rs1 = self.rs1.device_buffer();
+            let upc = self.upc.device_buffer();
+            let rs2 = self.rs2.device_buffer();
+            let imm = self.imm.device_buffer();
+            let dense = self.dense.device_buffer();
+            let e_in = self.bound_e_in.device_buffer();
+            let e_out = self.bound_e_out.device_buffer();
+            let partials = self.partials.buffer().device_buffer();
+            self.context.run_once(
+                KernelId::InstrInputBindNative,
+                &self.bind_params,
+                &[
+                    &flags, &rs1, &upc, &rs2, &imm, &dense, &e_in, &e_out, &partials,
+                ],
+                self.len / 4,
+            )
+        }
+
+        pub fn assert_oracle(&self) -> Result<(), MetalError> {
+            assert_eq!(self.host_message(), self.expected);
+            assert_eq!(self.metal_message()?, self.expected);
+            Ok(())
+        }
+    }
+
+    fn pack_flags(row: &InstructionInputRow) -> u32 {
+        let mut flags = 0;
+        for (set, flag) in [
+            (row.is_rs1.0, InstructionFlags::LeftOperandIsRs1Value),
+            (row.is_pc.0, InstructionFlags::LeftOperandIsPC),
+            (row.is_rs2.0, InstructionFlags::RightOperandIsRs2Value),
+            (row.is_imm.0, InstructionFlags::RightOperandIsImm),
+        ] {
+            if set {
+                flags |= 1u32 << TraceRecord::instruction_flag_bit(flag);
+            }
+        }
+        flags
+    }
+
+    fn mix64(mut value: u64) -> u64 {
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
     }
 }
 
@@ -697,9 +990,9 @@ mod tests {
         // nextest runs one process per test, so env mutation is safe.
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
-        // log_t = 10: bind0 + 8 dense device rounds (the last prove_round
-        // folds 4 → 2 pairs on device; finish_rounds is host-side).
-        assert_eq!(parity(10, 21), 9);
+        // log_t = 10: q0 + bind0 + 8 dense device rounds (the last
+        // prove_round folds 4 → 2 pairs; finish_rounds is host-side).
+        assert_eq!(parity(10, 21), 10);
     }
 
     #[test]
@@ -707,18 +1000,17 @@ mod tests {
         let _lock = gpu_lock();
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
-        assert_eq!(parity(9, 8080), 8);
+        assert_eq!(parity(9, 8080), 9);
     }
 
-    /// Tail handoff: the gate (pre-bind table length) admits bind0 at
-    /// `len = 1024` and the first dense round at `len = 512`, then hands the
-    /// shrinking tail to the CPU over the same unified buffers.
+    /// Tail handoff: the gate admits q0, bind0 at `len = 1024`, and the first
+    /// dense round at `len = 512`, then hands the shrinking tail to the CPU.
     #[test]
     fn tail_rounds_hand_off_to_cpu() {
         let _lock = gpu_lock();
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS_INSTRUCTION_INPUT", "512");
         std::env::set_var("JOLT_METAL_MIN_TERMS", "0");
-        assert_eq!(parity(10, 7), 2);
+        assert_eq!(parity(10, 7), 3);
     }
 }
