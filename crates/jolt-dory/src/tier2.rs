@@ -188,6 +188,41 @@ fn multi_miller_prepared(pairs: &[(G1Affine, &[EllCoeff])]) -> Fq12 {
     f
 }
 
+/// [`multi_miller_prepared`] over caller-borrowed coefficient slices — the
+/// probe/bench seam for timing the shared-ladder Miller phase alone.
+pub fn multi_miller_prepared_pairs(pairs: &[(G1Affine, &[EllCoeff])]) -> Fq12 {
+    multi_miller_prepared(pairs)
+}
+
+/// The multi-Miller Fp12 value of affine pairs — the deterministic CPU
+/// twin of the Metal fly kernel (its co-execution arm). Chunks on the
+/// rayon pool; each chunk prepares its own G2 points once and runs ONE
+/// shared squaring ladder ([`multi_miller_prepared`]), so per-pair cost is
+/// the preparation + prepared-Miller rate with no dependence on arkworks'
+/// internal 4-pair re-chunking (nondeterministically 3-4× slower on a
+/// saturated pool — W3-st8 measurement). Identity pairs are filtered
+/// exactly as arkworks' pair filter; any partition multiplies the same
+/// Fp12 factors, so the value is bit-identical to `multi_miller_loop`.
+pub fn multi_miller_affine(ps: &[G1Affine], qs: &[ark_bn254::G2Affine]) -> Fq12 {
+    assert_eq!(ps.len(), qs.len());
+    ps.par_chunks(MILLER_CHUNK)
+        .zip(qs.par_chunks(MILLER_CHUNK))
+        .map(|(ps_chunk, qs_chunk)| {
+            let live: Vec<(G1Affine, <Bn254 as Pairing>::G2Prepared)> = ps_chunk
+                .iter()
+                .zip(qs_chunk)
+                .filter(|(p, q)| !p.is_zero() && !q.is_zero())
+                .map(|(p, q)| (*p, (*q).into()))
+                .collect();
+            let pairs: Vec<(G1Affine, &[EllCoeff])> = live
+                .iter()
+                .map(|(p, prep)| (*p, prep.ell_coeffs.as_slice()))
+                .collect();
+            multi_miller_prepared(&pairs)
+        })
+        .reduce(Fq12::one, |a, b| a * b)
+}
+
 /// The `multi_pair_g2_setup` Fp12 product of `ps` against the prepared
 /// generator prefix, without the per-call G2 re-preparation.
 pub(crate) fn multi_pair_g2_prepared(ps: &[ArkG1], prep: &DoryTier2Prep) -> ArkGT {
@@ -364,6 +399,42 @@ mod tests {
                 multi_miller_prepared(&pairs),
                 expected,
                 "fresh loop diverged at {n} pairs"
+            );
+        }
+    }
+
+    /// The affine co-execution entry must reproduce arkworks'
+    /// multi-Miller value bit for bit across chunk boundaries (the
+    /// MILLER_CHUNK partition), with identities on both sides.
+    #[test]
+    fn multi_miller_affine_matches_arkworks() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0x0aff);
+        for n in [
+            1usize,
+            MILLER_CHUNK - 1,
+            MILLER_CHUNK,
+            2 * MILLER_CHUNK + 17,
+        ] {
+            let mut ps: Vec<G1Affine> = (0..n)
+                .map(|_| ark_bn254::G1Projective::rand(&mut rng).into_affine())
+                .collect();
+            let mut qs: Vec<ark_bn254::G2Affine> = (0..n)
+                .map(|_| ark_bn254::G2Projective::rand(&mut rng).into_affine())
+                .collect();
+            if n > 4 {
+                ps[2] = G1Affine::zero();
+                qs[4] = ark_bn254::G2Affine::zero();
+                qs[n - 1] = ark_bn254::G2Affine::zero();
+            }
+            let expected = Bn254::multi_miller_loop(
+                ps.iter().copied(),
+                qs.iter().map(|q| <Bn254 as Pairing>::G2Prepared::from(*q)),
+            )
+            .0;
+            assert_eq!(
+                multi_miller_affine(&ps, &qs),
+                expected,
+                "affine loop diverged at {n} pairs"
             );
         }
     }

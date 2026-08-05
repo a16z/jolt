@@ -412,6 +412,19 @@ impl MetalContext {
         self.device.name().to_string()
     }
 
+    /// Compiler-derived pipeline limits `(max_total_threads_per_threadgroup,
+    /// thread_execution_width)` — the public occupancy proxy: the compiler
+    /// lowers the first below the device's 1024 cap as per-thread register
+    /// footprint grows, so it doubles as an indirect register-pressure
+    /// reading (Metal exposes no direct register count).
+    pub fn pipeline_stats(&self, kernel: KernelId) -> (usize, usize) {
+        let pipeline = &self.pipelines[kernel.index()];
+        (
+            pipeline.maxTotalThreadsPerThreadgroup(),
+            pipeline.threadExecutionWidth(),
+        )
+    }
+
     pub(super) fn device(&self) -> &ProtocolObject<dyn MTLDevice> {
         &self.device
     }
