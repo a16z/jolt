@@ -31,7 +31,8 @@ default = ["host"]
 akita = [
   "dep:jolt-akita",
   "jolt-claims?/akita",
-  "jolt-field?/solinas",
+  "dep:jolt-field",
+  "jolt-field/solinas",
   "jolt-verifier/akita",
 ]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]

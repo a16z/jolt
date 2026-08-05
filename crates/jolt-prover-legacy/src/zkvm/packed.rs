@@ -1801,7 +1801,7 @@ mod tests {
             mutate(claims);
             tampered
         };
-        let one = AkitaField::from_u64(1);
+        let one = <AkitaField as jolt_field::Ring>::from_u64(1);
         assert!(
             verify(&tamper(&|claims| claims
                 .stage6b
@@ -1989,7 +1989,7 @@ mod advice_tests {
                 .auxiliary
                 .as_mut()
                 .unwrap()
-                .evaluations[object] += AkitaField::from_u64(1);
+                .evaluations[object] += <AkitaField as jolt_field::Ring>::from_u64(1);
             assert!(
                 verify(&tampered).is_err(),
                 "tampered object-{object} evaluation must be rejected"
@@ -2173,7 +2173,7 @@ mod committed_tests {
             .auxiliary
             .as_mut()
             .unwrap()
-            .evaluations[0] += AkitaField::from_u64(1);
+            .evaluations[0] += <AkitaField as jolt_field::Ring>::from_u64(1);
         assert!(
             verify(&tampered).is_err(),
             "tampered ProgramOneHot evaluation must be rejected"
@@ -2187,7 +2187,7 @@ mod committed_tests {
             .bytecode
             .as_mut()
             .expect("committed proofs carry the bytecode reconstruction cell");
-        bytecode_cell.pc_bytes[0] += AkitaField::from_u64(1);
+        bytecode_cell.pc_bytes[0] += <AkitaField as jolt_field::Ring>::from_u64(1);
         assert!(
             verify(&tampered).is_err(),
             "tampered bytecode reconstruction wire must be rejected"
