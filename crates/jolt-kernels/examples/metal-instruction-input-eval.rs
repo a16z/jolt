@@ -10,7 +10,7 @@ use std::hint::black_box;
 use std::mem::size_of;
 use std::time::{Duration, Instant};
 
-use jolt_kernels::metal::solinas::{SolinasMetal, SpartanOuterUniskipRow};
+use jolt_kernels::metal::solinas::{InstructionInputRow, SolinasMetal, SpartanOuterUniskipRow};
 use serde_json::json;
 
 #[expect(
@@ -357,9 +357,10 @@ fn main() -> EvalResult<()> {
     let frozen_cpu_reference_ratio = median_f64(&paired_frozen_cpu_reference_ratios);
     let rows = workload.rows();
     let cpu_row_bytes = size_of::<instruction_input::CpuInstructionInputRow>() * rows;
-    let resident_row_bytes = size_of::<SpartanOuterUniskipRow>() * rows;
+    let resident_compact_row_bytes = size_of::<InstructionInputRow>() * rows;
+    let resident_source_row_bytes = size_of::<SpartanOuterUniskipRow>() * rows;
     let metal_phase_persistent_modeled_bytes = cpu_row_bytes
-        .checked_add(resident_row_bytes)
+        .checked_add(resident_compact_row_bytes)
         .and_then(|value| value.checked_add(sequence_owned_bytes as usize))
         .ok_or("InstructionInput resource accounting overflow")?;
     let cpu_first_dense_bytes = TABLES * (rows / 2) * 16;
@@ -375,7 +376,7 @@ fn main() -> EvalResult<()> {
         .and_then(|value| value.checked_add(hybrid_cpu_tail_bind_scratch_capacity_bytes))
         .ok_or("InstructionInput hybrid peak accounting overflow")?;
     let sequence_setup_peak_modeled_bytes = metal_phase_persistent_modeled_bytes
-        .checked_add(resident_row_bytes)
+        .checked_add(resident_source_row_bytes)
         .ok_or("InstructionInput setup peak accounting overflow")?;
     let evaluator_peak_modeled_bytes = cpu_trial_peak_modeled_bytes
         .max(sequence_setup_peak_modeled_bytes)
@@ -418,11 +419,11 @@ fn main() -> EvalResult<()> {
         return Err("InstructionInput evaluator correctness guard failed".into());
     }
 
-    // `instruction_input_v3` is a closed schema: every emitted field is declared here,
+    // `instruction_input_v4` is a closed schema: every emitted field is declared here,
     // with no extension/property map whose keys vary between runs.
     let output = json!({
-        "schema": "instruction_input_v3",
-        "schema_version": 3,
+        "schema": "instruction_input_v4",
+        "schema_version": 4,
         "kernel": "instruction_input",
         "metrics": {
             "hybrid_speedup": hybrid_speedup,
@@ -497,7 +498,7 @@ fn main() -> EvalResult<()> {
         "resources": {
             "gpu_seconds": evaluator_gpu_active_total.as_secs_f64(),
             "cpu_native_rows_bytes": cpu_row_bytes,
-            "resident_stage1_rows_bytes": resident_row_bytes,
+            "resident_compact_rows_bytes": resident_compact_row_bytes,
             "sequence_owned_working_storage_bytes": sequence_owned_bytes,
             "cpu_phase_persistent_modeled_bytes": cpu_row_bytes,
             "cpu_first_dense_table_bytes": cpu_first_dense_bytes,
@@ -509,8 +510,8 @@ fn main() -> EvalResult<()> {
             "metal_warmup_and_trial_peak_modeled_bytes": metal_warmup_and_trial_peak_modeled_bytes,
             "sequence_setup_peak_modeled_bytes": sequence_setup_peak_modeled_bytes,
             "evaluator_peak_modeled_bytes": evaluator_peak_modeled_bytes,
-            "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_row_bytes,
-            "setup_peak_increment_from_resident_source_copy_bytes": resident_row_bytes,
+            "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_source_row_bytes,
+            "setup_peak_increment_from_resident_source_copy_bytes": resident_source_row_bytes,
             "cutoff_readback_bytes": TABLES * cutoff * 16,
             "unified_memory_no_per_round_row_upload": true,
             "sequence_owned_storage_includes_dense_ping_pong_weights_and_reductions": true
@@ -523,7 +524,7 @@ fn main() -> EvalResult<()> {
             "samples_per_round": 4,
             "descriptor_fields_returned_by_gpu": 3,
             "cpu_native_row_bytes": size_of::<instruction_input::CpuInstructionInputRow>(),
-            "resident_stage1_row_bytes": size_of::<SpartanOuterUniskipRow>(),
+            "resident_compact_row_bytes": size_of::<InstructionInputRow>(),
             "cutoff_log2": cutoff_log2,
             "cutoff_elements": cutoff,
             "trace_cutoff_log2": trace_cutoff_log2,
@@ -550,7 +551,7 @@ fn main() -> EvalResult<()> {
             "cpu_trials_run_while_resident_metal_sequence_is_allocated": false,
             "cpu_trials_run_before_resident_source_materialization": true,
             "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
-            "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage"
+            "metal_control": "public InstructionInputSequence over resident compact InstructionInputRow storage"
         },
         "pipelines": {
             "native_message_execution_width": native_message_limits.thread_execution_width,

@@ -11,11 +11,13 @@ use metal::{
 use rayon::prelude::*;
 
 use super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, Fp128, InstructionInputRow, InstructionInputRows,
+    MetalError, PipelineLimits, SolinasMetal,
 };
 
 pub const SPARTAN_OUTER_EXTENDED_NODES: usize = 9;
 const ROW_WORDS: usize = 20;
+const RESIDUAL_ROW_WORDS: usize = 14;
 const SIMD_WIDTH: usize = 32;
 const BLOCKS_PIPELINE: &str = "solinas_spartan_outer_uniskip_blocks";
 const REDUCE_PIPELINE: &str = "solinas_spartan_outer_uniskip_reduce";
@@ -73,11 +75,19 @@ pub struct SpartanOuterUniskipRow {
     words: [u64; ROW_WORDS],
 }
 
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SpartanOuterUniskipResidualRow {
+    words: [u64; RESIDUAL_ROW_WORDS],
+}
+
 #[derive(Clone)]
 pub struct SpartanOuterUniskipRows {
-    buffer: Buffer,
+    instruction_input_rows: InstructionInputRows,
+    residual_buffer: Buffer,
     len: usize,
     device_registry_id: u64,
+    accounts_instruction_input_rows: bool,
 }
 
 impl SpartanOuterUniskipRows {
@@ -89,8 +99,12 @@ impl SpartanOuterUniskipRows {
         self.len == 0
     }
 
-    pub(crate) fn buffer(&self) -> &Buffer {
-        &self.buffer
+    pub(crate) fn instruction_input_buffer(&self) -> &Buffer {
+        self.instruction_input_rows.buffer()
+    }
+
+    pub(crate) fn residual_buffer(&self) -> &Buffer {
+        &self.residual_buffer
     }
 
     pub const fn device_registry_id(&self) -> u64 {
@@ -98,7 +112,20 @@ impl SpartanOuterUniskipRows {
     }
 
     pub fn allocation_identity(&self) -> usize {
-        self.buffer.as_ptr() as usize
+        self.residual_buffer.as_ptr() as usize
+    }
+
+    pub fn instruction_input_allocation_identity(&self) -> usize {
+        self.instruction_input_rows.allocation_identity()
+    }
+
+    pub(crate) fn share_instruction_input_rows(&mut self) -> InstructionInputRows {
+        self.accounts_instruction_input_rows = false;
+        self.instruction_input_rows.clone()
+    }
+
+    pub(crate) fn restore_instruction_input_accounting(&mut self) {
+        self.accounts_instruction_input_rows = true;
     }
 }
 
@@ -107,9 +134,15 @@ impl allocative::Allocative for SpartanOuterUniskipRows {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
-            allocative::Key::new("device_rows"),
-            self.len * size_of::<SpartanOuterUniskipRow>(),
+            allocative::Key::new("device_residual_rows"),
+            self.len * size_of::<SpartanOuterUniskipResidualRow>(),
         );
+        if self.accounts_instruction_input_rows {
+            visitor.visit_simple(
+                allocative::Key::new("device_instruction_input_rows"),
+                self.len * size_of::<InstructionInputRow>(),
+            );
+        }
         visitor.exit();
     }
 }
@@ -193,6 +226,32 @@ impl SpartanOuterUniskipRow {
                 flags,
             ],
         }
+    }
+
+    pub(crate) fn split(self) -> (InstructionInputRow, SpartanOuterUniskipResidualRow) {
+        let words = self.words;
+        let flags = words[19];
+        let load = flags & (1 << FLAG_LOAD) != 0;
+        let slot1 = words[10];
+        let slot2 = words[11];
+        let slot3 = words[12];
+        let memory_0 = if load { slot1 } else { slot3 };
+        let memory_1 = if load {
+            slot3
+        } else if flags & (1 << FLAG_STORE) != 0 {
+            slot2
+        } else {
+            0
+        };
+        (
+            InstructionInputRow::from_full_words(words),
+            SpartanOuterUniskipResidualRow {
+                words: [
+                    words[0], words[1], words[2], words[3], words[4], words[5], memory_0, memory_1,
+                    words[13], words[14], words[15], words[16], words[17], words[18],
+                ],
+            },
+        )
     }
 
     /// Decodes the eight InstructionInput columns in output-claim order.
@@ -429,7 +488,8 @@ struct Params {
 }
 
 struct Buffers {
-    rows: Buffer,
+    instruction_input_rows: Buffer,
+    residual_rows: Buffer,
     e_in: Buffer,
     e_out: Buffer,
     block_sums: Buffer,
@@ -465,39 +525,77 @@ impl SolinasMetal {
         &self,
         rows: &[SpartanOuterUniskipRow],
     ) -> Result<SpartanOuterUniskipRows, MetalError> {
-        self.prepare_spartan_outer_uniskip_rows_with_fill(rows.len(), |destination| {
-            destination.copy_from_slice(rows);
-            Ok(())
-        })
+        self.prepare_spartan_outer_uniskip_rows_with_fill(
+            rows.len(),
+            |instruction_input, residual| {
+                for ((source, instruction_input), residual) in
+                    rows.iter().copied().zip(instruction_input).zip(residual)
+                {
+                    (*instruction_input, *residual) = source.split();
+                }
+                Ok(())
+            },
+        )
     }
 
     pub(crate) fn prepare_spartan_outer_uniskip_rows_with_fill(
         &self,
         rows: usize,
-        fill: impl FnOnce(&mut [SpartanOuterUniskipRow]) -> Result<(), MetalError>,
+        fill: impl FnOnce(
+            &mut [InstructionInputRow],
+            &mut [SpartanOuterUniskipResidualRow],
+        ) -> Result<(), MetalError>,
     ) -> Result<SpartanOuterUniskipRows, MetalError> {
         if rows == 0 {
             return Err(MetalError::EmptyInput);
         }
-        let row_bytes = spartan_outer_uniskip_row_bytes(rows)?;
-        self.validate_buffer_length(row_bytes)?;
+        let instruction_input_bytes = byte_length::<InstructionInputRow>(rows)?;
+        let residual_bytes = byte_length::<SpartanOuterUniskipResidualRow>(rows)?;
+        for bytes in [instruction_input_bytes, residual_bytes] {
+            self.validate_buffer_length(bytes)?;
+        }
+        let row_bytes = instruction_input_bytes
+            .checked_add(residual_bytes)
+            .ok_or(MetalError::InputTooLong(rows))?;
         self.validate_additional_working_set(row_bytes)?;
-        let rows_buffer = self
+        let instruction_input_buffer = self.device.new_buffer(
+            instruction_input_bytes,
+            MTLResourceOptions::StorageModeShared,
+        );
+        let residual_buffer = self
             .device
-            .new_buffer(row_bytes, MTLResourceOptions::StorageModeShared);
-        // SAFETY: the shared buffer has exactly `rows` elements and no command
-        // buffer can observe it until `fill` returns and the invocation executes.
-        let destination = unsafe {
+            .new_buffer(residual_bytes, MTLResourceOptions::StorageModeShared);
+        // SAFETY: both shared buffers have exactly `rows` elements and no command
+        // buffer can observe either allocation until `fill` returns.
+        let instruction_input = unsafe {
             slice::from_raw_parts_mut(
-                rows_buffer.contents().cast::<SpartanOuterUniskipRow>(),
+                instruction_input_buffer
+                    .contents()
+                    .cast::<InstructionInputRow>(),
                 rows,
             )
         };
-        fill(destination)?;
+        // SAFETY: see the paired compact-buffer construction above.
+        let residual = unsafe {
+            slice::from_raw_parts_mut(
+                residual_buffer
+                    .contents()
+                    .cast::<SpartanOuterUniskipResidualRow>(),
+                rows,
+            )
+        };
+        fill(instruction_input, residual)?;
+        let device_registry_id = self.device_registry_id();
         Ok(SpartanOuterUniskipRows {
-            buffer: rows_buffer,
+            instruction_input_rows: InstructionInputRows::from_buffer(
+                instruction_input_buffer,
+                rows,
+                device_registry_id,
+            ),
+            residual_buffer,
             len: rows,
-            device_registry_id: self.device_registry_id(),
+            device_registry_id,
+            accounts_instruction_input_rows: true,
         })
     }
 
@@ -508,8 +606,9 @@ impl SolinasMetal {
         e_out: &[AkitaField],
         config: SpartanOuterUniskipConfig,
     ) -> Result<SpartanOuterUniskipInvocation<'_>, MetalError> {
-        self.prepare_spartan_outer_uniskip_from_buffer(
-            rows.buffer.clone(),
+        self.prepare_spartan_outer_uniskip_from_buffers(
+            rows.instruction_input_buffer().clone(),
+            rows.residual_buffer().clone(),
             rows.len,
             e_in,
             e_out,
@@ -517,9 +616,10 @@ impl SolinasMetal {
         )
     }
 
-    fn prepare_spartan_outer_uniskip_from_buffer(
+    fn prepare_spartan_outer_uniskip_from_buffers(
         &self,
-        rows_buffer: Buffer,
+        instruction_input_rows_buffer: Buffer,
+        residual_rows_buffer: Buffer,
         rows: usize,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
@@ -630,7 +730,8 @@ impl SolinasMetal {
             blocks_limits,
             reduce_limits,
             buffers: Buffers {
-                rows: rows_buffer,
+                instruction_input_rows: instruction_input_rows_buffer,
+                residual_rows: residual_rows_buffer,
                 e_in: buffer_from_slice(&self.device, &e_in_fp),
                 e_out: buffer_from_slice(&self.device, &e_out_fp),
                 block_sums: self
@@ -678,11 +779,12 @@ impl SpartanOuterUniskipInvocation<'_> {
             let command_buffer = self.context.queue.new_command_buffer();
             let blocks = command_buffer.new_compute_command_encoder();
             blocks.set_compute_pipeline_state(&self.blocks_pipeline);
-            blocks.set_buffer(0, Some(&self.buffers.rows), 0);
-            blocks.set_buffer(1, Some(&self.buffers.e_in), 0);
-            blocks.set_buffer(2, Some(&self.buffers.e_out), 0);
-            blocks.set_buffer(3, Some(&self.buffers.block_sums), 0);
-            blocks.set_buffer(4, Some(&self.buffers.params), 0);
+            blocks.set_buffer(0, Some(&self.buffers.instruction_input_rows), 0);
+            blocks.set_buffer(1, Some(&self.buffers.residual_rows), 0);
+            blocks.set_buffer(2, Some(&self.buffers.e_in), 0);
+            blocks.set_buffer(3, Some(&self.buffers.e_out), 0);
+            blocks.set_buffer(4, Some(&self.buffers.block_sums), 0);
+            blocks.set_buffer(5, Some(&self.buffers.params), 0);
             blocks.set_threadgroup_memory_length(
                 0,
                 byte_length::<Fp128>(self.threads_per_threadgroup)?,
@@ -804,6 +906,11 @@ pub(crate) fn spartan_outer_uniskip_invocation_bytes(rows: usize) -> Result<u64,
 }
 
 const _: () = assert!(size_of::<SpartanOuterUniskipRow>() == 160);
+const _: () = assert!(size_of::<SpartanOuterUniskipResidualRow>() == 112);
+const _: () = assert!(
+    size_of::<InstructionInputRow>() + size_of::<SpartanOuterUniskipResidualRow>()
+        == size_of::<SpartanOuterUniskipRow>()
+);
 const _: () = assert!(size_of::<Params>() == 16);
 
 #[cfg(test)]

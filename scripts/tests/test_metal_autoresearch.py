@@ -236,7 +236,8 @@ class MetalAutoresearchTests(unittest.TestCase):
             log_n
         )
         cpu_rows_bytes = 48 * rows
-        resident_rows_bytes = 160 * rows
+        resident_rows_bytes = 48 * rows
+        resident_source_rows_bytes = 160 * rows
         persistent_bytes = cpu_rows_bytes + resident_rows_bytes + sequence_bytes
         cpu_first_dense_bytes = 8 * (rows // 2) * 16
         cpu_bind_scratch_bytes = (rows // 4) * 16
@@ -276,8 +277,8 @@ class MetalAutoresearchTests(unittest.TestCase):
             )
         }
         output = {
-            "schema": "instruction_input_v3",
-            "schema_version": 3,
+            "schema": "instruction_input_v4",
+            "schema_version": 4,
             "kernel": "instruction_input",
             "metrics": {
                 "hybrid_speedup": statistics.median(paired),
@@ -346,7 +347,7 @@ class MetalAutoresearchTests(unittest.TestCase):
                 )
                 / 1e9,
                 "cpu_native_rows_bytes": cpu_rows_bytes,
-                "resident_stage1_rows_bytes": resident_rows_bytes,
+                "resident_compact_rows_bytes": resident_rows_bytes,
                 "sequence_owned_working_storage_bytes": sequence_bytes,
                 "cpu_phase_persistent_modeled_bytes": cpu_rows_bytes,
                 "cpu_first_dense_table_bytes": cpu_first_dense_bytes,
@@ -361,16 +362,16 @@ class MetalAutoresearchTests(unittest.TestCase):
                 + hybrid_tail_bytes
                 + hybrid_tail_bind_scratch_bytes,
                 "sequence_setup_peak_modeled_bytes": persistent_bytes
-                + resident_rows_bytes,
+                + resident_source_rows_bytes,
                 "evaluator_peak_modeled_bytes": max(
                     cpu_rows_bytes + cpu_first_dense_bytes + cpu_bind_scratch_bytes,
                     persistent_bytes
                     + hybrid_tail_bytes
                     + hybrid_tail_bind_scratch_bytes,
-                    persistent_bytes + resident_rows_bytes,
+                    persistent_bytes + resident_source_rows_bytes,
                 ),
-                "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_rows_bytes,
-                "setup_peak_increment_from_resident_source_copy_bytes": resident_rows_bytes,
+                "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_source_rows_bytes,
+                "setup_peak_increment_from_resident_source_copy_bytes": resident_source_rows_bytes,
                 "cutoff_readback_bytes": 8 * cutoff * 16,
                 "unified_memory_no_per_round_row_upload": True,
                 "sequence_owned_storage_includes_dense_ping_pong_weights_and_reductions": True,
@@ -383,7 +384,7 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "samples_per_round": 4,
                 "descriptor_fields_returned_by_gpu": 3,
                 "cpu_native_row_bytes": 48,
-                "resident_stage1_row_bytes": 160,
+                "resident_compact_row_bytes": 48,
                 "cutoff_log2": cutoff_log2,
                 "cutoff_elements": cutoff,
                 "trace_cutoff_log2": trace_cutoff_log2,
@@ -416,7 +417,7 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "cpu_trials_run_while_resident_metal_sequence_is_allocated": False,
                 "cpu_trials_run_before_resident_source_materialization": True,
                 "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
-                "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage",
+                "metal_control": "public InstructionInputSequence over resident compact InstructionInputRow storage",
             },
             "pipelines": {
                 "native_message_execution_width": 32,
@@ -467,10 +468,59 @@ class MetalAutoresearchTests(unittest.TestCase):
         }
         return config, params, output
 
-    def instruction_input_v2_local_contract_fixture(
+    def instruction_input_v3_local_contract_fixture(
         self,
     ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
         config, params, output = self.instruction_input_local_contract_fixture()
+        config["evaluator"]["result_contract"] = "instruction_input_v3"
+        config["evaluator"]["result_schema_version"] = 3
+        output["schema"] = "instruction_input_v3"
+        output["schema_version"] = 3
+        rows = output["workload"]["rows"]
+        cutoff = output["workload"]["cutoff_elements"]
+        cpu_rows_bytes = 48 * rows
+        resident_rows_bytes = 160 * rows
+        sequence_bytes = output["resources"]["sequence_owned_working_storage_bytes"]
+        persistent_bytes = cpu_rows_bytes + resident_rows_bytes + sequence_bytes
+        cpu_peak_bytes = output["resources"]["cpu_trial_peak_modeled_bytes"]
+        hybrid_tail_bytes = output["resources"][
+            "hybrid_readback_plus_tail_table_capacity_bytes"
+        ]
+        hybrid_scratch_bytes = output["resources"][
+            "hybrid_cpu_tail_bind_scratch_capacity_bytes"
+        ]
+        del output["workload"]["resident_compact_row_bytes"]
+        output["workload"]["resident_stage1_row_bytes"] = 160
+        output["workload"]["metal_control"] = (
+            "public InstructionInputSequence over resident SpartanOuterUniskipRow storage"
+        )
+        del output["resources"]["resident_compact_rows_bytes"]
+        output["resources"]["resident_stage1_rows_bytes"] = resident_rows_bytes
+        output["resources"]["metal_phase_persistent_modeled_bytes"] = persistent_bytes
+        output["resources"]["metal_warmup_and_trial_peak_modeled_bytes"] = (
+            persistent_bytes + hybrid_tail_bytes + hybrid_scratch_bytes
+        )
+        output["resources"]["sequence_setup_peak_modeled_bytes"] = (
+            persistent_bytes + resident_rows_bytes
+        )
+        output["resources"]["evaluator_peak_modeled_bytes"] = max(
+            cpu_peak_bytes,
+            persistent_bytes + hybrid_tail_bytes + hybrid_scratch_bytes,
+            persistent_bytes + resident_rows_bytes,
+        )
+        output["resources"][
+            "resident_source_host_copy_bytes_dropped_before_metal_trials"
+        ] = resident_rows_bytes
+        output["resources"][
+            "setup_peak_increment_from_resident_source_copy_bytes"
+        ] = resident_rows_bytes
+        self.assertEqual(output["resources"]["cutoff_readback_bytes"], 8 * cutoff * 16)
+        return config, params, output
+
+    def instruction_input_v2_local_contract_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        config, params, output = self.instruction_input_v3_local_contract_fixture()
         config["evaluator"]["result_contract"] = "instruction_input_v2"
         config["evaluator"]["result_schema_version"] = 2
         config["metric"]["name"] = "hybrid_speedup"
@@ -669,12 +719,27 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "stage3_storage_id": 101,
             }
         return {
-            "kind": "metal_resident",
+            "kind": "metal_compact_resident",
             "rows": 1 << log_n,
-            "row_bytes": 160,
+            "row_bytes": 48,
             "prepare_storage_id": 202,
             "stage1_storage_id": 202,
             "stage3_storage_id": 202,
+            "residual_storage_id": 203,
+            "row_production": {
+                "source_kind": "owned_random_access",
+                "witness_row_extractions": 1 << log_n,
+                "residual_rows_written": 1 << log_n,
+                "compact_rows_written": 1 << log_n,
+                "compact_row_bytes": 48,
+                "residual_row_bytes": 112,
+                "compact_allocations": 1,
+                "residual_allocations": 1,
+                "full_row_allocations": 0,
+                "full_domain_copy_bytes": 0,
+                "full_domain_copy_dispatches": 0,
+                "host_repack_rows": 0,
+            },
         }
 
     def production_instruction_input_result_fixture(
@@ -743,6 +808,10 @@ class MetalAutoresearchTests(unittest.TestCase):
                 / (metal_piop_ns + metal_prepare_ns),
                 "paired_instruction_input_kernel_service_speedups": [local_speedup]
                 * pairs,
+                "paired_instruction_input_kernel_service_fractional_improvements": [
+                    1.0 - metal_member_ns / cpu_member_ns
+                ]
+                * pairs,
                 "cpu_instruction_input_kernel_service_ms_samples": [cpu_member_ns / 1e6]
                 * pairs,
                 "metal_instruction_input_kernel_service_ms_samples": [metal_member_ns / 1e6]
@@ -752,6 +821,18 @@ class MetalAutoresearchTests(unittest.TestCase):
                     "minimum_speedup": float(gate["minimum_local_speedup"]),
                     "minimum_pairs": pairs,
                     "median_speedup": local_speedup,
+                    "median_fractional_improvement": 1.0
+                    - metal_member_ns / cpu_member_ns,
+                    "mad_fractional_improvement": 0.0,
+                    "cpu_member_ms_median": cpu_member_ns / 1e6,
+                    "cpu_member_ms_mad": 0.0,
+                    "metal_member_ms_median": metal_member_ns / 1e6,
+                    "metal_member_ms_mad": 0.0,
+                    "enough_pairs": True,
+                    "clears_speedup": True,
+                    "clears_fractional_improvement": True,
+                    "clears_noise": True,
+                    "lower_metal_median": True,
                     "optimized_first_median_speedup": local_speedup,
                     "metal_first_median_speedup": local_speedup,
                     "clears_order_strata": True,
@@ -1026,7 +1107,7 @@ class MetalAutoresearchTests(unittest.TestCase):
         metal_autoresearch.validate_local_result_contract(config, output, params)
 
     def test_instruction_input_run_evaluator_accepts_schema_three(self) -> None:
-        config, params, output = self.instruction_input_local_contract_fixture()
+        config, params, output = self.instruction_input_v3_local_contract_fixture()
         completed = SimpleNamespace(
             returncode=0,
             stdout=json.dumps(output) + "\n",
@@ -1042,7 +1123,7 @@ class MetalAutoresearchTests(unittest.TestCase):
                 )
         self.assertEqual(parsed["schema_version"], 3)
 
-    def test_instruction_input_template_pins_schema_three(self) -> None:
+    def test_instruction_input_template_pins_schema_four(self) -> None:
         template = metal_autoresearch.read_json(
             ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
         )
@@ -1050,8 +1131,187 @@ class MetalAutoresearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "schema version mismatches"):
             metal_autoresearch.validate_template(template)
 
+    def test_instruction_input_template_freezes_architecture_evidence(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        evidence = template["architecture_phase"]["baseline_evidence"]
+        template["scope"]["frozen"].remove(evidence)
+        with self.assertRaisesRegex(ValueError, "baseline evidence must be frozen"):
+            metal_autoresearch.validate_template(template)
+
+    def test_new_instruction_input_run_requires_architecture_evidence(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        del template["architecture_phase"]
+
+        with self.assertRaisesRegex(ValueError, "architecture baseline"):
+            metal_autoresearch.validate_new_run_template(template)
+
+    def test_instruction_input_architecture_evidence_recomputes_ratios(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        source = ROOT / template["architecture_phase"]["baseline_evidence"]
+        evidence = metal_autoresearch.read_json(source)
+        evidence["samples"][0]["service_speedup"] += 0.25
+        encoded = metal_autoresearch.canonical_json(evidence)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "architecture-evidence.json"
+            path.write_bytes(encoded)
+            old_path = template["architecture_phase"]["baseline_evidence"]
+            template["architecture_phase"]["baseline_evidence"] = path.name
+            template["architecture_phase"]["baseline_evidence_sha256"] = (
+                metal_autoresearch.sha256(encoded)
+            )
+            template["scope"]["frozen"].remove(old_path)
+            template["scope"]["frozen"].append(path.name)
+
+            with self.assertRaisesRegex(ValueError, "sample ratio"):
+                metal_autoresearch.validate_template(template, root)
+
+    def test_instruction_input_architecture_evidence_binds_fixed_bar(self) -> None:
+        original = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        source = ROOT / original["architecture_phase"]["baseline_evidence"]
+
+        for threshold, clears, message in (
+            (3.0, True, "failed local gate"),
+            (5.0, False, "template contract"),
+        ):
+            with self.subTest(threshold=threshold):
+                template = copy.deepcopy(original)
+                evidence = metal_autoresearch.read_json(source)
+                evidence["decision"]["minimum_speedup"] = threshold
+                if clears:
+                    evidence["decision"]["clears_speedup"] = True
+                    evidence["decision"]["clears_order_strata"] = True
+                    evidence["decision"]["clears_fractional_improvement"] = True
+                    evidence["decision"]["clears"] = True
+                    evidence["guards"]["instruction_input_local_gate"] = True
+                encoded = metal_autoresearch.canonical_json(evidence)
+
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    path = root / "architecture-evidence.json"
+                    path.write_bytes(encoded)
+                    old_path = template["architecture_phase"]["baseline_evidence"]
+                    template["architecture_phase"]["baseline_evidence"] = path.name
+                    template["architecture_phase"]["baseline_evidence_sha256"] = (
+                        metal_autoresearch.sha256(encoded)
+                    )
+                    template["scope"]["frozen"].remove(old_path)
+                    template["scope"]["frozen"].append(path.name)
+
+                    with self.assertRaisesRegex(ValueError, message):
+                        metal_autoresearch.validate_template(template, root)
+
+    def test_instruction_input_architecture_evidence_requires_other_guards(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        source = ROOT / template["architecture_phase"]["baseline_evidence"]
+        evidence = metal_autoresearch.read_json(source)
+        evidence["guards"]["instruction_input_readback_exact"] = False
+        encoded = metal_autoresearch.canonical_json(evidence)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "architecture-evidence.json"
+            path.write_bytes(encoded)
+            old_path = template["architecture_phase"]["baseline_evidence"]
+            template["architecture_phase"]["baseline_evidence"] = path.name
+            template["architecture_phase"]["baseline_evidence_sha256"] = (
+                metal_autoresearch.sha256(encoded)
+            )
+            template["scope"]["frozen"].remove(old_path)
+            template["scope"]["frozen"].append(path.name)
+
+            with self.assertRaisesRegex(ValueError, "guards are invalid"):
+                metal_autoresearch.validate_template(template, root)
+
+    def test_instruction_input_architecture_evidence_binds_command_contract(self) -> None:
+        original = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        source = ROOT / original["architecture_phase"]["baseline_evidence"]
+
+        workload = copy.deepcopy(original)
+        workload_command = workload["final_validation"]["production_gate"][
+            "evaluator"
+        ]["command"]
+        workload_command[workload_command.index("--workload") + 1] = "unrelated"
+        evidence = metal_autoresearch.read_json(source)
+        evidence["launch"]["workload"] = "unrelated"
+        with self.assertRaisesRegex(ValueError, "template contract"):
+            metal_autoresearch.validate_instruction_input_architecture_evidence(
+                evidence, workload
+            )
+
+        repeats = copy.deepcopy(original)
+        repeats_command = repeats["final_validation"]["production_gate"]["evaluator"][
+            "command"
+        ]
+        repeats_command[repeats_command.index("--repeats") + 1] = "7"
+        evidence = metal_autoresearch.read_json(source)
+        with self.assertRaisesRegex(ValueError, "template contract"):
+            metal_autoresearch.validate_instruction_input_architecture_evidence(
+                evidence, repeats
+            )
+
+    def test_instruction_input_architecture_evidence_rejects_json_type_aliases(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        source = ROOT / template["architecture_phase"]["baseline_evidence"]
+
+        revision = metal_autoresearch.read_json(source)
+        revision["candidate"]["git_revision"] = int("1" * 40)
+        with self.assertRaisesRegex(ValueError, "candidate record is invalid"):
+            metal_autoresearch.validate_instruction_input_architecture_evidence(
+                revision, template
+            )
+
+        pair = metal_autoresearch.read_json(source)
+        pair["samples"][0]["pair"] = True
+        with self.assertRaisesRegex(ValueError, "sample order is invalid"):
+            metal_autoresearch.validate_instruction_input_architecture_evidence(
+                pair, template
+            )
+
+    def test_instruction_input_architecture_evidence_requires_nested_timings(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        source = ROOT / template["architecture_phase"]["baseline_evidence"]
+
+        for field, value_field in (
+            ("cpu_service_ns", "cpu_piop_ns"),
+            ("cpu_piop_plus_prepare_ns", "cpu_piop_ns"),
+        ):
+            with self.subTest(field=field):
+                evidence = metal_autoresearch.read_json(source)
+                sample = evidence["samples"][0]
+                sample[field] = (
+                    sample[value_field] + 1
+                    if field == "cpu_service_ns"
+                    else sample[value_field] - 1
+                )
+                with self.assertRaisesRegex(ValueError, "timing relationship"):
+                    metal_autoresearch.validate_instruction_input_architecture_evidence(
+                        evidence, template
+                    )
+
     def test_instruction_input_local_result_keeps_v2_history_readable(self) -> None:
         config, params, output = self.instruction_input_v2_local_contract_fixture()
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+
+    def test_instruction_input_local_result_keeps_v3_history_readable(self) -> None:
+        config, params, output = self.instruction_input_v3_local_contract_fixture()
         metal_autoresearch.validate_local_result_contract(config, output, params)
 
     def test_instruction_input_run_evaluator_keeps_schema_two_readable(self) -> None:
@@ -1109,7 +1369,7 @@ class MetalAutoresearchTests(unittest.TestCase):
             "59f9946b7d1a3c05d3094528e853d2228ae5ec0d94a5dae2c63d5713a560a966",
         )
 
-    def test_instruction_input_v3_primary_ignores_live_cpu_drift(self) -> None:
+    def test_instruction_input_v4_primary_ignores_live_cpu_drift(self) -> None:
         config, params, output = self.instruction_input_local_contract_fixture()
         primary = output["metrics"]["frozen_cpu_reference_ratio"]
         cpu_samples = [5_000 + 1_000 * index for index in range(5)]
@@ -1293,7 +1553,7 @@ class MetalAutoresearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "correctness guard"):
             metal_autoresearch.validate_local_result_contract(config, output, params)
 
-    def test_instruction_input_v3_pins_phase_machine(self) -> None:
+    def test_instruction_input_v4_pins_phase_machine(self) -> None:
         config, params, output = self.instruction_input_local_contract_fixture()
         config["fingerprint"] = {"evaluator": copy.deepcopy(output["fingerprint"])}
         output["fingerprint"]["device"] = "different Metal device"
@@ -2324,6 +2584,13 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "row lifecycle",
             ),
             (
+                "compact row projection",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input_row_lifecycle"
+                ]["row_production"].__setitem__("full_domain_copy_bytes", 48),
+                "row lifecycle",
+            ),
+            (
                 "closed row lifecycle schema",
                 lambda value: value["pairs"][0]["arms"]["metal"][
                     "instruction_input_row_lifecycle"
@@ -2429,12 +2696,21 @@ class MetalAutoresearchTests(unittest.TestCase):
             "instruction_input_minimal_initialization_exact",
             "instruction_input_storage_buffers_stable",
             "instruction_input_native_primer_exact_and_protocol_inert",
+            "instruction_input_compact_rows_direct_and_stable",
         ):
             gate["required_guards"].remove(guard)
         result["schema_version"] = 5
         result["fingerprint"].pop("instruction_input_storage_initialization")
         result["fingerprint"].pop("instruction_input_native_primer")
         for pair in result["pairs"]:
+            pair["arms"]["metal"]["instruction_input_row_lifecycle"] = {
+                "kind": "metal_resident",
+                "rows": 1 << 26,
+                "row_bytes": 160,
+                "prepare_storage_id": 202,
+                "stage1_storage_id": 202,
+                "stage3_storage_id": 202,
+            }
             for backend in ("optimized", "metal"):
                 member = pair["arms"][backend]["instruction_input"]
                 if backend == "metal":
@@ -2453,6 +2729,28 @@ class MetalAutoresearchTests(unittest.TestCase):
                 if backend == "metal":
                     member["resource_observation"].pop("storage_initialization")
                     member["resource_observation"].pop("native_primer")
+        evidence = metal_autoresearch.validate_production_result(
+            config, result, "abc", params, True
+        )
+        self.assertEqual(evidence["pairs"], 5)
+
+    def test_schema_six_instruction_input_result_remains_readable(self) -> None:
+        config, params, result = self.production_instruction_input_result_fixture()
+        gate = config["final_validation"]["production_gate"]
+        gate["evaluator"]["schema_version"] = 6
+        gate["required_guards"].remove(
+            "instruction_input_compact_rows_direct_and_stable"
+        )
+        result["schema_version"] = 6
+        for pair in result["pairs"]:
+            pair["arms"]["metal"]["instruction_input_row_lifecycle"] = {
+                "kind": "metal_resident",
+                "rows": 1 << 26,
+                "row_bytes": 160,
+                "prepare_storage_id": 202,
+                "stage1_storage_id": 202,
+                "stage3_storage_id": 202,
+            }
         evidence = metal_autoresearch.validate_production_result(
             config, result, "abc", params, True
         )
@@ -2500,6 +2798,9 @@ class MetalAutoresearchTests(unittest.TestCase):
         config, params, result = self.production_instruction_input_result_fixture()
         speedups = [5.0, 3.0, 5.0, 3.0, 5.0]
         result["metrics"]["paired_instruction_input_kernel_service_speedups"] = speedups
+        result["metrics"][
+            "paired_instruction_input_kernel_service_fractional_improvements"
+        ] = [1.0 - 1.0 / speedup for speedup in speedups]
         result["metrics"]["cpu_instruction_input_kernel_service_ms_samples"] = [
             speedup * 100 / 1e6 for speedup in speedups
         ]
@@ -2524,6 +2825,35 @@ class MetalAutoresearchTests(unittest.TestCase):
                 - member["finish_ns"]
             )
         with self.assertRaisesRegex(ValueError, "order stratum"):
+            metal_autoresearch.validate_production_result(
+                config, result, "abc", params, True
+            )
+
+    def test_production_instruction_input_gate_recomputes_full_decision(self) -> None:
+        for field, value in (
+            ("median_fractional_improvement", 0.79),
+            ("mad_fractional_improvement", 0.01),
+            ("cpu_member_ms_median", 99.0),
+            ("clears_noise", False),
+            ("clears_fractional_improvement", False),
+        ):
+            with self.subTest(field=field):
+                config, params, result = (
+                    self.production_instruction_input_result_fixture()
+                )
+                result["metrics"][
+                    "instruction_input_kernel_service_decision"
+                ][field] = value
+                with self.assertRaisesRegex(ValueError, "raw-pair decision"):
+                    metal_autoresearch.validate_production_result(
+                        config, result, "abc", params, True
+                    )
+
+        config, params, result = self.production_instruction_input_result_fixture()
+        result["metrics"][
+            "paired_instruction_input_kernel_service_fractional_improvements"
+        ][0] = 0.5
+        with self.assertRaisesRegex(ValueError, "fractional improvements"):
             metal_autoresearch.validate_production_result(
                 config, result, "abc", params, True
             )
@@ -2996,8 +3326,8 @@ class MetalAutoresearchTests(unittest.TestCase):
         unknown_schema = copy.deepcopy(template)
         unknown_schema["final_validation"]["production_gate"]["evaluator"][
             "schema_version"
-        ] = 7
-        with self.assertRaisesRegex(ValueError, "must be 4, 5, or 6"):
+        ] = 8
+        with self.assertRaisesRegex(ValueError, "must be 4, 5, 6, or 7"):
             metal_autoresearch.validate_template(unknown_schema)
 
         bytecode = metal_autoresearch.read_json(

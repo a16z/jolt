@@ -5,19 +5,156 @@ use std::{
 };
 
 use jolt_field::AkitaField;
+use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
     ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
-use super::{
-    command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
-    SpartanOuterUniskipRows,
-};
+use super::{command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal};
 
 pub const INSTRUCTION_INPUT_TABLES: usize = 8;
 pub const INSTRUCTION_INPUT_COEFFICIENTS: usize = 3;
 const INSTRUCTION_INPUT_DEVICE_BUFFERS: usize = 6;
+const INSTRUCTION_INPUT_ROW_WORDS: usize = 6;
+
+const ROW_RS1: usize = 0;
+const ROW_UNEXPANDED_PC: usize = 1;
+const ROW_RS2: usize = 2;
+const ROW_IMM_LOW: usize = 3;
+const ROW_IMM_HIGH: usize = 4;
+const ROW_FLAGS: usize = 5;
+
+const FLAG_LOAD: u32 = 0;
+const FLAG_IMM_POSITIVE: u32 = 18;
+const FLAG_LEFT_OPERAND_IS_RS1: u32 = 20;
+const FLAG_LEFT_OPERAND_IS_PC: u32 = 21;
+const FLAG_RIGHT_OPERAND_IS_RS2: u32 = 22;
+const FLAG_RIGHT_OPERAND_IS_IMM: u32 = 23;
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InstructionInputRow {
+    words: [u64; INSTRUCTION_INPUT_ROW_WORDS],
+}
+
+#[derive(Clone)]
+pub struct InstructionInputRows {
+    buffer: Buffer,
+    len: usize,
+    device_registry_id: u64,
+}
+
+impl InstructionInputRow {
+    pub fn from_spartan_outer(row: &SpartanOuterRow) -> Self {
+        let imm = row.imm.0.unsigned_abs();
+        let mut flags = 0u64;
+        let mut set = |bit: u32, value: bool| flags |= u64::from(value) << bit;
+        set(FLAG_LOAD, row.load.0);
+        set(FLAG_IMM_POSITIVE, row.imm.0 >= 0);
+        set(FLAG_LEFT_OPERAND_IS_RS1, row.left_operand_is_rs1.0);
+        set(FLAG_LEFT_OPERAND_IS_PC, row.left_operand_is_pc.0);
+        set(FLAG_RIGHT_OPERAND_IS_RS2, row.right_operand_is_rs2.0);
+        set(FLAG_RIGHT_OPERAND_IS_IMM, row.right_operand_is_imm.0);
+        Self {
+            words: [
+                row.rs1_value.0,
+                row.unexpanded_pc.0,
+                if row.load.0 { 0 } else { row.rs2_value.0 },
+                imm as u64,
+                (imm >> 64) as u64,
+                flags,
+            ],
+        }
+    }
+
+    pub(crate) const fn from_full_words(words: [u64; 20]) -> Self {
+        let flags = words[19];
+        Self {
+            words: [
+                words[9],
+                words[6],
+                if flags & (1 << FLAG_LOAD) == 0 {
+                    words[10]
+                } else {
+                    0
+                },
+                words[7],
+                words[8],
+                flags,
+            ],
+        }
+    }
+
+    pub const fn words(self) -> [u64; INSTRUCTION_INPUT_ROW_WORDS] {
+        self.words
+    }
+
+    pub fn fields<F: jolt_field::Field>(&self) -> [F; INSTRUCTION_INPUT_TABLES] {
+        let flags = self.words[ROW_FLAGS];
+        let flag = |bit| F::from_u64((flags >> bit) & 1);
+        let imm_magnitude =
+            u128::from(self.words[ROW_IMM_LOW]) | (u128::from(self.words[ROW_IMM_HIGH]) << 64);
+        let imm = F::from_u128(imm_magnitude);
+        let imm = if ((flags >> FLAG_IMM_POSITIVE) & 1) != 0 {
+            imm
+        } else {
+            -imm
+        };
+        [
+            flag(FLAG_LEFT_OPERAND_IS_RS1),
+            F::from_u64(self.words[ROW_RS1]),
+            flag(FLAG_LEFT_OPERAND_IS_PC),
+            F::from_u64(self.words[ROW_UNEXPANDED_PC]),
+            flag(FLAG_RIGHT_OPERAND_IS_RS2),
+            F::from_u64(self.words[ROW_RS2]),
+            flag(FLAG_RIGHT_OPERAND_IS_IMM),
+            imm,
+        ]
+    }
+}
+
+impl InstructionInputRows {
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    pub const fn device_registry_id(&self) -> u64 {
+        self.device_registry_id
+    }
+
+    pub fn allocation_identity(&self) -> usize {
+        self.buffer.as_ptr() as usize
+    }
+
+    pub(crate) fn from_buffer(buffer: Buffer, len: usize, device_registry_id: u64) -> Self {
+        Self {
+            buffer,
+            len,
+            device_registry_id,
+        }
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for InstructionInputRows {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_rows"),
+            self.len * size_of::<InstructionInputRow>(),
+        );
+        visitor.exit();
+    }
+}
 
 const SIMD_WIDTH: usize = 32;
 const NATIVE_MESSAGE_PIPELINE: &str = "solinas_instruction_input_native_message";
@@ -356,7 +493,7 @@ enum DispatchKind {
 
 pub struct InstructionInputSequence {
     storage: InstructionInputSequenceStorage,
-    resident_rows: SpartanOuterUniskipRows,
+    resident_rows: InstructionInputRows,
     phase: SequencePhase,
     dense_elements: usize,
     dense_in_a: bool,
@@ -374,13 +511,62 @@ impl allocative::Allocative for InstructionInputSequence {
 }
 
 impl SolinasMetal {
+    pub fn prepare_instruction_input_rows(
+        &self,
+        rows: &[InstructionInputRow],
+    ) -> Result<InstructionInputRows, MetalError> {
+        self.prepare_instruction_input_rows_with_fill(rows.len(), |destination| {
+            destination.copy_from_slice(rows);
+            Ok(())
+        })
+    }
+
+    pub fn prepare_instruction_input_rows_from_spartan(
+        &self,
+        rows: &[super::SpartanOuterUniskipRow],
+    ) -> Result<InstructionInputRows, MetalError> {
+        self.prepare_instruction_input_rows_with_fill(rows.len(), |destination| {
+            for (source, destination) in rows.iter().zip(destination) {
+                *destination = InstructionInputRow::from_full_words(source.words());
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn prepare_instruction_input_rows_with_fill(
+        &self,
+        rows: usize,
+        fill: impl FnOnce(&mut [InstructionInputRow]) -> Result<(), MetalError>,
+    ) -> Result<InstructionInputRows, MetalError> {
+        if rows == 0 {
+            return Err(MetalError::EmptyInput);
+        }
+        let row_bytes = instruction_input_row_bytes(rows)?;
+        self.validate_buffer_length(row_bytes)?;
+        self.validate_additional_working_set(row_bytes)?;
+        let buffer = self
+            .device
+            .new_buffer(row_bytes, MTLResourceOptions::StorageModeShared);
+        // SAFETY: the shared buffer has exactly `rows` compact elements and no
+        // command buffer can observe it until `fill` returns.
+        let destination = unsafe {
+            slice::from_raw_parts_mut(buffer.contents().cast::<InstructionInputRow>(), rows)
+        };
+        fill(destination)?;
+        Ok(InstructionInputRows::from_buffer(
+            buffer,
+            rows,
+            self.device_registry_id(),
+        ))
+    }
+
     /// Allocates a reusable instruction-input sequence and uploads `rows` once.
     pub fn prepare_instruction_input_sequence(
         &self,
         rows: &[super::SpartanOuterUniskipRow],
         config: InstructionInputSequenceConfig,
     ) -> Result<InstructionInputSequence, MetalError> {
-        let resident_rows = self.prepare_spartan_outer_uniskip_rows(rows)?;
+        let resident_rows = self.prepare_instruction_input_rows_from_spartan(rows)?;
         let (e_in_capacity, e_out_capacity) = instruction_input_weight_capacities(rows.len())?;
         self.prepare_instruction_input_sequence_storage(
             rows.len(),
@@ -503,7 +689,7 @@ impl InstructionInputSequenceStorage {
 
     fn submit_native_pipeline_primer(
         &self,
-        resident_rows: &SpartanOuterUniskipRows,
+        resident_rows: &InstructionInputRows,
     ) -> Result<InstructionInputNativePrimerCommand, MetalError> {
         if resident_rows.len() != self.rows
             || self.rows < INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS
@@ -594,7 +780,7 @@ impl InstructionInputSequenceStorage {
 
     fn complete_native_pipeline_primer(
         &self,
-        resident_rows: &SpartanOuterUniskipRows,
+        resident_rows: &InstructionInputRows,
         primer: InstructionInputNativePrimerCommand,
     ) -> Result<InstructionInputPrimerStats, MetalError> {
         if resident_rows.allocation_identity() != primer.resident_row_identity
@@ -659,7 +845,7 @@ impl InstructionInputSequenceStorage {
 
     pub(crate) fn attach(
         self,
-        resident_rows: SpartanOuterUniskipRows,
+        resident_rows: InstructionInputRows,
     ) -> Result<InstructionInputSequence, MetalError> {
         if resident_rows.len() != self.rows {
             return Err(MetalError::InvalidInstructionInputRows(resident_rows.len()));
@@ -1197,6 +1383,13 @@ fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
     u64::try_from(bytes).map_err(|_| MetalError::InputTooLong(elements))
 }
 
+pub(crate) fn instruction_input_row_bytes(rows: usize) -> Result<u64, MetalError> {
+    byte_length::<InstructionInputRow>(rows)
+}
+
+const _: () = assert!(size_of::<InstructionInputRow>() == 48);
+const _: () = assert!(std::mem::align_of::<InstructionInputRow>() == 16);
+
 fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
     encoder.set_bytes(
         index,
@@ -1214,11 +1407,11 @@ mod tests {
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
     use super::{
-        initialize_storage, instruction_input_sequence_storage_bytes,
+        initialize_storage, instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
         instruction_input_storage_layout, instruction_input_weight_capacities,
-        validate_u32_element_count, InstructionInputParams, InstructionInputSequenceConfig,
-        InstructionInputStorageInitialization, ReductionParams, INSTRUCTION_INPUT_DEVICE_BUFFERS,
-        INSTRUCTION_INPUT_TABLES,
+        validate_u32_element_count, InstructionInputParams, InstructionInputRow,
+        InstructionInputSequenceConfig, InstructionInputStorageInitialization, ReductionParams,
+        INSTRUCTION_INPUT_DEVICE_BUFFERS, INSTRUCTION_INPUT_TABLES,
     };
     use crate::metal::solinas::{MetalError, SolinasMetal, SpartanOuterUniskipRow};
 
@@ -1352,6 +1545,22 @@ mod tests {
     }
 
     #[test]
+    fn compact_rows_preserve_all_instruction_input_fields() {
+        for row in packed_rows(16) {
+            let compact = InstructionInputRow::from_full_words(row.words());
+            assert_eq!(
+                compact.fields::<AkitaField>(),
+                row.instruction_input_fields::<AkitaField>()
+            );
+        }
+        assert_eq!(instruction_input_row_bytes(1 << 26).unwrap(), 3_221_225_472);
+        assert_eq!(
+            instruction_input_row_bytes(1 << 28).unwrap(),
+            12_884_901_888
+        );
+    }
+
+    #[test]
     fn resident_sequence_matches_cpu_descriptors_and_tables() {
         let rows = packed_rows(16);
         let initial_tables: Vec<AkitaField> = (0..INSTRUCTION_INPUT_TABLES)
@@ -1370,7 +1579,7 @@ mod tests {
         let mut gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
         let resident = context
-            .prepare_spartan_outer_uniskip_rows(&rows)
+            .prepare_instruction_input_rows_from_spartan(&rows)
             .expect("rows should upload");
         let (e_in_capacity, e_out_capacity) =
             instruction_input_weight_capacities(rows.len()).unwrap();

@@ -83,8 +83,8 @@ use super::instruction_input::prepare_instruction_input_rows;
 use super::support::collect_rows;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
-    MetalError, SolinasMetal, SpartanOuterUniskipConfig, SpartanOuterUniskipRow,
-    SpartanOuterUniskipRows,
+    InstructionInputRow, InstructionInputRows, MetalError, SolinasMetal, SpartanOuterUniskipConfig,
+    SpartanOuterUniskipRow, SpartanOuterUniskipRows,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -361,6 +361,22 @@ impl RowsStore {
             Self::Retained(rows) => RowsAccess::Retained(rows),
         }
     }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn production_source_kind(&self) -> &'static str {
+        match self {
+            Self::Owned(_) => "owned_random_access",
+            Self::Retained(_) => "retained_host_repack",
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn host_repack_rows(&self) -> usize {
+        match self {
+            Self::Owned(_) => 0,
+            Self::Retained(rows) => rows.len(),
+        }
+    }
 }
 
 #[cfg(feature = "allocative")]
@@ -504,7 +520,6 @@ impl OptimizedOuterUniskip {
 pub(crate) fn prepare_metal_spartan_outer_uniskip(
     context: &SolinasMetal,
     config: SpartanOuterUniskipConfig,
-    retain_resident_rows: bool,
     session: &mut ProofSession,
     log_t: usize,
     tau: &[AkitaField],
@@ -530,15 +545,20 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
                 _ => prepare_metal_spartan_outer_rows(context, &rows, cycles)?,
             }
         };
-        let resident_rows_storage_id = resident.allocation_identity();
-        let _instruction_input_use = retain_resident_rows.then(|| {
-            tracing::info_span!(
-                "MetalInstructionInput::resident_rows_stage1_use",
-                resident_rows_storage_id,
-                resident_rows = cycles
-            )
-            .entered()
-        });
+        let compact_rows_storage_id = resident.instruction_input_allocation_identity();
+        let residual_rows_storage_id = resident.allocation_identity();
+        let _handoff = tracing::info_span!(
+            "MetalInstructionInput::compact_rows_stage1_handoff",
+            compact_rows_storage_id,
+            residual_rows_storage_id,
+            resident_rows = cycles,
+            compact_row_bytes = 48,
+            residual_row_bytes = 112,
+            full_domain_copy_bytes = 0,
+            full_domain_copy_dispatches = 0,
+            host_repack_rows = 0,
+        )
+        .entered();
         let invocation = context
             .prepare_spartan_outer_uniskip_with_rows(&resident, &e_in, &e_out, config)
             .map_err(metal_outer_error)?;
@@ -548,9 +568,6 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
         }
         let output = invocation.read_output().map_err(metal_outer_error)?;
         drop(invocation);
-        if retain_resident_rows {
-            session.park(resident);
-        }
         output
     };
     let mut t1_values = vec![AkitaField::zero(); EXTENDED_SIZE];
@@ -577,14 +594,36 @@ pub(crate) fn prepare_metal_spartan_outer_witness_rows(
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
-fn prepare_metal_spartan_outer_rows(
+pub(crate) fn prepare_metal_instruction_input_witness_rows(
     context: &SolinasMetal,
-    rows: &RowsStore,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
     cycles: usize,
-) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
+) -> Result<InstructionInputRows, KernelError<AkitaField>> {
+    let rows = RowsStore::resolve(witness, cycles)?;
     let access = rows.access();
-    context
-        .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |destination| {
+    let source_kind = rows.production_source_kind();
+    let host_repack_rows = rows.host_repack_rows();
+    let span = tracing::info_span!(
+        "MetalInstructionInput::compact_rows_prepare",
+        source_kind,
+        witness_row_extractions = cycles,
+        residual_rows_written = 0,
+        compact_rows_written = cycles,
+        compact_row_bytes = 48,
+        residual_row_bytes = 0,
+        compact_allocations = 1,
+        residual_allocations = 0,
+        full_row_allocations = 0,
+        full_domain_copy_bytes = 0,
+        full_domain_copy_dispatches = 0,
+        host_repack_rows,
+        compact_rows_storage_id = tracing::field::Empty,
+        residual_rows_storage_id = 0,
+        resident_rows = cycles,
+    );
+    let _entered = span.enter();
+    let prepared = context
+        .prepare_instruction_input_rows_with_fill(cycles, |destination| {
             #[cfg(feature = "parallel")]
             {
                 destination.par_iter_mut().enumerate().try_for_each(
@@ -595,7 +634,7 @@ fn prepare_metal_spartan_outer_rows(
                                 message: error.to_string(),
                             }
                         })?;
-                        *destination = SpartanOuterUniskipRow::from_spartan_outer(&row);
+                        *destination = InstructionInputRow::from_spartan_outer(&row);
                         Ok(())
                     },
                 )?;
@@ -609,12 +648,90 @@ fn prepare_metal_spartan_outer_rows(
                             message: error.to_string(),
                         }
                     })?;
-                    *destination = SpartanOuterUniskipRow::from_spartan_outer(&row);
+                    *destination = InstructionInputRow::from_spartan_outer(&row);
                 }
             }
             Ok(())
         })
-        .map_err(metal_outer_error)
+        .map_err(metal_outer_error)?;
+    let _ = span.record("compact_rows_storage_id", prepared.allocation_identity());
+    Ok(prepared)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn prepare_metal_spartan_outer_rows(
+    context: &SolinasMetal,
+    rows: &RowsStore,
+    cycles: usize,
+) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
+    let access = rows.access();
+    let source_kind = rows.production_source_kind();
+    let host_repack_rows = rows.host_repack_rows();
+    let span = tracing::info_span!(
+        "MetalInstructionInput::compact_rows_prepare",
+        source_kind,
+        witness_row_extractions = cycles,
+        residual_rows_written = cycles,
+        compact_rows_written = cycles,
+        compact_row_bytes = 48,
+        residual_row_bytes = 112,
+        compact_allocations = 1,
+        residual_allocations = 1,
+        full_row_allocations = 0,
+        full_domain_copy_bytes = 0,
+        full_domain_copy_dispatches = 0,
+        host_repack_rows,
+        compact_rows_storage_id = tracing::field::Empty,
+        residual_rows_storage_id = tracing::field::Empty,
+        resident_rows = cycles,
+    );
+    let _entered = span.enter();
+    let prepared = context
+        .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |instruction_input, residual| {
+            #[cfg(feature = "parallel")]
+            {
+                instruction_input
+                    .par_iter_mut()
+                    .zip(residual.par_iter_mut())
+                    .enumerate()
+                    .try_for_each(
+                        |(row_index, (instruction_input, residual))| -> Result<(), MetalError> {
+                            let row = access.row(row_index).map_err(|error| {
+                                MetalError::SpartanOuterRowExtraction {
+                                    row: row_index,
+                                    message: error.to_string(),
+                                }
+                            })?;
+                            (*instruction_input, *residual) =
+                                SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                            Ok(())
+                        },
+                    )?;
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                for (row_index, (instruction_input, residual)) in
+                    instruction_input.iter_mut().zip(residual).enumerate()
+                {
+                    let row = access.row(row_index).map_err(|error| {
+                        MetalError::SpartanOuterRowExtraction {
+                            row: row_index,
+                            message: error.to_string(),
+                        }
+                    })?;
+                    (*instruction_input, *residual) =
+                        SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+                }
+            }
+            Ok(())
+        })
+        .map_err(metal_outer_error)?;
+    let _ = span.record(
+        "compact_rows_storage_id",
+        prepared.instruction_input_allocation_identity(),
+    );
+    let _ = span.record("residual_rows_storage_id", prepared.allocation_identity());
+    Ok(prepared)
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]

@@ -41,6 +41,10 @@ mod instruction_ra;
 mod instruction_ra_sequence;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/instruction_input.rs"]
+mod instruction_input;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/product5.rs"]
 mod product5;
 
@@ -65,8 +69,8 @@ mod macos {
     use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
     use super::{
-        address_raf, address_suffix, booleanity, bytecode_cycle, cpu, cycle, instruction_ra,
-        instruction_ra_sequence, product5,
+        address_raf, address_suffix, booleanity, bytecode_cycle, cpu, cycle, instruction_input,
+        instruction_ra, instruction_ra_sequence, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         spartan_outer_uniskip,
     };
@@ -111,6 +115,12 @@ mod macos {
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
                 "instruction-ra-first-message" => instruction_ra::bench(c, &context),
                 "instruction-ra-sequence" => instruction_ra_sequence::bench(c, &context),
+                "instruction-input-message" => instruction_input::bench_message(c, &context),
+                "instruction-input-transition" => {
+                    instruction_input::bench_transition(c, &context);
+                }
+                "instruction-input-service" => instruction_input::bench_service(c, &context),
+                "instruction-input" => instruction_input::bench(c, &context),
                 "instruction-read-raf-address" => address_raf::bench(c, &context),
                 "instruction-read-raf-address-condensed" => {
                     address_raf::bench_condensed(c, &context);

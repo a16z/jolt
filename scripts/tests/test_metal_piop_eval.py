@@ -168,6 +168,28 @@ def complete_instruction_input_trace(
         events.extend(
             [
                 event(
+                    "MetalInstructionInput::compact_rows_prepare",
+                    50.0,
+                    20.0,
+                    {
+                        "source_kind": "owned_random_access",
+                        "witness_row_extractions": str(1 << log_n),
+                        "residual_rows_written": str(1 << log_n),
+                        "compact_rows_written": str(1 << log_n),
+                        "compact_row_bytes": "48",
+                        "residual_row_bytes": "112",
+                        "compact_allocations": "1",
+                        "residual_allocations": "1",
+                        "full_row_allocations": "0",
+                        "full_domain_copy_bytes": "0",
+                        "full_domain_copy_dispatches": "0",
+                        "host_repack_rows": "0",
+                        "compact_rows_storage_id": "202",
+                        "residual_rows_storage_id": "203",
+                        "resident_rows": str(1 << log_n),
+                    },
+                ),
+                event(
                     "MetalInstructionInput::storage_prepare",
                     100.0,
                     400.0,
@@ -177,7 +199,7 @@ def complete_instruction_input_trace(
                         "host_tail_bytes": str(host_tail_bytes),
                         "resident_rows_storage_id": "202",
                         "resident_rows": str(1 << log_n),
-                        "resident_row_bytes": "160",
+                        "resident_row_bytes": "48",
                     },
                 ),
                 event(
@@ -219,12 +241,18 @@ def complete_instruction_input_trace(
                     },
                 ),
                 event(
-                    "MetalInstructionInput::resident_rows_stage1_use",
+                    "MetalInstructionInput::compact_rows_stage1_handoff",
                     1_020.0,
                     30.0,
                     {
-                        "resident_rows_storage_id": "202",
+                        "compact_rows_storage_id": "202",
+                        "residual_rows_storage_id": "203",
                         "resident_rows": str(1 << log_n),
+                        "compact_row_bytes": "48",
+                        "residual_row_bytes": "112",
+                        "full_domain_copy_bytes": "0",
+                        "full_domain_copy_dispatches": "0",
+                        "host_repack_rows": "0",
                     },
                 ),
                 event(
@@ -366,6 +394,34 @@ class MetalPiopEvalTests(unittest.TestCase):
             {"name": "jolt_prover::piop", "ph": "E", "pid": 1, "tid": 0, "ts": 15.5},
         ]
         self.assertEqual(metal_piop_eval.unique_span_duration_us(events), 5.5)
+
+    def test_span_args_include_fields_recorded_after_entry(self) -> None:
+        events = [
+            {
+                "name": "resident_rows",
+                "ph": "B",
+                "pid": 1,
+                "tid": 2,
+                "ts": 10.0,
+                "args": {"rows": "16"},
+            },
+            {
+                "name": "resident_rows",
+                "ph": "E",
+                "pid": 1,
+                "tid": 2,
+                "ts": 11.0,
+                "args": {"rows": "16", "storage_id": "202"},
+            },
+        ]
+        self.assertEqual(
+            metal_piop_eval.unique_span_args(events, "resident_rows"),
+            {"rows": "16", "storage_id": "202"},
+        )
+
+        events[1]["args"]["rows"] = "17"
+        with self.assertRaisesRegex(ValueError, "changed argument rows"):
+            metal_piop_eval.unique_span_args(events, "resident_rows")
 
     def test_rejects_missing_or_ambiguous_piop_spans(self) -> None:
         with self.assertRaisesRegex(ValueError, "exactly one"):
@@ -543,16 +599,31 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(
             observed["row_lifecycle"],
             {
-                "kind": "metal_resident",
+                "kind": "metal_compact_resident",
                 "rows": 1 << 26,
-                "row_bytes": 160,
+                "row_bytes": 48,
                 "prepare_storage_id": 202,
                 "stage1_storage_id": 202,
                 "stage3_storage_id": 202,
+                "residual_storage_id": 203,
+                "row_production": {
+                    "source_kind": "owned_random_access",
+                    "witness_row_extractions": 1 << 26,
+                    "residual_rows_written": 1 << 26,
+                    "compact_rows_written": 1 << 26,
+                    "compact_row_bytes": 48,
+                    "residual_row_bytes": 112,
+                    "compact_allocations": 1,
+                    "residual_allocations": 1,
+                    "full_row_allocations": 0,
+                    "full_domain_copy_bytes": 0,
+                    "full_domain_copy_dispatches": 0,
+                    "host_repack_rows": 0,
+                },
             },
         )
 
-    def test_schema_six_service_fields_are_instruction_input_only(self) -> None:
+    def test_schema_seven_service_fields_are_instruction_input_only(self) -> None:
         bytecode = metal_piop_eval.bytecode_member_breakdown(
             complete_bytecode_trace(26, "metal"), "metal", 26
         )
@@ -645,8 +716,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             ),
             (
                 "metal",
-                "MetalInstructionInput::resident_rows_stage1_use",
-                "resident_rows_storage_id",
+                "MetalInstructionInput::compact_rows_stage1_handoff",
+                "compact_rows_storage_id",
             ),
             (
                 "metal",
@@ -662,6 +733,56 @@ class MetalPiopEvalTests(unittest.TestCase):
                     metal_piop_eval.instruction_input_member_breakdown(
                         mismatched, backend, 26, 16
                     )
+
+        copied_rows = complete_instruction_input_trace(26, "metal")
+        production = next(
+            event
+            for event in copied_rows
+            if event["name"] == "MetalInstructionInput::compact_rows_prepare"
+        )
+        production["args"]["full_domain_copy_bytes"] = "48"
+        with self.assertRaisesRegex(ValueError, "row lifecycle"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                copied_rows, "metal", 26, 16
+            )
+
+        repacked_rows = complete_instruction_input_trace(26, "metal")
+        production = next(
+            event
+            for event in repacked_rows
+            if event["name"] == "MetalInstructionInput::compact_rows_prepare"
+        )
+        production["args"]["source_kind"] = "retained_host_repack"
+        production["args"]["host_repack_rows"] = str(1 << 26)
+        with self.assertRaisesRegex(ValueError, "row lifecycle"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                repacked_rows, "metal", 26, 16
+            )
+
+        aliased_residual = complete_instruction_input_trace(26, "metal")
+        production = next(
+            event
+            for event in aliased_residual
+            if event["name"] == "MetalInstructionInput::compact_rows_prepare"
+        )
+        production["args"]["residual_rows_storage_id"] = "202"
+        with self.assertRaisesRegex(ValueError, "row lifecycle"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                aliased_residual, "metal", 26, 16
+            )
+
+        changed_residual = complete_instruction_input_trace(26, "metal")
+        stage1 = next(
+            event
+            for event in changed_residual
+            if event["name"]
+            == "MetalInstructionInput::compact_rows_stage1_handoff"
+        )
+        stage1["args"]["residual_rows_storage_id"] = "204"
+        with self.assertRaisesRegex(ValueError, "row lifecycle"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                changed_residual, "metal", 26, 16
+            )
 
     def test_rejects_instruction_input_primer_contract_drift(self) -> None:
         unknown = complete_instruction_input_trace(26, "metal")

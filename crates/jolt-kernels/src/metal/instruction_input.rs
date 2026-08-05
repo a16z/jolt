@@ -11,11 +11,11 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::instruction_read_raf::MetalBackend;
 use super::solinas::{
-    instruction_input_weight_capacities, InstructionInputSequence, InstructionInputSequenceConfig,
-    InstructionInputSequenceStorage, InstructionInputStorageInitialization, MetalError,
-    PendingInstructionInputPrimer, SpartanOuterUniskipRows, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
-    INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
-    INSTRUCTION_INPUT_TABLES,
+    instruction_input_weight_capacities, InstructionInputRows, InstructionInputSequence,
+    InstructionInputSequenceConfig, InstructionInputSequenceStorage,
+    InstructionInputStorageInitialization, MetalError, PendingInstructionInputPrimer,
+    INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS, INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
+    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS, INSTRUCTION_INPUT_TABLES,
 };
 use crate::optimized::instruction_input::{
     OptimizedInstructionInput, OptimizedInstructionInputKernel,
@@ -95,12 +95,12 @@ impl MetalBackend {
         {
             return Ok(());
         }
-        let Some(resident_rows) = session.state::<SpartanOuterUniskipRows>() else {
+        let Some(resident_rows) = session.state::<InstructionInputRows>() else {
             return Ok(());
         };
         let resident_rows_storage_id = resident_rows.allocation_identity();
         let resident_row_count = resident_rows.len();
-        let resident_row_bytes = size_of::<super::solinas::SpartanOuterUniskipRow>();
+        let resident_row_bytes = size_of::<super::solinas::InstructionInputRow>();
         let host_elements = INSTRUCTION_INPUT_TABLES
             .checked_mul(config.cutoff_elements)
             .ok_or(MetalError::InputTooLong(config.cutoff_elements))
@@ -159,7 +159,7 @@ impl MetalBackend {
         session: &mut ProofSession,
     ) -> Result<(), KernelError<AkitaField>> {
         let prepared = session.take::<PreparedInstructionInput>();
-        let resident_rows = session.take::<SpartanOuterUniskipRows>();
+        let resident_rows = session.take::<InstructionInputRows>();
         let (prepared, resident_rows) = match (prepared, resident_rows) {
             (None, None) => return Ok(()),
             (
@@ -273,7 +273,7 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
         if trace_elements < config.trace_cutoff_elements || trace_elements <= config.cutoff_elements
         {
             drop(session.take::<PreparedInstructionInput>());
-            drop(session.take::<SpartanOuterUniskipRows>());
+            drop(session.take::<InstructionInputRows>());
             return <OptimizedInstructionInput as PrepareKernel<
                 AkitaField,
                 InstructionInput<AkitaField>,
@@ -283,7 +283,7 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
         let (e_in_capacity, e_out_capacity) =
             instruction_input_weight_capacities(trace_elements).map_err(metal_prepare_error)?;
         let prepared = session.take::<PreparedInstructionInput>();
-        let resident_rows = session.take::<SpartanOuterUniskipRows>();
+        let resident_rows = session.take::<InstructionInputRows>();
         let (device, host_tail) = match (prepared, resident_rows) {
             (None, None) => {
                 return <OptimizedInstructionInput as PrepareKernel<

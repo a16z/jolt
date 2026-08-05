@@ -25,7 +25,7 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
@@ -65,8 +65,11 @@ OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE = "OptimizedInstructionInput::rows_prep
 OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE = (
     "OptimizedInstructionInput::rows_stage3_use"
 )
-METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE = (
-    "MetalInstructionInput::resident_rows_stage1_use"
+METAL_INSTRUCTION_INPUT_ROWS_PREPARE = (
+    "MetalInstructionInput::compact_rows_prepare"
+)
+METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF = (
+    "MetalInstructionInput::compact_rows_stage1_handoff"
 )
 PRODUCTION_PAIRS = 5
 LOCAL_KERNELS = {
@@ -458,7 +461,24 @@ def unique_span_args(events: list[dict[str, Any]], name: str) -> dict[str, Any]:
     ]
     if len(records) != 1 or not isinstance(records[0].get("args"), dict):
         raise ValueError(f"trace must contain one argument record for {name}")
-    return records[0]["args"]
+    record = records[0]
+    args = dict(record["args"])
+    if record.get("ph") == "B":
+        end_records = [
+            event
+            for event in events
+            if event.get("name") == name
+            and event.get("ph") == "E"
+            and event.get("pid") == record.get("pid")
+            and event.get("tid") == record.get("tid")
+        ]
+        if len(end_records) != 1 or not isinstance(end_records[0].get("args"), dict):
+            raise ValueError(f"trace must contain one ending argument record for {name}")
+        for field, value in end_records[0]["args"].items():
+            if field in args and args[field] != value:
+                raise ValueError(f"trace span {name} changed argument {field}")
+            args[field] = value
+    return args
 
 
 def bytecode_member_breakdown(
@@ -654,9 +674,13 @@ def instruction_input_member_breakdown(
     lifecycle_names = {
         OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE,
         OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE,
-        METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE,
+        METAL_INSTRUCTION_INPUT_ROWS_PREPARE,
+        METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF,
     }
-    allowed_metal_names = inner_names | {METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE}
+    allowed_metal_names = inner_names | {
+        METAL_INSTRUCTION_INPUT_ROWS_PREPARE,
+        METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF,
+    }
     unknown_metal_names = {
         name
         for event in events
@@ -728,7 +752,8 @@ def instruction_input_member_breakdown(
         if (
             len(intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE]) != 1
             or len(intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE]) != 1
-            or intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE]
+            or intervals[METAL_INSTRUCTION_INPUT_ROWS_PREPARE]
+            or intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF]
         ):
             raise ValueError("optimized InstructionInput row lifecycle is incomplete")
         rows_prepare = intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE][0]
@@ -787,7 +812,8 @@ def instruction_input_member_breakdown(
         if (
             intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE]
             or intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE]
-            or len(intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE]) != 1
+            or len(intervals[METAL_INSTRUCTION_INPUT_ROWS_PREPARE]) != 1
+            or len(intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF]) != 1
         ):
             raise ValueError("Metal InstructionInput row lifecycle is incomplete")
         expected_inner_counts = {
@@ -817,7 +843,10 @@ def instruction_input_member_breakdown(
         primer_submit_us = interval_duration_us(primer_submit)
         primer_join = inner["native_primer_join"][0]
         primer_complete = inner["native_primer_complete"][0]
-        rows_stage1 = intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE][0]
+        rows_prepare = intervals[METAL_INSTRUCTION_INPUT_ROWS_PREPARE][0]
+        rows_stage1_handoff = intervals[
+            METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF
+        ][0]
         shift_prepares = intervals[SPARTAN_SHIFT_PREPARE_SPAN]
         if len(shift_prepares) != 1:
             raise ValueError("Metal trace must contain exactly one SpartanShift prepare span")
@@ -843,14 +872,25 @@ def instruction_input_member_breakdown(
             storage_initialize,
             "InstructionInput storage initialization completion",
         )
-        if rows_stage1[0] < piop[0] or rows_stage1[1] > prepare[0]:
+        if (
+            rows_prepare[0] < backend_prepare[0]
+            or rows_prepare[1] > backend_prepare[1]
+            or rows_prepare[1] > storage_prepare[0]
+        ):
             raise ValueError(
-                "Metal InstructionInput stage-1 row use is outside its lifecycle"
+                "Metal InstructionInput compact rows were not directly prepared before PIOP"
+            )
+        if (
+            rows_stage1_handoff[0] < piop[0]
+            or rows_stage1_handoff[1] > prepare[0]
+        ):
+            raise ValueError(
+                "Metal InstructionInput stage-1 compact handoff is outside its lifecycle"
             )
         require_contained(primer_submit, piop, "InstructionInput native primer submit")
         require_contained(shift_prepare, piop, "SpartanShift preparation")
         if (
-            rows_stage1[1] > primer_submit[0]
+            rows_stage1_handoff[1] > primer_submit[0]
             or primer_submit[1] > shift_prepare[0]
             or shift_prepare[1] > prepare[0]
         ):
@@ -913,7 +953,7 @@ def instruction_input_member_breakdown(
             or storage["cutoff_elements"] != 1 << cutoff_log2
             or storage["host_tail_bytes"] != host_tail_bytes
             or storage["resident_rows"] != 1 << log_n
-            or storage["resident_row_bytes"] != 160
+            or storage["resident_row_bytes"] != 48
         ):
             raise ValueError("InstructionInput storage preparation has invalid geometry")
 
@@ -1222,16 +1262,130 @@ def instruction_input_member_breakdown(
             raise ValueError(
                 "InstructionInput Metal prepare did not preserve the selected startup controls"
             )
-        stage1_args = unique_span_args(
-            events, METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE
+        row_production_args = unique_span_args(
+            events, METAL_INSTRUCTION_INPUT_ROWS_PREPARE
         )
-        if set(stage1_args) != {"resident_rows_storage_id", "resident_rows"}:
+        if set(row_production_args) != {
+            "source_kind",
+            "witness_row_extractions",
+            "residual_rows_written",
+            "compact_rows_written",
+            "compact_row_bytes",
+            "residual_row_bytes",
+            "compact_allocations",
+            "residual_allocations",
+            "full_row_allocations",
+            "full_domain_copy_bytes",
+            "full_domain_copy_dispatches",
+            "host_repack_rows",
+            "compact_rows_storage_id",
+            "residual_rows_storage_id",
+            "resident_rows",
+        }:
             raise ValueError("Metal InstructionInput row lifecycle is incomplete")
+        row_count = 1 << log_n
+        production_storage_id = positive_trace_integer(
+            row_production_args["compact_rows_storage_id"],
+            "Metal compact-row production storage ID",
+        )
+        residual_storage_id = positive_trace_integer(
+            row_production_args["residual_rows_storage_id"],
+            "Metal residual-row production storage ID",
+        )
+        row_production = {
+            "source_kind": trace_string(
+                row_production_args["source_kind"],
+                "Metal witness-row production source",
+            ),
+            "witness_row_extractions": positive_trace_integer(
+                row_production_args["witness_row_extractions"],
+                "Metal witness row extractions",
+            ),
+            "residual_rows_written": positive_trace_integer(
+                row_production_args["residual_rows_written"],
+                "Metal residual rows written",
+            ),
+            "compact_rows_written": positive_trace_integer(
+                row_production_args["compact_rows_written"],
+                "Metal compact rows written",
+            ),
+            "compact_row_bytes": positive_trace_integer(
+                row_production_args["compact_row_bytes"],
+                "Metal compact row width",
+            ),
+            "residual_row_bytes": positive_trace_integer(
+                row_production_args["residual_row_bytes"],
+                "Metal residual row width",
+            ),
+            "compact_allocations": positive_trace_integer(
+                row_production_args["compact_allocations"],
+                "Metal compact row allocations",
+            ),
+            "residual_allocations": positive_trace_integer(
+                row_production_args["residual_allocations"],
+                "Metal residual row allocations",
+            ),
+            "full_row_allocations": nonnegative_trace_integer(
+                row_production_args["full_row_allocations"],
+                "Metal full-row allocations",
+            ),
+            "full_domain_copy_bytes": nonnegative_trace_integer(
+                row_production_args["full_domain_copy_bytes"],
+                "Metal compact full-domain copy bytes",
+            ),
+            "full_domain_copy_dispatches": nonnegative_trace_integer(
+                row_production_args["full_domain_copy_dispatches"],
+                "Metal compact full-domain copy dispatches",
+            ),
+            "host_repack_rows": nonnegative_trace_integer(
+                row_production_args["host_repack_rows"],
+                "Metal compact host repack rows",
+            ),
+        }
+        production_rows = positive_trace_integer(
+            row_production_args["resident_rows"], "Metal production row count"
+        )
+        stage1_args = unique_span_args(
+            events, METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF
+        )
+        if set(stage1_args) != {
+            "compact_rows_storage_id",
+            "residual_rows_storage_id",
+            "resident_rows",
+            "compact_row_bytes",
+            "residual_row_bytes",
+            "full_domain_copy_bytes",
+            "full_domain_copy_dispatches",
+            "host_repack_rows",
+        }:
+            raise ValueError("Metal InstructionInput stage-1 handoff is incomplete")
         stage1_storage_id = positive_trace_integer(
-            stage1_args["resident_rows_storage_id"], "Metal stage-1 storage ID"
+            stage1_args["compact_rows_storage_id"], "Metal stage-1 compact storage ID"
+        )
+        stage1_residual_storage_id = positive_trace_integer(
+            stage1_args["residual_rows_storage_id"],
+            "Metal stage-1 residual storage ID",
         )
         stage1_rows = positive_trace_integer(
-            stage1_args["resident_rows"], "Metal stage-1 row count"
+            stage1_args["resident_rows"], "Metal stage-1 compact row count"
+        )
+        stage1_row_bytes = positive_trace_integer(
+            stage1_args["compact_row_bytes"], "Metal stage-1 compact row width"
+        )
+        stage1_residual_row_bytes = positive_trace_integer(
+            stage1_args["residual_row_bytes"],
+            "Metal stage-1 residual row width",
+        )
+        stage1_copy_bytes = nonnegative_trace_integer(
+            stage1_args["full_domain_copy_bytes"],
+            "Metal stage-1 full-domain copy bytes",
+        )
+        stage1_copy_dispatches = nonnegative_trace_integer(
+            stage1_args["full_domain_copy_dispatches"],
+            "Metal stage-1 full-domain copy dispatches",
+        )
+        stage1_host_repack_rows = nonnegative_trace_integer(
+            stage1_args["host_repack_rows"], "Metal stage-1 host repack rows"
         )
         prepare_storage_id = storage["resident_rows_storage_id"]
         primer_resource_records = [
@@ -1242,10 +1396,35 @@ def instruction_input_member_breakdown(
         if (
             resident_rows_reused is not True
             or round_allocations != 0
-            or stage1_rows != 1 << log_n
+            or production_rows != row_count
+            or stage1_rows != row_count
             or stage3_rows != stage1_rows
+            or row_production
+            != {
+                "source_kind": "owned_random_access",
+                "witness_row_extractions": row_count,
+                "residual_rows_written": row_count,
+                "compact_rows_written": row_count,
+                "compact_row_bytes": 48,
+                "residual_row_bytes": 112,
+                "compact_allocations": 1,
+                "residual_allocations": 1,
+                "full_row_allocations": 0,
+                "full_domain_copy_bytes": 0,
+                "full_domain_copy_dispatches": 0,
+                "host_repack_rows": 0,
+            }
+            or stage1_row_bytes != 48
+            or stage1_residual_row_bytes != 112
+            or stage1_copy_bytes != 0
+            or stage1_copy_dispatches != 0
+            or stage1_host_repack_rows != 0
+            or residual_storage_id == production_storage_id
+            or stage1_residual_storage_id != residual_storage_id
+            or production_storage_id != prepare_storage_id
             or stage1_storage_id != prepare_storage_id
             or stage3_storage_id != prepare_storage_id
+            or storage["resident_row_bytes"] != 48
             or any(
                 record["resident_rows_storage_id"] != prepare_storage_id
                 or record["storage_buffer_identities"]
@@ -1258,12 +1437,14 @@ def instruction_input_member_breakdown(
                 "InstructionInput Metal row lifecycle did not preserve residency"
             )
         row_lifecycle = {
-            "kind": "metal_resident",
+            "kind": "metal_compact_resident",
             "rows": stage1_rows,
-            "row_bytes": storage["resident_row_bytes"],
+            "row_bytes": 48,
             "prepare_storage_id": prepare_storage_id,
             "stage1_storage_id": stage1_storage_id,
             "stage3_storage_id": stage3_storage_id,
+            "residual_storage_id": residual_storage_id,
+            "row_production": row_production,
         }
 
         readback = unique_span_args(
@@ -2230,7 +2411,7 @@ def main() -> int:
                     and sample["instruction_input"]["metal_member"]["row_lifecycle"][
                         "kind"
                     ]
-                    == "metal_resident"
+                    == "metal_compact_resident"
                     and sample["instruction_input"]["metal_member"]["row_lifecycle"][
                         "rows"
                     ]
@@ -2238,7 +2419,7 @@ def main() -> int:
                     and sample["instruction_input"]["metal_member"]["row_lifecycle"][
                         "row_bytes"
                     ]
-                    == 160
+                    == 48
                     and sample["instruction_input"]["metal_member"]["row_lifecycle"][
                         "prepare_storage_id"
                     ]
@@ -2248,6 +2429,32 @@ def main() -> int:
                     == sample["instruction_input"]["metal_member"]["row_lifecycle"][
                         "stage3_storage_id"
                     ]
+                    and sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "residual_storage_id"
+                    ]
+                    != sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "prepare_storage_id"
+                    ]
+                    for sample in attributions
+                ),
+                "instruction_input_compact_rows_direct_and_stable": all(
+                    sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "row_production"
+                    ]
+                    == {
+                        "source_kind": "owned_random_access",
+                        "witness_row_extractions": 1 << args.log_n,
+                        "residual_rows_written": 1 << args.log_n,
+                        "compact_rows_written": 1 << args.log_n,
+                        "compact_row_bytes": 48,
+                        "residual_row_bytes": 112,
+                        "compact_allocations": 1,
+                        "residual_allocations": 1,
+                        "full_row_allocations": 0,
+                        "full_domain_copy_bytes": 0,
+                        "full_domain_copy_dispatches": 0,
+                        "host_repack_rows": 0,
+                    }
                     for sample in attributions
                 ),
                 "instruction_input_working_set_admitted": all(

@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::mem::size_of;
+use std::mem::{size_of, size_of_val};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -295,7 +295,7 @@ impl CpuInstructionInput {
         gamma: AkitaField,
     ) -> EvalResult<[AkitaField; SAMPLES]> {
         match &self.state {
-            CpuState::Native(rows) => Ok(native_q_evals(rows, gruen, gamma)),
+            CpuState::Native(rows) => Ok(cpu_native_q_evals(rows, gruen, gamma)),
             CpuState::Dense(tables) => Ok(dense_q_evals(tables, gruen, gamma)),
         }
     }
@@ -349,7 +349,7 @@ impl CpuInstructionInput {
     }
 }
 
-fn native_q_evals(
+pub fn cpu_native_q_evals(
     rows: &[CpuInstructionInputRow],
     gruen: &GruenSplitEqPolynomial<AkitaField>,
     gamma: AkitaField,
@@ -394,6 +394,75 @@ fn native_q_evals(
                 *slot = e_out * (right.reduce() + gamma * left.reduce());
             }
             output
+        },
+        |mut left, right| {
+            for (left, right) in left.iter_mut().zip(&right) {
+                *left += *right;
+            }
+            left
+        },
+    )
+}
+
+/// Bind all eight native tables into `bound_tables`, then evaluate the next
+/// message. `gruen` must already be bound by `challenge`.
+pub fn cpu_native_bind_and_message_preallocated(
+    rows: &[CpuInstructionInputRow],
+    challenge: AkitaField,
+    gruen: &GruenSplitEqPolynomial<AkitaField>,
+    gamma: AkitaField,
+    bound_tables: &mut [AkitaField],
+) -> [AkitaField; SAMPLES] {
+    let elements = rows.len() / 2;
+    assert_eq!(bound_tables.len(), TABLES * elements);
+    for (table, output) in bound_tables.chunks_exact_mut(elements).enumerate() {
+        output
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(pair, output)| {
+                let even = row_fields(rows[2 * pair])[table];
+                let odd = row_fields(rows[2 * pair + 1])[table];
+                *output = even + challenge * (odd - even);
+            });
+    }
+    dense_flat_q_evals(bound_tables, elements, gruen, gamma)
+}
+
+fn dense_flat_q_evals(
+    tables: &[AkitaField],
+    elements: usize,
+    gruen: &GruenSplitEqPolynomial<AkitaField>,
+    gamma: AkitaField,
+) -> [AkitaField; SAMPLES] {
+    assert_eq!(tables.len(), TABLES * elements);
+    gruen.par_fold_out_in(
+        || {
+            (
+                [AkitaField::zero(); SAMPLES],
+                [AkitaField::zero(); TABLES],
+                [AkitaField::zero(); TABLES],
+            )
+        },
+        |(acc, evals, steps), row, _x_in, e_in| {
+            for table in 0..TABLES {
+                let lo = tables[table * elements + 2 * row];
+                evals[table] = lo;
+                steps[table] = tables[table * elements + 2 * row + 1] - lo;
+            }
+            for value in acc.iter_mut() {
+                let right = evals[4] * evals[5] + evals[6] * evals[7];
+                let left = evals[0] * evals[1] + evals[2] * evals[3];
+                *value += e_in * (right + gamma * left);
+                for (eval, step) in evals.iter_mut().zip(steps.iter()) {
+                    *eval += *step;
+                }
+            }
+        },
+        |_x_out, e_out, (mut acc, _, _)| {
+            for value in &mut acc {
+                *value *= e_out;
+            }
+            acc
         },
         |mut left, right| {
             for (left, right) in left.iter_mut().zip(&right) {
@@ -472,7 +541,7 @@ fn message_poly(
     Ok(UnivariatePoly::from_evals(&evals))
 }
 
-fn descriptor_grid(descriptors: [AkitaField; DESCRIPTORS]) -> [AkitaField; SAMPLES] {
+pub fn descriptor_grid(descriptors: [AkitaField; DESCRIPTORS]) -> [AkitaField; SAMPLES] {
     let [q_at_0, q_at_1, quadratic] = descriptors;
     let twice_quadratic = quadratic + quadratic;
     let q_at_2 = q_at_1 + q_at_1 - q_at_0 + twice_quadratic;
@@ -637,7 +706,21 @@ pub fn run_hybrid(
 ) -> EvalResult<TimedTrace> {
     validate_cutoff(workload.rows(), cutoff)?;
     let mut cutoff_readback = vec![AkitaField::zero(); TABLES * cutoff];
-    let preallocated_readback_bytes = cutoff_readback.len() * size_of::<AkitaField>();
+    run_hybrid_with_readback(sequence, workload, cutoff, capture, &mut cutoff_readback)
+}
+
+pub fn run_hybrid_with_readback(
+    sequence: &mut InstructionInputSequence,
+    workload: &Workload,
+    cutoff: usize,
+    capture: Capture,
+    cutoff_readback: &mut [AkitaField],
+) -> EvalResult<TimedTrace> {
+    validate_cutoff(workload.rows(), cutoff)?;
+    if cutoff_readback.len() != TABLES * cutoff {
+        return Err("InstructionInput readback scratch has the wrong length".into());
+    }
+    let preallocated_readback_bytes = size_of_val(cutoff_readback);
     let total_started = Instant::now();
     let resident_identity = sequence.resident_row_identity();
     let static_identity = sequence.static_buffer_identity();
@@ -691,15 +774,15 @@ pub fn run_hybrid(
 
         if state.is_dense && state.elements == cutoff {
             let read_started = Instant::now();
-            sequence.read_current_tables(&mut cutoff_readback)?;
+            sequence.read_current_tables(cutoff_readback)?;
             readback += read_started.elapsed();
             readbacks += 1;
             let tail_started = Instant::now();
-            let mut tail = CpuInstructionInput::from_dense(&cutoff_readback, cutoff)?;
+            let mut tail = CpuInstructionInput::from_dense(cutoff_readback, cutoff)?;
             gruen.bind(challenge);
             tail.bind(challenge);
             cpu_tail += tail_started.elapsed();
-            let captured = capture.cutoff_tables.then_some(cutoff_readback);
+            let captured = capture.cutoff_tables.then(|| cutoff_readback.to_vec());
             break (tail, captured);
         }
 

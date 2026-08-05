@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 
 SCHEMA_VERSION = 1
-CURRENT_PIOP_RESULT_SCHEMA = 6
+CURRENT_PIOP_RESULT_SCHEMA = 7
 VERDICTS = {"keep", "discard", "crash", "invalid"}
 CANDIDATE_STATUSES = {"queued", "accepted_parent", "promoted", "rejected"}
 EVALUATOR_LOCK_PATH = Path("/private/tmp/jolt-metal-autoresearch-evaluator.lock")
@@ -104,17 +104,22 @@ PRODUCTION_LOCAL_KERNELS = {
             "instruction_input_storage_buffers_stable",
             "instruction_input_native_primer_exact_and_protocol_inert",
         },
+        "schema7_required_guards": {
+            "instruction_input_compact_rows_direct_and_stable",
+        },
     },
 }
 LOCAL_RESULT_CONTRACTS = {
     "bytecode_read_raf_cycle_v1",
     "instruction_input_v2",
     "instruction_input_v3",
+    "instruction_input_v4",
 }
 LOCAL_RESULT_SCHEMA_VERSIONS = {
     "bytecode_read_raf_cycle_v1": 1,
     "instruction_input_v2": 2,
     "instruction_input_v3": 3,
+    "instruction_input_v4": 4,
 }
 BYTECODE_LOCAL_FINGERPRINT_PARAMETERS = {
     "message_threads": "JOLT_METAL_BYTECODE_MESSAGE_THREADS",
@@ -149,6 +154,39 @@ INSTRUCTION_INPUT_V3_CPU_REFERENCE_PROVENANCE = (
     "median of 25 CPU ns samples from immutable instruction-input-a2-2f87d8b6a8 at "
     "2f87d8b6a81f1bb253c27795badc7da7baa3d0d8; compact-JSON sample SHA256 "
     "59f9946b7d1a3c05d3094528e853d2228ae5ec0d94a5dae2c63d5713a560a966"
+)
+INSTRUCTION_INPUT_ARCHITECTURE_EVIDENCE_GUARDS = frozenset(
+    {
+        "bytecode_command_buffers_completed",
+        "bytecode_local_gate",
+        "bytecode_metal_backend_exercised",
+        "bytecode_q10_cpu_control",
+        "bytecode_readback_exact",
+        "bytecode_working_set_admitted",
+        "cpu_proofs_verified",
+        "instruction_input_cpu_control",
+        "instruction_input_cpu_rows_reused",
+        "instruction_input_host_readback_preallocated_outside_piop",
+        "instruction_input_local_gate",
+        "instruction_input_metal_backend_exercised",
+        "instruction_input_minimal_initialization_exact",
+        "instruction_input_native_primer_completed_before_join",
+        "instruction_input_native_primer_exact_and_protocol_inert",
+        "instruction_input_no_round_device_buffer_allocations",
+        "instruction_input_readback_exact",
+        "instruction_input_resident_rows_reused",
+        "instruction_input_storage_buffers_stable",
+        "instruction_input_working_set_admitted",
+        "local_kernel_attributed",
+        "local_kernel_metal_backend_exercised",
+        "metal_proofs_verified",
+        "production_contract",
+        "stable_binary",
+        "stable_source",
+        "target_scale",
+        "unique_backend_witness_prepare_span",
+        "unique_piop_span",
+    }
 )
 
 
@@ -378,7 +416,356 @@ def parse_unique_schema_result(stdout: str, schema_version: int) -> dict[str, An
     return matches[0]
 
 
-def validate_template(template: dict[str, Any]) -> None:
+def validate_instruction_input_architecture_evidence(
+    evidence: dict[str, Any], template: dict[str, Any]
+) -> None:
+    top_fields = {
+        "schema",
+        "schema_version",
+        "status",
+        "recorded_at",
+        "candidate",
+        "launch",
+        "samples",
+        "decision",
+        "guards",
+        "artifact",
+        "reason",
+        "disposition",
+    }
+    if set(evidence) != top_fields:
+        raise ValueError("architecture baseline evidence fields are incomplete")
+    if (
+        evidence["schema"] != "metal_piop_rejection_evidence_v1"
+        or type(evidence["schema_version"]) is not int
+        or evidence["schema_version"] != 1
+        or evidence["status"] != "rejected"
+        or not isinstance(evidence["recorded_at"], str)
+        or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", evidence["recorded_at"])
+        is None
+    ):
+        raise ValueError("architecture baseline evidence has an invalid schema")
+
+    candidate = evidence["candidate"]
+    if not isinstance(candidate, dict) or set(candidate) != {
+        "git_revision",
+        "worktree_dirty",
+        "worktree_state_sha256",
+        "binary_sha256",
+    }:
+        raise ValueError("architecture baseline candidate record is incomplete")
+    if (
+        type(candidate["git_revision"]) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", candidate["git_revision"]) is None
+        or candidate["worktree_dirty"] is not False
+        or any(
+            type(candidate[name]) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", candidate[name]) is None
+            for name in ("worktree_state_sha256", "binary_sha256")
+        )
+    ):
+        raise ValueError("architecture baseline candidate record is invalid")
+
+    launch = evidence["launch"]
+    launch_fields = {
+        "mode",
+        "acceptance_eligible",
+        "workload",
+        "log_n",
+        "pairs",
+        "orders",
+        "instruction_input",
+    }
+    if not isinstance(launch, dict) or set(launch) != launch_fields:
+        raise ValueError("architecture baseline launch record is incomplete")
+    pairs = launch["pairs"]
+    orders = launch["orders"]
+    expected_orders = [
+        ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+        for index in range(pairs if type(pairs) is int and pairs > 0 else 0)
+    ]
+    if (
+        launch["mode"] != "production"
+        or launch["acceptance_eligible"] is not True
+        or not isinstance(launch["workload"], str)
+        or not launch["workload"]
+        or type(launch["log_n"]) is not int
+        or launch["log_n"] < 26
+        or type(pairs) is not int
+        or pairs < 5
+        or pairs % 2 == 0
+        or orders != expected_orders
+    ):
+        raise ValueError("architecture baseline launch record is invalid")
+    instruction_input = launch["instruction_input"]
+    instruction_input_fields = {
+        "cutoff_log2",
+        "trace_cutoff_log2",
+        "native_message_threads",
+        "native_transition_threads",
+        "dense_transition_threads",
+        "storage_initialization",
+        "native_primer",
+    }
+    if not isinstance(instruction_input, dict) or set(instruction_input) != instruction_input_fields:
+        raise ValueError("architecture baseline InstructionInput launch is incomplete")
+    if (
+        any(
+            type(instruction_input[name]) is not int or instruction_input[name] <= 0
+            for name in (
+                "cutoff_log2",
+                "trace_cutoff_log2",
+                "native_message_threads",
+                "native_transition_threads",
+                "dense_transition_threads",
+            )
+        )
+        or instruction_input["cutoff_log2"] > launch["log_n"]
+        or instruction_input["trace_cutoff_log2"] > launch["log_n"]
+        or instruction_input["storage_initialization"] != "minimal"
+        or instruction_input["native_primer"] != "async"
+    ):
+        raise ValueError("architecture baseline InstructionInput launch is invalid")
+
+    samples = evidence["samples"]
+    sample_fields = {
+        "pair",
+        "order",
+        "cpu_service_ns",
+        "metal_service_ns",
+        "service_speedup",
+        "cpu_piop_ns",
+        "metal_piop_ns",
+        "piop_speedup",
+        "cpu_piop_plus_prepare_ns",
+        "metal_piop_plus_prepare_ns",
+        "piop_plus_prepare_speedup",
+    }
+    if not isinstance(samples, list) or len(samples) != pairs:
+        raise ValueError("architecture baseline samples are incomplete")
+    timing_fields = {
+        "service_speedup": ("cpu_service_ns", "metal_service_ns"),
+        "piop_speedup": ("cpu_piop_ns", "metal_piop_ns"),
+        "piop_plus_prepare_speedup": (
+            "cpu_piop_plus_prepare_ns",
+            "metal_piop_plus_prepare_ns",
+        ),
+    }
+    for index, sample in enumerate(samples):
+        if not isinstance(sample, dict) or set(sample) != sample_fields:
+            raise ValueError("architecture baseline sample fields are incomplete")
+        if (
+            type(sample["pair"]) is not int
+            or sample["pair"] != index + 1
+            or sample["order"] != orders[index]
+        ):
+            raise ValueError("architecture baseline sample order is invalid")
+        for cpu_name, metal_name in timing_fields.values():
+            if (
+                type(sample[cpu_name]) is not int
+                or sample[cpu_name] <= 0
+                or type(sample[metal_name]) is not int
+                or sample[metal_name] <= 0
+            ):
+                raise ValueError("architecture baseline sample timing is invalid")
+        if (
+            sample["cpu_service_ns"] > sample["cpu_piop_ns"]
+            or sample["metal_service_ns"] > sample["metal_piop_ns"]
+            or sample["cpu_piop_plus_prepare_ns"] <= sample["cpu_piop_ns"]
+            or sample["metal_piop_plus_prepare_ns"] <= sample["metal_piop_ns"]
+        ):
+            raise ValueError("architecture baseline sample timing relationship is invalid")
+        for ratio_name, (cpu_name, metal_name) in timing_fields.items():
+            ratio = sample[ratio_name]
+            expected_ratio = sample[cpu_name] / sample[metal_name]
+            if (
+                isinstance(ratio, bool)
+                or not isinstance(ratio, (int, float))
+                or not math.isfinite(ratio)
+                or not math.isclose(
+                    float(ratio), expected_ratio, rel_tol=1e-12, abs_tol=1e-12
+                )
+            ):
+                raise ValueError("architecture baseline sample ratio is invalid")
+
+    decision = evidence["decision"]
+    if not isinstance(decision, dict):
+        raise ValueError("architecture baseline decision is incomplete")
+    minimum_speedup = decision.get("minimum_speedup")
+    minimum_pairs = decision.get("minimum_pairs")
+    if (
+        isinstance(minimum_speedup, bool)
+        or not isinstance(minimum_speedup, (int, float))
+        or not math.isfinite(minimum_speedup)
+        or minimum_speedup <= 1.0
+        or type(minimum_pairs) is not int
+        or minimum_pairs < 1
+    ):
+        raise ValueError("architecture baseline decision threshold is invalid")
+    cpu_service = [sample["cpu_service_ns"] for sample in samples]
+    metal_service = [sample["metal_service_ns"] for sample in samples]
+    service_speedups = [cpu / metal for cpu, metal in zip(cpu_service, metal_service)]
+    improvements = [1.0 - metal / cpu for cpu, metal in zip(cpu_service, metal_service)]
+    speedup_median = statistics.median(service_speedups)
+    improvement_median = statistics.median(improvements)
+    improvement_mad = statistics.median(
+        abs(value - improvement_median) for value in improvements
+    )
+    cpu_median = statistics.median(cpu_service)
+    metal_median = statistics.median(metal_service)
+    optimized_first = [
+        speedup
+        for sample, speedup in zip(samples, service_speedups)
+        if sample["order"] == ["optimized", "metal"]
+    ]
+    metal_first = [
+        speedup
+        for sample, speedup in zip(samples, service_speedups)
+        if sample["order"] == ["metal", "optimized"]
+    ]
+    optimized_first_median = statistics.median(optimized_first)
+    metal_first_median = statistics.median(metal_first)
+    clears_speedup = speedup_median >= minimum_speedup
+    clears_order_strata = (
+        optimized_first_median >= minimum_speedup
+        and metal_first_median >= minimum_speedup
+    )
+    clears_noise = improvement_median > 3.0 * improvement_mad
+    clears_fraction = improvement_median >= 1.0 - 1.0 / minimum_speedup
+    expected_decision = {
+        "minimum_speedup": float(minimum_speedup),
+        "minimum_pairs": minimum_pairs,
+        "median_speedup": speedup_median,
+        "optimized_first_median_speedup": optimized_first_median,
+        "metal_first_median_speedup": metal_first_median,
+        "cpu_service_ms_median": cpu_median / 1e6,
+        "cpu_service_ms_mad": statistics.median(
+            abs(value - cpu_median) for value in cpu_service
+        )
+        / 1e6,
+        "metal_service_ms_median": metal_median / 1e6,
+        "metal_service_ms_mad": statistics.median(
+            abs(value - metal_median) for value in metal_service
+        )
+        / 1e6,
+        "median_fractional_improvement": improvement_median,
+        "mad_fractional_improvement": improvement_mad,
+        "clears_speedup": clears_speedup,
+        "clears_order_strata": clears_order_strata,
+        "clears_noise": clears_noise,
+        "clears_fractional_improvement": clears_fraction,
+        "clears": len(samples) >= minimum_pairs
+        and clears_speedup
+        and clears_order_strata
+        and clears_noise
+        and clears_fraction
+        and metal_median < cpu_median,
+        "piop_speedup": statistics.median(
+            sample["cpu_piop_ns"] / sample["metal_piop_ns"] for sample in samples
+        ),
+        "piop_plus_prepare_speedup": statistics.median(
+            sample["cpu_piop_plus_prepare_ns"]
+            / sample["metal_piop_plus_prepare_ns"]
+            for sample in samples
+        ),
+    }
+    if not decisions_match(decision, expected_decision):
+        raise ValueError("architecture baseline decision disagrees with its samples")
+    if decision["clears"] is not False:
+        raise ValueError("architecture baseline must record a failed local gate")
+
+    guards = evidence["guards"]
+    if (
+        not isinstance(guards, dict)
+        or set(guards) != INSTRUCTION_INPUT_ARCHITECTURE_EVIDENCE_GUARDS
+        or any(type(value) is not bool for value in guards.values())
+        or any(
+            value is not True
+            for name, value in guards.items()
+            if name != "instruction_input_local_gate"
+        )
+        or guards["instruction_input_local_gate"] is not False
+    ):
+        raise ValueError("architecture baseline guards are invalid")
+
+    artifact = evidence["artifact"]
+    if not isinstance(artifact, dict) or set(artifact) != {
+        "result_path",
+        "result_sha256",
+        "source_schema_version",
+    }:
+        raise ValueError("architecture baseline artifact is incomplete")
+    result_path = Path(artifact["result_path"]) if type(artifact["result_path"]) is str else None
+    if (
+        result_path is None
+        or result_path.is_absolute()
+        or ".." in result_path.parts
+        or result_path.name != "result.json"
+        or type(artifact["result_sha256"]) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", artifact["result_sha256"]) is None
+        or type(artifact["source_schema_version"]) is not int
+        or artifact["source_schema_version"] != 6
+        or evidence["reason"] != "the fixed InstructionInput 4x local gate failed"
+        or evidence["disposition"]
+        != "retained only as the compact-row phase infrastructure baseline"
+    ):
+        raise ValueError("architecture baseline artifact is invalid")
+
+    gate = template["final_validation"]["production_gate"]
+    command = gate["evaluator"]["command"]
+    try:
+        if any(command.count(flag) != 1 for flag in ("--workload", "--log-n", "--repeats")):
+            raise ValueError("architecture command bindings must be unique")
+        command_workload = command[command.index("--workload") + 1]
+        command_log_n = int(command[command.index("--log-n") + 1])
+        command_repeats = int(command[command.index("--repeats") + 1])
+        baseline = template["baseline_params"]
+        expected_instruction_input = {
+            "native_message_threads": int(
+                baseline["JOLT_METAL_INSTRUCTION_INPUT_NATIVE_MESSAGE_THREADS"]
+            ),
+            "native_transition_threads": int(
+                baseline["JOLT_METAL_INSTRUCTION_INPUT_NATIVE_TRANSITION_THREADS"]
+            ),
+            "dense_transition_threads": int(
+                baseline["JOLT_METAL_INSTRUCTION_INPUT_DENSE_TRANSITION_THREADS"]
+            ),
+            "cutoff_log2": int(
+                baseline["JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2"]
+            ),
+            "trace_cutoff_log2": int(
+                baseline["JOLT_METAL_INSTRUCTION_INPUT_TRACE_CUTOFF_LOG2"]
+            ),
+        }
+    except (KeyError, ValueError, IndexError) as error:
+        raise ValueError(
+            "InstructionInput template cannot bind its architecture baseline"
+        ) from error
+    observed_instruction_input = {
+        name: instruction_input[name] for name in expected_instruction_input
+    }
+    primary_log_n = template["final_validation"]["primary_log_n"]
+    if (
+        launch["workload"] != command_workload
+        or launch["workload"] != gate["workload"]
+        or launch["log_n"] != command_log_n
+        or launch["log_n"] != primary_log_n
+        or launch["log_n"] != gate["minimum_log_n"]
+        or pairs != command_repeats
+        or pairs != gate["minimum_pairs"]
+        or minimum_pairs != gate["minimum_pairs"]
+        or not math.isclose(
+            float(minimum_speedup),
+            float(gate["minimum_local_speedup"]),
+            rel_tol=0.0,
+            abs_tol=0.0,
+        )
+        or observed_instruction_input != expected_instruction_input
+    ):
+        raise ValueError("architecture baseline diverges from the template contract")
+
+
+def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> None:
     required = {
         "schema_version",
         "kernel",
@@ -420,6 +807,53 @@ def validate_template(template: dict[str, Any]) -> None:
         raise ValueError(f"paths cannot be editable and frozen: {overlap}")
     if template["portfolio_contract"] not in frozen:
         raise ValueError("the portfolio contract must be in the frozen path set")
+    architecture_phase = template.get("architecture_phase")
+    if template.get("kernel") == "instruction_input" and architecture_phase is None:
+        raise ValueError("InstructionInput template requires an architecture baseline")
+    if architecture_phase is not None:
+        architecture_fields = {
+            "baseline_evidence",
+            "baseline_evidence_sha256",
+            "compact_row_bytes",
+            "residual_row_bytes",
+            "stage1_combined_row_bytes",
+            "status",
+        }
+        if not isinstance(architecture_phase, dict) or set(architecture_phase) != architecture_fields:
+            raise ValueError("architecture_phase must be an object")
+        baseline_evidence = architecture_phase.get("baseline_evidence")
+        if not isinstance(baseline_evidence, str) or not baseline_evidence:
+            raise ValueError("architecture_phase must name its baseline evidence")
+        if baseline_evidence not in frozen:
+            raise ValueError("architecture baseline evidence must be frozen")
+        relative_evidence_path = Path(baseline_evidence)
+        if relative_evidence_path.is_absolute() or ".." in relative_evidence_path.parts:
+            raise ValueError("architecture baseline evidence path must stay within the root")
+        validation_root = (root or Path(__file__).resolve().parents[1]).resolve()
+        evidence_path = (validation_root / relative_evidence_path).resolve()
+        if validation_root not in evidence_path.parents:
+            raise ValueError("architecture baseline evidence path must stay within the root")
+        if not evidence_path.is_file():
+            raise ValueError("architecture baseline evidence does not exist")
+        evidence_digest = architecture_phase["baseline_evidence_sha256"]
+        if (
+            not isinstance(evidence_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", evidence_digest) is None
+            or sha256(evidence_path.read_bytes()) != evidence_digest
+        ):
+            raise ValueError("architecture baseline evidence digest does not match")
+        if (
+            architecture_phase["compact_row_bytes"] != 48
+            or architecture_phase["residual_row_bytes"] != 112
+            or architecture_phase["stage1_combined_row_bytes"] != 160
+            or architecture_phase["compact_row_bytes"]
+            + architecture_phase["residual_row_bytes"]
+            != architecture_phase["stage1_combined_row_bytes"]
+            or architecture_phase["status"] != "frozen before shader search"
+        ):
+            raise ValueError("architecture phase geometry is invalid")
+        evidence = read_json(evidence_path)
+        validate_instruction_input_architecture_evidence(evidence, template)
     search_space = template["search_space"]
     if set(template["baseline_params"]) != set(search_space):
         raise ValueError("baseline parameters must close the search space")
@@ -453,7 +887,7 @@ def validate_template(template: dict[str, Any]) -> None:
         raise ValueError("the Bytecode evaluator requires its closed result contract")
     if (
         template["kernel"] == "instruction_input"
-        and result_contract != "instruction_input_v3"
+        and result_contract != "instruction_input_v4"
     ):
         raise ValueError("the InstructionInput evaluator requires its closed result contract")
     if result_contract is not None and result_contract not in LOCAL_RESULT_CONTRACTS:
@@ -480,13 +914,17 @@ def validate_template(template: dict[str, Any]) -> None:
             raise ValueError(
                 "the Bytecode result contract requires every launch parameter in the search space and baseline"
             )
-    if result_contract in {"instruction_input_v2", "instruction_input_v3"}:
+    if result_contract in {
+        "instruction_input_v2",
+        "instruction_input_v3",
+        "instruction_input_v4",
+    }:
         if template["kernel"] != "instruction_input":
             raise ValueError(
                 "the InstructionInput result contract requires the InstructionInput kernel"
             )
         required_env = set(INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV.values())
-        if result_contract == "instruction_input_v3":
+        if result_contract in {"instruction_input_v3", "instruction_input_v4"}:
             required_env.update(INSTRUCTION_INPUT_V3_FINGERPRINT_ENV.values())
         missing_env = sorted(required_env - set(evaluator.get("env", {})))
         if missing_env:
@@ -504,27 +942,27 @@ def validate_template(template: dict[str, Any]) -> None:
             raise ValueError(
                 "the InstructionInput evaluator requires at least five odd paired repeats"
             )
-        if result_contract == "instruction_input_v3":
+        if result_contract in {"instruction_input_v3", "instruction_input_v4"}:
             try:
                 cpu_reference_ns = int(
                     evaluator["env"]["JOLT_METAL_EVAL_CPU_REFERENCE_NS"]
                 )
             except (KeyError, TypeError, ValueError) as error:
                 raise ValueError(
-                    "the InstructionInput v3 evaluator requires an integer CPU reference"
+                    "the InstructionInput evaluator requires an integer CPU reference"
                 ) from error
             if cpu_reference_ns <= 0:
                 raise ValueError(
-                    "the InstructionInput v3 evaluator CPU reference must be positive"
+                    "the InstructionInput evaluator CPU reference must be positive"
                 )
             if cpu_reference_ns != INSTRUCTION_INPUT_V3_CPU_REFERENCE_NS:
                 raise ValueError(
-                    "the InstructionInput v3 evaluator CPU reference must match the frozen a2 baseline"
+                    "the InstructionInput evaluator CPU reference must match the frozen a2 baseline"
                 )
             metric = template.get("metric", {})
             if metric.get("name") != "frozen_cpu_reference_ratio":
                 raise ValueError(
-                    "the InstructionInput v3 evaluator requires its drift-free primary metric"
+                    "the InstructionInput evaluator requires its drift-free primary metric"
                 )
             if (
                 metric.get("role") != "search_proxy"
@@ -532,7 +970,7 @@ def validate_template(template: dict[str, Any]) -> None:
                 or metric.get("unit") != "normalized_ratio"
             ):
                 raise ValueError(
-                    "the InstructionInput v3 evaluator metric must remain a relative-only search proxy"
+                    "the InstructionInput evaluator metric must remain a relative-only search proxy"
                 )
         required_params = set(INSTRUCTION_INPUT_LOCAL_FINGERPRINT_PARAMETERS.values())
         if required_params - set(template["search_space"]) or required_params - set(
@@ -589,14 +1027,14 @@ def validate_template(template: dict[str, Any]) -> None:
         if int(evaluator.get("timeout_seconds", 0)) < 1:
             raise ValueError("production evaluator timeout must be positive")
         result_schema = int(evaluator.get("schema_version", 4))
-        if result_schema not in {4, 5, 6}:
-            raise ValueError("production evaluator schema must be 4, 5, or 6")
+        if result_schema not in {4, 5, 6, 7}:
+            raise ValueError("production evaluator schema must be 4, 5, 6, or 7")
         local_kernel = gate.get("local_kernel")
-        if local_kernel is not None and result_schema not in {5, 6}:
-            raise ValueError("named local-kernel production gates require schema 5 or 6")
-        if result_schema in {5, 6} and local_kernel not in PRODUCTION_LOCAL_KERNELS:
+        if local_kernel is not None and result_schema not in {5, 6, 7}:
+            raise ValueError("named local-kernel production gates require schema 5, 6, or 7")
+        if result_schema in {5, 6, 7} and local_kernel not in PRODUCTION_LOCAL_KERNELS:
             raise ValueError(
-                "schema-5/6 production gates require a known local kernel"
+                "schema-5/6/7 production gates require a known local kernel"
             )
         if local_kernel is not None:
             descriptor = PRODUCTION_LOCAL_KERNELS.get(local_kernel)
@@ -609,6 +1047,8 @@ def validate_template(template: dict[str, Any]) -> None:
             required_guards = set(descriptor["required_guards"])
             if result_schema >= 6:
                 required_guards.update(descriptor.get("schema6_required_guards", set()))
+            if result_schema >= 7:
+                required_guards.update(descriptor.get("schema7_required_guards", set()))
             missing_guards = sorted(
                 required_guards - set(gate.get("required_guards", []))
             )
@@ -725,6 +1165,8 @@ def validate_template(template: dict[str, Any]) -> None:
 def validate_new_run_template(template: dict[str, Any]) -> None:
     if template.get("kernel") != "instruction_input":
         return
+    if not isinstance(template.get("architecture_phase"), dict):
+        raise ValueError("new InstructionInput runs require an architecture baseline")
     result_schema = template["final_validation"]["production_gate"]["evaluator"].get(
         "schema_version", 4
     )
@@ -923,13 +1365,19 @@ def validate_instruction_input_local_result(
     config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
 ) -> None:
     result_contract = config["evaluator"].get("result_contract")
-    if result_contract not in {"instruction_input_v2", "instruction_input_v3"}:
+    if result_contract not in {
+        "instruction_input_v2",
+        "instruction_input_v3",
+        "instruction_input_v4",
+    }:
         raise ValueError("InstructionInput evaluator has an unknown result contract")
-    has_frozen_cpu_reference = result_contract == "instruction_input_v3"
-    expected_schema = (
-        "instruction_input_v3" if has_frozen_cpu_reference else "instruction_input_v2"
-    )
-    expected_schema_version = 3 if has_frozen_cpu_reference else 2
+    has_frozen_cpu_reference = result_contract in {
+        "instruction_input_v3",
+        "instruction_input_v4",
+    }
+    compact_row_contract = result_contract == "instruction_input_v4"
+    expected_schema = result_contract
+    expected_schema_version = LOCAL_RESULT_SCHEMA_VERSIONS[result_contract]
     top_fields = {
         "schema",
         "schema_version",
@@ -1098,7 +1546,6 @@ def validate_instruction_input_local_result(
         "samples_per_round",
         "descriptor_fields_returned_by_gpu",
         "cpu_native_row_bytes",
-        "resident_stage1_row_bytes",
         "cutoff_log2",
         "cutoff_elements",
         "trace_cutoff_log2",
@@ -1123,6 +1570,12 @@ def validate_instruction_input_local_result(
         "cpu_control",
         "metal_control",
     }
+    resident_row_width_field = (
+        "resident_compact_row_bytes"
+        if compact_row_contract
+        else "resident_stage1_row_bytes"
+    )
+    workload_fields.add(resident_row_width_field)
     if has_frozen_cpu_reference:
         workload_fields.update(
             {
@@ -1142,7 +1595,7 @@ def validate_instruction_input_local_result(
         "samples_per_round": 4,
         "descriptor_fields_returned_by_gpu": 3,
         "cpu_native_row_bytes": 48,
-        "resident_stage1_row_bytes": 160,
+        resident_row_width_field: 48 if compact_row_contract else 160,
         "cutoff_log2": expected["cutoff_log2"],
         "cutoff_elements": cutoff,
         "trace_cutoff_log2": expected["trace_cutoff_log2"],
@@ -1165,7 +1618,11 @@ def validate_instruction_input_local_result(
         "cpu_trials_run_while_resident_metal_sequence_is_allocated": False,
         "cpu_trials_run_before_resident_source_materialization": True,
         "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
-        "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage",
+        "metal_control": (
+            "public InstructionInputSequence over resident compact InstructionInputRow storage"
+            if compact_row_contract
+            else "public InstructionInputSequence over resident SpartanOuterUniskipRow storage"
+        ),
     }
     if has_frozen_cpu_reference:
         expected_workload.update(
@@ -1473,7 +1930,6 @@ def validate_instruction_input_local_result(
     resource_fields = {
         "gpu_seconds",
         "cpu_native_rows_bytes",
-        "resident_stage1_rows_bytes",
         "sequence_owned_working_storage_bytes",
         "cpu_phase_persistent_modeled_bytes",
         "cpu_first_dense_table_bytes",
@@ -1491,6 +1947,12 @@ def validate_instruction_input_local_result(
         "unified_memory_no_per_round_row_upload",
         "sequence_owned_storage_includes_dense_ping_pong_weights_and_reductions",
     }
+    resident_rows_resource_field = (
+        "resident_compact_rows_bytes"
+        if compact_row_contract
+        else "resident_stage1_rows_bytes"
+    )
+    resource_fields.add(resident_rows_resource_field)
     if not isinstance(resources, dict) or set(resources) != resource_fields:
         raise ValueError("InstructionInput evaluator resource record is incomplete")
     gpu_seconds = resources["gpu_seconds"]
@@ -1506,7 +1968,8 @@ def validate_instruction_input_local_result(
     ):
         raise ValueError("InstructionInput evaluator GPU resource timing is invalid")
     cpu_rows_bytes = workload["cpu_native_row_bytes"] * rows
-    resident_rows_bytes = workload["resident_stage1_row_bytes"] * rows
+    resident_rows_bytes = workload[resident_row_width_field] * rows
+    resident_source_rows_bytes = 160 * rows if compact_row_contract else resident_rows_bytes
     sequence_bytes = resources["sequence_owned_working_storage_bytes"]
     if (
         type(sequence_bytes) is not int
@@ -1522,10 +1985,10 @@ def validate_instruction_input_local_result(
     metal_peak_bytes = (
         metal_persistent_bytes + hybrid_tail_bytes + hybrid_tail_bind_scratch_bytes
     )
-    setup_peak_bytes = metal_persistent_bytes + resident_rows_bytes
+    setup_peak_bytes = metal_persistent_bytes + resident_source_rows_bytes
     expected_resources = {
         "cpu_native_rows_bytes": cpu_rows_bytes,
-        "resident_stage1_rows_bytes": resident_rows_bytes,
+        resident_rows_resource_field: resident_rows_bytes,
         "cpu_phase_persistent_modeled_bytes": cpu_rows_bytes,
         "cpu_first_dense_table_bytes": cpu_first_dense_bytes,
         "cpu_bind_scratch_capacity_bytes": cpu_bind_scratch_bytes,
@@ -1538,8 +2001,8 @@ def validate_instruction_input_local_result(
         "evaluator_peak_modeled_bytes": max(
             cpu_peak_bytes, metal_peak_bytes, setup_peak_bytes
         ),
-        "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_rows_bytes,
-        "setup_peak_increment_from_resident_source_copy_bytes": resident_rows_bytes,
+        "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_source_rows_bytes,
+        "setup_peak_increment_from_resident_source_copy_bytes": resident_source_rows_bytes,
         "cutoff_readback_bytes": 8 * cutoff * 16,
     }
     for name, wanted in expected_resources.items():
@@ -1585,7 +2048,11 @@ def validate_local_result_contract(
     contract = config["evaluator"].get("result_contract")
     if contract is None:
         return
-    if contract in {"instruction_input_v2", "instruction_input_v3"}:
+    if contract in {
+        "instruction_input_v2",
+        "instruction_input_v3",
+        "instruction_input_v4",
+    }:
         validate_instruction_input_local_result(config, output, params)
         return
     if contract != "bytecode_read_raf_cycle_v1":
@@ -1967,7 +2434,7 @@ def validate_production_bytecode_member(
 
 
 def validate_production_instruction_input_row_lifecycle(
-    lifecycle: Any, backend: str, log_n: int
+    lifecycle: Any, backend: str, log_n: int, result_schema: int
 ) -> None:
     common_fields = {
         "kind",
@@ -1976,16 +2443,16 @@ def validate_production_instruction_input_row_lifecycle(
         "prepare_storage_id",
         "stage3_storage_id",
     }
-    expected_fields = (
-        common_fields
-        if backend == "optimized"
-        else common_fields | {"stage1_storage_id"}
-    )
+    expected_fields = common_fields
+    if backend == "metal":
+        expected_fields |= {"stage1_storage_id"}
+        if result_schema >= 7:
+            expected_fields |= {"residual_storage_id", "row_production"}
     if not isinstance(lifecycle, dict) or set(lifecycle) != expected_fields:
         raise ValueError(
             "production InstructionInput row lifecycle record is incomplete"
         )
-    integer_fields = expected_fields - {"kind"}
+    integer_fields = expected_fields - {"kind", "row_production"}
     if any(
         type(lifecycle[name]) is not int or lifecycle[name] <= 0
         for name in integer_fields
@@ -1998,7 +2465,7 @@ def validate_production_instruction_input_row_lifecycle(
             and lifecycle["row_bytes"] == 48
             and lifecycle["prepare_storage_id"] == lifecycle["stage3_storage_id"]
         )
-    else:
+    elif result_schema < 7:
         valid = (
             lifecycle["kind"] == "metal_resident"
             and lifecycle["rows"] == 1 << log_n
@@ -2006,6 +2473,33 @@ def validate_production_instruction_input_row_lifecycle(
             and lifecycle["prepare_storage_id"]
             == lifecycle["stage1_storage_id"]
             == lifecycle["stage3_storage_id"]
+        )
+    else:
+        row_count = 1 << log_n
+        valid = (
+            lifecycle["kind"] == "metal_compact_resident"
+            and lifecycle["rows"] == row_count
+            and lifecycle["row_bytes"] == 48
+            and lifecycle["prepare_storage_id"]
+            == lifecycle["stage1_storage_id"]
+            == lifecycle["stage3_storage_id"]
+            and lifecycle["residual_storage_id"]
+            != lifecycle["prepare_storage_id"]
+            and lifecycle["row_production"]
+            == {
+                "source_kind": "owned_random_access",
+                "witness_row_extractions": row_count,
+                "residual_rows_written": row_count,
+                "compact_rows_written": row_count,
+                "compact_row_bytes": 48,
+                "residual_row_bytes": 112,
+                "compact_allocations": 1,
+                "residual_allocations": 1,
+                "full_row_allocations": 0,
+                "full_domain_copy_bytes": 0,
+                "full_domain_copy_dispatches": 0,
+                "host_repack_rows": 0,
+            }
         )
     if not valid:
         raise ValueError("production InstructionInput row lifecycle is invalid")
@@ -2283,6 +2777,106 @@ def validate_production_instruction_input_member(
     return member["service_ns"] if result_schema >= 6 else member["member_ns"]
 
 
+def recompute_local_member_decision(
+    pair_records: list[dict[str, Any]],
+    cpu: list[int],
+    metal: list[int],
+    minimum_speedup: float,
+    minimum_pairs: int,
+) -> tuple[list[float], dict[str, Any]]:
+    speedups = [cpu_ns / metal_ns for cpu_ns, metal_ns in zip(cpu, metal)]
+    improvements = [
+        1.0 - metal_ns / cpu_ns for cpu_ns, metal_ns in zip(cpu, metal)
+    ]
+    speedup_median = statistics.median(speedups)
+    improvement_median = statistics.median(improvements)
+    improvement_mad = statistics.median(
+        abs(value - improvement_median) for value in improvements
+    )
+    cpu_median = statistics.median(cpu)
+    metal_median = statistics.median(metal)
+    optimized_first = [
+        speedup
+        for pair, speedup in zip(pair_records, speedups)
+        if pair.get("order") == ["optimized", "metal"]
+    ]
+    metal_first = [
+        speedup
+        for pair, speedup in zip(pair_records, speedups)
+        if pair.get("order") == ["metal", "optimized"]
+    ]
+    optimized_first_median = (
+        statistics.median(optimized_first) if optimized_first else None
+    )
+    metal_first_median = statistics.median(metal_first) if metal_first else None
+    enough_pairs = len(pair_records) >= minimum_pairs
+    clears_speedup = speedup_median >= minimum_speedup
+    clears_fraction = improvement_median >= 1.0 - 1.0 / minimum_speedup
+    clears_noise = improvement_median > 3.0 * improvement_mad
+    lower_median = metal_median < cpu_median
+    clears_order_strata = (
+        optimized_first_median is not None
+        and metal_first_median is not None
+        and optimized_first_median >= minimum_speedup
+        and metal_first_median >= minimum_speedup
+    )
+    return improvements, {
+        "minimum_speedup": minimum_speedup,
+        "minimum_pairs": minimum_pairs,
+        "median_speedup": speedup_median,
+        "median_fractional_improvement": improvement_median,
+        "mad_fractional_improvement": improvement_mad,
+        "cpu_member_ms_median": cpu_median / 1e6,
+        "cpu_member_ms_mad": statistics.median(
+            abs(value - cpu_median) for value in cpu
+        )
+        / 1e6,
+        "metal_member_ms_median": metal_median / 1e6,
+        "metal_member_ms_mad": statistics.median(
+            abs(value - metal_median) for value in metal
+        )
+        / 1e6,
+        "enough_pairs": enough_pairs,
+        "clears_speedup": clears_speedup,
+        "clears_fractional_improvement": clears_fraction,
+        "clears_noise": clears_noise,
+        "lower_metal_median": lower_median,
+        "optimized_first_median_speedup": optimized_first_median,
+        "metal_first_median_speedup": metal_first_median,
+        "clears_order_strata": clears_order_strata,
+        "clears": enough_pairs
+        and clears_speedup
+        and clears_fraction
+        and clears_noise
+        and lower_median
+        and clears_order_strata,
+    }
+
+
+def decisions_match(actual: Any, expected: dict[str, Any]) -> bool:
+    if not isinstance(actual, dict) or set(actual) != set(expected):
+        return False
+    for name, wanted in expected.items():
+        got = actual[name]
+        if isinstance(wanted, bool):
+            if got is not wanted:
+                return False
+        elif isinstance(wanted, int):
+            if type(got) is not int or got != wanted:
+                return False
+        elif wanted is None:
+            if got is not None:
+                return False
+        elif (
+            isinstance(got, bool)
+            or not isinstance(got, (int, float))
+            or not math.isfinite(got)
+            or not math.isclose(float(got), wanted, rel_tol=1e-9, abs_tol=1e-9)
+        ):
+            return False
+    return True
+
+
 def validate_production_result(
     config: dict[str, Any],
     result: dict[str, Any],
@@ -2530,6 +3124,8 @@ def validate_production_result(
             )
         ):
             raise ValueError("production PIOP resource summary is invalid")
+    optimized_first_median = None
+    metal_first_median = None
     if local_kernel == "BytecodeReadRafCycle":
         bytecode_fingerprint = result.get("fingerprint")
         if not isinstance(bytecode_fingerprint, dict):
@@ -2663,8 +3259,6 @@ def validate_production_result(
             raise ValueError(
                 "production InstructionInput result has incomplete raw pair records"
             )
-        optimized_first_speedups = []
-        metal_first_speedups = []
         raw_cpu_members = []
         raw_metal_members = []
         for index, (record, local_speedup) in enumerate(zip(pair_records, local_pairs)):
@@ -2694,10 +3288,10 @@ def validate_production_result(
                 metal_record, "metal", log_n, cutoff_log2, result_schema
             )
             validate_production_instruction_input_row_lifecycle(
-                cpu_row_lifecycle, "optimized", log_n
+                cpu_row_lifecycle, "optimized", log_n, result_schema
             )
             validate_production_instruction_input_row_lifecycle(
-                metal_row_lifecycle, "metal", log_n
+                metal_row_lifecycle, "metal", log_n, result_schema
             )
             if result_schema >= 6 and metal_record["resource_observation"][
                 "native_primer"
@@ -2735,11 +3329,6 @@ def validate_production_result(
                 )
             raw_cpu_members.append(cpu_member)
             raw_metal_members.append(metal_member)
-            (
-                optimized_first_speedups
-                if expected_order == ["optimized", "metal"]
-                else metal_first_speedups
-            ).append(float(local_speedup))
         for name, raw_samples in (
             ("cpu_instruction_input_kernel_service_ms_samples", raw_cpu_members),
             ("metal_instruction_input_kernel_service_ms_samples", raw_metal_members),
@@ -2762,39 +3351,52 @@ def validate_production_result(
                 )
             ):
                 raise ValueError("production InstructionInput sample summary is invalid")
-        optimized_first_median = statistics.median(optimized_first_speedups)
-        metal_first_median = statistics.median(metal_first_speedups)
         minimum_speedup = float(gate["minimum_local_speedup"])
+        recomputed_improvements, recomputed_decision = recompute_local_member_decision(
+            pair_records,
+            raw_cpu_members,
+            raw_metal_members,
+            minimum_speedup,
+            int(gate["minimum_pairs"]),
+        )
+        optimized_first_median = float(
+            recomputed_decision["optimized_first_median_speedup"]
+        )
+        metal_first_median = float(
+            recomputed_decision["metal_first_median_speedup"]
+        )
+        reported_improvements = metrics.get(
+            "paired_instruction_input_kernel_service_fractional_improvements"
+        )
         if (
-            optimized_first_median < minimum_speedup
-            or metal_first_median < minimum_speedup
+            not isinstance(reported_improvements, list)
+            or len(reported_improvements) != len(recomputed_improvements)
+            or any(
+                isinstance(reported, bool)
+                or not isinstance(reported, (int, float))
+                or not math.isfinite(reported)
+                or not math.isclose(
+                    float(reported), expected, rel_tol=1e-9, abs_tol=1e-12
+                )
+                for reported, expected in zip(
+                    reported_improvements, recomputed_improvements
+                )
+            )
         ):
+            raise ValueError(
+                "production InstructionInput fractional improvements disagree with raw pairs"
+            )
+        if recomputed_decision["clears_order_strata"] is not True:
             raise ValueError(
                 "production InstructionInput order stratum does not clear the local gate"
             )
-        decision_values = {
-            "minimum_speedup": minimum_speedup,
-            "median_speedup": float(metric),
-            "optimized_first_median_speedup": optimized_first_median,
-            "metal_first_median_speedup": metal_first_median,
-        }
-        for name, expected in decision_values.items():
-            actual = decision.get(name)
-            if (
-                isinstance(actual, bool)
-                or not isinstance(actual, (int, float))
-                or not math.isclose(float(actual), expected, rel_tol=1e-12)
-            ):
-                raise ValueError(
-                    "production InstructionInput decision disagrees with recomputed "
-                    f"{name}"
-                )
-        if (
-            decision.get("minimum_pairs") != int(gate["minimum_pairs"])
-            or decision.get("clears_order_strata") is not True
-        ):
+        if recomputed_decision["clears"] is not True:
             raise ValueError(
-                "production InstructionInput decision has an invalid order-strata claim"
+                "production InstructionInput raw pairs do not clear the fixed local decision"
+            )
+        if not decisions_match(decision, recomputed_decision):
+            raise ValueError(
+                "production InstructionInput decision disagrees with recomputed raw-pair decision"
             )
     piop_speedup = metrics.get("piop_speedup")
     if (
@@ -3204,7 +3806,7 @@ def production_rejection_record(run_dir: Path) -> Optional[dict[str, Any]]:
 def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     template = read_json(Path(args.template))
-    validate_template(template)
+    validate_template(template, root)
     validate_new_run_template(template)
     goal_contract = read_json(root / template["portfolio_contract"])
     validate_goal_contract(goal_contract)

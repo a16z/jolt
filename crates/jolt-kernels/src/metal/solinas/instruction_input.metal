@@ -1,6 +1,5 @@
 #define INSTRUCTION_INPUT_COEFFICIENTS 3u
 
-#define INSTRUCTION_INPUT_FLAG_LOAD 0u
 #define INSTRUCTION_INPUT_FLAG_IMM_POSITIVE 18u
 #define INSTRUCTION_INPUT_FLAG_LEFT_IS_RS1 20u
 #define INSTRUCTION_INPUT_FLAG_LEFT_IS_PC 21u
@@ -40,16 +39,14 @@ inline SolinasFp128 instruction_input_from_i128(
 }
 
 inline int instruction_input_flag(
-    device const SpartanOuterUniskipRow& row,
+    device const InstructionInputRow& row,
     uint bit)
 {
-    return (int)((row.words[19] >> bit) & 1ul);
+    return (int)((instruction_input_row_word(row, 5u) >> bit) & 1ul);
 }
 
-inline ulong instruction_input_rs2(device const SpartanOuterUniskipRow& row) {
-    return instruction_input_flag(row, INSTRUCTION_INPUT_FLAG_LOAD) != 0
-        ? 0ul
-        : row.words[10];
+inline ulong instruction_input_rs2(device const InstructionInputRow& row) {
+    return instruction_input_row_word(row, 2u);
 }
 
 inline void instruction_input_accumulate_u64(
@@ -89,8 +86,8 @@ inline void instruction_input_accumulate_i128(
 }
 
 inline void instruction_input_native_pair(
-    device const SpartanOuterUniskipRow& row_0,
-    device const SpartanOuterUniskipRow& row_1,
+    device const InstructionInputRow& row_0,
+    device const InstructionInputRow& row_1,
     SolinasFp128 gamma,
     SolinasFp128 weight,
     thread SolinasFp128* lanes)
@@ -106,14 +103,14 @@ inline void instruction_input_native_pair(
         left,
         instruction_input_flag(row_0, INSTRUCTION_INPUT_FLAG_LEFT_IS_RS1),
         instruction_input_flag(row_1, INSTRUCTION_INPUT_FLAG_LEFT_IS_RS1),
-        row_0.words[9],
-        row_1.words[9]);
+        instruction_input_row_word(row_0, 0u),
+        instruction_input_row_word(row_1, 0u));
     instruction_input_accumulate_u64(
         left,
         instruction_input_flag(row_0, INSTRUCTION_INPUT_FLAG_LEFT_IS_PC),
         instruction_input_flag(row_1, INSTRUCTION_INPUT_FLAG_LEFT_IS_PC),
-        row_0.words[6],
-        row_1.words[6]);
+        instruction_input_row_word(row_0, 1u),
+        instruction_input_row_word(row_1, 1u));
     instruction_input_accumulate_u64(
         right,
         instruction_input_flag(row_0, INSTRUCTION_INPUT_FLAG_RIGHT_IS_RS2),
@@ -124,11 +121,11 @@ inline void instruction_input_native_pair(
         right,
         instruction_input_flag(row_0, INSTRUCTION_INPUT_FLAG_RIGHT_IS_IMM),
         instruction_input_flag(row_1, INSTRUCTION_INPUT_FLAG_RIGHT_IS_IMM),
-        row_0.words[7],
-        row_0.words[8],
+        instruction_input_row_word(row_0, 3u),
+        instruction_input_row_word(row_0, 4u),
         instruction_input_flag(row_0, INSTRUCTION_INPUT_FLAG_IMM_POSITIVE) != 0,
-        row_1.words[7],
-        row_1.words[8],
+        instruction_input_row_word(row_1, 3u),
+        instruction_input_row_word(row_1, 4u),
         instruction_input_flag(row_1, INSTRUCTION_INPUT_FLAG_IMM_POSITIVE) != 0);
 
     for (uint descriptor = 0; descriptor < INSTRUCTION_INPUT_COEFFICIENTS; descriptor++) {
@@ -142,7 +139,7 @@ inline void instruction_input_native_pair(
 }
 
 inline SolinasFp128 instruction_input_row_field(
-    device const SpartanOuterUniskipRow& row,
+    device const InstructionInputRow& row,
     uint table)
 {
     switch (table) {
@@ -150,12 +147,12 @@ inline SolinasFp128 instruction_input_row_field(
             return instruction_input_from_u64(
                 (ulong)instruction_input_flag(row, INSTRUCTION_INPUT_FLAG_LEFT_IS_RS1));
         case 1u:
-            return instruction_input_from_u64(row.words[9]);
+            return instruction_input_from_u64(instruction_input_row_word(row, 0u));
         case 2u:
             return instruction_input_from_u64(
                 (ulong)instruction_input_flag(row, INSTRUCTION_INPUT_FLAG_LEFT_IS_PC));
         case 3u:
-            return instruction_input_from_u64(row.words[6]);
+            return instruction_input_from_u64(instruction_input_row_word(row, 1u));
         case 4u:
             return instruction_input_from_u64(
                 (ulong)instruction_input_flag(row, INSTRUCTION_INPUT_FLAG_RIGHT_IS_RS2));
@@ -166,8 +163,8 @@ inline SolinasFp128 instruction_input_row_field(
                 (ulong)instruction_input_flag(row, INSTRUCTION_INPUT_FLAG_RIGHT_IS_IMM));
         default:
             return instruction_input_from_i128(
-                row.words[7],
-                row.words[8],
+                instruction_input_row_word(row, 3u),
+                instruction_input_row_word(row, 4u),
                 instruction_input_flag(row, INSTRUCTION_INPUT_FLAG_IMM_POSITIVE) != 0);
     }
 }
@@ -272,7 +269,7 @@ inline void instruction_input_finish_block(
 }
 
 kernel void solinas_instruction_input_native_message(
-    device const SpartanOuterUniskipRow* rows [[buffer(0)]],
+    device const InstructionInputRow* rows [[buffer(0)]],
     device const SolinasFp128* e_in [[buffer(1)]],
     device const SolinasFp128* e_out [[buffer(2)]],
     device SolinasFp128* partials [[buffer(3)]],
@@ -304,7 +301,7 @@ kernel void solinas_instruction_input_native_message(
 }
 
 kernel void solinas_instruction_input_native_transition(
-    device const SpartanOuterUniskipRow* rows [[buffer(0)]],
+    device const InstructionInputRow* rows [[buffer(0)]],
     device SolinasFp128* dense [[buffer(1)]],
     device const SolinasFp128* e_in [[buffer(2)]],
     device const SolinasFp128* e_out [[buffer(3)]],

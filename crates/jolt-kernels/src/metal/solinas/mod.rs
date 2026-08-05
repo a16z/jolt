@@ -67,13 +67,14 @@ pub use bytecode_cycle::{
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
 pub(crate) use instruction_input::{
-    instruction_input_sequence_storage_bytes, instruction_input_weight_capacities,
-    InstructionInputSequenceStorage, PendingInstructionInputPrimer,
-    INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS, INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
-    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+    instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
+    instruction_input_weight_capacities, InstructionInputSequenceStorage,
+    PendingInstructionInputPrimer, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
+    INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
 };
 pub use instruction_input::{
-    InstructionInputPrimerStats, InstructionInputSequence, InstructionInputSequenceConfig,
+    InstructionInputPrimerStats, InstructionInputRow, InstructionInputRows,
+    InstructionInputSequence, InstructionInputSequenceConfig,
     InstructionInputStorageInitialization, InstructionInputStorageInitializationStats,
     INSTRUCTION_INPUT_COEFFICIENTS, INSTRUCTION_INPUT_TABLES,
 };
