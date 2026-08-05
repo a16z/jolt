@@ -19,7 +19,7 @@ wave-1 attribution report: `.journals/metal-m5-saturation-report.html`.
   max, then next. No e2e for kernel iteration.
 - Night mandate (01:49): waves run continuously; prepare functions → GPU;
   every-kernel sweep. Kernel-adding merges: re-count `KernelId::ALL`
-  (currently `[Self; 73]`).
+  (currently `[Self; 74]`).
 - All cargo under `/usr/bin/lockf -k /tmp/jolt-metal-wave3-cargo.lock`;
   `gpu_lock()` for timed GPU. No pushing without parent's word.
 
@@ -80,3 +80,4 @@ Doctrine: single-kernel + prepare→GPU. Off `3830f4da8`+.
 <!-- verdict · numbers · commit · one-line mechanism -->
 - **st5 IRR phase-scan: GO, merged.** 2^24 41.12→18.91 ms (−54.0%), modeled st5 −2.68 s @2^27 (14.81→~12.13). `36485d52e` — collision-only SIMD scatter replaces full-width scan. Parity 10/10+10/10.
 - **st4 GPU CSR prepare (W2B salvage): RETAIN, merged.** 2^24 985.11→136.46 ms (−86.1%), modeled ≥1.58 s @2^27, alloc Δ0. Loop fusion NO-GO (−5.7%, JOLT_REGRW_FUSED=1 opt-in probe). `c3222b7ce` — exact legacy CSR built on device. Parity 4/4.
+- **st6b IncCR prepare → GPU: RETAIN, merged.** 2^24 465-490→80-83 ms (−83%), modeled −1.48 s @2^27. st5 bucket attempt reverted (0.07 s, below bar). `1a6c6ff58` — jk_inc_prepare split-eq paired weights, detached fill overlapped with host column materialization. Oracle+transcript parity green. Inventory: st3 SpartanShift 0.66 s below bar; sweep complete.

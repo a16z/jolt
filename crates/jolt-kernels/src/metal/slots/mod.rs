@@ -48,6 +48,8 @@ mod spartan_product;
 
 pub use bytecode_read_raf::MetalBytecodeReadRafCycle;
 pub use hamming_weight_claim_reduction::MetalHammingWeightClaimReduction;
+#[cfg(feature = "bench-utils")]
+pub use inc_claim_reduction::bench::IncPrepareFixture;
 pub use inc_claim_reduction::MetalIncClaimReduction;
 pub use instruction_claim_reduction::MetalInstructionClaimReduction;
 #[cfg(feature = "bench-utils")]
@@ -106,6 +108,21 @@ impl RoundTable {
             Some(buffer) => buffer,
             None => ctx.own_page_aligned(PageAlignedVec::from_elem(Fr::from_u64(0), nxt_len))?,
         };
+        Ok(Self { cur, nxt })
+    }
+
+    /// Allocate both ping-pong sides for a device fill of `cur` before the
+    /// table becomes visible to any round.
+    pub(super) fn new_device_filled(
+        ctx: &'static MetalContext,
+        len: usize,
+    ) -> Result<Self, MetalError> {
+        let cur = own_uninit_frs(ctx, len)?.ok_or(MetalError::UnsupportedShape(
+            "zero-length device-filled round table",
+        ))?;
+        let nxt = own_uninit_frs(ctx, len / 2)?.ok_or(MetalError::UnsupportedShape(
+            "device-filled round table has no bind target",
+        ))?;
         Ok(Self { cur, nxt })
     }
 

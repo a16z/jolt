@@ -35,6 +35,16 @@ struct BindEvalParams {
     uint points[FR_LIMBS * JK_MAX_EVAL_POINTS];
 };
 
+struct IncPrepareParams {
+    uint n;
+    uint low_bits;
+    uint low_mask;
+    uint offsets[8];
+    uint gamma[FR_LIMBS];
+    uint gamma2[FR_LIMBS];
+    uint gamma3[FR_LIMBS];
+};
+
 // Empty kernel for dispatch-latency measurement.
 kernel void jk_noop() {}
 
@@ -131,6 +141,34 @@ kernel void jk_fr_bind4(
     result = fr_add(result, fr_mont_mul(fr_load_const(p.l3, 0),
                                        fr_sub(fr_load(a, 4 * gid + 3), a0)));
     fr_store(out, gid, result);
+}
+
+// Direct paired weights avoid four T-sized eq intermediates; balanced
+// factors keep the upload at O(sqrt(T)).
+kernel void jk_inc_prepare(
+    device const uint* factors [[buffer(0)]],
+    device uint* ram_weights [[buffer(1)]],
+    device uint* rd_weights [[buffer(2)]],
+    constant IncPrepareParams& p [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= p.n) {
+        return;
+    }
+    uint high = gid >> p.low_bits;
+    uint low = gid & p.low_mask;
+    Fr256 eq[4];
+    for (uint point = 0; point < 4u; point++) {
+        Fr256 high_factor = fr_load(factors, p.offsets[2u * point] + high);
+        Fr256 low_factor = fr_load(factors, p.offsets[2u * point + 1u] + low);
+        eq[point] = fr_mont_mul(high_factor, low_factor);
+    }
+    Fr256 gamma = fr_load_const(p.gamma, 0);
+    Fr256 gamma2 = fr_load_const(p.gamma2, 0);
+    Fr256 gamma3 = fr_load_const(p.gamma3, 0);
+    fr_store(ram_weights, gid, fr_add(eq[0], fr_mont_mul(gamma, eq[1])));
+    fr_store(rd_weights, gid, fr_add(fr_mont_mul(gamma2, eq[2]),
+                                    fr_mont_mul(gamma3, eq[3])));
 }
 
 // --- Slot-round machinery -------------------------------------------------
