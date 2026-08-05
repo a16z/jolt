@@ -2,8 +2,6 @@
 //! of consumers.
 
 use std::ops::Range;
-#[cfg(feature = "parallel")]
-use std::sync::Mutex;
 
 use jolt_program::execution::TraceRow;
 #[cfg(feature = "parallel")]
@@ -142,99 +140,6 @@ pub trait RowSource {
     fn rows(&self) -> Option<&[TraceRow]> {
         None
     }
-}
-
-/// The parallel scatter grain of the index-parallel collectors: big enough
-/// to amortize rayon dispatch, small enough to load-balance skewed
-/// extraction.
-#[cfg(feature = "parallel")]
-const COLLECT_PAR_CHUNK: usize = 1 << 12;
-
-/// Deterministic error latch for the index-parallel collectors: keeps the
-/// failure at the LOWEST index, so an invalid trace reports the same error
-/// the sequential walk would hit first, independent of thread timing.
-///
-/// Blocking lock throughout: contention exists only on error paths, which
-/// never overlap the happy path's cost (each worker chunk stops at its first
-/// failure).
-#[cfg(feature = "parallel")]
-pub struct FirstErrorLatch {
-    slot: Mutex<Option<(usize, WitnessError)>>,
-}
-
-#[cfg(feature = "parallel")]
-#[expect(
-    clippy::unwrap_used,
-    reason = "no lock user can panic while holding the latch"
-)]
-impl FirstErrorLatch {
-    pub fn new() -> Self {
-        Self {
-            slot: Mutex::new(None),
-        }
-    }
-
-    /// Record `failure` at `index` if it precedes the held one.
-    pub fn record(&self, index: usize, failure: WitnessError) {
-        let mut guard = self.slot.lock().unwrap();
-        if guard.as_ref().is_none_or(|(held, _)| index < *held) {
-            *guard = Some((index, failure));
-        }
-    }
-
-    /// The lowest-index failure, if any worker recorded one.
-    pub fn take(self) -> Option<WitnessError> {
-        self.slot.into_inner().unwrap().map(|(_, failure)| failure)
-    }
-}
-
-#[cfg(feature = "parallel")]
-impl Default for FirstErrorLatch {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// In-place parallel collection of `window(0..count)` into a fresh vector:
-/// workers write straight into the destination's spare capacity — no
-/// per-thread segment buffers or concatenation (rayon's `Result` collect
-/// loses indexedness and stages every segment). The lowest-index error wins
-/// (deterministic across runs); on error the partially-written buffer is
-/// abandoned without drops — sound because `V: Copy` rules out drop
-/// obligations by construction. Public for the kernels' index-parallel
-/// collectors over borrowed trace rows.
-#[cfg(feature = "parallel")]
-pub fn par_collect_windows<V: Copy + Send>(
-    count: usize,
-    window: impl Fn(usize) -> Result<V, WitnessError> + Send + Sync,
-) -> Result<Vec<V>, WitnessError> {
-    let mut out: Vec<V> = Vec::with_capacity(count);
-    let spare = &mut out.spare_capacity_mut()[..count];
-    let error = FirstErrorLatch::new();
-    spare
-        .par_chunks_mut(COLLECT_PAR_CHUNK)
-        .enumerate()
-        .for_each(|(chunk_index, destination)| {
-            let base = chunk_index * COLLECT_PAR_CHUNK;
-            for (offset, slot) in destination.iter_mut().enumerate() {
-                match window(base + offset) {
-                    Ok(value) => {
-                        let _ = slot.write(value);
-                    }
-                    Err(failure) => {
-                        error.record(base + offset, failure);
-                        return;
-                    }
-                }
-            }
-        });
-    if let Some(failure) = error.take() {
-        return Err(failure);
-    }
-    // SAFETY: the error latch is empty, so every chunk ran to completion and
-    // initialized all `count` slots of the spare capacity above.
-    unsafe { out.set_len(count) };
-    Ok(out)
 }
 
 /// The fused pass: walk `range` once and deliver each chunk to every

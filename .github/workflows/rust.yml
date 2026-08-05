@@ -457,6 +457,11 @@ jobs:
       - name: Test jolt-witness with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-witness --features test-utils,parallel --cargo-quiet
+      # Same non-default-parallel pattern: jolt-utils' latch/collector tests
+      # only exist behind its parallel feature.
+      - name: Test jolt-utils with parallel
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet

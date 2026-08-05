@@ -28,7 +28,6 @@ pub mod field_inline;
 pub mod testing;
 pub mod witnesses;
 
-mod alloc;
 mod bundle;
 mod consumer;
 mod error;
@@ -45,8 +44,6 @@ pub use consumer::{
     collect_bundles, stream_witnesses, ChunkVisitor, CollectBundles, ConsumerSet, RowSource,
     StreamConsumer,
 };
-#[cfg(feature = "parallel")]
-pub use consumer::{par_collect_windows, FirstErrorLatch};
 pub use error::WitnessError;
 pub use shape::{PolynomialEncoding, Shape};
 

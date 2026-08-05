@@ -25,7 +25,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
-use jolt_poly::thread::unsafe_allocate_zero_vec;
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, StreamConsumer};
 

@@ -63,7 +63,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
             W::extract_indexed(selector, row, next, env).map(W::into)
         })?;
         // The selector's mask bounds every hot address below `2^chunk_bits`.
-        let mut values = crate::alloc::zero_table(checked_pow2(log_rows)?);
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(checked_pow2(log_rows)?);
         for (cycle, address) in hot_addresses.into_iter().enumerate() {
             if let Some(address) = address {
                 values[address * cycles + cycle] = F::one();
@@ -98,7 +98,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 value(current, next, &env)
             };
             #[cfg(feature = "parallel")]
-            return crate::consumer::par_collect_windows(rows, window);
+            return jolt_utils::par_collect_windows(rows, window);
             #[cfg(not(feature = "parallel"))]
             return (0..rows).map(window).collect();
         }

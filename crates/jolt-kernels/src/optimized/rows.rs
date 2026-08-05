@@ -10,9 +10,9 @@ use core::ops::Range;
 
 use jolt_field::Field;
 use jolt_program::execution::TraceRow;
-use jolt_witness::witnesses::WitnessEnv;
 #[cfg(feature = "parallel")]
-use jolt_witness::{par_collect_windows, FirstErrorLatch};
+use jolt_utils::{par_collect_windows, FirstErrorLatch};
+use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
