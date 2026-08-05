@@ -149,3 +149,17 @@ absolute measured. Wave 3 CLOSED.
 - **st8 fly restructure: door PRICED SHUT, merged (harness+lever, defaults unchanged).** Spill map: cliff below one Fq6 (fq6 sqr 2.8× off CIOS roof at 48 u32 live; fly peak ≈430 u32). Split ladder +12.7..18.2% (killed). NEW lever: TG cap 64 → −8.6% @2^13 hook but −2.8% @2^17 ⇒ ~0.19 s, below bar, env-gated JOLT_METAL_PAIRING_TG_CAP. `a18bfb890`. Handoff: jk_miller_table −24% at cap 32 on commit shape. Bundle door: cap-64 + dispatch-merge ≈ 0.4 s. 253/253+47/47.
 - **Record attempt in probe-passed window: 77.44 s / 1.733 MHz / RSS 72.24 GiB.** Best absolute tonight (78.46→77.44) but window still ~11% off record-grade (2^22 probe 3.89 s vs ~3.0-3.3 healthy on this code; threshold was too loose). Three windows tonight agree at 77-79 s on wave-3 code vs 95 s wave-2 code — paired A/B certification unchanged. Absolute record deferred to a genuinely fresh window (tighter probe ≤3.4 s; likely post-reboot).
 - **st8 dispatch-merge bundle: RETAIN, merged (default-on).** Reduce-message multi-pairs merged 4→1/2→1 into one gated jk_miller_fly dispatch + fly-only cap 64: r0 −10.3%, r5-r8 −45..−87%; measured −0.61 s / modeled −0.9 s st8 @2^27 (w3 had priced 0.2 s). Kill switches JOLT_MILLER_MERGE_DISPATCH=0 / JOLT_METAL_PAIRING_TG_CAP=0. `2c88f6dae`. st0 cap NO-SHIP: in-pipeline inversion (+2% wall — freed occupancy eaten by co-scheduled seg-sum). 255/255+47/47+20/20 byte-diff.
+
+## Wave-4 gate (10:45 UTC)
+
+Battery: kernels+dory+eval 404/404 (incl. new bundle parity + 20/20
+byte-diff ratchet); clippy/fmt green in lanes. Shipped: st8 dispatch-merge
+bundle (isolated-certified −0.61 s measured / −0.9 s modeled; kill
+switches). Doors closed with pricing: fly restructure (spill cliff below
+one Fq6), typed-Dory packing (+0.08 s vs 18-25 days), st0 TG cap
+(in-pipeline inversion). Bundle-on 2^27 completes cleanly (exit 0; earlier
+missing output = transient). E2e delta certification deferred — window
+degrades under sustained load (78→95→102 s across the morning on
+unchanged code); bundle's e2e effect will show in the next record-window
+stage vector (default-on). Wave 4 CLOSED. Record watchdog 6e88f481
+probing hourly (2^22 ≤ 3.40 s).
