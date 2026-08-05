@@ -504,6 +504,55 @@ pub(crate) fn prepare_booleanity_cycle<F: Field>(
     }))
 }
 
+/// Bench seam (`metal::st6b_bench`): the cycle kernel from raw parts —
+/// pre-collected rows and an explicit layout, skipping the witness plane
+/// (shape validation and row collection are the caller's). Construction
+/// mirrors [`prepare_booleanity_cycle`] exactly from the selector build on.
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[expect(clippy::too_many_arguments, reason = "bench-only raw-parts seam")]
+pub(crate) fn booleanity_cycle_kernel_for_bench<F: Field>(
+    rows: Arc<InstructionRows>,
+    layout: JoltRaPolynomialLayout,
+    log_k_chunk: usize,
+    r_address: &[F],
+    reference_address: &[F],
+    reference_cycle: &[F],
+    gamma: F,
+    driver: impl FnOnce(BooleanityDeviceInputs<'_, F>) -> Option<Box<dyn LazyRaDevice<F>>>,
+) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
+    let selectors = ColumnSelector::for_layout(layout, log_k_chunk)?;
+    let address_scalar =
+        try_eq_mle(r_address, reference_address).map_err(|_| KernelError::InvariantViolation {
+            reason: "booleanity address point and reference length mismatch",
+        })?;
+    let eq_address = eq_table(r_address);
+    let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(gamma, layout.total())?;
+    let tables: Vec<Vec<F>> = gamma_powers
+        .iter()
+        .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
+        .collect();
+    let driver = driver(BooleanityDeviceInputs {
+        rows: &rows,
+        poly_meta: selectors.iter().map(ColumnSelector::device_meta).collect(),
+        log_k_chunk,
+        gamma_powers: &gamma_powers,
+    });
+    Ok(Box::new(OptimizedBooleanityCycleKernel {
+        rounds: reference_cycle.len(),
+        eq: GruenSplitEqPolynomial::new_with_scaling(
+            reference_cycle,
+            BindingOrder::LowToHigh,
+            Some(address_scalar),
+        ),
+        tables: LazyFoldedRa::new_with_driver(tables, BooleanityChunks { rows, selectors }, driver),
+        gamma_powers,
+        gamma_powers_inv,
+        layout,
+        rounds_bound: 0,
+        launched: false,
+    }))
+}
+
 /// `(γ^i, γ^{-i})` pairs for the pre-scaled shared tables. The inverse
 /// powers unscale the final claims back to the committed polynomials'
 /// values; `γ^i · γ^{-i} = 1` exactly, so unscaling is byte-exact.

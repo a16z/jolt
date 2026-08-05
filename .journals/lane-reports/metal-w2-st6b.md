@@ -105,14 +105,69 @@ ambient-dependent and only the wave-close cool runs can confirm.
 - Byte parity: slot lockstep suites + the harness oracle (the change is
   representation-only; no transcript/protocol surface).
 
-## Follow-up doors (not taken, evidence attached)
+## Follow-up doors (after the Rav retention)
 
-1. **Bool driver extension** — the biggest remaining adopter (20 polys,
-   15 GiB at 2^27) still runs the legacy synchronous width-8 adoption; the
-   `PendingAdopt` machinery is generic, needs only a `jk_bool_adopt_round`
-   twin + horizon override. Expected same-shape win, larger volume.
+1. **Bool driver extension** — taken below.
 2. **Below-gate tail reclaim** — rounds 8-14 `begin_round` costs 3-7 ms
    each at 2^24 in BOTH arms (dense `take_dense` copy + host binds after
    the gate closes); small but 3 drivers × ~6 rounds.
 3. IncCR::prepare / BytecodeRRC host mass is the hostgaps lane's surface,
    untouched here.
+
+---
+
+# Bool door (follow-up, post-merge `9c4699c56`): RETAIN
+
+The booleanity-cycle driver — the biggest single adopter (20 polys,
+15 GiB fresh ping-pong at 2^27) — now runs the same deferred fused
+adoption: `BoolDriver::lazy_horizon = 8`, ONE detached
+`jk_bool_adopt_round` (gather once at width 16 → dense write at `T/16` +
+the two summand lanes `[q_constant, q_leading]`), riding the `PendingAdopt`
+machinery unchanged. Knob: `JOLT_BOOL_DEFERRED_ADOPT=0` = legacy. No
+geometry blocker: the Bool kernel holds two accumulators (no per-batch
+register arrays), so the 20-poly width-16 gather loop is thread-state-flat.
+
+## Isolated decision (2 agreeing quiet runs, same-window interleaved arms)
+
+Harness extension: the REAL optimized booleanity-cycle kernel built from
+raw parts (`booleanity_cycle_kernel_for_bench` — construction mirrors
+`prepare_booleanity_cycle` from the selector build on) at the production
+layout split (16 instruction + 2 bytecode + 2 RAM selectors, 8-bit
+chunks; CB-audit-matched 20-poly adoption), booleanity-flavored rows
+(every PC hot, ~3/8 RAM hot — the sentinel gathers pay their production
+mix). CPU-twin oracle: wire polynomials + output claims byte-equal ✓ both
+arms, both sizes.
+
+| size | arm | total | adopt begin | adopt span | Σ begin | adopt alloc |
+|---|---|---:|---:|---:|---:|---:|
+| 2^22 | sync | 76.2-83.3 ms | 19.4-20.5 ms | 25.1-25.9 ms | 35.2-38.9 ms | 480 MiB |
+| 2^22 | defer | **70.8-77.5 ms** | **0.40-0.42 ms** | **12.4-13.6 ms** | **15.8-18.9 ms** | **240 MiB** |
+| 2^24 | sync | 225.2-228.4 ms | 68.7-71.3 ms | 85.8-89.8 ms | 83.4-88.4 ms | 1920 MiB |
+| 2^24 | defer | **206.5-210.8 ms** | **0.44-0.51 ms** | **43.7-45.3 ms** | **16.2-18.6 ms** | **960 MiB** |
+
+Verdict at 2^24: isolated total **−7.7…−8.3%**, adoption-round
+`begin_round` **−99.3%** (68.7-71.3 → 0.44-0.51 ms), adoption span
+**−49…−50%**, Σbegin **−78…−82%**, adoption allocation **halved**
+(1.875 → 0.94 GiB at 2^24; **15 → 7.5 GiB at 2^27**). Same shape as the
+Rav result; retention bar (adopt-begin collapse + no total regression) met
+with margin.
+
+## Combined stage-6b adoption model at 2^27 (orchestrator's gate to confirm)
+
+All three drivers now defer: fresh adoption-round allocation
+**28.5 → 14.25 GiB** (Bool 15→7.5, InstrRav 12→6, RamRav 1.5→0.75), zero
+blocking materialize waits in phase 1 (three ~65-71 ms/2^24-scale begin
+stalls → ~0.5 ms each), and the three fused adopt-rounds overlap the
+~2.6 s of synchronous CPU members at that round. Modeled good-mode st6b
+−1…−2 s total across the three drivers; the 30.9 s tail mode loses half
+its allocation fuel plus every phase-1 adoption wait.
+
+## Retention matrix (Bool increment)
+
+- jolt-kernels `--features metal`: **248/248** (1 known-class leaky) —
+  including new `bool_parity_adopt_decline`, `bool_parity_legacy_sync_adopt`
+  and the re-pinned deferred counts (4+1+8 full / 4+1+2 handoff / 4
+  decline; legacy 3+1+10).
+- Non-metal lazy-RA consumers 21/21; clippy `-D warnings` ± metal; fmt.
+- Wire bytes unchanged by construction (representation-only; same lanes,
+  same messages), pinned by the lockstep suites + harness oracle.

@@ -270,6 +270,67 @@ kernel void jk_rav_lazy_round(
     }
 }
 
+struct BoolAdoptParams {
+    uint groups;     // new_len / 2 message pairs
+    uint num_tgs;
+    uint log_in;
+    uint width;      // branch count (2 · lazy horizon, i.e. 16)
+    uint num_polys;
+    uint k_entries;
+    uint mask;
+    uint len;        // dense length = cycles / width (cur stride)
+};
+
+// Booleanity-cycle fused adoption round: thread `gid` gathers each
+// polynomial's (h0, h1) dense pair at width `width` — the values
+// lazy_ra::materialize would store — writes them into the flat poly-major
+// `cur` (stride `len`), and accumulates the same two summand lanes as
+// jk_bool_dense_round. One pass over the rows replaces the legacy
+// materialize dispatch PLUS the message round's full re-read of `cur`.
+kernel void jk_bool_adopt_round(
+    device const uint* rows [[buffer(0)]],
+    device const uint* meta [[buffer(1)]],
+    device const uint* tables [[buffer(2)]],
+    device uint* cur [[buffer(3)]],
+    device const uint* rho [[buffer(4)]],
+    device const uint* e_in [[buffer(5)]],
+    device const uint* e_out [[buffer(6)]],
+    device uint* partials [[buffer(7)]],
+    constant BoolAdoptParams& p [[buffer(8)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < p.groups;
+    Fr256 eq = fr_zero();
+    if (active) {
+        eq = fr_mont_mul(fr_load(e_out, gid >> p.log_in),
+                         fr_load(e_in, gid & ((1u << p.log_in) - 1u)));
+    }
+    uint per_poly = p.width * p.k_entries * FR_LIMBS;
+    Fr256 constant_acc = fr_zero();
+    Fr256 leading_acc = fr_zero();
+    for (uint i = 0u; i < p.num_polys; i++) {
+        if (!active) {
+            break;
+        }
+        uint kind = meta[2u * i];
+        uint shift = meta[2u * i + 1u];
+        device const uint* table = tables + i * per_poly;
+        Fr256 h0 = jk_ra_gather(rows, table, p.width, p.k_entries, kind, shift, p.mask, 2u * gid);
+        Fr256 h1 =
+            jk_ra_gather(rows, table, p.width, p.k_entries, kind, shift, p.mask, 2u * gid + 1u);
+        fr_store(cur, i * p.len + 2u * gid, h0);
+        fr_store(cur, i * p.len + 2u * gid + 1u, h1);
+        Fr256 delta = fr_sub(h1, h0);
+        constant_acc = fr_add(constant_acc, fr_mont_mul(h0, fr_sub(h0, fr_load(rho, i))));
+        leading_acc = fr_add(leading_acc, fr_mont_mul(delta, delta));
+    }
+    jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, constant_acc), partials, 0u, p.num_tgs);
+    jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, leading_acc), partials, 1u, p.num_tgs);
+}
+
 struct RavAdoptParams {
     uint groups;     // new_len / 2 message pairs
     uint num_tgs;
