@@ -3,6 +3,10 @@ name = "jolt-eval"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+metal = ["dep:jolt-kernels", "jolt-kernels/metal"]
+
 [dependencies]
 jolt-prover-legacy = { workspace = true, features = ["host"] }
 jolt-verifier = { workspace = true }
@@ -44,8 +48,13 @@ jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 
 jolt-eval-macros = { path = "macros" }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+jolt-kernels = { workspace = true, optional = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
+iai-callgrind.workspace = true
+jolt-poly.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"
@@ -85,6 +94,17 @@ harness = false
 
 [[bench]]
 name = "prover_time_sha2_chain"
+harness = false
+
+[[bench]]
+name = "metal_fr_bind"
+path = "benches/metal/metal_fr_bind.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
+name = "eq_evals"
+path = "benches/callgrind/eq_evals.rs"
 harness = false
 
 [[bin]]

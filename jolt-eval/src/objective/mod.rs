@@ -1,3 +1,4 @@
+pub mod callgrind;
 pub mod code_quality;
 pub mod objective_fn;
 pub mod optimize;
@@ -205,10 +206,15 @@ impl PerformanceObjective {
 }
 
 /// Union of all known objectives — used as a type-safe HashMap key.
+///
+/// Callgrind objectives are a string-keyed family parsed at runtime via
+/// [`OptimizationObjective::from_key`]. They do not appear in
+/// [`all()`](Self::all).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OptimizationObjective {
     StaticAnalysis(StaticAnalysisObjective),
     Performance(PerformanceObjective),
+    Callgrind(callgrind::CallgrindObjective),
 }
 
 // Re-export the const objective keys from their defining modules.
@@ -235,6 +241,7 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.name(),
             Self::Performance(p) => p.name(),
+            Self::Callgrind(c) => c.name(),
         }
     }
 
@@ -242,6 +249,7 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.units(),
             Self::Performance(p) => p.units(),
+            Self::Callgrind(c) => c.units(),
         }
     }
 
@@ -249,6 +257,7 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.description(),
             Self::Performance(p) => p.description(),
+            Self::Callgrind(c) => c.description(),
         }
     }
 
@@ -256,11 +265,30 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.diff_paths(),
             Self::Performance(p) => p.diff_paths(),
+            Self::Callgrind(_) => &["crates/jolt-poly/", "crates/jolt-kernels/"],
         }
     }
 
     pub fn is_perf(&self) -> bool {
-        matches!(self, Self::Performance(_))
+        matches!(self, Self::Performance(_) | Self::Callgrind(_))
+    }
+
+    /// Parses `callgrind:<bench-name>:instructions` objectives.
+    ///
+    /// Returns `None` for keys outside this grammar and `Some(Err)` for a
+    /// malformed key inside it.
+    pub fn from_key(key: &str) -> Option<Result<Self, MeasurementError>> {
+        key.starts_with("callgrind:")
+            .then(|| callgrind::CallgrindObjective::parse(key).map(Self::Callgrind))
+    }
+
+    pub fn measure_keyed_in(&self, work_dir: &std::path::Path) -> Result<f64, MeasurementError> {
+        match self {
+            Self::Callgrind(c) => c.measure_in(work_dir),
+            Self::StaticAnalysis(_) | Self::Performance(_) => Err(MeasurementError::new(
+                "not a string-keyed objective; measured via Criterion / static analysis",
+            )),
+        }
     }
 }
 
