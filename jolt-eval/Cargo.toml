@@ -5,7 +5,17 @@ edition = "2021"
 
 [features]
 default = []
-metal = ["dep:jolt-kernels", "jolt-kernels/metal"]
+# Metal isolated objectives (macOS): device kernels plus the modular-prover
+# plumbing the st0-contention objective drives (commit slot + record walk).
+metal = [
+  "dep:jolt-kernels",
+  "jolt-kernels/metal",
+  "dep:jolt-prover",
+  "jolt-prover/metal",
+  "dep:jolt-witness",
+  "dep:jolt-claims",
+  "dep:libc",
+]
 
 [dependencies]
 jolt-prover-legacy = { workspace = true, features = ["host"] }
@@ -51,6 +61,10 @@ jolt-eval-macros = { path = "macros" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 jolt-kernels = { workspace = true, optional = true }
+jolt-prover = { workspace = true, optional = true }
+jolt-witness = { workspace = true, optional = true }
+jolt-claims = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -111,6 +125,11 @@ required-features = ["metal"]
 name = "eq_evals"
 path = "benches/callgrind/eq_evals.rs"
 harness = false
+
+[[bin]]
+name = "st0-contention"
+path = "bin/st0_contention.rs"
+required-features = ["metal"]
 
 [[bin]]
 name = "measure-objectives"
