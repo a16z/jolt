@@ -1,0 +1,97 @@
+use std::time::Duration;
+
+pub const OUTER_REMAINDER_OPENINGS: usize = 35;
+pub(super) const OUTER_REMAINDER_STREAM_ROWS: usize = 10;
+pub(super) const DEVICE_BUFFERS: usize = 9;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OuterRemainderSequenceConfig {
+    pub materialize_threads_per_threadgroup: Option<usize>,
+    pub stream_bind_threads_per_threadgroup: Option<usize>,
+    pub transition_threads_per_threadgroup: Option<usize>,
+    pub opening_threads_per_threadgroup: Option<usize>,
+    pub max_threadgroups: usize,
+    pub cpu_tail_elements: usize,
+    pub storage_initialization: OuterRemainderStorageInitialization,
+}
+
+impl Default for OuterRemainderSequenceConfig {
+    fn default() -> Self {
+        Self {
+            materialize_threads_per_threadgroup: Some(256),
+            stream_bind_threads_per_threadgroup: Some(128),
+            transition_threads_per_threadgroup: Some(128),
+            opening_threads_per_threadgroup: Some(256),
+            max_threadgroups: 8192,
+            cpu_tail_elements: 1 << 18,
+            storage_initialization: OuterRemainderStorageInitialization::Full,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OuterRemainderStorageInitialization {
+    Lazy,
+    Full,
+}
+
+impl OuterRemainderStorageInitialization {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Lazy => "lazy",
+            Self::Full => "full",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OuterRemainderPhase {
+    BeforeMaterialize,
+    BOnly,
+    Interleaved,
+    Exported,
+    OpeningsComplete,
+    Poisoned,
+}
+
+impl OuterRemainderPhase {
+    pub(super) const fn name(self) -> &'static str {
+        match self {
+            Self::BeforeMaterialize => "before materialization",
+            Self::BOnly => "B-only",
+            Self::Interleaved => "interleaved",
+            Self::Exported => "CPU tail exported",
+            Self::OpeningsComplete => "openings complete",
+            Self::Poisoned => "poisoned",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OuterRemainderDispatchCounts {
+    pub materializations: usize,
+    pub stream_transitions: usize,
+    pub dense_transitions: usize,
+    pub cpu_tail_exports: usize,
+    pub opening_scans: usize,
+    pub command_buffers: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OuterRemainderStorageStats {
+    pub owned_bytes: u64,
+    pub buffer_identities: [usize; DEVICE_BUFFERS],
+    pub compact_row_identity: usize,
+    pub residual_row_identity: usize,
+    pub row_device_registry_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OuterRemainderStorageInitializationStats {
+    pub mode: OuterRemainderStorageInitialization,
+    pub device_buffers: usize,
+    pub bytes: u64,
+    pub wall: Duration,
+    pub gpu_active: Duration,
+    pub buffer_identities: [usize; DEVICE_BUFFERS],
+}

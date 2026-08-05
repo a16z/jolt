@@ -1,0 +1,143 @@
+use std::mem::size_of;
+
+use super::super::{Fp128, MetalError, PipelineLimits, SolinasMetal};
+use super::api::{
+    OuterRemainderSequenceConfig, DEVICE_BUFFERS, OUTER_REMAINDER_OPENINGS,
+    OUTER_REMAINDER_STREAM_ROWS,
+};
+
+pub(super) const OUTER_REMAINDER_TILE_ROWS: usize = 64;
+pub(super) const OUTER_REMAINDER_ROW_WORDS: usize = 20;
+pub(super) const SIMD_WIDTH: usize = 32;
+
+#[derive(Clone, Copy)]
+pub(super) struct StorageGeometry {
+    pub(super) current_elements: usize,
+    pub(super) weight_capacity: usize,
+    pub(super) max_threadgroups: usize,
+    pub(super) element_counts: [usize; DEVICE_BUFFERS],
+    pub(super) owned_bytes: u64,
+}
+
+pub(crate) fn outer_remainder_sequence_storage_bytes_with_config(
+    rows: usize,
+    config: OuterRemainderSequenceConfig,
+) -> Result<u64, MetalError> {
+    Ok(storage_geometry(rows, config)?.owned_bytes)
+}
+
+pub(crate) fn outer_remainder_sequence_max_buffer_bytes_with_config(
+    rows: usize,
+    config: OuterRemainderSequenceConfig,
+) -> Result<u64, MetalError> {
+    storage_geometry(rows, config)?
+        .element_counts
+        .into_iter()
+        .try_fold(0, |maximum, elements| {
+            Ok(maximum.max(field_bytes(elements)?))
+        })
+}
+
+pub(super) fn validate_opening_threadgroup_memory(
+    context: &SolinasMetal,
+    limits: PipelineLimits,
+    threads: usize,
+) -> Result<(), MetalError> {
+    let shards = threads / OUTER_REMAINDER_OPENINGS;
+    let dynamic = OUTER_REMAINDER_TILE_ROWS
+        .checked_mul(OUTER_REMAINDER_ROW_WORDS)
+        .and_then(|words| words.checked_mul(size_of::<u64>()))
+        .and_then(|bytes| bytes.checked_add(OUTER_REMAINDER_TILE_ROWS * size_of::<Fp128>()))
+        .and_then(|bytes| bytes.checked_add(OUTER_REMAINDER_OPENINGS * shards * size_of::<Fp128>()))
+        .ok_or(MetalError::InvalidOuterRemainderConfig(
+            "opening threadgroup byte count overflowed",
+        ))? as u64;
+    let requested = limits
+        .static_threadgroup_memory_length
+        .checked_add(dynamic)
+        .ok_or(MetalError::InvalidOuterRemainderConfig(
+            "opening threadgroup byte count overflowed",
+        ))?;
+    let maximum = context.device.max_threadgroup_memory_length();
+    if requested > maximum {
+        return Err(MetalError::OuterRemainderThreadgroupMemory { requested, maximum });
+    }
+    Ok(())
+}
+
+pub(super) fn storage_geometry(
+    cycles: usize,
+    config: OuterRemainderSequenceConfig,
+) -> Result<StorageGeometry, MetalError> {
+    if cycles < 4 || !cycles.is_power_of_two() {
+        return Err(MetalError::InvalidOuterRemainderRows(cycles));
+    }
+    if config.max_threadgroups == 0 {
+        return Err(MetalError::InvalidOuterRemainderConfig(
+            "max_threadgroups must be nonzero",
+        ));
+    }
+    if config.cpu_tail_elements < 2 || !config.cpu_tail_elements.is_power_of_two() {
+        return Err(MetalError::InvalidOuterRemainderConfig(
+            "cpu_tail_elements must be a power of two of at least two",
+        ));
+    }
+    let current_elements = cycles
+        .checked_mul(2)
+        .ok_or(MetalError::InputTooLong(cycles))?;
+    validate_u32(current_elements)?;
+    let weight_bits = (cycles.ilog2() as usize).div_ceil(2);
+    let weight_capacity = 1usize
+        .checked_shl(weight_bits as u32)
+        .ok_or(MetalError::InputTooLong(cycles))?;
+    let max_threadgroups = config.max_threadgroups.min(weight_capacity);
+    let message_partials = 2usize
+        .checked_mul(max_threadgroups)
+        .ok_or(MetalError::InputTooLong(max_threadgroups))?;
+    let opening_partials = OUTER_REMAINDER_OPENINGS
+        .checked_mul(max_threadgroups)
+        .ok_or(MetalError::InputTooLong(max_threadgroups))?;
+    let element_counts = [
+        current_elements,
+        current_elements,
+        weight_capacity,
+        weight_capacity,
+        OUTER_REMAINDER_STREAM_ROWS,
+        message_partials,
+        2,
+        opening_partials,
+        OUTER_REMAINDER_OPENINGS,
+    ];
+    let owned_bytes = element_counts.iter().try_fold(0u64, |total, &elements| {
+        total
+            .checked_add(field_bytes(elements)?)
+            .ok_or(MetalError::InputTooLong(cycles))
+    })?;
+    Ok(StorageGeometry {
+        current_elements,
+        weight_capacity,
+        max_threadgroups,
+        element_counts,
+        owned_bytes,
+    })
+}
+
+pub(super) fn field_bytes(elements: usize) -> Result<u64, MetalError> {
+    let bytes = elements
+        .checked_mul(size_of::<Fp128>())
+        .ok_or(MetalError::InputTooLong(elements))?;
+    u64::try_from(bytes).map_err(|_| MetalError::InputTooLong(elements))
+}
+
+fn validate_u32(elements: usize) -> Result<(), MetalError> {
+    let _ = to_u32(elements)?;
+    Ok(())
+}
+
+pub(super) fn to_u32(elements: usize) -> Result<u32, MetalError> {
+    u32::try_from(elements).map_err(|_| MetalError::InputTooLong(elements))
+}
+
+pub(super) fn message_threadgroup_bytes(threads: usize) -> u64 {
+    (2 * (threads / SIMD_WIDTH) * size_of::<Fp128>()) as u64
+}
