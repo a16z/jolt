@@ -71,7 +71,7 @@ pub(crate) use instruction_input::{
     InstructionInputSequenceStorage,
 };
 pub use instruction_input::{
-    InstructionInputSequence, InstructionInputSequenceConfig,
+    InstructionInputPrimerStats, InstructionInputSequence, InstructionInputSequenceConfig,
     InstructionInputStorageInitialization, InstructionInputStorageInitializationStats,
     INSTRUCTION_INPUT_COEFFICIENTS, INSTRUCTION_INPUT_TABLES,
 };

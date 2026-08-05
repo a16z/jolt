@@ -54,6 +54,17 @@ pub struct InstructionInputStorageInitializationStats {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstructionInputPrimerStats {
+    pub source_elements: usize,
+    pub e_in_elements: usize,
+    pub e_out_elements: usize,
+    pub wall: Duration,
+    pub gpu_active: Duration,
+    pub resident_row_identity: usize,
+    pub storage_buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionInputSequenceConfig {
     pub native_message_threads_per_threadgroup: Option<usize>,
     pub native_transition_threads_per_threadgroup: Option<usize>,
@@ -432,6 +443,137 @@ impl InstructionInputSequence {
         self.dense_elements = 0;
         self.dense_in_a = true;
         self.gpu_active_time = Duration::ZERO;
+    }
+
+    /// Runs the actual native-message and reduction pipelines on a zero-weighted
+    /// 64-row prefix without advancing the protocol state.
+    pub fn prime_native_pipeline(&mut self) -> Result<InstructionInputPrimerStats, MetalError> {
+        const SOURCE_ELEMENTS: usize = 64;
+        const E_IN_ELEMENTS: usize = 1;
+        const E_OUT_ELEMENTS: usize = SOURCE_ELEMENTS / 2;
+
+        if self.phase != SequencePhase::BeforeMessage {
+            return Err(MetalError::InvalidInstructionInputState(
+                "native pipeline primer requires the initial sequence state",
+            ));
+        }
+        if self.storage.rows < SOURCE_ELEMENTS
+            || self.storage.e_in_capacity < E_IN_ELEMENTS
+            || self.storage.e_out_capacity < E_OUT_ELEMENTS
+        {
+            return Err(MetalError::InvalidInstructionInputRows(self.storage.rows));
+        }
+
+        let started = Instant::now();
+        let zeros_in = [AkitaField::zero(); E_IN_ELEMENTS];
+        let zeros_out = [AkitaField::zero(); E_OUT_ELEMENTS];
+        write_fields(
+            &self.storage.buffers.e_in,
+            self.storage.e_in_capacity,
+            &zeros_in,
+        )?;
+        write_fields(
+            &self.storage.buffers.e_out,
+            self.storage.e_out_capacity,
+            &zeros_out,
+        )?;
+        let params = InstructionInputParams {
+            source_elements: SOURCE_ELEMENTS as u32,
+            e_in_length: E_IN_ELEMENTS as u32,
+            e_out_length: E_OUT_ELEMENTS as u32,
+            reserved: 0,
+        };
+        let reduction_params = ReductionParams {
+            input_count: E_OUT_ELEMENTS as u32,
+            output_count: 1,
+            reserved: [0; 2],
+        };
+        let gamma = Fp128::from_jolt_field(&AkitaField::zero());
+        let command_buffer = self.storage.context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.storage.pipelines.native_message);
+            encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
+            encoder.set_buffer(1, Some(&self.storage.buffers.e_in), 0);
+            encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
+            encoder.set_buffer(3, Some(&self.storage.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 4, &gamma);
+            set_inline_bytes(encoder, 5, &params);
+            let threads = self.storage.native_message_threads;
+            encoder.set_threadgroup_memory_length(
+                0,
+                (INSTRUCTION_INPUT_COEFFICIENTS * (threads / SIMD_WIDTH) * size_of::<Fp128>())
+                    as u64,
+            );
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: E_OUT_ELEMENTS as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: threads as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.set_compute_pipeline_state(&self.storage.pipelines.reduction);
+            encoder.set_buffer(0, Some(&self.storage.buffers.partial_a), 0);
+            encoder.set_buffer(1, Some(&self.storage.buffers.partial_b), 0);
+            set_inline_bytes(encoder, 2, &reduction_params);
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: 1,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.storage.reduction_limits.thread_execution_width as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        // SAFETY: the synchronous reduction wrote three fields at the start of
+        // partial_b, and no GPU command remains active.
+        let output = unsafe {
+            slice::from_raw_parts(
+                self.storage.buffers.partial_b.contents().cast::<Fp128>(),
+                INSTRUCTION_INPUT_COEFFICIENTS,
+            )
+        };
+        self.storage
+            .context
+            .validate_inputs("instruction input native primer", output)?;
+        if output
+            .iter()
+            .any(|value| value.into_jolt_field::<AkitaField>() != AkitaField::zero())
+        {
+            return Err(MetalError::InvalidInstructionInputState(
+                "native pipeline primer produced a nonzero message",
+            ));
+        }
+        let wall = started.elapsed();
+        Ok(InstructionInputPrimerStats {
+            source_elements: SOURCE_ELEMENTS,
+            e_in_elements: E_IN_ELEMENTS,
+            e_out_elements: E_OUT_ELEMENTS,
+            wall,
+            gpu_active: Duration::from_secs_f64(end - start),
+            resident_row_identity: self.resident_rows.allocation_identity(),
+            storage_buffer_identities: self.storage.buffers.identities(),
+        })
     }
 
     pub fn message(
@@ -916,7 +1058,7 @@ fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, va
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, reason = "test module")]
 mod tests {
-    use std::{mem::size_of, slice};
+    use std::{mem::size_of, slice, time::Duration};
 
     use jolt_field::AkitaField;
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
@@ -1152,6 +1294,64 @@ mod tests {
         let mut readback = vec![AkitaField::zero(); tables_2.len()];
         sequence.read_current_tables(&mut readback).unwrap();
         assert_eq!(readback, tables_2);
+    }
+
+    #[test]
+    fn native_pipeline_primer_preserves_the_first_protocol_message() {
+        let rows = packed_rows(4096);
+        let initial_tables: Vec<AkitaField> = (0..INSTRUCTION_INPUT_TABLES)
+            .flat_map(|table| {
+                rows.iter()
+                    .map(move |row| row.instruction_input_fields::<AkitaField>()[table])
+            })
+            .collect();
+        let gamma = AkitaField::from_u64(0xC001_CAFE);
+        let r_product = (0..rows.len().ilog2())
+            .map(|index| AkitaField::from_u64(5 + 2 * u64::from(index)))
+            .collect::<Vec<_>>();
+        let gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
+        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+        let mut sequence = context
+            .prepare_instruction_input_sequence(
+                &rows,
+                InstructionInputSequenceConfig {
+                    storage_initialization: InstructionInputStorageInitialization::Minimal,
+                    ..InstructionInputSequenceConfig::default()
+                },
+            )
+            .expect("sequence should prepare");
+        let resident_identity = sequence.resident_row_identity();
+        let storage_identities = sequence.static_buffer_identity();
+
+        let primer = sequence
+            .prime_native_pipeline()
+            .expect("native pipeline should prime");
+
+        assert_eq!(primer.source_elements, 64);
+        assert_eq!(primer.e_in_elements, 1);
+        assert_eq!(primer.e_out_elements, 32);
+        assert_eq!(primer.resident_row_identity, resident_identity);
+        assert_eq!(primer.storage_buffer_identities, storage_identities);
+        assert!(primer.gpu_active > Duration::ZERO);
+        assert!(primer.gpu_active <= primer.wall);
+        assert_eq!(sequence.resident_row_identity(), resident_identity);
+        assert_eq!(sequence.static_buffer_identity(), storage_identities);
+
+        let expected = descriptors(
+            &initial_tables,
+            rows.len(),
+            gamma,
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+        );
+        let actual = sequence
+            .message(gamma, gruen.e_in_current(), gruen.e_out_current())
+            .expect("first protocol message should execute after the primer");
+        assert_eq!(actual, expected);
+        assert!(matches!(
+            sequence.prime_native_pipeline(),
+            Err(MetalError::InvalidInstructionInputState(_))
+        ));
     }
 
     #[test]
