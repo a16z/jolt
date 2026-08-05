@@ -52,8 +52,9 @@ mod bench {
     use ark_ff::{One, UniformRand};
     use jolt_kernels::metal::miller::{
         ell_coeffs_per_pair, flatten_prepared_coeffs, fq12_to_device_limbs,
-        miller_fly_indexed_partials, miller_fly_partials, miller_table_partials,
-        product_of_partials, uniform_seg_starts, ArkG2Prepared, ELL_COEFF_U32S, FQ12_U32S,
+        miller_fly_indexed_partials, miller_fly_partials, miller_fly_split_partials,
+        miller_table_partials, product_of_partials, uniform_seg_starts, ArkG2Prepared,
+        ELL_COEFF_U32S, FQ12_U32S,
     };
     use jolt_kernels::metal::testing::gpu_lock;
     use jolt_kernels::metal::{KernelId, MetalContext};
@@ -65,10 +66,13 @@ mod bench {
     const N_PAIRS: usize = 8192;
 
     /// Fq-mul equivalents per op (Karatsuba tower: Fq12 mul = 18 Fq2 = 54,
-    /// sqr = 12 Fq2 = 36, 034 = 13 Fq2 + 2 fp-scalings = 43).
+    /// sqr = 12 Fq2 = 36, 034 = 13 Fq2 + 2 fp-scalings = 43; Fq6 mul =
+    /// 6 Fq2 = 18, sqr = 12).
     const MUL_EQ_FQ12_MUL: f64 = 54.0;
     const MUL_EQ_FQ12_SQR: f64 = 36.0;
     const MUL_EQ_034: f64 = 43.0;
+    const MUL_EQ_FQ6_MUL: f64 = 18.0;
+    const MUL_EQ_FQ6_SQR: f64 = 12.0;
 
     fn min_secs(passes: usize, mut f: impl FnMut()) -> f64 {
         f();
@@ -107,6 +111,7 @@ mod bench {
         let flatten = p1_flatten(&qs);
         let dev_table = t2_miller_table(ctx, &ps, &flatten.coeffs);
         let dev_fly = t3_miller_fly(ctx, &ps, &qs);
+        t3b_fly_split(ctx, &ps, &qs, dev_fly);
         let (cpu_all, cpu_absorb, cpu_1t) = c_cpu_references(&ps, &qs, &flatten.preps);
         x1_contention(ctx, &ps, &flatten.coeffs);
 
@@ -150,6 +155,11 @@ mod bench {
         for (name, kernel, bufs, mul_eq) in [
             ("fq12 mul", KernelId::Fq12Mul, 3usize, MUL_EQ_FQ12_MUL),
             ("fq12 sqr", KernelId::Fq12Sqr, 2, MUL_EQ_FQ12_SQR),
+            // Fq6 chains reuse the front half of each Fq12 record — the
+            // live-state ladder points between bare CIOS (~8 u32) and the
+            // fq12 chains (~192+ u32).
+            ("fq6 mul ", KernelId::Fq6Mul, 3, MUL_EQ_FQ6_MUL),
+            ("fq6 sqr ", KernelId::Fq6Sqr, 2, MUL_EQ_FQ6_SQR),
         ] {
             let a_buf = ctx.wrap_slice(&x_limbs).unwrap();
             let b_buf = ctx.wrap_slice(&x_limbs).unwrap();
@@ -312,6 +322,62 @@ mod bench {
         }
         println!();
         secs
+    }
+
+    /// W4-fly ownership probe: each split pass timed in isolation (which
+    /// state — the G2Hom ladder or the Fq12 walk — pays the spill), then
+    /// the production two-pass dispatch against the fused kernel.
+    fn t3b_fly_split(ctx: &MetalContext, ps: &[G1Affine], qs: &[G2Affine], fused_secs: f64) {
+        use jolt_kernels::metal::{bases_as_u32s, g2_bases_as_u32s};
+        println!("== T3b: split ladder ({N_PAIRS} pairs, 1/thread) ==");
+        let n = N_PAIRS;
+        let steps = ell_coeffs_per_pair();
+        let ps_buf = ctx.wrap_slice(bases_as_u32s(ps)).unwrap();
+        let qs_buf = ctx.wrap_slice(g2_bases_as_u32s(qs)).unwrap();
+        let lines_buf = ctx.alloc_u32s(n * steps * ELL_COEFF_U32S).unwrap();
+        let flags_buf = ctx.alloc_u32s(n).unwrap();
+        let out_buf = ctx.alloc_u32s(n * FQ12_U32S).unwrap();
+        let params = [n as u32, 0u32];
+        let lines_secs = min_secs(3, || {
+            ctx.run_once(
+                KernelId::MillerFlyLines,
+                &params,
+                &[&ps_buf, &qs_buf, &lines_buf, &flags_buf],
+                n,
+            )
+            .unwrap();
+        });
+        let fold_secs = min_secs(3, || {
+            ctx.run_once(
+                KernelId::MillerFlyFold,
+                &params,
+                &[&lines_buf, &flags_buf, &out_buf],
+                n,
+            )
+            .unwrap();
+        });
+        let total_secs = min_secs(3, || {
+            let partials = miller_fly_split_partials(ctx, ps, qs).unwrap();
+            let _ = std::hint::black_box(&partials);
+        });
+        let per = |s: f64| s / n as f64 * 1e6;
+        println!(
+            "lines pass (G2 ladder, no Fq12 state): {:.1} ms ({:.2} µs/pair)",
+            lines_secs * 1e3,
+            per(lines_secs),
+        );
+        println!(
+            "fold pass (Fq12 walk, no ladder state): {:.1} ms ({:.2} µs/pair)",
+            fold_secs * 1e3,
+            per(fold_secs),
+        );
+        println!(
+            "split total (one CB + copyback): {:.1} ms ({:.2} µs/pair) vs fused {:.2} µs/pair → {:+.1}%\n",
+            total_secs * 1e3,
+            per(total_secs),
+            per(fused_secs),
+            (total_secs / fused_secs - 1.0) * 100.0,
+        );
     }
 
     fn c_cpu_references(
