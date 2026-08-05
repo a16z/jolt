@@ -480,3 +480,31 @@ alloc delta reported (tail-mode fuel).
 
 Fleet: bdcc152e (Gate-1, steered with Q3 spec pin) · e371fb72 (st3) ·
 c42e074e (st6b Bool). st0 lane closed.
+
+### Wake 3 (00:42 UTC): st3 GO merged, st1 lane opened
+
+**e371fb72 st3: GO, merged** (`9195cbd02` → merge `d8288f11b`). Attribution
+@2^24: host `native_q_evals` 44.6 ms, first-write/sync residual 36.5 ms,
+GPU bind window 29.3 ms. Cut the scalable slice: new `jk_instr_input_q0`
+kernel (Boolean endpoint selection + quadratic coefficient, three device
+reductions, host q(2/3) reconstruction), CPU fallback + transcript bytes
+unchanged. Isolated: 2^22 32.06→3.81 ms (8.41×), 2^24 139.64→15.15 ms
+(9.22×), disjoint CIs. Estimate: st3 2.340→1.939 s @2^27 (**−0.40 s**,
+~0.56% whole-proof). Metal parity 3/3.
+
+**Semantic merge trap hit and fixed:** st6b (`jk_rav_adopt_round`) and st3
+(`jk_instr_input_q0`) both appended a `KernelId`; textual merge kept
+`ALL: [Self; 68]` with 69 variants → E0308. Fixed `4eb216ec8` (69);
+union parity suites 22/22 after fix. Rule for future kernel-adding merges:
+re-count `KernelId::ALL` (Bool lane will make it 70). c42e074e warned
+mid-flight.
+
+**e371fb72 resumed onto st1** (4.456 s stage): attribute uniskip-message vs
+round-loop vs host-glue at 2^22/2^24 (also prices the deferred radix-4 st1
+door), then cut the largest slice; retention ≥0.3 s @2^27; same-window
+interleaved A/B per the ambient-power rule.
+
+Running total (stage-calibrated estimates, uncertified): st7 −0.78 s,
+st6b −0.5..−1.5 s, st3 −0.40 s ⇒ ~**−1.7..−2.7 s** vs 71.77 s flagship.
+Pending: Bool driver, st1, Gate-1 (radix4). Wave-2 gate (full battery +
+2^25/2^27 certification) after those settle.
