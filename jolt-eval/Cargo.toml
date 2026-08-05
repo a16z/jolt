@@ -133,6 +133,12 @@ name = "registers_address_first_phase"
 harness = false
 
 [[bench]]
+name = "registers_rw_prefix"
+path = "benches/metal/registers_rw_prefix.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
 name = "spartan_outer_claims"
 path = "benches/metal/spartan_outer_claims.rs"
 harness = false
