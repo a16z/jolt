@@ -139,6 +139,12 @@ harness = false
 required-features = ["metal"]
 
 [[bench]]
+name = "ram_rw"
+path = "benches/metal/ram_rw.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
 name = "spartan_outer_claims"
 path = "benches/metal/spartan_outer_claims.rs"
 harness = false
