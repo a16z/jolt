@@ -163,3 +163,4 @@ degrades under sustained load (78→95→102 s across the morning on
 unchanged code); bundle's e2e effect will show in the next record-window
 stage vector (default-on). Wave 4 CLOSED. Record watchdog 6e88f481
 probing hourly (2^22 ≤ 3.40 s).
+- **Post-daemon-restart (14:29 UTC):** no machine reboot (uptime 23 d). Window probe 3.62 s @2^22 — recovering with idle (3.89-4.20 this morning) but sub-record. Watchdog re-armed as b1ad9731 (hourly, ≤3.40 s).
