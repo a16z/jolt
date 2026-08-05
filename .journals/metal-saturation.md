@@ -448,3 +448,35 @@ rav/lazy_ra parity 9/9 and muldiv e2e (host) 3/3 pass on the merged trunk.
 Fleet after wake 1: bdcc152e (Gate-1, steered) · e371fb72 (st3) ·
 d6c80e49 (st0). Estimated shipped-but-uncertified: st7 −0.78 s + st6b
 −0.5..−1.5 s (good mode) + tail-mode variance kill.
+
+### Wake 2 (00:35 UTC): st0 verdict — door killed with mechanism
+
+**d6c80e49 st0: KILL the fix, RETAIN the harness** (`4846a0754`, merged
+`e206f3807` — jolt-eval metal feature union-resolved, superset kept).
+The ±5 s st0 bimodality is **ambient device power/clock state, not a
+walk↔commit scheduling defect**: reproduced on solo commit with zero
+co-runner (3.8 → 22.5 s wall at constant ~22 s utime — device stall, CPU
+work unchanged). No in-process scheduling fix can remove a mode that exists
+without the walk. Real contention exists but is secondary: co-run commit
++8.4% @2^22 / +43% @2^24, walk +65–118%, and inflation tracks co-runner
+**residency, not intensity** (2-thread walk hurt commit MORE than
+8-thread); VM/fault theory dead. Full fix matrix measured and dead:
+stagger=serialize (+25%), width throttling null/catastrophic, QoS-utility
+null, QoS-background 2.8× walk; background×12 E-cluster won stable windows
+but starved 26.3 s in a degraded window — fail-unsafe. Future door (needs
+2^27 cert): bg12 + starvation guard. Retained: `st0-contention` bin with
+six legs + `JOLT_RECORD_HOIST_DELAY_MS`/`JOLT_RECORD_QOS` default-off
+knobs; default spawn path byte-identical.
+
+**Campaign-wide bench rule from this lane:** ambient power state moves
+whole distributions (observed live on a power flip); all timed A/B claims
+must be same-window interleaved — solo before/after pairs across windows
+are not evidence. Propagated to the c42e074e resume.
+
+**c42e074e resumed** onto its named follow-up: Bool-driver deferred+fused
+adoption (20 polys, ~15 GiB @2^27), same pattern/discipline as the shipped
+Rav fix; retention bar = begin_round collapse + no total regression;
+alloc delta reported (tail-mode fuel).
+
+Fleet: bdcc152e (Gate-1, steered with Q3 spec pin) · e371fb72 (st3) ·
+c42e074e (st6b Bool). st0 lane closed.
