@@ -23,6 +23,8 @@
 //! [`validate_derived_tables`](crate::SumcheckKernel::validate_derived_tables)
 //! (Gruen scalar vs `derive_output_term(EqProduct)`).
 
+use std::mem::size_of;
+
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 use jolt_field::signed::{S192, S256, S64};
@@ -67,6 +69,60 @@ pub struct InstructionInputRow {
     pub imm: Imm,
 }
 
+pub(crate) struct PreparedInstructionInputRows {
+    rows: Vec<InstructionInputRow>,
+}
+
+impl PreparedInstructionInputRows {
+    pub(crate) const fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn into_rows(self) -> Vec<InstructionInputRow> {
+        self.rows
+    }
+
+    fn storage_id(&self) -> usize {
+        self.rows.as_ptr() as usize
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PreparedInstructionInputRows {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("rows"),
+            crate::backend::vec_heap_bytes(&self.rows),
+        );
+        visitor.exit();
+    }
+}
+
+pub(crate) fn prepare_instruction_input_rows<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    trace_elements: usize,
+) -> Result<(), KernelError<F>> {
+    let row_bytes = trace_elements
+        .checked_mul(size_of::<InstructionInputRow>())
+        .ok_or(KernelError::InvariantViolation {
+            reason: "InstructionInput prepared-row byte length overflow",
+        })?;
+    let rows = collect_rows(witness, trace_elements)?;
+    let prepared = PreparedInstructionInputRows { rows };
+    let cpu_rows_storage_id = prepared.storage_id();
+    let _span = tracing::info_span!(
+        "OptimizedInstructionInput::rows_prepare",
+        cpu_rows_storage_id,
+        cpu_rows = trace_elements,
+        cpu_row_bytes = row_bytes / trace_elements
+    )
+    .entered();
+    session.park(prepared);
+    Ok(())
+}
+
 impl InstructionInputRow {
     /// The row's values as field elements, in table order — exactly the
     /// entries the dense tables hold (same `ToField` conversions as the
@@ -92,12 +148,29 @@ pub struct OptimizedInstructionInput;
 impl<F: Field> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
-        let rows: Vec<InstructionInputRow> = collect_rows(witness, 1usize << r_product.len())?;
+        let trace_elements = 1usize << r_product.len();
+        let prepared = session.take::<PreparedInstructionInputRows>();
+        let cpu_rows_storage_id = prepared.as_ref().map_or(0, |rows| rows.storage_id());
+        let _span = tracing::info_span!(
+            "OptimizedInstructionInput::rows_stage3_use",
+            cpu_rows_storage_id,
+            cpu_rows = trace_elements
+        )
+        .entered();
+        let rows = match prepared {
+            Some(prepared) if prepared.len() == trace_elements => prepared.into_rows(),
+            Some(_) => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "prepared InstructionInput row count disagrees with the relation",
+                });
+            }
+            None => collect_rows(witness, trace_elements)?,
+        };
         Ok(Box::new(OptimizedInstructionInputKernel::new(
             r_product,
             rows,
@@ -111,6 +184,8 @@ impl<F: Field> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInp
 enum InputState<F: Field> {
     Native(Vec<InstructionInputRow>),
     Dense(Vec<Polynomial<F>>),
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Offloaded,
 }
 
 pub struct OptimizedInstructionInputKernel<F: Field> {
@@ -130,6 +205,8 @@ impl<F: Field> allocative::Allocative for OptimizedInstructionInputKernel<F> {
         let state_bytes = match &self.state {
             InputState::Native(rows) => vec_heap_bytes(rows),
             InputState::Dense(polys) => polys_heap_bytes(polys),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            InputState::Offloaded => 0,
         };
         visitor.visit_simple(allocative::Key::new("state"), state_bytes);
         visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
@@ -175,6 +252,18 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
             bind_scratch: Vec::new(),
             rounds_bound: 0,
         })
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn new_offloaded(r_product: &[F], gamma: F) -> Self {
+        Self {
+            log_t: r_product.len(),
+            gamma,
+            state: InputState::Offloaded,
+            gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
+            bind_scratch: Vec::new(),
+            rounds_bound: 0,
+        }
     }
 
     /// The first round's `q` evaluations over the native rows: per pair and
@@ -294,8 +383,23 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
         let q_evals = match &self.state {
             InputState::Native(rows) => self.native_q_evals(rows),
             InputState::Dense(tables) => self.dense_q_evals(tables),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            InputState::Offloaded => {
+                return Err(instruction_input_state_error(
+                    "CPU message requested while instruction input is resident on Metal",
+                ));
+            }
         };
 
+        self.message_from_q_evals(q_evals, round, previous_claim)
+    }
+
+    fn message_from_q_evals(
+        &self,
+        q_evals: [F; 4],
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
         let l_step = l_at_1 - l_at_0;
         let mut l_eval = l_at_0;
@@ -316,7 +420,18 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        if self.rounds_bound >= self.log_t {
+            return Err(instruction_input_state_error(
+                "instruction input received more binds than cycle variables",
+            ));
+        }
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "CPU bind requested while instruction input is resident on Metal",
+            ));
+        }
         self.gruen.bind(challenge);
         match &mut self.state {
             InputState::Native(rows) => {
@@ -348,17 +463,118 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
                     table.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
                 }
             }
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            InputState::Offloaded => unreachable!("offloaded state returned above"),
         }
         self.rounds_bound += 1;
+        Ok(())
     }
 
     /// The eight fully bound table values, table order.
-    fn final_values(&self) -> [F; NUM_TABLES] {
+    fn final_values(&self) -> Option<[F; NUM_TABLES]> {
         match &self.state {
             // Bindless extraction happens only for `log_t = 0` geometries.
-            InputState::Native(rows) => rows[0].field_values(),
-            InputState::Dense(tables) => core::array::from_fn(|i| tables[i].evals()[0]),
+            InputState::Native(rows) => Some(rows[0].field_values()),
+            InputState::Dense(tables) => Some(core::array::from_fn(|i| tables[i].evals()[0])),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            InputState::Offloaded => None,
         }
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<F: Field> OptimizedInstructionInputKernel<F> {
+    pub(crate) fn metal_weights(&self) -> Result<(&[F], &[F]), SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal weights requested after instruction input returned to the CPU",
+            ));
+        }
+        Ok((self.gruen.e_in_current(), self.gruen.e_out_current()))
+    }
+
+    pub(crate) fn metal_bind_offloaded(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal bind requested after instruction input returned to the CPU",
+            ));
+        }
+        if self.rounds_bound >= self.log_t {
+            return Err(instruction_input_state_error(
+                "instruction input received more binds than cycle variables",
+            ));
+        }
+        self.gruen.bind(challenge);
+        self.rounds_bound += 1;
+        Ok(())
+    }
+
+    pub(crate) fn metal_message(
+        &self,
+        q_coefficients: [F; 3],
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "Metal message supplied after instruction input returned to the CPU",
+            ));
+        }
+        let [q_at_0, q_at_1, q_quadratic] = q_coefficients;
+        let twice_quadratic = q_quadratic + q_quadratic;
+        let q_at_2 = q_at_1 + q_at_1 - q_at_0 + twice_quadratic;
+        let q_at_3 = q_at_2 + q_at_1 - q_at_0 + twice_quadratic + twice_quadratic;
+        self.message_from_q_evals([q_at_0, q_at_1, q_at_2, q_at_3], round, previous_claim)
+    }
+
+    pub(crate) fn metal_restore_dense(
+        &mut self,
+        flat_tables: &[F],
+        elements: usize,
+    ) -> Result<(), SumcheckError<F>> {
+        if !matches!(self.state, InputState::Offloaded) {
+            return Err(instruction_input_state_error(
+                "instruction input dense tables restored more than once",
+            ));
+        }
+        if elements == 0 || !elements.is_power_of_two() || self.rounds_bound > self.log_t {
+            return Err(instruction_input_state_error(
+                "invalid instruction input dense-tail geometry",
+            ));
+        }
+        let expected_elements = 1usize
+            .checked_shl((self.log_t - self.rounds_bound) as u32)
+            .ok_or_else(|| {
+                instruction_input_state_error("instruction input table length overflow")
+            })?;
+        if elements != expected_elements {
+            return Err(instruction_input_state_error(format!(
+                "instruction input dense tail has {elements} elements per table; expected {expected_elements}"
+            )));
+        }
+        let expected_values = NUM_TABLES.checked_mul(elements).ok_or_else(|| {
+            instruction_input_state_error("instruction input readback length overflow")
+        })?;
+        if flat_tables.len() != expected_values {
+            return Err(instruction_input_state_error(format!(
+                "instruction input dense tail has {} values; expected {expected_values}",
+                flat_tables.len()
+            )));
+        }
+        self.state = InputState::Dense(
+            flat_tables
+                .chunks_exact(elements)
+                .map(|values| Polynomial::new(values.to_vec()))
+                .collect(),
+        );
+        Ok(())
+    }
+}
+
+fn instruction_input_state_error<F: Field>(message: impl Into<String>) -> SumcheckError<F> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: message.into(),
     }
 }
 
@@ -374,14 +590,13 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -398,7 +613,10 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
             });
         }
         let [left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm] =
-            self.final_values();
+            self.final_values()
+                .ok_or(SumcheckKernelError::InvariantViolation {
+                    reason: "instruction input output requested while tables remain on Metal",
+                })?;
         Ok(InstructionInputOutputClaims {
             left_operand_is_rs1,
             rs1_value,
@@ -449,6 +667,8 @@ mod tests {
         InstructionInputChallenges, InstructionInputInputClaims,
     };
     use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId, TraceDimensions};
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    use jolt_field::Invertible;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
@@ -467,6 +687,16 @@ mod tests {
 
     fn challenge(round: usize) -> Fr {
         fr(0x1357_9BDF_2468_ACE0 ^ (round as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x55)
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn quadratic_descriptors(evals: [Fr; 4]) -> [Fr; 3] {
+        let inverse_two = fr(2).inverse().unwrap();
+        [
+            evals[0],
+            evals[1],
+            (evals[2] + evals[0]) * inverse_two - evals[1],
+        ]
     }
 
     fn splitmix(state: &mut u64) -> u64 {
@@ -599,5 +829,87 @@ mod tests {
     #[test]
     fn parity_odd_log_t() {
         assert_parity(3, 8080);
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_offload_roundtrip_matches_cpu() {
+        let log_t = 4;
+        let mut state = 0xA11C_E55E_D00D_F00D;
+        let rows: Vec<InstructionInputRow> = (0..1usize << log_t)
+            .map(|index| {
+                let raw = splitmix(&mut state);
+                let wide = ((splitmix(&mut state) as i128) << 64) | splitmix(&mut state) as i128;
+                InstructionInputRow {
+                    is_rs1: InstructionFlag(raw & 1 != 0),
+                    rs1_value: Rs1Value(splitmix(&mut state)),
+                    is_pc: InstructionFlag(raw & 2 != 0),
+                    unexpanded_pc: UnexpandedPc(splitmix(&mut state)),
+                    is_rs2: InstructionFlag(raw & 4 != 0),
+                    rs2_value: Rs2Value(splitmix(&mut state)),
+                    is_imm: InstructionFlag(raw & 8 != 0),
+                    imm: Imm(if index % 3 == 0 { -wide } else { wide }),
+                }
+            })
+            .collect();
+        let r_product: Vec<Fr> = (0..log_t).map(|i| fr(700 + 29 * i as u64)).collect();
+        let gamma = fr(0xC001_CAFE);
+        let eq = eq_table(&r_product);
+        let mut claim = fr(0);
+        for (weight, row) in eq.iter().zip(&rows) {
+            let values = row.field_values::<Fr>();
+            let right = values[4] * values[5] + values[6] * values[7];
+            let left = values[0] * values[1] + values[2] * values[3];
+            claim += *weight * (right + gamma * left);
+        }
+
+        let mut cpu =
+            OptimizedInstructionInputKernel::new(&r_product, rows.clone(), gamma).unwrap();
+        let mut offloaded = OptimizedInstructionInputKernel::new_offloaded(&r_product, gamma);
+
+        let q_coefficients = quadratic_descriptors(cpu.native_q_evals(&rows));
+        let cpu_poly = cpu.prove_round(None, 0, claim).unwrap();
+        let metal_poly = offloaded.metal_message(q_coefficients, 0, claim).unwrap();
+        assert_eq!(metal_poly.coefficients(), cpu_poly.coefficients());
+        claim = cpu_poly.evaluate(challenge(0));
+
+        let cpu_poly = cpu.prove_round(Some(challenge(0)), 1, claim).unwrap();
+        offloaded.metal_bind_offloaded(challenge(0)).unwrap();
+        let tables = match &cpu.state {
+            super::InputState::Dense(tables) => Some(tables),
+            super::InputState::Native(_) | super::InputState::Offloaded => None,
+        }
+        .unwrap();
+        let q_coefficients = quadratic_descriptors(cpu.dense_q_evals(tables));
+        let elements = tables[0].len();
+        let flat_tables: Vec<Fr> = tables
+            .iter()
+            .flat_map(|table| table.evals().iter().copied())
+            .collect();
+        let metal_poly = offloaded.metal_message(q_coefficients, 1, claim).unwrap();
+        assert_eq!(metal_poly.coefficients(), cpu_poly.coefficients());
+        offloaded
+            .metal_restore_dense(&flat_tables, elements)
+            .unwrap();
+        claim = cpu_poly.evaluate(challenge(1));
+
+        for round in 2..log_t {
+            let bind = challenge(round - 1);
+            let cpu_poly = cpu.prove_round(Some(bind), round, claim).unwrap();
+            let restored_poly = offloaded.prove_round(Some(bind), round, claim).unwrap();
+            assert_eq!(restored_poly.coefficients(), cpu_poly.coefficients());
+            claim = cpu_poly.evaluate(challenge(round));
+        }
+        let final_bind = challenge(log_t - 1);
+        cpu.finish_rounds(final_bind).unwrap();
+        offloaded.finish_rounds(final_bind).unwrap();
+        let input_claims = InstructionInputInputClaims {
+            right_instruction_input: fr(0),
+            left_instruction_input: fr(0),
+        };
+        assert_eq!(
+            offloaded.output_claims(&input_claims).unwrap(),
+            cpu.output_claims(&input_claims).unwrap()
+        );
     }
 }

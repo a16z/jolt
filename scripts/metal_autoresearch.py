@@ -74,8 +74,33 @@ PRODUCTION_LOCAL_KERNELS = {
             "bytecode_local_gate",
         },
     },
+    "InstructionInput": {
+        "metric": "instruction_input_kernel_service_speedup",
+        "paired_metric": "paired_instruction_input_kernel_service_speedups",
+        "parameters": frozenset(
+            {
+                "JOLT_METAL_INSTRUCTION_INPUT_NATIVE_MESSAGE_THREADS",
+                "JOLT_METAL_INSTRUCTION_INPUT_NATIVE_TRANSITION_THREADS",
+                "JOLT_METAL_INSTRUCTION_INPUT_DENSE_TRANSITION_THREADS",
+                "JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2",
+                "JOLT_METAL_INSTRUCTION_INPUT_TRACE_CUTOFF_LOG2",
+            }
+        ),
+        "required_guards": COMMON_PRODUCTION_GUARDS
+        | {
+            "instruction_input_cpu_control",
+            "instruction_input_cpu_rows_reused",
+            "instruction_input_metal_backend_exercised",
+            "instruction_input_resident_rows_reused",
+            "instruction_input_working_set_admitted",
+            "instruction_input_readback_exact",
+            "instruction_input_host_readback_preallocated_outside_piop",
+            "instruction_input_no_round_device_buffer_allocations",
+            "instruction_input_local_gate",
+        },
+    },
 }
-LOCAL_RESULT_CONTRACTS = {"bytecode_read_raf_cycle_v1"}
+LOCAL_RESULT_CONTRACTS = {"bytecode_read_raf_cycle_v1", "instruction_input_v1"}
 BYTECODE_LOCAL_FINGERPRINT_PARAMETERS = {
     "message_threads": "JOLT_METAL_BYTECODE_MESSAGE_THREADS",
     "transition_threads": "JOLT_METAL_BYTECODE_TRANSITION_THREADS",
@@ -88,6 +113,33 @@ BYTECODE_LOCAL_FINGERPRINT_ENV = {
     "repeats": "JOLT_METAL_EVAL_REPEATS",
     "seed": "JOLT_METAL_EVAL_SEED",
 }
+INSTRUCTION_INPUT_LOCAL_FINGERPRINT_PARAMETERS = {
+    "native_message_threads": "JOLT_METAL_INSTRUCTION_INPUT_NATIVE_MESSAGE_THREADS",
+    "native_transition_threads": "JOLT_METAL_INSTRUCTION_INPUT_NATIVE_TRANSITION_THREADS",
+    "dense_transition_threads": "JOLT_METAL_INSTRUCTION_INPUT_DENSE_TRANSITION_THREADS",
+    "cutoff_log2": "JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2",
+    "trace_cutoff_log2": "JOLT_METAL_INSTRUCTION_INPUT_TRACE_CUTOFF_LOG2",
+}
+INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV = {
+    "log_n": "JOLT_METAL_EVAL_LOG_N",
+    "validation_log_n": "JOLT_METAL_EVAL_VALIDATE_LOG_N",
+    "repeats": "JOLT_METAL_EVAL_REPEATS",
+    "seed": "JOLT_METAL_EVAL_SEED",
+}
+
+
+def instruction_input_sequence_storage_bytes(log_n: int) -> int:
+    rows = 1 << log_n
+    e_out = 1 << (log_n // 2)
+    e_in = (rows // 2) // e_out
+    elements = (
+        8 * (rows // 2)
+        + 8 * (rows // 4)
+        + e_in
+        + e_out
+        + 2 * 3 * e_out
+    )
+    return 16 * elements
 
 
 def utc_now() -> str:
@@ -372,6 +424,11 @@ def validate_template(template: dict[str, Any]) -> None:
         and result_contract != "bytecode_read_raf_cycle_v1"
     ):
         raise ValueError("the Bytecode evaluator requires its closed result contract")
+    if (
+        template["kernel"] == "instruction_input"
+        and result_contract != "instruction_input_v1"
+    ):
+        raise ValueError("the InstructionInput evaluator requires its closed result contract")
     if result_contract is not None and result_contract not in LOCAL_RESULT_CONTRACTS:
         raise ValueError("the local evaluator names an unknown result contract")
     if result_contract == "bytecode_read_raf_cycle_v1":
@@ -390,6 +447,57 @@ def validate_template(template: dict[str, Any]) -> None:
         ):
             raise ValueError(
                 "the Bytecode result contract requires every launch parameter in the search space and baseline"
+            )
+    if result_contract == "instruction_input_v1":
+        if template["kernel"] != "instruction_input":
+            raise ValueError(
+                "the InstructionInput result contract requires the InstructionInput kernel"
+            )
+        missing_env = sorted(
+            set(INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV.values())
+            - set(evaluator.get("env", {}))
+        )
+        if missing_env:
+            raise ValueError(
+                "the InstructionInput result contract is missing evaluator environment: "
+                f"{missing_env}"
+            )
+        try:
+            evaluator_repeats = int(evaluator["env"]["JOLT_METAL_EVAL_REPEATS"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "the InstructionInput evaluator requires an integer repeat count"
+            ) from error
+        if evaluator_repeats < 5 or evaluator_repeats % 2 == 0:
+            raise ValueError(
+                "the InstructionInput evaluator requires at least five odd paired repeats"
+            )
+        required_params = set(INSTRUCTION_INPUT_LOCAL_FINGERPRINT_PARAMETERS.values())
+        if required_params - set(template["search_space"]) or required_params - set(
+            template.get("baseline_params", {})
+        ):
+            raise ValueError(
+                "the InstructionInput result contract requires every launch parameter in the search space and baseline"
+            )
+        final_validation = template.get("final_validation")
+        if not isinstance(final_validation, dict) or set(final_validation) != {
+            "primary_log_n",
+            "production_gate",
+        }:
+            raise ValueError(
+                "the InstructionInput final-validation contract contains inert checks"
+            )
+        if final_validation["primary_log_n"] != int(
+            evaluator["env"]["JOLT_METAL_EVAL_LOG_N"]
+        ):
+            raise ValueError(
+                "the InstructionInput final-validation contract targets the wrong scale"
+            )
+        if template.get("scope", {}).get("editable") != [
+            "crates/jolt-kernels/src/metal/solinas/instruction_input.metal"
+        ]:
+            raise ValueError(
+                "the InstructionInput search scope must remain shader-only"
             )
     collaboration = template.get("collaboration")
     if collaboration is not None:
@@ -727,11 +835,484 @@ def validate_bytecode_phase_sample(
         raise ValueError("Bytecode evaluator phase schedule has the wrong readback")
 
 
+def validate_instruction_input_local_result(
+    config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
+) -> None:
+    top_fields = {
+        "schema",
+        "schema_version",
+        "kernel",
+        "metrics",
+        "timings",
+        "guards",
+        "resources",
+        "workload",
+        "pipelines",
+        "fingerprint",
+    }
+    if (
+        set(output) != top_fields
+        or output.get("schema") != "instruction_input_v1"
+        or output.get("schema_version") != 1
+        or output.get("kernel") != "instruction_input"
+    ):
+        raise ValueError("InstructionInput evaluator result violates its top-level schema")
+
+    environment = config["evaluator"].get("env", {})
+    try:
+        expected = {
+            field: int(environment[name])
+            for field, name in INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV.items()
+        }
+        expected.update(
+            {
+                field: int(params[name])
+                for field, name in INSTRUCTION_INPUT_LOCAL_FINGERPRINT_PARAMETERS.items()
+            }
+        )
+    except KeyError as error:
+        raise ValueError(
+            f"InstructionInput evaluator parameters are missing {error.args[0]}"
+        ) from error
+    repeats = expected["repeats"]
+    if repeats < 5 or repeats % 2 == 0:
+        raise ValueError("InstructionInput evaluator requires at least five odd repeats")
+    rows = 1 << expected["log_n"]
+    cutoff = 1 << expected["cutoff_log2"]
+    orders = [
+        ["cpu", "metal"] if index % 2 == 0 else ["metal", "cpu"]
+        for index in range(repeats)
+    ]
+
+    fingerprint = output["fingerprint"]
+    fingerprint_fields = {
+        "device",
+        "max_buffer_length",
+        "recommended_max_working_set_size",
+        "current_allocated_size",
+        "cpu_threads",
+        "log_n",
+        "validation_log_n",
+        "repeats",
+        "seed",
+        "cutoff_log2",
+        "trace_cutoff_log2",
+        "native_message_threads",
+        "native_transition_threads",
+        "dense_transition_threads",
+        "orders",
+        "protocol_seeds",
+        "protocol_transcript_states",
+    }
+    if not isinstance(fingerprint, dict) or set(fingerprint) != fingerprint_fields:
+        raise ValueError("InstructionInput evaluator fingerprint is incomplete")
+    for name, value in expected.items():
+        if type(fingerprint.get(name)) is not int or fingerprint[name] != value:
+            raise ValueError(f"InstructionInput evaluator fingerprint does not match {name}")
+    if fingerprint["orders"] != orders:
+        raise ValueError("InstructionInput evaluator has the wrong interleaved order")
+    protocol_seeds = [
+        expected["seed"] ^ ((0x9E3779B97F4A7C15 * (index + 1)) & ((1 << 64) - 1))
+        for index in range(repeats)
+    ]
+    if (
+        fingerprint["protocol_seeds"] != protocol_seeds
+        or len(set(protocol_seeds)) != repeats
+    ):
+        raise ValueError("InstructionInput evaluator protocol tapes are invalid")
+    protocol_transcript_states = fingerprint["protocol_transcript_states"]
+    if (
+        not isinstance(protocol_transcript_states, list)
+        or len(protocol_transcript_states) != repeats
+        or any(
+            not isinstance(state, list)
+            or len(state) != 32
+            or any(type(byte) is not int or not 0 <= byte <= 255 for byte in state)
+            for state in protocol_transcript_states
+        )
+        or len({tuple(state) for state in protocol_transcript_states}) != repeats
+    ):
+        raise ValueError("InstructionInput evaluator transcript tapes are not distinct")
+    if expected["trace_cutoff_log2"] > expected["log_n"]:
+        raise ValueError("InstructionInput trace cutoff does not admit the target")
+    if (
+        not isinstance(fingerprint["device"], str)
+        or not fingerprint["device"]
+        or any(
+            type(fingerprint[name]) is not int or fingerprint[name] <= 0
+            for name in (
+                "max_buffer_length",
+                "recommended_max_working_set_size",
+                "cpu_threads",
+            )
+        )
+        or type(fingerprint["current_allocated_size"]) is not int
+        or fingerprint["current_allocated_size"] < 0
+    ):
+        raise ValueError("InstructionInput evaluator machine fingerprint is invalid")
+
+    workload = output["workload"]
+    workload_fields = {
+        "log_n",
+        "rows",
+        "validation_log_n",
+        "tables",
+        "samples_per_round",
+        "descriptor_fields_returned_by_gpu",
+        "cpu_native_row_bytes",
+        "resident_stage1_row_bytes",
+        "cutoff_log2",
+        "cutoff_elements",
+        "trace_cutoff_log2",
+        "trace_cutoff_elements",
+        "native_message_threads",
+        "native_transition_threads",
+        "dense_transition_threads",
+        "host_fiat_shamir",
+        "primary_timing",
+        "workload_preparation_in_primary_metric",
+        "sequence_preparation_in_primary_metric",
+        "host_readback_allocation_in_primary_metric",
+        "protocol_tape_preparation_in_primary_metric",
+        "protocol_tapes_per_process",
+        "protocol_tape_derivation",
+        "cpu_trials_run_while_resident_metal_sequence_is_allocated",
+        "cpu_control",
+        "metal_control",
+    }
+    if not isinstance(workload, dict) or set(workload) != workload_fields:
+        raise ValueError("InstructionInput evaluator workload contract is incomplete")
+    expected_workload = {
+        "log_n": expected["log_n"],
+        "rows": rows,
+        "validation_log_n": expected["validation_log_n"],
+        "tables": 8,
+        "samples_per_round": 4,
+        "descriptor_fields_returned_by_gpu": 3,
+        "cpu_native_row_bytes": 48,
+        "resident_stage1_row_bytes": 160,
+        "cutoff_log2": expected["cutoff_log2"],
+        "cutoff_elements": cutoff,
+        "trace_cutoff_log2": expected["trace_cutoff_log2"],
+        "trace_cutoff_elements": 1 << expected["trace_cutoff_log2"],
+        "native_message_threads": expected["native_message_threads"],
+        "native_transition_threads": expected["native_transition_threads"],
+        "dense_transition_threads": expected["dense_transition_threads"],
+        "host_fiat_shamir": True,
+        "primary_timing": "resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
+        "workload_preparation_in_primary_metric": False,
+        "sequence_preparation_in_primary_metric": False,
+        "host_readback_allocation_in_primary_metric": False,
+        "protocol_tape_preparation_in_primary_metric": False,
+        "protocol_tapes_per_process": repeats,
+        "protocol_tape_derivation": "base_seed xor ((repeat + 1) * 0x9e3779b97f4a7c15 modulo 2^64)",
+        "cpu_trials_run_while_resident_metal_sequence_is_allocated": True,
+        "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
+        "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage",
+    }
+    if workload != expected_workload:
+        raise ValueError("InstructionInput evaluator workload fingerprint diverged")
+
+    metrics = output["metrics"]
+    metric_fields = {
+        "hybrid_speedup",
+        "resident_speedup",
+        "paired_hybrid_speedups",
+        "paired_resident_speedups",
+        "cpu_ns_samples",
+        "hybrid_ns_samples",
+        "resident_ns_samples",
+        "cpu_million_rows_per_second",
+        "hybrid_million_rows_per_second",
+    }
+    if not isinstance(metrics, dict) or set(metrics) != metric_fields:
+        raise ValueError("InstructionInput evaluator metric record is incomplete")
+
+    def integer_samples(record: dict[str, Any], name: str, allow_zero: bool = False) -> list[int]:
+        values = record.get(name)
+        minimum = 0 if allow_zero else 1
+        if (
+            not isinstance(values, list)
+            or len(values) != repeats
+            or any(type(value) is not int or value < minimum for value in values)
+        ):
+            raise ValueError(f"InstructionInput evaluator {name} samples are invalid")
+        return values
+
+    cpu_samples = integer_samples(metrics, "cpu_ns_samples")
+    hybrid_samples = integer_samples(metrics, "hybrid_ns_samples")
+    resident_samples = integer_samples(metrics, "resident_ns_samples")
+    paired = metrics["paired_hybrid_speedups"]
+    resident_paired = metrics["paired_resident_speedups"]
+    recomputed = [cpu / metal for cpu, metal in zip(cpu_samples, hybrid_samples)]
+    recomputed_resident = [
+        cpu / metal for cpu, metal in zip(cpu_samples, resident_samples)
+    ]
+    for name, actual, wanted in (
+        ("paired_hybrid_speedups", paired, recomputed),
+        ("paired_resident_speedups", resident_paired, recomputed_resident),
+    ):
+        if (
+            not isinstance(actual, list)
+            or len(actual) != repeats
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not math.isclose(float(value), expected_value, rel_tol=1e-12)
+                for value, expected_value in zip(actual, wanted)
+            )
+        ):
+            raise ValueError(f"InstructionInput evaluator {name} are invalid")
+    for name, wanted in (
+        ("hybrid_speedup", statistics.median(recomputed)),
+        ("resident_speedup", statistics.median(recomputed_resident)),
+        (
+            "cpu_million_rows_per_second",
+            rows / (statistics.median(cpu_samples) / 1e9) / 1e6,
+        ),
+        (
+            "hybrid_million_rows_per_second",
+            rows / (statistics.median(hybrid_samples) / 1e9) / 1e6,
+        ),
+    ):
+        value = metrics.get(name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not math.isclose(float(value), wanted, rel_tol=1e-12)
+        ):
+            raise ValueError(f"InstructionInput evaluator {name} is invalid")
+
+    timings = output["timings"]
+    timing_fields = {
+        "workload_and_source_preparation_seconds",
+        "sequence_upload_and_storage_preparation_seconds",
+        "cpu_median_seconds",
+        "hybrid_median_seconds",
+        "resident_median_seconds",
+        "sequence_reset_median_seconds",
+        "gpu_dispatch_wall_median_seconds",
+        "host_round_median_seconds",
+        "readback_median_seconds",
+        "cpu_tail_median_seconds",
+        "gpu_active_total_seconds",
+        "sequence_reset_ns_samples",
+        "gpu_dispatch_wall_ns_samples",
+        "host_round_ns_samples",
+        "readback_ns_samples",
+        "cpu_tail_ns_samples",
+        "gpu_active_ns_samples",
+        "repeats",
+    }
+    if not isinstance(timings, dict) or set(timings) != timing_fields:
+        raise ValueError("InstructionInput evaluator timing record is incomplete")
+    if timings["repeats"] != repeats:
+        raise ValueError("InstructionInput evaluator repeat count diverged")
+    reset_samples = integer_samples(timings, "sequence_reset_ns_samples", allow_zero=True)
+    component_samples = {
+        "gpu_dispatch_wall_median_seconds": integer_samples(
+            timings, "gpu_dispatch_wall_ns_samples"
+        ),
+        "host_round_median_seconds": integer_samples(timings, "host_round_ns_samples"),
+        "readback_median_seconds": integer_samples(timings, "readback_ns_samples"),
+        "cpu_tail_median_seconds": integer_samples(timings, "cpu_tail_ns_samples"),
+    }
+    gpu_active_samples = integer_samples(timings, "gpu_active_ns_samples")
+    gpu_wall_samples = integer_samples(timings, "gpu_dispatch_wall_ns_samples")
+    if any(
+        not 0 < active <= gpu_wall <= hybrid
+        for active, gpu_wall, hybrid in zip(
+            gpu_active_samples, gpu_wall_samples, hybrid_samples
+        )
+    ):
+        raise ValueError("InstructionInput evaluator GPU timing is not reconciled")
+    if any(
+        resident != hybrid - reset or hybrid <= reset
+        for resident, hybrid, reset in zip(
+            resident_samples, hybrid_samples, reset_samples
+        )
+    ):
+        raise ValueError("InstructionInput evaluator resident timing is not reconciled")
+    if any(
+        sum(samples[index] for samples in component_samples.values())
+        > resident_samples[index]
+        for index in range(repeats)
+    ):
+        raise ValueError("InstructionInput evaluator component timings exceed resident wall")
+    median_samples = {
+        "cpu_median_seconds": cpu_samples,
+        "hybrid_median_seconds": hybrid_samples,
+        "resident_median_seconds": resident_samples,
+        "sequence_reset_median_seconds": reset_samples,
+        **component_samples,
+    }
+    for name, samples in median_samples.items():
+        value = timings[name]
+        wanted = statistics.median(samples) / 1e9
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not math.isclose(float(value), wanted, rel_tol=1e-12, abs_tol=1e-15)
+        ):
+            raise ValueError(f"InstructionInput evaluator {name} is invalid")
+    for name in (
+        "workload_and_source_preparation_seconds",
+        "sequence_upload_and_storage_preparation_seconds",
+    ):
+        value = timings[name]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise ValueError(f"InstructionInput evaluator {name} is invalid")
+    gpu_active_total = timings["gpu_active_total_seconds"]
+    if (
+        isinstance(gpu_active_total, bool)
+        or not isinstance(gpu_active_total, (int, float))
+        or not math.isclose(
+            float(gpu_active_total), sum(gpu_active_samples) / 1e9, rel_tol=1e-12
+        )
+    ):
+        raise ValueError("InstructionInput evaluator GPU-active total is invalid")
+
+    guards = output["guards"]
+    guard_fields = {
+        "exact_four_sample_q_evals",
+        "exact_round_polynomials",
+        "exact_host_fiat_shamir_challenges",
+        "exact_round_schedule",
+        "exact_cutoff_tables",
+        "exact_final_eight_claims",
+        "exact_final_sumcheck_claim",
+        "exact_transcript_state",
+        "exact_derived_eq_cycle",
+        "exact_final_relation",
+        "actual_optimized_cpu_validation_parity",
+        "protocol_retarget_reuses_cpu_rows",
+        "production_trace_cutoff_admits_target",
+        "raw_timing_relations",
+        "resident_rows_stable_across_reset",
+        "static_device_buffer_identities_stable",
+        "exactly_one_dense_readback",
+        "host_readback_preallocated_before_primary_timer",
+        "distinct_protocol_tapes",
+        "round_device_buffer_allocations_zero",
+        "host_fiat_shamir",
+        "cpu_tail_uses_exact_four_samples",
+        "all_exact",
+    }
+    if (
+        not isinstance(guards, dict)
+        or set(guards) != guard_fields
+        or any(guards[name] is not True for name in guard_fields)
+    ):
+        raise ValueError("InstructionInput evaluator correctness guard failed")
+
+    resources = output["resources"]
+    resource_fields = {
+        "gpu_seconds",
+        "cpu_native_rows_bytes",
+        "resident_stage1_rows_bytes",
+        "sequence_owned_working_storage_bytes",
+        "persistent_modeled_bytes_during_primary_trials",
+        "cpu_first_dense_table_bytes",
+        "cpu_trial_peak_modeled_bytes",
+        "hybrid_readback_plus_tail_table_capacity_bytes",
+        "hybrid_trial_peak_modeled_bytes",
+        "resident_source_host_copy_bytes_dropped_before_primary_trials",
+        "setup_peak_increment_from_resident_source_copy_bytes",
+        "cutoff_readback_bytes",
+        "unified_memory_no_per_round_row_upload",
+        "sequence_owned_storage_includes_dense_ping_pong_weights_and_reductions",
+    }
+    if not isinstance(resources, dict) or set(resources) != resource_fields:
+        raise ValueError("InstructionInput evaluator resource record is incomplete")
+    gpu_seconds = resources["gpu_seconds"]
+    if (
+        isinstance(gpu_seconds, bool)
+        or not isinstance(gpu_seconds, (int, float))
+        or not math.isfinite(gpu_seconds)
+        or not math.isclose(
+            float(gpu_seconds), sum(gpu_active_samples) / 1e9, rel_tol=1e-12
+        )
+    ):
+        raise ValueError("InstructionInput evaluator GPU resource timing is invalid")
+    cpu_rows_bytes = workload["cpu_native_row_bytes"] * rows
+    resident_rows_bytes = workload["resident_stage1_row_bytes"] * rows
+    sequence_bytes = resources["sequence_owned_working_storage_bytes"]
+    expected_resources = {
+        "cpu_native_rows_bytes": cpu_rows_bytes,
+        "resident_stage1_rows_bytes": resident_rows_bytes,
+        "persistent_modeled_bytes_during_primary_trials": cpu_rows_bytes
+        + resident_rows_bytes
+        + sequence_bytes,
+        "cpu_first_dense_table_bytes": 8 * (rows // 2) * 16,
+        "hybrid_readback_plus_tail_table_capacity_bytes": 2 * 8 * cutoff * 16,
+        "resident_source_host_copy_bytes_dropped_before_primary_trials": resident_rows_bytes,
+        "setup_peak_increment_from_resident_source_copy_bytes": resident_rows_bytes,
+        "cutoff_readback_bytes": 8 * cutoff * 16,
+    }
+    if (
+        type(sequence_bytes) is not int
+        or sequence_bytes != instruction_input_sequence_storage_bytes(expected["log_n"])
+    ):
+        raise ValueError("InstructionInput evaluator sequence storage is invalid")
+    for name, wanted in expected_resources.items():
+        if type(resources[name]) is not int or resources[name] != wanted:
+            raise ValueError(f"InstructionInput evaluator resource {name} is invalid")
+    if (
+        resources["cpu_trial_peak_modeled_bytes"]
+        != resources["persistent_modeled_bytes_during_primary_trials"]
+        + resources["cpu_first_dense_table_bytes"]
+        or resources["hybrid_trial_peak_modeled_bytes"]
+        != resources["persistent_modeled_bytes_during_primary_trials"]
+        + resources["hybrid_readback_plus_tail_table_capacity_bytes"]
+        or resources["unified_memory_no_per_round_row_upload"] is not True
+        or resources[
+            "sequence_owned_storage_includes_dense_ping_pong_weights_and_reductions"
+        ]
+        is not True
+    ):
+        raise ValueError("InstructionInput evaluator peak resource accounting is invalid")
+
+    pipelines = output["pipelines"]
+    pipeline_fields = {
+        "native_message_execution_width",
+        "native_message_max_threads",
+        "native_transition_execution_width",
+        "native_transition_max_threads",
+        "dense_transition_execution_width",
+        "dense_transition_max_threads",
+    }
+    if not isinstance(pipelines, dict) or set(pipelines) != pipeline_fields:
+        raise ValueError("InstructionInput evaluator pipeline record is incomplete")
+    for prefix, selected in (
+        ("native_message", expected["native_message_threads"]),
+        ("native_transition", expected["native_transition_threads"]),
+        ("dense_transition", expected["dense_transition_threads"]),
+    ):
+        if (
+            pipelines[f"{prefix}_execution_width"] != 32
+            or type(pipelines[f"{prefix}_max_threads"]) is not int
+            or pipelines[f"{prefix}_max_threads"] < selected
+            or selected % 32 != 0
+        ):
+            raise ValueError(f"InstructionInput evaluator {prefix} pipeline is invalid")
+
+
 def validate_local_result_contract(
     config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
 ) -> None:
     contract = config["evaluator"].get("result_contract")
     if contract is None:
+        return
+    if contract == "instruction_input_v1":
+        validate_instruction_input_local_result(config, output, params)
         return
     if contract != "bytecode_read_raf_cycle_v1":
         raise ValueError("unknown local evaluator result contract")
@@ -1111,6 +1692,182 @@ def validate_production_bytecode_member(
     return member["member_ns"]
 
 
+def validate_production_instruction_input_row_lifecycle(
+    lifecycle: Any, backend: str, log_n: int
+) -> None:
+    common_fields = {
+        "kind",
+        "rows",
+        "row_bytes",
+        "prepare_storage_id",
+        "stage3_storage_id",
+    }
+    expected_fields = (
+        common_fields
+        if backend == "optimized"
+        else common_fields | {"stage1_storage_id"}
+    )
+    if not isinstance(lifecycle, dict) or set(lifecycle) != expected_fields:
+        raise ValueError(
+            "production InstructionInput row lifecycle record is incomplete"
+        )
+    integer_fields = expected_fields - {"kind"}
+    if any(
+        type(lifecycle[name]) is not int or lifecycle[name] <= 0
+        for name in integer_fields
+    ):
+        raise ValueError("production InstructionInput row lifecycle is invalid")
+    if backend == "optimized":
+        valid = (
+            lifecycle["kind"] == "optimized_cpu"
+            and lifecycle["rows"] == 1 << log_n
+            and lifecycle["row_bytes"] == 48
+            and lifecycle["prepare_storage_id"] == lifecycle["stage3_storage_id"]
+        )
+    else:
+        valid = (
+            lifecycle["kind"] == "metal_resident"
+            and lifecycle["rows"] == 1 << log_n
+            and lifecycle["row_bytes"] == 160
+            and lifecycle["prepare_storage_id"]
+            == lifecycle["stage1_storage_id"]
+            == lifecycle["stage3_storage_id"]
+        )
+    if not valid:
+        raise ValueError("production InstructionInput row lifecycle is invalid")
+
+
+def validate_production_instruction_input_member(
+    member: Any, backend: str, log_n: int, cutoff_log2: int
+) -> int:
+    fields = {
+        "prepare_ns",
+        "rounds_ns",
+        "rounds_total_ns",
+        "finish_ns",
+        "output_claims_ns",
+        "member_ns",
+        "outer_counts",
+        "metal_counts",
+        "resource_observation",
+    }
+    if not isinstance(member, dict) or set(member) != fields:
+        raise ValueError("production InstructionInput member record is incomplete")
+    scalar_names = (
+        "prepare_ns",
+        "rounds_total_ns",
+        "finish_ns",
+        "output_claims_ns",
+        "member_ns",
+    )
+    if any(type(member[name]) is not int or member[name] <= 0 for name in scalar_names):
+        raise ValueError("production InstructionInput member timing is invalid")
+    rounds = member["rounds_ns"]
+    if (
+        not isinstance(rounds, list)
+        or len(rounds) != log_n
+        or any(type(value) is not int or value <= 0 for value in rounds)
+        or member["rounds_total_ns"] != sum(rounds)
+        or member["member_ns"]
+        != member["prepare_ns"]
+        + member["rounds_total_ns"]
+        + member["finish_ns"]
+        + member["output_claims_ns"]
+    ):
+        raise ValueError("production InstructionInput member timing is not reconciled")
+    if member["outer_counts"] != {
+        "prepare": 1,
+        "prove_round": log_n,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }:
+        raise ValueError("production InstructionInput outer schedule is invalid")
+
+    expected_metal_counts = {
+        "storage_prepare": 0,
+        "allocation_plan": 0,
+        "prepare": 0,
+        "first_message": 0,
+        "first_bind": 0,
+        "dense_round": 0,
+        "readback": 0,
+        "cpu_tail": 0,
+    }
+    if backend == "metal":
+        expected_metal_counts.update(
+            {
+                "storage_prepare": 1,
+                "allocation_plan": 1,
+                "prepare": 1,
+                "first_message": 1,
+                "first_bind": 1,
+                "dense_round": log_n - cutoff_log2 - 1,
+                "readback": 1,
+                "cpu_tail": cutoff_log2,
+            }
+        )
+    if member["metal_counts"] != expected_metal_counts:
+        raise ValueError("production InstructionInput Metal schedule is invalid")
+
+    observation = member["resource_observation"]
+    if backend == "optimized":
+        if observation is not None:
+            raise ValueError("production optimized InstructionInput arm has Metal resources")
+    else:
+        observation_fields = {
+            "allocation",
+            "host_tail_bytes",
+            "readback_bytes",
+            "resident_rows_reused",
+            "round_device_buffer_allocations",
+        }
+        if not isinstance(observation, dict) or set(observation) != observation_fields:
+            raise ValueError(
+                "production InstructionInput Metal resource record is incomplete"
+            )
+        allocation = observation["allocation"]
+        allocation_fields = {
+            "current_device_bytes",
+            "device_buffers",
+            "planned_device_bytes",
+            "recommended_device_bytes",
+        }
+        if not isinstance(allocation, dict) or set(allocation) != allocation_fields:
+            raise ValueError(
+                "production InstructionInput Metal allocation record is incomplete"
+            )
+        if any(
+            type(allocation[name]) is not int or allocation[name] < 0
+            for name in allocation_fields
+        ):
+            raise ValueError(
+                "production InstructionInput Metal allocation values are invalid"
+            )
+        expected_tail_bytes = 8 * (1 << cutoff_log2) * 16
+        expected_sequence_bytes = instruction_input_sequence_storage_bytes(log_n)
+        expected_resident_row_bytes = 160 * (1 << log_n)
+        if (
+            allocation["device_buffers"] != 6
+            or allocation["planned_device_bytes"] != expected_sequence_bytes
+            or allocation["current_device_bytes"] < expected_resident_row_bytes
+            or allocation["recommended_device_bytes"] <= 0
+            or allocation["current_device_bytes"]
+            + allocation["planned_device_bytes"]
+            > allocation["recommended_device_bytes"]
+            or type(observation["host_tail_bytes"]) is not int
+            or observation["host_tail_bytes"] != expected_tail_bytes
+            or type(observation["readback_bytes"]) is not int
+            or observation["readback_bytes"] != expected_tail_bytes
+            or observation["resident_rows_reused"] is not True
+            or type(observation["round_device_buffer_allocations"]) is not int
+            or observation["round_device_buffer_allocations"] != 0
+        ):
+            raise ValueError(
+                "production InstructionInput Metal resource accounting is invalid"
+            )
+    return member["member_ns"]
+
+
 def validate_production_result(
     config: dict[str, Any],
     result: dict[str, Any],
@@ -1341,6 +2098,146 @@ def validate_production_result(
             or decision.get("clears_order_strata") is not True
         ):
             raise ValueError("production Bytecode decision has an invalid order-strata claim")
+    if local_kernel == "InstructionInput":
+        instruction_input_fingerprint = result.get("fingerprint")
+        if not isinstance(instruction_input_fingerprint, dict):
+            raise ValueError("production InstructionInput result has no fingerprint")
+        log_n = instruction_input_fingerprint.get("log_n")
+        cutoff_log2 = instruction_input_fingerprint.get(
+            "instruction_input_metal_cutoff_log2"
+        )
+        if (
+            type(log_n) is not int
+            or type(cutoff_log2) is not int
+            or not 1 <= cutoff_log2 <= log_n - 2
+        ):
+            raise ValueError("production InstructionInput result has invalid cycle geometry")
+        decision = metrics.get("instruction_input_kernel_service_decision")
+        if not isinstance(decision, dict) or decision.get("clears") is not True:
+            raise ValueError(
+                "production InstructionInput result did not clear its fixed local decision"
+            )
+        decision_speedup = decision.get("median_speedup")
+        if not math.isclose(
+            float(decision_speedup)
+            if isinstance(decision_speedup, (int, float))
+            and not isinstance(decision_speedup, bool)
+            else math.nan,
+            float(metric),
+            rel_tol=1e-12,
+        ):
+            raise ValueError(
+                "production InstructionInput decision disagrees with its scalar metric"
+            )
+        if pair_records is None or len(pair_records) != len(local_pairs):
+            raise ValueError(
+                "production InstructionInput result has incomplete raw pair records"
+            )
+        optimized_first_speedups = []
+        metal_first_speedups = []
+        raw_cpu_members = []
+        raw_metal_members = []
+        for index, (record, local_speedup) in enumerate(zip(pair_records, local_pairs)):
+            expected_order = (
+                ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+            )
+            if not isinstance(record, dict) or record.get("order") != expected_order:
+                raise ValueError("production InstructionInput raw pair order is invalid")
+            arms = record.get("arms", {})
+            try:
+                cpu_record = arms["optimized"]["instruction_input"]
+                metal_record = arms["metal"]["instruction_input"]
+                cpu_row_lifecycle = arms["optimized"][
+                    "instruction_input_row_lifecycle"
+                ]
+                metal_row_lifecycle = arms["metal"][
+                    "instruction_input_row_lifecycle"
+                ]
+            except (KeyError, TypeError) as error:
+                raise ValueError(
+                    "production InstructionInput raw pair is incomplete"
+                ) from error
+            cpu_member = validate_production_instruction_input_member(
+                cpu_record, "optimized", log_n, cutoff_log2
+            )
+            metal_member = validate_production_instruction_input_member(
+                metal_record, "metal", log_n, cutoff_log2
+            )
+            validate_production_instruction_input_row_lifecycle(
+                cpu_row_lifecycle, "optimized", log_n
+            )
+            validate_production_instruction_input_row_lifecycle(
+                metal_row_lifecycle, "metal", log_n
+            )
+            if not math.isclose(
+                float(local_speedup), cpu_member / metal_member, rel_tol=1e-9
+            ):
+                raise ValueError(
+                    "production InstructionInput raw pair disagrees with its speedup"
+                )
+            raw_cpu_members.append(cpu_member)
+            raw_metal_members.append(metal_member)
+            (
+                optimized_first_speedups
+                if expected_order == ["optimized", "metal"]
+                else metal_first_speedups
+            ).append(float(local_speedup))
+        for name, raw_samples in (
+            ("cpu_instruction_input_kernel_service_ms_samples", raw_cpu_members),
+            ("metal_instruction_input_kernel_service_ms_samples", raw_metal_members),
+        ):
+            reported_samples = metrics.get(name)
+            if (
+                not isinstance(reported_samples, list)
+                or len(reported_samples) != len(raw_samples)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isfinite(reported)
+                    or not math.isclose(
+                        float(reported) * 1e6,
+                        raw,
+                        rel_tol=1e-12,
+                        abs_tol=0.500001,
+                    )
+                    for reported, raw in zip(reported_samples, raw_samples)
+                )
+            ):
+                raise ValueError("production InstructionInput sample summary is invalid")
+        optimized_first_median = statistics.median(optimized_first_speedups)
+        metal_first_median = statistics.median(metal_first_speedups)
+        minimum_speedup = float(gate["minimum_local_speedup"])
+        if (
+            optimized_first_median < minimum_speedup
+            or metal_first_median < minimum_speedup
+        ):
+            raise ValueError(
+                "production InstructionInput order stratum does not clear the local gate"
+            )
+        decision_values = {
+            "minimum_speedup": minimum_speedup,
+            "median_speedup": float(metric),
+            "optimized_first_median_speedup": optimized_first_median,
+            "metal_first_median_speedup": metal_first_median,
+        }
+        for name, expected in decision_values.items():
+            actual = decision.get(name)
+            if (
+                isinstance(actual, bool)
+                or not isinstance(actual, (int, float))
+                or not math.isclose(float(actual), expected, rel_tol=1e-12)
+            ):
+                raise ValueError(
+                    "production InstructionInput decision disagrees with recomputed "
+                    f"{name}"
+                )
+        if (
+            decision.get("minimum_pairs") != int(gate["minimum_pairs"])
+            or decision.get("clears_order_strata") is not True
+        ):
+            raise ValueError(
+                "production InstructionInput decision has an invalid order-strata claim"
+            )
     piop_speedup = metrics.get("piop_speedup")
     if (
         isinstance(piop_speedup, bool)
@@ -1393,7 +2290,7 @@ def validate_production_result(
                 "optimized_first_median_speedup": optimized_first_median,
                 "metal_first_median_speedup": metal_first_median,
             }
-            if local_kernel == "BytecodeReadRafCycle"
+            if local_kernel in {"BytecodeReadRafCycle", "InstructionInput"}
             else {}
         ),
     }
@@ -1516,6 +2413,20 @@ def accepted_parent(config: dict[str, Any], events: list[dict[str, Any]]) -> tup
             parent_id = event["trial_id"]
             value = float(event["metric_value"])
     return parent_id, value
+
+
+def validate_accepted_parent_for_production(
+    config: dict[str, Any], metric_value: float
+) -> None:
+    if config.get("evaluator", {}).get("result_contract") != "instruction_input_v1":
+        return
+    minimum = float(
+        config["final_validation"]["production_gate"]["minimum_local_speedup"]
+    )
+    if not math.isfinite(metric_value) or metric_value < minimum:
+        raise ValueError(
+            "the accepted local parent does not clear the full-protocol search gate"
+        )
 
 
 def accepted_parent_params(
@@ -2310,7 +3221,8 @@ def command_validate_production(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     run_dir = Path(args.run_dir).resolve()
     config, events = load_run(run_dir)
-    parent_id, _ = accepted_parent(config, events)
+    parent_id, parent_metric = accepted_parent(config, events)
+    validate_accepted_parent_for_production(config, parent_metric)
     params = accepted_parent_params(config, events)
     validate_params(config, params)
     ledger = run_dir / "production-validations.jsonl"

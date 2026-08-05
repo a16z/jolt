@@ -178,6 +178,223 @@ class MetalAutoresearchTests(unittest.TestCase):
         }
         return config, params, output
 
+    def instruction_input_local_contract_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        config = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        params = {
+            name: str(value) for name, value in config["baseline_params"].items()
+        }
+        log_n = int(config["evaluator"]["env"]["JOLT_METAL_EVAL_LOG_N"])
+        validation_log_n = int(
+            config["evaluator"]["env"]["JOLT_METAL_EVAL_VALIDATE_LOG_N"]
+        )
+        repeats = int(config["evaluator"]["env"]["JOLT_METAL_EVAL_REPEATS"])
+        seed = int(config["evaluator"]["env"]["JOLT_METAL_EVAL_SEED"])
+        cutoff_log2 = int(params["JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2"])
+        trace_cutoff_log2 = int(
+            params["JOLT_METAL_INSTRUCTION_INPUT_TRACE_CUTOFF_LOG2"]
+        )
+        rows = 1 << log_n
+        cutoff = 1 << cutoff_log2
+        cpu_samples = [500 + 100 * index for index in range(repeats)]
+        hybrid_samples = [100 + 20 * index for index in range(repeats)]
+        reset_samples = [10 + 10 * index for index in range(repeats)]
+        resident_samples = [
+            hybrid - reset
+            for hybrid, reset in zip(hybrid_samples, reset_samples)
+        ]
+        gpu_wall_samples = [50 + 10 * index for index in range(repeats)]
+        gpu_active_samples = [40 + 10 * index for index in range(repeats)]
+        host_samples = [10 + index for index in range(repeats)]
+        readback_samples = [5 + index for index in range(repeats)]
+        tail_samples = [10 + index for index in range(repeats)]
+        paired = [
+            cpu / hybrid for cpu, hybrid in zip(cpu_samples, hybrid_samples)
+        ]
+        resident_paired = [
+            cpu / resident for cpu, resident in zip(cpu_samples, resident_samples)
+        ]
+        sequence_bytes = metal_autoresearch.instruction_input_sequence_storage_bytes(
+            log_n
+        )
+        cpu_rows_bytes = 48 * rows
+        resident_rows_bytes = 160 * rows
+        persistent_bytes = cpu_rows_bytes + resident_rows_bytes + sequence_bytes
+        cpu_first_dense_bytes = 8 * (rows // 2) * 16
+        hybrid_tail_bytes = 2 * 8 * cutoff * 16
+        protocol_seeds = [
+            seed ^ ((0x9E3779B97F4A7C15 * (index + 1)) & ((1 << 64) - 1))
+            for index in range(repeats)
+        ]
+        guards = {
+            name: True
+            for name in (
+                "exact_four_sample_q_evals",
+                "exact_round_polynomials",
+                "exact_host_fiat_shamir_challenges",
+                "exact_round_schedule",
+                "exact_cutoff_tables",
+                "exact_final_eight_claims",
+                "exact_final_sumcheck_claim",
+                "exact_transcript_state",
+                "exact_derived_eq_cycle",
+                "exact_final_relation",
+                "actual_optimized_cpu_validation_parity",
+                "protocol_retarget_reuses_cpu_rows",
+                "production_trace_cutoff_admits_target",
+                "raw_timing_relations",
+                "resident_rows_stable_across_reset",
+                "static_device_buffer_identities_stable",
+                "exactly_one_dense_readback",
+                "host_readback_preallocated_before_primary_timer",
+                "distinct_protocol_tapes",
+                "round_device_buffer_allocations_zero",
+                "host_fiat_shamir",
+                "cpu_tail_uses_exact_four_samples",
+                "all_exact",
+            )
+        }
+        output = {
+            "schema": "instruction_input_v1",
+            "schema_version": 1,
+            "kernel": "instruction_input",
+            "metrics": {
+                "hybrid_speedup": statistics.median(paired),
+                "resident_speedup": statistics.median(resident_paired),
+                "paired_hybrid_speedups": paired,
+                "paired_resident_speedups": resident_paired,
+                "cpu_ns_samples": cpu_samples,
+                "hybrid_ns_samples": hybrid_samples,
+                "resident_ns_samples": resident_samples,
+                "cpu_million_rows_per_second": rows
+                / (statistics.median(cpu_samples) / 1e9)
+                / 1e6,
+                "hybrid_million_rows_per_second": rows
+                / (statistics.median(hybrid_samples) / 1e9)
+                / 1e6,
+            },
+            "timings": {
+                "workload_and_source_preparation_seconds": 1.0,
+                "sequence_upload_and_storage_preparation_seconds": 2.0,
+                "cpu_median_seconds": statistics.median(cpu_samples) / 1e9,
+                "hybrid_median_seconds": statistics.median(hybrid_samples) / 1e9,
+                "resident_median_seconds": statistics.median(resident_samples) / 1e9,
+                "sequence_reset_median_seconds": statistics.median(reset_samples)
+                / 1e9,
+                "gpu_dispatch_wall_median_seconds": statistics.median(
+                    gpu_wall_samples
+                )
+                / 1e9,
+                "host_round_median_seconds": statistics.median(host_samples) / 1e9,
+                "readback_median_seconds": statistics.median(readback_samples) / 1e9,
+                "cpu_tail_median_seconds": statistics.median(tail_samples) / 1e9,
+                "gpu_active_total_seconds": sum(gpu_active_samples) / 1e9,
+                "sequence_reset_ns_samples": reset_samples,
+                "gpu_dispatch_wall_ns_samples": gpu_wall_samples,
+                "host_round_ns_samples": host_samples,
+                "readback_ns_samples": readback_samples,
+                "cpu_tail_ns_samples": tail_samples,
+                "gpu_active_ns_samples": gpu_active_samples,
+                "repeats": repeats,
+            },
+            "guards": guards,
+            "resources": {
+                "gpu_seconds": sum(gpu_active_samples) / 1e9,
+                "cpu_native_rows_bytes": cpu_rows_bytes,
+                "resident_stage1_rows_bytes": resident_rows_bytes,
+                "sequence_owned_working_storage_bytes": sequence_bytes,
+                "persistent_modeled_bytes_during_primary_trials": persistent_bytes,
+                "cpu_first_dense_table_bytes": cpu_first_dense_bytes,
+                "cpu_trial_peak_modeled_bytes": persistent_bytes
+                + cpu_first_dense_bytes,
+                "hybrid_readback_plus_tail_table_capacity_bytes": hybrid_tail_bytes,
+                "hybrid_trial_peak_modeled_bytes": persistent_bytes
+                + hybrid_tail_bytes,
+                "resident_source_host_copy_bytes_dropped_before_primary_trials": resident_rows_bytes,
+                "setup_peak_increment_from_resident_source_copy_bytes": resident_rows_bytes,
+                "cutoff_readback_bytes": 8 * cutoff * 16,
+                "unified_memory_no_per_round_row_upload": True,
+                "sequence_owned_storage_includes_dense_ping_pong_weights_and_reductions": True,
+            },
+            "workload": {
+                "log_n": log_n,
+                "rows": rows,
+                "validation_log_n": validation_log_n,
+                "tables": 8,
+                "samples_per_round": 4,
+                "descriptor_fields_returned_by_gpu": 3,
+                "cpu_native_row_bytes": 48,
+                "resident_stage1_row_bytes": 160,
+                "cutoff_log2": cutoff_log2,
+                "cutoff_elements": cutoff,
+                "trace_cutoff_log2": trace_cutoff_log2,
+                "trace_cutoff_elements": 1 << trace_cutoff_log2,
+                "native_message_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_NATIVE_MESSAGE_THREADS"]
+                ),
+                "native_transition_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_NATIVE_TRANSITION_THREADS"]
+                ),
+                "dense_transition_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_DENSE_TRANSITION_THREADS"]
+                ),
+                "host_fiat_shamir": True,
+                "primary_timing": "resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
+                "workload_preparation_in_primary_metric": False,
+                "sequence_preparation_in_primary_metric": False,
+                "host_readback_allocation_in_primary_metric": False,
+                "protocol_tape_preparation_in_primary_metric": False,
+                "protocol_tapes_per_process": repeats,
+                "protocol_tape_derivation": "base_seed xor ((repeat + 1) * 0x9e3779b97f4a7c15 modulo 2^64)",
+                "cpu_trials_run_while_resident_metal_sequence_is_allocated": True,
+                "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
+                "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage",
+            },
+            "pipelines": {
+                "native_message_execution_width": 32,
+                "native_message_max_threads": 1024,
+                "native_transition_execution_width": 32,
+                "native_transition_max_threads": 1024,
+                "dense_transition_execution_width": 32,
+                "dense_transition_max_threads": 1024,
+            },
+            "fingerprint": {
+                "device": "fixture Metal device",
+                "max_buffer_length": 1 << 36,
+                "recommended_max_working_set_size": 1 << 40,
+                "current_allocated_size": 0,
+                "cpu_threads": 8,
+                "log_n": log_n,
+                "validation_log_n": validation_log_n,
+                "repeats": repeats,
+                "seed": seed,
+                "cutoff_log2": cutoff_log2,
+                "trace_cutoff_log2": trace_cutoff_log2,
+                "native_message_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_NATIVE_MESSAGE_THREADS"]
+                ),
+                "native_transition_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_NATIVE_TRANSITION_THREADS"]
+                ),
+                "dense_transition_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_DENSE_TRANSITION_THREADS"]
+                ),
+                "orders": [
+                    ["cpu", "metal"] if index % 2 == 0 else ["metal", "cpu"]
+                    for index in range(repeats)
+                ],
+                "protocol_seeds": protocol_seeds,
+                "protocol_transcript_states": [
+                    [index + 1] * 32 for index in range(repeats)
+                ],
+            },
+        }
+        return config, params, output
+
     def production_bytecode_member_fixture(
         self, backend: str, member_ns: int, log_n: int = 26, cutoff_log2: int = 16
     ) -> dict[str, object]:
@@ -234,6 +451,203 @@ class MetalAutoresearchTests(unittest.TestCase):
             "metal_counts": metal_phases,
             "resource_observation": resource,
         }
+
+    def production_instruction_input_member_fixture(
+        self, backend: str, member_ns: int, log_n: int = 26, cutoff_log2: int = 16
+    ) -> dict[str, object]:
+        prepare_ns = 1
+        rounds_ns = [1] * log_n
+        finish_ns = 1
+        output_claims_ns = member_ns - prepare_ns - sum(rounds_ns) - finish_ns
+        self.assertGreater(output_claims_ns, 0)
+        metal_phases = {
+            "storage_prepare": 0,
+            "allocation_plan": 0,
+            "prepare": 0,
+            "first_message": 0,
+            "first_bind": 0,
+            "dense_round": 0,
+            "readback": 0,
+            "cpu_tail": 0,
+        }
+        resource = None
+        if backend == "metal":
+            metal_phases.update(
+                {
+                    "storage_prepare": 1,
+                    "allocation_plan": 1,
+                    "prepare": 1,
+                    "first_message": 1,
+                    "first_bind": 1,
+                    "dense_round": log_n - cutoff_log2 - 1,
+                    "readback": 1,
+                    "cpu_tail": cutoff_log2,
+                }
+            )
+            resource = {
+                "allocation": {
+                    "current_device_bytes": 160 * (1 << log_n),
+                    "device_buffers": 6,
+                    "planned_device_bytes": metal_autoresearch.instruction_input_sequence_storage_bytes(
+                        log_n
+                    ),
+                    "recommended_device_bytes": 160
+                    * (1 << log_n)
+                    + metal_autoresearch.instruction_input_sequence_storage_bytes(
+                        log_n
+                    ),
+                },
+                "host_tail_bytes": 8 * (1 << cutoff_log2) * 16,
+                "resident_rows_reused": True,
+                "round_device_buffer_allocations": 0,
+                "readback_bytes": 8 * (1 << cutoff_log2) * 16,
+            }
+        return {
+            "prepare_ns": prepare_ns,
+            "rounds_ns": rounds_ns,
+            "rounds_total_ns": sum(rounds_ns),
+            "finish_ns": finish_ns,
+            "output_claims_ns": output_claims_ns,
+            "member_ns": member_ns,
+            "outer_counts": {
+                "prepare": 1,
+                "prove_round": log_n,
+                "finish_rounds": 1,
+                "output_claims": 1,
+            },
+            "metal_counts": metal_phases,
+            "resource_observation": resource,
+        }
+
+    def production_instruction_input_row_lifecycle_fixture(
+        self, backend: str, log_n: int = 26
+    ) -> dict[str, object]:
+        if backend == "optimized":
+            return {
+                "kind": "optimized_cpu",
+                "rows": 1 << log_n,
+                "row_bytes": 48,
+                "prepare_storage_id": 101,
+                "stage3_storage_id": 101,
+            }
+        return {
+            "kind": "metal_resident",
+            "rows": 1 << log_n,
+            "row_bytes": 160,
+            "prepare_storage_id": 202,
+            "stage1_storage_id": 202,
+            "stage3_storage_id": 202,
+        }
+
+    def production_instruction_input_result_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        config = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        params = {
+            name: str(value) for name, value in config["baseline_params"].items()
+        }
+        gate = config["final_validation"]["production_gate"]
+        pairs = int(gate["minimum_pairs"])
+        log_n = 26
+        cutoff_log2 = int(
+            params["JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2"]
+        )
+        cpu_piop_ns = 200
+        metal_piop_ns = 100
+        cpu_member_ns = 500
+        metal_member_ns = 100
+        local_speedup = cpu_member_ns / metal_member_ns
+        orders = [
+            ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+            for index in range(pairs)
+        ]
+        result = {
+            "schema_version": 5,
+            "kernel": "akita_piop",
+            "local_kernel": "InstructionInput",
+            "local_metric": {
+                "metric": "instruction_input_kernel_service_speedup",
+                "paired_metric": "paired_instruction_input_kernel_service_speedups",
+            },
+            "run_class": {"mode": "production", "acceptance_eligible": True},
+            "guards": {name: True for name in gate["required_guards"]},
+            "metrics": {
+                "instruction_input_kernel_service_speedup": local_speedup,
+                "piop_speedup": cpu_piop_ns / metal_piop_ns,
+                "paired_speedups": [cpu_piop_ns / metal_piop_ns] * pairs,
+                "cpu_piop_ms_samples": [cpu_piop_ns / 1e6] * pairs,
+                "metal_piop_ms_samples": [metal_piop_ns / 1e6] * pairs,
+                "paired_instruction_input_kernel_service_speedups": [local_speedup]
+                * pairs,
+                "cpu_instruction_input_kernel_service_ms_samples": [cpu_member_ns / 1e6]
+                * pairs,
+                "metal_instruction_input_kernel_service_ms_samples": [metal_member_ns / 1e6]
+                * pairs,
+                "instruction_input_kernel_service_decision": {
+                    "clears": True,
+                    "minimum_speedup": float(gate["minimum_local_speedup"]),
+                    "minimum_pairs": pairs,
+                    "median_speedup": local_speedup,
+                    "optimized_first_median_speedup": local_speedup,
+                    "metal_first_median_speedup": local_speedup,
+                    "clears_order_strata": True,
+                },
+            },
+            "pairs": [
+                {
+                    "index": index + 1,
+                    "order": order,
+                    "arms": {
+                        "optimized": {
+                            "piop_ns": cpu_piop_ns,
+                            "instruction_input": self.production_instruction_input_member_fixture(
+                                "optimized", cpu_member_ns, log_n, cutoff_log2
+                            ),
+                            "instruction_input_row_lifecycle": self.production_instruction_input_row_lifecycle_fixture(
+                                "optimized", log_n
+                            ),
+                        },
+                        "metal": {
+                            "piop_ns": metal_piop_ns,
+                            "instruction_input": self.production_instruction_input_member_fixture(
+                                "metal", metal_member_ns, log_n, cutoff_log2
+                            ),
+                            "instruction_input_row_lifecycle": self.production_instruction_input_row_lifecycle_fixture(
+                                "metal", log_n
+                            ),
+                        },
+                    },
+                }
+                for index, order in enumerate(orders)
+            ],
+            "resources": {"metal_piop_seconds": pairs * metal_piop_ns / 1e9},
+            "fingerprint": {
+                "git_revision": "abc",
+                "worktree_dirty": False,
+                "local_kernel": "InstructionInput",
+                "log_n": log_n,
+                "instruction_input_metal_native_message_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_NATIVE_MESSAGE_THREADS"]
+                ),
+                "instruction_input_metal_native_transition_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_NATIVE_TRANSITION_THREADS"]
+                ),
+                "instruction_input_metal_dense_transition_threads": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_DENSE_TRANSITION_THREADS"]
+                ),
+                "instruction_input_metal_cutoff_log2": cutoff_log2,
+                "instruction_input_metal_trace_cutoff_log2": int(
+                    params["JOLT_METAL_INSTRUCTION_INPUT_TRACE_CUTOFF_LOG2"]
+                ),
+                "orders": orders,
+                "span": "jolt_prover::piop",
+                "workload": "fibonacci",
+            },
+        }
+        return config, params, result
 
     def test_schema_five_parser_requires_one_result_record(self) -> None:
         record = '{"schema_version": 5, "kernel": "akita_piop"}'
@@ -440,6 +854,177 @@ class MetalAutoresearchTests(unittest.TestCase):
         del template["evaluator"]["result_contract"]
 
         with self.assertRaisesRegex(ValueError, "result contract"):
+            metal_autoresearch.validate_template(template)
+
+    def test_instruction_input_local_result_accepts_closed_contract(self) -> None:
+        config, params, output = self.instruction_input_local_contract_fixture()
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+
+    def test_instruction_input_local_result_rejects_schema_extensions(self) -> None:
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["undeclared"] = True
+        with self.assertRaisesRegex(ValueError, "top-level schema"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["metrics"]["undeclared"] = 1
+        with self.assertRaisesRegex(ValueError, "metric record"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
+    def test_instruction_input_local_result_recomputes_reported_values(self) -> None:
+        mutations = (
+            (
+                "raw CPU sample",
+                lambda output: output["metrics"]["cpu_ns_samples"].__setitem__(
+                    0, 501
+                ),
+                "paired_hybrid_speedups",
+            ),
+            (
+                "paired speedup",
+                lambda output: output["metrics"]["paired_hybrid_speedups"].__setitem__(
+                    0, 99.0
+                ),
+                "paired_hybrid_speedups",
+            ),
+            (
+                "median",
+                lambda output: output["metrics"].__setitem__("hybrid_speedup", 99.0),
+                "hybrid_speedup",
+            ),
+            (
+                "timing median",
+                lambda output: output["timings"].__setitem__(
+                    "gpu_dispatch_wall_median_seconds", 99.0
+                ),
+                "gpu_dispatch_wall_median_seconds",
+            ),
+            (
+                "GPU total",
+                lambda output: output["timings"].__setitem__(
+                    "gpu_active_total_seconds", 99.0
+                ),
+                "GPU-active total",
+            ),
+            (
+                "GPU resource",
+                lambda output: output["resources"].__setitem__(
+                    "gpu_seconds", 99.0
+                ),
+                "GPU resource timing",
+            ),
+            (
+                "resource total",
+                lambda output: output["resources"].__setitem__(
+                    "persistent_modeled_bytes_during_primary_trials", 1
+                ),
+                "resource",
+            ),
+        )
+        for name, mutate, message in mutations:
+            with self.subTest(name=name):
+                config, params, output = self.instruction_input_local_contract_fixture()
+                mutate(output)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_local_result_contract(
+                        config, output, params
+                    )
+
+    def test_instruction_input_local_result_rejects_protocol_tampering(self) -> None:
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["fingerprint"]["repeats"] = 3
+        with self.assertRaisesRegex(ValueError, "fingerprint does not match repeats"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["fingerprint"]["protocol_seeds"][1] = output["fingerprint"][
+            "protocol_seeds"
+        ][0]
+        with self.assertRaisesRegex(ValueError, "protocol tapes"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["fingerprint"]["protocol_transcript_states"][1] = output[
+            "fingerprint"
+        ]["protocol_transcript_states"][0]
+        with self.assertRaisesRegex(ValueError, "transcript tapes"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["guards"]["distinct_protocol_tapes"] = False
+        with self.assertRaisesRegex(ValueError, "correctness guard"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
+    def test_instruction_input_local_result_enforces_gpu_time_budget(self) -> None:
+        for name, active, gpu_wall, hybrid, message in (
+            ("zero active", 0, 50, 100, "samples"),
+            ("active exceeds wall", 51, 50, 100, "GPU timing"),
+            ("wall exceeds hybrid", 50, 101, 100, "GPU timing"),
+        ):
+            with self.subTest(name=name):
+                config, params, output = self.instruction_input_local_contract_fixture()
+                output["timings"]["gpu_active_ns_samples"][0] = active
+                output["timings"]["gpu_dispatch_wall_ns_samples"][0] = gpu_wall
+                output["metrics"]["hybrid_ns_samples"][0] = hybrid
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_local_result_contract(
+                        config, output, params
+                    )
+
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["timings"]["host_round_ns_samples"][0] = 100
+        with self.assertRaisesRegex(ValueError, "component timings"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
+    def test_instruction_input_template_requires_precise_allocation_guard(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        precise_guard = "instruction_input_no_round_device_buffer_allocations"
+        old_guard = "instruction_input_no_round_allocations"
+        descriptor_guards = metal_autoresearch.PRODUCTION_LOCAL_KERNELS[
+            "InstructionInput"
+        ]["required_guards"]
+        self.assertIn(precise_guard, descriptor_guards)
+        self.assertNotIn(old_guard, descriptor_guards)
+        metal_autoresearch.validate_template(template)
+
+        template["final_validation"]["production_gate"]["required_guards"].remove(
+            precise_guard
+        )
+        template["final_validation"]["production_gate"]["required_guards"].append(
+            old_guard
+        )
+        with self.assertRaisesRegex(ValueError, "mandatory local-kernel guards"):
+            metal_autoresearch.validate_template(template)
+
+    def test_instruction_input_template_rejects_inert_validation_claims(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        template["final_validation"]["fresh_processes"] = 2
+        with self.assertRaisesRegex(ValueError, "inert checks"):
+            metal_autoresearch.validate_template(template)
+
+    def test_instruction_input_template_requires_shader_only_scope(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        template["scope"]["editable"].append(
+            "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.metal"
+        )
+        with self.assertRaisesRegex(ValueError, "shader-only"):
+            metal_autoresearch.validate_template(template)
+
+        template = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        template["evaluator"]["env"]["JOLT_METAL_EVAL_REPEATS"] = "3"
+        with self.assertRaisesRegex(ValueError, "at least five odd"):
             metal_autoresearch.validate_template(template)
 
     def test_snapshot_restores_discarded_candidate(self) -> None:
@@ -1257,6 +1842,213 @@ class MetalAutoresearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "order stratum"):
             metal_autoresearch.validate_production_result(
                 config, result, "abc", {}, True
+            )
+
+    def test_production_instruction_input_gate_validates_raw_members(self) -> None:
+        config, params, result = self.production_instruction_input_result_fixture()
+        evidence = metal_autoresearch.validate_production_result(
+            config, result, "abc", params, True
+        )
+        self.assertEqual(
+            evidence["paired_metric"],
+            "paired_instruction_input_kernel_service_speedups",
+        )
+        self.assertEqual(evidence["optimized_first_median_speedup"], 5.0)
+        self.assertEqual(evidence["metal_first_median_speedup"], 5.0)
+
+        mutations = (
+            (
+                "closed member schema",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ].__setitem__("undeclared", True),
+                "member record",
+            ),
+            (
+                "round total",
+                lambda value: value["pairs"][0]["arms"]["optimized"][
+                    "instruction_input"
+                ].__setitem__("rounds_total_ns", 27),
+                "member timing",
+            ),
+            (
+                "dense schedule",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["metal_counts"].__setitem__("dense_round", 8),
+                "Metal schedule",
+            ),
+            (
+                "CPU-tail schedule",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["metal_counts"].__setitem__("cpu_tail", 1),
+                "Metal schedule",
+            ),
+            (
+                "round allocation",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"].__setitem__(
+                    "round_device_buffer_allocations", 1
+                ),
+                "resource accounting",
+            ),
+            (
+                "round allocation type",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"].__setitem__(
+                    "round_device_buffer_allocations", False
+                ),
+                "resource accounting",
+            ),
+            (
+                "readback",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"].__setitem__("readback_bytes", 1),
+                "resource accounting",
+            ),
+            (
+                "preallocated host tail",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"].__setitem__("host_tail_bytes", 1),
+                "resource accounting",
+            ),
+            (
+                "exact sequence bytes",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"]["allocation"].__setitem__(
+                    "planned_device_bytes",
+                    metal_autoresearch.instruction_input_sequence_storage_bytes(26)
+                    - 16,
+                ),
+                "resource accounting",
+            ),
+            (
+                "resident rows in current allocation",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input"
+                ]["resource_observation"]["allocation"].__setitem__(
+                    "current_device_bytes", 160 * (1 << 26) - 1
+                ),
+                "resource accounting",
+            ),
+            (
+                "CPU row lifecycle",
+                lambda value: value["pairs"][0]["arms"]["optimized"][
+                    "instruction_input_row_lifecycle"
+                ].__setitem__("stage3_storage_id", 303),
+                "row lifecycle",
+            ),
+            (
+                "Metal row lifecycle",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input_row_lifecycle"
+                ].__setitem__("stage1_storage_id", 303),
+                "row lifecycle",
+            ),
+            (
+                "row lifecycle boolean ID",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input_row_lifecycle"
+                ].__setitem__("stage1_storage_id", True),
+                "row lifecycle",
+            ),
+            (
+                "closed row lifecycle schema",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "instruction_input_row_lifecycle"
+                ].__setitem__("undeclared", True),
+                "row lifecycle record",
+            ),
+            (
+                "raw speedup",
+                lambda value: value["metrics"][
+                    "paired_instruction_input_kernel_service_speedups"
+                ].__setitem__(0, 4.5),
+                "raw pair",
+            ),
+            (
+                "pair order",
+                lambda value: value["pairs"][0].__setitem__(
+                    "order", ["metal", "optimized"]
+                ),
+                "alternate correctly",
+            ),
+            (
+                "sample summary",
+                lambda value: value["metrics"][
+                    "cpu_instruction_input_kernel_service_ms_samples"
+                ].__setitem__(0, 1.0),
+                "sample summary",
+            ),
+        )
+        for name, mutate, message in mutations:
+            with self.subTest(name=name):
+                tampered = copy.deepcopy(result)
+                mutate(tampered)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_production_result(
+                        config, tampered, "abc", params, True
+                    )
+
+    def test_production_requires_full_protocol_local_parent_bar(self) -> None:
+        config, _, _ = self.production_instruction_input_result_fixture()
+        metal_autoresearch.validate_accepted_parent_for_production(config, 4.0)
+        with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
+            metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)
+
+    def test_production_instruction_input_gate_requires_precise_guard(self) -> None:
+        config, params, result = self.production_instruction_input_result_fixture()
+        del result["guards"][
+            "instruction_input_no_round_device_buffer_allocations"
+        ]
+        result["guards"]["instruction_input_no_round_allocations"] = True
+        with self.assertRaisesRegex(ValueError, "failed guards"):
+            metal_autoresearch.validate_production_result(
+                config, result, "abc", params, True
+            )
+
+        config, params, result = self.production_instruction_input_result_fixture()
+        del result["guards"]["instruction_input_cpu_rows_reused"]
+        with self.assertRaisesRegex(ValueError, "failed guards"):
+            metal_autoresearch.validate_production_result(
+                config, result, "abc", params, True
+            )
+
+    def test_production_instruction_input_gate_recomputes_order_strata(self) -> None:
+        config, params, result = self.production_instruction_input_result_fixture()
+        speedups = [5.0, 3.0, 5.0, 3.0, 5.0]
+        result["metrics"]["paired_instruction_input_kernel_service_speedups"] = speedups
+        result["metrics"]["cpu_instruction_input_kernel_service_ms_samples"] = [
+            speedup * 100 / 1e6 for speedup in speedups
+        ]
+        result["metrics"]["instruction_input_kernel_service_decision"].update(
+            {
+                "median_speedup": 5.0,
+                "optimized_first_median_speedup": 5.0,
+                "metal_first_median_speedup": 3.0,
+                "clears_order_strata": True,
+                "clears": True,
+            }
+        )
+        for pair, speedup in zip(result["pairs"], speedups):
+            member = pair["arms"]["optimized"]["instruction_input"]
+            member_ns = round(speedup * 100)
+            member["member_ns"] = member_ns
+            member["output_claims_ns"] = (
+                member_ns
+                - member["prepare_ns"]
+                - member["rounds_total_ns"]
+                - member["finish_ns"]
+            )
+        with self.assertRaisesRegex(ValueError, "order stratum"):
+            metal_autoresearch.validate_production_result(
+                config, result, "abc", params, True
             )
 
     def test_production_revision_rejects_commits_outside_editable_scope(self) -> None:

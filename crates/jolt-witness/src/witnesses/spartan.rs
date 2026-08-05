@@ -6,9 +6,9 @@ use jolt_riscv::JoltTraceRow as TraceRow;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 
 use super::{
-    lookup_query, row_is_noop, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
-    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
-    RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
+    lookup_query, row_is_noop, Imm, InstructionFlag, LeftInstructionInput, LeftLookupOperand,
+    LookupOutput, NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc,
+    Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
 use crate::{WitnessBundle, WitnessError, RV64_XLEN};
@@ -53,6 +53,10 @@ pub struct SpartanOuterRow {
     pub is_compressed: OpFlag,
     pub is_first_in_sequence: OpFlag,
     pub is_last_in_sequence: OpFlag,
+    pub left_operand_is_rs1: InstructionFlag,
+    pub left_operand_is_pc: InstructionFlag,
+    pub right_operand_is_rs2: InstructionFlag,
+    pub right_operand_is_imm: InstructionFlag,
 }
 
 impl WitnessBundle for SpartanOuterRow {
@@ -128,6 +132,18 @@ impl WitnessBundle for SpartanOuterRow {
             is_compressed: flag(CircuitFlags::IsCompressed),
             is_first_in_sequence: flag(CircuitFlags::IsFirstInSequence),
             is_last_in_sequence: flag(CircuitFlags::IsLastInSequence),
+            left_operand_is_rs1: InstructionFlag(
+                instruction_flags[InstructionFlags::LeftOperandIsRs1Value],
+            ),
+            left_operand_is_pc: InstructionFlag(
+                instruction_flags[InstructionFlags::LeftOperandIsPC],
+            ),
+            right_operand_is_rs2: InstructionFlag(
+                instruction_flags[InstructionFlags::RightOperandIsRs2Value],
+            ),
+            right_operand_is_imm: InstructionFlag(
+                instruction_flags[InstructionFlags::RightOperandIsImm],
+            ),
         })
     }
 

@@ -4,6 +4,7 @@
 
 mod booleanity;
 mod bytecode_read_raf;
+mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
 pub mod solinas;
@@ -11,6 +12,7 @@ mod spartan_outer;
 
 pub use booleanity::BooleanityMetalConfig;
 pub use bytecode_read_raf::{BytecodeReadRafMetalConfig, BytecodeReadRafResidentRows};
+pub use instruction_input::InstructionInputMetalConfig;
 pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 #[cfg(test)]
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;

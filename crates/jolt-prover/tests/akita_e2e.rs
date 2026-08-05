@@ -243,6 +243,11 @@ mod muldiv {
                 trace_cutoff_elements: 2,
                 ..Default::default()
             },
+            instruction_input: jolt_kernels::metal::InstructionInputMetalConfig {
+                trace_cutoff_elements: 2,
+                cutoff_elements: 2,
+                ..Default::default()
+            },
             instruction_read_raf: jolt_kernels::metal::InstructionReadRafMetalConfig {
                 address_cutoff_elements: 8,
                 cutoff_elements: 8,

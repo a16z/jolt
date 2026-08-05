@@ -42,6 +42,26 @@ BYTECODE_METAL_PHASES = (
     "invalid_round",
 )
 BYTECODE_MIN_SPEEDUP = 4.0
+INSTRUCTION_INPUT_KERNEL = "InstructionInput"
+INSTRUCTION_INPUT_COMPONENTS = ("prepare", "prove_round", "finish_rounds", "output_claims")
+INSTRUCTION_INPUT_METAL_PHASES = (
+    "storage_prepare",
+    "allocation_plan",
+    "prepare",
+    "first_message",
+    "first_bind",
+    "dense_round",
+    "readback",
+    "cpu_tail",
+)
+INSTRUCTION_INPUT_MIN_SPEEDUP = 4.0
+OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE = "OptimizedInstructionInput::rows_prepare"
+OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE = (
+    "OptimizedInstructionInput::rows_stage3_use"
+)
+METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE = (
+    "MetalInstructionInput::resident_rows_stage1_use"
+)
 PRODUCTION_PAIRS = 5
 LOCAL_KERNELS = {
     "BytecodeReadRafCycle": {
@@ -56,7 +76,27 @@ LOCAL_KERNELS = {
         "paired_metric": "paired_instruction_ra_speedups",
         "backend_prefix": "MetalInstructionRaVirtualization::",
     },
+    "InstructionInput": {
+        "name": INSTRUCTION_INPUT_KERNEL,
+        "metric": "instruction_input_kernel_service_speedup",
+        "paired_metric": "paired_instruction_input_kernel_service_speedups",
+        "backend_prefix": "MetalInstructionInput::",
+    },
 }
+
+
+def instruction_input_sequence_storage_bytes(log_n: int) -> int:
+    rows = 1 << log_n
+    e_out = 1 << (log_n // 2)
+    e_in = (rows // 2) // e_out
+    elements = (
+        8 * (rows // 2)
+        + 8 * (rows // 4)
+        + e_in
+        + e_out
+        + 2 * 3 * e_out
+    )
+    return 16 * elements
 BYTECODE_CONFIG_RE = re.compile(
     r"^BYTECODE_CYCLE_CONFIG requested=(?P<requested>\S+) "
     r"effective=(?P<effective>\S+) log_t=(?P<log_t>\d+) "
@@ -69,6 +109,13 @@ BYTECODE_METAL_CONFIG_RE = re.compile(
     r"message_threads=(?P<message_threads>\d+) "
     r"transition_threads=(?P<transition_threads>\d+) "
     r"max_threadgroups=(?P<max_threadgroups>\d+)$"
+)
+INSTRUCTION_INPUT_METAL_CONFIG_RE = re.compile(
+    r"^INSTRUCTION_INPUT_METAL_CONFIG backend=metal "
+    r"trace_cutoff=(?P<trace_cutoff>\d+) cutoff=(?P<cutoff>\d+) "
+    r"native_message_threads=(?P<native_message_threads>\d+) "
+    r"native_transition_threads=(?P<native_transition_threads>\d+) "
+    r"dense_transition_threads=(?P<dense_transition_threads>\d+)$"
 )
 MAX_RSS_RE = re.compile(r"^\s*(?P<bytes>\d+)\s+maximum resident set size\s*$", re.MULTILINE)
 
@@ -338,6 +385,41 @@ def validate_bytecode_stdout(
     return {"relation": config, "metal_runtime": metal_config}
 
 
+def validate_instruction_input_stdout(
+    stdout: str,
+    backend: str,
+    native_message_threads: int = 256,
+    native_transition_threads: int = 128,
+    dense_transition_threads: int = 128,
+    cutoff_log2: int = 16,
+    trace_cutoff_log2: int = 25,
+) -> Optional[dict[str, int]]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := INSTRUCTION_INPUT_METAL_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if backend == "optimized":
+        if configs:
+            raise ValueError("optimized evaluator emitted an InstructionInput Metal config")
+        return None
+    if len(configs) != 1:
+        raise ValueError(
+            "Metal evaluator must emit exactly one InstructionInput Metal config"
+        )
+    config = {name: int(value) for name, value in configs[0].groupdict().items()}
+    expected = {
+        "trace_cutoff": 1 << trace_cutoff_log2,
+        "cutoff": 1 << cutoff_log2,
+        "native_message_threads": native_message_threads,
+        "native_transition_threads": native_transition_threads,
+        "dense_transition_threads": dense_transition_threads,
+    }
+    if config != expected:
+        raise ValueError(f"unexpected InstructionInput Metal config: {config}")
+    return config
+
+
 def interval_duration_us(interval: tuple[float, float]) -> float:
     return interval[1] - interval[0]
 
@@ -490,6 +572,460 @@ def bytecode_member_breakdown(
     }
 
 
+def trace_boolean(value: Any) -> Optional[bool]:
+    if value is True or value == "true":
+        return True
+    if value is False or value == "false":
+        return False
+    return None
+
+
+def positive_trace_integer(value: Any, field: str) -> int:
+    if type(value) is int:
+        parsed = value
+    elif isinstance(value, str) and value.isascii() and value.isdecimal():
+        parsed = int(value)
+    else:
+        raise ValueError(f"InstructionInput trace has invalid {field}")
+    if parsed <= 0:
+        raise ValueError(f"InstructionInput trace has invalid {field}")
+    return parsed
+
+
+def nonnegative_trace_integer(value: Any, field: str) -> int:
+    if type(value) is int:
+        parsed = value
+    elif isinstance(value, str) and value.isascii() and value.isdecimal():
+        parsed = int(value)
+    else:
+        raise ValueError(f"InstructionInput trace has invalid {field}")
+    if parsed < 0:
+        raise ValueError(f"InstructionInput trace has invalid {field}")
+    return parsed
+
+
+def instruction_input_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    cutoff_log2: int = 16,
+) -> dict[str, Any]:
+    outer_names = {
+        f"{INSTRUCTION_INPUT_KERNEL}::{component}"
+        for component in INSTRUCTION_INPUT_COMPONENTS
+    }
+    inner_names = {
+        f"Metal{INSTRUCTION_INPUT_KERNEL}::{phase}"
+        for phase in INSTRUCTION_INPUT_METAL_PHASES
+    }
+    lifecycle_names = {
+        OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE,
+        OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE,
+        METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE,
+    }
+    intervals = strict_named_intervals(
+        events,
+        outer_names
+        | inner_names
+        | lifecycle_names
+        | {PIOP_SPAN, BACKEND_WITNESS_PREP_SPAN},
+    )
+    if len(intervals[PIOP_SPAN]) != 1:
+        raise ValueError("trace must contain exactly one positive PIOP span")
+    if len(intervals[BACKEND_WITNESS_PREP_SPAN]) != 1:
+        raise ValueError(
+            "trace must contain exactly one positive backend witness preparation span"
+        )
+    piop = intervals[PIOP_SPAN][0]
+    backend_prepare = intervals[BACKEND_WITNESS_PREP_SPAN][0]
+    by_component = {
+        component: sorted(intervals[f"{INSTRUCTION_INPUT_KERNEL}::{component}"])
+        for component in INSTRUCTION_INPUT_COMPONENTS
+    }
+    expected_outer_counts = {
+        "prepare": 1,
+        "prove_round": log_n,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }
+    outer_counts = {
+        component: len(component_intervals)
+        for component, component_intervals in by_component.items()
+    }
+    if outer_counts != expected_outer_counts:
+        raise ValueError(
+            f"InstructionInput member span counts {outer_counts}, expected {expected_outer_counts}"
+        )
+
+    prepare = by_component["prepare"][0]
+    rounds = by_component["prove_round"]
+    finish = by_component["finish_rounds"][0]
+    output = by_component["output_claims"][0]
+    ordered = [prepare, *rounds, finish, output]
+    if any(start < piop[0] or end > piop[1] for start, end in ordered):
+        raise ValueError("an InstructionInput member span lies outside PIOP")
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError("InstructionInput member spans overlap or appear out of order")
+
+    inner = {
+        phase: sorted(intervals[f"Metal{INSTRUCTION_INPUT_KERNEL}::{phase}"])
+        for phase in INSTRUCTION_INPUT_METAL_PHASES
+    }
+    inner_counts = {phase: len(values) for phase, values in inner.items()}
+    resource_observation = None
+    row_lifecycle = None
+    if backend == "optimized":
+        if any(inner_counts.values()):
+            raise ValueError(
+                "optimized trace unexpectedly contains InstructionInput Metal spans"
+            )
+        if (
+            len(intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE]) != 1
+            or len(intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE]) != 1
+            or intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE]
+        ):
+            raise ValueError("optimized InstructionInput row lifecycle is incomplete")
+        rows_prepare = intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE][0]
+        rows_stage3 = intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE][0]
+        if (
+            rows_prepare[0] < backend_prepare[0]
+            or rows_prepare[1] > backend_prepare[1]
+            or rows_prepare[1] > piop[0]
+        ):
+            raise ValueError(
+                "optimized InstructionInput rows were not prepared before PIOP"
+            )
+        require_contained(
+            rows_stage3, prepare, "optimized InstructionInput prepared-row use"
+        )
+        prepare_args = unique_span_args(
+            events, OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE
+        )
+        stage3_args = unique_span_args(
+            events, OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE
+        )
+        if set(prepare_args) != {
+            "cpu_rows_storage_id",
+            "cpu_rows",
+            "cpu_row_bytes",
+        } or set(stage3_args) != {"cpu_rows_storage_id", "cpu_rows"}:
+            raise ValueError("optimized InstructionInput row lifecycle is incomplete")
+        prepare_storage_id = positive_trace_integer(
+            prepare_args["cpu_rows_storage_id"], "CPU prepare storage ID"
+        )
+        stage3_storage_id = positive_trace_integer(
+            stage3_args["cpu_rows_storage_id"], "CPU stage-3 storage ID"
+        )
+        cpu_rows = positive_trace_integer(prepare_args["cpu_rows"], "CPU row count")
+        stage3_rows = positive_trace_integer(
+            stage3_args["cpu_rows"], "CPU stage-3 row count"
+        )
+        cpu_row_bytes = positive_trace_integer(
+            prepare_args["cpu_row_bytes"], "CPU row width"
+        )
+        if (
+            cpu_rows != 1 << log_n
+            or stage3_rows != cpu_rows
+            or cpu_row_bytes != 48
+            or stage3_storage_id != prepare_storage_id
+        ):
+            raise ValueError("optimized InstructionInput row lifecycle is invalid")
+        row_lifecycle = {
+            "kind": "optimized_cpu",
+            "rows": cpu_rows,
+            "row_bytes": cpu_row_bytes,
+            "prepare_storage_id": prepare_storage_id,
+            "stage3_storage_id": stage3_storage_id,
+        }
+    else:
+        if (
+            intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE]
+            or intervals[OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE]
+            or len(intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE]) != 1
+        ):
+            raise ValueError("Metal InstructionInput row lifecycle is incomplete")
+        expected_inner_counts = {
+            "storage_prepare": 1,
+            "allocation_plan": 1,
+            "prepare": 1,
+            "first_message": 1,
+            "first_bind": 1,
+            "dense_round": log_n - cutoff_log2 - 1,
+            "readback": 1,
+            "cpu_tail": cutoff_log2,
+        }
+        if inner_counts != expected_inner_counts:
+            raise ValueError(
+                f"InstructionInput Metal span counts {inner_counts}, expected {expected_inner_counts}"
+            )
+        storage_prepare = inner["storage_prepare"][0]
+        allocation_plan = inner["allocation_plan"][0]
+        rows_stage1 = intervals[METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE][0]
+        if (
+            storage_prepare[0] < backend_prepare[0]
+            or storage_prepare[1] > backend_prepare[1]
+            or storage_prepare[1] > piop[0]
+        ):
+            raise ValueError(
+                "InstructionInput storage is not contained in backend witness preparation"
+            )
+        require_contained(
+            allocation_plan, storage_prepare, "InstructionInput allocation plan"
+        )
+        if rows_stage1[0] < piop[0] or rows_stage1[1] > prepare[0]:
+            raise ValueError(
+                "Metal InstructionInput stage-1 row use is outside its lifecycle"
+            )
+        require_contained(inner["prepare"][0], prepare, "Metal InstructionInput prepare")
+        require_contained(
+            inner["first_message"][0], rounds[0], "first InstructionInput Metal message"
+        )
+        require_contained(
+            inner["first_bind"][0], rounds[1], "first InstructionInput Metal bind"
+        )
+        for index, interval in enumerate(inner["dense_round"]):
+            require_contained(interval, rounds[index + 2], "dense InstructionInput round")
+        handoff_round = 2 + expected_inner_counts["dense_round"]
+        require_contained(
+            inner["readback"][0], rounds[handoff_round], "InstructionInput readback"
+        )
+        if inner["readback"][0][1] > inner["cpu_tail"][0][0]:
+            raise ValueError("InstructionInput readback overlaps CPU-tail algebra")
+        for interval, outer_round in zip(
+            inner["cpu_tail"][:-1], rounds[handoff_round:]
+        ):
+            require_contained(interval, outer_round, "InstructionInput CPU-tail round")
+        require_contained(
+            inner["cpu_tail"][-1], finish, "InstructionInput CPU-tail finish"
+        )
+
+        storage = unique_span_args(
+            events, f"Metal{INSTRUCTION_INPUT_KERNEL}::storage_prepare"
+        )
+        if set(storage) != {
+            "trace_elements",
+            "cutoff_elements",
+            "host_tail_bytes",
+            "resident_rows_storage_id",
+            "resident_rows",
+            "resident_row_bytes",
+        }:
+            raise ValueError("InstructionInput storage preparation has unexpected fields")
+        storage = {
+            name: positive_trace_integer(value, name)
+            for name, value in storage.items()
+        }
+        host_tail_bytes = 8 * (1 << cutoff_log2) * 16
+        if (
+            storage["trace_elements"] != 1 << log_n
+            or storage["cutoff_elements"] != 1 << cutoff_log2
+            or storage["host_tail_bytes"] != host_tail_bytes
+            or storage["resident_rows"] != 1 << log_n
+            or storage["resident_row_bytes"] != 160
+        ):
+            raise ValueError("InstructionInput storage preparation has invalid geometry")
+
+        allocation = unique_span_args(
+            events, f"Metal{INSTRUCTION_INPUT_KERNEL}::allocation_plan"
+        )
+        allocation_fields = {
+            "device_buffers",
+            "planned_device_bytes",
+            "current_device_bytes",
+            "recommended_device_bytes",
+        }
+        if set(allocation) != allocation_fields:
+            raise ValueError("InstructionInput allocation plan has unexpected fields")
+        allocation = {
+            name: nonnegative_trace_integer(value, name)
+            for name, value in allocation.items()
+        }
+        expected_sequence_bytes = instruction_input_sequence_storage_bytes(log_n)
+        expected_resident_row_bytes = 160 * (1 << log_n)
+        if (
+            allocation["device_buffers"] != 6
+            or allocation["planned_device_bytes"] != expected_sequence_bytes
+            or allocation["current_device_bytes"] < expected_resident_row_bytes
+        ):
+            raise ValueError(
+                "InstructionInput allocation plan has invalid buffer accounting"
+            )
+        if (
+            allocation["current_device_bytes"] + allocation["planned_device_bytes"]
+            > allocation["recommended_device_bytes"]
+        ):
+            raise ValueError(
+                "InstructionInput allocation plan exceeds the admitted working set"
+            )
+
+        prepare_args = unique_span_args(
+            events, f"Metal{INSTRUCTION_INPUT_KERNEL}::prepare"
+        )
+        if set(prepare_args) != {
+            "resident_rows_reused",
+            "round_device_buffer_allocations",
+            "resident_rows_storage_id",
+            "resident_rows",
+        }:
+            raise ValueError("InstructionInput Metal prepare has unexpected fields")
+        resident_rows_reused = trace_boolean(prepare_args["resident_rows_reused"])
+        round_allocations = nonnegative_trace_integer(
+            prepare_args["round_device_buffer_allocations"],
+            "round device buffer allocations",
+        )
+        stage3_storage_id = positive_trace_integer(
+            prepare_args["resident_rows_storage_id"], "Metal stage-3 storage ID"
+        )
+        stage3_rows = positive_trace_integer(
+            prepare_args["resident_rows"], "Metal stage-3 row count"
+        )
+        stage1_args = unique_span_args(
+            events, METAL_INSTRUCTION_INPUT_ROWS_STAGE1_USE
+        )
+        if set(stage1_args) != {"resident_rows_storage_id", "resident_rows"}:
+            raise ValueError("Metal InstructionInput row lifecycle is incomplete")
+        stage1_storage_id = positive_trace_integer(
+            stage1_args["resident_rows_storage_id"], "Metal stage-1 storage ID"
+        )
+        stage1_rows = positive_trace_integer(
+            stage1_args["resident_rows"], "Metal stage-1 row count"
+        )
+        prepare_storage_id = storage["resident_rows_storage_id"]
+        if (
+            resident_rows_reused is not True
+            or round_allocations != 0
+            or stage1_rows != 1 << log_n
+            or stage3_rows != stage1_rows
+            or stage1_storage_id != prepare_storage_id
+            or stage3_storage_id != prepare_storage_id
+        ):
+            raise ValueError(
+                "InstructionInput Metal row lifecycle did not preserve residency"
+            )
+        row_lifecycle = {
+            "kind": "metal_resident",
+            "rows": stage1_rows,
+            "row_bytes": storage["resident_row_bytes"],
+            "prepare_storage_id": prepare_storage_id,
+            "stage1_storage_id": stage1_storage_id,
+            "stage3_storage_id": stage3_storage_id,
+        }
+
+        readback = unique_span_args(
+            events, f"Metal{INSTRUCTION_INPUT_KERNEL}::readback"
+        )
+        if readback != {"bytes": str(host_tail_bytes)}:
+            raise ValueError(
+                "InstructionInput readback does not cover exactly eight cutoff tables"
+            )
+        resource_observation = {
+            "allocation": allocation,
+            "host_tail_bytes": storage["host_tail_bytes"],
+            "readback_bytes": int(readback["bytes"]),
+            "resident_rows_reused": resident_rows_reused,
+            "round_device_buffer_allocations": round_allocations,
+        }
+
+    round_durations = [interval_duration_us(interval) for interval in rounds]
+    components = {
+        "prepare_us": interval_duration_us(prepare),
+        "rounds_us": round_durations,
+        "rounds_total_us": sum(round_durations),
+        "finish_us": interval_duration_us(finish),
+        "output_claims_us": interval_duration_us(output),
+    }
+    components["member_us"] = (
+        components["prepare_us"]
+        + components["rounds_total_us"]
+        + components["finish_us"]
+        + components["output_claims_us"]
+    )
+    scalar_components = [value for value in components.values() if not isinstance(value, list)]
+    if any(not math.isfinite(value) or value <= 0.0 for value in scalar_components):
+        raise ValueError("trace contains a non-positive InstructionInput member duration")
+    return {
+        "components": components,
+        "outer_counts": outer_counts,
+        "metal_counts": inner_counts,
+        "resource_observation": resource_observation,
+        "row_lifecycle": row_lifecycle,
+    }
+
+
+def local_member_decision(
+    pairs: list[dict[str, Any]],
+    cpu: list[float],
+    metal: list[float],
+    minimum_speedup: float,
+) -> tuple[list[float], list[float], dict[str, Any]]:
+    speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
+    improvements = [1.0 - metal_us / cpu_us for cpu_us, metal_us in zip(cpu, metal)]
+    speedup_median = statistics.median(speedups)
+    improvement_median = statistics.median(improvements)
+    improvement_mad = statistics.median(
+        abs(value - improvement_median) for value in improvements
+    )
+    cpu_median = statistics.median(cpu)
+    metal_median = statistics.median(metal)
+    optimized_first = [
+        speedup
+        for pair, speedup in zip(pairs, speedups)
+        if pair.get("order") == ["optimized", "metal"]
+    ]
+    metal_first = [
+        speedup
+        for pair, speedup in zip(pairs, speedups)
+        if pair.get("order") == ["metal", "optimized"]
+    ]
+    optimized_first_median = (
+        statistics.median(optimized_first) if optimized_first else None
+    )
+    metal_first_median = statistics.median(metal_first) if metal_first else None
+    enough_pairs = len(pairs) >= PRODUCTION_PAIRS
+    clears_speedup = speedup_median >= minimum_speedup
+    clears_fraction = improvement_median >= 1.0 - 1.0 / minimum_speedup
+    clears_noise = improvement_median > 3.0 * improvement_mad
+    lower_median = metal_median < cpu_median
+    clears_order_strata = (
+        optimized_first_median is not None
+        and metal_first_median is not None
+        and optimized_first_median >= minimum_speedup
+        and metal_first_median >= minimum_speedup
+    )
+    decision = {
+        "minimum_speedup": minimum_speedup,
+        "minimum_pairs": PRODUCTION_PAIRS,
+        "median_speedup": speedup_median,
+        "median_fractional_improvement": improvement_median,
+        "mad_fractional_improvement": improvement_mad,
+        "cpu_member_ms_median": cpu_median / 1000.0,
+        "cpu_member_ms_mad": statistics.median(
+            abs(value - cpu_median) for value in cpu
+        )
+        / 1000.0,
+        "metal_member_ms_median": metal_median / 1000.0,
+        "metal_member_ms_mad": statistics.median(
+            abs(value - metal_median) for value in metal
+        )
+        / 1000.0,
+        "enough_pairs": enough_pairs,
+        "clears_speedup": clears_speedup,
+        "clears_fractional_improvement": clears_fraction,
+        "clears_noise": clears_noise,
+        "lower_metal_median": lower_median,
+        "optimized_first_median_speedup": optimized_first_median,
+        "metal_first_median_speedup": metal_first_median,
+        "clears_order_strata": clears_order_strata,
+        "clears": enough_pairs
+        and clears_speedup
+        and clears_fraction
+        and clears_noise
+        and lower_median
+        and clears_order_strata,
+    }
+    return speedups, improvements, decision
+
+
 def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     if not pairs:
         raise ValueError("at least one CPU/Metal pair is required")
@@ -501,13 +1037,22 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     metal_instruction_ra = [float(pair["metal_instruction_ra_us"]) for pair in pairs]
     cpu_bytecode = [float(pair["cpu_bytecode_us"]) for pair in pairs]
     metal_bytecode = [float(pair["metal_bytecode_us"]) for pair in pairs]
+    cpu_instruction_input = [float(pair["cpu_instruction_input_us"]) for pair in pairs]
+    metal_instruction_input = [
+        float(pair["metal_instruction_input_us"]) for pair in pairs
+    ]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
         raise ValueError("backend witness preparation durations must be finite and non-negative")
     if any(
         not math.isfinite(value) or value <= 0.0
-        for value in cpu_instruction_ra + metal_instruction_ra + cpu_bytecode + metal_bytecode
+        for value in cpu_instruction_ra
+        + metal_instruction_ra
+        + cpu_bytecode
+        + metal_bytecode
+        + cpu_instruction_input
+        + metal_instruction_input
     ):
         raise ValueError("kernel durations must be finite and positive")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
@@ -521,6 +1066,14 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         1.0 - metal_us / cpu_us
         for cpu_us, metal_us in zip(cpu_bytecode, metal_bytecode)
     ]
+    instruction_input_speedups, instruction_input_improvements, instruction_input_decision = (
+        local_member_decision(
+            pairs,
+            cpu_instruction_input,
+            metal_instruction_input,
+            INSTRUCTION_INPUT_MIN_SPEEDUP,
+        )
+    )
     paired_with_prepare = [
         (cpu_us + cpu_prepare_us) / (metal_us + metal_prepare_us)
         for cpu_us, metal_us, cpu_prepare_us, metal_prepare_us in zip(
@@ -571,6 +1124,9 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "piop_speedup": statistics.median(paired_speedups),
         "instruction_ra_speedup": statistics.median(instruction_ra_speedups),
         "bytecode_read_raf_cycle_speedup": bytecode_speedup_median,
+        "instruction_input_kernel_service_speedup": statistics.median(
+            instruction_input_speedups
+        ),
         "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
@@ -580,6 +1136,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_instruction_ra_speedups": instruction_ra_speedups,
         "paired_bytecode_read_raf_cycle_speedups": bytecode_speedups,
         "paired_bytecode_read_raf_cycle_fractional_improvements": bytecode_improvements,
+        "paired_instruction_input_kernel_service_speedups": instruction_input_speedups,
+        "paired_instruction_input_kernel_service_fractional_improvements": instruction_input_improvements,
         "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
@@ -591,6 +1149,13 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_bytecode_read_raf_cycle_ms_samples": [
             value / 1000.0 for value in metal_bytecode
         ],
+        "cpu_instruction_input_kernel_service_ms_samples": [
+            value / 1000.0 for value in cpu_instruction_input
+        ],
+        "metal_instruction_input_kernel_service_ms_samples": [
+            value / 1000.0 for value in metal_instruction_input
+        ],
+        "instruction_input_kernel_service_decision": instruction_input_decision,
         "bytecode_read_raf_cycle_decision": {
             "minimum_speedup": BYTECODE_MIN_SPEEDUP,
             "minimum_pairs": PRODUCTION_PAIRS,
@@ -664,6 +1229,11 @@ def run_backend(
     bytecode_max_threadgroups: int,
     bytecode_cutoff_log2: int,
     bytecode_trace_cutoff_log2: int,
+    instruction_input_native_message_threads: int,
+    instruction_input_native_transition_threads: int,
+    instruction_input_dense_transition_threads: int,
+    instruction_input_cutoff_log2: int,
+    instruction_input_trace_cutoff_log2: int,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -689,6 +1259,16 @@ def run_backend(
         str(bytecode_cutoff_log2),
         "--bytecode-metal-trace-cutoff-log2",
         str(bytecode_trace_cutoff_log2),
+        "--instruction-input-metal-native-message-threads",
+        str(instruction_input_native_message_threads),
+        "--instruction-input-metal-native-transition-threads",
+        str(instruction_input_native_transition_threads),
+        "--instruction-input-metal-dense-transition-threads",
+        str(instruction_input_dense_transition_threads),
+        "--instruction-input-metal-cutoff-log2",
+        str(instruction_input_cutoff_log2),
+        "--instruction-input-metal-trace-cutoff-log2",
+        str(instruction_input_trace_cutoff_log2),
     ]
     if backend == "metal":
         benchmark_command.extend(
@@ -724,6 +1304,15 @@ def run_backend(
         bytecode_cutoff_log2,
         bytecode_trace_cutoff_log2,
     )
+    instruction_input_config = validate_instruction_input_stdout(
+        result.stdout,
+        backend,
+        instruction_input_native_message_threads,
+        instruction_input_native_transition_threads,
+        instruction_input_dense_transition_threads,
+        instruction_input_cutoff_log2,
+        instruction_input_trace_cutoff_log2,
+    )
     source = trace_path(root, workload, log_n, backend)
     if not source.is_file() or source.stat().st_mtime_ns <= started_ns:
         raise ValueError(f"{backend} evaluator did not emit a fresh trace")
@@ -739,16 +1328,24 @@ def run_backend(
     ):
         raise ValueError(f"{backend} trace changed while it was captured")
     events = load_trace_events(destination)
-    member = bytecode_member_breakdown(events, backend, log_n, bytecode_cutoff_log2)
+    bytecode_member = bytecode_member_breakdown(
+        events, backend, log_n, bytecode_cutoff_log2
+    )
+    instruction_input_member = instruction_input_member_breakdown(
+        events, backend, log_n, instruction_input_cutoff_log2
+    )
     attribution = trace_attribution(events)
-    attributed_member_us = kernel_wall_us(attribution, BYTECODE_KERNEL)
-    if not math.isclose(
-        attributed_member_us,
-        float(member["components"]["member_us"]),
-        rel_tol=1e-12,
-        abs_tol=1e-6,
+    for name, member in (
+        (BYTECODE_KERNEL, bytecode_member),
+        (INSTRUCTION_INPUT_KERNEL, instruction_input_member),
     ):
-        raise ValueError("Bytecode member parser disagrees with trace attribution")
+        if not math.isclose(
+            kernel_wall_us(attribution, name),
+            float(member["components"]["member_us"]),
+            rel_tol=1e-12,
+            abs_tol=1e-6,
+        ):
+            raise ValueError(f"{name} member parser disagrees with trace attribution")
     stdout_path = artifact_dir / f"{label}.stdout"
     stderr_path = artifact_dir / f"{label}.stderr"
     return {
@@ -758,7 +1355,9 @@ def run_backend(
         ),
         "attribution": attribution,
         "bytecode_config": bytecode_config,
-        "bytecode_member": member,
+        "bytecode_member": bytecode_member,
+        "instruction_input_config": instruction_input_config,
+        "instruction_input_member": instruction_input_member,
         "command": command,
         "max_rss_bytes": max_rss,
         "artifacts": {
@@ -935,6 +1534,36 @@ def parser() -> argparse.ArgumentParser:
         choices=[18, 20, 22, 24, 25],
         default=18,
     )
+    result.add_argument(
+        "--instruction-input-metal-native-message-threads",
+        type=int,
+        choices=[32, 64, 128, 256, 512, 1024],
+        default=256,
+    )
+    result.add_argument(
+        "--instruction-input-metal-native-transition-threads",
+        type=int,
+        choices=[32, 64, 128, 256, 512, 1024],
+        default=128,
+    )
+    result.add_argument(
+        "--instruction-input-metal-dense-transition-threads",
+        type=int,
+        choices=[32, 64, 128, 256, 512, 1024],
+        default=128,
+    )
+    result.add_argument(
+        "--instruction-input-metal-cutoff-log2",
+        type=int,
+        choices=[12, 14, 15, 16, 17, 18, 20],
+        default=16,
+    )
+    result.add_argument(
+        "--instruction-input-metal-trace-cutoff-log2",
+        type=int,
+        choices=[24, 25, 26, 27, 28],
+        default=25,
+    )
     result.add_argument("--trace", type=Path)
     return result
 
@@ -961,13 +1590,22 @@ def main() -> int:
         print("error: log-n, repeats, and timeout must be positive", file=sys.stderr)
         return 2
     if args.log_n < 25:
-        print("error: Bytecode Metal PIOP evaluation requires log-n at least 25", file=sys.stderr)
+        print("error: Metal PIOP evaluation requires log-n at least 25", file=sys.stderr)
         return 2
     if args.bytecode_metal_cutoff_log2 > args.log_n - 1:
         print("error: Bytecode Metal cutoff must not exceed half the trace", file=sys.stderr)
         return 2
     if args.bytecode_metal_trace_cutoff_log2 > args.log_n:
         print("error: Bytecode Metal trace cutoff disables the measured backend", file=sys.stderr)
+        return 2
+    if args.instruction_input_metal_cutoff_log2 > args.log_n - 1:
+        print("error: InstructionInput cutoff must not exceed half the trace", file=sys.stderr)
+        return 2
+    if args.instruction_input_metal_trace_cutoff_log2 > args.log_n:
+        print(
+            "error: InstructionInput trace cutoff disables the measured backend",
+            file=sys.stderr,
+        )
         return 2
     if args.instruction_ra_reuse_inverse and args.instruction_ra_materialize_width == 16:
         print("error: width-16 Instruction RA cannot reuse the inverse", file=sys.stderr)
@@ -1012,6 +1650,11 @@ def main() -> int:
                     args.bytecode_metal_max_threadgroups,
                     args.bytecode_metal_cutoff_log2,
                     args.bytecode_metal_trace_cutoff_log2,
+                    args.instruction_input_metal_native_message_threads,
+                    args.instruction_input_metal_native_transition_threads,
+                    args.instruction_input_metal_dense_transition_threads,
+                    args.instruction_input_metal_cutoff_log2,
+                    args.instruction_input_metal_trace_cutoff_log2,
                     index + 1,
                     args.timeout_seconds,
                 )
@@ -1034,6 +1677,16 @@ def main() -> int:
                     "metal_bytecode_us": float(
                         results["metal"]["bytecode_member"]["components"]["member_us"]
                     ),
+                    "cpu_instruction_input_us": float(
+                        results["optimized"]["instruction_input_member"]["components"][
+                            "member_us"
+                        ]
+                    ),
+                    "metal_instruction_input_us": float(
+                        results["metal"]["instruction_input_member"]["components"][
+                            "member_us"
+                        ]
+                    ),
                 }
             )
             attributions.append(
@@ -1045,6 +1698,16 @@ def main() -> int:
                         "metal_config": results["metal"]["bytecode_config"],
                         "optimized_member": results["optimized"]["bytecode_member"],
                         "metal_member": results["metal"]["bytecode_member"],
+                    },
+                    "instruction_input": {
+                        "optimized_config": results["optimized"][
+                            "instruction_input_config"
+                        ],
+                        "metal_config": results["metal"]["instruction_input_config"],
+                        "optimized_member": results["optimized"][
+                            "instruction_input_member"
+                        ],
+                        "metal_member": results["metal"]["instruction_input_member"],
                     },
                     "commands": {
                         "optimized": results["optimized"]["command"],
@@ -1068,6 +1731,12 @@ def main() -> int:
                             "bytecode": member_record(
                                 results[backend]["bytecode_member"]
                             ),
+                            "instruction_input": member_record(
+                                results[backend]["instruction_input_member"]
+                            ),
+                            "instruction_input_row_lifecycle": results[backend][
+                                "instruction_input_member"
+                            ]["row_lifecycle"],
                             "config": results[backend]["bytecode_config"],
                             "command": results[backend]["command"],
                             "artifacts": results[backend]["artifacts"],
@@ -1151,6 +1820,97 @@ def main() -> int:
                 "bytecode_local_gate": metrics["bytecode_read_raf_cycle_decision"][
                     "clears"
                 ],
+                "instruction_input_cpu_control": all(
+                    not any(
+                        sample["instruction_input"]["optimized_member"]["metal_counts"].values()
+                    )
+                    for sample in attributions
+                ),
+                "instruction_input_cpu_rows_reused": all(
+                    sample["instruction_input"]["optimized_member"]["row_lifecycle"][
+                        "kind"
+                    ]
+                    == "optimized_cpu"
+                    and sample["instruction_input"]["optimized_member"][
+                        "row_lifecycle"
+                    ]["rows"]
+                    == 1 << args.log_n
+                    and sample["instruction_input"]["optimized_member"][
+                        "row_lifecycle"
+                    ]["row_bytes"]
+                    == 48
+                    and sample["instruction_input"]["optimized_member"][
+                        "row_lifecycle"
+                    ]["prepare_storage_id"]
+                    == sample["instruction_input"]["optimized_member"][
+                        "row_lifecycle"
+                    ]["stage3_storage_id"]
+                    for sample in attributions
+                ),
+                "instruction_input_metal_backend_exercised": all(
+                    sample["instruction_input"]["metal_member"]["metal_counts"][
+                        "first_message"
+                    ]
+                    == 1
+                    for sample in attributions
+                ),
+                "instruction_input_resident_rows_reused": all(
+                    sample["instruction_input"]["metal_member"]["resource_observation"][
+                        "resident_rows_reused"
+                    ]
+                    is True
+                    and sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "kind"
+                    ]
+                    == "metal_resident"
+                    and sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "rows"
+                    ]
+                    == 1 << args.log_n
+                    and sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "row_bytes"
+                    ]
+                    == 160
+                    and sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "prepare_storage_id"
+                    ]
+                    == sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "stage1_storage_id"
+                    ]
+                    == sample["instruction_input"]["metal_member"]["row_lifecycle"][
+                        "stage3_storage_id"
+                    ]
+                    for sample in attributions
+                ),
+                "instruction_input_working_set_admitted": all(
+                    sample["instruction_input"]["metal_member"]["resource_observation"]
+                    is not None
+                    for sample in attributions
+                ),
+                "instruction_input_readback_exact": all(
+                    sample["instruction_input"]["metal_member"]["resource_observation"][
+                        "readback_bytes"
+                    ]
+                    == 8 * (1 << args.instruction_input_metal_cutoff_log2) * 16
+                    for sample in attributions
+                ),
+                "instruction_input_host_readback_preallocated_outside_piop": all(
+                    sample["instruction_input"]["metal_member"]["resource_observation"][
+                        "host_tail_bytes"
+                    ]
+                    == 8 * (1 << args.instruction_input_metal_cutoff_log2) * 16
+                    for sample in attributions
+                ),
+                "instruction_input_no_round_device_buffer_allocations": all(
+                    sample["instruction_input"]["metal_member"]["resource_observation"][
+                        "round_device_buffer_allocations"
+                    ]
+                    == 0
+                    for sample in attributions
+                ),
+                "instruction_input_local_gate": metrics[
+                    "instruction_input_kernel_service_decision"
+                ]["clears"],
             },
             "resources": {
                 "metal_piop_seconds": sum(pair["metal_us"] for pair in pairs)
@@ -1182,6 +1942,15 @@ def main() -> int:
                 "bytecode_metal_trace_cutoff_elements": 1
                 << args.bytecode_metal_trace_cutoff_log2,
                 "bytecode_cpu_tail_algebra": "q10",
+                "instruction_input_metal_native_message_threads": args.instruction_input_metal_native_message_threads,
+                "instruction_input_metal_native_transition_threads": args.instruction_input_metal_native_transition_threads,
+                "instruction_input_metal_dense_transition_threads": args.instruction_input_metal_dense_transition_threads,
+                "instruction_input_metal_cutoff_log2": args.instruction_input_metal_cutoff_log2,
+                "instruction_input_metal_cutoff_elements": 1
+                << args.instruction_input_metal_cutoff_log2,
+                "instruction_input_metal_trace_cutoff_log2": args.instruction_input_metal_trace_cutoff_log2,
+                "instruction_input_metal_trace_cutoff_elements": 1
+                << args.instruction_input_metal_trace_cutoff_log2,
                 "span": PIOP_SPAN,
                 "orders": orders,
             },

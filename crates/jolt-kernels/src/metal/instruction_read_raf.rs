@@ -9,6 +9,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::booleanity::BooleanityMetalConfig;
 use super::bytecode_read_raf::BytecodeReadRafMetalConfig;
+use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows, MetalError, Product5Sequence,
@@ -52,6 +53,8 @@ impl Default for InstructionReadRafMetalConfig {
 pub struct MetalConfig {
     /// Stage-1 Spartan outer uni-skip settings.
     pub spartan_outer_uniskip: SpartanOuterUniskipMetalConfig,
+    /// Stage-3 instruction-input virtualization settings.
+    pub instruction_input: InstructionInputMetalConfig,
     /// Stage-5 instruction read-RAF settings.
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-6b Booleanity cycle settings.
@@ -82,6 +85,8 @@ impl MetalBackend {
         }
         for cutoff in [
             config.spartan_outer_uniskip.trace_cutoff_elements,
+            config.instruction_input.trace_cutoff_elements,
+            config.instruction_input.cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
             config.bytecode_read_raf_cycle.trace_cutoff_elements,
@@ -114,6 +119,7 @@ where
     /// Replaces implemented optimized slots with their Metal counterparts.
     pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Self {
         self.spartan_outer_uniskip = Box::new(metal.clone());
+        self.instruction_input = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
         self.bytecode_read_raf_cycle = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());

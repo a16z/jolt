@@ -84,3 +84,7 @@ required-features = ["metal", "parallel"]
 [[example]]
 name = "metal-bytecode-read-raf-eval"
 required-features = ["metal", "parallel"]
+
+[[example]]
+name = "metal-instruction-input-eval"
+required-features = ["metal", "parallel"]

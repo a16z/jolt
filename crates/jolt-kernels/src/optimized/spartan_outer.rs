@@ -70,15 +70,16 @@ use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::SpartanOuterRow;
 #[cfg(test)]
 use jolt_witness::witnesses::{
-    Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput, NextIsFirstInSequence,
-    NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamReadValue,
-    RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
-    ShouldBranch, ShouldJump, UnexpandedPc,
+    Imm, InstructionFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
+    RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
+    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc,
 };
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::instruction_input::prepare_instruction_input_rows;
 use super::support::collect_rows;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
@@ -503,6 +504,7 @@ impl OptimizedOuterUniskip {
 pub(crate) fn prepare_metal_spartan_outer_uniskip(
     context: &SolinasMetal,
     config: SpartanOuterUniskipConfig,
+    retain_resident_rows: bool,
     session: &mut ProofSession,
     log_t: usize,
     tau: &[AkitaField],
@@ -528,6 +530,15 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
                 _ => prepare_metal_spartan_outer_rows(context, &rows, cycles)?,
             }
         };
+        let resident_rows_storage_id = resident.allocation_identity();
+        let _instruction_input_use = retain_resident_rows.then(|| {
+            tracing::info_span!(
+                "MetalInstructionInput::resident_rows_stage1_use",
+                resident_rows_storage_id,
+                resident_rows = cycles
+            )
+            .entered()
+        });
         let invocation = context
             .prepare_spartan_outer_uniskip_with_rows(&resident, &e_in, &e_out, config)
             .map_err(metal_outer_error)?;
@@ -535,7 +546,12 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
             let _span = tracing::info_span!("MetalSpartanOuterUniskip::dispatch").entered();
             invocation.execute().map_err(metal_outer_error)?;
         }
-        invocation.read_output().map_err(metal_outer_error)?
+        let output = invocation.read_output().map_err(metal_outer_error)?;
+        drop(invocation);
+        if retain_resident_rows {
+            session.park(resident);
+        }
+        output
     };
     let mut t1_values = vec![AkitaField::zero(); EXTENDED_SIZE];
     for ((position, _), value) in extension_coefficients().iter().zip(extended) {
@@ -611,6 +627,15 @@ fn metal_outer_error(error: MetalError) -> KernelError<AkitaField> {
 }
 
 impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
+    fn prepare_witness(
+        &self,
+        session: &mut ProofSession,
+        log_t: usize,
+        witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<(), KernelError<F>> {
+        prepare_instruction_input_rows(session, witness, 1usize << log_t)
+    }
+
     #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::prepare")]
     fn prepare(
         &self,
@@ -1225,6 +1250,7 @@ mod tests {
     use jolt_witness::{BundleSource, FixedBackend, JoltWitnessOracle, PolynomialEncoding, Shape};
 
     use super::*;
+    use crate::optimized::instruction_input::PreparedInstructionInputRows;
     use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
     use crate::ReferenceBackend;
 
@@ -1339,6 +1365,10 @@ mod tests {
                     is_compressed: OpFlag(bit()),
                     is_first_in_sequence: OpFlag(bit()),
                     is_last_in_sequence: OpFlag(bit()),
+                    left_operand_is_rs1: InstructionFlag(bit()),
+                    left_operand_is_pc: InstructionFlag(bit()),
+                    right_operand_is_rs2: InstructionFlag(bit()),
+                    right_operand_is_imm: InstructionFlag(bit()),
                 }
             })
             .collect()
@@ -1508,6 +1538,28 @@ mod tests {
             for (log_t, seed) in [(1usize, 111u64), (2, 222), (3, 333), (4, 444)] {
                 parity_case(dummy, log_t, seed);
             }
+        });
+    }
+
+    #[test]
+    fn prepare_witness_parks_instruction_input_rows() {
+        with_sample_backend(|backend| {
+            let log_t = 2;
+            let mut session = ProofSession::default();
+            <OptimizedOuterUniskip as UniskipKernel<Fr, OuterRemainder<Fr>>>::prepare_witness(
+                &OptimizedOuterUniskip,
+                &mut session,
+                log_t,
+                backend,
+            )
+            .unwrap();
+            assert_eq!(
+                session
+                    .state::<PreparedInstructionInputRows>()
+                    .unwrap()
+                    .len(),
+                1 << log_t
+            );
         });
     }
 

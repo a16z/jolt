@@ -4,8 +4,8 @@ use jolt_field::signed::{S192, S256, S64};
 use jolt_field::{AkitaField, SignedProductAccumulator as _, WithSignedProductAccumulator};
 use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -62,6 +62,10 @@ const FLAG_COMPRESSED: u32 = 16;
 const FLAG_RIGHT_INPUT_POSITIVE: u32 = 17;
 const FLAG_IMM_POSITIVE: u32 = 18;
 const FLAG_PRODUCT_POSITIVE: u32 = 19;
+const FLAG_LEFT_OPERAND_IS_RS1: u32 = 20;
+const FLAG_LEFT_OPERAND_IS_PC: u32 = 21;
+const FLAG_RIGHT_OPERAND_IS_RS2: u32 = 22;
+const FLAG_RIGHT_OPERAND_IS_IMM: u32 = 23;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -73,6 +77,7 @@ pub struct SpartanOuterUniskipRow {
 pub struct SpartanOuterUniskipRows {
     buffer: Buffer,
     len: usize,
+    device_registry_id: u64,
 }
 
 impl SpartanOuterUniskipRows {
@@ -82,6 +87,18 @@ impl SpartanOuterUniskipRows {
 
     pub const fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    pub(crate) fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    pub const fn device_registry_id(&self) -> u64 {
+        self.device_registry_id
+    }
+
+    pub fn allocation_identity(&self) -> usize {
+        self.buffer.as_ptr() as usize
     }
 }
 
@@ -148,6 +165,10 @@ impl SpartanOuterUniskipRow {
         );
         set(FLAG_IMM_POSITIVE, row.imm.0 >= 0);
         set(FLAG_PRODUCT_POSITIVE, row.product.0.is_positive);
+        set(FLAG_LEFT_OPERAND_IS_RS1, row.left_operand_is_rs1.0);
+        set(FLAG_LEFT_OPERAND_IS_PC, row.left_operand_is_pc.0);
+        set(FLAG_RIGHT_OPERAND_IS_RS2, row.right_operand_is_rs2.0);
+        set(FLAG_RIGHT_OPERAND_IS_IMM, row.right_operand_is_imm.0);
         Self {
             words: [
                 row.left_instruction_input.0,
@@ -172,6 +193,31 @@ impl SpartanOuterUniskipRow {
                 flags,
             ],
         }
+    }
+
+    /// Decodes the eight InstructionInput columns in output-claim order.
+    pub fn instruction_input_fields<F: jolt_field::Field>(&self) -> [F; 8] {
+        let flags = self.words[19];
+        let flag = |bit| F::from_u64((flags >> bit) & 1);
+        let load = ((flags >> FLAG_LOAD) & 1) != 0;
+        let rs2 = if load { 0 } else { self.words[10] };
+        let imm_magnitude = u128::from(self.words[7]) | (u128::from(self.words[8]) << 64);
+        let imm = F::from_u128(imm_magnitude);
+        let imm = if ((flags >> FLAG_IMM_POSITIVE) & 1) != 0 {
+            imm
+        } else {
+            -imm
+        };
+        [
+            flag(FLAG_LEFT_OPERAND_IS_RS1),
+            F::from_u64(self.words[9]),
+            flag(FLAG_LEFT_OPERAND_IS_PC),
+            F::from_u64(self.words[6]),
+            flag(FLAG_RIGHT_OPERAND_IS_RS2),
+            F::from_u64(rs2),
+            flag(FLAG_RIGHT_OPERAND_IS_IMM),
+            imm,
+        ]
     }
 }
 
@@ -433,8 +479,9 @@ impl SolinasMetal {
         if rows == 0 {
             return Err(MetalError::EmptyInput);
         }
-        let row_bytes = byte_length::<SpartanOuterUniskipRow>(rows)?;
+        let row_bytes = spartan_outer_uniskip_row_bytes(rows)?;
         self.validate_buffer_length(row_bytes)?;
+        self.validate_additional_working_set(row_bytes)?;
         let rows_buffer = self
             .device
             .new_buffer(row_bytes, MTLResourceOptions::StorageModeShared);
@@ -450,6 +497,7 @@ impl SolinasMetal {
         Ok(SpartanOuterUniskipRows {
             buffer: rows_buffer,
             len: rows,
+            device_registry_id: self.device_registry_id(),
         })
     }
 
@@ -538,16 +586,34 @@ impl SolinasMetal {
             .len()
             .checked_mul(SPARTAN_OUTER_EXTENDED_NODES)
             .ok_or(MetalError::InputTooLong(e_out.len()))?;
+        let e_in_bytes = byte_length::<Fp128>(e_in_fp.len())?;
+        let e_out_bytes = byte_length::<Fp128>(e_out_fp.len())?;
         let block_bytes = byte_length::<Fp128>(block_elements)?;
         let output_bytes = byte_length::<Fp128>(SPARTAN_OUTER_EXTENDED_NODES)?;
+        let params_bytes = byte_length::<Params>(1)?;
         for requested in [
-            byte_length::<Fp128>(e_in_fp.len())?,
-            byte_length::<Fp128>(e_out_fp.len())?,
+            e_in_bytes,
+            e_out_bytes,
             block_bytes,
             output_bytes,
+            params_bytes,
         ] {
             self.validate_buffer_length(requested)?;
         }
+        let invocation_bytes = [
+            e_in_bytes,
+            e_out_bytes,
+            block_bytes,
+            output_bytes,
+            params_bytes,
+        ]
+        .into_iter()
+        .try_fold(0u64, |total, bytes| {
+            total
+                .checked_add(bytes)
+                .ok_or(MetalError::InputTooLong(rows))
+        })?;
+        self.validate_additional_working_set(invocation_bytes)?;
         let params = Params {
             rows: u32::try_from(rows).map_err(|_| MetalError::InputTooLong(rows))?,
             pairs_per_block: u32::try_from(pairs_per_block)
@@ -701,6 +767,42 @@ fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
         .ok_or(MetalError::InputTooLong(elements))
 }
 
+pub(crate) fn spartan_outer_uniskip_row_bytes(rows: usize) -> Result<u64, MetalError> {
+    byte_length::<SpartanOuterUniskipRow>(rows)
+}
+
+pub(crate) fn spartan_outer_uniskip_invocation_bytes(rows: usize) -> Result<u64, MetalError> {
+    if rows == 0 || !rows.is_power_of_two() {
+        return Err(MetalError::SpartanOuterUniskipShape {
+            rows,
+            e_in: 0,
+            e_out: 0,
+        });
+    }
+    let split = (rows.ilog2() as usize).div_ceil(2);
+    let e_out = 1usize << split;
+    let e_in = rows
+        .checked_mul(2)
+        .and_then(|elements| elements.checked_div(e_out))
+        .ok_or(MetalError::InputTooLong(rows))?;
+    let block_elements = e_out
+        .checked_mul(SPARTAN_OUTER_EXTENDED_NODES)
+        .ok_or(MetalError::InputTooLong(e_out))?;
+    [
+        byte_length::<Fp128>(e_in)?,
+        byte_length::<Fp128>(e_out)?,
+        byte_length::<Fp128>(block_elements)?,
+        byte_length::<Fp128>(SPARTAN_OUTER_EXTENDED_NODES)?,
+        byte_length::<Params>(1)?,
+    ]
+    .into_iter()
+    .try_fold(0u64, |total, bytes| {
+        total
+            .checked_add(bytes)
+            .ok_or(MetalError::InputTooLong(rows))
+    })
+}
+
 const _: () = assert!(size_of::<SpartanOuterUniskipRow>() == 160);
 const _: () = assert!(size_of::<Params>() == 16);
 
@@ -711,6 +813,26 @@ mod tests {
     use jolt_poly::EqPolynomial;
 
     use super::*;
+
+    #[test]
+    fn resident_row_bytes_match_the_production_geometry() {
+        assert_eq!(
+            spartan_outer_uniskip_row_bytes(1 << 26).unwrap(),
+            10_737_418_240
+        );
+    }
+
+    #[test]
+    fn invocation_bytes_match_the_split_eq_geometry() {
+        assert_eq!(
+            spartan_outer_uniskip_invocation_bytes(1 << 26).unwrap(),
+            1_573_024
+        );
+        assert_eq!(
+            spartan_outer_uniskip_invocation_bytes(1 << 28).unwrap(),
+            3_145_888
+        );
+    }
 
     fn splitmix(mut value: u64) -> u64 {
         value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
@@ -949,5 +1071,38 @@ mod tests {
             .err()
             .unwrap();
         assert!(matches!(error, MetalError::SpartanOuterUniskipShape { .. }));
+    }
+
+    #[test]
+    fn packed_row_recovers_instruction_input_values() {
+        let mut words = [0u64; ROW_WORDS];
+        words[6] = 17;
+        words[7] = 23;
+        words[9] = 29;
+        words[10] = 31;
+        words[19] = (1 << FLAG_IMM_POSITIVE) | (1 << 20) | (1 << 23);
+        let row = SpartanOuterUniskipRow::from_words(words);
+        assert_eq!(
+            row.instruction_input_fields::<AkitaField>(),
+            [
+                AkitaField::one(),
+                AkitaField::from_u64(29),
+                AkitaField::zero(),
+                AkitaField::from_u64(17),
+                AkitaField::zero(),
+                AkitaField::from_u64(31),
+                AkitaField::one(),
+                AkitaField::from_u64(23),
+            ]
+        );
+
+        words[10] = 0xfeed_cafe;
+        words[19] = (1 << FLAG_LOAD) | (1 << FLAG_IMM_POSITIVE) | (1 << 21) | (1 << 23);
+        let load = SpartanOuterUniskipRow::from_words(words);
+        assert_eq!(
+            load.instruction_input_fields::<AkitaField>()[5],
+            AkitaField::zero(),
+            "loads canonically have no rs2"
+        );
     }
 }

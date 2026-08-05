@@ -27,6 +27,7 @@ const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity.metal");
 const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization.metal");
 const INSTRUCTION_RA_SEQUENCE_SOURCE: &str = include_str!("instruction_ra_sequence.metal");
+const INSTRUCTION_INPUT_SOURCE: &str = include_str!("instruction_input.metal");
 const BYTECODE_CYCLE_SOURCE: &str = include_str!("bytecode_cycle.metal");
 const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
@@ -39,6 +40,7 @@ mod address_suffix_full;
 mod booleanity;
 mod bytecode_cycle;
 mod bytecode_row;
+mod instruction_input;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
 mod product5;
@@ -64,6 +66,14 @@ pub use bytecode_cycle::{
     BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
+pub(crate) use instruction_input::{
+    instruction_input_sequence_storage_bytes, instruction_input_weight_capacities,
+    InstructionInputSequenceStorage,
+};
+pub use instruction_input::{
+    InstructionInputSequence, InstructionInputSequenceConfig, INSTRUCTION_INPUT_COEFFICIENTS,
+    INSTRUCTION_INPUT_TABLES,
+};
 pub(crate) use instruction_ra_sequence::{
     instruction_ra_weight_capacities, InstructionRaSequenceStorage,
 };
@@ -80,6 +90,9 @@ pub use product5::{
 pub use spartan_outer_uniskip::{
     evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,
     SpartanOuterUniskipRow, SpartanOuterUniskipRows, SPARTAN_OUTER_EXTENDED_NODES,
+};
+pub(crate) use spartan_outer_uniskip::{
+    spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_row_bytes,
 };
 
 pub const OFFSET_275: u32 = 275;
@@ -371,6 +384,24 @@ pub enum MetalError {
     },
     #[error("invalid resident Instruction RA state: {0}")]
     InvalidInstructionRaState(&'static str),
+    #[error("InstructionInput needs a power-of-two row count of at least four, got {0}")]
+    InvalidInstructionInputRows(usize),
+    #[error("InstructionInput table storage has length {got}, expected {expected}")]
+    InstructionInputStorageLength { expected: usize, got: usize },
+    #[error("InstructionInput split weights cover {covered} pairs, expected {expected}")]
+    InstructionInputWeightShape { expected: usize, covered: usize },
+    #[error("InstructionInput rows belong to Metal device {got}, but the kernel uses {expected}")]
+    InstructionInputRowsDevice { expected: u64, got: u64 },
+    #[error(
+        "InstructionInput pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedInstructionInputExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error("invalid resident InstructionInput state: {0}")]
+    InvalidInstructionInputState(&'static str),
     #[error(
         "bytecode cycle kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
@@ -505,7 +536,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)
@@ -537,17 +568,7 @@ impl SolinasMetal {
     ) -> Result<(), MetalError> {
         let current = self.device.current_allocated_size();
         let maximum = self.device.recommended_max_working_set_size();
-        if current
-            .checked_add(additional)
-            .is_none_or(|total| total > maximum)
-        {
-            return Err(MetalError::WorkingSetTooLarge {
-                current,
-                additional,
-                maximum,
-            });
-        }
-        Ok(())
+        validate_working_set(current, additional, maximum)
     }
 
     pub fn pipeline_limits(&self, probe: Probe) -> Result<PipelineLimits, MetalError> {
@@ -714,6 +735,24 @@ impl SolinasMetal {
         }
         Ok(width)
     }
+}
+
+pub(crate) fn validate_working_set(
+    current: u64,
+    additional: u64,
+    maximum: u64,
+) -> Result<(), MetalError> {
+    if current
+        .checked_add(additional)
+        .is_none_or(|total| total > maximum)
+    {
+        return Err(MetalError::WorkingSetTooLarge {
+            current,
+            additional,
+            maximum,
+        });
+    }
+    Ok(())
 }
 
 #[repr(C)]
@@ -890,7 +929,27 @@ fn command_buffer_timestamp(
 mod tests {
     use std::mem::{align_of, size_of};
 
-    use super::{AddressRafScanConfig, AddressRafScanRow, Fp128, SolinasMetal, OFFSET_275};
+    use super::{
+        validate_working_set, AddressRafScanConfig, AddressRafScanRow, Fp128, MetalError,
+        SolinasMetal, OFFSET_275,
+    };
+
+    #[test]
+    fn working_set_admission_is_exact_and_overflow_safe() {
+        assert!(validate_working_set(40, 60, 100).is_ok());
+        assert!(matches!(
+            validate_working_set(40, 61, 100),
+            Err(MetalError::WorkingSetTooLarge {
+                current: 40,
+                additional: 61,
+                maximum: 100,
+            })
+        ));
+        assert!(matches!(
+            validate_working_set(u64::MAX, 1, u64::MAX),
+            Err(MetalError::WorkingSetTooLarge { .. })
+        ));
+    }
 
     #[test]
     fn fp128_has_the_metal_buffer_layout() {

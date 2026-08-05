@@ -172,7 +172,7 @@ order after the first slot establishes the harness.
 | 2 | `ram_raf_evaluation` | sparse reduction | analyze |
 | 2 | `ram_output_check` | address-domain product | analyze |
 | 3 | `spartan_shift` | dense fused product | analyze |
-| 3 | `instruction_input` | dense fused product | analyze |
+| 3 | `instruction_input` | resident native rows, fused eight-table cycle reduction | integrated; exact lifecycle, per-buffer/working-set, and evaluator gates closed; `2^26` baseline pending |
 | 3 | `registers_claim_reduction` | dense fused product | analyze |
 | 4 | `registers_read_write` | sparse CPU front, dense cycle tail | analyze |
 | 4 | `ram_val_check` | dense fused product | analyze |

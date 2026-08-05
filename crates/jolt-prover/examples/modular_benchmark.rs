@@ -555,12 +555,22 @@ mod akita_benchmark {
     }
 
     #[derive(Debug, Clone, Copy)]
+    struct InstructionInputMetalTuning {
+        native_message_threads: usize,
+        native_transition_threads: usize,
+        dense_transition_threads: usize,
+        cutoff_log2: u32,
+        trace_cutoff_log2: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
     struct BackendConfig {
         backend: Backend,
         instruction_ra_materialize_width: InstructionRaMaterializeWidth,
         instruction_ra_reuse_inverse: bool,
         bytecode_cycle_algebra: BytecodeCycleAlgebra,
         bytecode_metal: BytecodeMetalTuning,
+        instruction_input_metal: InstructionInputMetalTuning,
     }
 
     #[derive(Parser, Debug)]
@@ -603,6 +613,21 @@ mod akita_benchmark {
 
         #[clap(long, default_value_t = 18)]
         bytecode_metal_trace_cutoff_log2: u32,
+
+        #[clap(long, default_value_t = 256)]
+        instruction_input_metal_native_message_threads: usize,
+
+        #[clap(long, default_value_t = 128)]
+        instruction_input_metal_native_transition_threads: usize,
+
+        #[clap(long, default_value_t = 128)]
+        instruction_input_metal_dense_transition_threads: usize,
+
+        #[clap(long, default_value_t = 16)]
+        instruction_input_metal_cutoff_log2: u32,
+
+        #[clap(long, default_value_t = 25)]
+        instruction_input_metal_trace_cutoff_log2: u32,
     }
 
     pub fn run() {
@@ -649,6 +674,13 @@ mod akita_benchmark {
                 cutoff_log2: cli.bytecode_metal_cutoff_log2,
                 trace_cutoff_log2: cli.bytecode_metal_trace_cutoff_log2,
             },
+            instruction_input_metal: InstructionInputMetalTuning {
+                native_message_threads: cli.instruction_input_metal_native_message_threads,
+                native_transition_threads: cli.instruction_input_metal_native_transition_threads,
+                dense_transition_threads: cli.instruction_input_metal_dense_transition_threads,
+                cutoff_log2: cli.instruction_input_metal_cutoff_log2,
+                trace_cutoff_log2: cli.instruction_input_metal_trace_cutoff_log2,
+            },
         };
         run_benchmark(cli.name, scale, cli.target_trace_size, backend_config);
     }
@@ -671,6 +703,14 @@ mod akita_benchmark {
                     max_threadgroups: bytecode_metal_max_threadgroups,
                     cutoff_log2: bytecode_metal_cutoff_log2,
                     trace_cutoff_log2: bytecode_metal_trace_cutoff_log2,
+                },
+            instruction_input_metal:
+                InstructionInputMetalTuning {
+                    native_message_threads: instruction_input_metal_native_message_threads,
+                    native_transition_threads: instruction_input_metal_native_transition_threads,
+                    dense_transition_threads: instruction_input_metal_dense_transition_threads,
+                    cutoff_log2: instruction_input_metal_cutoff_log2,
+                    trace_cutoff_log2: instruction_input_metal_trace_cutoff_log2,
                 },
         } = backend_config;
         let bench_name = bench.as_str();
@@ -795,6 +835,11 @@ mod akita_benchmark {
             bytecode_metal_max_threadgroups,
             bytecode_metal_cutoff_log2,
             bytecode_metal_trace_cutoff_log2,
+            instruction_input_metal_native_message_threads,
+            instruction_input_metal_native_transition_threads,
+            instruction_input_metal_dense_transition_threads,
+            instruction_input_metal_cutoff_log2,
+            instruction_input_metal_trace_cutoff_log2,
         );
         let optimized_bytecode_algebra = match bytecode_cycle_algebra {
             BytecodeCycleAlgebra::Generic => jolt_kernels::optimized::BytecodeCycleAlgebra::Generic,
@@ -853,6 +898,27 @@ mod akita_benchmark {
                 config.bytecode_read_raf_cycle.trace_cutoff_elements = 1usize
                     .checked_shl(bytecode_metal_trace_cutoff_log2)
                     .expect("Bytecode Metal trace cutoff log2 must fit usize");
+                config
+                    .instruction_input
+                    .dispatch
+                    .native_message_threads_per_threadgroup =
+                    Some(instruction_input_metal_native_message_threads);
+                config
+                    .instruction_input
+                    .dispatch
+                    .native_transition_threads_per_threadgroup =
+                    Some(instruction_input_metal_native_transition_threads);
+                config
+                    .instruction_input
+                    .dispatch
+                    .dense_transition_threads_per_threadgroup =
+                    Some(instruction_input_metal_dense_transition_threads);
+                config.instruction_input.cutoff_elements = 1usize
+                    .checked_shl(instruction_input_metal_cutoff_log2)
+                    .expect("InstructionInput Metal cutoff log2 must fit usize");
+                config.instruction_input.trace_cutoff_elements = 1usize
+                    .checked_shl(instruction_input_metal_trace_cutoff_log2)
+                    .expect("InstructionInput Metal trace cutoff log2 must fit usize");
                 println!(
                     "BYTECODE_METAL_CONFIG backend=metal cpu_tail={} trace_cutoff={} cutoff={} message_threads={} transition_threads={} max_threadgroups={}",
                     bytecode_cycle_algebra.as_str(),
@@ -861,6 +927,14 @@ mod akita_benchmark {
                     bytecode_metal_message_threads,
                     bytecode_metal_transition_threads,
                     bytecode_metal_max_threadgroups,
+                );
+                println!(
+                    "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} native_message_threads={} native_transition_threads={} dense_transition_threads={}",
+                    config.instruction_input.trace_cutoff_elements,
+                    config.instruction_input.cutoff_elements,
+                    instruction_input_metal_native_message_threads,
+                    instruction_input_metal_native_transition_threads,
+                    instruction_input_metal_dense_transition_threads,
                 );
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }
