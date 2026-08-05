@@ -23,8 +23,8 @@ use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::{
     MTLBarrierScope, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLComputeCommandEncoder, MTLComputePipelineDescriptor, MTLComputePipelineState,
+    MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary, MTLPipelineOption, MTLSize,
 };
 
 use super::buffers::DeviceBuffer;
@@ -127,10 +127,12 @@ pub enum KernelId {
     MillerTable,
     MillerFly,
     MillerFlyIndexed,
+    MillerFlyLines,
+    MillerFlyFold,
 }
 
 impl KernelId {
-    pub const ALL: [Self; 77] = [
+    pub const ALL: [Self; 79] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -208,6 +210,8 @@ impl KernelId {
         Self::MillerTable,
         Self::MillerFly,
         Self::MillerFlyIndexed,
+        Self::MillerFlyLines,
+        Self::MillerFlyFold,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -289,11 +293,66 @@ impl KernelId {
             Self::MillerTable => "jk_miller_table",
             Self::MillerFly => "jk_miller_fly",
             Self::MillerFlyIndexed => "jk_miller_fly_indexed",
+            Self::MillerFlyLines => "jk_miller_fly_lines",
+            Self::MillerFlyFold => "jk_miller_fly_fold",
         }
     }
 
     const fn index(self) -> usize {
         self as usize
+    }
+
+    /// The pairing/tower family: every kernel whose per-thread live set
+    /// (an Fq12 accumulator and up) is past the register budget the AGX
+    /// compiler will hold at the device's 1024-thread pipeline cap.
+    const fn is_pairing_family(self) -> bool {
+        matches!(
+            self,
+            Self::Fq6Mul
+                | Self::Fq6Sqr
+                | Self::Fq12Mul
+                | Self::Fq12Sqr
+                | Self::Fq12Mul034
+                | Self::MillerTable
+                | Self::MillerFly
+                | Self::MillerFlyIndexed
+                | Self::MillerFlyLines
+                | Self::MillerFlyFold
+        )
+    }
+
+    /// Compile-time `maxTotalThreadsPerThreadgroup` cap for this kernel's
+    /// pipeline, or `None` for the device default (1024). Declaring a
+    /// lower cap on the pipeline DESCRIPTOR is the one public lever that
+    /// invites the AGX compiler to trade occupancy for per-thread
+    /// registers instead of spilling; dispatch width adapts via
+    /// [`ComputePass::dispatch`].
+    ///
+    /// **Default uncapped — measured below the retention bar (W4-fly).**
+    /// The trade is real but regime-bound. Fly at 8192 pairs (µs/pair):
+    /// caps 1024/256 codegen-inert at 3.47, 128 → 3.08, 64 → 3.05
+    /// (plateau), 32 → 3.07. At the saturated production shape (2^17
+    /// hook call) the gain collapses: uncapped 359.2 ms, cap 64 349.2
+    /// (−2.8%), cap 128 360.8 (parity) — full occupancy already hides the
+    /// spill traffic once the device is saturated, so registers only buy
+    /// back serial ladder latency on small dispatches (2^13 call: −8.6%).
+    /// Modeled ≈ 0.2 s st8 @2^27 < the 0.6 s bar. `jk_miller_table`
+    /// measured 4.44 → 3.39 µs/pair at cap 32 (8192-pair commit shape) —
+    /// evidence handed to the stage-0 lane, same saturation caveat.
+    /// `JOLT_METAL_PAIRING_TG_CAP` caps the pairing family for
+    /// experiments (`0`/unset = uncapped), read once at context build.
+    fn thread_cap(self) -> Option<usize> {
+        if !self.is_pairing_family() {
+            return None;
+        }
+        static OVERRIDE: OnceLock<Option<usize>> = OnceLock::new();
+        *OVERRIDE.get_or_init(|| {
+            let cap = std::env::var("JOLT_METAL_PAIRING_TG_CAP")
+                .ok()
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            (cap != 0).then(|| cap.next_power_of_two().clamp(32, 1024))
+        })
     }
 }
 
@@ -353,6 +412,10 @@ pub struct MetalContext {
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     /// Indexed by [`KernelId::index`] (construction order = `KernelId::ALL`).
     pipelines: Vec<Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+    /// Default dispatch width per kernel: [`THREADGROUP_SIZE`], shrunk to
+    /// the pipeline's declared maximum for register-capped pipelines
+    /// (cached so the encode path stays free of per-dispatch objc calls).
+    dispatch_widths: Vec<usize>,
 }
 
 static CONTEXT: OnceLock<Result<MetalContext, MetalError>> = OnceLock::new();
@@ -390,24 +453,50 @@ impl MetalContext {
             .map_err(|e| MetalError::Compile(e.localizedDescription().to_string()))?;
 
         let mut pipelines = Vec::with_capacity(KernelId::ALL.len());
+        let mut dispatch_widths = Vec::with_capacity(KernelId::ALL.len());
         for kernel in KernelId::ALL {
             let function = library
                 .newFunctionWithName(&NSString::from_str(kernel.name()))
                 .ok_or(MetalError::MissingFunction(kernel.name()))?;
-            let pipeline = device
-                .newComputePipelineStateWithFunction_error(&function)
-                .map_err(|e| MetalError::Pipeline {
-                    name: kernel.name(),
-                    reason: e.localizedDescription().to_string(),
-                })?;
+            let pipeline = if let Some(cap) = kernel.thread_cap() {
+                let descriptor = MTLComputePipelineDescriptor::new();
+                descriptor.setComputeFunction(Some(&function));
+                descriptor.setMaxTotalThreadsPerThreadgroup(cap);
+                device
+                    .newComputePipelineStateWithDescriptor_options_reflection_error(
+                        &descriptor,
+                        MTLPipelineOption::None,
+                        None,
+                    )
+                    .map_err(|e| MetalError::Pipeline {
+                        name: kernel.name(),
+                        reason: e.localizedDescription().to_string(),
+                    })?
+            } else {
+                device
+                    .newComputePipelineStateWithFunction_error(&function)
+                    .map_err(|e| MetalError::Pipeline {
+                        name: kernel.name(),
+                        reason: e.localizedDescription().to_string(),
+                    })?
+            };
             let max = pipeline.maxTotalThreadsPerThreadgroup();
-            if max < THREADGROUP_SIZE {
+            // Capped pipelines dispatch at their (smaller) declared width,
+            // so they only need a full simdgroup; everything else keeps the
+            // fixed-width fail-closed check.
+            let need = if kernel.thread_cap().is_some() {
+                32
+            } else {
+                THREADGROUP_SIZE
+            };
+            if max < need {
                 return Err(MetalError::ThreadgroupTooSmall {
                     name: kernel.name(),
                     max,
-                    need: THREADGROUP_SIZE,
+                    need,
                 });
             }
+            dispatch_widths.push(THREADGROUP_SIZE.min(max));
             pipelines.push(pipeline);
         }
 
@@ -416,6 +505,7 @@ impl MetalContext {
             device,
             queue,
             pipelines,
+            dispatch_widths,
         })
     }
 
@@ -502,7 +592,10 @@ impl<'b> ComputePass<'_, 'b> {
         buffers: &[&DeviceBuffer<'b>],
         threads: usize,
     ) {
-        self.dispatch_width(kernel, params, buffers, threads, THREADGROUP_SIZE);
+        // Capped pipelines (register/occupancy trade) shrink the width to
+        // their declared maximum; everyone else keeps the fixed width.
+        let width = self.ctx.dispatch_widths[kernel.index()];
+        self.dispatch_width(kernel, params, buffers, threads, width);
     }
 
     /// Encode one dispatch with a kernel-specific threadgroup width.

@@ -668,3 +668,147 @@ kernel void jk_miller_fly_indexed(
     G2AffinePt q = g2_load_base(qs, row_indices[tid]);
     fq12_store_at(out + tid * (12u * FR_LIMBS), jk_miller_fly_one(pt, q));
 }
+
+// --- Miller loop, split-ladder form (W4-fly spill restructure) -----------------
+//
+// jk_miller_fly's ~430 live u32 words (f 96 + G2Hom 48 + q/nqy 48 + P 16 +
+// line 48 + tower-mul temporaries) sit far past the register budget the
+// compiler will hold at max_threads = 1024, so every f touch pays compiler
+// spill traffic. The split runs the SAME ladder as two kernels with
+// disjoint persistent state:
+//
+//   pass 1 (lines) — G2Hom ladder only, no Fq12 state: emits each line
+//     already P-scaled ((c0·P.y, c1·P.x, c2), exactly `jk_fly_ell`'s
+//     operands) to a step-major device table, one record per ell in
+//     jk_miller_fly_one's application order.
+//   pass 2 (fold) — Fq12 state only, no ladder: replays the ate walk,
+//     squaring and folding the streamed records with the same
+//     `fq12_mul_by_034` calls.
+//
+// Same field ops on the same values in the same order as the fused kernel —
+// partials are bit-identical (the parity tests pin buffer equality, not
+// just GT equality). Table traffic is 2·JK_ELL_COEFFS·6·FR_LIMBS words per
+// pair (~33 KB round trip), priced ≪ the spill traffic it replaces.
+
+struct MillerSplitParams {
+    uint n_pairs;                 // pairs in this block
+    uint base;                    // global index of the block's first pair
+};
+
+// One P-scaled line record: step-major within the block, so SIMD-adjacent
+// threads (adjacent pairs) touch adjacent records each step.
+inline void jk_split_store_line(
+    device uint* lines,
+    uint n_pairs,
+    thread uint &step,
+    uint slot,
+    Fq2El l0,
+    Fq2El l1,
+    Fq2El l2,
+    Fq256 px,
+    Fq256 py)
+{
+    device uint* dst = lines + (step * n_pairs + slot) * (6u * FR_LIMBS);
+    fq2_store_at(dst, fq2_mul_by_fq(l0, py));
+    fq2_store_at(dst + 2u * FR_LIMBS, fq2_mul_by_fq(l1, px));
+    fq2_store_at(dst + 4u * FR_LIMBS, l2);
+    step++;
+}
+
+kernel void jk_miller_fly_lines(
+    device const uint* ps [[buffer(0)]],   // G1Affine memory (global indices)
+    device const uint* qs [[buffer(1)]],   // G2Affine memory (global indices)
+    device uint* lines [[buffer(2)]],      // JK_ELL_COEFFS × n_pairs × 6·FR_LIMBS
+    device uint* flags [[buffer(3)]],      // 1 = live pair (all records valid)
+    constant MillerSplitParams& p [[buffer(4)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n_pairs) {
+        return;
+    }
+    G1AffinePt pt = g1_load_base(ps, p.base + tid);
+    G2AffinePt q = g2_load_base(qs, p.base + tid);
+    bool live = !(fq_is_zero(pt.x) && fq_is_zero(pt.y)) && !(fq2_is_zero(q.x) && fq2_is_zero(q.y));
+    flags[tid] = live ? 1u : 0u;
+    if (!live) {
+        return;
+    }
+
+    G2Hom r;
+    r.x = q.x;
+    r.y = q.y;
+    r.z = fq2_one();
+    Fq2El nqy = fq2_neg(q.y);
+    Fq2El l0;
+    Fq2El l1;
+    Fq2El l2;
+    uint step = 0;
+    for (uint it = 0; it < JK_ATE_LEN; it++) {
+        jk_fly_dbl(r, l0, l1, l2);
+        jk_split_store_line(lines, p.n_pairs, step, tid, l0, l1, l2, pt.x, pt.y);
+        int digit = JK_ATE[JK_ATE_LEN - 1u - it];
+        if (digit == 1) {
+            jk_fly_add(r, q.x, q.y, l0, l1, l2);
+            jk_split_store_line(lines, p.n_pairs, step, tid, l0, l1, l2, pt.x, pt.y);
+        } else if (digit == -1) {
+            jk_fly_add(r, q.x, nqy, l0, l1, l2);
+            jk_split_store_line(lines, p.n_pairs, step, tid, l0, l1, l2, pt.x, pt.y);
+        }
+    }
+    Fq2El q1x = q.x;
+    Fq2El q1y = q.y;
+    jk_mul_by_char(q1x, q1y);
+    Fq2El q2x = q1x;
+    Fq2El q2y = q1y;
+    jk_mul_by_char(q2x, q2y);
+    q2y = fq2_neg(q2y);
+    jk_fly_add(r, q1x, q1y, l0, l1, l2);
+    jk_split_store_line(lines, p.n_pairs, step, tid, l0, l1, l2, pt.x, pt.y);
+    jk_fly_add(r, q2x, q2y, l0, l1, l2);
+    jk_split_store_line(lines, p.n_pairs, step, tid, l0, l1, l2, pt.x, pt.y);
+}
+
+inline Fq12El jk_split_fold_line(
+    Fq12El f,
+    device const uint* lines,
+    uint n_pairs,
+    thread uint &step,
+    uint slot)
+{
+    device const uint* src = lines + (step * n_pairs + slot) * (6u * FR_LIMBS);
+    step++;
+    return fq12_mul_by_034(
+        f,
+        fq2_load_at(src),
+        fq2_load_at(src + 2u * FR_LIMBS),
+        fq2_load_at(src + 4u * FR_LIMBS));
+}
+
+kernel void jk_miller_fly_fold(
+    device const uint* lines [[buffer(0)]],
+    device const uint* flags [[buffer(1)]],
+    device uint* out [[buffer(2)]],        // one Fq12 per pair (global indices)
+    constant MillerSplitParams& p [[buffer(3)]],
+    uint tid [[thread_position_in_grid]])
+{
+    if (tid >= p.n_pairs) {
+        return;
+    }
+    Fq12El f = fq12_one();
+    if (flags[tid] != 0u) {
+        uint step = 0;
+        for (uint it = 0; it < JK_ATE_LEN; it++) {
+            if (it != 0) {
+                f = fq12_sqr(f);
+            }
+            f = jk_split_fold_line(f, lines, p.n_pairs, step, tid);
+            int digit = JK_ATE[JK_ATE_LEN - 1u - it];
+            if (digit != 0) {
+                f = jk_split_fold_line(f, lines, p.n_pairs, step, tid);
+            }
+        }
+        f = jk_split_fold_line(f, lines, p.n_pairs, step, tid);
+        f = jk_split_fold_line(f, lines, p.n_pairs, step, tid);
+    }
+    fq12_store_at(out + (p.base + tid) * (12u * FR_LIMBS), f);
+}
