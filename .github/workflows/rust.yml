@@ -96,6 +96,8 @@ jobs:
           -q
           --message-format=short
           -p jolt-claims
+          -p jolt-verifier
+          -p jolt-witness
           -p jolt-r1cs
           -p tracer
           -p jolt-program
@@ -543,6 +545,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo nextest run -p jolt-claims -p jolt-r1cs \
+            -p jolt-verifier -p jolt-witness \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
 
