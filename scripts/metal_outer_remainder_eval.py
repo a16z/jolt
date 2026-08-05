@@ -78,6 +78,7 @@ SOURCE_PATHS = (
     "crates/jolt-prover/examples/metal-outer-remainder-eval.rs",
     "crates/jolt-prover/src/stages/stage1.rs",
     "crates/jolt-kernels/src/metal/spartan_outer.rs",
+    "crates/jolt-kernels/src/metal/solinas/fp128.metal",
     "crates/jolt-kernels/src/metal/solinas/mod.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder.metal",

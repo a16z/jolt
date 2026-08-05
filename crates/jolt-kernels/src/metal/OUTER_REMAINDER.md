@@ -235,5 +235,15 @@ also missed the parent's 84.641 ms. Reducing the opening accumulator array from 
 to five slots increased opening GPU-active time from 62.075 ms to 85.088 ms and the
 member to 248.279 ms. Both changes were fully reverted. The next search halves the
 schoolbook limb products for the 13 true `u64` opening columns while preserving the
-single resident-row scan; the controller should continue toward 5x when measured
-headroom remains plausible.
+single resident-row scan.
+
+That mixed-width candidate was also exact but did not improve the target kernel:
+opening GPU-active time was 62.187 ms and member wall was 220.625 ms, versus 62.075
+and 217.138 ms for the retained parent. A direct 1,048,576-element Criterion control
+showed why: the custom 4-by-2-limb product took 221.01 us while the generic 4-by-4
+product took 183.02 us on this compiler and GPU. Removing source-level multiplies
+introduced a longer dependency/code-generation path. The helper, probe, tests, and
+integration were fully reverted. The next opening design must reduce the number of
+canonical reductions or change work ownership; another eager mixed-width product
+is pruned. The controller should continue toward 5x when measured headroom remains
+plausible.
