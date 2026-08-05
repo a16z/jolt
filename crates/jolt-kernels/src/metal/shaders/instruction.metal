@@ -426,6 +426,43 @@ inline void jk_simd_scatter3(
     jk_cell_add(cells, family_base + 512u + chunk, sum2);
 }
 
+// Random suffix chunks are almost always unique inside a simdgroup. Exchange
+// keys first; only the rare colliding lanes pay for field shuffles/reduction.
+inline void jk_simd_scatter1(
+    device uint* cells,
+    uint key,
+    bool active,
+    Fr256 value,
+    uint lane,
+    uint simd_size)
+{
+    bool collision = false;
+    bool leader = active;
+    for (uint source = 0u; source < simd_size; source++) {
+        bool source_active = simd_shuffle((uint)active, (ushort)source) != 0u;
+        uint source_key = simd_shuffle(key, (ushort)source);
+        bool same = source_active && source_key == key && source != lane;
+        collision = collision || same;
+        leader = leader && !(same && source < lane);
+    }
+    Fr256 sum = fr_zero();
+    for (uint source = 0u; source < simd_size; source++) {
+        bool source_collision =
+            simd_shuffle((uint)(active && collision), (ushort)source) != 0u;
+        if (source_collision) {
+            uint source_key = simd_shuffle(key, (ushort)source);
+            Fr256 source_value = jk_simd_shuffle_fr(value, source);
+            if (collision && source_key == key) {
+                sum = fr_add(sum, source_value);
+            }
+        }
+    }
+    if (!active || (collision && !leader)) {
+        return;
+    }
+    jk_cell_add(cells, key, collision ? sum : value);
+}
+
 // Fused condensation + RAF scan. Per-simdgroup cells, quantity-major:
 // [0] shift_half, [1] left, [2] right (interleaved rows);
 // [3] shift_full, [4] identity, [5] upper-all-ones (RAF rows);
@@ -620,6 +657,80 @@ struct IrrSuffixScanParams {
 // are 9 words per slot: count, then ids packed id | is_01 << 8 (the 0/1
 // flag picks Montgomery adds over raw-space products).
 kernel void jk_irr_suffix_scan(
+    device const uint* rows [[buffer(0)]],
+    device const uint* u_evals [[buffer(1)]],
+    device const uint* bucket_flat [[buffer(2)]],
+    device const uint* sg_slot [[buffer(3)]],
+    device const uint* sg_range [[buffer(4)]],
+    device const uint* suffix_meta [[buffer(5)]],
+    device uint* partials [[buffer(6)]],
+    constant IrrSuffixScanParams& p [[buffer(7)]],
+    uint gid [[thread_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simd_size [[threads_per_simdgroup]])
+{
+    uint sg = gid / simd_size;
+    if (sg >= p.num_sgs) {
+        return;
+    }
+    uint slot = sg_slot[sg];
+    uint count = suffix_meta[slot * 9u];
+    device uint* my = partials + sg * JK_IRR_SUF_CELLS * FR_LIMBS;
+    for (uint i = lane; i < count * 256u * FR_LIMBS; i += simd_size) {
+        my[i] = 0u;
+    }
+    simdgroup_barrier(mem_flags::mem_device);
+
+    uint start = sg_range[2u * sg];
+    uint end = sg_range[2u * sg + 1u];
+    for (uint base = start; base < end; base += simd_size) {
+        uint i = base + lane;
+        bool active = i < end;
+        uint chunk = 0u;
+        ulong s_lo = 0ul;
+        ulong s_hi = 0ul;
+        Fr256 u = fr_zero();
+        if (active) {
+            uint j = bucket_flat[i];
+            device const uint* row = rows + j * 12u;
+            ulong lo = (ulong)row[0] | ((ulong)row[1] << 32);
+            ulong hi = (ulong)row[2] | ((ulong)row[3] << 32);
+            u = fr_load(u_evals, j);
+            chunk = jk_chunk8(lo, hi, p.suffix_len);
+            jk_mask128(lo, hi, p.suffix_len, s_lo, s_hi);
+        }
+        bool tile_uniform = simd_all(active)
+            && simd_all(chunk == simd_broadcast_first(chunk))
+            && simd_size == 32u;
+        for (uint s = 0u; s < count; s++) {
+            uint meta = suffix_meta[slot * 9u + 1u + s];
+            uint id = meta & 0xFFu;
+            bool is01 = (meta & 0x100u) != 0u;
+            Fr256 v = fr_zero();
+            bool emit = false;
+            if (active) {
+                ulong m = jk_suffix_mle(id, s_lo, s_hi, p.suffix_len);
+                if (m != 0ul) {
+                    v = is01 ? u : fr_mont_mul(u, jk_fr_from_u64(m));
+                    emit = true;
+                }
+            }
+            if (tile_uniform) {
+                Fr256 total = jk_simd_sum(v, simd_size);
+                if (lane == 0u) {
+                    jk_cell_add(my, s * 256u + simd_broadcast_first(chunk), total);
+                }
+            } else {
+                jk_simd_scatter1(
+                    my, s * 256u + chunk, emit, v, lane, simd_size);
+            }
+        }
+    }
+}
+
+// Ablation arm for JOLT_IRR_SUFFIX_SCAN_LEGACY: retains full-row clearing
+// and the barrier-serialized scatter for same-window retention tests.
+kernel void jk_irr_suffix_scan_legacy(
     device const uint* rows [[buffer(0)]],
     device const uint* u_evals [[buffer(1)]],
     device const uint* bucket_flat [[buffer(2)]],

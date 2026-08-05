@@ -69,6 +69,9 @@ const MAX_FACTORS: usize = 16;
 /// Scan parallelism: enough simdgroups to fill the target GPU, big enough
 /// row runs to amortize the per-simdgroup bucket rows.
 const TARGET_SIMDGROUPS: usize = 512;
+/// Suffix gathers need more in-flight groups to hide indexed row/weight loads;
+/// 2048 wins scan+reduce while 4096 overlaps it at twice the partial memory.
+const TARGET_SUFFIX_SIMDGROUPS: usize = 2048;
 const MIN_ROWS_PER_SIMDGROUP: usize = 1024;
 
 // The device decodes rows as 12 u32 words (offsets pinned by the repr(C)
@@ -195,6 +198,7 @@ struct AddressState {
     num_sgs_raf: usize,
     rows_per_sg_raf: usize,
     phase_scan_kernel: KernelId,
+    suffix_scan_kernel: KernelId,
     num_sgs_suffix: usize,
 }
 
@@ -228,8 +232,15 @@ impl DeviceIrrScanner {
 
         // Suffix schedule: simdgroup count per table proportional to its
         // bucket, each simdgroup a contiguous index range of one table.
+        let suffix_legacy =
+            std::env::var_os("JOLT_IRR_SUFFIX_SCAN_LEGACY").is_some_and(|value| value != "0");
+        let suffix_simdgroups = if suffix_legacy {
+            TARGET_SIMDGROUPS
+        } else {
+            TARGET_SUFFIX_SIMDGROUPS
+        };
         let rows_per_sg_suffix =
-            div_ceil_pos(bucket_flat.len(), TARGET_SIMDGROUPS).max(MIN_ROWS_PER_SIMDGROUP);
+            div_ceil_pos(bucket_flat.len(), suffix_simdgroups).max(MIN_ROWS_PER_SIMDGROUP);
         let mut sg_slot = Vec::new();
         let mut sg_range = Vec::new();
         let mut suffix_group = Vec::new();
@@ -308,6 +319,11 @@ impl DeviceIrrScanner {
                     KernelId::IrrPhaseScanLegacy
                 } else {
                     KernelId::IrrPhaseScan
+                },
+                suffix_scan_kernel: if suffix_legacy {
+                    KernelId::IrrSuffixScanLegacy
+                } else {
+                    KernelId::IrrSuffixScan
                 },
                 num_sgs_suffix,
             }),
@@ -398,7 +414,7 @@ impl AddressState {
             let mut pass = context.begin_pass()?;
             if !self.slots.is_empty() {
                 pass.dispatch(
-                    KernelId::IrrSuffixScan,
+                    self.suffix_scan_kernel,
                     &suffix_params,
                     &[
                         &rows_buffer,
@@ -435,7 +451,7 @@ impl AddressState {
             );
             if !self.slots.is_empty() {
                 pass.dispatch(
-                    KernelId::IrrSuffixScan,
+                    self.suffix_scan_kernel,
                     &suffix_params,
                     &[
                         &rows_buffer,
@@ -899,7 +915,7 @@ fn cycle_init_params(
 #[cfg(feature = "bench-utils")]
 pub mod bench {
     use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
-    use jolt_lookup_tables::LookupBits;
+    use jolt_lookup_tables::{LookupBits, LookupTableKind};
     use rayon::prelude::*;
 
     use super::*;
@@ -924,6 +940,40 @@ pub mod bench {
         partials: DeviceBuffer<'a>,
         params: &'a [u32],
         threads: usize,
+    }
+
+    pub struct IrrSuffixScanFixture {
+        rows: PageAlignedVec<InstructionCycleRow>,
+        u_evals: PageAlignedVec<Fr>,
+        bucket_flat: PageAlignedVec<u32>,
+        sg_slot: PageAlignedVec<u32>,
+        sg_range: PageAlignedVec<u32>,
+        suffix_meta: PageAlignedVec<u32>,
+        partials: PageAlignedVec<Fr>,
+        out: PageAlignedVec<Fr>,
+        group: PageAlignedVec<u32>,
+        params: Vec<u32>,
+        reduce_params: Vec<u32>,
+        threads: usize,
+        tables: Vec<LookupTableKind<RISCV_XLEN>>,
+        ranges: Vec<std::ops::Range<usize>>,
+    }
+
+    pub struct IrrSuffixScanBuffers<'a> {
+        context: &'static MetalContext,
+        rows: DeviceBuffer<'a>,
+        u_evals: DeviceBuffer<'a>,
+        bucket_flat: DeviceBuffer<'a>,
+        sg_slot: DeviceBuffer<'a>,
+        sg_range: DeviceBuffer<'a>,
+        suffix_meta: DeviceBuffer<'a>,
+        partials: DeviceBuffer<'a>,
+        group: DeviceBuffer<'a>,
+        out: DeviceBuffer<'a>,
+        params: &'a [u32],
+        reduce_params: &'a [u32],
+        threads: usize,
+        out_len: usize,
     }
 
     impl IrrPhaseScanFixture {
@@ -1099,6 +1149,258 @@ pub mod bench {
                 KernelId::IrrPhaseScanLegacy,
                 self.params,
                 &[&self.rows, &self.u_evals, &self.v_prev, &self.partials],
+                self.threads,
+            )
+        }
+    }
+
+    impl IrrSuffixScanFixture {
+        pub fn production_geometry(log_t: usize) -> Result<Self, MetalError> {
+            Self::with_simdgroups(log_t, TARGET_SUFFIX_SIMDGROUPS)
+        }
+
+        pub fn with_simdgroups(log_t: usize, target_simdgroups: usize) -> Result<Self, MetalError> {
+            if target_simdgroups == 0 {
+                return Err(MetalError::UnsupportedShape(
+                    "suffix-scan fixture requires a nonzero simdgroup target",
+                ));
+            }
+            let n = 1usize << log_t;
+            let all_tables: Vec<_> = LookupTableKind::<RISCV_XLEN>::iter().collect();
+            let table_indices = [0, 3, 7, 11, LookupTableKind::<RISCV_XLEN>::COUNT - 1];
+            let tables: Vec<_> = table_indices
+                .into_iter()
+                .map(|index| all_tables[index])
+                .collect();
+            let mut buckets = vec![Vec::new(); tables.len()];
+            let mut state = 0x4952_5253_5546_4649u64 ^ log_t as u64;
+            let rows = PageAlignedVec::from_fn(n, |j| {
+                let lo = splitmix(&mut state);
+                let hi = splitmix(&mut state);
+                let slot = j % tables.len();
+                let table_index = (j % 7 != 3).then_some(tables[slot].index());
+                if table_index.is_some() {
+                    buckets[slot].push(j as u32);
+                }
+                InstructionCycleRow::new(
+                    (u128::from(hi) << 64) | u128::from(lo),
+                    table_index,
+                    j % 3 == 0,
+                    None,
+                    None,
+                )
+            });
+            let u_evals = PageAlignedVec::from_fn(n, |_| Fr::from_u64(splitmix(&mut state)));
+
+            let bucket_len: usize = buckets.iter().map(Vec::len).sum();
+            let rows_per_sg =
+                div_ceil_pos(bucket_len, target_simdgroups).max(MIN_ROWS_PER_SIMDGROUP);
+            let mut bucket_flat = Vec::with_capacity(bucket_len);
+            let mut ranges = Vec::with_capacity(tables.len());
+            let mut sg_slot = Vec::new();
+            let mut sg_range = Vec::new();
+            let mut group = Vec::with_capacity(2 * tables.len());
+            for (slot, bucket) in buckets.into_iter().enumerate() {
+                let range_start = bucket_flat.len();
+                bucket_flat.extend_from_slice(&bucket);
+                let range_end = bucket_flat.len();
+                ranges.push(range_start..range_end);
+                group.push(sg_slot.len() as u32);
+                let mut start = range_start;
+                while start < range_end {
+                    let end = (start + rows_per_sg).min(range_end);
+                    sg_slot.push(slot as u32);
+                    sg_range.extend_from_slice(&[start as u32, end as u32]);
+                    start = end;
+                }
+                group.push(sg_slot.len() as u32);
+            }
+            let mut suffix_meta = Vec::with_capacity(tables.len() * (MAX_SUFFIXES + 1));
+            for table in &tables {
+                let suffixes = table.suffixes();
+                suffix_meta.push(suffixes.len() as u32);
+                for index in 0..MAX_SUFFIXES {
+                    suffix_meta.push(suffixes.get(index).map_or(0, |suffix| {
+                        u32::from(*suffix as u8) | (u32::from(suffix.is_01_valued()) << 8)
+                    }));
+                }
+            }
+            let num_sgs = sg_slot.len();
+            let total_cells = tables.len() * SUF_CELLS;
+            let zero = Fr::from_u64(0);
+            Ok(Self {
+                rows,
+                u_evals,
+                bucket_flat: PageAlignedVec::from_slice(&bucket_flat),
+                sg_slot: PageAlignedVec::from_slice(&sg_slot),
+                sg_range: PageAlignedVec::from_slice(&sg_range),
+                suffix_meta: PageAlignedVec::from_slice(&suffix_meta),
+                partials: PageAlignedVec::from_elem(zero, num_sgs * SUF_CELLS),
+                out: PageAlignedVec::from_elem(zero, total_cells),
+                group: PageAlignedVec::from_slice(&group),
+                params: vec![num_sgs as u32, 64],
+                reduce_params: vec![total_cells as u32, SUF_CELLS as u32, SUF_CELLS as u32],
+                threads: num_sgs * SIMD_WIDTH,
+                tables,
+                ranges,
+            })
+        }
+
+        pub fn assert_oracle(&mut self) -> Result<(), MetalError> {
+            let mut expected = vec![Fr::from_u64(0); self.tables.len() * SUF_CELLS];
+            for (slot, (table, range)) in self.tables.iter().zip(&self.ranges).enumerate() {
+                for &j in &self.bucket_flat[range.clone()] {
+                    let row = &self.rows[j as usize];
+                    let suffix_bits = LookupBits::new(row.lookup_index & u64::MAX as u128, 64);
+                    let chunk = ((row.lookup_index >> 64) as usize) & (CHUNK_SIZE - 1);
+                    let u = self.u_evals[j as usize];
+                    for (suffix_index, suffix) in table.suffixes().iter().enumerate() {
+                        let scalar = suffix.suffix_mle(suffix_bits);
+                        expected[slot * SUF_CELLS + suffix_index * CHUNK_SIZE + chunk] +=
+                            u * Fr::from_u64(scalar);
+                    }
+                }
+            }
+
+            let context = MetalContext::global()?;
+            self.dispatch_and_reduce(context, KernelId::IrrSuffixScan)?;
+            self.assert_output(&expected, "suffix-scan");
+            self.dispatch_and_reduce(context, KernelId::IrrSuffixScanLegacy)?;
+            self.assert_output(&expected, "legacy suffix-scan");
+            Ok(())
+        }
+
+        fn dispatch_and_reduce(
+            &mut self,
+            context: &'static MetalContext,
+            kernel: KernelId,
+        ) -> Result<(), MetalError> {
+            let out_len = self.out.len();
+            let rows = self.rows.device_buffer(context)?;
+            let u_evals = self.u_evals.device_buffer(context)?;
+            let bucket_flat = self.bucket_flat.device_buffer(context)?;
+            let sg_slot = self.sg_slot.device_buffer(context)?;
+            let sg_range = self.sg_range.device_buffer(context)?;
+            let suffix_meta = self.suffix_meta.device_buffer(context)?;
+            let partials = self.partials.device_buffer_mut(context)?;
+            let out = self.out.device_buffer_mut(context)?;
+            let group = self.group.device_buffer(context)?;
+            let mut pass = context.begin_pass()?;
+            pass.dispatch(
+                kernel,
+                &self.params,
+                &[
+                    &rows,
+                    &u_evals,
+                    &bucket_flat,
+                    &sg_slot,
+                    &sg_range,
+                    &suffix_meta,
+                    &partials,
+                ],
+                self.threads,
+            );
+            pass.dispatch(
+                KernelId::IrrReduce,
+                &self.reduce_params,
+                &[&partials, &group, &out],
+                out_len,
+            );
+            pass.run()
+        }
+
+        fn assert_output(&self, expected: &[Fr], label: &str) {
+            let r_mont = Fr::from_u64(1).mul_pow_2(128).mul_pow_2(128);
+            for (slot, table) in self.tables.iter().enumerate() {
+                for (suffix_index, suffix) in table.suffixes().iter().enumerate() {
+                    let start = slot * SUF_CELLS + suffix_index * CHUNK_SIZE;
+                    let end = start + CHUNK_SIZE;
+                    for (offset, (&got, &expected)) in self.out[start..end]
+                        .iter()
+                        .zip(&expected[start..end])
+                        .enumerate()
+                    {
+                        let index = start + offset;
+                        let got = if suffix.is_01_valued() {
+                            got
+                        } else {
+                            got * r_mont
+                        };
+                        assert_eq!(got, expected, "{label} cell {index}");
+                    }
+                }
+            }
+        }
+
+        pub fn buffers(&mut self) -> Result<IrrSuffixScanBuffers<'_>, MetalError> {
+            let context = MetalContext::global()?;
+            let out_len = self.out.len();
+            Ok(IrrSuffixScanBuffers {
+                context,
+                rows: self.rows.device_buffer(context)?,
+                u_evals: self.u_evals.device_buffer(context)?,
+                bucket_flat: self.bucket_flat.device_buffer(context)?,
+                sg_slot: self.sg_slot.device_buffer(context)?,
+                sg_range: self.sg_range.device_buffer(context)?,
+                suffix_meta: self.suffix_meta.device_buffer(context)?,
+                partials: self.partials.device_buffer_mut(context)?,
+                group: self.group.device_buffer(context)?,
+                out: self.out.device_buffer_mut(context)?,
+                params: &self.params,
+                reduce_params: &self.reduce_params,
+                threads: self.threads,
+                out_len,
+            })
+        }
+    }
+
+    impl IrrSuffixScanBuffers<'_> {
+        pub fn run(&self) -> Result<(), MetalError> {
+            self.dispatch(KernelId::IrrSuffixScan)
+        }
+
+        pub fn run_legacy(&self) -> Result<(), MetalError> {
+            self.dispatch(KernelId::IrrSuffixScanLegacy)
+        }
+
+        pub fn run_with_reduce(&self) -> Result<(), MetalError> {
+            let mut pass = self.context.begin_pass()?;
+            pass.dispatch(
+                KernelId::IrrSuffixScan,
+                self.params,
+                &[
+                    &self.rows,
+                    &self.u_evals,
+                    &self.bucket_flat,
+                    &self.sg_slot,
+                    &self.sg_range,
+                    &self.suffix_meta,
+                    &self.partials,
+                ],
+                self.threads,
+            );
+            pass.dispatch(
+                KernelId::IrrReduce,
+                self.reduce_params,
+                &[&self.partials, &self.group, &self.out],
+                self.out_len,
+            );
+            pass.run()
+        }
+
+        fn dispatch(&self, kernel: KernelId) -> Result<(), MetalError> {
+            self.context.run_once(
+                kernel,
+                self.params,
+                &[
+                    &self.rows,
+                    &self.u_evals,
+                    &self.bucket_flat,
+                    &self.sg_slot,
+                    &self.sg_range,
+                    &self.suffix_meta,
+                    &self.partials,
+                ],
                 self.threads,
             )
         }
