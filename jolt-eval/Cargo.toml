@@ -3,6 +3,20 @@ name = "jolt-eval"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+# Metal isolated objectives (macOS): device kernels plus the modular-prover
+# plumbing the st0-contention objective drives (commit slot + record walk).
+metal = [
+  "dep:jolt-kernels",
+  "jolt-kernels/metal",
+  "dep:jolt-prover",
+  "jolt-prover/metal",
+  "dep:jolt-witness",
+  "dep:jolt-claims",
+  "dep:libc",
+]
+
 [dependencies]
 jolt-prover-legacy = { workspace = true, features = ["host"] }
 jolt-verifier = { workspace = true }
@@ -43,6 +57,13 @@ jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 
 jolt-eval-macros = { path = "macros" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+jolt-kernels = { workspace = true, optional = true }
+jolt-prover = { workspace = true, optional = true }
+jolt-witness = { workspace = true, optional = true }
+jolt-claims = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -86,6 +107,11 @@ harness = false
 [[bench]]
 name = "prover_time_sha2_chain"
 harness = false
+
+[[bin]]
+name = "st0-contention"
+path = "bin/st0_contention.rs"
+required-features = ["metal"]
 
 [[bin]]
 name = "measure-objectives"
