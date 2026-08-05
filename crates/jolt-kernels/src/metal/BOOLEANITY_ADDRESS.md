@@ -6,59 +6,51 @@ pushforward. The eight address rounds and Fiat--Shamir remain on the host.
 
 ## Measured boundary
 
-The clean five-pair `2^26` Fibonacci holdout at revision
-`ea5acd23019ca4d8045e6cade3b321601b41019a` measured:
+The clean five-pair `2^26` Fibonacci production holdout at revision
+`b4da2261a022820acfb4e9263e23a01795b78bb2` measured:
 
 | Quantity | Median |
 |---|---:|
-| Optimized CPU member | 939.917 ms |
-| Current Metal-backend member | 942.588 ms |
-| Current local speedup | 0.997x |
-| Optimized CPU PIOP | 19,330.984 ms |
-| Metal-hybrid PIOP | 8,667.648 ms |
-| PIOP speedup | 2.203x |
+| Optimized CPU equal-input member | 929.140 ms |
+| Optimized CPU raw service member | 955.465 ms |
+| Metal member | 111.635 ms |
+| Equal-input paired speedup | 8.453x |
+| Raw service paired speedup | 8.702x |
+| Optimized CPU PIOP | 19,281.782 ms |
+| Metal-hybrid PIOP | 7,630.265 ms |
+| Paired PIOP speedup | 2.513x |
+| PIOP plus backend witness preparation | 2.400x |
 
-The current Metal backend still selects the optimized CPU address kernel. In one
-representative accepted trace, preparation took 960.230 ms and all eight rounds
-together took 0.698 ms. The only material target is therefore preparation.
+All five CPU proofs and all five Metal proofs verified. Both execution-order
+strata cleared 4x: the median was 7.340x when Metal ran first and 8.581x when
+the optimized CPU ran first. The raw service denominator includes CPU row
+materialization; the equal-input metric subtracts only its attributed row-source
+span. PIOP timing is never adjusted. Ratios of independently reported medians
+need not equal medians of paired ratios.
 
-Those values describe the PIOP holdout at the pre-integration revision, not the
-standalone kernel evaluator's denominator. The pre-ABI-audit `2^26` standalone
-run at `inner_log2 = 15`, six selectors per tile, and 1,024 tile threads used
-five alternating pairs and measured:
+The closed standalone search is recorded in
+`benchmark-runs/metal-autoresearch/booleanity-address-v3`. Its accepted
+`trial-009` used five independent evaluator executions, each with five
+alternating pairs. Across those executions, the median CPU member was
+207.125 ms, the median Metal member was 35.724 ms, and the controller's median
+paired speedup was 5.552x. Every mass, address round, Fiat--Shamir challenge,
+final claim, and transcript state matched. The production gate promoted the
+same source snapshot.
 
-| Quantity | Median |
-|---|---:|
-| Standalone optimized CPU mirror | 194.97 ms |
-| Complete Metal-hybrid member | 59.02 ms |
-| Median paired speedup | 3.255x |
+The search began from a 3.665x canonical baseline. Six-way and pairwise atomic
+interleaving lost to register pressure. Aggregating the three-valued signed
+carry was useful, but the decisive improvement was exploiting exact, checked
+common cases in the high fused-increment bytes. Selectors 24--26 share one
+thread-local bucket-zero subtotal when all three computed hot indices are zero;
+otherwise all three take the general atomic path. The subtotal is flushed into
+three disjoint selector tables. The carry selector independently accumulates
+its `-1`, `0`, and `+1` bins. This changes only how field sums are grouped.
 
-The CPU and Metal member medians are reported independently, so their ratio
-need not equal the median of the five paired speedups. That run was exact for
-its inputs and missed the 4x floor, but it used the old noncanonical selector
-schedule (16 ascending instruction chunks, one bytecode chunk, and three RAM
-chunks). It is mechanism-search evidence only. It cannot satisfy the current
-evaluator's production-selector guard.
-
-The corrected canonical run
-`benchmark-runs/metal-autoresearch/booleanity-address-v2` uses 16 descending
-instruction chunks, two bytecode chunks, two RAM chunks, and nine fused-inc
-selectors. Across five independent evaluator executions, each containing five
-alternating pairs, its controller median was 3.620x. A representative execution
-measured a 198.833-ms CPU median, a 54.952-ms Metal median, a 3.618 ratio of
-medians, and a 3.604 median paired speedup. It was exact and specialized, but
-`promotion.local_eligible` was false because it did not clear 4x. This is the
-current equal-input baseline.
-
-Geometry probes found 512 tile threads faster than 1,024. Before compile-time
-selector specialization, its best single sample was about 55.18 ms; after
-specialization, the best single sample was about 53.53 ms. These samples also
-predate the selector correction and are exploratory observations, not promotion
-evidence. The `inner_log2 = 14`,
-`inner_log2 = 16`, and three-selector tile probes were slower. Native 64-bit
-atomic fetch-add was also rejected by the runtime Metal compiler, so it is not
-an available accumulator candidate on this toolchain. The production default
-is now 512 tile threads; it still requires a clean alternating five-pair run.
+Geometry probes retained `inner_log2 = 15`, six selectors per tile, 512 tile
+threads, and 1,024 finalizer threads. The `inner_log2 = 14`, `inner_log2 = 16`,
+three-selector tiling, four-word deferred sums, and native 64-bit atomics were
+rejected by measurement or the runtime compiler. The production holdout
+validated the retained geometry and one-command, one-readback contract.
 
 At production geometry, `T = 2^26`, `K = 256`, and there are 29 checked sparse
 columns in ABI order: 16 instruction chunks at shifts `120, 112, ..., 0`, two
@@ -91,6 +83,17 @@ The split is intentionally not balanced. An inner block of `2^15 = 32,768`
 rows matches the retained direct-address accumulator geometry, reduces partial
 storage by 4x relative to a `13 + 13` split, and keeps the exact overflow count
 within the existing bound.
+
+The final production tile specializes five fused-increment selectors without
+changing their tables. It computes the biased increment and signed carry once.
+If the exact hot indices for shifts 32, 40, and 48 are all zero, their common
+weight enters one thread-local five-word deferred sum; otherwise the three
+weights take their ordinary selector-local atomic paths. At the end of the
+thread's inner scan, that one subtotal is merged into bucket zero of all three
+disjoint selector tables. The signed carry similarly enters one of three local
+deferred sums and is flushed to buckets 255, 0, or 1. Reducing subsets before
+merging them is exact because addition in the field is associative, and the
+five-word representation retains every `2^128` carry before Solinas reduction.
 
 ## Threadgroup design
 
@@ -155,36 +158,38 @@ At `T = 2^26`, `O = 2,048`:
 | Post-bucket field multiplications | 15,204,352 |
 | Final output | 118,784 bytes |
 
+The nominal atomic count describes the fully general direct-scatter path. On
+the fixed target workload, the shared high-byte subtotal and three carry
+subtotals replace four per-row selector chains. Including their per-worker
+flushes leaves about 6.74 billion four-limb threadgroup atomics, roughly 13.5%
+fewer than the direct schedule. The speedup is larger than that count suggests
+because the removed high-byte and carry updates target a handful of highly
+contended buckets.
+
 The cache-optimistic traffic is 12.953 GiB, or 30.8 ms at the measured
 420.68-GiB/s copy roof. Charging every repeated `E_in` access to DRAM gives
 17.953 GiB and a 42.7-ms floor, although `E_in` is only 512 KiB and is shared
 by every outer block.
 
-The closest measured primitive is the heat-soaked direct-address accumulator:
-14.69 ms for `2^26` rows with up to three five-limb field additions per row.
-Scaling its field-add count by `29 / 3` gives about 142 ms. This is not a
-throughput guarantee--the new kernel has five row passes and more tile
-initialization--but it is the conservative empirical planning term. The 15.2
-million bucket multiplications are below 1 ms at the retained 16.4-Gmul/s
-whole-device field roof when fully distributed; the tile shader performs them
-before writing partials so the six-group finalizer does not serialize
-multiplication onto only part of the GPU.
+The accepted standalone trial measured a 33.49-ms median GPU-active interval,
+only 2.7 ms above the cache-optimistic 30.8-ms traffic floor. Its complete
+35.72-ms member includes command wall time, weight preparation, readback, and
+host rounds. The 15.2 million bucket multiplications remain below 1 ms at the
+retained 16.4-Gmul/s whole-device field roof when fully distributed. On this
+workload the accepted shader is therefore close to the optimistic traffic roof;
+the production PIOP trace is slower because it runs in the full resident proof
+working set and after other heat-producing members.
 
-The initial PIOP-member planning budgets from the 939.917-ms CPU holdout were:
+The final equal-input budgets and results are:
 
-| Local target | Complete wall budget |
-|---|---:|
-| 4x architecture floor | 234.98 ms |
-| 5x working target | 187.98 ms |
-| Match current cycle Booleanity (5.768x) | 162.95 ms |
+| Boundary | 4x budget | Measured member | Paired speedup |
+|---|---:|---:|---:|
+| Standalone exact mirror | 51.78 ms | 35.72 ms | 5.552x |
+| Production PIOP member | 232.28 ms | 111.64 ms | 8.453x |
 
-The closed standalone evaluator now uses the optimized CPU mirror as its local
-denominator. In the representative canonical run, the 198.833-ms CPU median
-sets a 49.71-ms 4x wall budget (39.77 ms for 5x). The 54.952-ms Metal median
-therefore does not promote,
-even though it is far below the original architecture budget. Four times is not
-a stopping point: once a configuration clears 4x cleanly, tuning continues if
-the component timings and roofline show a clear larger gain.
+Four times remained a floor rather than a cap: the search continued through
+the 4.393x and 4.797x accepted parents until the 5.552x standalone winner. The
+separate production relation then cleared both order strata and promoted it.
 
 At `2^28`, the resident rows occupy 10 GiB, the reusable six-selector partial
 buffer grows to 0.1875 GiB, and the five tiles move 0.9063 GiB of logical
@@ -278,11 +283,11 @@ also infers one-command, one-readback, and no-per-row-buffer behavior from the
 fixed invocation API rather than runtime command counters. Production tracing
 and the PIOP holdout provide those integration checks.
 
-Against the earlier accepted PIOP medians, replacing the 942.588-ms member by a
-4x, 5x, or 5.768x result projected PIOP speedups of roughly 2.429x, 2.443x, and
-2.451x. The production holdout must recompute this projection after integration;
-the standalone mirror is not substituted into the PIOP total. This kernel is
-necessary but cannot complete the 4x portfolio goal by itself.
+The production member is now 1.46% of the 7.630-s Metal PIOP. Even removing it
+entirely could save only that share, so more local tuning is not a useful route to
+the portfolio target. The holdout moved from the 2.203x pre-integration checkpoint
+to 2.513x. Reaching 4x at the current 19.282-s CPU denominator requires reducing
+Metal PIOP to at most 4.820 s, a further 2.810-s saving from the remaining kernels.
 
 ## Criterion microbenchmark
 

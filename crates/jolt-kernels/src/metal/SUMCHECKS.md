@@ -180,7 +180,7 @@ order after the first slot establishes the harness.
 | 5 | `ram_ra_claim_reduction` | dense fused product | analyze |
 | 5 | `registers_val_evaluation` | dense fused product | analyze |
 | 6a | `bytecode_read_raf_address` | address pushforward | analyze |
-| 6a | `booleanity_address` | address pushforward | analyze |
+| 6a | `booleanity_address` | address pushforward | integrated and production-promoted: exact resident path, 8.453x equal-input paired speedup at `2^26` |
 | 6b | `bytecode_read_raf_cycle` | sparse-to-dense cycle reduction | Q10 CPU denominator revalidated; dense A0 observed and exact, row-derived A1 next |
 | 6b | `booleanity_cycle` | sparse-to-dense cycle reduction | integrated; 4.85x real kernel seam at `2^26`, further ceiling work open |
 | 6b | `ram_hamming_booleanity` | dense cubic | analyze |
@@ -339,6 +339,30 @@ After the Booleanity cycle port, the exact CPU-first `2^26` pair in
 buffer. Both proofs verified and each trace contained exactly one PIOP span. One
 pair is directional evidence; promotion of the aggregate result still requires the
 contract's interleaved repetitions.
+
+The production validation after the resident Booleanity-address port is recorded in
+`benchmark-runs/metal-autoresearch/booleanity-address-v3`. Five alternating exact
+`2^26` pairs at revision `b4da2261a` measured a 19.282-s optimized-CPU median, a
+7.630-s Metal-hybrid median, and a 2.513x median paired PIOP speedup. Including
+backend witness preparation gives 2.400x. The promoted address member measured
+8.453x on the equal-input attribution boundary and cleared both execution-order
+strata. All ten proofs verified.
+
+One representative Metal trace from that holdout identifies the next disjoint
+portfolio candidates:
+
+| Kernel | Metal wall time | Metal PIOP share |
+|---|---:|---:|
+| `RegistersReadWriteChecking` | 990.110 ms | 12.53% |
+| `InstructionReadRaf` | 977.397 ms | 12.36% |
+| `OuterRemainder` | 943.284 ms | 11.93% |
+| `Booleanity` | 643.179 ms | 8.14% |
+| `HammingWeightClaimReduction` | 599.385 ms | 7.58% |
+| `ProductRemainder` | 439.812 ms | 5.56% |
+
+The current CPU denominator permits at most 4.820 s of Metal PIOP for the 4x floor,
+so the remaining portfolio must save at least 2.810 s from the 7.630-s median. The
+next port is selected by conservative recoverable wall time, not by span rank alone.
 
 ### Instruction-read address worksheet
 
