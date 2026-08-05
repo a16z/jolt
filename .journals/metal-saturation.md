@@ -19,7 +19,7 @@ wave-1 attribution report: `.journals/metal-m5-saturation-report.html`.
   max, then next. No e2e for kernel iteration.
 - Night mandate (01:49): waves run continuously; prepare functions → GPU;
   every-kernel sweep. Kernel-adding merges: re-count `KernelId::ALL`
-  (currently `[Self; 71]`).
+  (currently `[Self; 72]`).
 - All cargo under `/usr/bin/lockf -k /tmp/jolt-metal-wave3-cargo.lock`;
   `gpu_lock()` for timed GPU. No pushing without parent's word.
 
@@ -78,3 +78,4 @@ Doctrine: single-kernel + prepare→GPU. Off `3830f4da8`+.
 ## Results log (terse)
 
 <!-- verdict · numbers · commit · one-line mechanism -->
+- **st5 IRR phase-scan: GO, merged.** 2^24 41.12→18.91 ms (−54.0%), modeled st5 −2.68 s @2^27 (14.81→~12.13). `36485d52e` — collision-only SIMD scatter replaces full-width scan. Parity 10/10+10/10.

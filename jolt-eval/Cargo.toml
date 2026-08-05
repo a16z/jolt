@@ -123,6 +123,12 @@ harness = false
 required-features = ["metal"]
 
 [[bench]]
+name = "instruction_read_raf_phase_scan"
+path = "benches/metal/instruction_read_raf_phase_scan.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
 name = "registers_address_first_phase"
 harness = false
 
