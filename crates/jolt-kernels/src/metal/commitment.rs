@@ -67,6 +67,8 @@ use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer, WitnessError};
 use rayon::prelude::*;
 
+#[cfg(feature = "bench-utils")]
+use super::field::FR_U32_LIMBS;
 use super::g1::{bases_as_u32s, jac_from_device_limbs, JAC_U32S, SEG_INDEX_SIGN_BIT};
 use super::miller::{
     flatten_prepared_coeffs, g1_points_as_u32s, g2_points_as_u32s, miller_table_params,
@@ -95,6 +97,22 @@ const PIPELINE_DEPTH: usize = 2;
 /// spans 2–4 threads — enough threads per superchunk (~20k) to fill the
 /// device, enough serial adds per thread to amortize scheduling.
 const MAX_SEGMENT_LEN: usize = 256;
+
+fn max_segment_len() -> usize {
+    std::env::var("JOLT_METAL_G1_SEGMENT_LEN")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value.is_power_of_two() && (32..=1024).contains(&value))
+        .unwrap_or(MAX_SEGMENT_LEN)
+}
+
+fn g1_seg_dispatch(n_segs: usize) -> (KernelId, usize) {
+    #[cfg(feature = "bench-utils")]
+    if std::env::var_os("JOLT_METAL_G1_SEG_SERIAL").is_some() {
+        return (KernelId::G1SegSumSerial, n_segs);
+    }
+    (KernelId::G1SegSum, n_segs)
+}
 
 /// Pairs per device Miller thread. The W6 microbench is occupancy-bound at
 /// production pair counts — per-pair rate keeps improving down to 2 pairs
@@ -228,7 +246,7 @@ impl CommitWitness<Fr, DoryScheme> for MetalCommitWitness {
             grid,
             setup,
             SUPERCHUNK_CYCLES,
-            MAX_SEGMENT_LEN,
+            max_segment_len(),
             inc_device,
         ) {
             Ok(outputs) => Ok(outputs
@@ -414,13 +432,14 @@ fn commit_streaming_metal(
                 let starts_buf = job.seg_starts.device_buffer(ctx)?;
                 let out_buf = ctx.alloc_u32s(n_segs * JAC_U32S)?;
                 let mut pass = ctx.begin_pass()?;
+                let (kernel, threads) = g1_seg_dispatch(n_segs);
                 pass.dispatch(
-                    KernelId::G1SegSum,
+                    kernel,
                     &[u32::try_from(n_segs).map_err(|_| {
                         MetalError::Execution("segment count overflows u32".to_owned())
                     })?],
                     &[&bases_buf, &indices_buf, &starts_buf, &out_buf],
-                    n_segs,
+                    threads,
                 );
                 // The increment family joins the same command buffer: a
                 // second dispatch over disjoint buffers, one wait for both.
@@ -430,15 +449,16 @@ fn commit_streaming_metal(
                         let inc_indices_buf = inc.indices.device_buffer(ctx)?;
                         let inc_starts_buf = inc.seg_starts.device_buffer(ctx)?;
                         let inc_out_buf = ctx.alloc_u32s(n_inc_segs * JAC_U32S)?;
+                        let (kernel, threads) = g1_seg_dispatch(n_inc_segs);
                         pass.dispatch(
-                            KernelId::G1SegSum,
+                            kernel,
                             &[u32::try_from(n_inc_segs).map_err(|_| {
                                 MetalError::Execution(
                                     "increment segment count overflows u32".to_owned(),
                                 )
                             })?],
                             &[&bases_buf, &inc_indices_buf, &inc_starts_buf, &inc_out_buf],
-                            n_inc_segs,
+                            threads,
                         );
                         Some((n_inc_segs, inc_indices_buf, inc_starts_buf, inc_out_buf))
                     }
@@ -1347,6 +1367,179 @@ fn reduce_inc_superchunk(segs: &[IncSeg], jac: &[u32], inc_rows: &mut [Vec<Bn254
         .collect();
     for (column, window, point) in rows {
         inc_rows[column][window] = point;
+    }
+}
+
+#[cfg(feature = "bench-utils")]
+pub struct G1SegBenchFixture {
+    bases: super::buffers::OwnedDeviceBuffer<u32>,
+    rows: Vec<CommittedColumnsWitness>,
+    one_hot: Vec<(usize, ColumnKind)>,
+    row_width: usize,
+    one_hot_k: usize,
+    windows_total: usize,
+}
+
+#[cfg(feature = "bench-utils")]
+pub struct G1SegBenchCase {
+    indices: super::buffers::OwnedDeviceBuffer<u32>,
+    starts: super::buffers::OwnedDeviceBuffer<u32>,
+    out: super::buffers::OwnedDeviceBuffer<u32>,
+    destinations: Vec<u64>,
+    additions: usize,
+    useful_bytes: usize,
+    montgomery_muls: usize,
+}
+
+#[cfg(feature = "bench-utils")]
+#[derive(Clone, Copy, Debug)]
+pub struct G1SegBenchSample {
+    pub gpu_s: f64,
+    pub wall_s: f64,
+    pub segments: usize,
+    pub additions: usize,
+    pub useful_gbps: f64,
+    pub gmul_s: f64,
+}
+
+#[cfg(feature = "bench-utils")]
+impl G1SegBenchFixture {
+    pub fn new(
+        source: &dyn RowSource,
+        ids: &[JoltCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &DoryProverSetup,
+    ) -> Result<Self, String> {
+        let cycles = 1usize << grid.log_t;
+        let row_width = grid.num_columns();
+        let one_hot_k = 1usize << grid.log_k_chunk;
+        let windows_total = cycles / row_width;
+        let sample_windows = (SUPERCHUNK_CYCLES / row_width).clamp(1, windows_total);
+        let sample_cycles = sample_windows * row_width;
+        let kinds = column_kinds::<Fr>(ids, grid).map_err(|error| error.to_string())?;
+        let one_hot = kinds
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, kind)| kind.is_one_hot())
+            .collect();
+        let rows = jolt_witness::collect_bundles::<CommittedColumnsWitness>(source, sample_cycles)
+            .map_err(|error| error.to_string())?;
+        let bases = DoryScheme::begin_one_hot_column_major_stream(setup, row_width);
+        let context = MetalContext::global().map_err(|error| error.to_string())?;
+        let bases = context
+            .own_page_aligned(PageAlignedVec::from_slice(bases_as_u32s(&bases)))
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            bases,
+            rows,
+            one_hot,
+            row_width,
+            one_hot_k,
+            windows_total,
+        })
+    }
+
+    pub fn build_case(&self, max_segment_len: usize) -> Result<G1SegBenchCase, MetalError> {
+        assert!(max_segment_len.is_power_of_two());
+        let context = MetalContext::global()?;
+        let job = build_gpu_job(
+            &self.rows,
+            &self.one_hot,
+            self.row_width,
+            self.one_hot_k,
+            0,
+            self.windows_total,
+            max_segment_len,
+        );
+        let additions = job.indices.len();
+        let segments = job.segs.len();
+        let useful_bytes =
+            additions * (2 * FR_U32_LIMBS * 4 + 4) + (segments + 1) * 4 + segments * JAC_U32S * 4;
+        let mixed_adds = additions.saturating_sub(segments);
+        let montgomery_muls = mixed_adds * 10 + segments * 4;
+        let destinations = job
+            .segs
+            .iter()
+            .map(|seg| (u64::from(seg.column) << 32) | u64::from(seg.row))
+            .collect();
+        Ok(G1SegBenchCase {
+            indices: context.own_page_aligned(job.indices)?,
+            starts: context.own_page_aligned(job.seg_starts)?,
+            out: context.own_page_aligned(PageAlignedVec::from_elem(0u32, segments * JAC_U32S))?,
+            destinations,
+            additions,
+            useful_bytes,
+            montgomery_muls,
+        })
+    }
+
+    pub fn assert_equivalent(&self, cases: &[&G1SegBenchCase]) -> Result<(), MetalError> {
+        let mut expected = None;
+        for case in cases {
+            std::env::set_var("JOLT_METAL_G1_SEG_SERIAL", "1");
+            let _ = case.sample(self)?;
+            let serial = case.reduced_outputs();
+            std::env::remove_var("JOLT_METAL_G1_SEG_SERIAL");
+            let _ = case.sample(self)?;
+            let reduced = case.reduced_outputs();
+            assert_eq!(serial, reduced, "XYZZ changed tier-1 row sums");
+            if let Some(expected) = &expected {
+                assert_eq!(*expected, reduced, "segment cap changed tier-1 row sums");
+            } else {
+                expected = Some(reduced);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "bench-utils")]
+impl G1SegBenchCase {
+    pub fn sample(&self, fixture: &G1SegBenchFixture) -> Result<G1SegBenchSample, MetalError> {
+        let context = MetalContext::global()?;
+        let bases = fixture.bases.device_buffer();
+        let indices = self.indices.device_buffer();
+        let starts = self.starts.device_buffer();
+        let out = self.out.device_buffer();
+        let mut pass = context.begin_pass()?;
+        let (kernel, threads) = g1_seg_dispatch(self.destinations.len());
+        let montgomery_muls = if kernel == KernelId::G1SegSumSerial {
+            self.additions.saturating_sub(self.destinations.len()) * 11
+        } else {
+            self.montgomery_muls
+        };
+        pass.dispatch(
+            kernel,
+            &[self.destinations.len() as u32],
+            &[&bases, &indices, &starts, &out],
+            threads,
+        );
+        let wall_start = std::time::Instant::now();
+        let gpu_s = pass.commit().wait_timed()?.as_secs_f64();
+        let wall_s = wall_start.elapsed().as_secs_f64();
+        Ok(G1SegBenchSample {
+            gpu_s,
+            wall_s,
+            segments: self.destinations.len(),
+            additions: self.additions,
+            useful_gbps: self.useful_bytes as f64 / gpu_s / 1e9,
+            gmul_s: montgomery_muls as f64 / gpu_s / 1e9,
+        })
+    }
+
+    fn reduced_outputs(&self) -> std::collections::BTreeMap<u64, G1Projective> {
+        let mut rows = std::collections::BTreeMap::new();
+        for (segment, &destination) in self.destinations.iter().enumerate() {
+            let point = jac_from_device_limbs(
+                &self.out.as_slice()[segment * JAC_U32S..(segment + 1) * JAC_U32S],
+            );
+            let _ = rows
+                .entry(destination)
+                .and_modify(|sum: &mut G1Projective| *sum += point)
+                .or_insert(point);
+        }
+        rows
     }
 }
 

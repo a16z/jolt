@@ -163,11 +163,29 @@ struct G1AffinePt {
     Fq256 y;
 };
 
+// Extended Jacobian (XYZZ): affine coordinates are (X/ZZ, Y/ZZZ). Keeping
+// Z² and Z³ removes one Montgomery multiplication from every mixed add.
+struct G1Xyzz {
+    Fq256 x;
+    Fq256 y;
+    Fq256 zz;
+    Fq256 zzz;
+};
+
 inline G1Jac g1_identity() {
     G1Jac p;
     p.x = fq_zero();
     p.y = fq_zero();
     p.z = fq_zero();
+    return p;
+}
+
+inline G1Xyzz g1_xyzz_identity() {
+    G1Xyzz p;
+    p.x = fq_zero();
+    p.y = fq_zero();
+    p.zz = fq_zero();
+    p.zzz = fq_zero();
     return p;
 }
 
@@ -297,6 +315,65 @@ inline G1Jac g1_add_jac(G1Jac p, G1Jac q) {
         fq_sub(fq_sub(fq_sqr(fq_add(p.z, q.z)), z1z1), z2z2),
         h
     );
+    return out;
+}
+
+inline G1Xyzz g1_xyzz_dbl(G1Xyzz p) {
+    if (fq_is_zero(p.zz)) {
+        return p;
+    }
+    Fq256 u = fq_dbl(p.y);
+    Fq256 v = fq_sqr(u);
+    Fq256 w = fq_mul(u, v);
+    Fq256 s = fq_mul(p.x, v);
+    Fq256 m = fq_sqr(p.x);
+    m = fq_add(fq_dbl(m), m);
+    G1Xyzz out;
+    out.x = fq_sub(fq_sqr(m), fq_dbl(s));
+    out.y = fq_sub(fq_mul(m, fq_sub(s, out.x)), fq_mul(w, p.y));
+    out.zz = fq_mul(v, p.zz);
+    out.zzz = fq_mul(w, p.zzz);
+    return out;
+}
+
+// Mixed XYZZ + affine addition: 8M + 2S, versus Jacobian's 7M + 4S.
+inline G1Xyzz g1_xyzz_madd(G1Xyzz acc, G1AffinePt q) {
+    if (fq_is_zero(acc.zz)) {
+        G1Xyzz out;
+        out.x = q.x;
+        out.y = q.y;
+        for (uint i = 0; i < FR_LIMBS; i++) {
+            out.zz.v[i] = FQ_ONE[i];
+            out.zzz.v[i] = FQ_ONE[i];
+        }
+        return out;
+    }
+    Fq256 u2 = fq_mul(q.x, acc.zz);
+    Fq256 s2 = fq_mul(q.y, acc.zzz);
+    Fq256 h = fq_sub(u2, acc.x);
+    Fq256 r = fq_sub(s2, acc.y);
+    if (fq_is_zero(h)) {
+        return fq_is_zero(r) ? g1_xyzz_dbl(acc) : g1_xyzz_identity();
+    }
+    Fq256 hh = fq_sqr(h);
+    Fq256 hhh = fq_mul(h, hh);
+    Fq256 v = fq_mul(acc.x, hh);
+    G1Xyzz out;
+    out.x = fq_sub(fq_sub(fq_sqr(r), hhh), fq_dbl(v));
+    out.y = fq_sub(fq_mul(r, fq_sub(v, out.x)), fq_mul(acc.y, hhh));
+    out.zz = fq_mul(acc.zz, hh);
+    out.zzz = fq_mul(acc.zzz, hhh);
+    return out;
+}
+
+inline G1Jac g1_xyzz_to_jac(G1Xyzz p) {
+    if (fq_is_zero(p.zz)) {
+        return g1_identity();
+    }
+    G1Jac out;
+    out.x = fq_mul(p.x, fq_sqr(p.zz));
+    out.y = fq_mul(p.y, fq_sqr(p.zzz));
+    out.z = p.zzz;
     return out;
 }
 
@@ -647,7 +724,8 @@ kernel void jk_g1_dory_msm_window_fold(
     }
 }
 
-// One thread per segment: sum the selected bases into a Jacobian point.
+// One thread per segment, accumulating in XYZZ to remove one field
+// multiplication per mixed addition without changing host segmentation.
 //   bases      — host G1Affine array (stride JK_G1_AFFINE_STRIDE u32s)
 //   indices    — base indices, all segments concatenated; bit 31 selects
 //                the NEGATED base (x, -y) — the signed-digit MSM entries of
@@ -668,8 +746,8 @@ kernel void jk_g1_seg_sum(
         return;
     }
     uint start = seg_starts[tid];
-    uint end = seg_starts[tid + 1];
-    G1Jac acc = g1_identity();
+    uint end = seg_starts[tid + 1u];
+    G1Xyzz acc = g1_xyzz_identity();
     for (uint i = start; i < end; i++) {
         uint raw = indices[i];
         G1AffinePt q = g1_load_base(bases, raw & 0x7fffffffu);
@@ -679,16 +757,35 @@ kernel void jk_g1_seg_sum(
             // negation.
             q.y = fq_sub(fq_zero(), q.y);
         }
+        acc = g1_xyzz_madd(acc, q);
+    }
+    g1_store_jac(out + tid * (3u * FR_LIMBS), g1_xyzz_to_jac(acc));
+}
+
+// Measurement oracle for the retained XYZZ kernel. Production never
+// selects this dependency-chain baseline.
+kernel void jk_g1_seg_sum_serial(
+    device const uint* bases [[buffer(0)]],
+    device const uint* indices [[buffer(1)]],
+    device const uint* seg_starts [[buffer(2)]],
+    device uint* out [[buffer(3)]],
+    constant uint* params [[buffer(4)]],
+    uint tid [[thread_position_in_grid]])
+{
+    uint n_segs = params[0];
+    if (tid >= n_segs) {
+        return;
+    }
+    uint start = seg_starts[tid];
+    uint end = seg_starts[tid + 1u];
+    G1Jac acc = g1_identity();
+    for (uint i = start; i < end; i++) {
+        uint raw = indices[i];
+        G1AffinePt q = g1_load_base(bases, raw & 0x7fffffffu);
+        if (raw >> 31) {
+            q.y = fq_sub(fq_zero(), q.y);
+        }
         acc = g1_madd(acc, q);
     }
-    device uint* dst = out + tid * (3u * FR_LIMBS);
-    for (uint i = 0; i < FR_LIMBS; i++) {
-        dst[i] = acc.x.v[i];
-    }
-    for (uint i = 0; i < FR_LIMBS; i++) {
-        dst[FR_LIMBS + i] = acc.y.v[i];
-    }
-    for (uint i = 0; i < FR_LIMBS; i++) {
-        dst[2u * FR_LIMBS + i] = acc.z.v[i];
-    }
+    g1_store_jac(out + tid * (3u * FR_LIMBS), acc);
 }

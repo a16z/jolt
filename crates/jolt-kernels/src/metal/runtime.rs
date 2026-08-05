@@ -14,6 +14,8 @@ use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
+#[cfg(feature = "bench-utils")]
+use std::time::Duration;
 use std::time::Instant;
 
 use objc2::rc::Retained;
@@ -61,6 +63,7 @@ pub enum KernelId {
     TablePairsRound,
     HammingRound,
     G1SegSum,
+    G1SegSumSerial,
     G1CombineRows,
     G1ScalarMulAdd,
     G1ProjectiveMulAdd,
@@ -127,7 +130,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 76] = [
+    pub const ALL: [Self; 77] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -141,6 +144,7 @@ impl KernelId {
         Self::TablePairsRound,
         Self::HammingRound,
         Self::G1SegSum,
+        Self::G1SegSumSerial,
         Self::G1CombineRows,
         Self::G1ScalarMulAdd,
         Self::G1ProjectiveMulAdd,
@@ -221,6 +225,7 @@ impl KernelId {
             Self::TablePairsRound => "jk_table_pairs_round",
             Self::HammingRound => "jk_hamming_round",
             Self::G1SegSum => "jk_g1_seg_sum",
+            Self::G1SegSumSerial => "jk_g1_seg_sum_serial",
             Self::G1CombineRows => "jk_g1_combine_rows",
             Self::G1ScalarMulAdd => "jk_g1_scalar_mul_add",
             Self::G1ProjectiveMulAdd => "jk_g1_projective_mul_add",
@@ -592,6 +597,15 @@ impl PendingPass<'_> {
     /// Block until the GPU finishes; surfaces device-side errors.
     pub fn wait(self) -> Result<(), MetalError> {
         wait_completed(&self.cb, self.trace.as_ref())
+    }
+
+    /// Wait and return the command buffer's device execution window.
+    #[cfg(feature = "bench-utils")]
+    pub fn wait_timed(self) -> Result<Duration, MetalError> {
+        wait_completed(&self.cb, self.trace.as_ref())?;
+        Ok(Duration::from_secs_f64(
+            self.cb.GPUEndTime() - self.cb.GPUStartTime(),
+        ))
     }
 
     /// Erase the dispatched buffers' borrows, so the pass can stay in
