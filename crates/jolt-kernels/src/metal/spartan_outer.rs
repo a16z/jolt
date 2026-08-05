@@ -1,4 +1,8 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    mem::size_of,
+    time::{Duration, Instant},
+};
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
@@ -446,6 +450,23 @@ fn invalid_outer_remainder_state(expected: &'static str, got: &'static str) -> M
     MetalError::InvalidOuterRemainderState { expected, got }
 }
 
+fn duration_nanos(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+fn record_gpu_phase(
+    span: &tracing::Span,
+    started: Instant,
+    gpu_before: Duration,
+    gpu_after: Duration,
+) {
+    let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
+    let _ = span.record(
+        "gpu_active_ns",
+        duration_nanos(gpu_after.saturating_sub(gpu_before)),
+    );
+}
+
 impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
     fn prepare(
         &self,
@@ -472,6 +493,12 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             drop(session.take::<SpartanOuterUniskipRows>());
             return OptimizedOuterRemainder.prepare(session, witness, inputs);
         }
+        let _metal_prepare = tracing::info_span!(
+            "MetalOuterRemainder::prepare",
+            resident_rows = cycles,
+            rounds,
+        )
+        .entered();
 
         let rows =
             session
@@ -486,17 +513,34 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         }
         let dispatch = self.config.spartan_outer_remainder.dispatch;
         let device = self.context.device_info();
-        let additional = outer_remainder_sequence_storage_bytes_with_config(cycles, dispatch)
-            .and_then(|bytes| {
-                let maximum_buffer =
-                    outer_remainder_sequence_max_buffer_bytes_with_config(cycles, dispatch)?;
-                validate_resident_row_buffer(maximum_buffer, device.max_buffer_length)?;
-                self.context.validate_additional_working_set(bytes)?;
-                Ok(bytes)
+        let planned_device_bytes =
+            outer_remainder_sequence_storage_bytes_with_config(cycles, dispatch)
+                .map_err(metal_prepare_error)?;
+        let existing_resident_bytes =
+            spartan_outer_uniskip_row_bytes(cycles).map_err(metal_prepare_error)?;
+        let allocation_span = tracing::info_span!(
+            "MetalOuterRemainder::allocation_plan",
+            admitted = tracing::field::Empty,
+            existing_resident_bytes,
+            additional_working_set_bytes = planned_device_bytes,
+            current_device_bytes = device.current_allocated_size,
+            recommended_max_working_set_bytes = device.recommended_max_working_set_size,
+        );
+        let _allocation_guard = allocation_span.enter();
+        let admission = outer_remainder_sequence_max_buffer_bytes_with_config(cycles, dispatch)
+            .and_then(|maximum_buffer| {
+                validate_resident_row_buffer(maximum_buffer, device.max_buffer_length)
+            })
+            .and_then(|()| {
+                self.context
+                    .validate_additional_working_set(planned_device_bytes)
             });
-        let planned_device_bytes = match additional {
-            Ok(bytes) => bytes,
+        match admission {
+            Ok(()) => {
+                let _ = allocation_span.record("admitted", true);
+            }
             Err(error) if error.is_capacity_error() => {
+                let _ = allocation_span.record("admitted", false);
                 tracing::warn!(
                     target: "jolt::metal",
                     error = %error,
@@ -507,27 +551,44 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 return OptimizedOuterRemainder.prepare(session, witness, inputs);
             }
             Err(error) => return Err(metal_prepare_error(error)),
-        };
+        }
+        drop(_allocation_guard);
 
-        let rows =
+        let compact_rows_storage_id = rows.instruction_input_allocation_identity();
+        let residual_rows_storage_id = rows.allocation_identity();
+        let device_registry_id = rows.device_registry_id();
+        let compact_retained = session.state::<InstructionInputRows>().is_some();
+        let rows = {
+            let _row_handoff = tracing::info_span!(
+                "MetalOuterRemainder::row_handoff",
+                compact_rows_storage_id,
+                residual_rows_storage_id,
+                device_registry_id,
+                resident_rows = cycles,
+                row_upload_bytes = 0u64,
+                device_allocations = 0u64,
+            )
+            .entered();
             session
                 .take::<SpartanOuterUniskipRows>()
                 .ok_or(KernelError::InvariantViolation {
                     reason: "Metal outer remainder rows disappeared after admission",
-                })?;
-        let compact_rows_storage_id = rows.instruction_input_allocation_identity();
-        let residual_rows_storage_id = rows.allocation_identity();
-        let device_registry_id = rows.device_registry_id();
+                })?
+        };
         let sequence = {
             let _span = tracing::info_span!(
                 "MetalOuterRemainder::sequence_prepare",
-                cycles,
+                resident_rows = cycles,
+                rounds,
+                cutoff_elements = dispatch.cpu_tail_elements,
+                trace_cutoff_elements = self.config.spartan_outer_remainder.trace_cutoff_elements,
                 planned_device_bytes,
                 compact_rows_storage_id,
                 residual_rows_storage_id,
                 device_registry_id,
                 row_upload_bytes = 0u64,
                 full_domain_copy_dispatches = 0u64,
+                round_device_buffer_allocations = 0u64,
             )
             .entered();
             match self
@@ -555,11 +616,20 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let host = MetalOuterRemainderHost::new(log_t, &tau, inputs.relation.uniskip_challenge())?;
         let mut sequence = sequence;
         let endpoints = {
-            let _span = tracing::info_span!("MetalOuterRemainder::materialize").entered();
+            let phase = tracing::info_span!(
+                "MetalOuterRemainder::first_message",
+                dispatch_wall_ns = tracing::field::Empty,
+                gpu_active_ns = tracing::field::Empty,
+            );
+            let _phase_guard = phase.enter();
             let (e_in, e_out) = host.current_weights();
-            sequence
+            let gpu_before = sequence.gpu_active_time();
+            let started = Instant::now();
+            let endpoints = sequence
                 .materialize_and_first_message(host.stream_lagrange(), e_in, e_out)
-                .map_err(metal_prepare_error)?
+                .map_err(metal_prepare_error)?;
+            record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
+            endpoints
         };
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
@@ -581,6 +651,10 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             )),
             pending_endpoints: Some((endpoints[0], endpoints[1])),
             compact_rows_storage_id,
+            residual_rows_storage_id,
+            device_registry_id,
+            resident_rows: cycles,
+            compact_retained,
             cpu_tail_elements: tail_elements,
         }))
     }
@@ -854,6 +928,10 @@ struct MetalOuterRemainderKernel {
     host_tail: Option<(Vec<AkitaField>, Vec<AkitaField>)>,
     pending_endpoints: Option<(AkitaField, AkitaField)>,
     compact_rows_storage_id: usize,
+    residual_rows_storage_id: usize,
+    device_registry_id: u64,
+    resident_rows: usize,
+    compact_retained: bool,
     cpu_tail_elements: usize,
 }
 
@@ -876,7 +954,6 @@ impl allocative::Allocative for MetalOuterRemainderKernel {
 
 impl MetalOuterRemainderKernel {
     fn restore_cpu_tail(&mut self) -> Result<(), SumcheckError<AkitaField>> {
-        let _span = tracing::info_span!("MetalOuterRemainder::readback").entered();
         let sequence = self.sequence.as_mut().ok_or_else(|| {
             metal_round_error(invalid_outer_remainder_state(
                 "resident sequence during CPU-tail export",
@@ -884,6 +961,19 @@ impl MetalOuterRemainderKernel {
             ))
         })?;
         let current = sequence.current_elements();
+        let readback_elements = current
+            .checked_mul(2)
+            .ok_or_else(|| metal_round_error(MetalError::InputTooLong(current)))?;
+        let readback_bytes = readback_elements
+            .checked_mul(size_of::<AkitaField>())
+            .ok_or_else(|| metal_round_error(MetalError::InputTooLong(readback_elements)))?;
+        let _span = tracing::info_span!(
+            "MetalOuterRemainder::readback",
+            readbacks = 1u64,
+            elements = readback_elements,
+            bytes = readback_bytes,
+        )
+        .entered();
         let (mut az, mut bz) = self.host_tail.take().ok_or_else(|| {
             metal_round_error(invalid_outer_remainder_state(
                 "available CPU-tail buffers",
@@ -914,7 +1004,7 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
     fn prove_round(
         &mut self,
         bind: Option<AkitaField>,
-        _round: usize,
+        round: usize,
         previous_claim: AkitaField,
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
         let endpoints = if let Some(challenge) = bind {
@@ -933,14 +1023,32 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
                 tail.bind(challenge);
                 tail.endpoints(e_in, e_out)?
             } else {
-                let _span = tracing::info_span!("MetalOuterRemainder::resident_round").entered();
                 let sequence = self.sequence.as_mut().ok_or_else(|| {
                     metal_round_error(invalid_outer_remainder_state(
                         "resident sequence before a Metal round",
                         "absent device sequence",
                     ))
                 })?;
-                let output = if self.host.challenges.len() == 1 {
+                let first_bind = self.host.challenges.len() == 1;
+                let phase = if first_bind {
+                    tracing::info_span!(
+                        "MetalOuterRemainder::first_bind",
+                        round,
+                        dispatch_wall_ns = tracing::field::Empty,
+                        gpu_active_ns = tracing::field::Empty,
+                    )
+                } else {
+                    tracing::info_span!(
+                        "MetalOuterRemainder::dense_round",
+                        round,
+                        dispatch_wall_ns = tracing::field::Empty,
+                        gpu_active_ns = tracing::field::Empty,
+                    )
+                };
+                let _phase_guard = phase.enter();
+                let gpu_before = sequence.gpu_active_time();
+                let started = Instant::now();
+                let output = if first_bind {
                     sequence.bind_stream_and_message(
                         challenge,
                         self.host.stream_lagrange(),
@@ -951,6 +1059,7 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
                     sequence.bind_and_message(challenge, e_in, e_out)
                 }
                 .map_err(metal_round_error)?;
+                record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
                 (output[0], output[1])
             }
         } else {
@@ -969,6 +1078,7 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
             self.restore_cpu_tail()?;
         }
         self.host.bind(bind);
+        let _span = tracing::info_span!("MetalOuterRemainder::cpu_tail", terminal = true).entered();
         self.cpu_tail
             .as_mut()
             .ok_or_else(|| {
@@ -1002,10 +1112,23 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                 reason: "Metal outer remainder released resident rows before openings",
             })?;
         let claimed = {
-            let _span = tracing::info_span!("MetalOuterRemainder::opening_scan").entered();
-            sequence
+            let phase = tracing::info_span!(
+                "MetalOuterRemainder::output_claims",
+                dispatch_wall_ns = tracing::field::Empty,
+                gpu_active_ns = tracing::field::Empty,
+                readbacks = 1u64,
+                output_elements = OUTER_VARIABLES,
+                readback_bytes = OUTER_VARIABLES * size_of::<AkitaField>(),
+                row_upload_bytes = 0u64,
+            );
+            let _phase_guard = phase.enter();
+            let gpu_before = sequence.gpu_active_time();
+            let started = Instant::now();
+            let claimed = sequence
                 .evaluate_openings(&e_in, &e_out)
-                .map_err(metal_output_error)?
+                .map_err(metal_output_error)?;
+            record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
+            claimed
         };
         let compact = sequence
             .into_instruction_input_rows()
@@ -1018,8 +1141,13 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
         let _release = tracing::info_span!(
             "MetalOuterRemainder::row_release",
             compact_rows_storage_id = self.compact_rows_storage_id,
-            residual_releases = 1u64,
-            compact_copy_bytes = 0u64,
+            residual_rows_storage_id = self.residual_rows_storage_id,
+            device_registry_id = self.device_registry_id,
+            resident_rows = self.resident_rows,
+            row_upload_bytes = 0u64,
+            device_allocations = 0u64,
+            residual_released = true,
+            compact_retained = self.compact_retained,
         )
         .entered();
         drop(compact);

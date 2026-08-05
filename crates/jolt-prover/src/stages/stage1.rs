@@ -97,16 +97,18 @@ where
         ),
     };
 
-    let proved = sumchecks.prove(
-        backend,
-        session,
-        witness,
-        &inputs,
-        &input_points,
-        &challenges,
-        mode.recorder()?,
-        transcript,
-    )?;
+    let proved = tracing::info_span!("OuterRemainder::complete_member").in_scope(|| {
+        sumchecks.prove(
+            backend,
+            session,
+            witness,
+            &inputs,
+            &input_points,
+            &challenges,
+            mode.recorder()?,
+            transcript,
+        )
+    })?;
     #[cfg(feature = "zk")]
     let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
     #[cfg(not(feature = "zk"))]
