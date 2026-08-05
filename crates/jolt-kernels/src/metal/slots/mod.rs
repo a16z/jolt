@@ -53,7 +53,7 @@ pub use instruction_claim_reduction::MetalInstructionClaimReduction;
 pub use instruction_input::MetalInstructionInput;
 pub use instruction_read_raf::MetalInstructionReadRaf;
 pub use joint_opening::MetalJointOpening;
-pub(crate) use ra_lazy::rav_driver_for_bench;
+pub(crate) use ra_lazy::{bool_driver_for_bench, rav_driver_for_bench};
 pub use ra_lazy::{
     MetalBooleanityCycle, MetalInstructionRaVirtualization, MetalRamRaVirtualization,
 };

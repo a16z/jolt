@@ -84,6 +84,7 @@ pub enum KernelId {
     RaMaterialize,
     BoolLazyRound,
     BoolDenseRound,
+    BoolAdoptRound,
     RavLazyRound,
     RavAdoptRound,
     RavDenseRound,
@@ -119,7 +120,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 68] = [
+    pub const ALL: [Self; 69] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -156,6 +157,7 @@ impl KernelId {
         Self::RaMaterialize,
         Self::BoolLazyRound,
         Self::BoolDenseRound,
+        Self::BoolAdoptRound,
         Self::RavLazyRound,
         Self::RavAdoptRound,
         Self::RavDenseRound,
@@ -228,6 +230,7 @@ impl KernelId {
             Self::RaMaterialize => "jk_ra_materialize",
             Self::BoolLazyRound => "jk_bool_lazy_round",
             Self::BoolDenseRound => "jk_bool_dense_round",
+            Self::BoolAdoptRound => "jk_bool_adopt_round",
             Self::RavLazyRound => "jk_rav_lazy_round",
             Self::RavAdoptRound => "jk_rav_adopt_round",
             Self::RavDenseRound => "jk_rav_dense_round",
