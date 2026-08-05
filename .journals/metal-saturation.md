@@ -19,7 +19,7 @@ wave-1 attribution report: `.journals/metal-m5-saturation-report.html`.
   max, then next. No e2e for kernel iteration.
 - Night mandate (01:49): waves run continuously; prepare functions → GPU;
   every-kernel sweep. Kernel-adding merges: re-count `KernelId::ALL`
-  (currently `[Self; 75]`).
+  (currently `[Self; 76]`).
 - All cargo under `/usr/bin/lockf -k /tmp/jolt-metal-wave3-cargo.lock`;
   `gpu_lock()` for timed GPU. No pushing without parent's word.
 
@@ -85,3 +85,4 @@ Doctrine: single-kernel + prepare→GPU. Off `3830f4da8`+.
 - **st6b gathers: NO-GO, merged (docs+harness).** Lazy 178-185 ms of 258-265 ms deferred-RAV @2^24; both prototypes ≈ baseline. `01751baaa` — gather is already ALU/latency-optimal at these widths. Parity 14/14.
 - **st8 Miller partial fold: RETAIN, merged.** Fold 282→15 ms (18.8×), hook @2^17 642→375 ms (−41.6%), modeled st8 −0.6..−1.05 s @2^27. `c05b48ddf` — Rayon-parallel exact associative Fq12 partial product replaces single-thread fold. Doors closed w/ mechanism: CPU co-execution (ark 4-pair re-chunk = 3-4× nondeterministic tax, 20% share REGRESSES), schoolbook fq6_mul (fly pressure is persistent state). Geometry map: thread exposure NOT the bottleneck; max_threads=1024 spills. Priced residual: fly persistent-state restructure (research, 3.4× spill tax on 5.5 s). 297/297.
 - **st5 IRR suffix-scan: GO, merged.** 2^24 22.67→14.67 ms (−35.3%) + 2048-group schedule −17.4%; CB mass 92.4→48.3 ms (−47.7%); modeled st5 −1.26 s @2^27 (→~10.87). `52c985059` — suffix scan restructure + group scheduling. Parity 10/10+10/10.
+- **st2 RAM-RW: NO-GO, merged (env-gated, default-off).** Prepare only 0.501 s @2^27; GPU CSR −58..−68% but models −0.22..−0.26 s (below −0.3 gate); CB fusion 23→12 flat. `bdc6d5717` — stage too small for the pattern. Parity+pins green.

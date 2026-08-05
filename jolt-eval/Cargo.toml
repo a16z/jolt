@@ -145,6 +145,12 @@ harness = false
 required-features = ["metal"]
 
 [[bench]]
+name = "ram_rw"
+path = "benches/metal/ram_rw.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
 name = "metal_fr_bind"
 path = "benches/metal/metal_fr_bind.rs"
 harness = false

@@ -107,6 +107,7 @@ pub enum KernelId {
     ProductLr,
     IcrInit,
     IcrRound,
+    RamRwBuild,
     RamRwMessage,
     RamRwBind,
     RegRwBuild,
@@ -126,7 +127,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 75] = [
+    pub const ALL: [Self; 76] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -186,6 +187,7 @@ impl KernelId {
         Self::ProductLr,
         Self::IcrInit,
         Self::IcrRound,
+        Self::RamRwBuild,
         Self::RamRwMessage,
         Self::RamRwBind,
         Self::RegRwBuild,
@@ -265,6 +267,7 @@ impl KernelId {
             Self::ProductLr => "jk_product_lr",
             Self::IcrInit => "jk_icr_init",
             Self::IcrRound => "jk_icr_round",
+            Self::RamRwBuild => "jk_ram_rw_build",
             Self::RamRwMessage => "jk_ram_rw_message",
             Self::RamRwBind => "jk_ram_rw_bind",
             Self::RegRwBuild => "jk_reg_rw_build",
