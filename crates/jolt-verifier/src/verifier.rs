@@ -277,17 +277,18 @@ where
     Ok(())
 }
 
-/// Fail-closed gate for the field-inline axis: the config is selectable (and
-/// mismatches reject in [`validate_proof_config`]), but the stage slices that
-/// verify FR proofs (composed stage 1, FR Twist batching in stages 2/4/5/6,
-/// `FieldRdInc` joint opening) have not landed. Reject before any transcript
-/// work rather than run a half-composed verifier; delete this gate as the
-/// final field-inline verifier slice.
+/// Fail-closed gate for the field-inline axis: the config, commitment payload,
+/// and composed stage-1 clear path have landed, but the remaining slices that
+/// verify FR proofs (FR Twist batching in stages 2/4/5/6, `FieldRdInc` joint
+/// opening, and the ZK/BlindFold lowering of the composed relations) have not.
+/// Reject before any transcript work rather than run a half-composed verifier;
+/// delete this gate as the final field-inline verifier slice.
 #[cfg(feature = "field-inline")]
 fn require_field_inline_slices() -> Result<(), VerifierError> {
     Err(VerifierError::ProtocolAxisUnimplemented {
         axis: "field-inline",
-        pending: "stage-1 Spartan composition and FR Twist stage batching",
+        pending: "FR Twist stage batching (stages 2/4/5/6), the FieldRdInc joint opening, \
+                  and the composed BlindFold lowering",
     })
 }
 
