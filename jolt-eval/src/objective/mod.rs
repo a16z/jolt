@@ -146,6 +146,7 @@ pub enum PerformanceObjective {
     HammingWeightPushforward(
         performance::hamming_weight_pushforward::HammingWeightPushforwardObjective,
     ),
+    RegistersAddressPhase(performance::registers_address_phase::RegistersAddressPhase),
 }
 
 impl PerformanceObjective {
@@ -161,6 +162,9 @@ impl PerformanceObjective {
             Self::HammingWeightPushforward(
                 performance::hamming_weight_pushforward::HammingWeightPushforwardObjective,
             ),
+            Self::RegistersAddressPhase(
+                performance::registers_address_phase::RegistersAddressPhase,
+            ),
         ]
     }
 
@@ -174,6 +178,7 @@ impl PerformanceObjective {
             Self::MulU128(o) => o.name(),
             Self::MulI128(o) => o.name(),
             Self::HammingWeightPushforward(o) => o.name(),
+            Self::RegistersAddressPhase(o) => o.name(),
         }
     }
 
@@ -187,6 +192,7 @@ impl PerformanceObjective {
             Self::MulU128(o) => o.units(),
             Self::MulI128(o) => o.units(),
             Self::HammingWeightPushforward(o) => o.units(),
+            Self::RegistersAddressPhase(o) => o.units(),
         }
     }
 
@@ -200,6 +206,7 @@ impl PerformanceObjective {
             Self::MulU128(o) => o.description(),
             Self::MulI128(o) => o.description(),
             Self::HammingWeightPushforward(o) => o.description(),
+            Self::RegistersAddressPhase(o) => o.description(),
         }
     }
 
@@ -214,6 +221,9 @@ impl PerformanceObjective {
                 "crates/jolt-kernels/src/optimized/hamming_weight_claim_reduction.rs",
                 "crates/jolt-kernels/src/optimized/booleanity.rs",
             ],
+            Self::RegistersAddressPhase(_) => {
+                &["jolt-eval/src/objective/performance/registers_address_phase.rs"]
+            }
         }
     }
 }
@@ -238,6 +248,7 @@ pub use performance::binding::{BIND_HIGH_TO_LOW, BIND_LOW_TO_HIGH};
 pub use performance::field_mul::{MUL_I128, MUL_I64, MUL_U128, MUL_U64};
 pub use performance::hamming_weight_pushforward::HAMMING_WEIGHT_PUSHFORWARD;
 pub use performance::naive_sort::NAIVE_SORT_TIME;
+pub use performance::registers_address_phase::REGISTERS_ADDRESS_PHASE;
 
 impl OptimizationObjective {
     pub fn all() -> Vec<Self> {

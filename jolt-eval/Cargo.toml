@@ -15,6 +15,7 @@ jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
+jolt-poly = { workspace = true }
 jolt-kernels = { workspace = true, features = ["bench-utils"] }
 jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
@@ -33,6 +34,7 @@ eyre = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 rand = { workspace = true }
+rayon = { workspace = true }
 tracing-subscriber = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
@@ -55,7 +57,6 @@ jolt-kernels = { workspace = true, optional = true }
 [dev-dependencies]
 criterion = { workspace = true }
 iai-callgrind.workspace = true
-jolt-poly.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"
@@ -99,6 +100,10 @@ harness = false
 
 [[bench]]
 name = "prover_time_sha2_chain"
+harness = false
+
+[[bench]]
+name = "registers_address_first_phase"
 harness = false
 
 [[bench]]
