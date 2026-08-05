@@ -11,6 +11,7 @@
 use clap::{Parser, Subcommand};
 use jolt_prover::compare::CompareArgs;
 use jolt_prover::profile::{BenchmarkArgs, ProfileArgs};
+use jolt_prover::vertical::VerticalArgs;
 
 #[derive(Parser)]
 #[command(name = "jolt-prover", about = "Modular Jolt prover telemetry harness")]
@@ -27,6 +28,7 @@ enum Command {
     /// accumulating benchmark-runs/results/modular_timings.csv.
     Benchmark(BenchmarkArgs),
     Compare(CompareArgs),
+    Vertical(VerticalArgs),
 }
 
 fn main() {
@@ -42,6 +44,9 @@ fn main() {
         }
         Command::Compare(args) => {
             let _comparison = jolt_prover::compare::run(&args);
+        }
+        Command::Vertical(args) => {
+            let _timings = jolt_prover::vertical::run(&args);
         }
     }
 }
