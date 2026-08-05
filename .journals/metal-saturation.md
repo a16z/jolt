@@ -602,3 +602,31 @@ in a baseline-quality st0 window this trunk models ≈ 64 s.
 
 Dashboard point: `.journals/artifacts/wave2-dashboard-point.json`.
 2^27 certification CSV archived. Wave 2 CLOSED.
+
+## Wave 3 (opened 2026-08-05 01:30 UTC)
+
+Doctrine: user's single-kernel harnessing directive — harness one kernel
+via jolt-eval, optimize to the max, then the next; e2e only at wave gates.
+Post-gate stage mass @2^27 (record run): st0 17.98 (ambient-dominated,
+in-process door killed) · **st5 14.81** · st4 9.52 · st8 7.99 · st6b 7.02
+· st1 5.45.
+
+Lanes dispatched (worktrees off `3830f4da8`):
+
+- **6add005e st4-prefix (sol-xhigh, metal-w3-st4prefix):** capture the
+  uncaptured w15 sync prize on the UNCHANGED representation — fuse the
+  13-pass/2-wait/6-host-boundary sparse prefix (5.86 s wall, 3.73 s idle),
+  precompute/double-buffer the per-round host scans. Kernel/scheduling
+  only; bar ≥0.5 s stage.
+- **eb10eb25 st5 (sol-xhigh, metal-w3-st5):** attribute the 14.8 s to its
+  dominant kernel (InstrReadRAF d=6 family expected), harness it, ALU/
+  occupancy/layout micro-optimization to the max; bar ≥12% kernel /
+  ≥0.4 s stage; achieved-mul/s vs the 11.30 Gmont-mul/s roof reported
+  either way.
+- **c32db501 st8 (fable-max, metal-w3-st8):** root-cause Miller/pairing
+  dispatch geometry vs the 4k-8k thread-exposure finding; occupancy/
+  packing cut; exact pairing parity mandatory; bar ≥0.4 s stage.
+
+Parked (not scheduled): typed-Dory st6b/st7 packing (needs post-fix
+re-pricing); st6b gather residual (7.0 s — next lane slot); st0 bg12 +
+starvation guard (fail-unsafe, needs explicit mandate); st1 residual.
