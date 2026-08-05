@@ -3287,6 +3287,7 @@ dependencies = [
  "libc",
  "postcard",
  "rand 0.8.7",
+ "rayon",
  "rust-code-analysis",
  "schemars 1.2.1",
  "serde",

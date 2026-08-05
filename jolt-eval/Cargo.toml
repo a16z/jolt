@@ -25,6 +25,7 @@ jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
+jolt-poly = { workspace = true }
 jolt-kernels = { workspace = true, features = ["bench-utils"] }
 jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
@@ -43,6 +44,7 @@ eyre = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 rand = { workspace = true }
+rayon = { workspace = true }
 tracing-subscriber = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
@@ -69,7 +71,6 @@ libc = { workspace = true, optional = true }
 [dev-dependencies]
 criterion = { workspace = true }
 iai-callgrind.workspace = true
-jolt-poly.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"
@@ -120,6 +121,10 @@ name = "instruction_input_round0"
 path = "benches/metal/instruction_input_round0.rs"
 harness = false
 required-features = ["metal"]
+
+[[bench]]
+name = "registers_address_first_phase"
+harness = false
 
 [[bench]]
 name = "metal_fr_bind"
