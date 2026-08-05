@@ -253,6 +253,15 @@ mod muldiv {
                 cutoff_elements: 8,
                 ..Default::default()
             },
+            booleanity_address: jolt_kernels::metal::BooleanityAddressMetalConfig {
+                trace_cutoff_elements: 2,
+                dispatch: jolt_kernels::metal::solinas::BooleanityAddressPushforwardConfig {
+                    inner_log2: 2,
+                    selectors_per_tile: 6,
+                    tile_threads_per_threadgroup: Some(256),
+                    finalize_threads_per_threadgroup: Some(256),
+                },
+            },
             booleanity_cycle: jolt_kernels::metal::BooleanityMetalConfig {
                 trace_cutoff_elements: 2,
                 cutoff_elements: 2,

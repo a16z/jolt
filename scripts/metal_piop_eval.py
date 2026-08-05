@@ -61,6 +61,28 @@ INSTRUCTION_INPUT_METAL_PHASES = (
     "cpu_tail",
 )
 INSTRUCTION_INPUT_MIN_SPEEDUP = 4.0
+BOOLEANITY_ADDRESS_KERNEL = "BooleanityAddressPhase"
+BOOLEANITY_ADDRESS_COMPONENTS = (
+    "prepare",
+    "prove_round",
+    "finish_rounds",
+    "output_claims",
+)
+BOOLEANITY_ADDRESS_METAL_PHASES = (
+    "prepare",
+    "sequence_prepare",
+    "allocation_plan",
+    "dispatch",
+    "readback",
+)
+BOOLEANITY_ADDRESS_MIN_SPEEDUP = 4.0
+SUMCHECK_ROUND_SPAN = "sumcheck_round"
+SUMCHECK_HOST_FIAT_SHAMIR_SPAN = "sumcheck_host_fiat_shamir"
+OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE = "OptimizedBooleanityAddress::row_source"
+PRODUCTION_RAYON_THREADS = 16
+METAL_BOOLEANITY_ROWS_STAGE5_PREPARE = "MetalBooleanityRows::stage5_prepare"
+METAL_BOOLEANITY_ROWS_STAGE6A_USE = "MetalBooleanityRows::stage6a_address_use"
+METAL_BOOLEANITY_ROWS_STAGE6B_USE = "MetalBooleanityRows::stage6b_cycle_use"
 OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE = "OptimizedInstructionInput::rows_prepare"
 OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE = (
     "OptimizedInstructionInput::rows_stage3_use"
@@ -91,6 +113,12 @@ LOCAL_KERNELS = {
         "paired_metric": "paired_instruction_input_kernel_service_speedups",
         "backend_prefix": "MetalInstructionInput::",
     },
+    "BooleanityAddressPhase": {
+        "name": BOOLEANITY_ADDRESS_KERNEL,
+        "metric": "booleanity_address_phase_speedup",
+        "paired_metric": "paired_booleanity_address_phase_speedups",
+        "backend_prefix": "MetalBooleanityAddressPhase::",
+    },
 }
 
 
@@ -106,6 +134,25 @@ def instruction_input_sequence_storage_bytes(log_n: int) -> int:
         + 2 * 3 * e_out
     )
     return 16 * elements
+
+
+def booleanity_address_sequence_storage_bytes(
+    log_n: int, inner_log2: int, selectors_per_tile: int
+) -> int:
+    if log_n < 0 or inner_log2 < 0 or inner_log2 > log_n:
+        raise ValueError("invalid Booleanity address storage geometry")
+    rows = 1 << log_n
+    e_in = 1 << inner_log2
+    if e_in > rows or selectors_per_tile < 1:
+        raise ValueError("invalid Booleanity address storage geometry")
+    e_out = rows // e_in
+    selector_bytes = 29 * 8
+    weight_bytes = 16 * (e_in + e_out)
+    partial_bytes = 16 * e_out * selectors_per_tile * 256
+    output_bytes = 16 * 29 * 256
+    return selector_bytes + weight_bytes + partial_bytes + output_bytes
+
+
 BYTECODE_CONFIG_RE = re.compile(
     r"^BYTECODE_CYCLE_CONFIG requested=(?P<requested>\S+) "
     r"effective=(?P<effective>\S+) log_t=(?P<log_t>\d+) "
@@ -127,6 +174,17 @@ INSTRUCTION_INPUT_METAL_CONFIG_RE = re.compile(
     r"dense_transition_threads=(?P<dense_transition_threads>\d+) "
     r"storage_initialization=(?P<storage_initialization>\S+) "
     r"native_primer=(?P<native_primer>\S+)$"
+)
+BOOLEANITY_ADDRESS_METAL_CONFIG_RE = re.compile(
+    r"^BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal "
+    r"trace_cutoff=(?P<trace_cutoff>\d+) "
+    r"inner_log2=(?P<inner_log2>\d+) "
+    r"selectors_per_tile=(?P<selectors_per_tile>\d+) "
+    r"tile_threads=(?P<tile_threads>\d+) "
+    r"finalize_threads=(?P<finalize_threads>\d+)$"
+)
+PIOP_EXECUTION_CONFIG_RE = re.compile(
+    r"^PIOP_EXECUTION_CONFIG rayon_threads=(?P<rayon_threads>\d+)$"
 )
 MAX_RSS_RE = re.compile(r"^\s*(?P<bytes>\d+)\s+maximum resident set size\s*$", re.MULTILINE)
 
@@ -442,6 +500,59 @@ def validate_instruction_input_stdout(
     return config
 
 
+def validate_booleanity_address_stdout(
+    stdout: str,
+    backend: str,
+    inner_log2: int = 15,
+    selectors_per_tile: int = 6,
+    tile_threads: int = 512,
+    finalize_threads: int = 1024,
+    trace_cutoff_log2: int = 18,
+) -> Optional[dict[str, Any]]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := BOOLEANITY_ADDRESS_METAL_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if backend == "optimized":
+        if configs:
+            raise ValueError(
+                "optimized evaluator emitted a Booleanity address Metal config"
+            )
+        return None
+    if len(configs) != 1:
+        raise ValueError(
+            "Metal evaluator must emit exactly one Booleanity address Metal config"
+        )
+    config = {name: int(value) for name, value in configs[0].groupdict().items()}
+    expected = {
+        "trace_cutoff": 1 << trace_cutoff_log2,
+        "inner_log2": inner_log2,
+        "selectors_per_tile": selectors_per_tile,
+        "tile_threads": tile_threads,
+        "finalize_threads": finalize_threads,
+    }
+    if config != expected:
+        raise ValueError(f"unexpected Booleanity address Metal config: {config}")
+    return config
+
+
+def validate_piop_execution_stdout(stdout: str) -> dict[str, int]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := PIOP_EXECUTION_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if len(configs) != 1:
+        raise ValueError("evaluator must emit exactly one PIOP execution config")
+    rayon_threads = int(configs[0].group("rayon_threads"))
+    if rayon_threads != PRODUCTION_RAYON_THREADS:
+        raise ValueError(
+            f"unexpected production Rayon width: {rayon_threads}"
+        )
+    return {"rayon_threads": rayon_threads}
+
+
 def interval_duration_us(interval: tuple[float, float]) -> float:
     return interval[1] - interval[0]
 
@@ -655,6 +766,512 @@ def nonnegative_trace_integer(value: Any, field: str) -> int:
     if parsed < 0:
         raise ValueError(f"InstructionInput trace has invalid {field}")
     return parsed
+
+
+def booleanity_trace_integer(
+    value: Any, field: str, *, allow_zero: bool = False
+) -> int:
+    if type(value) is int:
+        parsed = value
+    elif isinstance(value, str) and value.isascii() and value.isdecimal():
+        parsed = int(value)
+    else:
+        raise ValueError(f"Booleanity address trace has invalid {field}")
+    if parsed < 0 or (parsed == 0 and not allow_zero):
+        raise ValueError(f"Booleanity address trace has invalid {field}")
+    return parsed
+
+
+def exact_span_args(
+    events: list[dict[str, Any]], name: str, fields: set[str]
+) -> dict[str, Any]:
+    args = unique_span_args(events, name)
+    if set(args) != fields:
+        raise ValueError(f"{name} has unexpected argument fields")
+    return args
+
+
+def booleanity_address_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    inner_log2: int = 15,
+    selectors_per_tile: int = 6,
+    tile_threads: int = 512,
+    finalize_threads: int = 1024,
+) -> dict[str, Any]:
+    if backend not in {"optimized", "metal"}:
+        raise ValueError(f"unsupported Booleanity address backend {backend!r}")
+    if (
+        log_n < 0
+        or inner_log2 < 0
+        or inner_log2 > min(log_n, 16)
+        or not 1 <= selectors_per_tile <= 6
+        or tile_threads <= 0
+        or tile_threads % 32 != 0
+        or finalize_threads < 256
+        or finalize_threads % 256 != 0
+    ):
+        raise ValueError("invalid Booleanity address evaluator geometry")
+    outer_names = {
+        f"{BOOLEANITY_ADDRESS_KERNEL}::{component}"
+        for component in BOOLEANITY_ADDRESS_COMPONENTS
+    }
+    inner_names = {
+        f"Metal{BOOLEANITY_ADDRESS_KERNEL}::{phase}"
+        for phase in BOOLEANITY_ADDRESS_METAL_PHASES
+    }
+    lifecycle_names = {
+        METAL_BOOLEANITY_ROWS_STAGE5_PREPARE,
+        METAL_BOOLEANITY_ROWS_STAGE6A_USE,
+        METAL_BOOLEANITY_ROWS_STAGE6B_USE,
+    }
+    allowed_metal_names = inner_names | lifecycle_names
+    unknown_metal_names = {
+        name
+        for event in events
+        if isinstance((name := event.get("name")), str)
+        and (
+            name.startswith(f"Metal{BOOLEANITY_ADDRESS_KERNEL}::")
+            or name.startswith("MetalBooleanityRows::")
+        )
+        and name not in allowed_metal_names
+    }
+    if unknown_metal_names:
+        raise ValueError(
+            "Booleanity address trace contains unknown Metal phases: "
+            f"{sorted(unknown_metal_names)}"
+        )
+    parent_names = {"InstructionReadRaf::prepare", "Booleanity::prepare"}
+    intervals = strict_named_intervals(
+        events,
+        outer_names
+        | inner_names
+        | lifecycle_names
+        | parent_names
+        | {
+            PIOP_SPAN,
+            SUMCHECK_ROUND_SPAN,
+            SUMCHECK_HOST_FIAT_SHAMIR_SPAN,
+            OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE,
+        },
+    )
+    if len(intervals[PIOP_SPAN]) != 1:
+        raise ValueError("trace must contain exactly one positive PIOP span")
+    piop = intervals[PIOP_SPAN][0]
+    by_component = {
+        component: sorted(intervals[f"{BOOLEANITY_ADDRESS_KERNEL}::{component}"])
+        for component in BOOLEANITY_ADDRESS_COMPONENTS
+    }
+    expected_outer_counts = {
+        "prepare": 1,
+        "prove_round": 8,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }
+    outer_counts = {
+        component: len(component_intervals)
+        for component, component_intervals in by_component.items()
+    }
+    if outer_counts != expected_outer_counts:
+        raise ValueError(
+            "Booleanity address member span counts "
+            f"{outer_counts}, expected {expected_outer_counts}"
+        )
+
+    prepare = by_component["prepare"][0]
+    rounds = by_component["prove_round"]
+    finish = by_component["finish_rounds"][0]
+    output = by_component["output_claims"][0]
+    ordered = [prepare, *rounds, finish, output]
+    if any(start < piop[0] or end > piop[1] for start, end in ordered):
+        raise ValueError("a Booleanity address member span lies outside PIOP")
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError(
+            "Booleanity address member spans overlap or appear out of order"
+        )
+
+    host_fiat_shamir = []
+    for member_round in rounds:
+        containing_rounds = [
+            interval
+            for interval in intervals[SUMCHECK_ROUND_SPAN]
+            if interval[0] <= member_round[0] and member_round[1] <= interval[1]
+        ]
+        if len(containing_rounds) != 1:
+            raise ValueError(
+                "a Booleanity address round lacks one enclosing sumcheck round"
+            )
+        sumcheck_round = containing_rounds[0]
+        round_fiat_shamir = [
+            interval
+            for interval in intervals[SUMCHECK_HOST_FIAT_SHAMIR_SPAN]
+            if sumcheck_round[0] <= interval[0] and interval[1] <= sumcheck_round[1]
+        ]
+        if len(round_fiat_shamir) != 1:
+            raise ValueError(
+                "a Booleanity address round lacks one host Fiat-Shamir span"
+            )
+        fiat_shamir = round_fiat_shamir[0]
+        if member_round[1] > fiat_shamir[0]:
+            raise ValueError(
+                "Booleanity address host Fiat-Shamir precedes its round polynomial"
+            )
+        host_fiat_shamir.append(fiat_shamir)
+    if len(set(host_fiat_shamir)) != len(rounds):
+        raise ValueError("Booleanity address rounds reuse a host Fiat-Shamir span")
+
+    inner = {
+        phase: sorted(intervals[f"Metal{BOOLEANITY_ADDRESS_KERNEL}::{phase}"])
+        for phase in BOOLEANITY_ADDRESS_METAL_PHASES
+    }
+    inner_counts = {phase: len(values) for phase, values in inner.items()}
+    row_lifecycle = None
+    resource_observation = None
+    row_source_intervals = intervals[OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE]
+    if backend == "optimized":
+        if any(inner_counts.values()) or any(intervals[name] for name in lifecycle_names):
+            raise ValueError(
+                "optimized trace unexpectedly contains Booleanity address Metal spans"
+            )
+        if len(row_source_intervals) != 1:
+            raise ValueError(
+                "optimized Booleanity address trace must contain one row-source span"
+            )
+        require_contained(
+            row_source_intervals[0], prepare, "optimized Booleanity address row source"
+        )
+    else:
+        if row_source_intervals:
+            raise ValueError(
+                "Metal Booleanity address trace contains an optimized row-source span"
+            )
+        expected_inner_counts = {phase: 1 for phase in BOOLEANITY_ADDRESS_METAL_PHASES}
+        if inner_counts != expected_inner_counts:
+            raise ValueError(
+                "Booleanity address Metal span counts "
+                f"{inner_counts}, expected {expected_inner_counts}"
+            )
+        if any(len(intervals[name]) != 1 for name in lifecycle_names):
+            raise ValueError("Booleanity address resident-row lifecycle is incomplete")
+        if len(intervals["InstructionReadRaf::prepare"]) != 1 or len(
+            intervals["Booleanity::prepare"]
+        ) != 1:
+            raise ValueError("Booleanity address resident-row lifecycle parents are incomplete")
+
+        metal_prepare = inner["prepare"][0]
+        sequence_interval = inner["sequence_prepare"][0]
+        allocation_interval = inner["allocation_plan"][0]
+        dispatch_interval = inner["dispatch"][0]
+        readback_interval = inner["readback"][0]
+        require_contained(metal_prepare, prepare, "Metal Booleanity address prepare")
+        require_contained(
+            sequence_interval, metal_prepare, "Booleanity address sequence preparation"
+        )
+        require_contained(
+            allocation_interval,
+            sequence_interval,
+            "Booleanity address allocation plan",
+        )
+        require_contained(
+            dispatch_interval, metal_prepare, "Booleanity address dispatch"
+        )
+        require_contained(
+            readback_interval, metal_prepare, "Booleanity address readback"
+        )
+        if sequence_interval[1] > dispatch_interval[0] or dispatch_interval[1] > readback_interval[0]:
+            raise ValueError(
+                "Booleanity address sequence, dispatch, and readback overlap or are out of order"
+            )
+
+        stage5_interval = intervals[METAL_BOOLEANITY_ROWS_STAGE5_PREPARE][0]
+        stage6a_interval = intervals[METAL_BOOLEANITY_ROWS_STAGE6A_USE][0]
+        stage6b_interval = intervals[METAL_BOOLEANITY_ROWS_STAGE6B_USE][0]
+        require_contained(
+            stage5_interval,
+            intervals["InstructionReadRaf::prepare"][0],
+            "Booleanity stage-5 resident-row preparation",
+        )
+        require_contained(
+            stage6a_interval, prepare, "Booleanity stage-6a resident-row use"
+        )
+        require_contained(
+            stage6b_interval,
+            intervals["Booleanity::prepare"][0],
+            "Booleanity stage-6b resident-row use",
+        )
+        if not (
+            stage5_interval[1] <= stage6a_interval[0]
+            and stage6a_interval[1] <= stage6b_interval[0]
+        ):
+            raise ValueError("Booleanity address resident-row lifecycle is out of order")
+
+        lifecycle_fields = {
+            "resident_rows_storage_id",
+            "resident_rows",
+            "resident_row_bytes",
+            "device_registry_id",
+            "row_allocations",
+            "row_upload_bytes",
+        }
+        lifecycle_args = {
+            "stage5": exact_span_args(
+                events, METAL_BOOLEANITY_ROWS_STAGE5_PREPARE, lifecycle_fields
+            ),
+            "stage6a": exact_span_args(
+                events, METAL_BOOLEANITY_ROWS_STAGE6A_USE, lifecycle_fields
+            ),
+            "stage6b": exact_span_args(
+                events, METAL_BOOLEANITY_ROWS_STAGE6B_USE, lifecycle_fields
+            ),
+        }
+        parsed_lifecycle = {
+            stage: {
+                field: booleanity_trace_integer(value, f"{stage} {field}", allow_zero=True)
+                for field, value in args.items()
+            }
+            for stage, args in lifecycle_args.items()
+        }
+        rows = 1 << log_n
+        storage_ids = [
+            parsed_lifecycle[stage]["resident_rows_storage_id"]
+            for stage in ("stage5", "stage6a", "stage6b")
+        ]
+        registries = [
+            parsed_lifecycle[stage]["device_registry_id"]
+            for stage in ("stage5", "stage6a", "stage6b")
+        ]
+        if (
+            any(storage_id <= 0 for storage_id in storage_ids)
+            or len(set(storage_ids)) != 1
+            or any(registry <= 0 for registry in registries)
+            or len(set(registries)) != 1
+            or any(
+                parsed_lifecycle[stage]["resident_rows"] != rows
+                or parsed_lifecycle[stage]["resident_row_bytes"] != 40
+                for stage in ("stage5", "stage6a", "stage6b")
+            )
+            or parsed_lifecycle["stage5"]["row_allocations"] != 1
+            or parsed_lifecycle["stage5"]["row_upload_bytes"] != rows * 40
+            or any(
+                parsed_lifecycle[stage]["row_allocations"] != 0
+                or parsed_lifecycle[stage]["row_upload_bytes"] != 0
+                for stage in ("stage6a", "stage6b")
+            )
+        ):
+            raise ValueError("Booleanity address resident-row lifecycle is inconsistent")
+        row_lifecycle = {
+            "kind": "metal_booleanity_resident",
+            "rows": rows,
+            "row_bytes": 40,
+            "device_registry_id": registries[0],
+            "stage5_storage_id": storage_ids[0],
+            "stage6a_storage_id": storage_ids[1],
+            "stage6b_storage_id": storage_ids[2],
+            **{
+                stage: {
+                    "row_allocations": parsed_lifecycle[stage]["row_allocations"],
+                    "row_upload_bytes": parsed_lifecycle[stage]["row_upload_bytes"],
+                }
+                for stage in ("stage5", "stage6a", "stage6b")
+            },
+        }
+
+        sequence_fields = {
+            "resident_rows_storage_id",
+            "resident_rows",
+            "resident_row_bytes",
+            "row_upload_bytes",
+            "polys",
+            "k",
+            "e_in_elements",
+            "e_out_elements",
+            "requested_inner_log2",
+            "effective_inner_log2",
+            "requested_selectors_per_tile",
+            "effective_selectors_per_tile",
+            "requested_tile_threads",
+            "effective_tile_threads",
+            "requested_finalize_threads",
+            "effective_finalize_threads",
+            "selector_tiles",
+            "production_specialized",
+        }
+        sequence_args = exact_span_args(
+            events,
+            f"Metal{BOOLEANITY_ADDRESS_KERNEL}::sequence_prepare",
+            sequence_fields,
+        )
+        production_specialized = trace_boolean(sequence_args["production_specialized"])
+        if production_specialized is None:
+            raise ValueError(
+                "Booleanity address sequence has invalid production_specialized"
+            )
+        sequence = {
+            field: booleanity_trace_integer(value, f"sequence {field}", allow_zero=True)
+            for field, value in sequence_args.items()
+            if field != "production_specialized"
+        }
+        sequence["production_specialized"] = production_specialized
+        selector_tiles = 29 // selectors_per_tile + (29 % selectors_per_tile != 0)
+        expected_sequence = {
+            "resident_rows_storage_id": storage_ids[0],
+            "resident_rows": rows,
+            "resident_row_bytes": 40,
+            "row_upload_bytes": 0,
+            "polys": 29,
+            "k": 256,
+            "e_in_elements": 1 << inner_log2,
+            "e_out_elements": 1 << (log_n - inner_log2),
+            "requested_inner_log2": inner_log2,
+            "effective_inner_log2": inner_log2,
+            "requested_selectors_per_tile": selectors_per_tile,
+            "effective_selectors_per_tile": selectors_per_tile,
+            "requested_tile_threads": tile_threads,
+            "effective_tile_threads": tile_threads,
+            "requested_finalize_threads": finalize_threads,
+            "effective_finalize_threads": finalize_threads,
+            "selector_tiles": selector_tiles,
+            "production_specialized": selectors_per_tile in {3, 6},
+        }
+        if sequence != expected_sequence:
+            raise ValueError(
+                f"Booleanity address sequence geometry is inconsistent: {sequence}"
+            )
+
+        allocation_fields = {
+            "device_buffers",
+            "planned_device_bytes",
+            "current_device_bytes",
+            "recommended_device_bytes",
+        }
+        allocation_args = exact_span_args(
+            events,
+            f"Metal{BOOLEANITY_ADDRESS_KERNEL}::allocation_plan",
+            allocation_fields,
+        )
+        allocation = {
+            field: booleanity_trace_integer(value, field, allow_zero=True)
+            for field, value in allocation_args.items()
+        }
+        expected_planned_bytes = booleanity_address_sequence_storage_bytes(
+            log_n, inner_log2, selectors_per_tile
+        )
+        if (
+            allocation["device_buffers"] != 5
+            or allocation["planned_device_bytes"] != expected_planned_bytes
+            or allocation["current_device_bytes"] < rows * 40
+            or allocation["current_device_bytes"] + allocation["planned_device_bytes"]
+            > allocation["recommended_device_bytes"]
+        ):
+            raise ValueError("Booleanity address allocation plan has invalid buffer accounting")
+
+        dispatch_fields = {
+            "command_buffers",
+            "tile_dispatches",
+            "finalize_dispatches",
+            "command_completed",
+            "gpu_active_ns",
+            "resident_rows_storage_id",
+        }
+        dispatch_args = exact_span_args(
+            events,
+            f"Metal{BOOLEANITY_ADDRESS_KERNEL}::dispatch",
+            dispatch_fields,
+        )
+        command_completed = trace_boolean(dispatch_args["command_completed"])
+        if command_completed is not True:
+            raise ValueError("Booleanity address command did not complete")
+        dispatch = {
+            field: booleanity_trace_integer(value, f"dispatch {field}", allow_zero=True)
+            for field, value in dispatch_args.items()
+            if field != "command_completed"
+        }
+        dispatch["command_completed"] = command_completed
+        if (
+            dispatch["command_buffers"] != 1
+            or dispatch["tile_dispatches"] != selector_tiles
+            or dispatch["finalize_dispatches"] != selector_tiles
+            or dispatch["gpu_active_ns"] <= 0
+            or dispatch["resident_rows_storage_id"] != storage_ids[0]
+        ):
+            raise ValueError("Booleanity address dispatch accounting is inconsistent")
+
+        readback_fields = {"elements", "bytes", "readbacks"}
+        readback_args = exact_span_args(
+            events,
+            f"Metal{BOOLEANITY_ADDRESS_KERNEL}::readback",
+            readback_fields,
+        )
+        readback = {
+            field: booleanity_trace_integer(value, f"readback {field}", allow_zero=True)
+            for field, value in readback_args.items()
+        }
+        if readback != {"elements": 29 * 256, "bytes": 29 * 256 * 16, "readbacks": 1}:
+            raise ValueError("Booleanity address readback accounting is inconsistent")
+        resource_observation = {
+            "sequence": sequence,
+            "allocation": allocation,
+            "dispatch": dispatch,
+            "readback": readback,
+        }
+
+    round_durations = [interval_duration_us(interval) for interval in rounds]
+    host_fiat_shamir_durations = [
+        interval_duration_us(interval) for interval in host_fiat_shamir
+    ]
+    prepare_us = interval_duration_us(prepare)
+    row_source_us = (
+        interval_duration_us(row_source_intervals[0]) if row_source_intervals else 0.0
+    )
+    normalized_prepare_us = prepare_us - row_source_us
+    components = {
+        "prepare_us": prepare_us,
+        "row_source_us": row_source_us,
+        "normalized_prepare_us": normalized_prepare_us,
+        "rounds_us": round_durations,
+        "rounds_total_us": sum(round_durations),
+        "host_fiat_shamir_us": host_fiat_shamir_durations,
+        "host_fiat_shamir_total_us": sum(host_fiat_shamir_durations),
+        "finish_us": interval_duration_us(finish),
+        "output_claims_us": interval_duration_us(output),
+    }
+    components["member_us"] = (
+        components["prepare_us"]
+        + components["rounds_total_us"]
+        + components["host_fiat_shamir_total_us"]
+        + components["finish_us"]
+        + components["output_claims_us"]
+    )
+    components["normalized_member_us"] = (
+        components["normalized_prepare_us"]
+        + components["rounds_total_us"]
+        + components["host_fiat_shamir_total_us"]
+        + components["finish_us"]
+        + components["output_claims_us"]
+    )
+    positive_components = (
+        "prepare_us",
+        "normalized_prepare_us",
+        "rounds_total_us",
+        "host_fiat_shamir_total_us",
+        "finish_us",
+        "output_claims_us",
+        "member_us",
+        "normalized_member_us",
+    )
+    if any(
+        not math.isfinite(components[name]) or components[name] <= 0.0
+        for name in positive_components
+    ) or not math.isfinite(row_source_us) or row_source_us < 0.0:
+        raise ValueError("trace contains a non-positive Booleanity address member duration")
+    return {
+        "components": components,
+        "outer_counts": outer_counts,
+        "metal_counts": inner_counts,
+        "resource_observation": resource_observation,
+        "row_lifecycle": row_lifecycle,
+    }
 
 
 def instruction_input_member_breakdown(
@@ -1581,6 +2198,30 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     metal_instruction_input = [
         float(pair["metal_instruction_input_us"]) for pair in pairs
     ]
+    cpu_booleanity_address = [
+        float(pair["cpu_booleanity_address_us"]) for pair in pairs
+    ]
+    metal_booleanity_address = [
+        float(pair["metal_booleanity_address_us"]) for pair in pairs
+    ]
+    cpu_booleanity_address_service = [
+        float(
+            pair.get(
+                "cpu_booleanity_address_service_us",
+                pair["cpu_booleanity_address_us"],
+            )
+        )
+        for pair in pairs
+    ]
+    metal_booleanity_address_service = [
+        float(
+            pair.get(
+                "metal_booleanity_address_service_us",
+                pair["metal_booleanity_address_us"],
+            )
+        )
+        for pair in pairs
+    ]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
@@ -1593,6 +2234,10 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_bytecode
         + cpu_instruction_input
         + metal_instruction_input
+        + cpu_booleanity_address
+        + metal_booleanity_address
+        + cpu_booleanity_address_service
+        + metal_booleanity_address_service
     ):
         raise ValueError("kernel durations must be finite and positive")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
@@ -1614,6 +2259,22 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             INSTRUCTION_INPUT_MIN_SPEEDUP,
         )
     )
+    (
+        booleanity_address_speedups,
+        booleanity_address_improvements,
+        booleanity_address_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_booleanity_address,
+        metal_booleanity_address,
+        BOOLEANITY_ADDRESS_MIN_SPEEDUP,
+    )
+    booleanity_address_service_speedups = [
+        cpu_us / metal_us
+        for cpu_us, metal_us in zip(
+            cpu_booleanity_address_service, metal_booleanity_address_service
+        )
+    ]
     paired_with_prepare = [
         (cpu_us + cpu_prepare_us) / (metal_us + metal_prepare_us)
         for cpu_us, metal_us, cpu_prepare_us, metal_prepare_us in zip(
@@ -1667,6 +2328,12 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "instruction_input_kernel_service_speedup": statistics.median(
             instruction_input_speedups
         ),
+        "booleanity_address_phase_speedup": statistics.median(
+            booleanity_address_speedups
+        ),
+        "booleanity_address_phase_service_speedup": statistics.median(
+            booleanity_address_service_speedups
+        ),
         "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
@@ -1678,6 +2345,9 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_bytecode_read_raf_cycle_fractional_improvements": bytecode_improvements,
         "paired_instruction_input_kernel_service_speedups": instruction_input_speedups,
         "paired_instruction_input_kernel_service_fractional_improvements": instruction_input_improvements,
+        "paired_booleanity_address_phase_speedups": booleanity_address_speedups,
+        "paired_booleanity_address_phase_fractional_improvements": booleanity_address_improvements,
+        "paired_booleanity_address_phase_service_speedups": booleanity_address_service_speedups,
         "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
@@ -1695,7 +2365,20 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_instruction_input_kernel_service_ms_samples": [
             value / 1000.0 for value in metal_instruction_input
         ],
+        "cpu_booleanity_address_phase_ms_samples": [
+            value / 1000.0 for value in cpu_booleanity_address
+        ],
+        "metal_booleanity_address_phase_ms_samples": [
+            value / 1000.0 for value in metal_booleanity_address
+        ],
+        "cpu_booleanity_address_phase_service_ms_samples": [
+            value / 1000.0 for value in cpu_booleanity_address_service
+        ],
+        "metal_booleanity_address_phase_service_ms_samples": [
+            value / 1000.0 for value in metal_booleanity_address_service
+        ],
         "instruction_input_kernel_service_decision": instruction_input_decision,
+        "booleanity_address_phase_decision": booleanity_address_decision,
         "bytecode_read_raf_cycle_decision": {
             "minimum_speedup": BYTECODE_MIN_SPEEDUP,
             "minimum_pairs": PRODUCTION_PAIRS,
@@ -1740,7 +2423,20 @@ def member_record(
     output_claims_ns = microseconds_to_nanoseconds(components["output_claims_us"])
     rounds_total_ns = sum(rounds_ns)
     prefetch_submit_ns = round(float(components.get("prefetch_submit_us", 0.0)) * 1000.0)
-    member_ns = prepare_ns + rounds_total_ns + finish_ns + output_claims_ns
+    host_fiat_shamir_us = components.get("host_fiat_shamir_us")
+    host_fiat_shamir_ns = (
+        [microseconds_to_nanoseconds(value) for value in host_fiat_shamir_us]
+        if host_fiat_shamir_us is not None
+        else []
+    )
+    host_fiat_shamir_total_ns = sum(host_fiat_shamir_ns)
+    member_ns = (
+        prepare_ns
+        + rounds_total_ns
+        + host_fiat_shamir_total_ns
+        + finish_ns
+        + output_claims_ns
+    )
     record = {
         "prepare_ns": prepare_ns,
         "rounds_ns": rounds_ns,
@@ -1752,6 +2448,20 @@ def member_record(
         "metal_counts": member["metal_counts"],
         "resource_observation": member["resource_observation"],
     }
+    if host_fiat_shamir_us is not None:
+        row_source_us = float(components["row_source_us"])
+        if not math.isfinite(row_source_us) or row_source_us < 0.0:
+            raise ValueError("row-source duration must be finite and non-negative")
+        row_source_ns = round(row_source_us * 1000.0)
+        normalized_prepare_ns = prepare_ns - row_source_ns
+        normalized_member_ns = member_ns - row_source_ns
+        if normalized_prepare_ns <= 0 or normalized_member_ns <= 0:
+            raise ValueError("normalized member duration must be positive")
+        record["host_fiat_shamir_ns"] = host_fiat_shamir_ns
+        record["host_fiat_shamir_total_ns"] = host_fiat_shamir_total_ns
+        record["row_source_ns"] = row_source_ns
+        record["normalized_prepare_ns"] = normalized_prepare_ns
+        record["normalized_member_ns"] = normalized_member_ns
     if include_prefetch:
         record["prefetch_submit_ns"] = prefetch_submit_ns
         record["service_ns"] = member_ns + prefetch_submit_ns
@@ -1782,6 +2492,11 @@ def run_backend(
     instruction_input_dense_transition_threads: int,
     instruction_input_cutoff_log2: int,
     instruction_input_trace_cutoff_log2: int,
+    booleanity_address_inner_log2: int,
+    booleanity_address_selectors_per_tile: int,
+    booleanity_address_tile_threads: int,
+    booleanity_address_finalize_threads: int,
+    booleanity_address_trace_cutoff_log2: int,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -1817,6 +2532,16 @@ def run_backend(
         str(instruction_input_cutoff_log2),
         "--instruction-input-metal-trace-cutoff-log2",
         str(instruction_input_trace_cutoff_log2),
+        "--booleanity-address-metal-inner-log2",
+        str(booleanity_address_inner_log2),
+        "--booleanity-address-metal-selectors-per-tile",
+        str(booleanity_address_selectors_per_tile),
+        "--booleanity-address-metal-tile-threads",
+        str(booleanity_address_tile_threads),
+        "--booleanity-address-metal-finalize-threads",
+        str(booleanity_address_finalize_threads),
+        "--booleanity-address-metal-trace-cutoff-log2",
+        str(booleanity_address_trace_cutoff_log2),
     ]
     if backend == "metal":
         benchmark_command.extend(
@@ -1828,10 +2553,13 @@ def run_backend(
         if instruction_ra_reuse_inverse:
             benchmark_command.append("--instruction-ra-reuse-inverse")
     command = ["/usr/bin/time", "-l", *benchmark_command]
+    environment = os.environ.copy()
+    environment["RAYON_NUM_THREADS"] = str(PRODUCTION_RAYON_THREADS)
     started_ns = time.time_ns()
     result = subprocess.run(
         command,
         cwd=root,
+        env=environment,
         timeout=timeout_seconds,
         capture_output=True,
         text=True,
@@ -1842,6 +2570,7 @@ def run_backend(
     if result.returncode != 0:
         raise ValueError(f"{backend} evaluator exited with status {result.returncode}")
     max_rss = parse_max_rss(result.stderr)
+    execution_config = validate_piop_execution_stdout(result.stdout)
     bytecode_config = validate_bytecode_stdout(
         result.stdout,
         backend,
@@ -1860,6 +2589,15 @@ def run_backend(
         instruction_input_dense_transition_threads,
         instruction_input_cutoff_log2,
         instruction_input_trace_cutoff_log2,
+    )
+    booleanity_address_config = validate_booleanity_address_stdout(
+        result.stdout,
+        backend,
+        booleanity_address_inner_log2,
+        booleanity_address_selectors_per_tile,
+        booleanity_address_tile_threads,
+        booleanity_address_finalize_threads,
+        booleanity_address_trace_cutoff_log2,
     )
     source = trace_path(root, workload, log_n, backend)
     if not source.is_file() or source.stat().st_mtime_ns <= started_ns:
@@ -1882,13 +2620,28 @@ def run_backend(
     instruction_input_member = instruction_input_member_breakdown(
         events, backend, log_n, instruction_input_cutoff_log2
     )
+    booleanity_address_member = booleanity_address_member_breakdown(
+        events,
+        backend,
+        log_n,
+        booleanity_address_inner_log2,
+        booleanity_address_selectors_per_tile,
+        booleanity_address_tile_threads,
+        booleanity_address_finalize_threads,
+    )
     attribution = trace_attribution(events)
     for name, member in (
         (BYTECODE_KERNEL, bytecode_member),
         (INSTRUCTION_INPUT_KERNEL, instruction_input_member),
+        (BOOLEANITY_ADDRESS_KERNEL, booleanity_address_member),
     ):
+        attributed_us = kernel_wall_us(attribution, name)
+        if name == BOOLEANITY_ADDRESS_KERNEL:
+            attributed_us += float(
+                member["components"]["host_fiat_shamir_total_us"]
+            )
         if not math.isclose(
-            kernel_wall_us(attribution, name),
+            attributed_us,
             float(member["components"]["member_us"]),
             rel_tol=1e-12,
             abs_tol=1e-6,
@@ -1906,6 +2659,9 @@ def run_backend(
         "bytecode_member": bytecode_member,
         "instruction_input_config": instruction_input_config,
         "instruction_input_member": instruction_input_member,
+        "booleanity_address_config": booleanity_address_config,
+        "booleanity_address_member": booleanity_address_member,
+        "execution_config": execution_config,
         "command": command,
         "max_rss_bytes": max_rss,
         "artifacts": {
@@ -2112,6 +2868,36 @@ def parser() -> argparse.ArgumentParser:
         choices=[24, 25, 26, 27, 28],
         default=25,
     )
+    result.add_argument(
+        "--booleanity-address-metal-inner-log2",
+        type=int,
+        choices=[12, 13, 14, 15, 16],
+        default=15,
+    )
+    result.add_argument(
+        "--booleanity-address-metal-selectors-per-tile",
+        type=int,
+        choices=[1, 2, 3, 4, 5, 6],
+        default=6,
+    )
+    result.add_argument(
+        "--booleanity-address-metal-tile-threads",
+        type=int,
+        choices=[32, 64, 128, 256, 512, 1024],
+        default=512,
+    )
+    result.add_argument(
+        "--booleanity-address-metal-finalize-threads",
+        type=int,
+        choices=[256, 512, 768, 1024],
+        default=1024,
+    )
+    result.add_argument(
+        "--booleanity-address-metal-trace-cutoff-log2",
+        type=int,
+        choices=[18, 20, 22, 24, 25, 26, 27, 28],
+        default=18,
+    )
     result.add_argument("--trace", type=Path)
     return result
 
@@ -2152,6 +2938,15 @@ def main() -> int:
     if args.instruction_input_metal_trace_cutoff_log2 > args.log_n:
         print(
             "error: InstructionInput trace cutoff disables the measured backend",
+            file=sys.stderr,
+        )
+        return 2
+    if args.booleanity_address_metal_inner_log2 > args.log_n:
+        print("error: Booleanity address inner split exceeds the trace", file=sys.stderr)
+        return 2
+    if args.booleanity_address_metal_trace_cutoff_log2 > args.log_n:
+        print(
+            "error: Booleanity address trace cutoff disables the measured backend",
             file=sys.stderr,
         )
         return 2
@@ -2203,9 +2998,18 @@ def main() -> int:
                     args.instruction_input_metal_dense_transition_threads,
                     args.instruction_input_metal_cutoff_log2,
                     args.instruction_input_metal_trace_cutoff_log2,
+                    args.booleanity_address_metal_inner_log2,
+                    args.booleanity_address_metal_selectors_per_tile,
+                    args.booleanity_address_metal_tile_threads,
+                    args.booleanity_address_metal_finalize_threads,
+                    args.booleanity_address_metal_trace_cutoff_log2,
                     index + 1,
                     args.timeout_seconds,
                 )
+            booleanity_address_records = {
+                backend: member_record(results[backend]["booleanity_address_member"])
+                for backend in ("optimized", "metal")
+            }
             pairs.append(
                 {
                     "order": order,
@@ -2235,6 +3039,24 @@ def main() -> int:
                             "service_us"
                         ]
                     ),
+                    "cpu_booleanity_address_us": float(
+                        booleanity_address_records["optimized"][
+                            "normalized_member_ns"
+                        ]
+                    )
+                    / 1000.0,
+                    "metal_booleanity_address_us": float(
+                        booleanity_address_records["metal"]["normalized_member_ns"]
+                    )
+                    / 1000.0,
+                    "cpu_booleanity_address_service_us": float(
+                        booleanity_address_records["optimized"]["member_ns"]
+                    )
+                    / 1000.0,
+                    "metal_booleanity_address_service_us": float(
+                        booleanity_address_records["metal"]["member_ns"]
+                    )
+                    / 1000.0,
                 }
             )
             attributions.append(
@@ -2256,6 +3078,20 @@ def main() -> int:
                             "instruction_input_member"
                         ],
                         "metal_member": results["metal"]["instruction_input_member"],
+                    },
+                    "booleanity_address": {
+                        "optimized_config": results["optimized"][
+                            "booleanity_address_config"
+                        ],
+                        "metal_config": results["metal"]["booleanity_address_config"],
+                        "optimized_member": results["optimized"][
+                            "booleanity_address_member"
+                        ],
+                        "metal_member": results["metal"]["booleanity_address_member"],
+                    },
+                    "execution": {
+                        "optimized": results["optimized"]["execution_config"],
+                        "metal": results["metal"]["execution_config"],
                     },
                     "commands": {
                         "optimized": results["optimized"]["command"],
@@ -2285,6 +3121,10 @@ def main() -> int:
                             ),
                             "instruction_input_row_lifecycle": results[backend][
                                 "instruction_input_member"
+                            ]["row_lifecycle"],
+                            "booleanity_address": booleanity_address_records[backend],
+                            "booleanity_address_row_lifecycle": results[backend][
+                                "booleanity_address_member"
                             ]["row_lifecycle"],
                             "config": results[backend]["bytecode_config"],
                             "command": results[backend]["command"],
@@ -2319,6 +3159,14 @@ def main() -> int:
                 "metal_proofs_verified": True,
                 "unique_piop_span": True,
                 "unique_backend_witness_prepare_span": True,
+                "rayon_threads_pinned": all(
+                    sample["execution"]
+                    == {
+                        "optimized": {"rayon_threads": PRODUCTION_RAYON_THREADS},
+                        "metal": {"rayon_threads": PRODUCTION_RAYON_THREADS},
+                    }
+                    for sample in attributions
+                ),
                 "target_scale": args.log_n == 26,
                 "bytecode_q10_cpu_control": True,
                 "bytecode_metal_backend_exercised": all(
@@ -2556,6 +3404,120 @@ def main() -> int:
                 "instruction_input_local_gate": metrics[
                     "instruction_input_kernel_service_decision"
                 ]["clears"],
+                "booleanity_address_cpu_control": all(
+                    not any(
+                        sample["booleanity_address"]["optimized_member"][
+                            "metal_counts"
+                        ].values()
+                    )
+                    and sample["booleanity_address"]["optimized_member"][
+                        "row_lifecycle"
+                    ]
+                    is None
+                    for sample in attributions
+                ),
+                "booleanity_address_cpu_row_source_attributed": all(
+                    sample["booleanity_address"]["optimized_member"]["components"][
+                        "row_source_us"
+                    ]
+                    > 0.0
+                    and sample["booleanity_address"]["optimized_member"]["components"][
+                        "normalized_member_us"
+                    ]
+                    < sample["booleanity_address"]["optimized_member"]["components"][
+                        "member_us"
+                    ]
+                    and sample["booleanity_address"]["metal_member"]["components"][
+                        "row_source_us"
+                    ]
+                    == 0.0
+                    and sample["booleanity_address"]["metal_member"]["components"][
+                        "normalized_member_us"
+                    ]
+                    == sample["booleanity_address"]["metal_member"]["components"][
+                        "member_us"
+                    ]
+                    for sample in attributions
+                ),
+                "booleanity_address_metal_backend_exercised": all(
+                    sample["booleanity_address"]["metal_member"]["metal_counts"]
+                    == {
+                        "prepare": 1,
+                        "sequence_prepare": 1,
+                        "allocation_plan": 1,
+                        "dispatch": 1,
+                        "readback": 1,
+                    }
+                    for sample in attributions
+                ),
+                "booleanity_address_resident_rows_reused": all(
+                    sample["booleanity_address"]["metal_member"]["row_lifecycle"]
+                    is not None
+                    and sample["booleanity_address"]["metal_member"]["row_lifecycle"][
+                        "stage5_storage_id"
+                    ]
+                    == sample["booleanity_address"]["metal_member"]["row_lifecycle"][
+                        "stage6a_storage_id"
+                    ]
+                    == sample["booleanity_address"]["metal_member"]["row_lifecycle"][
+                        "stage6b_storage_id"
+                    ]
+                    and sample["booleanity_address"]["metal_member"]["row_lifecycle"][
+                        "stage6a"
+                    ]
+                    == {"row_allocations": 0, "row_upload_bytes": 0}
+                    and sample["booleanity_address"]["metal_member"]["row_lifecycle"][
+                        "stage6b"
+                    ]
+                    == {"row_allocations": 0, "row_upload_bytes": 0}
+                    for sample in attributions
+                ),
+                "booleanity_address_working_set_admitted": all(
+                    (
+                        observation := sample["booleanity_address"]["metal_member"][
+                            "resource_observation"
+                        ]
+                    )
+                    is not None
+                    and observation["allocation"]["current_device_bytes"]
+                    + observation["allocation"]["planned_device_bytes"]
+                    <= observation["allocation"]["recommended_device_bytes"]
+                    for sample in attributions
+                ),
+                "booleanity_address_readback_exact": all(
+                    sample["booleanity_address"]["metal_member"][
+                        "resource_observation"
+                    ]["readback"]
+                    == {"elements": 29 * 256, "bytes": 29 * 256 * 16, "readbacks": 1}
+                    for sample in attributions
+                ),
+                "booleanity_address_dispatch_exact": all(
+                    sample["booleanity_address"]["metal_member"][
+                        "resource_observation"
+                    ]["dispatch"]["command_buffers"]
+                    == 1
+                    and sample["booleanity_address"]["metal_member"][
+                        "resource_observation"
+                    ]["dispatch"]["tile_dispatches"]
+                    == (29 + args.booleanity_address_metal_selectors_per_tile - 1)
+                    // args.booleanity_address_metal_selectors_per_tile
+                    and sample["booleanity_address"]["metal_member"][
+                        "resource_observation"
+                    ]["dispatch"]["finalize_dispatches"]
+                    == (29 + args.booleanity_address_metal_selectors_per_tile - 1)
+                    // args.booleanity_address_metal_selectors_per_tile
+                    for sample in attributions
+                ),
+                "booleanity_address_command_completed": all(
+                    sample["booleanity_address"]["metal_member"][
+                        "resource_observation"
+                    ]["dispatch"]["command_completed"]
+                    is True
+                    for sample in attributions
+                ),
+                "booleanity_address_local_gate": metrics[
+                    "booleanity_address_phase_decision"
+                ]["clears"],
             },
             "resources": {
                 "metal_piop_seconds": sum(pair["metal_us"] for pair in pairs)
@@ -2576,6 +3538,7 @@ def main() -> int:
                 "workload": args.workload,
                 "log_n": args.log_n,
                 "local_kernel": local_kernel["name"],
+                "rayon_threads": PRODUCTION_RAYON_THREADS,
                 "instruction_ra_materialize_width": args.instruction_ra_materialize_width,
                 "instruction_ra_reuse_inverse": args.instruction_ra_reuse_inverse,
                 "bytecode_metal_message_threads": args.bytecode_metal_message_threads,
@@ -2598,6 +3561,13 @@ def main() -> int:
                 << args.instruction_input_metal_trace_cutoff_log2,
                 "instruction_input_storage_initialization": "minimal",
                 "instruction_input_native_primer": "async",
+                "booleanity_address_metal_inner_log2": args.booleanity_address_metal_inner_log2,
+                "booleanity_address_metal_selectors_per_tile": args.booleanity_address_metal_selectors_per_tile,
+                "booleanity_address_metal_tile_threads": args.booleanity_address_metal_tile_threads,
+                "booleanity_address_metal_finalize_threads": args.booleanity_address_metal_finalize_threads,
+                "booleanity_address_metal_trace_cutoff_log2": args.booleanity_address_metal_trace_cutoff_log2,
+                "booleanity_address_metal_trace_cutoff_elements": 1
+                << args.booleanity_address_metal_trace_cutoff_log2,
                 "span": PIOP_SPAN,
                 "orders": orders,
             },

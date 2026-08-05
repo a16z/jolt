@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{mem::size_of, sync::Arc};
 
 use jolt_field::AkitaField;
 use jolt_openings::CommitmentScheme;
@@ -7,7 +7,7 @@ use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
-use super::booleanity::BooleanityMetalConfig;
+use super::booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
 use super::bytecode_read_raf::BytecodeReadRafMetalConfig;
 use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
@@ -57,6 +57,8 @@ pub struct MetalConfig {
     pub instruction_input: InstructionInputMetalConfig,
     /// Stage-5 instruction read-RAF settings.
     pub instruction_read_raf: InstructionReadRafMetalConfig,
+    /// Stage-6a Booleanity address settings.
+    pub booleanity_address: BooleanityAddressMetalConfig,
     /// Stage-6b Booleanity cycle settings.
     pub booleanity_cycle: BooleanityMetalConfig,
     /// Stage-6b bytecode read-RAF cycle settings.
@@ -87,6 +89,7 @@ impl MetalBackend {
             config.spartan_outer_uniskip.trace_cutoff_elements,
             config.instruction_input.trace_cutoff_elements,
             config.instruction_input.cutoff_elements,
+            config.booleanity_address.trace_cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
             config.bytecode_read_raf_cycle.trace_cutoff_elements,
@@ -121,6 +124,7 @@ where
         self.spartan_outer_uniskip = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
+        self.booleanity_address = Box::new(metal.clone());
         self.bytecode_read_raf_cycle = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());
         self.instruction_ra_virtualization = Box::new(metal.clone());
@@ -149,14 +153,36 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let cpu = prepare_metal_instruction_read_raf(session, witness, inputs, use_metal_address)?;
         let resident_row_cutoff = self
             .config
-            .booleanity_cycle
+            .booleanity_address
             .trace_cutoff_elements
+            .min(self.config.booleanity_cycle.trace_cutoff_elements)
             .min(self.config.bytecode_read_raf_cycle.trace_cutoff_elements);
         if trace_elements >= resident_row_cutoff && session.state::<BooleanityRows>().is_none() {
-            let rows = cpu
-                .metal_prepare_booleanity_rows(&self.context)
-                .map_err(KernelError::from)?;
-            session.park(rows);
+            match cpu.metal_prepare_booleanity_rows(&self.context) {
+                Ok(rows) => {
+                    let lifecycle_span = tracing::info_span!(
+                        "MetalBooleanityRows::stage5_prepare",
+                        resident_rows_storage_id = rows.allocation_identity(),
+                        resident_rows = rows.len(),
+                        resident_row_bytes = size_of::<super::solinas::BooleanityRow>(),
+                        device_registry_id = rows.device_registry_id(),
+                        row_allocations = 1u64,
+                        row_upload_bytes =
+                            (rows.len() * size_of::<super::solinas::BooleanityRow>()) as u64,
+                    )
+                    .entered();
+                    drop(lifecycle_span);
+                    session.park(rows);
+                }
+                Err(error) if error.is_capacity_error() => {
+                    tracing::warn!(
+                        target: "jolt::metal",
+                        error = %error,
+                        "Booleanity resident rows were not admitted"
+                    );
+                }
+                Err(error) => return Err(backend_error(error.to_string()).into()),
+            }
         }
         Ok(Box::new(MetalInstructionReadRafKernel::new(
             cpu,

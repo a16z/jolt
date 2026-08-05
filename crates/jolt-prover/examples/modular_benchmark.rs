@@ -564,6 +564,15 @@ mod akita_benchmark {
     }
 
     #[derive(Debug, Clone, Copy)]
+    struct BooleanityAddressMetalTuning {
+        inner_log2: usize,
+        selectors_per_tile: usize,
+        tile_threads: usize,
+        finalize_threads: usize,
+        trace_cutoff_log2: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
     struct BackendConfig {
         backend: Backend,
         instruction_ra_materialize_width: InstructionRaMaterializeWidth,
@@ -571,6 +580,7 @@ mod akita_benchmark {
         bytecode_cycle_algebra: BytecodeCycleAlgebra,
         bytecode_metal: BytecodeMetalTuning,
         instruction_input_metal: InstructionInputMetalTuning,
+        booleanity_address_metal: BooleanityAddressMetalTuning,
     }
 
     #[derive(Parser, Debug)]
@@ -628,6 +638,21 @@ mod akita_benchmark {
 
         #[clap(long, default_value_t = 25)]
         instruction_input_metal_trace_cutoff_log2: u32,
+
+        #[clap(long, default_value_t = 15)]
+        booleanity_address_metal_inner_log2: usize,
+
+        #[clap(long, default_value_t = 6)]
+        booleanity_address_metal_selectors_per_tile: usize,
+
+        #[clap(long, default_value_t = 512)]
+        booleanity_address_metal_tile_threads: usize,
+
+        #[clap(long, default_value_t = 1024)]
+        booleanity_address_metal_finalize_threads: usize,
+
+        #[clap(long, default_value_t = 18)]
+        booleanity_address_metal_trace_cutoff_log2: u32,
     }
 
     pub fn run() {
@@ -681,6 +706,13 @@ mod akita_benchmark {
                 cutoff_log2: cli.instruction_input_metal_cutoff_log2,
                 trace_cutoff_log2: cli.instruction_input_metal_trace_cutoff_log2,
             },
+            booleanity_address_metal: BooleanityAddressMetalTuning {
+                inner_log2: cli.booleanity_address_metal_inner_log2,
+                selectors_per_tile: cli.booleanity_address_metal_selectors_per_tile,
+                tile_threads: cli.booleanity_address_metal_tile_threads,
+                finalize_threads: cli.booleanity_address_metal_finalize_threads,
+                trace_cutoff_log2: cli.booleanity_address_metal_trace_cutoff_log2,
+            },
         };
         run_benchmark(cli.name, scale, cli.target_trace_size, backend_config);
     }
@@ -711,6 +743,14 @@ mod akita_benchmark {
                     dense_transition_threads: instruction_input_metal_dense_transition_threads,
                     cutoff_log2: instruction_input_metal_cutoff_log2,
                     trace_cutoff_log2: instruction_input_metal_trace_cutoff_log2,
+                },
+            booleanity_address_metal:
+                BooleanityAddressMetalTuning {
+                    inner_log2: booleanity_address_metal_inner_log2,
+                    selectors_per_tile: booleanity_address_metal_selectors_per_tile,
+                    tile_threads: booleanity_address_metal_tile_threads,
+                    finalize_threads: booleanity_address_metal_finalize_threads,
+                    trace_cutoff_log2: booleanity_address_metal_trace_cutoff_log2,
                 },
         } = backend_config;
         let bench_name = bench.as_str();
@@ -793,6 +833,10 @@ mod akita_benchmark {
             bytecode_dimensions.num_committed_ra_polys(),
             bytecode_dimensions.num_committed_ra_polys() + 2,
         );
+        println!(
+            "PIOP_EXECUTION_CONFIG rayon_threads={}",
+            rayon::current_num_threads()
+        );
         let setup_shape = ONE_HOT_TRACE_LAYOUT
             .setup_shape(&one_hot_shape)
             .expect("derive canonical packed setup shape");
@@ -840,6 +884,11 @@ mod akita_benchmark {
             instruction_input_metal_dense_transition_threads,
             instruction_input_metal_cutoff_log2,
             instruction_input_metal_trace_cutoff_log2,
+            booleanity_address_metal_inner_log2,
+            booleanity_address_metal_selectors_per_tile,
+            booleanity_address_metal_tile_threads,
+            booleanity_address_metal_finalize_threads,
+            booleanity_address_metal_trace_cutoff_log2,
         );
         let optimized_bytecode_algebra = match bytecode_cycle_algebra {
             BytecodeCycleAlgebra::Generic => jolt_kernels::optimized::BytecodeCycleAlgebra::Generic,
@@ -919,6 +968,21 @@ mod akita_benchmark {
                 config.instruction_input.trace_cutoff_elements = 1usize
                     .checked_shl(instruction_input_metal_trace_cutoff_log2)
                     .expect("InstructionInput Metal trace cutoff log2 must fit usize");
+                config.booleanity_address.dispatch.inner_log2 = booleanity_address_metal_inner_log2;
+                config.booleanity_address.dispatch.selectors_per_tile =
+                    booleanity_address_metal_selectors_per_tile;
+                config
+                    .booleanity_address
+                    .dispatch
+                    .tile_threads_per_threadgroup = Some(booleanity_address_metal_tile_threads);
+                config
+                    .booleanity_address
+                    .dispatch
+                    .finalize_threads_per_threadgroup =
+                    Some(booleanity_address_metal_finalize_threads);
+                config.booleanity_address.trace_cutoff_elements = 1usize
+                    .checked_shl(booleanity_address_metal_trace_cutoff_log2)
+                    .expect("Booleanity address Metal trace cutoff log2 must fit usize");
                 println!(
                     "BYTECODE_METAL_CONFIG backend=metal cpu_tail={} trace_cutoff={} cutoff={} message_threads={} transition_threads={} max_threadgroups={}",
                     bytecode_cycle_algebra.as_str(),
@@ -940,6 +1004,14 @@ mod akita_benchmark {
                         .dispatch
                         .storage_initialization
                         .as_str(),
+                );
+                println!(
+                    "BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal trace_cutoff={} inner_log2={} selectors_per_tile={} tile_threads={} finalize_threads={}",
+                    config.booleanity_address.trace_cutoff_elements,
+                    booleanity_address_metal_inner_log2,
+                    booleanity_address_metal_selectors_per_tile,
+                    booleanity_address_metal_tile_threads,
+                    booleanity_address_metal_finalize_threads,
                 );
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }

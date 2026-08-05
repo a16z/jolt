@@ -1,19 +1,47 @@
+use std::mem::size_of;
+
 use jolt_field::AkitaField;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims, SumcheckOutputPoints,
 };
+use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_witness::JoltWitnessPlane;
 
 use super::instruction_read_raf::MetalBackend;
-use super::solinas::{BooleanityRows, BooleanitySequence, BooleanitySequenceConfig};
-use crate::optimized::booleanity::{
-    prepare_optimized_booleanity_cycle, OptimizedBooleanityCycleKernel,
+use super::solinas::{
+    BooleanityAddressPushforwardConfig, BooleanityRows, BooleanitySequence,
+    BooleanitySequenceConfig, MetalError,
 };
+use crate::optimized::booleanity::{
+    prepare_optimized_booleanity_cycle, BooleanityAddressMetalPlan, OptimizedBooleanityAddress,
+    OptimizedBooleanityCycleKernel,
+};
+use crate::optimized::instruction_read_raf::InstructionCycleRow;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BooleanityAddressMetalConfig {
+    pub trace_cutoff_elements: usize,
+    pub dispatch: BooleanityAddressPushforwardConfig,
+}
+
+impl Default for BooleanityAddressMetalConfig {
+    fn default() -> Self {
+        Self {
+            trace_cutoff_elements: 1 << 18,
+            dispatch: BooleanityAddressPushforwardConfig {
+                inner_log2: 15,
+                selectors_per_tile: 6,
+                tile_threads_per_threadgroup: Some(512),
+                finalize_threads_per_threadgroup: Some(1024),
+            },
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BooleanityMetalConfig {
@@ -36,6 +64,170 @@ impl Default for BooleanityMetalConfig {
     }
 }
 
+impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBackend {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+        inputs: ProverInputs<'_, AkitaField, BooleanityAddressPhase<AkitaField>>,
+    ) -> Result<
+        Box<dyn SumcheckKernel<AkitaField, Relation = BooleanityAddressPhase<AkitaField>>>,
+        KernelError<AkitaField>,
+    > {
+        let cpu_inputs = || ProverInputs {
+            relation: inputs.relation,
+            claims: inputs.claims,
+            points: inputs.points,
+            challenges: inputs.challenges,
+        };
+        let cpu = |session: &mut ProofSession| {
+            OptimizedBooleanityAddress.prepare(session, witness, cpu_inputs())
+        };
+        let dimensions = inputs.relation.dimensions();
+        let trace_elements = 1usize << dimensions.log_t;
+        let config = self.config.booleanity_address;
+        if trace_elements < config.trace_cutoff_elements
+            || dimensions.log_k_chunk != 8
+            || config.dispatch.inner_log2 > dimensions.log_t
+        {
+            return cpu(session);
+        }
+        let resident_rows = match session.state::<BooleanityRows>().cloned() {
+            Some(rows)
+                if rows.len() == trace_elements
+                    && rows.device_registry_id() == self.context.device_registry_id() =>
+            {
+                rows
+            }
+            _ => return cpu(session),
+        };
+        let resident_row_identity = resident_rows.allocation_identity();
+        let resident_row_bytes = size_of::<super::solinas::BooleanityRow>();
+        let resident_span = tracing::info_span!(
+            "MetalBooleanityRows::stage6a_address_use",
+            resident_rows_storage_id = resident_row_identity,
+            resident_rows = trace_elements,
+            resident_row_bytes,
+            device_registry_id = resident_rows.device_registry_id(),
+            row_allocations = 0u64,
+            row_upload_bytes = 0u64,
+        )
+        .entered();
+        drop(resident_span);
+        let _span = tracing::info_span!("MetalBooleanityAddressPhase::prepare").entered();
+        let plan = BooleanityAddressMetalPlan::new(witness, inputs.relation, inputs.challenges)?;
+        let e_in_elements = 1usize << config.dispatch.inner_log2;
+        let e_out_elements = trace_elements / e_in_elements;
+        let selector_bytes = plan.selectors().len() * size_of::<[u32; 2]>();
+        let e_in_bytes = e_in_elements * size_of::<AkitaField>();
+        let e_out_bytes = e_out_elements * size_of::<AkitaField>();
+        let partial_bytes =
+            e_out_elements * config.dispatch.selectors_per_tile * 256 * size_of::<AkitaField>();
+        let output_bytes = plan.selectors().len() * 256 * size_of::<AkitaField>();
+        let planned_device_bytes =
+            selector_bytes + e_in_bytes + e_out_bytes + partial_bytes + output_bytes;
+        let device = self.context.device_info();
+        let requested_tile_threads = config.dispatch.tile_threads_per_threadgroup.unwrap_or(0);
+        let requested_finalize_threads = config
+            .dispatch
+            .finalize_threads_per_threadgroup
+            .unwrap_or(0);
+        let sequence_span = tracing::info_span!(
+            "MetalBooleanityAddressPhase::sequence_prepare",
+            resident_rows_storage_id = resident_row_identity,
+            resident_rows = trace_elements,
+            resident_row_bytes,
+            row_upload_bytes = 0u64,
+            polys = plan.selectors().len(),
+            k = 256usize,
+            e_in_elements,
+            e_out_elements,
+            requested_inner_log2 = config.dispatch.inner_log2,
+            effective_inner_log2 = config.dispatch.inner_log2,
+            requested_selectors_per_tile = config.dispatch.selectors_per_tile,
+            effective_selectors_per_tile = tracing::field::Empty,
+            requested_tile_threads,
+            effective_tile_threads = tracing::field::Empty,
+            requested_finalize_threads,
+            effective_finalize_threads = tracing::field::Empty,
+            selector_tiles = tracing::field::Empty,
+            production_specialized = tracing::field::Empty,
+        );
+        let sequence_guard = sequence_span.enter();
+        let allocation_span = tracing::info_span!(
+            "MetalBooleanityAddressPhase::allocation_plan",
+            device_buffers = 5u64,
+            planned_device_bytes,
+            current_device_bytes = device.current_allocated_size,
+            recommended_device_bytes = device.recommended_max_working_set_size,
+        );
+        let allocation_guard = allocation_span.enter();
+        let invocation = match self.context.prepare_booleanity_address_pushforward(
+            resident_rows,
+            plan.selectors(),
+            plan.reference_cycle(),
+            config.dispatch,
+        ) {
+            Ok(invocation) => invocation,
+            Err(error) if booleanity_address_can_fallback(&error) => {
+                tracing::warn!(error = %error, "Booleanity address Metal preparation fell back to CPU");
+                return cpu(session);
+            }
+            Err(error) => return Err(metal_error(error.to_string()).into()),
+        };
+        drop(allocation_guard);
+        let _ = sequence_span.record(
+            "effective_selectors_per_tile",
+            invocation.selectors_per_tile(),
+        );
+        let _ = sequence_span.record(
+            "effective_tile_threads",
+            invocation.tile_threads_per_threadgroup(),
+        );
+        let _ = sequence_span.record(
+            "effective_finalize_threads",
+            invocation.finalize_threads_per_threadgroup(),
+        );
+        let _ = sequence_span.record("selector_tiles", invocation.selector_tiles());
+        let _ = sequence_span.record(
+            "production_specialized",
+            invocation.uses_production_specialization(),
+        );
+        drop(sequence_guard);
+
+        let dispatch_span = tracing::info_span!(
+            "MetalBooleanityAddressPhase::dispatch",
+            command_buffers = 1u64,
+            tile_dispatches = invocation.selector_tiles(),
+            finalize_dispatches = invocation.selector_tiles(),
+            command_completed = tracing::field::Empty,
+            gpu_active_ns = tracing::field::Empty,
+            resident_rows_storage_id = resident_row_identity,
+        );
+        let dispatch_guard = dispatch_span.enter();
+        let gpu_active = invocation
+            .execute_timed()
+            .map_err(|error| metal_error(error.to_string()))?;
+        let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
+        let _ = dispatch_span.record("command_completed", true);
+        let _ = dispatch_span.record("gpu_active_ns", gpu_active_ns);
+        drop(dispatch_guard);
+
+        let readback_span = tracing::info_span!(
+            "MetalBooleanityAddressPhase::readback",
+            elements = invocation.output_elements(),
+            bytes = invocation.output_elements() * size_of::<AkitaField>(),
+            readbacks = 1u64,
+        );
+        let readback_guard = readback_span.enter();
+        let masses = invocation
+            .read_masses()
+            .map_err(|error| metal_error(error.to_string()))?;
+        drop(readback_guard);
+        plan.finish(masses)
+    }
+}
+
 impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
     fn prepare(
         &self,
@@ -52,10 +244,42 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
             let _ = session.take::<BooleanityRows>();
             return Ok(Box::new(cpu));
         }
-        let resident_rows = match session.take::<BooleanityRows>() {
-            Some(rows) if rows.len() == trace_elements => rows,
-            _ => cpu.metal_prepare_rows(&self.context)?,
+        let (resident_rows, reused) = match session.take::<BooleanityRows>() {
+            Some(rows) if rows.len() == trace_elements => (rows, true),
+            _ => {
+                let source = cpu.metal_row_source()?;
+                match self
+                    .context
+                    .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(source))
+                {
+                    Ok(rows) => (rows, false),
+                    Err(error) if error.is_capacity_error() => {
+                        tracing::warn!(
+                            target: "jolt::metal",
+                            error = %error,
+                            "Booleanity cycle resident rows were not admitted"
+                        );
+                        return Ok(Box::new(cpu));
+                    }
+                    Err(error) => return Err(metal_error(error.to_string()).into()),
+                }
+            }
         };
+        let lifecycle_span = tracing::info_span!(
+            "MetalBooleanityRows::stage6b_cycle_use",
+            resident_rows_storage_id = resident_rows.allocation_identity(),
+            resident_rows = resident_rows.len(),
+            resident_row_bytes = size_of::<super::solinas::BooleanityRow>(),
+            device_registry_id = resident_rows.device_registry_id(),
+            row_allocations = u64::from(!reused),
+            row_upload_bytes = if reused {
+                0u64
+            } else {
+                (resident_rows.len() * size_of::<super::solinas::BooleanityRow>()) as u64
+            },
+        )
+        .entered();
+        drop(lifecycle_span);
         let sequence = cpu.metal_offload(
             &self.context,
             resident_rows,
@@ -205,16 +429,31 @@ fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
     }
 }
 
+fn booleanity_address_can_fallback(error: &MetalError) -> bool {
+    matches!(
+        error,
+        MetalError::InputTooLong(_)
+            | MetalError::BufferTooLong { .. }
+            | MetalError::WorkingSetTooLarge { .. }
+            | MetalError::FunctionLookup { .. }
+            | MetalError::PipelineCompilation { .. }
+            | MetalError::UnsupportedBooleanityExecutionWidth { .. }
+            | MetalError::InvalidThreadgroupWidth { .. }
+            | MetalError::BooleanityAddressThreadgroupMemory { .. }
+    )
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
     use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
+    use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhaseChallenges;
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
 
     use super::*;
     use crate::optimized::booleanity::{
-        testing::with_booleanity_backend, OptimizedBooleanityCycle,
+        testing::with_booleanity_backend, OptimizedBooleanityAddress, OptimizedBooleanityCycle,
     };
     use crate::optimized::instruction_read_raf::{
         collect_instruction_cycle_rows, InstructionCycleRow,
@@ -224,6 +463,84 @@ mod tests {
         (0..len as u64)
             .map(|index| AkitaField::from_u64(seed + 37 * index + 5))
             .collect()
+    }
+
+    #[test]
+    fn address_prepare_matches_optimized_cpu_and_preserves_resident_rows() {
+        let log_t = 10;
+        with_booleanity_backend(log_t, 8, |witness, dimensions| {
+            let relation = BooleanityAddressPhase::new(
+                dimensions,
+                point(900, dimensions.log_k_chunk),
+                point(400, log_t),
+            );
+            let claims = Default::default();
+            let points = Default::default();
+            let challenges = BooleanityAddressPhaseChallenges {
+                reference_address: point(700, dimensions.log_k_chunk),
+                gamma: AkitaField::from_u64(31),
+            };
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+
+            let mut expected = OptimizedBooleanityAddress
+                .prepare(&mut ProofSession::default(), witness, inputs())
+                .unwrap();
+            let metal = MetalBackend::new(super::super::MetalConfig {
+                booleanity_address: BooleanityAddressMetalConfig {
+                    trace_cutoff_elements: 2,
+                    dispatch: BooleanityAddressPushforwardConfig {
+                        inner_log2: 8,
+                        selectors_per_tile: 6,
+                        tile_threads_per_threadgroup: Some(256),
+                        finalize_threads_per_threadgroup: Some(256),
+                    },
+                },
+                ..Default::default()
+            })
+            .unwrap();
+            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+            let resident = metal
+                .context
+                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                .unwrap();
+            let retained = resident.clone();
+            let mut session = ProofSession::default();
+            session.park(resident);
+            let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
+            let parked = session.state::<BooleanityRows>().unwrap();
+            assert!(retained.shares_allocation(parked));
+
+            let mut claim = AkitaField::zero();
+            let mut bind = None;
+            let mut round_challenges = Vec::new();
+            for round in 0..expected.num_rounds() {
+                let expected_poly = expected.prove_round(bind, round, claim).unwrap();
+                let actual_poly = actual.prove_round(bind, round, claim).unwrap();
+                assert_eq!(actual_poly, expected_poly, "round {round}");
+                let challenge = AkitaField::from_u64(0x1234_5678 + 1000 * round as u64 + 7);
+                claim = expected_poly.evaluate(challenge);
+                round_challenges.push(challenge);
+                bind = Some(challenge);
+            }
+            let final_bind = *round_challenges.last().unwrap();
+            expected.finish_rounds(final_bind).unwrap();
+            actual.finish_rounds(final_bind).unwrap();
+            assert_eq!(
+                actual.output_claims(&claims).unwrap(),
+                expected.output_claims(&claims).unwrap()
+            );
+            let output_points = relation
+                .derive_opening_points(&round_challenges, &points)
+                .unwrap();
+            actual
+                .validate_derived_tables(&relation, &points, &output_points, &challenges)
+                .unwrap();
+        });
     }
 
     #[test]

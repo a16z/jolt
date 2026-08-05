@@ -108,15 +108,43 @@ PRODUCTION_LOCAL_KERNELS = {
             "instruction_input_compact_rows_direct_and_stable",
         },
     },
+    "BooleanityAddressPhase": {
+        "metric": "booleanity_address_phase_speedup",
+        "paired_metric": "paired_booleanity_address_phase_speedups",
+        "parameters": frozenset(
+            {
+                "JOLT_METAL_BOOLEANITY_ADDRESS_INNER_LOG2",
+                "JOLT_METAL_BOOLEANITY_ADDRESS_SELECTORS_PER_TILE",
+                "JOLT_METAL_BOOLEANITY_ADDRESS_TILE_THREADS",
+                "JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS",
+                "JOLT_METAL_BOOLEANITY_ADDRESS_TRACE_CUTOFF_LOG2",
+            }
+        ),
+        "required_guards": COMMON_PRODUCTION_GUARDS
+        | {
+            "booleanity_address_cpu_control",
+            "booleanity_address_cpu_row_source_attributed",
+            "booleanity_address_metal_backend_exercised",
+            "booleanity_address_resident_rows_reused",
+            "booleanity_address_working_set_admitted",
+            "booleanity_address_readback_exact",
+            "booleanity_address_dispatch_exact",
+            "booleanity_address_command_completed",
+            "booleanity_address_local_gate",
+            "rayon_threads_pinned",
+        },
+    },
 }
 LOCAL_RESULT_CONTRACTS = {
     "bytecode_read_raf_cycle_v1",
+    "booleanity_address_v1",
     "instruction_input_v2",
     "instruction_input_v3",
     "instruction_input_v4",
 }
 LOCAL_RESULT_SCHEMA_VERSIONS = {
     "bytecode_read_raf_cycle_v1": 1,
+    "booleanity_address_v1": 1,
     "instruction_input_v2": 2,
     "instruction_input_v3": 3,
     "instruction_input_v4": 4,
@@ -132,6 +160,19 @@ BYTECODE_LOCAL_FINGERPRINT_ENV = {
     "log_n": "JOLT_METAL_EVAL_LOG_N",
     "repeats": "JOLT_METAL_EVAL_REPEATS",
     "seed": "JOLT_METAL_EVAL_SEED",
+}
+BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_PARAMETERS = {
+    "inner_log2": "JOLT_METAL_BOOLEANITY_ADDRESS_INNER_LOG2",
+    "selectors_per_tile": "JOLT_METAL_BOOLEANITY_ADDRESS_SELECTORS_PER_TILE",
+    "tile_threads": "JOLT_METAL_BOOLEANITY_ADDRESS_TILE_THREADS",
+    "finalize_threads": "JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS",
+    "trace_cutoff_log2": "JOLT_METAL_BOOLEANITY_ADDRESS_TRACE_CUTOFF_LOG2",
+}
+BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_ENV = {
+    "log_n": "JOLT_METAL_EVAL_LOG_N",
+    "repeats": "JOLT_METAL_EVAL_REPEATS",
+    "seed": "JOLT_METAL_EVAL_SEED",
+    "cpu_threads": "RAYON_NUM_THREADS",
 }
 INSTRUCTION_INPUT_LOCAL_FINGERPRINT_PARAMETERS = {
     "native_message_threads": "JOLT_METAL_INSTRUCTION_INPUT_NATIVE_MESSAGE_THREADS",
@@ -202,6 +243,26 @@ def instruction_input_sequence_storage_bytes(log_n: int) -> int:
         + 2 * 3 * e_out
     )
     return 16 * elements
+
+
+def booleanity_address_sequence_storage_bytes(
+    log_n: int, inner_log2: int, selectors_per_tile: int
+) -> int:
+    if (
+        log_n < 0
+        or inner_log2 < 0
+        or inner_log2 > log_n
+        or not 1 <= selectors_per_tile <= 6
+    ):
+        raise ValueError("invalid Booleanity address storage geometry")
+    rows = 1 << log_n
+    e_in = 1 << inner_log2
+    e_out = rows // e_in
+    selector_bytes = 29 * 8
+    field_bytes = 16 * (
+        e_in + e_out + e_out * selectors_per_tile * 256 + 29 * 256
+    )
+    return selector_bytes + field_bytes
 
 
 def utc_now() -> str:
@@ -886,6 +947,13 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
     ):
         raise ValueError("the Bytecode evaluator requires its closed result contract")
     if (
+        template["kernel"] == "booleanity_address"
+        and result_contract != "booleanity_address_v1"
+    ):
+        raise ValueError(
+            "the Booleanity address evaluator requires its closed result contract"
+        )
+    if (
         template["kernel"] == "instruction_input"
         and result_contract != "instruction_input_v4"
     ):
@@ -913,6 +981,57 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
         ):
             raise ValueError(
                 "the Bytecode result contract requires every launch parameter in the search space and baseline"
+            )
+    if result_contract == "booleanity_address_v1":
+        if template["kernel"] != "booleanity_address":
+            raise ValueError(
+                "the Booleanity address result contract requires the Booleanity address kernel"
+            )
+        missing_env = sorted(
+            set(BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_ENV.values())
+            - set(evaluator.get("env", {}))
+        )
+        if missing_env:
+            raise ValueError(
+                "the Booleanity address result contract is missing evaluator environment: "
+                f"{missing_env}"
+            )
+        try:
+            evaluator_repeats = int(evaluator["env"]["JOLT_METAL_EVAL_REPEATS"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "the Booleanity address evaluator requires an integer repeat count"
+            ) from error
+        if evaluator_repeats < 5 or evaluator_repeats % 2 == 0:
+            raise ValueError(
+                "the Booleanity address evaluator requires at least five odd paired repeats"
+            )
+        required_params = set(BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_PARAMETERS.values())
+        if required_params - set(template["search_space"]) or required_params - set(
+            template.get("baseline_params", {})
+        ):
+            raise ValueError(
+                "the Booleanity address result contract requires every launch parameter in the search space and baseline"
+            )
+        if template.get("scope", {}).get("editable") != [
+            "crates/jolt-kernels/src/metal/solinas/booleanity_address.metal"
+        ]:
+            raise ValueError(
+                "the Booleanity address search scope must remain shader-only"
+            )
+        final_validation = template.get("final_validation")
+        if not isinstance(final_validation, dict) or set(final_validation) != {
+            "primary_log_n",
+            "production_gate",
+        }:
+            raise ValueError(
+                "the Booleanity address final-validation contract contains inert checks"
+            )
+        if final_validation["primary_log_n"] != int(
+            evaluator["env"]["JOLT_METAL_EVAL_LOG_N"]
+        ):
+            raise ValueError(
+                "the Booleanity address final-validation contract targets the wrong scale"
             )
     if result_contract in {
         "instruction_input_v2",
@@ -1163,16 +1282,19 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
 
 
 def validate_new_run_template(template: dict[str, Any]) -> None:
-    if template.get("kernel") != "instruction_input":
+    kernel = template.get("kernel")
+    if kernel not in {"instruction_input", "booleanity_address"}:
         return
-    if not isinstance(template.get("architecture_phase"), dict):
+    if kernel == "instruction_input" and not isinstance(
+        template.get("architecture_phase"), dict
+    ):
         raise ValueError("new InstructionInput runs require an architecture baseline")
     result_schema = template["final_validation"]["production_gate"]["evaluator"].get(
         "schema_version", 4
     )
     if result_schema != CURRENT_PIOP_RESULT_SCHEMA:
         raise ValueError(
-            "new InstructionInput runs require the current production result schema"
+            f"new {kernel} runs require the current production result schema"
         )
 
 
@@ -2042,6 +2164,590 @@ def validate_instruction_input_local_result(
             raise ValueError(f"InstructionInput evaluator {prefix} pipeline is invalid")
 
 
+def validate_booleanity_address_local_result(
+    config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
+) -> None:
+    output_fields = {
+        "schema",
+        "schema_version",
+        "kernel",
+        "workload",
+        "fingerprint",
+        "metrics",
+        "timings",
+        "guards",
+        "all_exact",
+        "resources",
+        "pipelines",
+        "promotion",
+        "oracle_limits",
+    }
+    if (
+        set(output) != output_fields
+        or output.get("schema") != "booleanity_address_v1"
+        or output.get("schema_version") != 1
+        or output.get("kernel") != "booleanity_address"
+    ):
+        raise ValueError("Booleanity address evaluator result contract is incomplete")
+    environment = config["evaluator"].get("env", {})
+    try:
+        expected = {
+            field: int(environment[name])
+            for field, name in BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_ENV.items()
+        }
+        expected.update(
+            {
+                field: int(params[name])
+                for field, name in BOOLEANITY_ADDRESS_LOCAL_FINGERPRINT_PARAMETERS.items()
+            }
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "Booleanity address evaluator launch parameters are incomplete"
+        ) from error
+    if not (
+        expected["repeats"] >= 5
+        and expected["repeats"] % 2 == 1
+        and 0 <= expected["inner_log2"] <= min(expected["log_n"], 16)
+        and 1 <= expected["selectors_per_tile"] <= 6
+        and expected["tile_threads"] > 0
+        and expected["tile_threads"] % 32 == 0
+        and expected["finalize_threads"] >= 256
+        and expected["finalize_threads"] % 256 == 0
+        and expected["trace_cutoff_log2"] <= expected["log_n"]
+        and expected["cpu_threads"] > 0
+    ):
+        raise ValueError("Booleanity address evaluator launch geometry is invalid")
+    rows = 1 << expected["log_n"]
+    e_in = 1 << expected["inner_log2"]
+    e_out = rows // e_in
+    selector_tiles = (29 + expected["selectors_per_tile"] - 1) // expected[
+        "selectors_per_tile"
+    ]
+    orders = [
+        ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+        for index in range(expected["repeats"])
+    ]
+
+    workload = output["workload"]
+    workload_fields = {
+        "log_n",
+        "rows",
+        "selectors",
+        "k",
+        "address_rounds",
+        "row_bytes",
+        "seed",
+        "repeats",
+        "orders",
+        "resident_rows_prepared_once_outside_members",
+        "cpu_row_construction_outside_members",
+        "excluded_warmup_pairs",
+        "cpu_member_contract",
+        "metal_member_contract",
+        "gpu_active_accounting",
+    }
+    expected_workload = {
+        "log_n": expected["log_n"],
+        "rows": rows,
+        "selectors": 29,
+        "k": 256,
+        "address_rounds": 8,
+        "row_bytes": 40,
+        "seed": expected["seed"],
+        "repeats": expected["repeats"],
+        "orders": orders,
+        "resident_rows_prepared_once_outside_members": True,
+        "cpu_row_construction_outside_members": True,
+        "excluded_warmup_pairs": 1,
+        "cpu_member_contract": "parallel tensor-equality pushforward mirror plus host address rounds",
+        "metal_member_contract": "weight preparation and upload plus one command encode/submit/wait plus one result readback plus host address rounds",
+        "gpu_active_accounting": "nested in metal dispatch wall; never added to member components",
+    }
+    if (
+        not isinstance(workload, dict)
+        or set(workload) != workload_fields
+        or workload != expected_workload
+    ):
+        raise ValueError("Booleanity address evaluator workload fingerprint diverged")
+
+    fingerprint = output["fingerprint"]
+    fingerprint_fields = {
+        "trace_cutoff_log2",
+        "trace_cutoff_elements",
+        "inner_log2",
+        "selectors_per_tile",
+        "tile_threads",
+        "finalize_threads",
+        "effective_selector_tiles",
+        "effective_tile_threads",
+        "effective_finalize_threads",
+        "production_specialized",
+        "accumulator_words",
+        "resident_row_identity",
+        "cpu_threads",
+        "cpu_control",
+        "host_round_oracle",
+    }
+    expected_fingerprint = {
+        "trace_cutoff_log2": expected["trace_cutoff_log2"],
+        "trace_cutoff_elements": 1 << expected["trace_cutoff_log2"],
+        "inner_log2": expected["inner_log2"],
+        "selectors_per_tile": expected["selectors_per_tile"],
+        "tile_threads": expected["tile_threads"],
+        "finalize_threads": expected["finalize_threads"],
+        "effective_selector_tiles": selector_tiles,
+        "effective_tile_threads": expected["tile_threads"],
+        "effective_finalize_threads": expected["finalize_threads"],
+        "production_specialized": expected["selectors_per_tile"] in {3, 6},
+        "accumulator_words": 5,
+        "cpu_threads": expected["cpu_threads"],
+        "cpu_control": "standalone parallel TensorEqTable/AkitaAccumulator mirror",
+        "host_round_oracle": "shared deterministic evaluator implementation",
+    }
+    if not isinstance(fingerprint, dict) or set(fingerprint) != fingerprint_fields:
+        raise ValueError("Booleanity address evaluator fingerprint is incomplete")
+    if any(fingerprint.get(name) != value for name, value in expected_fingerprint.items()):
+        raise ValueError("Booleanity address evaluator fingerprint diverged")
+    if (
+        type(fingerprint["resident_row_identity"]) is not int
+        or fingerprint["resident_row_identity"] <= 0
+    ):
+        raise ValueError("Booleanity address evaluator machine fingerprint is invalid")
+
+    metrics = output["metrics"]
+    metric_fields = {
+        "hybrid_speedup",
+        "ratio_of_member_medians",
+        "paired_speedups",
+        "paired_speedup_mad",
+        "cpu_member_ns_samples",
+        "metal_member_ns_samples",
+        "minimum_promotion_speedup",
+    }
+    if not isinstance(metrics, dict) or set(metrics) != metric_fields:
+        raise ValueError("Booleanity address evaluator metric record is incomplete")
+    repeats = expected["repeats"]
+    cpu_samples = positive_integer_samples(metrics, "cpu_member_ns_samples", repeats)
+    metal_samples = positive_integer_samples(metrics, "metal_member_ns_samples", repeats)
+    recomputed_pairs = [cpu / metal for cpu, metal in zip(cpu_samples, metal_samples)]
+    paired = metrics["paired_speedups"]
+    if (
+        not isinstance(paired, list)
+        or len(paired) != repeats
+        or any(
+            isinstance(actual, bool)
+            or not isinstance(actual, (int, float))
+            or not math.isfinite(actual)
+            or not math.isclose(float(actual), wanted, rel_tol=1e-12)
+            for actual, wanted in zip(paired, recomputed_pairs)
+        )
+    ):
+        raise ValueError(
+            "Booleanity address evaluator paired speedups disagree with raw samples"
+        )
+    speedup = statistics.median(recomputed_pairs)
+    ratio_of_medians = statistics.median(cpu_samples) / statistics.median(metal_samples)
+    speedup_mad = statistics.median(abs(value - speedup) for value in recomputed_pairs)
+    for name, wanted in (
+        ("hybrid_speedup", speedup),
+        ("ratio_of_member_medians", ratio_of_medians),
+        ("paired_speedup_mad", speedup_mad),
+        ("minimum_promotion_speedup", 4.0),
+    ):
+        actual = metrics[name]
+        if (
+            isinstance(actual, bool)
+            or not isinstance(actual, (int, float))
+            or not math.isfinite(actual)
+            or not math.isclose(float(actual), wanted, rel_tol=1e-12)
+        ):
+            raise ValueError(f"Booleanity address evaluator {name} is invalid")
+
+    timings = output["timings"]
+    timing_fields = {
+        "cpu_member_median_ns",
+        "cpu_prepare_median_ns",
+        "cpu_host_rounds_median_ns",
+        "cpu_unattributed_median_ns",
+        "metal_member_median_ns",
+        "metal_prepare_median_ns",
+        "metal_dispatch_wall_median_ns",
+        "metal_gpu_active_median_ns",
+        "metal_readback_median_ns",
+        "metal_host_rounds_median_ns",
+        "metal_unattributed_median_ns",
+        "cpu_prepare_ns_samples",
+        "cpu_host_rounds_ns_samples",
+        "cpu_unattributed_ns_samples",
+        "metal_prepare_ns_samples",
+        "metal_dispatch_wall_ns_samples",
+        "metal_gpu_active_ns_samples",
+        "metal_readback_ns_samples",
+        "metal_host_rounds_ns_samples",
+        "metal_unattributed_ns_samples",
+        "exclusive_component_accounting",
+        "excluded_warmup",
+    }
+    if not isinstance(timings, dict) or set(timings) != timing_fields:
+        raise ValueError("Booleanity address evaluator timing record is incomplete")
+
+    def integer_samples(name: str, allow_zero: bool = False) -> list[int]:
+        values = timings.get(name)
+        minimum = 0 if allow_zero else 1
+        if (
+            not isinstance(values, list)
+            or len(values) != repeats
+            or any(type(value) is not int or value < minimum for value in values)
+        ):
+            raise ValueError(
+                f"Booleanity address evaluator {name} samples are invalid"
+            )
+        return values
+
+    cpu_components = {
+        "prepare": integer_samples("cpu_prepare_ns_samples"),
+        "host_rounds": integer_samples("cpu_host_rounds_ns_samples"),
+        "unattributed": integer_samples(
+            "cpu_unattributed_ns_samples", allow_zero=True
+        ),
+    }
+    metal_components = {
+        "prepare": integer_samples("metal_prepare_ns_samples"),
+        "dispatch_wall": integer_samples("metal_dispatch_wall_ns_samples"),
+        "gpu_active": integer_samples("metal_gpu_active_ns_samples"),
+        "readback": integer_samples("metal_readback_ns_samples"),
+        "host_rounds": integer_samples("metal_host_rounds_ns_samples"),
+        "unattributed": integer_samples(
+            "metal_unattributed_ns_samples", allow_zero=True
+        ),
+    }
+    if any(
+        cpu_samples[index]
+        != sum(component[index] for component in cpu_components.values())
+        for index in range(repeats)
+    ):
+        raise ValueError("Booleanity address CPU member timing is not reconciled")
+    if any(
+        metal_samples[index]
+        != sum(
+            metal_components[name][index]
+            for name in (
+                "prepare",
+                "dispatch_wall",
+                "readback",
+                "host_rounds",
+                "unattributed",
+            )
+        )
+        for index in range(repeats)
+    ):
+        raise ValueError("Booleanity address Metal member timing is not reconciled")
+    if any(
+        active > wall
+        for active, wall in zip(
+            metal_components["gpu_active"], metal_components["dispatch_wall"]
+        )
+    ):
+        raise ValueError("Booleanity address GPU timing is not nested in dispatch wall")
+    median_records = {
+        "cpu_member_median_ns": cpu_samples,
+        "cpu_prepare_median_ns": cpu_components["prepare"],
+        "cpu_host_rounds_median_ns": cpu_components["host_rounds"],
+        "cpu_unattributed_median_ns": cpu_components["unattributed"],
+        "metal_member_median_ns": metal_samples,
+        "metal_prepare_median_ns": metal_components["prepare"],
+        "metal_dispatch_wall_median_ns": metal_components["dispatch_wall"],
+        "metal_gpu_active_median_ns": metal_components["gpu_active"],
+        "metal_readback_median_ns": metal_components["readback"],
+        "metal_host_rounds_median_ns": metal_components["host_rounds"],
+        "metal_unattributed_median_ns": metal_components["unattributed"],
+    }
+    for name, samples in median_records.items():
+        if timings[name] != statistics.median(samples):
+            raise ValueError(f"Booleanity address evaluator {name} is invalid")
+    if timings["exclusive_component_accounting"] != [
+        "prepare",
+        "dispatch_wall",
+        "readback",
+        "host_rounds",
+        "unattributed",
+    ]:
+        raise ValueError(
+            "Booleanity address evaluator component accounting is invalid"
+        )
+    warmup = timings["excluded_warmup"]
+    warmup_fields = {
+        "cpu_member_ns",
+        "cpu_prepare_ns",
+        "cpu_host_rounds_ns",
+        "cpu_unattributed_ns",
+        "metal_member_ns",
+        "metal_prepare_ns",
+        "metal_dispatch_wall_ns",
+        "metal_gpu_active_ns",
+        "metal_readback_ns",
+        "metal_host_rounds_ns",
+        "metal_unattributed_ns",
+    }
+    if not isinstance(warmup, dict) or set(warmup) != warmup_fields:
+        raise ValueError("Booleanity address evaluator warmup record is incomplete")
+    if any(
+        type(warmup[name]) is not int
+        or warmup[name] < (0 if name.endswith("unattributed_ns") else 1)
+        for name in warmup_fields
+    ):
+        raise ValueError("Booleanity address evaluator warmup timing is invalid")
+    if (
+        warmup["cpu_member_ns"]
+        != warmup["cpu_prepare_ns"]
+        + warmup["cpu_host_rounds_ns"]
+        + warmup["cpu_unattributed_ns"]
+        or warmup["metal_member_ns"]
+        != warmup["metal_prepare_ns"]
+        + warmup["metal_dispatch_wall_ns"]
+        + warmup["metal_readback_ns"]
+        + warmup["metal_host_rounds_ns"]
+        + warmup["metal_unattributed_ns"]
+        or warmup["metal_gpu_active_ns"] > warmup["metal_dispatch_wall_ns"]
+    ):
+        raise ValueError("Booleanity address evaluator warmup timing is not reconciled")
+
+    resources = output["resources"]
+    resource_fields = {
+        "device",
+        "device_allocated_before_reference_bytes",
+        "resident_row_bytes",
+        "selector_bytes",
+        "e_in_bytes",
+        "e_out_bytes",
+        "partial_owned_bytes",
+        "partial_expected_bytes",
+        "address_owned_device_bytes",
+        "result_readback_bytes",
+        "static_device_buffer_count",
+        "static_device_buffer_identities",
+        "gpu_active_total_ns",
+        "gpu_seconds",
+    }
+    if not isinstance(resources, dict) or set(resources) != resource_fields:
+        raise ValueError("Booleanity address evaluator resource record is incomplete")
+    device = resources["device"]
+    device_fields = {
+        "name",
+        "max_buffer_length",
+        "max_threadgroup_memory_length",
+        "recommended_max_working_set_size",
+        "current_allocated_size",
+        "offset",
+    }
+    if (
+        not isinstance(device, dict)
+        or set(device) != device_fields
+        or not isinstance(device["name"], str)
+        or not device["name"]
+        or any(
+            type(device[name]) is not int or device[name] <= 0
+            for name in (
+                "max_buffer_length",
+                "max_threadgroup_memory_length",
+                "recommended_max_working_set_size",
+            )
+        )
+        or type(device["current_allocated_size"]) is not int
+        or device["current_allocated_size"] < 0
+        or device["offset"] != 0xFFFF_A7F7
+    ):
+        raise ValueError("Booleanity address evaluator device record is invalid")
+    selector_bytes = 29 * 8
+    e_in_bytes = e_in * 16
+    e_out_bytes = e_out * 16
+    partial_bytes = e_out * expected["selectors_per_tile"] * 256 * 16
+    output_bytes = 29 * 256 * 16
+    address_bytes = (
+        selector_bytes + e_in_bytes + e_out_bytes + partial_bytes + output_bytes
+    )
+    expected_resources = {
+        "resident_row_bytes": rows * 40,
+        "selector_bytes": selector_bytes,
+        "e_in_bytes": e_in_bytes,
+        "e_out_bytes": e_out_bytes,
+        "partial_owned_bytes": partial_bytes,
+        "partial_expected_bytes": partial_bytes,
+        "address_owned_device_bytes": address_bytes,
+        "result_readback_bytes": output_bytes,
+        "static_device_buffer_count": 5,
+        "gpu_active_total_ns": sum(metal_components["gpu_active"]),
+    }
+    if any(resources.get(name) != value for name, value in expected_resources.items()):
+        raise ValueError("Booleanity address evaluator resource geometry is invalid")
+    expected_gpu_seconds = (
+        warmup["metal_gpu_active_ns"] + sum(metal_components["gpu_active"])
+    ) / 1e9
+    gpu_seconds = resources["gpu_seconds"]
+    if (
+        isinstance(gpu_seconds, bool)
+        or not isinstance(gpu_seconds, (int, float))
+        or not math.isfinite(gpu_seconds)
+        or not math.isclose(
+            float(gpu_seconds), expected_gpu_seconds, rel_tol=1e-12
+        )
+    ):
+        raise ValueError("Booleanity address evaluator GPU budget timing is invalid")
+    if (
+        type(resources["device_allocated_before_reference_bytes"]) is not int
+        or resources["device_allocated_before_reference_bytes"] < rows * 40
+        or not isinstance(resources["static_device_buffer_identities"], list)
+        or len(resources["static_device_buffer_identities"]) != 5
+        or any(
+            type(value) is not int or value <= 0
+            for value in resources["static_device_buffer_identities"]
+        )
+        or len(set(resources["static_device_buffer_identities"])) != 5
+    ):
+        raise ValueError("Booleanity address evaluator buffer identity record is invalid")
+
+    pipelines = output["pipelines"]
+    if not isinstance(pipelines, dict) or set(pipelines) != {"tile", "finalize"}:
+        raise ValueError("Booleanity address evaluator pipeline record is incomplete")
+    pipeline_fields = {
+        "thread_execution_width",
+        "max_total_threads_per_threadgroup",
+        "static_threadgroup_bytes",
+        "dynamic_threadgroup_bytes",
+        "total_threadgroup_bytes",
+        "effective_threads_per_threadgroup",
+    }
+    for name, selected, dynamic in (
+        (
+            "tile",
+            expected["tile_threads"],
+            expected["selectors_per_tile"] * 256 * 5 * 4,
+        ),
+        ("finalize", expected["finalize_threads"], expected["finalize_threads"] * 16),
+    ):
+        pipeline = pipelines[name]
+        if (
+            not isinstance(pipeline, dict)
+            or set(pipeline) != pipeline_fields
+            or pipeline["thread_execution_width"] != 32
+            or type(pipeline["max_total_threads_per_threadgroup"]) is not int
+            or pipeline["max_total_threads_per_threadgroup"] < selected
+            or type(pipeline["static_threadgroup_bytes"]) is not int
+            or pipeline["static_threadgroup_bytes"] < 0
+            or pipeline["dynamic_threadgroup_bytes"] != dynamic
+            or pipeline["total_threadgroup_bytes"]
+            != pipeline["static_threadgroup_bytes"] + dynamic
+            or pipeline["total_threadgroup_bytes"]
+            > device["max_threadgroup_memory_length"]
+            or pipeline["effective_threads_per_threadgroup"] != selected
+            or selected % 32 != 0
+        ):
+            raise ValueError(f"Booleanity address evaluator {name} pipeline is invalid")
+
+    guard_fields = {
+        "reference_mass_lengths_exact",
+        "timed_mass_lengths_exact",
+        "expected_mass_count_exact",
+        "exact_masses",
+        "exact_four_sample_q_evals",
+        "exact_round_polynomials",
+        "exact_host_fiat_shamir_challenges",
+        "exact_final_claim",
+        "exact_output_claims",
+        "exact_final_relations",
+        "exact_transcript_state",
+        "timed_samples_match_reference",
+        "correctness_exact",
+        "sample_cardinality_exact",
+        "alternating_orders_exact",
+        "cpu_component_timings_reconciled",
+        "metal_component_timings_reconciled",
+        "warmup_cpu_component_timings_reconciled",
+        "warmup_metal_component_timings_reconciled",
+        "gpu_active_nested_in_dispatch_wall",
+        "member_durations_positive",
+        "speedups_finite_positive",
+        "resident_rows_reused",
+        "resident_rows_stable_for_cycle_handoff",
+        "metal_shape_stable_across_samples",
+        "row_count_exact",
+        "polynomial_count_exact",
+        "production_selector_schedule_exact",
+        "selector_tile_width_exact",
+        "selector_tile_count_exact",
+        "e_in_size_exact",
+        "e_out_size_exact",
+        "output_size_exact",
+        "partial_size_exact",
+        "production_specialization_exact",
+        "requested_effective_tile_threads_exact",
+        "requested_effective_finalize_threads_exact",
+        "tile_pipeline_simd_width_exact",
+        "finalize_pipeline_simd_width_exact",
+        "tile_pipeline_thread_limit_admits_dispatch",
+        "finalize_pipeline_thread_limit_admits_dispatch",
+        "tile_threadgroup_memory_admitted",
+        "finalize_threadgroup_memory_admitted",
+        "static_device_buffers_stable",
+        "static_device_buffers_distinct",
+        "buffer_lengths_admitted",
+        "working_set_admitted",
+        "solinas_offset_exact",
+        "field_and_row_sizes_exact",
+        "one_execute_timed_call_per_member",
+        "single_command_completion_contract",
+        "single_result_readback_contract",
+        "no_per_row_contribution_buffer_contract",
+        "host_fiat_shamir",
+        "production_trace_cutoff_admits_target",
+        "all_exact",
+    }
+    guards = output["guards"]
+    if not isinstance(guards, dict) or set(guards) != guard_fields:
+        raise ValueError("Booleanity address evaluator guard record is incomplete")
+    if any(guards[name] is not True for name in guard_fields - {"all_exact"}):
+        raise ValueError("Booleanity address evaluator correctness/resource guard failed")
+    recomputed_all_exact = all(
+        guards[name] is True for name in guard_fields - {"all_exact"}
+    )
+    if (
+        guards["all_exact"] is not recomputed_all_exact
+        or type(output["all_exact"]) is not bool
+        or output["all_exact"] is not recomputed_all_exact
+    ):
+        raise ValueError("Booleanity address evaluator all-exact claim is invalid")
+
+    promotion = output["promotion"]
+    promotion_scale = expected["log_n"] >= 26
+    promotion_pair_count = repeats >= 5
+    promotion_speedup = speedup >= 4.0
+    if promotion != {
+        "minimum_log_n": 26,
+        "minimum_pairs": 5,
+        "minimum_speedup": 4.0,
+        "scale_eligible": promotion_scale,
+        "pair_count_eligible": promotion_pair_count,
+        "speedup_eligible": promotion_speedup,
+        "local_eligible": recomputed_all_exact
+        and promotion_scale
+        and promotion_pair_count
+        and promotion_speedup,
+        "production_piop_holdout_required": True,
+    }:
+        raise ValueError("Booleanity address evaluator promotion record is invalid")
+    oracle_limits = output["oracle_limits"]
+    if oracle_limits != {
+        "cpu_denominator_is_production_kernel": False,
+        "cpu_denominator_scope": "standalone optimized pushforward mirror plus the same host-round routine",
+        "host_rounds_are_independently_implemented": False,
+        "mass_oracle_independent_of_metal_shader": True,
+        "command_and_readback_counts_are_runtime_counters": False,
+        "requires_production_piop_holdout": True,
+    }:
+        raise ValueError("Booleanity address evaluator oracle-limit record is invalid")
+
+
 def validate_local_result_contract(
     config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
 ) -> None:
@@ -2054,6 +2760,9 @@ def validate_local_result_contract(
         "instruction_input_v4",
     }:
         validate_instruction_input_local_result(config, output, params)
+        return
+    if contract == "booleanity_address_v1":
+        validate_booleanity_address_local_result(config, output, params)
         return
     if contract != "bytecode_read_raf_cycle_v1":
         raise ValueError("unknown local evaluator result contract")
@@ -2777,6 +3486,280 @@ def validate_production_instruction_input_member(
     return member["service_ns"] if result_schema >= 6 else member["member_ns"]
 
 
+def validate_production_booleanity_address_row_lifecycle(
+    lifecycle: Any, backend: str, log_n: int
+) -> None:
+    if backend == "optimized":
+        if lifecycle is not None:
+            raise ValueError(
+                "production optimized Booleanity address arm has a resident-row lifecycle"
+            )
+        return
+
+    fields = {
+        "kind",
+        "rows",
+        "row_bytes",
+        "device_registry_id",
+        "stage5_storage_id",
+        "stage6a_storage_id",
+        "stage6b_storage_id",
+        "stage5",
+        "stage6a",
+        "stage6b",
+    }
+    if not isinstance(lifecycle, dict) or set(lifecycle) != fields:
+        raise ValueError(
+            "production Booleanity address row lifecycle record is incomplete"
+        )
+    stage_fields = {"row_allocations", "row_upload_bytes"}
+    if any(
+        not isinstance(lifecycle[name], dict)
+        or set(lifecycle[name]) != stage_fields
+        for name in ("stage5", "stage6a", "stage6b")
+    ):
+        raise ValueError("production Booleanity address row lifecycle is invalid")
+    rows = 1 << log_n
+    row_bytes = 40
+    storage_ids = [
+        lifecycle["stage5_storage_id"],
+        lifecycle["stage6a_storage_id"],
+        lifecycle["stage6b_storage_id"],
+    ]
+    if (
+        lifecycle["kind"] != "metal_booleanity_resident"
+        or lifecycle["rows"] != rows
+        or lifecycle["row_bytes"] != row_bytes
+        or type(lifecycle["device_registry_id"]) is not int
+        or lifecycle["device_registry_id"] <= 0
+        or any(type(value) is not int or value <= 0 for value in storage_ids)
+        or len(set(storage_ids)) != 1
+        or lifecycle["stage5"]
+        != {"row_allocations": 1, "row_upload_bytes": rows * row_bytes}
+        or lifecycle["stage6a"]
+        != {"row_allocations": 0, "row_upload_bytes": 0}
+        or lifecycle["stage6b"]
+        != {"row_allocations": 0, "row_upload_bytes": 0}
+    ):
+        raise ValueError("production Booleanity address row lifecycle is invalid")
+
+
+def validate_production_booleanity_address_member(
+    member: Any,
+    lifecycle: Any,
+    backend: str,
+    log_n: int,
+    inner_log2: int,
+    selectors_per_tile: int,
+    tile_threads: int,
+    finalize_threads: int,
+) -> int:
+    fields = {
+        "prepare_ns",
+        "rounds_ns",
+        "rounds_total_ns",
+        "host_fiat_shamir_ns",
+        "host_fiat_shamir_total_ns",
+        "row_source_ns",
+        "normalized_prepare_ns",
+        "normalized_member_ns",
+        "finish_ns",
+        "output_claims_ns",
+        "member_ns",
+        "outer_counts",
+        "metal_counts",
+        "resource_observation",
+    }
+    if not isinstance(member, dict) or set(member) != fields:
+        raise ValueError("production Booleanity address member record is incomplete")
+    scalar_names = (
+        "prepare_ns",
+        "rounds_total_ns",
+        "host_fiat_shamir_total_ns",
+        "normalized_prepare_ns",
+        "normalized_member_ns",
+        "finish_ns",
+        "output_claims_ns",
+        "member_ns",
+    )
+    if any(type(member[name]) is not int or member[name] <= 0 for name in scalar_names):
+        raise ValueError("production Booleanity address member timing is invalid")
+    rounds = member["rounds_ns"]
+    host_fiat_shamir = member["host_fiat_shamir_ns"]
+    if (
+        not isinstance(rounds, list)
+        or len(rounds) != 8
+        or any(type(value) is not int or value <= 0 for value in rounds)
+        or member["rounds_total_ns"] != sum(rounds)
+        or not isinstance(host_fiat_shamir, list)
+        or len(host_fiat_shamir) != 8
+        or any(type(value) is not int or value <= 0 for value in host_fiat_shamir)
+        or member["host_fiat_shamir_total_ns"] != sum(host_fiat_shamir)
+        or type(member["row_source_ns"]) is not int
+        or member["row_source_ns"] < 0
+        or member["normalized_prepare_ns"]
+        != member["prepare_ns"] - member["row_source_ns"]
+        or member["member_ns"]
+        != member["prepare_ns"]
+        + member["rounds_total_ns"]
+        + member["host_fiat_shamir_total_ns"]
+        + member["finish_ns"]
+        + member["output_claims_ns"]
+        or member["normalized_member_ns"]
+        != member["member_ns"] - member["row_source_ns"]
+    ):
+        raise ValueError(
+            "production Booleanity address member timing is not reconciled"
+        )
+    if member["outer_counts"] != {
+        "prepare": 1,
+        "prove_round": 8,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }:
+        raise ValueError("production Booleanity address outer schedule is invalid")
+    expected_metal_counts = {
+        "prepare": 0,
+        "sequence_prepare": 0,
+        "allocation_plan": 0,
+        "dispatch": 0,
+        "readback": 0,
+    }
+    if backend == "metal":
+        expected_metal_counts = {name: 1 for name in expected_metal_counts}
+    if member["metal_counts"] != expected_metal_counts:
+        raise ValueError("production Booleanity address Metal schedule is invalid")
+    if (backend == "optimized" and member["row_source_ns"] <= 0) or (
+        backend == "metal" and member["row_source_ns"] != 0
+    ):
+        raise ValueError("production Booleanity address row-source timing is invalid")
+
+    validate_production_booleanity_address_row_lifecycle(lifecycle, backend, log_n)
+    observation = member["resource_observation"]
+    if backend == "optimized":
+        if observation is not None:
+            raise ValueError(
+                "production optimized Booleanity address arm has Metal resources"
+            )
+        return member["normalized_member_ns"]
+
+    observation_fields = {"sequence", "allocation", "dispatch", "readback"}
+    if not isinstance(observation, dict) or set(observation) != observation_fields:
+        raise ValueError(
+            "production Booleanity address Metal resource record is incomplete"
+        )
+    sequence = observation["sequence"]
+    sequence_fields = {
+        "resident_rows_storage_id",
+        "resident_rows",
+        "resident_row_bytes",
+        "row_upload_bytes",
+        "polys",
+        "k",
+        "e_in_elements",
+        "e_out_elements",
+        "requested_inner_log2",
+        "effective_inner_log2",
+        "requested_selectors_per_tile",
+        "effective_selectors_per_tile",
+        "requested_tile_threads",
+        "effective_tile_threads",
+        "requested_finalize_threads",
+        "effective_finalize_threads",
+        "selector_tiles",
+        "production_specialized",
+    }
+    if not isinstance(sequence, dict) or set(sequence) != sequence_fields:
+        raise ValueError(
+            "production Booleanity address sequence record is incomplete"
+        )
+    rows = 1 << log_n
+    e_in = 1 << inner_log2
+    e_out = rows // e_in
+    selector_tiles = (29 + selectors_per_tile - 1) // selectors_per_tile
+    lifecycle_id = lifecycle["stage6a_storage_id"]
+    if (
+        sequence["resident_rows_storage_id"] != lifecycle_id
+        or sequence["resident_rows"] != rows
+        or sequence["resident_row_bytes"] != 40
+        or sequence["row_upload_bytes"] != 0
+        or sequence["polys"] != 29
+        or sequence["k"] != 256
+        or sequence["e_in_elements"] != e_in
+        or sequence["e_out_elements"] != e_out
+        or sequence["requested_inner_log2"] != inner_log2
+        or sequence["effective_inner_log2"] != inner_log2
+        or sequence["requested_selectors_per_tile"] != selectors_per_tile
+        or sequence["effective_selectors_per_tile"] != selectors_per_tile
+        or sequence["requested_tile_threads"] != tile_threads
+        or sequence["effective_tile_threads"] != tile_threads
+        or sequence["requested_finalize_threads"] != finalize_threads
+        or sequence["effective_finalize_threads"] != finalize_threads
+        or sequence["selector_tiles"] != selector_tiles
+        or sequence["production_specialized"] is not (
+            selectors_per_tile in {3, 6}
+        )
+    ):
+        raise ValueError("production Booleanity address sequence is invalid")
+
+    allocation = observation["allocation"]
+    allocation_fields = {
+        "device_buffers",
+        "planned_device_bytes",
+        "current_device_bytes",
+        "recommended_device_bytes",
+    }
+    if not isinstance(allocation, dict) or set(allocation) != allocation_fields:
+        raise ValueError(
+            "production Booleanity address allocation record is incomplete"
+        )
+    planned_bytes = booleanity_address_sequence_storage_bytes(
+        log_n, inner_log2, selectors_per_tile
+    )
+    if (
+        allocation["device_buffers"] != 5
+        or allocation["planned_device_bytes"] != planned_bytes
+        or type(allocation["current_device_bytes"]) is not int
+        or allocation["current_device_bytes"] < rows * 40
+        or type(allocation["recommended_device_bytes"]) is not int
+        or allocation["recommended_device_bytes"] <= 0
+        or allocation["current_device_bytes"] + planned_bytes
+        > allocation["recommended_device_bytes"]
+    ):
+        raise ValueError(
+            "production Booleanity address Metal resource accounting is invalid"
+        )
+
+    dispatch = observation["dispatch"]
+    dispatch_fields = {
+        "command_buffers",
+        "tile_dispatches",
+        "finalize_dispatches",
+        "command_completed",
+        "gpu_active_ns",
+        "resident_rows_storage_id",
+    }
+    if not isinstance(dispatch, dict) or set(dispatch) != dispatch_fields:
+        raise ValueError(
+            "production Booleanity address dispatch record is incomplete"
+        )
+    if (
+        dispatch["command_buffers"] != 1
+        or dispatch["tile_dispatches"] != selector_tiles
+        or dispatch["finalize_dispatches"] != selector_tiles
+        or dispatch["command_completed"] is not True
+        or type(dispatch["gpu_active_ns"]) is not int
+        or not 0 < dispatch["gpu_active_ns"] <= member["prepare_ns"]
+        or dispatch["resident_rows_storage_id"] != lifecycle_id
+    ):
+        raise ValueError("production Booleanity address dispatch is invalid")
+
+    readback = observation["readback"]
+    if readback != {"elements": 29 * 256, "bytes": 29 * 256 * 16, "readbacks": 1}:
+        raise ValueError("production Booleanity address readback is invalid")
+    return member["normalized_member_ns"]
+
+
 def recompute_local_member_decision(
     pair_records: list[dict[str, Any]],
     cpu: list[int],
@@ -3398,6 +4381,245 @@ def validate_production_result(
             raise ValueError(
                 "production InstructionInput decision disagrees with recomputed raw-pair decision"
             )
+    if local_kernel == "BooleanityAddressPhase":
+        booleanity_fingerprint = result.get("fingerprint")
+        if not isinstance(booleanity_fingerprint, dict):
+            raise ValueError("production Booleanity address result has no fingerprint")
+        log_n = booleanity_fingerprint.get("log_n")
+        parameter_names = {
+            "inner_log2": "JOLT_METAL_BOOLEANITY_ADDRESS_INNER_LOG2",
+            "selectors_per_tile": "JOLT_METAL_BOOLEANITY_ADDRESS_SELECTORS_PER_TILE",
+            "tile_threads": "JOLT_METAL_BOOLEANITY_ADDRESS_TILE_THREADS",
+            "finalize_threads": "JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS",
+        }
+        try:
+            geometry = {
+                name: int(expected_params[parameter])
+                for name, parameter in parameter_names.items()
+            }
+        except (KeyError, ValueError) as error:
+            raise ValueError(
+                "accepted Booleanity address parameters are incomplete"
+            ) from error
+        if (
+            type(log_n) is not int
+            or log_n < 1
+            or not 0 <= geometry["inner_log2"] <= min(log_n, 16)
+            or not 1 <= geometry["selectors_per_tile"] <= 6
+            or geometry["tile_threads"] <= 0
+            or geometry["tile_threads"] % 32 != 0
+            or geometry["finalize_threads"] < 256
+            or geometry["finalize_threads"] % 256 != 0
+        ):
+            raise ValueError("production Booleanity address geometry is invalid")
+        decision = metrics.get("booleanity_address_phase_decision")
+        if not isinstance(decision, dict) or decision.get("clears") is not True:
+            raise ValueError(
+                "production Booleanity address result did not clear its fixed local decision"
+            )
+        decision_speedup = decision.get("median_speedup")
+        if not math.isclose(
+            float(decision_speedup)
+            if isinstance(decision_speedup, (int, float))
+            and not isinstance(decision_speedup, bool)
+            else math.nan,
+            float(metric),
+            rel_tol=1e-12,
+        ):
+            raise ValueError(
+                "production Booleanity address decision disagrees with its scalar metric"
+            )
+        if pair_records is None or len(pair_records) != len(local_pairs):
+            raise ValueError(
+                "production Booleanity address result has incomplete raw pair records"
+            )
+        raw_cpu_members = []
+        raw_metal_members = []
+        raw_cpu_services = []
+        raw_metal_services = []
+        for index, (record, local_speedup) in enumerate(zip(pair_records, local_pairs)):
+            expected_order = (
+                ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+            )
+            if not isinstance(record, dict) or record.get("order") != expected_order:
+                raise ValueError("production Booleanity address raw pair order is invalid")
+            arms = record.get("arms", {})
+            try:
+                cpu_record = arms["optimized"]["booleanity_address"]
+                metal_record = arms["metal"]["booleanity_address"]
+                cpu_lifecycle = arms["optimized"][
+                    "booleanity_address_row_lifecycle"
+                ]
+                metal_lifecycle = arms["metal"]["booleanity_address_row_lifecycle"]
+            except (KeyError, TypeError) as error:
+                raise ValueError(
+                    "production Booleanity address raw pair is incomplete"
+                ) from error
+            cpu_member = validate_production_booleanity_address_member(
+                cpu_record,
+                cpu_lifecycle,
+                "optimized",
+                log_n,
+                geometry["inner_log2"],
+                geometry["selectors_per_tile"],
+                geometry["tile_threads"],
+                geometry["finalize_threads"],
+            )
+            metal_member = validate_production_booleanity_address_member(
+                metal_record,
+                metal_lifecycle,
+                "metal",
+                log_n,
+                geometry["inner_log2"],
+                geometry["selectors_per_tile"],
+                geometry["tile_threads"],
+                geometry["finalize_threads"],
+            )
+            rounding_slack_ns = 12
+            if (
+                cpu_record["member_ns"]
+                > arms["optimized"]["piop_ns"] + rounding_slack_ns
+                or metal_record["member_ns"]
+                > arms["metal"]["piop_ns"] + rounding_slack_ns
+            ):
+                raise ValueError(
+                    "production Booleanity address member timing exceeds its PIOP span"
+                )
+            if not math.isclose(
+                float(local_speedup), cpu_member / metal_member, rel_tol=1e-9
+            ):
+                raise ValueError(
+                    "production Booleanity address raw pair disagrees with its speedup"
+                )
+            raw_cpu_members.append(cpu_member)
+            raw_metal_members.append(metal_member)
+            raw_cpu_services.append(cpu_record["member_ns"])
+            raw_metal_services.append(metal_record["member_ns"])
+        for name, raw_samples in (
+            ("cpu_booleanity_address_phase_ms_samples", raw_cpu_members),
+            ("metal_booleanity_address_phase_ms_samples", raw_metal_members),
+        ):
+            reported_samples = metrics.get(name)
+            if (
+                not isinstance(reported_samples, list)
+                or len(reported_samples) != len(raw_samples)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isfinite(reported)
+                    or not math.isclose(
+                        float(reported) * 1e6,
+                        raw,
+                        rel_tol=1e-12,
+                        abs_tol=0.500001,
+                    )
+                    for reported, raw in zip(reported_samples, raw_samples)
+                )
+            ):
+                raise ValueError(
+                    "production Booleanity address sample summary is invalid"
+                )
+        service_speedups = [
+            cpu / metal for cpu, metal in zip(raw_cpu_services, raw_metal_services)
+        ]
+        reported_service_speedups = metrics.get(
+            "paired_booleanity_address_phase_service_speedups"
+        )
+        reported_service_median = metrics.get(
+            "booleanity_address_phase_service_speedup"
+        )
+        if (
+            not isinstance(reported_service_speedups, list)
+            or len(reported_service_speedups) != len(service_speedups)
+            or any(
+                isinstance(reported, bool)
+                or not isinstance(reported, (int, float))
+                or not math.isclose(float(reported), expected, rel_tol=1e-9)
+                for reported, expected in zip(
+                    reported_service_speedups, service_speedups
+                )
+            )
+            or isinstance(reported_service_median, bool)
+            or not isinstance(reported_service_median, (int, float))
+            or not math.isclose(
+                float(reported_service_median),
+                statistics.median(service_speedups),
+                rel_tol=1e-12,
+            )
+        ):
+            raise ValueError(
+                "production Booleanity address service speedup is invalid"
+            )
+        for name, raw_samples in (
+            ("cpu_booleanity_address_phase_service_ms_samples", raw_cpu_services),
+            ("metal_booleanity_address_phase_service_ms_samples", raw_metal_services),
+        ):
+            reported_samples = metrics.get(name)
+            if (
+                not isinstance(reported_samples, list)
+                or len(reported_samples) != len(raw_samples)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isclose(
+                        float(reported) * 1e6,
+                        raw,
+                        rel_tol=1e-12,
+                        abs_tol=0.500001,
+                    )
+                    for reported, raw in zip(reported_samples, raw_samples)
+                )
+            ):
+                raise ValueError(
+                    "production Booleanity address service sample summary is invalid"
+                )
+        minimum_speedup = float(gate["minimum_local_speedup"])
+        recomputed_improvements, recomputed_decision = recompute_local_member_decision(
+            pair_records,
+            raw_cpu_members,
+            raw_metal_members,
+            minimum_speedup,
+            int(gate["minimum_pairs"]),
+        )
+        optimized_first_median = float(
+            recomputed_decision["optimized_first_median_speedup"]
+        )
+        metal_first_median = float(
+            recomputed_decision["metal_first_median_speedup"]
+        )
+        reported_improvements = metrics.get(
+            "paired_booleanity_address_phase_fractional_improvements"
+        )
+        if (
+            not isinstance(reported_improvements, list)
+            or len(reported_improvements) != len(recomputed_improvements)
+            or any(
+                isinstance(reported, bool)
+                or not isinstance(reported, (int, float))
+                or not math.isfinite(reported)
+                or not math.isclose(
+                    float(reported), expected, rel_tol=1e-9, abs_tol=1e-12
+                )
+                for reported, expected in zip(
+                    reported_improvements, recomputed_improvements
+                )
+            )
+        ):
+            raise ValueError(
+                "production Booleanity address fractional improvements disagree with raw pairs"
+            )
+        if recomputed_decision["clears_order_strata"] is not True:
+            raise ValueError(
+                "production Booleanity address order stratum does not clear the local gate"
+            )
+        if recomputed_decision["clears"] is not True:
+            raise ValueError(
+                "production Booleanity address raw pairs do not clear the fixed local decision"
+            )
+        if not decisions_match(decision, recomputed_decision):
+            raise ValueError(
+                "production Booleanity address decision disagrees with recomputed raw-pair decision"
+            )
     piop_speedup = metrics.get("piop_speedup")
     if (
         isinstance(piop_speedup, bool)
@@ -3450,7 +4672,12 @@ def validate_production_result(
                 "optimized_first_median_speedup": optimized_first_median,
                 "metal_first_median_speedup": metal_first_median,
             }
-            if local_kernel in {"BytecodeReadRafCycle", "InstructionInput"}
+            if local_kernel
+            in {
+                "BytecodeReadRafCycle",
+                "InstructionInput",
+                "BooleanityAddressPhase",
+            }
             else {}
         ),
     }
@@ -3578,7 +4805,11 @@ def accepted_parent(config: dict[str, Any], events: list[dict[str, Any]]) -> tup
 def validate_accepted_parent_for_production(
     config: dict[str, Any], metric_value: float
 ) -> None:
-    if config.get("evaluator", {}).get("result_contract") != "instruction_input_v2":
+    result_contract = config.get("evaluator", {}).get("result_contract")
+    if result_contract not in {
+        "instruction_input_v2",
+        "booleanity_address_v1",
+    }:
         return
     minimum = float(
         config["final_validation"]["production_gate"]["minimum_local_speedup"]

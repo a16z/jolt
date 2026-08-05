@@ -227,7 +227,8 @@ where
             });
         }
 
-        let challenge = recorder.absorb_round(&batched_poly, transcript)?;
+        let challenge = tracing::info_span!("sumcheck_host_fiat_shamir")
+            .in_scope(|| recorder.absorb_round(&batched_poly, transcript))?;
         running_claim = batched_poly.evaluate(challenge);
         challenges.push(challenge);
 

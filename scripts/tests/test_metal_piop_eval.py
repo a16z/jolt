@@ -372,6 +372,176 @@ def complete_instruction_input_trace(
     return events
 
 
+def complete_booleanity_address_trace(
+    log_n: int,
+    backend: str,
+    inner_log2: int = 15,
+    selectors_per_tile: int = 6,
+    tile_threads: int = 512,
+    finalize_threads: int = 1024,
+) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    events = [
+        event("jolt_prover::piop", 0.0, 10_000.0),
+        event("InstructionReadRaf::prepare", 90.0, 60.0),
+        event("BooleanityAddressPhase::prepare", 1_000.0, 600.0),
+    ]
+    round_starts = [1_700.0 + 100.0 * index for index in range(8)]
+    for timestamp in round_starts:
+        events.extend(
+            [
+                event("sumcheck_round", timestamp - 5.0, 95.0),
+                event("BooleanityAddressPhase::prove_round", timestamp, 80.0),
+                event("sumcheck_host_fiat_shamir", timestamp + 85.0, 5.0),
+            ]
+        )
+    events.extend(
+        [
+            event("BooleanityAddressPhase::finish_rounds", 2_500.0, 80.0),
+            event("BooleanityAddressPhase::output_claims", 2_600.0, 40.0),
+            event("Booleanity::prepare", 2_700.0, 100.0),
+        ]
+    )
+    if backend == "optimized":
+        events.append(
+            event("OptimizedBooleanityAddress::row_source", 1_050.0, 300.0)
+        )
+    if backend == "metal":
+        rows = 1 << log_n
+        row_bytes = 40
+        polys = 29
+        k = 256
+        e_in = 1 << inner_log2
+        e_out = rows // e_in
+        selector_tiles = (polys + selectors_per_tile - 1) // selectors_per_tile
+        planned_bytes = metal_piop_eval.booleanity_address_sequence_storage_bytes(
+            log_n, inner_log2, selectors_per_tile
+        )
+        events.extend(
+            [
+                event(
+                    "MetalBooleanityRows::stage5_prepare",
+                    100.0,
+                    20.0,
+                    {
+                        "resident_rows_storage_id": "401",
+                        "resident_rows": str(rows),
+                        "resident_row_bytes": str(row_bytes),
+                        "device_registry_id": "17",
+                        "row_allocations": "1",
+                        "row_upload_bytes": str(rows * row_bytes),
+                    },
+                ),
+                event(
+                    "MetalBooleanityRows::stage6a_address_use",
+                    1_002.0,
+                    2.0,
+                    {
+                        "resident_rows_storage_id": "401",
+                        "resident_rows": str(rows),
+                        "resident_row_bytes": str(row_bytes),
+                        "device_registry_id": "17",
+                        "row_allocations": "0",
+                        "row_upload_bytes": "0",
+                    },
+                ),
+                event("MetalBooleanityAddressPhase::prepare", 1_005.0, 580.0),
+                event(
+                    "MetalBooleanityAddressPhase::sequence_prepare",
+                    1_010.0,
+                    190.0,
+                    {
+                        "resident_rows_storage_id": "401",
+                        "resident_rows": str(rows),
+                        "resident_row_bytes": str(row_bytes),
+                        "row_upload_bytes": "0",
+                        "polys": str(polys),
+                        "k": str(k),
+                        "e_in_elements": str(e_in),
+                        "e_out_elements": str(e_out),
+                        "requested_inner_log2": str(inner_log2),
+                        "effective_inner_log2": str(inner_log2),
+                        "requested_selectors_per_tile": str(selectors_per_tile),
+                        "effective_selectors_per_tile": str(selectors_per_tile),
+                        "requested_tile_threads": str(tile_threads),
+                        "effective_tile_threads": str(tile_threads),
+                        "requested_finalize_threads": str(finalize_threads),
+                        "effective_finalize_threads": str(finalize_threads),
+                        "selector_tiles": str(selector_tiles),
+                        "production_specialized": str(
+                            selectors_per_tile in {3, 6}
+                        ).lower(),
+                    },
+                ),
+                event(
+                    "MetalBooleanityAddressPhase::allocation_plan",
+                    1_020.0,
+                    80.0,
+                    {
+                        "device_buffers": "5",
+                        "planned_device_bytes": str(planned_bytes),
+                        "current_device_bytes": str(rows * row_bytes),
+                        "recommended_device_bytes": str(rows * row_bytes + planned_bytes),
+                    },
+                ),
+                event(
+                    "MetalBooleanityAddressPhase::dispatch",
+                    1_210.0,
+                    190.0,
+                    {
+                        "command_buffers": "1",
+                        "tile_dispatches": str(selector_tiles),
+                        "finalize_dispatches": str(selector_tiles),
+                        "command_completed": "true",
+                        "gpu_active_ns": "150000",
+                        "resident_rows_storage_id": "401",
+                    },
+                ),
+                event(
+                    "MetalBooleanityAddressPhase::readback",
+                    1_410.0,
+                    90.0,
+                    {
+                        "elements": str(polys * k),
+                        "bytes": str(polys * k * 16),
+                        "readbacks": "1",
+                    },
+                ),
+                event(
+                    "MetalBooleanityRows::stage6b_cycle_use",
+                    2_710.0,
+                    20.0,
+                    {
+                        "resident_rows_storage_id": "401",
+                        "resident_rows": str(rows),
+                        "resident_row_bytes": str(row_bytes),
+                        "device_registry_id": "17",
+                        "row_allocations": "0",
+                        "row_upload_bytes": "0",
+                    },
+                ),
+            ]
+        )
+    return events
+
+
 class MetalPiopEvalTests(unittest.TestCase):
     def test_worktree_digest_binds_untracked_paths_and_contents(self) -> None:
         first = metal_piop_eval.worktree_state_digest(
@@ -461,6 +631,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 10.0,
                     "cpu_instruction_input_us": 80.0,
                     "metal_instruction_input_us": 16.0,
+                    "cpu_booleanity_address_us": 60.0,
+                    "metal_booleanity_address_us": 10.0,
                 },
                 {
                     "cpu_us": 120.0,
@@ -473,6 +645,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 15.0,
                     "cpu_instruction_input_us": 90.0,
                     "metal_instruction_input_us": 30.0,
+                    "cpu_booleanity_address_us": 70.0,
+                    "metal_booleanity_address_us": 14.0,
                 },
             ]
         )
@@ -486,6 +660,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             [5.0, 3.0],
         )
         self.assertEqual(metrics["instruction_input_kernel_service_speedup"], 4.0)
+        self.assertEqual(metrics["paired_booleanity_address_phase_speedups"], [6.0, 5.0])
+        self.assertEqual(metrics["booleanity_address_phase_speedup"], 5.5)
         self.assertFalse(metrics["bytecode_read_raf_cycle_decision"]["enough_pairs"])
         self.assertEqual(metrics["piop_speedup"], 4.5)
         self.assertEqual(metrics["paired_speedups_with_backend_witness_prepare"], [4.0, 3.0])
@@ -538,6 +714,270 @@ class MetalPiopEvalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly one"):
             metal_piop_eval.validate_instruction_input_stdout(
                 record + "\n" + record, "metal"
+            )
+
+    def test_validates_booleanity_address_runtime_record(self) -> None:
+        record = "BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal trace_cutoff=262144 inner_log2=15 selectors_per_tile=6 tile_threads=512 finalize_threads=1024"
+        self.assertIsNone(
+            metal_piop_eval.validate_booleanity_address_stdout("", "optimized")
+        )
+        observed = metal_piop_eval.validate_booleanity_address_stdout(record, "metal")
+        assert observed is not None
+        self.assertEqual(observed["inner_log2"], 15)
+        self.assertEqual(observed["selectors_per_tile"], 6)
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            metal_piop_eval.validate_booleanity_address_stdout(
+                record + "\n" + record, "metal"
+            )
+
+    def test_requires_pinned_production_rayon_width(self) -> None:
+        record = "PIOP_EXECUTION_CONFIG rayon_threads=16"
+        self.assertEqual(
+            metal_piop_eval.validate_piop_execution_stdout(record),
+            {"rayon_threads": 16},
+        )
+        with self.assertRaisesRegex(ValueError, "Rayon width"):
+            metal_piop_eval.validate_piop_execution_stdout(
+                "PIOP_EXECUTION_CONFIG rayon_threads=15"
+            )
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            metal_piop_eval.validate_piop_execution_stdout("")
+
+    def test_requires_exact_booleanity_address_member_resources_and_lifecycle(
+        self,
+    ) -> None:
+        optimized = metal_piop_eval.booleanity_address_member_breakdown(
+            complete_booleanity_address_trace(26, "optimized"),
+            "optimized",
+            26,
+            15,
+            6,
+            512,
+            1024,
+        )
+        self.assertIsNone(optimized["row_lifecycle"])
+        self.assertTrue(not any(optimized["metal_counts"].values()))
+        self.assertEqual(optimized["components"]["row_source_us"], 300.0)
+        self.assertEqual(optimized["components"]["normalized_prepare_us"], 300.0)
+        self.assertEqual(
+            optimized["components"]["normalized_member_us"],
+            optimized["components"]["member_us"] - 300.0,
+        )
+
+        observed = metal_piop_eval.booleanity_address_member_breakdown(
+            complete_booleanity_address_trace(26, "metal"),
+            "metal",
+            26,
+            15,
+            6,
+            512,
+            1024,
+        )
+        self.assertEqual(observed["outer_counts"]["prove_round"], 8)
+        self.assertEqual(
+            observed["components"]["host_fiat_shamir_us"], [5.0] * 8
+        )
+        self.assertEqual(observed["components"]["host_fiat_shamir_total_us"], 40.0)
+        self.assertEqual(observed["components"]["row_source_us"], 0.0)
+        self.assertEqual(
+            observed["components"]["normalized_member_us"],
+            observed["components"]["member_us"],
+        )
+        self.assertEqual(
+            observed["metal_counts"],
+            {
+                "prepare": 1,
+                "sequence_prepare": 1,
+                "allocation_plan": 1,
+                "dispatch": 1,
+                "readback": 1,
+            },
+        )
+        self.assertEqual(
+            observed["resource_observation"]["allocation"]["planned_device_bytes"],
+            51_007_720,
+        )
+        self.assertEqual(
+            observed["resource_observation"]["readback"],
+            {"elements": 7_424, "bytes": 118_784, "readbacks": 1},
+        )
+        self.assertEqual(
+            observed["row_lifecycle"],
+            {
+                "kind": "metal_booleanity_resident",
+                "rows": 1 << 26,
+                "row_bytes": 40,
+                "device_registry_id": 17,
+                "stage5_storage_id": 401,
+                "stage6a_storage_id": 401,
+                "stage6b_storage_id": 401,
+                "stage5": {
+                    "row_allocations": 1,
+                    "row_upload_bytes": 40 * (1 << 26),
+                },
+                "stage6a": {"row_allocations": 0, "row_upload_bytes": 0},
+                "stage6b": {"row_allocations": 0, "row_upload_bytes": 0},
+            },
+        )
+
+        tuned = metal_piop_eval.booleanity_address_member_breakdown(
+            complete_booleanity_address_trace(25, "metal", 14, 4, 256, 512),
+            "metal",
+            25,
+            14,
+            4,
+            256,
+            512,
+        )
+        self.assertFalse(
+            tuned["resource_observation"]["sequence"]["production_specialized"]
+        )
+        self.assertEqual(
+            tuned["resource_observation"]["allocation"]["planned_device_bytes"],
+            metal_piop_eval.booleanity_address_sequence_storage_bytes(25, 14, 4),
+        )
+
+    def test_rejects_booleanity_address_trace_contract_drift(self) -> None:
+        cases = [
+            (
+                "unknown Metal phase",
+                "unknown Metal phases",
+                lambda events: events.append(
+                    {
+                        "name": "MetalBooleanityAddressPhase::hidden_copy",
+                        "ph": "X",
+                        "pid": 1,
+                        "tid": 0,
+                        "ts": 1_100.0,
+                        "dur": 1.0,
+                    }
+                ),
+            ),
+            (
+                "mismatched lifecycle identity",
+                "row lifecycle",
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["name"] == "MetalBooleanityRows::stage6a_address_use"
+                )["args"].update({"resident_rows_storage_id": "402"}),
+            ),
+            (
+                "hidden stage-6a upload",
+                "row lifecycle",
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["name"] == "MetalBooleanityRows::stage6a_address_use"
+                )["args"].update({"row_upload_bytes": "40"}),
+            ),
+            (
+                "wrong allocation",
+                "buffer accounting",
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["name"]
+                    == "MetalBooleanityAddressPhase::allocation_plan"
+                )["args"].update({"planned_device_bytes": "1"}),
+            ),
+            (
+                "wrong dispatch count",
+                "dispatch accounting",
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["name"] == "MetalBooleanityAddressPhase::dispatch"
+                )["args"].update({"tile_dispatches": "4"}),
+            ),
+            (
+                "incomplete command",
+                "command did not complete",
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["name"] == "MetalBooleanityAddressPhase::dispatch"
+                )["args"].update({"command_completed": "false"}),
+            ),
+            (
+                "wrong readback",
+                "readback accounting",
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["name"] == "MetalBooleanityAddressPhase::readback"
+                )["args"].update({"bytes": "16"}),
+            ),
+            (
+                "dispatch outside prepare",
+                "not contained",
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["name"] == "MetalBooleanityAddressPhase::dispatch"
+                ).update({"ts": 1_590.0}),
+            ),
+        ]
+        for label, error, mutate in cases:
+            with self.subTest(label=label):
+                events = complete_booleanity_address_trace(26, "metal")
+                mutate(events)
+                with self.assertRaisesRegex(ValueError, error):
+                    metal_piop_eval.booleanity_address_member_breakdown(
+                        events, "metal", 26, 15, 6, 512, 1024
+                    )
+
+    def test_rejects_incomplete_booleanity_address_member(self) -> None:
+        missing_row_source = complete_booleanity_address_trace(26, "optimized")
+        missing_row_source.remove(
+            next(
+                event
+                for event in missing_row_source
+                if event["name"] == "OptimizedBooleanityAddress::row_source"
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "row-source span"):
+            metal_piop_eval.booleanity_address_member_breakdown(
+                missing_row_source, "optimized", 26, 15, 6, 512, 1024
+            )
+
+        missing_round = complete_booleanity_address_trace(26, "metal")
+        missing_round.remove(
+            next(
+                event
+                for event in missing_round
+                if event["name"] == "BooleanityAddressPhase::prove_round"
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "member span counts"):
+            metal_piop_eval.booleanity_address_member_breakdown(
+                missing_round, "metal", 26, 15, 6, 512, 1024
+            )
+
+        missing_fiat_shamir = complete_booleanity_address_trace(26, "metal")
+        missing_fiat_shamir.remove(
+            next(
+                event
+                for event in missing_fiat_shamir
+                if event["name"] == "sumcheck_host_fiat_shamir"
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "host Fiat-Shamir"):
+            metal_piop_eval.booleanity_address_member_breakdown(
+                missing_fiat_shamir, "metal", 26, 15, 6, 512, 1024
+            )
+
+        missing_lifecycle = complete_booleanity_address_trace(26, "metal")
+        missing_lifecycle.remove(
+            next(
+                event
+                for event in missing_lifecycle
+                if event["name"] == "MetalBooleanityRows::stage6b_cycle_use"
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "row lifecycle"):
+            metal_piop_eval.booleanity_address_member_breakdown(
+                missing_lifecycle, "metal", 26, 15, 6, 512, 1024
             )
 
     def test_requires_exact_target_bytecode_member_and_metal_spans(self) -> None:
@@ -638,6 +1078,48 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(record["prefetch_submit_ns"], 10_000)
         self.assertEqual(
             record["service_ns"], record["member_ns"] + record["prefetch_submit_ns"]
+        )
+
+        booleanity_address = metal_piop_eval.booleanity_address_member_breakdown(
+            complete_booleanity_address_trace(26, "metal"),
+            "metal",
+            26,
+            15,
+            6,
+            512,
+            1024,
+        )
+        booleanity_record = metal_piop_eval.member_record(booleanity_address)
+        self.assertNotIn("service_ns", booleanity_record)
+        self.assertEqual(booleanity_record["host_fiat_shamir_ns"], [5_000] * 8)
+        self.assertEqual(booleanity_record["host_fiat_shamir_total_ns"], 40_000)
+        self.assertEqual(
+            booleanity_record["member_ns"],
+            booleanity_record["prepare_ns"]
+            + booleanity_record["rounds_total_ns"]
+            + booleanity_record["host_fiat_shamir_total_ns"]
+            + booleanity_record["finish_ns"]
+            + booleanity_record["output_claims_ns"],
+        )
+        self.assertEqual(booleanity_record["row_source_ns"], 0)
+        self.assertEqual(
+            booleanity_record["normalized_member_ns"],
+            booleanity_record["member_ns"],
+        )
+        optimized_booleanity = metal_piop_eval.booleanity_address_member_breakdown(
+            complete_booleanity_address_trace(26, "optimized"),
+            "optimized",
+            26,
+            15,
+            6,
+            512,
+            1024,
+        )
+        optimized_record = metal_piop_eval.member_record(optimized_booleanity)
+        self.assertEqual(optimized_record["row_source_ns"], 300_000)
+        self.assertEqual(
+            optimized_record["normalized_member_ns"],
+            optimized_record["member_ns"] - optimized_record["row_source_ns"],
         )
 
         with self.assertRaisesRegex(ValueError, "unexpectedly contains"):
@@ -971,6 +1453,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_bytecode_us": 200.0,
             "cpu_instruction_input_us": 1_000.0,
             "metal_instruction_input_us": 200.0,
+            "cpu_booleanity_address_us": 1_000.0,
+            "metal_booleanity_address_us": 200.0,
         }
         pairs = [
             {
@@ -989,6 +1473,11 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(decision["optimized_first_median_speedup"], 5.0)
         self.assertEqual(decision["metal_first_median_speedup"], 5.0)
         self.assertTrue(decision["clears_order_strata"])
+        booleanity_decision = metal_piop_eval.summarize_pairs(pairs)[
+            "booleanity_address_phase_decision"
+        ]
+        self.assertTrue(booleanity_decision["clears"])
+        self.assertEqual(booleanity_decision["median_speedup"], 5.0)
 
     def test_bytecode_gate_rejects_a_slow_order_stratum(self) -> None:
         pairs = []
@@ -1009,6 +1498,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 10_000.0 if metal_first else 200.0,
                     "cpu_instruction_input_us": 1_000.0,
                     "metal_instruction_input_us": 200.0,
+                    "cpu_booleanity_address_us": 1_000.0,
+                    "metal_booleanity_address_us": 200.0,
                 }
             )
         decision = metal_piop_eval.summarize_pairs(pairs)[
@@ -1036,6 +1527,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "metal_bytecode_us": 200.0,
                 "cpu_instruction_input_us": 800.0,
                 "metal_instruction_input_us": 160.0,
+                "cpu_booleanity_address_us": 1_000.0,
+                "metal_booleanity_address_us": 200.0,
             }
             for index in range(5)
         ]
@@ -1044,6 +1537,40 @@ class MetalPiopEvalTests(unittest.TestCase):
         ]
         self.assertTrue(decision["clears"])
         self.assertEqual(decision["median_speedup"], 5.0)
+
+    def test_booleanity_address_gate_requires_both_order_strata(self) -> None:
+        pairs = []
+        for index in range(5):
+            metal_first = index % 2 == 1
+            pairs.append(
+                {
+                    "order": ["metal", "optimized"]
+                    if metal_first
+                    else ["optimized", "metal"],
+                    "cpu_us": 1_000.0,
+                    "metal_us": 500.0,
+                    "cpu_prepare_us": 1.0,
+                    "metal_prepare_us": 1.0,
+                    "cpu_instruction_ra_us": 700.0,
+                    "metal_instruction_ra_us": 100.0,
+                    "cpu_bytecode_us": 1_000.0,
+                    "metal_bytecode_us": 200.0,
+                    "cpu_instruction_input_us": 800.0,
+                    "metal_instruction_input_us": 160.0,
+                    "cpu_booleanity_address_us": 1_000.0,
+                    "metal_booleanity_address_us": 10_000.0
+                    if metal_first
+                    else 200.0,
+                }
+            )
+        decision = metal_piop_eval.summarize_pairs(pairs)[
+            "booleanity_address_phase_decision"
+        ]
+        self.assertEqual(decision["median_speedup"], 5.0)
+        self.assertEqual(decision["optimized_first_median_speedup"], 5.0)
+        self.assertEqual(decision["metal_first_median_speedup"], 0.1)
+        self.assertFalse(decision["clears_order_strata"])
+        self.assertFalse(decision["clears"])
 
     def test_production_run_class_is_exact(self) -> None:
         metal_piop_eval.validate_run_class("diagnostic", "btreemap", 25, 1)

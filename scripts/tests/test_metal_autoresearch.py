@@ -178,6 +178,297 @@ class MetalAutoresearchTests(unittest.TestCase):
         }
         return config, params, output
 
+    def booleanity_address_local_contract_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        config = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/booleanity_address.template.json"
+        )
+        params = {
+            name: str(value) for name, value in config["baseline_params"].items()
+        }
+        log_n = int(config["evaluator"]["env"]["JOLT_METAL_EVAL_LOG_N"])
+        repeats = int(config["evaluator"]["env"]["JOLT_METAL_EVAL_REPEATS"])
+        seed = int(config["evaluator"]["env"]["JOLT_METAL_EVAL_SEED"])
+        cpu_threads = int(config["evaluator"]["env"]["RAYON_NUM_THREADS"])
+        inner_log2 = int(params["JOLT_METAL_BOOLEANITY_ADDRESS_INNER_LOG2"])
+        selectors_per_tile = int(
+            params["JOLT_METAL_BOOLEANITY_ADDRESS_SELECTORS_PER_TILE"]
+        )
+        tile_threads = int(
+            params["JOLT_METAL_BOOLEANITY_ADDRESS_TILE_THREADS"]
+        )
+        finalize_threads = int(
+            params["JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS"]
+        )
+        trace_cutoff_log2 = int(
+            params["JOLT_METAL_BOOLEANITY_ADDRESS_TRACE_CUTOFF_LOG2"]
+        )
+        rows = 1 << log_n
+        e_in = 1 << inner_log2
+        e_out = rows // e_in
+        selector_tiles = (29 + selectors_per_tile - 1) // selectors_per_tile
+        cpu_samples = [500 + 100 * index for index in range(repeats)]
+        metal_samples = [100 + 20 * index for index in range(repeats)]
+        cpu_prepare = [200] * repeats
+        cpu_host = [100] * repeats
+        cpu_unattributed = [
+            total - prepare - host
+            for total, prepare, host in zip(cpu_samples, cpu_prepare, cpu_host)
+        ]
+        metal_prepare = [10] * repeats
+        metal_dispatch = [40 + 10 * index for index in range(repeats)]
+        metal_gpu = [30 + 10 * index for index in range(repeats)]
+        metal_readback = [5] * repeats
+        metal_host = [10] * repeats
+        metal_unattributed = [
+            total - prepare - dispatch - readback - host
+            for total, prepare, dispatch, readback, host in zip(
+                metal_samples,
+                metal_prepare,
+                metal_dispatch,
+                metal_readback,
+                metal_host,
+            )
+        ]
+        paired = [cpu / metal for cpu, metal in zip(cpu_samples, metal_samples)]
+        speedup = statistics.median(paired)
+        speedup_mad = statistics.median(abs(value - speedup) for value in paired)
+        selector_bytes = 29 * 8
+        e_in_bytes = e_in * 16
+        e_out_bytes = e_out * 16
+        partial_bytes = e_out * selectors_per_tile * 256 * 16
+        output_bytes = 29 * 256 * 16
+        address_bytes = (
+            selector_bytes
+            + e_in_bytes
+            + e_out_bytes
+            + partial_bytes
+            + output_bytes
+        )
+        orders = [
+            ["optimized", "metal"]
+            if index % 2 == 0
+            else ["metal", "optimized"]
+            for index in range(repeats)
+        ]
+        guard_names = {
+            "reference_mass_lengths_exact",
+            "timed_mass_lengths_exact",
+            "expected_mass_count_exact",
+            "exact_masses",
+            "exact_four_sample_q_evals",
+            "exact_round_polynomials",
+            "exact_host_fiat_shamir_challenges",
+            "exact_final_claim",
+            "exact_output_claims",
+            "exact_final_relations",
+            "exact_transcript_state",
+            "timed_samples_match_reference",
+            "correctness_exact",
+            "sample_cardinality_exact",
+            "alternating_orders_exact",
+            "cpu_component_timings_reconciled",
+            "metal_component_timings_reconciled",
+            "warmup_cpu_component_timings_reconciled",
+            "warmup_metal_component_timings_reconciled",
+            "gpu_active_nested_in_dispatch_wall",
+            "member_durations_positive",
+            "speedups_finite_positive",
+            "resident_rows_reused",
+            "resident_rows_stable_for_cycle_handoff",
+            "metal_shape_stable_across_samples",
+            "row_count_exact",
+            "polynomial_count_exact",
+            "production_selector_schedule_exact",
+            "selector_tile_width_exact",
+            "selector_tile_count_exact",
+            "e_in_size_exact",
+            "e_out_size_exact",
+            "output_size_exact",
+            "partial_size_exact",
+            "production_specialization_exact",
+            "requested_effective_tile_threads_exact",
+            "requested_effective_finalize_threads_exact",
+            "tile_pipeline_simd_width_exact",
+            "finalize_pipeline_simd_width_exact",
+            "tile_pipeline_thread_limit_admits_dispatch",
+            "finalize_pipeline_thread_limit_admits_dispatch",
+            "tile_threadgroup_memory_admitted",
+            "finalize_threadgroup_memory_admitted",
+            "static_device_buffers_stable",
+            "static_device_buffers_distinct",
+            "buffer_lengths_admitted",
+            "working_set_admitted",
+            "solinas_offset_exact",
+            "field_and_row_sizes_exact",
+            "one_execute_timed_call_per_member",
+            "single_command_completion_contract",
+            "single_result_readback_contract",
+            "no_per_row_contribution_buffer_contract",
+            "host_fiat_shamir",
+            "production_trace_cutoff_admits_target",
+            "all_exact",
+        }
+        output = {
+            "schema": "booleanity_address_v1",
+            "schema_version": 1,
+            "kernel": "booleanity_address",
+            "workload": {
+                "log_n": log_n,
+                "rows": rows,
+                "selectors": 29,
+                "k": 256,
+                "address_rounds": 8,
+                "row_bytes": 40,
+                "seed": seed,
+                "repeats": repeats,
+                "orders": orders,
+                "resident_rows_prepared_once_outside_members": True,
+                "cpu_row_construction_outside_members": True,
+                "excluded_warmup_pairs": 1,
+                "cpu_member_contract": "parallel tensor-equality pushforward mirror plus host address rounds",
+                "metal_member_contract": "weight preparation and upload plus one command encode/submit/wait plus one result readback plus host address rounds",
+                "gpu_active_accounting": "nested in metal dispatch wall; never added to member components",
+            },
+            "fingerprint": {
+                "trace_cutoff_log2": trace_cutoff_log2,
+                "trace_cutoff_elements": 1 << trace_cutoff_log2,
+                "inner_log2": inner_log2,
+                "selectors_per_tile": selectors_per_tile,
+                "tile_threads": tile_threads,
+                "finalize_threads": finalize_threads,
+                "effective_selector_tiles": selector_tiles,
+                "effective_tile_threads": tile_threads,
+                "effective_finalize_threads": finalize_threads,
+                "production_specialized": selectors_per_tile in {3, 6},
+                "accumulator_words": 5,
+                "resident_row_identity": 101,
+                "cpu_threads": cpu_threads,
+                "cpu_control": "standalone parallel TensorEqTable/AkitaAccumulator mirror",
+                "host_round_oracle": "shared deterministic evaluator implementation",
+            },
+            "metrics": {
+                "hybrid_speedup": speedup,
+                "ratio_of_member_medians": statistics.median(cpu_samples)
+                / statistics.median(metal_samples),
+                "paired_speedups": paired,
+                "paired_speedup_mad": speedup_mad,
+                "cpu_member_ns_samples": cpu_samples,
+                "metal_member_ns_samples": metal_samples,
+                "minimum_promotion_speedup": 4.0,
+            },
+            "timings": {
+                "cpu_member_median_ns": statistics.median(cpu_samples),
+                "cpu_prepare_median_ns": statistics.median(cpu_prepare),
+                "cpu_host_rounds_median_ns": statistics.median(cpu_host),
+                "cpu_unattributed_median_ns": statistics.median(cpu_unattributed),
+                "metal_member_median_ns": statistics.median(metal_samples),
+                "metal_prepare_median_ns": statistics.median(metal_prepare),
+                "metal_dispatch_wall_median_ns": statistics.median(metal_dispatch),
+                "metal_gpu_active_median_ns": statistics.median(metal_gpu),
+                "metal_readback_median_ns": statistics.median(metal_readback),
+                "metal_host_rounds_median_ns": statistics.median(metal_host),
+                "metal_unattributed_median_ns": statistics.median(
+                    metal_unattributed
+                ),
+                "cpu_prepare_ns_samples": cpu_prepare,
+                "cpu_host_rounds_ns_samples": cpu_host,
+                "cpu_unattributed_ns_samples": cpu_unattributed,
+                "metal_prepare_ns_samples": metal_prepare,
+                "metal_dispatch_wall_ns_samples": metal_dispatch,
+                "metal_gpu_active_ns_samples": metal_gpu,
+                "metal_readback_ns_samples": metal_readback,
+                "metal_host_rounds_ns_samples": metal_host,
+                "metal_unattributed_ns_samples": metal_unattributed,
+                "exclusive_component_accounting": [
+                    "prepare",
+                    "dispatch_wall",
+                    "readback",
+                    "host_rounds",
+                    "unattributed",
+                ],
+                "excluded_warmup": {
+                    "cpu_member_ns": 500,
+                    "cpu_prepare_ns": 200,
+                    "cpu_host_rounds_ns": 100,
+                    "cpu_unattributed_ns": 200,
+                    "metal_member_ns": 100,
+                    "metal_prepare_ns": 10,
+                    "metal_dispatch_wall_ns": 40,
+                    "metal_gpu_active_ns": 30,
+                    "metal_readback_ns": 5,
+                    "metal_host_rounds_ns": 10,
+                    "metal_unattributed_ns": 35,
+                },
+            },
+            "guards": {name: True for name in guard_names},
+            "all_exact": True,
+            "resources": {
+                "device": {
+                    "name": "fixture",
+                    "max_buffer_length": 1 << 40,
+                    "max_threadgroup_memory_length": 32_768,
+                    "recommended_max_working_set_size": rows * 40
+                    + address_bytes
+                    + 1,
+                    "current_allocated_size": rows * 40,
+                    "offset": 0xFFFF_A7F7,
+                },
+                "device_allocated_before_reference_bytes": rows * 40,
+                "resident_row_bytes": rows * 40,
+                "selector_bytes": selector_bytes,
+                "e_in_bytes": e_in_bytes,
+                "e_out_bytes": e_out_bytes,
+                "partial_owned_bytes": partial_bytes,
+                "partial_expected_bytes": partial_bytes,
+                "address_owned_device_bytes": address_bytes,
+                "result_readback_bytes": output_bytes,
+                "static_device_buffer_count": 5,
+                "static_device_buffer_identities": [201, 202, 203, 204, 205],
+                "gpu_active_total_ns": sum(metal_gpu),
+                "gpu_seconds": (30 + sum(metal_gpu)) / 1e9,
+            },
+            "pipelines": {
+                "tile": {
+                    "thread_execution_width": 32,
+                    "max_total_threads_per_threadgroup": 1024,
+                    "static_threadgroup_bytes": 0,
+                    "dynamic_threadgroup_bytes": selectors_per_tile * 256 * 5 * 4,
+                    "total_threadgroup_bytes": selectors_per_tile * 256 * 5 * 4,
+                    "effective_threads_per_threadgroup": tile_threads,
+                },
+                "finalize": {
+                    "thread_execution_width": 32,
+                    "max_total_threads_per_threadgroup": 1024,
+                    "static_threadgroup_bytes": 0,
+                    "dynamic_threadgroup_bytes": finalize_threads * 16,
+                    "total_threadgroup_bytes": finalize_threads * 16,
+                    "effective_threads_per_threadgroup": finalize_threads,
+                },
+            },
+            "promotion": {
+                "minimum_log_n": 26,
+                "minimum_pairs": 5,
+                "minimum_speedup": 4.0,
+                "scale_eligible": True,
+                "pair_count_eligible": True,
+                "speedup_eligible": True,
+                "local_eligible": True,
+                "production_piop_holdout_required": True,
+            },
+            "oracle_limits": {
+                "cpu_denominator_is_production_kernel": False,
+                "cpu_denominator_scope": "standalone optimized pushforward mirror plus the same host-round routine",
+                "host_rounds_are_independently_implemented": False,
+                "mass_oracle_independent_of_metal_shader": True,
+                "command_and_readback_counts_are_runtime_counters": False,
+                "requires_production_piop_holdout": True,
+            },
+        }
+        return config, params, output
+
     def instruction_input_local_contract_fixture(
         self,
     ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
@@ -895,6 +1186,305 @@ class MetalAutoresearchTests(unittest.TestCase):
         }
         return config, params, result
 
+    def production_booleanity_address_member_fixture(
+        self,
+        backend: str,
+        member_ns: int,
+        params: dict[str, str],
+        log_n: int = 26,
+    ) -> tuple[dict[str, object], object]:
+        prepare_ns = 100 if backend == "optimized" else 50
+        row_source_ns = 40 if backend == "optimized" else 0
+        service_member_ns = member_ns + row_source_ns
+        rounds_ns = [1] * 8
+        host_fiat_shamir_ns = [1] * 8
+        finish_ns = 1
+        output_claims_ns = (
+            service_member_ns
+            - prepare_ns
+            - sum(rounds_ns)
+            - sum(host_fiat_shamir_ns)
+            - finish_ns
+        )
+        self.assertGreater(output_claims_ns, 0)
+        metal_counts = {
+            "prepare": 0,
+            "sequence_prepare": 0,
+            "allocation_plan": 0,
+            "dispatch": 0,
+            "readback": 0,
+        }
+        resource = None
+        lifecycle = None
+        if backend == "metal":
+            metal_counts = {name: 1 for name in metal_counts}
+            rows = 1 << log_n
+            inner_log2 = int(
+                params["JOLT_METAL_BOOLEANITY_ADDRESS_INNER_LOG2"]
+            )
+            selectors_per_tile = int(
+                params["JOLT_METAL_BOOLEANITY_ADDRESS_SELECTORS_PER_TILE"]
+            )
+            tile_threads = int(
+                params["JOLT_METAL_BOOLEANITY_ADDRESS_TILE_THREADS"]
+            )
+            finalize_threads = int(
+                params["JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS"]
+            )
+            e_in = 1 << inner_log2
+            e_out = rows // e_in
+            selector_tiles = (29 + selectors_per_tile - 1) // selectors_per_tile
+            storage_id = 401
+            current_bytes = rows * 40
+            planned_bytes = (
+                metal_autoresearch.booleanity_address_sequence_storage_bytes(
+                    log_n, inner_log2, selectors_per_tile
+                )
+            )
+            resource = {
+                "sequence": {
+                    "resident_rows_storage_id": storage_id,
+                    "resident_rows": rows,
+                    "resident_row_bytes": 40,
+                    "row_upload_bytes": 0,
+                    "polys": 29,
+                    "k": 256,
+                    "e_in_elements": e_in,
+                    "e_out_elements": e_out,
+                    "requested_inner_log2": inner_log2,
+                    "effective_inner_log2": inner_log2,
+                    "requested_selectors_per_tile": selectors_per_tile,
+                    "effective_selectors_per_tile": selectors_per_tile,
+                    "requested_tile_threads": tile_threads,
+                    "effective_tile_threads": tile_threads,
+                    "requested_finalize_threads": finalize_threads,
+                    "effective_finalize_threads": finalize_threads,
+                    "selector_tiles": selector_tiles,
+                    "production_specialized": selectors_per_tile in {3, 6},
+                },
+                "allocation": {
+                    "device_buffers": 5,
+                    "planned_device_bytes": planned_bytes,
+                    "current_device_bytes": current_bytes,
+                    "recommended_device_bytes": current_bytes + planned_bytes + 1,
+                },
+                "dispatch": {
+                    "command_buffers": 1,
+                    "tile_dispatches": selector_tiles,
+                    "finalize_dispatches": selector_tiles,
+                    "command_completed": True,
+                    "gpu_active_ns": 40,
+                    "resident_rows_storage_id": storage_id,
+                },
+                "readback": {
+                    "elements": 29 * 256,
+                    "bytes": 29 * 256 * 16,
+                    "readbacks": 1,
+                },
+            }
+            lifecycle = {
+                "kind": "metal_booleanity_resident",
+                "rows": rows,
+                "row_bytes": 40,
+                "device_registry_id": 7,
+                "stage5_storage_id": storage_id,
+                "stage6a_storage_id": storage_id,
+                "stage6b_storage_id": storage_id,
+                "stage5": {
+                    "row_allocations": 1,
+                    "row_upload_bytes": rows * 40,
+                },
+                "stage6a": {"row_allocations": 0, "row_upload_bytes": 0},
+                "stage6b": {"row_allocations": 0, "row_upload_bytes": 0},
+            }
+        member = {
+            "prepare_ns": prepare_ns,
+            "rounds_ns": rounds_ns,
+            "rounds_total_ns": sum(rounds_ns),
+            "host_fiat_shamir_ns": host_fiat_shamir_ns,
+            "host_fiat_shamir_total_ns": sum(host_fiat_shamir_ns),
+            "row_source_ns": row_source_ns,
+            "normalized_prepare_ns": prepare_ns - row_source_ns,
+            "normalized_member_ns": member_ns,
+            "finish_ns": finish_ns,
+            "output_claims_ns": output_claims_ns,
+            "member_ns": service_member_ns,
+            "outer_counts": {
+                "prepare": 1,
+                "prove_round": 8,
+                "finish_rounds": 1,
+                "output_claims": 1,
+            },
+            "metal_counts": metal_counts,
+            "resource_observation": resource,
+        }
+        return member, lifecycle
+
+    def production_booleanity_address_result_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        config = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/booleanity_address.template.json"
+        )
+        params = {
+            name: str(value) for name, value in config["baseline_params"].items()
+        }
+        gate = config["final_validation"]["production_gate"]
+        pair_count = int(gate["minimum_pairs"])
+        cpu_piop_ns = 1_000
+        metal_piop_ns = 200
+        cpu_prepare_ns = 10
+        metal_prepare_ns = 20
+        cpu_member_ns = 500
+        metal_member_ns = 100
+        local_speedup = cpu_member_ns / metal_member_ns
+        orders = [
+            ["optimized", "metal"]
+            if index % 2 == 0
+            else ["metal", "optimized"]
+            for index in range(pair_count)
+        ]
+        pair_records = []
+        for index, order in enumerate(orders):
+            cpu_member, cpu_lifecycle = (
+                self.production_booleanity_address_member_fixture(
+                    "optimized", cpu_member_ns, params
+                )
+            )
+            metal_member, metal_lifecycle = (
+                self.production_booleanity_address_member_fixture(
+                    "metal", metal_member_ns, params
+                )
+            )
+            pair_records.append(
+                {
+                    "index": index + 1,
+                    "order": order,
+                    "arms": {
+                        "optimized": {
+                            "piop_ns": cpu_piop_ns,
+                            "backend_witness_prepare_ns": cpu_prepare_ns,
+                            "booleanity_address": cpu_member,
+                            "booleanity_address_row_lifecycle": cpu_lifecycle,
+                        },
+                        "metal": {
+                            "piop_ns": metal_piop_ns,
+                            "backend_witness_prepare_ns": metal_prepare_ns,
+                            "booleanity_address": metal_member,
+                            "booleanity_address_row_lifecycle": metal_lifecycle,
+                        },
+                    },
+                }
+            )
+        _, decision = metal_autoresearch.recompute_local_member_decision(
+            pair_records,
+            [cpu_member_ns] * pair_count,
+            [metal_member_ns] * pair_count,
+            float(gate["minimum_local_speedup"]),
+            pair_count,
+        )
+        result = {
+            "schema_version": 7,
+            "kernel": "akita_piop",
+            "local_kernel": "BooleanityAddressPhase",
+            "local_metric": {
+                "metric": "booleanity_address_phase_speedup",
+                "paired_metric": "paired_booleanity_address_phase_speedups",
+            },
+            "run_class": {"mode": "production", "acceptance_eligible": True},
+            "guards": {name: True for name in gate["required_guards"]},
+            "metrics": {
+                "booleanity_address_phase_speedup": local_speedup,
+                "booleanity_address_phase_service_speedup": (
+                    cpu_member_ns + 40
+                )
+                / metal_member_ns,
+                "piop_speedup": cpu_piop_ns / metal_piop_ns,
+                "piop_plus_backend_witness_prepare_speedup": (
+                    cpu_piop_ns + cpu_prepare_ns
+                )
+                / (metal_piop_ns + metal_prepare_ns),
+                "cpu_piop_ms": cpu_piop_ns / 1e6,
+                "metal_piop_ms": metal_piop_ns / 1e6,
+                "cpu_backend_witness_prepare_ms": cpu_prepare_ns / 1e6,
+                "metal_backend_witness_prepare_ms": metal_prepare_ns / 1e6,
+                "paired_speedups": [cpu_piop_ns / metal_piop_ns] * pair_count,
+                "paired_speedups_with_backend_witness_prepare": [
+                    (cpu_piop_ns + cpu_prepare_ns)
+                    / (metal_piop_ns + metal_prepare_ns)
+                ]
+                * pair_count,
+                "paired_booleanity_address_phase_speedups": [local_speedup]
+                * pair_count,
+                "paired_booleanity_address_phase_service_speedups": [
+                    (cpu_member_ns + 40) / metal_member_ns
+                ]
+                * pair_count,
+                "paired_booleanity_address_phase_fractional_improvements": [
+                    1.0 - metal_member_ns / cpu_member_ns
+                ]
+                * pair_count,
+                "cpu_piop_ms_samples": [cpu_piop_ns / 1e6] * pair_count,
+                "metal_piop_ms_samples": [metal_piop_ns / 1e6] * pair_count,
+                "cpu_backend_witness_prepare_ms_samples": [
+                    cpu_prepare_ns / 1e6
+                ]
+                * pair_count,
+                "metal_backend_witness_prepare_ms_samples": [
+                    metal_prepare_ns / 1e6
+                ]
+                * pair_count,
+                "cpu_booleanity_address_phase_ms_samples": [
+                    cpu_member_ns / 1e6
+                ]
+                * pair_count,
+                "metal_booleanity_address_phase_ms_samples": [
+                    metal_member_ns / 1e6
+                ]
+                * pair_count,
+                "cpu_booleanity_address_phase_service_ms_samples": [
+                    (cpu_member_ns + 40) / 1e6
+                ]
+                * pair_count,
+                "metal_booleanity_address_phase_service_ms_samples": [
+                    metal_member_ns / 1e6
+                ]
+                * pair_count,
+                "booleanity_address_phase_decision": decision,
+            },
+            "pairs": pair_records,
+            "resources": {
+                "metal_piop_seconds": pair_count * metal_piop_ns / 1e9
+            },
+            "fingerprint": {
+                "git_revision": "abc",
+                "worktree_dirty": False,
+                "local_kernel": "BooleanityAddressPhase",
+                "log_n": 26,
+                "cpu_threads": int(config["evaluator"]["env"]["RAYON_NUM_THREADS"]),
+                "orders": orders,
+                "span": "jolt_prover::piop",
+                "workload": "fibonacci",
+                "booleanity_address_metal_inner_log2": int(
+                    params["JOLT_METAL_BOOLEANITY_ADDRESS_INNER_LOG2"]
+                ),
+                "booleanity_address_metal_selectors_per_tile": int(
+                    params["JOLT_METAL_BOOLEANITY_ADDRESS_SELECTORS_PER_TILE"]
+                ),
+                "booleanity_address_metal_tile_threads": int(
+                    params["JOLT_METAL_BOOLEANITY_ADDRESS_TILE_THREADS"]
+                ),
+                "booleanity_address_metal_finalize_threads": int(
+                    params["JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS"]
+                ),
+                "booleanity_address_metal_trace_cutoff_log2": int(
+                    params["JOLT_METAL_BOOLEANITY_ADDRESS_TRACE_CUTOFF_LOG2"]
+                ),
+            },
+        }
+        return config, params, result
+
     def test_schema_five_parser_requires_one_result_record(self) -> None:
         record = '{"schema_version": 5, "kernel": "akita_piop"}'
         self.assertEqual(
@@ -1101,6 +1691,124 @@ class MetalAutoresearchTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "result contract"):
             metal_autoresearch.validate_template(template)
+
+    def test_booleanity_address_local_result_accepts_closed_contract(self) -> None:
+        config, params, output = self.booleanity_address_local_contract_fixture()
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+        passed, reason = metal_autoresearch.guards_pass(config, output)
+        self.assertTrue(passed, reason)
+
+    def test_booleanity_address_local_result_recomputes_raw_evidence(self) -> None:
+        config, params, output = self.booleanity_address_local_contract_fixture()
+        mutations = (
+            (
+                "paired speedup",
+                lambda value: value["metrics"]["paired_speedups"].__setitem__(
+                    0, 4.0
+                ),
+                "paired speedups",
+            ),
+            (
+                "component overlap",
+                lambda value: value["timings"][
+                    "metal_dispatch_wall_ns_samples"
+                ].__setitem__(0, 41),
+                "not reconciled",
+            ),
+            (
+                "GPU outside wall",
+                lambda value: value["timings"][
+                    "metal_gpu_active_ns_samples"
+                ].__setitem__(0, 41),
+                "not nested",
+            ),
+            (
+                "partial bytes",
+                lambda value: value["resources"].__setitem__(
+                    "partial_owned_bytes", 1
+                ),
+                "resource geometry",
+            ),
+            (
+                "threadgroup bytes",
+                lambda value: value["pipelines"]["tile"].__setitem__(
+                    "total_threadgroup_bytes", 1
+                ),
+                "tile pipeline",
+            ),
+            (
+                "fingerprint parameter",
+                lambda value: value["fingerprint"].__setitem__(
+                    "selectors_per_tile", 5
+                ),
+                "fingerprint diverged",
+            ),
+            (
+                "extra schema field",
+                lambda value: value.__setitem__("unsupported", True),
+                "contract is incomplete",
+            ),
+        )
+        for name, mutate, message in mutations:
+            with self.subTest(name=name):
+                tampered = copy.deepcopy(output)
+                mutate(tampered)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_local_result_contract(
+                        config, tampered, params
+                    )
+
+    def test_booleanity_address_local_result_binds_all_five_parameters(self) -> None:
+        config, params, output = self.booleanity_address_local_contract_fixture()
+        for parameter in (
+            "JOLT_METAL_BOOLEANITY_ADDRESS_INNER_LOG2",
+            "JOLT_METAL_BOOLEANITY_ADDRESS_SELECTORS_PER_TILE",
+            "JOLT_METAL_BOOLEANITY_ADDRESS_TILE_THREADS",
+            "JOLT_METAL_BOOLEANITY_ADDRESS_FINALIZE_THREADS",
+            "JOLT_METAL_BOOLEANITY_ADDRESS_TRACE_CUTOFF_LOG2",
+        ):
+            with self.subTest(parameter=parameter):
+                tampered_params = dict(params)
+                tampered_params[parameter] = str(int(tampered_params[parameter]) + 1)
+                with self.assertRaisesRegex(ValueError, "fingerprint|geometry"):
+                    metal_autoresearch.validate_local_result_contract(
+                        config, output, tampered_params
+                    )
+
+    def test_booleanity_address_exact_sub_floor_result_remains_searchable(self) -> None:
+        config, params, output = self.booleanity_address_local_contract_fixture()
+        metal_samples = output["metrics"]["metal_member_ns_samples"]
+        cpu_samples = [3 * value for value in metal_samples]
+        cpu_prepare = output["timings"]["cpu_prepare_ns_samples"]
+        cpu_host = output["timings"]["cpu_host_rounds_ns_samples"]
+        cpu_unattributed = [
+            total - prepare - host
+            for total, prepare, host in zip(cpu_samples, cpu_prepare, cpu_host)
+        ]
+        output["metrics"].update(
+            {
+                "hybrid_speedup": 3.0,
+                "ratio_of_member_medians": 3.0,
+                "paired_speedups": [3.0] * len(metal_samples),
+                "paired_speedup_mad": 0.0,
+                "cpu_member_ns_samples": cpu_samples,
+            }
+        )
+        output["timings"].update(
+            {
+                "cpu_member_median_ns": statistics.median(cpu_samples),
+                "cpu_unattributed_median_ns": statistics.median(cpu_unattributed),
+                "cpu_unattributed_ns_samples": cpu_unattributed,
+            }
+        )
+        output["promotion"].update(
+            {"speedup_eligible": False, "local_eligible": False}
+        )
+
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+        passed, reason = metal_autoresearch.guards_pass(config, output)
+        self.assertTrue(passed, reason)
+        self.assertTrue(output["all_exact"])
 
     def test_instruction_input_local_result_accepts_closed_contract(self) -> None:
         config, params, output = self.instruction_input_local_contract_fixture()
@@ -2776,6 +3484,12 @@ class MetalAutoresearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
             metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)
 
+    def test_booleanity_production_requires_equal_input_local_bar(self) -> None:
+        config, _, _ = self.production_booleanity_address_result_fixture()
+        metal_autoresearch.validate_accepted_parent_for_production(config, 4.0)
+        with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
+            metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)
+
     def test_production_instruction_input_gate_requires_precise_guard(self) -> None:
         config, params, result = self.production_instruction_input_result_fixture()
         del result["guards"][
@@ -2857,6 +3571,111 @@ class MetalAutoresearchTests(unittest.TestCase):
             metal_autoresearch.validate_production_result(
                 config, result, "abc", params, True
             )
+
+    def test_production_booleanity_address_gate_recomputes_raw_members(self) -> None:
+        config, params, result = self.production_booleanity_address_result_fixture()
+        evidence = metal_autoresearch.validate_production_result(
+            config, result, "abc", params, True
+        )
+        self.assertEqual(evidence["metric"], "booleanity_address_phase_speedup")
+        self.assertEqual(evidence["metric_value"], 5.0)
+        self.assertEqual(evidence["optimized_first_median_speedup"], 5.0)
+        self.assertEqual(evidence["metal_first_median_speedup"], 5.0)
+
+        mutations = (
+            (
+                "readback bytes",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "booleanity_address"
+                ]["resource_observation"]["readback"].__setitem__("bytes", 1),
+                "readback",
+            ),
+            (
+                "second command buffer",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "booleanity_address"
+                ]["resource_observation"]["dispatch"].__setitem__(
+                    "command_buffers", 2
+                ),
+                "dispatch",
+            ),
+            (
+                "row allocation in stage6a",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "booleanity_address_row_lifecycle"
+                ]["stage6a"].__setitem__("row_allocations", 1),
+                "row lifecycle",
+            ),
+            (
+                "unbound selector width",
+                lambda value: value["pairs"][0]["arms"]["metal"][
+                    "booleanity_address"
+                ]["resource_observation"]["sequence"].__setitem__(
+                    "requested_selectors_per_tile", 5
+                ),
+                "sequence",
+            ),
+            (
+                "reported local sample",
+                lambda value: value["metrics"][
+                    "metal_booleanity_address_phase_ms_samples"
+                ].__setitem__(0, 1.0),
+                "sample summary",
+            ),
+        )
+        for name, mutate, message in mutations:
+            with self.subTest(name=name):
+                tampered = copy.deepcopy(result)
+                mutate(tampered)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_production_result(
+                        config, tampered, "abc", params, True
+                    )
+
+    def test_booleanity_address_template_closes_schema_scope_and_bindings(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT
+            / "crates/jolt-kernels/autoresearch/booleanity_address.template.json"
+        )
+        metal_autoresearch.validate_template(template)
+        metal_autoresearch.validate_new_run_template(template)
+        metal_autoresearch.validate_params(template, template["baseline_params"])
+        self.assertEqual(
+            template["scope"]["editable"],
+            ["crates/jolt-kernels/src/metal/solinas/booleanity_address.metal"],
+        )
+        gate = template["final_validation"]["production_gate"]
+        self.assertEqual(gate["evaluator"]["schema_version"], 7)
+        self.assertEqual(
+            {
+                binding["parameter"]
+                for binding in gate["evaluator"]["parameter_bindings"]
+            },
+            metal_autoresearch.PRODUCTION_LOCAL_KERNELS[
+                "BooleanityAddressPhase"
+            ]["parameters"],
+        )
+
+        missing_guard = copy.deepcopy(template)
+        missing_guard["final_validation"]["production_gate"][
+            "required_guards"
+        ].remove("booleanity_address_readback_exact")
+        with self.assertRaisesRegex(ValueError, "omits mandatory"):
+            metal_autoresearch.validate_template(missing_guard)
+
+        widened_scope = copy.deepcopy(template)
+        widened_scope["scope"]["editable"].append(
+            "crates/jolt-kernels/src/lib.rs"
+        )
+        with self.assertRaisesRegex(ValueError, "shader-only"):
+            metal_autoresearch.validate_template(widened_scope)
+
+        stale_schema = copy.deepcopy(template)
+        stale_schema["final_validation"]["production_gate"]["evaluator"][
+            "schema_version"
+        ] = 6
+        with self.assertRaisesRegex(ValueError, "current production result schema"):
+            metal_autoresearch.validate_new_run_template(stale_schema)
 
     def test_production_revision_rejects_commits_outside_editable_scope(self) -> None:
         with mock.patch.object(

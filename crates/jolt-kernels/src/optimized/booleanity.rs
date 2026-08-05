@@ -324,6 +324,22 @@ fn cycle_pushforward<F: Field>(
 // Stage 6a: address phase
 // ---------------------------------------------------------------------------
 
+fn booleanity_address_points<F: Field>(
+    relation: &BooleanityAddressPhase<F>,
+    challenges: &BooleanityAddressPhaseChallenges<F>,
+) -> Result<(BooleanityDimensions, Vec<F>), KernelError<F>> {
+    let dimensions = relation.dimensions();
+    let reference_cycle = relation.reference_cycle();
+    if challenges.reference_address.len() != dimensions.log_k_chunk
+        || reference_cycle.len() != dimensions.log_t
+    {
+        return Err(KernelError::InvariantViolation {
+            reason: "booleanity reference point lengths disagree with the dimensions",
+        });
+    }
+    Ok((dimensions, reference_cycle))
+}
+
 /// Slot front for the stage-6a booleanity address phase.
 pub struct OptimizedBooleanityAddress;
 
@@ -336,22 +352,15 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleani
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
         let relation = inputs.relation;
-        let dimensions = relation.dimensions();
         let BooleanityAddressPhaseChallenges {
             reference_address,
             gamma,
         } = inputs.challenges;
-        let reference_cycle = relation.reference_cycle();
-        if reference_address.len() != dimensions.log_k_chunk
-            || reference_cycle.len() != dimensions.log_t
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "booleanity reference point lengths disagree with the dimensions",
-            });
-        }
+        let (dimensions, reference_cycle) = booleanity_address_points(relation, inputs.challenges)?;
 
         let columns = column_selectors(witness, dimensions)?;
-        let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+        let rows = tracing::info_span!("OptimizedBooleanityAddress::row_source")
+            .in_scope(|| shared_instruction_rows(session, witness, 1usize << dimensions.log_t))?;
         let masses = cycle_pushforward(
             &rows,
             &columns.selectors,
@@ -363,6 +372,79 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBooleani
             relation.rounds(),
             *gamma,
             reference_address,
+            masses,
+        )))
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) struct BooleanityAddressMetalPlan {
+    selectors: Vec<BooleanitySelector>,
+    reference_cycle: Vec<AkitaField>,
+    reference_address: Vec<AkitaField>,
+    gamma: AkitaField,
+    rounds: usize,
+    k: usize,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl BooleanityAddressMetalPlan {
+    pub(crate) fn new(
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+        relation: &BooleanityAddressPhase<AkitaField>,
+        challenges: &BooleanityAddressPhaseChallenges<AkitaField>,
+    ) -> Result<Self, KernelError<AkitaField>> {
+        let (dimensions, reference_cycle) = booleanity_address_points(relation, challenges)?;
+        let columns = column_selectors(witness, dimensions)?;
+        Ok(Self {
+            selectors: columns
+                .selectors
+                .iter()
+                .map(ColumnSelector::metal_selector)
+                .collect(),
+            reference_cycle,
+            reference_address: challenges.reference_address.clone(),
+            gamma: challenges.gamma,
+            rounds: relation.rounds(),
+            k: 1usize << dimensions.log_k_chunk,
+        })
+    }
+
+    pub(crate) fn selectors(&self) -> &[BooleanitySelector] {
+        &self.selectors
+    }
+
+    pub(crate) fn reference_cycle(&self) -> &[AkitaField] {
+        &self.reference_cycle
+    }
+
+    pub(crate) fn finish(
+        self,
+        flat_masses: Vec<AkitaField>,
+    ) -> Result<
+        Box<dyn SumcheckKernel<AkitaField, Relation = BooleanityAddressPhase<AkitaField>>>,
+        KernelError<AkitaField>,
+    > {
+        let expected = self.selectors.len().checked_mul(self.k).ok_or_else(|| {
+            KernelError::InvalidGeometry {
+                reason: "Booleanity address mass count overflows usize".to_owned(),
+            }
+        })?;
+        if flat_masses.len() != expected {
+            return Err(KernelError::TableSizeMismatch {
+                table: "Metal Booleanity address masses".to_owned(),
+                expected,
+                got: flat_masses.len(),
+            });
+        }
+        let masses = flat_masses
+            .chunks_exact(self.k)
+            .map(<[AkitaField]>::to_vec)
+            .collect();
+        Ok(Box::new(OptimizedBooleanityAddressKernel::new(
+            self.rounds,
+            self.gamma,
+            &self.reference_address,
             masses,
         )))
     }
@@ -710,10 +792,9 @@ impl<F: Field> OptimizedBooleanityCycleKernel<F> {
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl OptimizedBooleanityCycleKernel<AkitaField> {
-    pub(crate) fn metal_prepare_rows(
+    pub(crate) fn metal_row_source(
         &self,
-        context: &SolinasMetal,
-    ) -> Result<BooleanityRows, SumcheckError<AkitaField>> {
+    ) -> Result<&[InstructionCycleRow], SumcheckError<AkitaField>> {
         let LazyFoldedRa::Lazy { width, source, .. } = &self.tables else {
             return Err(booleanity_metal_state_error(
                 "resident row preparation requires lazy Booleanity tables",
@@ -724,9 +805,7 @@ impl OptimizedBooleanityCycleKernel<AkitaField> {
                 "resident row preparation requires the initial unbound state",
             ));
         }
-        context
-            .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&source.rows))
-            .map_err(booleanity_metal_error)
+        Ok(&source.rows)
     }
 
     pub(crate) fn metal_offload(

@@ -39,48 +39,6 @@ inline uint address_direct_lookup_byte(AddressRafDirectLookup lookup, uint shift
         : (uint)(lookup.limbs[1] >> (shift - 64)) & 0xffu;
 }
 
-inline void address_direct_atomic_add(
-    threadgroup atomic_uint* sums,
-    uint field,
-    SolinasFp128 value)
-{
-    uint base = field * ADDRESS_RAF_DIRECT_WORDS;
-    uint carry = 0;
-    for (uint limb = 0; limb < 4; limb++) {
-        ulong addend = (ulong)value.limb[limb] + (ulong)carry;
-        uint low = (uint)addend;
-        uint previous = atomic_fetch_add_explicit(
-            &sums[base + limb],
-            low,
-            memory_order_relaxed);
-        carry = (uint)(addend >> 32) | (uint)(previous > 0xffffffffu - low);
-    }
-    if (carry != 0) {
-        atomic_fetch_add_explicit(&sums[base + 4], carry, memory_order_relaxed);
-    }
-}
-
-inline SolinasFp128 address_direct_reduce_atomic_sum(
-    threadgroup atomic_uint* sums,
-    uint field)
-{
-    uint base = field * ADDRESS_RAF_DIRECT_WORDS;
-    SolinasFp128 low;
-    for (uint limb = 0; limb < 4; limb++) {
-        low.limb[limb] = atomic_load_explicit(&sums[base + limb], memory_order_relaxed);
-    }
-    uint overflow = atomic_load_explicit(&sums[base + 4], memory_order_relaxed);
-
-    SolinasCorrection canonical = solinas_add_offset(low);
-    low = solinas_select(canonical.carry != 0, canonical.value, low);
-
-    ulong correction_word = (ulong)overflow * (ulong)SOLINAS_OFFSET;
-    SolinasFp128 correction = solinas_zero();
-    correction.limb[0] = (uint)correction_word;
-    correction.limb[1] = (uint)(correction_word >> 32);
-    return solinas_add(low, correction);
-}
-
 inline SolinasFp128 address_direct_simd_sum(SolinasFp128 value) {
     for (ushort offset = 16; offset > 0; offset >>= 1) {
         SolinasFp128 other;
@@ -139,27 +97,27 @@ kernel void solinas_address_raf_direct_tile(
         }
 
         uint first_field = key * ADDRESS_RAF_DIRECT_LANES;
-        address_direct_atomic_add(sums, first_field, weight);
+        solinas_deferred_atomic_add_5(sums, first_field, weight);
         if (key < ADDRESS_RAF_DIRECT_BINS) {
             ulong left = address_direct_compact_even_bits(suffix_lo >> 1)
                 | (address_direct_compact_even_bits(suffix_hi >> 1) << 32);
             ulong right = address_direct_compact_even_bits(suffix_lo)
                 | (address_direct_compact_even_bits(suffix_hi) << 32);
             if (left != 0) {
-                address_direct_atomic_add(
+                solinas_deferred_atomic_add_5(
                     sums,
                     first_field + 1,
                     solinas_mul_wide(weight, address_direct_field_from_u128(left, 0)));
             }
             if (right != 0) {
-                address_direct_atomic_add(
+                solinas_deferred_atomic_add_5(
                     sums,
                     first_field + 2,
                     solinas_mul_wide(weight, address_direct_field_from_u128(right, 0)));
             }
         } else {
             if (suffix_lo != 0 || suffix_hi != 0) {
-                address_direct_atomic_add(
+                solinas_deferred_atomic_add_5(
                     sums,
                     first_field + 1,
                     solinas_mul_wide(
@@ -170,7 +128,7 @@ kernel void solinas_address_raf_direct_tile(
             bool upper_all_ones = upper_bits == 0
                 || suffix_hi == ((1ul << upper_bits) - 1ul);
             if (upper_all_ones) {
-                address_direct_atomic_add(sums, first_field + 2, weight);
+                solinas_deferred_atomic_add_5(sums, first_field + 2, weight);
             }
         }
     }
@@ -178,7 +136,7 @@ kernel void solinas_address_raf_direct_tile(
 
     uint output_base = group * ADDRESS_RAF_DIRECT_FIELDS;
     for (uint field = tid; field < ADDRESS_RAF_DIRECT_FIELDS; field += threads) {
-        partials[output_base + field] = address_direct_reduce_atomic_sum(sums, field);
+        partials[output_base + field] = solinas_deferred_atomic_reduce_5(sums, field);
     }
 }
 

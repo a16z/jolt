@@ -74,10 +74,11 @@ inline BooleanityRow booleanity_load_row(
 inline bool booleanity_hot_index(
     BooleanityRow row,
     BooleanitySelector selector,
-    constant BooleanityParams& params,
+    uint chunk_bits,
+    ulong inc_bias,
     thread uint& hot)
 {
-    uint mask = (1u << params.chunk_bits) - 1u;
+    uint mask = (1u << chunk_bits) - 1u;
     if (selector.kind == 0u) {
         ulong word = selector.shift < 64u ? row.lookup_lo : row.lookup_hi;
         uint shift = selector.shift < 64u ? selector.shift : selector.shift - 64u;
@@ -104,15 +105,15 @@ inline bool booleanity_hot_index(
     ulong biased;
     int carry;
     if (negative) {
-        biased = params.inc_bias - row.fused_inc_magnitude;
-        carry = row.fused_inc_magnitude > params.inc_bias ? -1 : 0;
+        biased = inc_bias - row.fused_inc_magnitude;
+        carry = row.fused_inc_magnitude > inc_bias ? -1 : 0;
     } else {
-        biased = params.inc_bias + row.fused_inc_magnitude;
-        carry = biased < params.inc_bias ? 1 : 0;
+        biased = inc_bias + row.fused_inc_magnitude;
+        carry = biased < inc_bias ? 1 : 0;
     }
     if (selector.kind == 3u) {
         uint standard = (uint)(biased >> selector.shift) & mask;
-        hot = (standard + (1u << (params.chunk_bits - 1u))) & mask;
+        hot = (standard + (1u << (chunk_bits - 1u))) & mask;
     } else {
         hot = (uint)carry & mask;
     }
@@ -140,8 +141,10 @@ inline void booleanity_lazy_pair(
             BooleanityRow row_1 = booleanity_load_row(rows, 2u * pair + 1u, lane);
             uint first = params.k;
             uint second = params.k;
-            booleanity_hot_index(row_0, selector, params, first);
-            booleanity_hot_index(row_1, selector, params, second);
+            booleanity_hot_index(
+                row_0, selector, params.chunk_bits, params.inc_bias, first);
+            booleanity_hot_index(
+                row_1, selector, params.chunk_bits, params.inc_bias, second);
             uint stride = params.k + 1u;
             constant_lane = solinas_add(
                 constant_lane,
@@ -163,10 +166,12 @@ inline void booleanity_lazy_pair(
                 lane);
             uint hot;
             uint table = (poly * params.branch_width + offset) * params.k;
-            if (booleanity_hot_index(row_0, selector, params, hot)) {
+            if (booleanity_hot_index(
+                    row_0, selector, params.chunk_bits, params.inc_bias, hot)) {
                 h_0 = solinas_add(h_0, branches[table + hot]);
             }
-            if (booleanity_hot_index(row_1, selector, params, hot)) {
+            if (booleanity_hot_index(
+                    row_1, selector, params.chunk_bits, params.inc_bias, hot)) {
                 h_1 = solinas_add(h_1, branches[table + hot]);
             }
         }

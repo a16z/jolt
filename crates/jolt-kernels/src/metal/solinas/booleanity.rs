@@ -2,8 +2,8 @@ use std::{mem::size_of, slice, sync::Arc, time::Duration};
 
 use jolt_field::AkitaField;
 use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 
 use super::{
@@ -38,19 +38,27 @@ struct BooleanityRowsInner {
 }
 
 #[derive(Clone)]
-pub(crate) struct BooleanityRows(Arc<BooleanityRowsInner>);
+pub struct BooleanityRows(Arc<BooleanityRowsInner>);
 
 impl BooleanityRows {
     pub(crate) fn buffer(&self) -> &Buffer {
         &self.0.buffer
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.0.len
     }
 
-    pub(crate) fn device_registry_id(&self) -> u64 {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn device_registry_id(&self) -> u64 {
         self.0.device_registry_id
+    }
+
+    pub fn allocation_identity(&self) -> usize {
+        self.0.buffer.as_ptr() as usize
     }
 
     #[cfg(test)]
@@ -162,7 +170,7 @@ impl Default for BooleanitySequenceConfig {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct SelectorAbi {
+pub(super) struct SelectorAbi {
     kind: u32,
     shift: u32,
 }
@@ -273,7 +281,7 @@ impl SolinasMetal {
         )
     }
 
-    pub(crate) fn prepare_booleanity_rows(
+    pub fn prepare_booleanity_rows(
         &self,
         rows: &[BooleanityRow],
     ) -> Result<BooleanityRows, MetalError> {
@@ -283,6 +291,7 @@ impl SolinasMetal {
         let len = rows.len();
         let bytes = byte_length::<BooleanityRow>(len)?;
         self.validate_buffer_length(bytes)?;
+        self.validate_additional_working_set(bytes)?;
         Ok(BooleanityRows(Arc::new(BooleanityRowsInner {
             buffer: buffer_from_slice(&self.device, rows),
             len,
@@ -928,7 +937,7 @@ impl BooleanitySequence {
     }
 }
 
-fn selector_abi(
+pub(super) fn selector_abi(
     selector: BooleanitySelector,
     chunk_bits: usize,
 ) -> Result<SelectorAbi, MetalError> {
@@ -947,13 +956,17 @@ fn selector_abi(
     Ok(SelectorAbi { kind, shift })
 }
 
-fn balanced_bias(chunk_bits: usize) -> u64 {
+pub(super) fn balanced_bias(chunk_bits: usize) -> u64 {
     let radix = 1u128 << chunk_bits;
     let bias = (radix / 2) * (u128::from(u64::MAX) / (radix - 1));
     bias as u64
 }
 
-fn write_fields(buffer: &Buffer, capacity: usize, values: &[AkitaField]) -> Result<(), MetalError> {
+pub(super) fn write_fields(
+    buffer: &Buffer,
+    capacity: usize,
+    values: &[AkitaField],
+) -> Result<(), MetalError> {
     if values.len() > capacity {
         return Err(MetalError::BooleanityStorageLength {
             name: "field buffer",

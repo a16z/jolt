@@ -66,8 +66,8 @@ use super::support::accumulate_product;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, AddressRafScanRow,
-    BooleanityRow, BooleanityRows, Fp128, Product5Sequence, Product5SequenceConfig, SolinasMetal,
-    PRODUCT5_FACTORS,
+    BooleanityRow, BooleanityRows, Fp128, MetalError, Product5Sequence, Product5SequenceConfig,
+    SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -1636,10 +1636,8 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
     pub(crate) fn metal_prepare_booleanity_rows(
         &self,
         context: &SolinasMetal,
-    ) -> Result<BooleanityRows, SumcheckError<AkitaField>> {
-        context
-            .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&self.rows))
-            .map_err(metal_sumcheck_error)
+    ) -> Result<BooleanityRows, MetalError> {
+        context.prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&self.rows))
     }
 
     pub(crate) fn metal_prepare_address_sequence(

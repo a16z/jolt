@@ -92,3 +92,11 @@ required-features = ["metal", "parallel"]
 [[example]]
 name = "metal-instruction-input-residency-eval"
 required-features = ["metal", "parallel"]
+
+[[example]]
+name = "metal-instruction-input-cold-mechanism-eval"
+required-features = ["metal", "parallel"]
+
+[[example]]
+name = "metal-booleanity-address-eval"
+required-features = ["metal", "parallel"]

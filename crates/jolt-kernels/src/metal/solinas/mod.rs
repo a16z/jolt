@@ -17,6 +17,7 @@ use rayon::prelude::*;
 use thiserror::Error;
 
 const FIELD_SOURCE: &str = include_str!("fp128.metal");
+const DEFERRED_SUM_SOURCE: &str = include_str!("deferred_sum.metal");
 const ADDRESS_RAF_SOURCE: &str = include_str!("address_raf.metal");
 const ADDRESS_RAF_DIRECT_SOURCE: &str = include_str!("address_raf_direct.metal");
 const ADDRESS_SUFFIX_SOURCE: &str = include_str!("address_suffix.metal");
@@ -25,6 +26,7 @@ const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_cycle.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity.metal");
+const BOOLEANITY_ADDRESS_SOURCE: &str = include_str!("booleanity_address.metal");
 const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization.metal");
 const INSTRUCTION_RA_SEQUENCE_SOURCE: &str = include_str!("instruction_ra_sequence.metal");
 const INSTRUCTION_INPUT_SOURCE: &str = include_str!("instruction_input.metal");
@@ -38,6 +40,7 @@ mod address_sequence;
 mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
+mod booleanity_address;
 mod bytecode_cycle;
 mod bytecode_row;
 mod instruction_input;
@@ -57,10 +60,11 @@ pub use address_suffix::{
     AddressSuffixOneInvocation, AddressSuffixOneSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
 };
 pub use address_suffix_full::{AddressSuffixFullInvocation, AddressSuffixFullSums};
-pub(crate) use booleanity::BooleanityRows;
+pub use booleanity::BooleanityRows;
 pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
 };
+pub use booleanity_address::{BooleanityAddressPushforward, BooleanityAddressPushforwardConfig};
 pub use bytecode_cycle::{
     BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables,
     BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
@@ -484,6 +488,16 @@ pub enum MetalError {
     BooleanityRowsDevice { expected: u64, got: u64 },
     #[error("booleanity split weights cover {covered} pairs, expected {expected}")]
     BooleanityWeightShape { expected: usize, covered: usize },
+    #[error("Booleanity address selector tiles must contain 1..=6 selectors, got {0}")]
+    InvalidBooleanityAddressSelectorTile(usize),
+    #[error("Booleanity address inner split must be in 0..=16, got {0}")]
+    InvalidBooleanityAddressInnerLog2(usize),
+    #[error("Booleanity address finalization needs 256, 512, 768, or 1024 threads, got {0}")]
+    InvalidBooleanityAddressFinalizeWidth(usize),
+    #[error(
+        "Booleanity address needs {requested} bytes of threadgroup memory, device limit is {maximum}"
+    )]
+    BooleanityAddressThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(
         "booleanity pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
@@ -510,6 +524,15 @@ pub enum MetalError {
     InvalidGpuTimestamps { start: f64, end: f64 },
     #[error("execute the invocation before reading its output")]
     NotExecuted,
+}
+
+impl MetalError {
+    pub(crate) fn is_capacity_error(&self) -> bool {
+        matches!(
+            self,
+            Self::InputTooLong(_) | Self::BufferTooLong { .. } | Self::WorkingSetTooLarge { .. }
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -540,7 +563,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)
@@ -953,6 +976,25 @@ mod tests {
             validate_working_set(u64::MAX, 1, u64::MAX),
             Err(MetalError::WorkingSetTooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn capacity_errors_are_safe_pre_submit_fallbacks() {
+        for error in [
+            MetalError::InputTooLong(usize::MAX),
+            MetalError::BufferTooLong {
+                requested: 101,
+                maximum: 100,
+            },
+            MetalError::WorkingSetTooLarge {
+                current: 60,
+                additional: 41,
+                maximum: 100,
+            },
+        ] {
+            assert!(error.is_capacity_error());
+        }
+        assert!(!MetalError::EmptyInput.is_capacity_error());
     }
 
     #[test]

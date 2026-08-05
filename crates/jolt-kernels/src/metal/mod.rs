@@ -10,7 +10,7 @@ mod instruction_read_raf;
 pub mod solinas;
 mod spartan_outer;
 
-pub use booleanity::BooleanityMetalConfig;
+pub use booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
 pub use bytecode_read_raf::{BytecodeReadRafMetalConfig, BytecodeReadRafResidentRows};
 pub use instruction_input::InstructionInputMetalConfig;
 pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
