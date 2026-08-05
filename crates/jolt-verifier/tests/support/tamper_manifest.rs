@@ -421,6 +421,16 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets every Spartan outer variable opening claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage1.claims.field_inline_outer",
+        "claims.stage1.field_inline_outer",
+        VerifierPhase::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "FR-local Spartan outer openings feed the composed expected-output check; \
+         mutation runs once modular field-inline fixtures exist",
+    ),
 ];
 
 pub const STAGE2_TARGETS: &[TamperTarget] = &[
@@ -1361,9 +1371,9 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
             bytecode: None,
             program_image: None,
         },
-        stage1: stage1::outputs::Stage1OutputClaims {
-            uniskip_output_claim: zero,
-            outer: stage1::outputs::Stage1BatchOutputClaims {
+        stage1: stage1::outputs::Stage1OutputClaims::new(
+            zero,
+            stage1::outputs::Stage1BatchOutputClaims {
                 outer_remainder: stage1::OuterRemainderOutputClaims {
                     left_instruction_input: zero,
                     right_instruction_input: zero,
@@ -1402,7 +1412,7 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     is_last_in_sequence: zero,
                 },
             },
-        },
+        ),
         stage2: stage2::outputs::Stage2OutputClaims {
             product_uniskip_output_claim: zero,
             batch_outputs: stage2::outputs::Stage2BatchOutputClaims {

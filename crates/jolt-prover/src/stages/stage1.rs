@@ -117,14 +117,8 @@ where
     Ok(Stage1ProverOutput {
         uniskip_proof: proved_uniskip.proof,
         sumcheck_proof,
-        claims: Stage1OutputClaims {
-            uniskip_output_claim: proved_uniskip.output_claim,
-            outer: proved.output_claims.clone(),
-        },
-        clear_output: Stage1ClearOutput {
-            output_values: proved.output_claims,
-            output_points: proved.output_points,
-        },
+        claims: Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone()),
+        clear_output: Stage1ClearOutput::new(proved.output_claims, proved.output_points),
         #[cfg(feature = "zk")]
         uniskip_witness: proved_uniskip.witness,
         #[cfg(feature = "zk")]

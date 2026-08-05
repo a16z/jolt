@@ -64,6 +64,23 @@ where
 
         sumchecks.validate_output_claims(&claims.outer)?;
 
+        // The composed R1CS appends 13 FR-local columns; their openings ride
+        // the same remainder sumcheck and feed the composed expected-output
+        // check. Required fail-closed on FR-on builds.
+        #[cfg(feature = "field-inline")]
+        let field_inline_outer =
+            {
+                let field_inline_outer = claims.field_inline_outer.clone().ok_or(
+                    VerifierError::MissingProofPayload {
+                        field: "claims.stage1.field_inline_outer",
+                    },
+                )?;
+                sumchecks.outer_remainder.set_field_inline_outputs(
+                    crate::stages::relations::OutputClaims::opening_values(&field_inline_outer),
+                )?;
+                field_inline_outer
+            };
+
         // The remainder consumes the uni-skip's reduced opening as its input claim
         // (the relation's `input_claim` is the bare consumed opening).
         let input_values = Stage1BatchInputClaims {
@@ -84,9 +101,18 @@ where
         // the prover's commitment order.
         sumchecks.append_output_claims(transcript, &claims.outer);
 
+        // The FR-local openings absorb after the ordinary ones, in
+        // appended-column order — the same append the prover must perform.
+        #[cfg(feature = "field-inline")]
+        for value in crate::stages::relations::OutputClaims::opening_values(&field_inline_outer) {
+            transcript.append_labeled(b"opening_claim", &value);
+        }
+
         return Ok(Stage1Output::Clear(Stage1ClearOutput {
             output_values: claims.outer.clone(),
             output_points,
+            #[cfg(feature = "field-inline")]
+            field_inline_output_values: Some(field_inline_outer),
         }));
     }
 

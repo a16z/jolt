@@ -1505,10 +1505,7 @@ mod tests {
         let zero = Fr::zero();
 
         JoltProofClaims::Clear(ClearProofClaims {
-            stage1: stage1::outputs::Stage1OutputClaims {
-                uniskip_output_claim: zero,
-                outer: empty_spartan_outer_claims(),
-            },
+            stage1: stage1::outputs::Stage1OutputClaims::new(zero, empty_spartan_outer_claims()),
             #[cfg(feature = "akita")]
             reconstruction: crate::stages::stage8::reconstruction::ReconstructionOutputClaims {
                 untrusted_advice: None,
