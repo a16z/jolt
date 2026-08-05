@@ -119,6 +119,24 @@ where
     }
 }
 
+/// The field-register commitments of the field-inline extension. `FieldRdInc`
+/// is the extension's single committed polynomial; the FR access columns are
+/// virtual (anchored through the bytecode read-RAF path), so this nest stays
+/// one deep until the protocol commits more.
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldRegistersCommitments<C> {
+    pub rd_inc: C,
+}
+
+/// The field-inline extension's committed payload, grouped by component as the
+/// protocol spec lays it out (`FieldInlineCommitments::field_registers`).
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldInlineCommitments<C> {
+    pub field_registers: FieldRegistersCommitments<C>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltCommitments<C> {
     pub rd_inc: C,
@@ -126,6 +144,16 @@ pub struct JoltCommitments<C> {
     pub instruction_ra: Vec<C>,
     pub ram_ra: Vec<C>,
     pub bytecode_ra: Vec<C>,
+    /// Present on every field-inline proof (the FR-on build proves all guests
+    /// under the composed protocol). Carried as an `Option` because this type
+    /// is shared with producers that cannot supply FR commitments — the legacy
+    /// prover and the packed converter — whose proofs fail the protocol-config
+    /// gate before this field is ever read; [`validate_proof_consistency`]
+    /// rejects a missing payload fail-closed for everything else.
+    ///
+    /// [`validate_proof_consistency`]: crate::verifier::validate_proof_consistency
+    #[cfg(feature = "field-inline")]
+    pub field_inline: Option<FieldInlineCommitments<C>>,
 }
 
 impl<C> JoltCommitments<C> {
@@ -142,7 +170,17 @@ impl<C> JoltCommitments<C> {
             instruction_ra,
             ram_ra,
             bytecode_ra,
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
         }
+    }
+
+    /// Attach the field-inline committed payload (the modular prover's stage 0
+    /// sets this on every FR-on proof).
+    #[cfg(feature = "field-inline")]
+    pub fn with_field_inline(mut self, field_inline: FieldInlineCommitments<C>) -> Self {
+        self.field_inline = Some(field_inline);
+        self
     }
 }
 

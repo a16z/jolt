@@ -23,6 +23,9 @@ pub enum VerifierError {
         pending: &'static str,
     },
 
+    #[error("proof payload {field} is required by the configured protocol but missing")]
+    MissingProofPayload { field: &'static str },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

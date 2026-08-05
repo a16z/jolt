@@ -532,6 +532,16 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    // An FR-on build proves every guest under the composed protocol, so the
+    // field-inline committed payload is unconditionally required (absence means
+    // a producer without FR semantics — reject before any stage logic).
+    #[cfg(feature = "field-inline")]
+    if proof.commitments.field_inline.is_none() {
+        return Err(VerifierError::MissingProofPayload {
+            field: "commitments.field_inline",
+        });
+    }
+
     let stage_proofs = [
         (
             &proof.stages.stage1_uni_skip_first_round_proof,
@@ -786,6 +796,18 @@ pub fn absorb_transcript_commitments<C, T>(
     }
     for commitment in &commitments.bytecode_ra {
         absorb_commitment(commitment);
+    }
+    // The field-inline payload absorbs after the base commitments and before
+    // advice, mirroring its appended-extension position everywhere else in the
+    // protocol. The prover's stage 0 must commit in this same order.
+    #[cfg(feature = "field-inline")]
+    if let Some(field_inline) = &commitments.field_inline {
+        append_payload_label(
+            transcript,
+            b"field_rd_inc_commitment",
+            &field_inline.field_registers.rd_inc,
+        );
+        transcript.append(&field_inline.field_registers.rd_inc);
     }
     if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
         append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
@@ -1454,6 +1476,22 @@ mod tests {
 
     #[cfg(not(feature = "akita"))]
     fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
+        #[cfg(feature = "field-inline")]
+        {
+            crate::proof::JoltCommitments::new(
+                TestCommitment,
+                TestCommitment,
+                Vec::<TestCommitment>::new(),
+                Vec::<TestCommitment>::new(),
+                Vec::<TestCommitment>::new(),
+            )
+            .with_field_inline(crate::proof::FieldInlineCommitments {
+                field_registers: crate::proof::FieldRegistersCommitments {
+                    rd_inc: TestCommitment,
+                },
+            })
+        }
+        #[cfg(not(feature = "field-inline"))]
         crate::proof::JoltCommitments::new(
             TestCommitment,
             TestCommitment,

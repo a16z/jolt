@@ -350,6 +350,7 @@ mod tests {
     }
 
     /// All 35 produced opening *points* sharing a single opening point.
+    #[cfg(not(feature = "field-inline"))]
     fn output_points_at(point: &[Fr]) -> OuterRemainderOutputClaims<Vec<Fr>> {
         let next = || point.to_vec();
         OuterRemainderOutputClaims {
@@ -402,8 +403,10 @@ mod tests {
     #[test]
     fn weight_vectors_follow_composed_column_count() {
         let log_t = 3usize;
+        let tau_len = log_t + 2;
+        let remainder_len = 1 + log_t;
         let dimensions = SpartanOuterDimensions::rv64(log_t);
-        let tau = (0..log_t + 2).map(|i| Fr::from_u64(2 + i as u64)).collect();
+        let tau = (0..tau_len).map(|i| Fr::from_u64(2 + i as u64)).collect();
         let relation = OuterRemainder::<Fr>::new(dimensions, tau, Fr::from_u64(17));
 
         assert_eq!(
@@ -411,7 +414,7 @@ mod tests {
             jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len()
         );
 
-        let remainder_challenges = (0..1 + log_t)
+        let remainder_challenges = (0..remainder_len)
             .map(|i| Fr::from_u64(100 + i as u64))
             .collect::<Vec<_>>();
         let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
