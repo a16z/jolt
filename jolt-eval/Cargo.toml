@@ -15,6 +15,7 @@ jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
+jolt-kernels = { workspace = true, features = ["bench-utils"] }
 jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
   "transcript-keccak",
@@ -78,6 +79,10 @@ harness = false
 
 [[bench]]
 name = "field_mul_u64"
+harness = false
+
+[[bench]]
+name = "hamming_weight_pushforward"
 harness = false
 
 [[bench]]

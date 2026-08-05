@@ -11,7 +11,9 @@
 //!   accumulates ALL `N = instruction_d + bytecode_d + ram_d` pushforwards
 //!   against ONE shared `eq(r_cycle)` table (every stage-6b claim family
 //!   lives at the same cycle point), replacing the reference tier's `N`
-//!   independent `O(K_chunk·T)` folds over materialized one-hot grids.
+//!   independent `O(K_chunk·T)` folds over materialized one-hot grids. The
+//!   walk reuses booleanity's split-eq deferred buckets: inner weights enter
+//!   by addition, and the outer eq multiplication occurs once per bucket.
 //! - **One-hot weight fusion**: the three per-polynomial claim weights
 //!   `γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k)` are one combined
 //!   multilinear `W_i(k)` (the Hamming-weight leg's constant-1 rides the
@@ -20,6 +22,7 @@
 //! - **Eval-at-1 recovery** and **rayon walks** (module docs on
 //!   [`crate::optimized`]).
 
+use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_claims::OutputClaims;
 use jolt_field::Field;
@@ -29,12 +32,12 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::one_hot_pushforward::{parallel_outer_bits, split_eq_pushforwards, ColumnSelector};
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
 use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals};
@@ -42,100 +45,128 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Per-family chunk selectors in canonical layout order.
-struct FamilySelectors {
-    instruction: Vec<RaChunkSelector>,
-    bytecode: Vec<RaChunkSelector>,
-    ram: Vec<RaChunkSelector>,
-}
-
-impl FamilySelectors {
-    fn new<F: Field>(
-        counts: (usize, usize, usize),
-        chunk_bits: usize,
-    ) -> Result<Self, KernelError<F>> {
-        let family = |count: usize| -> Result<Vec<RaChunkSelector>, KernelError<F>> {
-            (0..count)
-                .map(|index| {
-                    RaChunkSelector::new(index, count, chunk_bits).map_err(KernelError::from)
-                })
-                .collect()
-        };
-        Ok(Self {
-            instruction: family(counts.0)?,
-            bytecode: family(counts.1)?,
-            ram: family(counts.2)?,
-        })
-    }
-}
-
 /// All `N` pushforwards from one pass over the shared stage-5 rows, in
 /// canonical (instruction, bytecode, RAM) order. The cycle-eq weight is
-/// computed on the fly from the split tables `eq(r, j) = eq(r[..hi], j_hi) ·
-/// eq(r[hi..], j_lo)` — two `O(√T)` tables instead of the `T`-sized eq
-/// materialization (4.3 GiB at 2^27), identical field values (field
-/// multiplication regroups exactly), one extra multiply per row.
+/// computed from split tables `eq(r, j) = eq(r[..hi], j_hi) ·
+/// eq(r[hi..], j_lo)`. Outer blocks stay at four per Rayon worker so the
+/// deferred inner-bucket accumulation removes per-row field multiplication
+/// without starving parallelism.
 fn pushforwards<F: Field>(
     rows: &[InstructionCycleRow],
     r_cycle: &[F],
-    selectors: &FamilySelectors,
-    k_chunk: usize,
-) -> Vec<Vec<F>> {
-    let log_t = r_cycle.len();
-    let lo_bits = log_t / 2;
-    let hi_bits = log_t - lo_bits;
-    let e_hi = eq_table(&r_cycle[..hi_bits]);
-    let e_lo = eq_table(&r_cycle[hi_bits..]);
-    let total = selectors.instruction.len() + selectors.bytecode.len() + selectors.ram.len();
-    let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
-        let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
-        for j in range {
-            let row = &rows[j];
-            let eq = e_hi[j >> lo_bits] * e_lo[j & ((1 << lo_bits) - 1)];
+    layout: JoltRaPolynomialLayout,
+    chunk_bits: usize,
+) -> Result<Vec<Vec<F>>, KernelError<F>> {
+    let selectors = ColumnSelector::for_layout(layout, chunk_bits)?;
+    Ok(split_eq_pushforwards(
+        rows,
+        &selectors,
+        1usize << chunk_bits,
+        r_cycle,
+        parallel_outer_bits(r_cycle.len()),
+    ))
+}
+
+#[cfg(feature = "bench-utils")]
+pub mod bench {
+    use std::sync::Arc;
+
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+
+    use super::pushforwards;
+    use crate::optimized::instruction_read_raf::InstructionCycleRow;
+    use crate::reference::views::eq_table;
+
+    const LOG_T: usize = 22;
+    const CHUNK_BITS: usize = 8;
+    const FAMILY_COUNTS: (usize, usize, usize) = (16, 2, 3);
+
+    pub struct HammingWeightPushforwardFixture {
+        rows: Arc<[InstructionCycleRow]>,
+        r_cycle: Vec<Fr>,
+        layout: JoltRaPolynomialLayout,
+        expected: Vec<Vec<Fr>>,
+    }
+
+    impl HammingWeightPushforwardFixture {
+        pub fn production_geometry() -> Self {
+            let rows: Arc<[InstructionCycleRow]> = (0..1usize << LOG_T)
+                .map(|cycle| {
+                    let x = cycle as u128;
+                    let lookup_index = x
+                        .wrapping_mul(0x9e37_79b9_7f4a_7c15_6a09_e667_f3bc_c909)
+                        .rotate_left((cycle & 127) as u32);
+                    let mapped_pc = (cycle % 17 != 0)
+                        .then_some((cycle.wrapping_mul(13) ^ (cycle >> 3)) & 0xffff);
+                    let ram_address = (cycle % 5 != 0)
+                        .then_some(((cycle.wrapping_mul(29) ^ (cycle >> 5)) & 0x00ff_ffff) as u64);
+                    InstructionCycleRow::new(lookup_index, None, false, mapped_pc, ram_address)
+                })
+                .collect::<Vec<_>>()
+                .into();
+            let r_cycle = (0..LOG_T)
+                .map(|i| Fr::from_u64(0x100 + 17 * i as u64))
+                .collect::<Vec<_>>();
+            let Ok(layout) =
+                JoltRaPolynomialLayout::new(FAMILY_COUNTS.0, FAMILY_COUNTS.1, FAMILY_COUNTS.2)
+            else {
+                std::process::abort();
+            };
+            let expected = reference_pushforwards(&rows, &r_cycle, layout);
+            let fixture = Self {
+                rows,
+                r_cycle,
+                layout,
+                expected,
+            };
+            assert_eq!(fixture.compute(), fixture.expected);
+            fixture
+        }
+
+        pub fn compute(&self) -> Vec<Vec<Fr>> {
+            let Ok(output) = pushforwards(&self.rows, &self.r_cycle, self.layout, CHUNK_BITS)
+            else {
+                std::process::abort();
+            };
+            output
+        }
+    }
+
+    fn reference_pushforwards(
+        rows: &[InstructionCycleRow],
+        r_cycle: &[Fr],
+        layout: JoltRaPolynomialLayout,
+    ) -> Vec<Vec<Fr>> {
+        let k_chunk = 1 << CHUNK_BITS;
+        let total = layout.total();
+        let mut out = (0..total)
+            .map(|_| vec![Fr::from_u64(0); k_chunk])
+            .collect::<Vec<_>>();
+        for (row, weight) in rows.iter().zip(eq_table(r_cycle)) {
             let mut slot = 0;
-            for selector in &selectors.instruction {
-                partial[slot][selector.chunk_u128(row.lookup_index)] += eq;
+            for index in 0..layout.instruction() {
+                let shift = (layout.instruction() - 1 - index) * CHUNK_BITS;
+                out[slot][((row.lookup_index >> shift) & 0xff) as usize] += weight;
                 slot += 1;
             }
-            for selector in &selectors.bytecode {
+            for index in 0..layout.bytecode() {
                 if let Some(pc) = row.mapped_pc() {
-                    partial[slot][selector.chunk_usize(pc)] += eq;
+                    let shift = (layout.bytecode() - 1 - index) * CHUNK_BITS;
+                    out[slot][(pc >> shift) & 0xff] += weight;
                 }
                 slot += 1;
             }
-            for selector in &selectors.ram {
+            for index in 0..layout.ram() {
                 if let Some(address) = row.remapped_ram_address() {
-                    partial[slot][selector.chunk_usize(address as usize)] += eq;
+                    let shift = (layout.ram() - 1 - index) * CHUNK_BITS;
+                    out[slot][(address as usize >> shift) & 0xff] += weight;
                 }
                 slot += 1;
             }
         }
-        partial
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        let num_threads = rayon::current_num_threads();
-        let chunk = rows.len().div_ceil(num_threads).max(1);
-        (0..rows.len())
-            .into_par_iter()
-            .step_by(chunk)
-            .map(|start| accumulate(start..(start + chunk).min(rows.len())))
-            .reduce(
-                || (0..total).map(|_| vec![F::zero(); k_chunk]).collect(),
-                |mut left, right| {
-                    for (left, right) in left.iter_mut().zip(right) {
-                        for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
-                        }
-                    }
-                    left
-                },
-            )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        accumulate(0..rows.len())
+        out
     }
 }
 
@@ -179,11 +210,7 @@ pub(crate) fn build_hamming_weight_tables<F: Field>(
     // exactly the shared stage-5 rows the record walk co-produced — reclaim
     // them instead of re-walking the trace.
     let rows = shared_instruction_rows(session, witness, cycles)?;
-    let selectors = FamilySelectors::new(
-        (layout.instruction(), layout.bytecode(), layout.ram()),
-        dimensions.log_k_chunk,
-    )?;
-    let g_tables = pushforwards(&rows, r_cycle, &selectors, k_chunk);
+    let g_tables = pushforwards(&rows, r_cycle, layout, dimensions.log_k_chunk)?;
 
     // W_i(k) = γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k).
     let gamma = inputs.challenges.gamma;
