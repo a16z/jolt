@@ -2082,6 +2082,52 @@ mod tests {
         assert_eq!(cpu.read_register(10), 21);
     }
 
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[should_panic(expected = "FIELD_INV of zero")]
+    fn field_inline_inverse_of_zero_traps_at_trace_time() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        // Fresh field registers are zero, so fr2 is a zero operand.
+        trace_one(&mut cpu, field_inline_word(FieldInlineOp::Inv, 1, 2, 0));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[should_panic(expected = "FIELD_STORE_TO_X of a value wider than 64 bits")]
+    fn field_inline_store_of_wide_value_traps_at_trace_time() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        // Build 2^64 in fr1 by repeated squaring of 2, then attempt to store it.
+        trace_one(&mut cpu, field_inline_word(FieldInlineOp::LoadImm, 1, 0, 2));
+        for _ in 0..6 {
+            trace_one(&mut cpu, field_inline_word(FieldInlineOp::Mul, 1, 1, 1));
+        }
+        trace_one(&mut cpu, field_inline_word(FieldInlineOp::StoreToX, 10, 1, 0));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[should_panic(expected = "FIELD_LOAD_IMM with out-of-range immediate")]
+    fn field_inline_synthetic_negative_immediate_traps_at_trace_time() {
+        use super::format::format_field_inline::FormatFieldInline;
+
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        let instruction = FIELD_LOAD_IMM {
+            address: 0x8000_0000,
+            operands: FormatFieldInline {
+                op: Some(FieldInlineOp::LoadImm),
+                rd: Some(1),
+                rs1: None,
+                rs2: None,
+                imm: -1,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let mut trace = Vec::new();
+        Instruction::from(instruction).trace(&mut cpu, Some(&mut trace));
+    }
+
     #[test]
     fn source_only_tracer_conversion_does_not_fabricate_final_kind() {
         let source = SourceInstruction::new(

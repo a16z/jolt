@@ -191,14 +191,19 @@ fn execute_inverse(
     let rd_register = operands.rd.unwrap_or(0);
     let rs1_value = cpu.field_registers.read(rs1_register);
     let pre_value = cpu.field_registers.read(rd_register);
-    // inv(0) protocol: the inverse of zero is undefined, so rd is set to 0 and the
-    // recorded `inv_product = rs1 * rd` is 0 (it is 1 for every non-zero input). A
-    // downstream constraint of the form `rs1 * rd == inv_product` is therefore always
-    // satisfiable, and `inv_product == 0` holds iff `rs1 == 0`, which lets the verifier
-    // distinguish the inv(0) case rather than leaving rd unconstrained.
-    let inverse = decode_field(rs1_value)
-        .inverse()
-        .unwrap_or_else(|| Fr::from(0u64));
+    // inv(0) fails closed: the R1CS row `IsFieldInv * (FieldInvProduct - 1) = 0`
+    // demands `rs1 * rd == 1`, which is unsatisfiable for rs1 = 0, so a trace
+    // containing FIELD_INV(0) can never be proven. Trapping here surfaces the
+    // guest bug at trace time instead of as a downstream sumcheck failure; the
+    // guest-side API is responsible for guarding zero before emitting FIELD_INV.
+    let inverse = decode_field(rs1_value).inverse().unwrap_or_else(|| {
+        panic!(
+            "FIELD_INV of zero at pc 0x{:x} (fr{}): the inverse constraint is \
+             unsatisfiable for a zero operand; guard the guest-side inverse",
+            cpu.read_pc(),
+            rs1_register,
+        )
+    });
     let post_value = encode_field(inverse);
     cpu.field_registers.write(rd_register, post_value);
     FieldInlineTraceData {
@@ -280,14 +285,22 @@ fn execute_store_to_x(
     let field_register = operands.rs1.unwrap_or(0);
     let x_register = operands.rd.unwrap_or(0);
     let field_value = cpu.field_registers.read(field_register);
-    // store-to-x bridges a field register into a 64-bit x register. A field value that
-    // does not fit in u64 is reduced modulo 2^64 (its low 64 canonical bits): the trace
-    // records both the full `field_value` and the truncated `x_value`, so any constraint
-    // binding this bridge must enforce that `x_value == field_value mod 2^64`.
+    // store-to-x is a range-restricted bridge: the R1CS row
+    // `IsFieldStoreToX * (RdWriteValue - FieldRs1Value) = 0` equates the x-register
+    // write with the field value natively, which is satisfiable only when the field
+    // value already fits in 64 bits (x-register values are u64-range). A wider value
+    // would make an honest trace unprovable, so trap here at trace time. Full-width
+    // extraction is the advice pattern's job (advice limbs + Horner + FIELD_ASSERT_EQ).
     let x_value = decode_field(field_value)
         .to_canonical_u64_checked()
         .unwrap_or_else(|| {
-            u64::from_le_bytes(field_value.bytes_le[..8].try_into().unwrap_or([0; 8]))
+            panic!(
+                "FIELD_STORE_TO_X of a value wider than 64 bits at pc 0x{:x} (fr{}): \
+                 the store bridge only supports field values < 2^64; extract wide \
+                 values through the advice pattern instead",
+                cpu.read_pc(),
+                field_register,
+            )
         });
     cpu.write_register(x_register as usize, x_value as i64);
     FieldInlineTraceData {
@@ -312,9 +325,20 @@ fn execute_load_imm(
     cpu: &mut Cpu,
 ) -> FieldInlineTraceData {
     let rd_register = operands.rd.unwrap_or(0);
-    let value = u64::try_from(operands.imm)
-        .ok()
-        .map_or_else(FieldEncodedValue::zero, FieldEncodedValue::from_u64);
+    // Decoded FIELD_LOAD_IMM immediates are zero-extended 12-bit values (0..=4095);
+    // anything else can only arrive through synthetic instruction construction and
+    // indicates a caller bug, so fail loudly instead of loading zero.
+    let value = u64::try_from(operands.imm).map_or_else(
+        |_| {
+            panic!(
+                "FIELD_LOAD_IMM with out-of-range immediate {} at pc 0x{:x}: decoded \
+                 field-inline immediates are zero-extended 12-bit values",
+                operands.imm,
+                cpu.read_pc(),
+            )
+        },
+        FieldEncodedValue::from_u64,
+    );
     let pre_value = cpu.field_registers.read(rd_register);
     cpu.field_registers.write(rd_register, value);
     FieldInlineTraceData {
