@@ -231,14 +231,11 @@ impl InstructionRaVirtualizationDimensions {
         num_virtual_ra_polys: NonZeroUsize,
         num_committed_per_virtual: NonZeroUsize,
     ) -> Result<Self, JoltFormulaDimensionsError> {
-        // The relation's sumcheck degree is `num_committed_per_virtual + 1`
-        // (`RaVirtualization::degree`); reject a shape whose degree overflows
-        // here so every accepted shape is consumable downstream.
-        if num_committed_per_virtual.get() == usize::MAX {
-            return Err(JoltFormulaDimensionsError::Overflow {
+        let _sumcheck_degree = num_committed_per_virtual.get().checked_add(1).ok_or(
+            JoltFormulaDimensionsError::Overflow {
                 name: "instruction RA virtualization sumcheck degree",
-            });
-        }
+            },
+        )?;
         let num_committed_ra_polys = num_virtual_ra_polys
             .get()
             .checked_mul(num_committed_per_virtual.get())
@@ -555,8 +552,6 @@ mod tests {
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 0, 1)).is_err());
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 1, 0)).is_err());
         assert!(InstructionRaVirtualizationDimensions::try_from((5, usize::MAX, 2)).is_err());
-        // `checked_mul` alone accepts `1 * usize::MAX`, but the relation's
-        // degree (`num_committed_per_virtual + 1`) would overflow.
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 1, usize::MAX)).is_err());
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 1, usize::MAX - 1)).is_ok());
     }
