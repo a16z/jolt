@@ -133,6 +133,96 @@ registers (cap) moves ≥15%. Priced exits, should anyone reopen:
   shuffles, per-thread live set drops below the §1 cliff) — the only
   untested shape that beats the cliff; comms cost unpriced, research-grade.
 
+---
+
+# W4-fly follow-ups (same lane, post-merge of `facfbea5a`)
+
+Two bounded doors from the findings above. Verdicts: **st0 table/fly-indexed
+cap NO-SHIP** (the isolated gain inverts under co-scheduling); **st8 bundle
+(dispatch-merge + fly cap 64) RETAINED** — merge alone measures −0.60 s st8
+@2^27, bundle ≈ −0.9 s modeled, bar 0.35 s.
+
+## 5. CLOSED: st0 commit-pipeline register cap — co-run inversion
+
+Production stage-0 tier-2 Miller is `jk_miller_fly_indexed` (8192-pair
+flush batches; `jk_miller_table` is the fallback path only). Full commit
+hook (`st0-contention --legs commit`, production sha2 witness/grid @2^22,
+gpu_lock, ABBA process-interleaved, 5 iters/invocation):
+
+| arm | commit wall (pooled medians) | Miller CB device time (CB trace) |
+|---|---:|---:|
+| uncapped | 1.207–1.211 s | 0.708 s / 27 CBs (64% of 1.112 s device) |
+| cap 64 | 1.229–1.236 s (**+2%**) | 0.726 s (**+2.5%**) |
+| cap 32 | 1.207 s (parity) | — |
+
+The isolated −12% (fly, 8192-pair shape) **inverts in-pipeline**: Miller
+CBs co-run with `jk_g1_seg_sum` waves, and the occupancy the cap frees is
+consumed by the G1 threadgroups while the Miller kernel keeps its own wall.
+Bar was −1.9% wall (0.3 s @2^27); measured +2%/0%. **st0 kernels stay
+uncapped** (`MillerFlyIndexed`, `MillerTable`); the isolated table −24% is
+recorded as co-run-hazardous, not shippable evidence.
+
+## 6. RETAINED: st8 bundle — merged reduce-round dispatches + fly cap 64
+
+**Mechanism.** Dory's reduce rounds issued each message's multi-pairs as
+separate hook calls (4 first-message, 2 second-message, n/2 pairs each):
+separate CBs whose per-call sizes starve the device mid-ladder and fall
+under the 2048-pair gate at rounds 7-8 (today's CPU rounds, measured at
+w3's honest 54 µs/pair co-run rate). `multi_pair_device_batch` concatenates
+a message's calls into ONE `jk_miller_fly` dispatch, gates on the total,
+and partitions the partial buffer back per call — per-call GTs are
+bit-exact (partials are per-pair; batch normalization inverts the same
+field elements). Wired in `dory_reduce::{first,second}_message` with the
+per-call path as fallback (`JOLT_MILLER_MERGE_DISPATCH=0` opt-out) and the
+beta/cross-MSM overlap structure untouched. `jk_miller_fly` (st8-only, runs
+solo-dominant — no st0-style co-run hazard from sibling families at its
+mass rounds) ships capped at 64.
+
+**Bench of record** (`miller_merge` group, hook walls, GT parity gated;
+baseline invocation `JOLT_METAL_PAIRING_TG_CAP=0` = W3 tree, bundle
+invocation = defaults):
+
+| message shape (round @2^27) | baseline singles | merge only | bundle (merge+cap) | bundle Δ |
+|---|---:|---:|---:|---:|
+| 4×2^17 (r0 first) | 1397.1 ms | 1339.8 | 1253.2 | **−10.3%** |
+| 4×2^12 (r5 first) | 118.7 | 70.3 | 51.2 | −56.9% |
+| 4×2^11 (r6 first) | 68.5 | 41.5 | 38.0 | −44.5% |
+| 4×2^10 (r7 first, CPU today) | 220.8 | 30.3 | 28.2 | −87.2% |
+| 4×2^9 (r8 first, CPU today) | 109.6 | 27.5 | 22.2 | −79.8% |
+| 2×2^11 (r6 second) | 34.3 | 30.4 | 28.1 | −18.2% |
+| 2×2^10 (r7 second, CPU today) | 109.2 | 27.4 | 25.6 | −76.6% |
+
+(r8 second = 2×2^9 = 1024 pairs stays under the gate both arms — CPU,
+unchanged.)
+
+**Retention math @2^27 st8.** Measured round deltas sum to **−0.612 s**
+(first r0/5/6/7/8 −0.522, second r6/7 −0.090). Unmeasured shapes (first
+r1-4, second r0-5; all device-throughput singles today, baselines modeled
+at 2.74 µs/pair ≈ 1.35 + 1.41 s) floored at the WORST measured bundle rate
+(−10.3%) add ≈ −0.28 s → **bundle ≈ −0.9 s, ≥ −0.61 s measured-only;
+bar 0.35 s cleared either way.** The merge-only arm (−0.60 s) clears the
+bar with the cap fully discounted, so the known co-run risk on the cap
+component (the bench does not reproduce the beta/cross-MSM device overlap
+of real rounds — §5's inversion mechanism) cannot un-retain the bundle.
+w3 priced this door ~0.2 s; the r7/r8 CPU walls were ~2× that estimate
+alone.
+
+## Verification (follow-ups)
+
+- `jolt-kernels --features metal`: **255/255** (new:
+  `multi_pair_device_batch_matches_singles` — batch = per-call hook = dory
+  CPU GTs on aliased/ragged/identity-bearing ranges;
+  `reduce_messages_merged_match_unmerged` — every first/second-message
+  field bit-equal across the toggle, CPU-trait reference). `jolt-dory`:
+  47/47 (open round-trips now route the merged path).
+- **Byte oracle:** `jolt-prover --features prover-fixtures,metal` byte-diff
+  suite **20/20** — proof bytes identical to the legacy prover with the
+  merged dispatches + capped fly live in the metal arm.
+- fmt + clippy `-D warnings`, default and metal feature sets: clean.
+- Conditions: AC (High Power), gpu_lock on every timed pass, wave-4 cargo
+  lockf, ABBA/process-interleaved A/B, ≤2 invocations per retention
+  decision. New dep: `jolt-eval` → `dory` (bench CPU-fallback reference).
+
 ## Verification
 
 - `cargo nextest run -p jolt-kernels --features metal`: **253/253** (new:

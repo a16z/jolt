@@ -30,7 +30,8 @@ mod macos {
 
     use criterion::{Criterion, Throughput};
     use jolt_kernels::metal::miller::{
-        multi_pair_device, seeded_pairing_inputs, ENV_MILLER_FLY_SPLIT,
+        multi_pair_device, multi_pair_device_batch, seeded_pairing_inputs, ArkG1, ArkG2, ArkGT,
+        ENV_MILLER_FLY_SPLIT,
     };
     use jolt_kernels::metal::testing::gpu_lock;
     use jolt_kernels::metal::MetalContext;
@@ -77,10 +78,85 @@ mod macos {
         }
         std::env::remove_var(ENV_MILLER_FLY_SPLIT);
     }
+
+    /// Production behavior today, one reduce-round message: each
+    /// multi-pair goes through the hook (device when its OWN size clears
+    /// the 2048-pair gate) or dory's CPU path, issued in the same nested
+    /// rayon shape as `dory_reduce::{first,second}_message`.
+    fn singles_message(calls: &[(&[ArkG1], &[ArkG2])]) -> Vec<ArkGT> {
+        fn one(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
+            multi_pair_device(ps, qs).unwrap_or_else(|| {
+                <dory::backends::arkworks::BN254 as
+                    dory::primitives::arithmetic::PairingCurve>::multi_pair(ps, qs)
+            })
+        }
+        match calls {
+            [a, b, c, d] => {
+                let ((g0, g1), (g2, g3)) = rayon::join(
+                    || rayon::join(|| one(a.0, a.1), || one(b.0, b.1)),
+                    || rayon::join(|| one(c.0, c.1), || one(d.0, d.1)),
+                );
+                vec![g0, g1, g2, g3]
+            }
+            [a, b] => {
+                let (g0, g1) = rayon::join(|| one(a.0, a.1), || one(b.0, b.1));
+                vec![g0, g1]
+            }
+            _ => calls.iter().map(|(ps, qs)| one(ps, qs)).collect(),
+        }
+    }
+
+    /// W4 bundle objective: merged-dispatch reduce messages vs today's
+    /// per-call issue, at the 2^27 round geometry (first message = 4 calls
+    /// of n/2 = 2^(17-r), second = 2; rounds 0-6 device singles, 7-8 CPU
+    /// singles). GT parity is asserted per shape before timing.
+    pub fn merge_benchmark(c: &mut Criterion) {
+        let _gpu_lock = gpu_lock();
+        MetalContext::global().expect("Metal context");
+        let max_total = 1usize << 19;
+        let (ps, qs) = seeded_pairing_inputs(0x6d_65, max_total);
+
+        // (calls, log2 n2, round label): round-0 sanity + the starvation
+        // rounds 5-6 + the currently-CPU rounds 7-8, both message shapes.
+        let shapes: [(usize, usize, &str); 7] = [
+            (4, 17, "r0"),
+            (4, 12, "r5"),
+            (4, 11, "r6"),
+            (4, 10, "r7"),
+            (4, 9, "r8"),
+            (2, 11, "r6"),
+            (2, 10, "r7"),
+        ];
+        for (n_calls, log_n2, round) in shapes {
+            let n2 = 1usize << log_n2;
+            let calls: Vec<(&[ArkG1], &[ArkG2])> = (0..n_calls)
+                .map(|i| (&ps[i * n2..(i + 1) * n2], &qs[i * n2..(i + 1) * n2]))
+                .collect();
+
+            let singles = singles_message(&calls);
+            let batch = multi_pair_device_batch(&calls).expect("merged batch serves");
+            for (i, (single, merged)) in singles.iter().zip(&batch).enumerate() {
+                assert_eq!(single.0, merged.0, "GT drift at call {i}");
+            }
+
+            let mut group = c.benchmark_group("miller_merge");
+            group.sample_size(10);
+            group.warm_up_time(Duration::from_secs(2));
+            group.measurement_time(Duration::from_secs(8));
+            group.throughput(Throughput::Elements((n_calls * n2) as u64));
+            group.bench_function(format!("{n_calls}x2^{log_n2}-{round}/singles"), |bencher| {
+                bencher.iter(|| singles_message(black_box(&calls)))
+            });
+            group.bench_function(format!("{n_calls}x2^{log_n2}-{round}/batch"), |bencher| {
+                bencher.iter(|| multi_pair_device_batch(black_box(&calls)).expect("serves"))
+            });
+            group.finish();
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
-criterion::criterion_group!(benches, macos::benchmark);
+criterion::criterion_group!(benches, macos::benchmark, macos::merge_benchmark);
 #[cfg(target_os = "macos")]
 criterion::criterion_main!(benches);
 
