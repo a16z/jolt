@@ -1,9 +1,13 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{
+    mem::size_of,
+    slice,
+    time::{Duration, Instant},
+};
 
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
 use super::{
@@ -21,11 +25,40 @@ const NATIVE_TRANSITION_PIPELINE: &str = "solinas_instruction_input_native_trans
 const DENSE_TRANSITION_PIPELINE: &str = "solinas_instruction_input_dense_transition";
 const REDUCTION_PIPELINE: &str = "solinas_instruction_input_reduce";
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum InstructionInputStorageInitialization {
+    #[default]
+    Lazy,
+    Minimal,
+    Full,
+}
+
+impl InstructionInputStorageInitialization {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Lazy => "lazy",
+            Self::Minimal => "minimal",
+            Self::Full => "full",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstructionInputStorageInitializationStats {
+    pub mode: InstructionInputStorageInitialization,
+    pub device_buffers: usize,
+    pub bytes: u64,
+    pub wall: Duration,
+    pub gpu_active: Duration,
+    pub buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionInputSequenceConfig {
     pub native_message_threads_per_threadgroup: Option<usize>,
     pub native_transition_threads_per_threadgroup: Option<usize>,
     pub dense_transition_threads_per_threadgroup: Option<usize>,
+    pub storage_initialization: InstructionInputStorageInitialization,
 }
 
 impl Default for InstructionInputSequenceConfig {
@@ -34,6 +67,7 @@ impl Default for InstructionInputSequenceConfig {
             native_message_threads_per_threadgroup: Some(256),
             native_transition_threads_per_threadgroup: Some(128),
             dense_transition_threads_per_threadgroup: Some(128),
+            storage_initialization: InstructionInputStorageInitialization::Lazy,
         }
     }
 }
@@ -82,11 +116,29 @@ struct Buffers {
     partial_b: Buffer,
 }
 
+impl Buffers {
+    fn all(&self) -> [&Buffer; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
+        [
+            &self.dense_a,
+            &self.dense_b,
+            &self.e_in,
+            &self.e_out,
+            &self.partial_a,
+            &self.partial_b,
+        ]
+    }
+
+    fn identities(&self) -> [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
+        self.all().map(|buffer| buffer.as_ptr() as usize)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InstructionInputStorageLayout {
     dense_a_elements: usize,
     dense_b_elements: usize,
     partial_elements: usize,
+    buffer_bytes: [u64; INSTRUCTION_INPUT_DEVICE_BUFFERS],
     owned_bytes: u64,
 }
 
@@ -116,15 +168,6 @@ fn instruction_input_storage_layout(
     let partial_elements = INSTRUCTION_INPUT_COEFFICIENTS
         .checked_mul(e_out_capacity)
         .ok_or(MetalError::InputTooLong(e_out_capacity))?;
-    let partial_buffer_elements = partial_elements
-        .checked_mul(2)
-        .ok_or(MetalError::InputTooLong(partial_elements))?;
-    let allocation_elements = dense_a_elements
-        .checked_add(dense_b_elements)
-        .and_then(|total| total.checked_add(e_in_capacity))
-        .and_then(|total| total.checked_add(e_out_capacity))
-        .and_then(|total| total.checked_add(partial_buffer_elements))
-        .ok_or(MetalError::InputTooLong(rows))?;
     for elements in [
         rows,
         e_in_capacity,
@@ -135,11 +178,25 @@ fn instruction_input_storage_layout(
     ] {
         validate_u32_element_count(elements)?;
     }
+    let buffer_bytes = [
+        byte_length::<Fp128>(dense_a_elements)?,
+        byte_length::<Fp128>(dense_b_elements)?,
+        byte_length::<Fp128>(e_in_capacity)?,
+        byte_length::<Fp128>(e_out_capacity)?,
+        byte_length::<Fp128>(partial_elements)?,
+        byte_length::<Fp128>(partial_elements)?,
+    ];
+    let owned_bytes = buffer_bytes.iter().try_fold(0u64, |total, bytes| {
+        total
+            .checked_add(*bytes)
+            .ok_or(MetalError::InputTooLong(rows))
+    })?;
     Ok(InstructionInputStorageLayout {
         dense_a_elements,
         dense_b_elements,
         partial_elements,
-        owned_bytes: byte_length::<Fp128>(allocation_elements)?,
+        buffer_bytes,
+        owned_bytes,
     })
 }
 
@@ -163,6 +220,7 @@ pub(crate) struct InstructionInputSequenceStorage {
     native_transition_threads: usize,
     dense_transition_threads: usize,
     config: InstructionInputSequenceConfig,
+    initialization: InstructionInputStorageInitializationStats,
     owned_bytes: u64,
 }
 
@@ -286,6 +344,22 @@ impl SolinasMetal {
         .entered();
         self.validate_additional_working_set(layout.owned_bytes)?;
 
+        let buffers = Buffers {
+            dense_a: new_buffer(self, layout.dense_a_elements)?,
+            dense_b: new_buffer(self, layout.dense_b_elements)?,
+            e_in: new_buffer(self, e_in_capacity)?,
+            e_out: new_buffer(self, e_out_capacity)?,
+            partial_a: new_buffer(self, layout.partial_elements)?,
+            partial_b: new_buffer(self, layout.partial_elements)?,
+        };
+        let actual_buffer_bytes = buffers.all().map(|buffer| buffer.length());
+        if actual_buffer_bytes != layout.buffer_bytes {
+            return Err(MetalError::InvalidInstructionInputState(
+                "allocated storage lengths disagree with the plan",
+            ));
+        }
+        let initialization = initialize_storage(self, &buffers, config.storage_initialization)?;
+
         Ok(InstructionInputSequenceStorage {
             context: self.clone(),
             pipelines,
@@ -293,14 +367,7 @@ impl SolinasMetal {
             native_transition_limits,
             dense_transition_limits,
             reduction_limits,
-            buffers: Buffers {
-                dense_a: new_buffer(self, layout.dense_a_elements)?,
-                dense_b: new_buffer(self, layout.dense_b_elements)?,
-                e_in: new_buffer(self, e_in_capacity)?,
-                e_out: new_buffer(self, e_out_capacity)?,
-                partial_a: new_buffer(self, layout.partial_elements)?,
-                partial_b: new_buffer(self, layout.partial_elements)?,
-            },
+            buffers,
             rows,
             e_in_capacity,
             e_out_capacity,
@@ -308,6 +375,7 @@ impl SolinasMetal {
             native_transition_threads,
             dense_transition_threads,
             config,
+            initialization,
             owned_bytes: layout.owned_bytes,
         })
     }
@@ -451,18 +519,15 @@ impl InstructionInputSequence {
     }
 
     pub fn static_buffer_identity(&self) -> [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
-        [
-            self.storage.buffers.dense_a.as_ptr() as usize,
-            self.storage.buffers.dense_b.as_ptr() as usize,
-            self.storage.buffers.e_in.as_ptr() as usize,
-            self.storage.buffers.e_out.as_ptr() as usize,
-            self.storage.buffers.partial_a.as_ptr() as usize,
-            self.storage.buffers.partial_b.as_ptr() as usize,
-        ]
+        self.storage.buffers.identities()
     }
 
     pub const fn owned_storage_bytes(&self) -> u64 {
         self.storage.owned_bytes
+    }
+
+    pub const fn storage_initialization(&self) -> InstructionInputStorageInitializationStats {
+        self.storage.initialization
     }
 
     pub const fn native_message_pipeline_limits(&self) -> PipelineLimits {
@@ -726,6 +791,84 @@ impl InstructionInputSequence {
     }
 }
 
+fn initialize_storage(
+    context: &SolinasMetal,
+    buffers: &Buffers,
+    mode: InstructionInputStorageInitialization,
+) -> Result<InstructionInputStorageInitializationStats, MetalError> {
+    let buffer_identities = buffers.identities();
+    let fill_lengths = buffers.all().map(|buffer| match mode {
+        InstructionInputStorageInitialization::Lazy => 0,
+        InstructionInputStorageInitialization::Minimal => size_of::<Fp128>() as u64,
+        InstructionInputStorageInitialization::Full => buffer.length(),
+    });
+    let bytes = fill_lengths.iter().try_fold(0u64, |total, length| {
+        total
+            .checked_add(*length)
+            .ok_or(MetalError::InvalidInstructionInputState(
+                "storage initialization byte count overflowed",
+            ))
+    })?;
+    let device_buffers = usize::from(mode != InstructionInputStorageInitialization::Lazy)
+        * INSTRUCTION_INPUT_DEVICE_BUFFERS;
+    let span = tracing::info_span!(
+        "MetalInstructionInput::storage_initialize",
+        mode = mode.as_str(),
+        device_buffers,
+        bytes,
+        protocol_dispatches = 0,
+        buffer_0 = buffer_identities[0],
+        buffer_1 = buffer_identities[1],
+        buffer_2 = buffer_identities[2],
+        buffer_3 = buffer_identities[3],
+        buffer_4 = buffer_identities[4],
+        buffer_5 = buffer_identities[5],
+    );
+    let _entered = span.enter();
+    let started = Instant::now();
+    let gpu_active = if mode == InstructionInputStorageInitialization::Lazy {
+        Duration::ZERO
+    } else {
+        let command_buffer = context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_blit_command_encoder();
+            for (buffer, length) in buffers.all().into_iter().zip(fill_lengths) {
+                encoder.fill_buffer(buffer, NSRange::new(0, length), 0);
+            }
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        let gpu_active = Duration::from_secs_f64(end - start);
+        let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
+        let completion = tracing::info_span!(
+            "MetalInstructionInput::storage_initialize_complete",
+            mode = mode.as_str(),
+            command_completed = true,
+            gpu_active_ns,
+        );
+        let _completed = completion.enter();
+        gpu_active
+    };
+    let wall = started.elapsed();
+    Ok(InstructionInputStorageInitializationStats {
+        mode,
+        device_buffers,
+        bytes,
+        wall,
+        gpu_active,
+        buffer_identities,
+    })
+}
+
 fn write_fields(buffer: &Buffer, capacity: usize, values: &[AkitaField]) -> Result<(), MetalError> {
     if values.len() > capacity {
         return Err(MetalError::InstructionInputStorageLength {
@@ -773,15 +916,17 @@ fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, va
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, reason = "test module")]
 mod tests {
-    use std::mem::size_of;
+    use std::{mem::size_of, slice};
 
     use jolt_field::AkitaField;
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
     use super::{
-        instruction_input_sequence_storage_bytes, instruction_input_weight_capacities,
+        initialize_storage, instruction_input_sequence_storage_bytes,
+        instruction_input_storage_layout, instruction_input_weight_capacities,
         validate_u32_element_count, InstructionInputParams, InstructionInputSequenceConfig,
-        ReductionParams, INSTRUCTION_INPUT_TABLES,
+        InstructionInputStorageInitialization, ReductionParams, INSTRUCTION_INPUT_DEVICE_BUFFERS,
+        INSTRUCTION_INPUT_TABLES,
     };
     use crate::metal::solinas::{MetalError, SolinasMetal, SpartanOuterUniskipRow};
 
@@ -796,9 +941,24 @@ mod tests {
 
     #[test]
     fn sequence_bytes_match_the_production_geometry() {
+        let rows = 1 << 26;
+        let (e_in, e_out) = instruction_input_weight_capacities(rows).unwrap();
+        let layout = instruction_input_storage_layout(rows, e_in, e_out).unwrap();
         assert_eq!(
-            instruction_input_sequence_storage_bytes(1 << 26).unwrap(),
-            6_443_433_984
+            layout.buffer_bytes,
+            [
+                4_294_967_296,
+                2_147_483_648,
+                65_536,
+                131_072,
+                393_216,
+                393_216,
+            ]
+        );
+        assert_eq!(layout.owned_bytes, 6_443_433_984);
+        assert_eq!(
+            instruction_input_sequence_storage_bytes(rows).unwrap(),
+            layout.owned_bytes
         );
     }
 
@@ -927,7 +1087,10 @@ mod tests {
                 rows.len(),
                 e_in_capacity,
                 e_out_capacity,
-                InstructionInputSequenceConfig::default(),
+                InstructionInputSequenceConfig {
+                    storage_initialization: InstructionInputStorageInitialization::Full,
+                    ..InstructionInputSequenceConfig::default()
+                },
             )
             .expect("sequence storage should prepare");
         let mut sequence = storage.attach(resident).expect("rows should attach");
@@ -989,5 +1152,46 @@ mod tests {
         let mut readback = vec![AkitaField::zero(); tables_2.len()];
         sequence.read_current_tables(&mut readback).unwrap();
         assert_eq!(readback, tables_2);
+    }
+
+    #[test]
+    fn full_initialization_zeroes_every_static_buffer_in_place() {
+        let rows = 16;
+        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+        let (e_in_capacity, e_out_capacity) = instruction_input_weight_capacities(rows).unwrap();
+        let storage = context
+            .prepare_instruction_input_sequence_storage(
+                rows,
+                e_in_capacity,
+                e_out_capacity,
+                InstructionInputSequenceConfig::default(),
+            )
+            .expect("sequence storage should prepare");
+        let identities = storage.buffers.identities();
+        for buffer in storage.buffers.all() {
+            let length = usize::try_from(buffer.length()).unwrap();
+            // SAFETY: every test buffer uses shared storage and no command is active.
+            let bytes = unsafe { slice::from_raw_parts_mut(buffer.contents().cast(), length) };
+            bytes.fill(0xA5);
+        }
+
+        let stats = initialize_storage(
+            &context,
+            &storage.buffers,
+            InstructionInputStorageInitialization::Full,
+        )
+        .expect("full initialization should complete");
+
+        assert_eq!(stats.device_buffers, INSTRUCTION_INPUT_DEVICE_BUFFERS);
+        assert_eq!(stats.bytes, storage.owned_bytes());
+        assert_eq!(stats.buffer_identities, identities);
+        assert!(stats.gpu_active <= stats.wall);
+        assert_eq!(storage.buffers.identities(), identities);
+        for buffer in storage.buffers.all() {
+            let length = usize::try_from(buffer.length()).unwrap();
+            // SAFETY: the synchronous blit completed and the shared buffer remains live.
+            let bytes: &[u8] = unsafe { slice::from_raw_parts(buffer.contents().cast(), length) };
+            assert!(bytes.iter().all(|byte| *byte == 0));
+        }
     }
 }

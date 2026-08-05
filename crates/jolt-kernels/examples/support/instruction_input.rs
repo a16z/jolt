@@ -9,7 +9,8 @@ use jolt_field::{
     AkitaField, AkitaSignedProductAccumulator, FromPrimitiveInt, SignedProductAccumulator as _,
 };
 use jolt_kernels::metal::solinas::{
-    InstructionInputSequence, InstructionInputSequenceConfig, SolinasMetal, SpartanOuterUniskipRow,
+    InstructionInputSequence, InstructionInputSequenceConfig,
+    InstructionInputStorageInitialization, SolinasMetal, SpartanOuterUniskipRow,
     INSTRUCTION_INPUT_TABLES,
 };
 use jolt_kernels::optimized::instruction_input::{
@@ -46,10 +47,18 @@ pub struct SequenceDispatch {
 
 impl SequenceDispatch {
     pub const fn config(self) -> InstructionInputSequenceConfig {
+        self.config_with_storage_initialization(InstructionInputStorageInitialization::Lazy)
+    }
+
+    pub const fn config_with_storage_initialization(
+        self,
+        storage_initialization: InstructionInputStorageInitialization,
+    ) -> InstructionInputSequenceConfig {
         InstructionInputSequenceConfig {
             native_message_threads_per_threadgroup: Some(self.native_message),
             native_transition_threads_per_threadgroup: Some(self.native_transition),
             dense_transition_threads_per_threadgroup: Some(self.dense_transition),
+            storage_initialization,
         }
     }
 }
@@ -78,10 +87,12 @@ pub struct TimedTrace {
     pub wall: Duration,
     pub reset: Duration,
     pub gpu_wall: Duration,
+    pub gpu_command_wall: Vec<Duration>,
     pub host_rounds: Duration,
     pub readback: Duration,
     pub cpu_tail: Duration,
     pub gpu_active: Duration,
+    pub gpu_command_active: Vec<Duration>,
     pub resident_rows_stable: bool,
     pub static_device_buffers_stable: bool,
     pub readbacks: usize,
@@ -184,6 +195,19 @@ impl Workload {
         context: &SolinasMetal,
         dispatch: SequenceDispatch,
     ) -> EvalResult<InstructionInputSequence> {
+        self.prepare_sequence_with_storage_initialization(
+            context,
+            dispatch,
+            InstructionInputStorageInitialization::Lazy,
+        )
+    }
+
+    pub fn prepare_sequence_with_storage_initialization(
+        &mut self,
+        context: &SolinasMetal,
+        dispatch: SequenceDispatch,
+        storage_initialization: InstructionInputStorageInitialization,
+    ) -> EvalResult<InstructionInputSequence> {
         let seed = self
             .resident_seed
             .take()
@@ -194,7 +218,10 @@ impl Workload {
             .enumerate()
             .map(|(index, row)| resident_row(index, *row, seed))
             .collect::<Vec<_>>();
-        let sequence = context.prepare_instruction_input_sequence(&rows, dispatch.config())?;
+        let sequence = context.prepare_instruction_input_sequence(
+            &rows,
+            dispatch.config_with_storage_initialization(storage_initialization),
+        )?;
         drop(rows);
         Ok(sequence)
     }
@@ -589,10 +616,12 @@ pub fn run_cpu(workload: &Workload, cutoff: usize, capture: Capture) -> EvalResu
         wall,
         reset: Duration::ZERO,
         gpu_wall: Duration::ZERO,
+        gpu_command_wall: Vec::new(),
         host_rounds: Duration::ZERO,
         readback: Duration::ZERO,
         cpu_tail: wall,
         gpu_active: Duration::ZERO,
+        gpu_command_active: Vec::new(),
         resident_rows_stable: true,
         static_device_buffers_stable: true,
         readbacks: 0,
@@ -624,15 +653,25 @@ pub fn run_hybrid(
     let mut challenges = Vec::with_capacity(workload.log_n);
     let mut states = Vec::with_capacity(workload.log_n);
     let mut gpu_wall = Duration::ZERO;
+    let mut gpu_command_wall = Vec::with_capacity(workload.log_n);
+    let mut gpu_command_active = Vec::with_capacity(workload.log_n);
     let mut host_rounds = Duration::ZERO;
     let mut readback = Duration::ZERO;
     let mut cpu_tail = Duration::ZERO;
     let mut readbacks = 0;
 
+    let gpu_active_started = sequence.gpu_active_time();
     let gpu_started = Instant::now();
     let descriptors =
         sequence.message(workload.gamma, gruen.e_in_current(), gruen.e_out_current())?;
-    gpu_wall += gpu_started.elapsed();
+    let command_wall = gpu_started.elapsed();
+    let command_active = sequence
+        .gpu_active_time()
+        .checked_sub(gpu_active_started)
+        .ok_or("InstructionInput GPU-active time moved backwards")?;
+    gpu_wall += command_wall;
+    gpu_command_wall.push(command_wall);
+    gpu_command_active.push(command_active);
     let mut q = descriptor_grid(descriptors);
 
     let (mut tail, cutoff_tables) = loop {
@@ -667,6 +706,7 @@ pub fn run_hybrid(
         let host_started = Instant::now();
         gruen.bind(challenge);
         host_rounds += host_started.elapsed();
+        let gpu_active_started = sequence.gpu_active_time();
         let gpu_started = Instant::now();
         let descriptors = sequence.bind_and_message(
             challenge,
@@ -674,7 +714,14 @@ pub fn run_hybrid(
             gruen.e_in_current(),
             gruen.e_out_current(),
         )?;
-        gpu_wall += gpu_started.elapsed();
+        let command_wall = gpu_started.elapsed();
+        let command_active = sequence
+            .gpu_active_time()
+            .checked_sub(gpu_active_started)
+            .ok_or("InstructionInput GPU-active time moved backwards")?;
+        gpu_wall += command_wall;
+        gpu_command_wall.push(command_wall);
+        gpu_command_active.push(command_active);
         q = descriptor_grid(descriptors);
     };
 
@@ -710,10 +757,12 @@ pub fn run_hybrid(
         wall: total_started.elapsed(),
         reset,
         gpu_wall,
+        gpu_command_wall,
         host_rounds,
         readback,
         cpu_tail,
         gpu_active: sequence.gpu_active_time(),
+        gpu_command_active,
         resident_rows_stable: sequence.resident_row_identity() == resident_identity,
         static_device_buffers_stable: sequence.static_buffer_identity() == static_identity,
         readbacks,

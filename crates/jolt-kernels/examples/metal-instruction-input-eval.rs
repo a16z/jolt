@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 use jolt_kernels::metal::solinas::{SolinasMetal, SpartanOuterUniskipRow};
 use serde_json::json;
 
+#[expect(
+    dead_code,
+    reason = "the shared support also exposes cold-residency timing fields"
+)]
 #[path = "support/instruction_input.rs"]
 mod instruction_input;
 

@@ -199,12 +199,22 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
             });
         }
         let round_device_buffer_allocations = sequence.round_device_buffer_allocations();
+        let initialization = sequence.storage_initialization();
+        let buffer_identities = initialization.buffer_identities;
         let _prepare_span = tracing::info_span!(
             "MetalInstructionInput::prepare",
             resident_rows_reused = true,
             round_device_buffer_allocations,
             resident_rows_storage_id = resident_identity,
-            resident_rows = trace_elements
+            resident_rows = trace_elements,
+            storage_initialization = initialization.mode.as_str(),
+            storage_initialization_bytes = initialization.bytes,
+            storage_buffer_0 = buffer_identities[0],
+            storage_buffer_1 = buffer_identities[1],
+            storage_buffer_2 = buffer_identities[2],
+            storage_buffer_3 = buffer_identities[3],
+            storage_buffer_4 = buffer_identities[4],
+            storage_buffer_5 = buffer_identities[5],
         )
         .entered();
         let cpu =
