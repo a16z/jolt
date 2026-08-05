@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d0f16">
-<title>Jolt Metal M5 Saturation Audit</title>
+<title>Metal M5 Saturation — Canonical Report</title>
 <style>
 /* Pika HTML reports — canonical single-file design system. */
 :root {
@@ -2298,13 +2298,14 @@ body.doc {
 
 <header class="hero">
   <div class="wrap hero__inner">
-    <span class="kicker" style="--kc:var(--purple)">Jolt · M5 Max · 04 Aug 2026</span>
-    <h1>The GPU is busy. <span class="thin">The proof is not one roof.</span></h1>
-    <p class="hero__sub">Fresh traces reject a single “unsaturated GPU” diagnosis: <b>host serialization, shared-memory traffic, and local compute occupancy dominate different stages.</b></p>
+    <span class="kicker" style="--kc:var(--purple)">Jolt · Metal M5 saturation campaign · canonical report</span>
+    <h1>One report, <span class="thin">checked against the metal</span></h1>
+    <p class="hero__sub">Replaces the four Aug-4 audit/journal files. Every per-stage claim re-derived from the raw monitor trace, command-buffer audit, and stage source code — <b>four of nine stage subjects in the prior audit were misattributed</b>; the numbers themselves were honest. Current through the wave-2 gate: <b>69.63 s / 1.928&nbsp;MHz padded at 2²⁷</b>.</p>
     <div class="stats">
-      <div class="stat"><span class="n">71.77 s</span><span class="l">2²⁷ baseline</span></div>
-      <div class="stat"><span class="n">1.870 MHz</span><span class="l">padded throughput</span></div>
-      <div class="stat"><span class="n">&lt;0.5%</span><span class="l">fixed launch ceiling</span></div>
+      <div class="stat"><span class="n num">69.63 s</span><span class="l">2²⁷ flagship (wave-2)</span></div>
+      <div class="stat"><span class="n num">−2.14 s</span><span class="l">vs 71.77 s baseline</span></div>
+      <div class="stat"><span class="n num">4/9</span><span class="l">stage labels wrong in prior audit</span></div>
+      <div class="stat"><span class="n num">0</span><span class="l">fabricated numbers found</span></div>
     </div>
   </div>
 </header>
@@ -2312,178 +2313,222 @@ body.doc {
 <nav class="toc" aria-label="Sections">
   <div class="toc__track" id="tocTrack">
     <span class="toc-ind"></span>
-    <a class="tp" href="#verdict" data-target="verdict"><span class="pdot"></span>Verdict</a>
-    <a class="tp" href="#stages" data-target="stages" style="--pc:var(--blue)"><span class="pdot"></span>Stages</a>
-    <a class="tp" href="#protocol" data-target="protocol" style="--pc:var(--purple)"><span class="pdot"></span>Protocol</a>
-    <a class="tp" href="#ideas" data-target="ideas" style="--pc:var(--green)"><span class="pdot"></span>Next bets</a>
-    <a class="tp" href="#evidence" data-target="evidence" style="--pc:var(--orange)"><span class="pdot"></span>Evidence</a>
+    <a class="tp" href="#factcheck" data-target="factcheck" style="--pc:var(--red)"><span class="pdot"></span>Fact-check</a>
+    <a class="tp" href="#attribution" data-target="attribution" style="--pc:var(--blue)"><span class="pdot"></span>Stage attribution</a>
+    <a class="tp" href="#gpu" data-target="gpu" style="--pc:var(--purple)"><span class="pdot"></span>How the GPU works</a>
+    <a class="tp" href="#campaign" data-target="campaign" style="--pc:var(--green)"><span class="pdot"></span>Waves 1–2</a>
+    <a class="tp" href="#wave3" data-target="wave3" style="--pc:var(--orange)"><span class="pdot"></span>Wave-3 surface</a>
+    <a class="tp" href="#verdict" data-target="verdict" style="--pc:var(--yellow)"><span class="pdot"></span>Verdict</a>
   </div>
 </nav>
 
 <main>
-  <section id="verdict"><div class="wrap block">
-    <div class="sec-head reveal">
-      <div>
-        <p class="eyebrow">01 · Bottom line</p>
-        <h2>Headroom exists, but utilization is the wrong control knob</h2>
-        <p>Optimization must follow the active roof of each stage.</p>
-      </div>
-    </div>
 
-    <div class="verdict card verdict--green reveal">
-      <span class="vlabel">Verdict</span>
-      <blockquote>“GPU not 100% saturated ⇒ headroom” is directionally true but operationally incomplete. Idle intervals in stages 3, 4, 6b, and 7 are recoverable; raising aggregate GPU% cannot fix bandwidth contention or Miller-loop occupancy limits.</blockquote>
-      <div class="vwho">Basis: fresh 2²⁷ monitor trace · 646 command buffers · controlled roof and contention probes</div>
-    </div>
+<section id="factcheck"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">01 · Adversarial fact-check</p>
+    <h2>The numbers were real. The names were invented.</h2>
+    <p>Every table cell in the prior audit traces to <code>metal-sat-attribution-plan.md</code> and was independently re-derived here from <code>monitor-2to27-20260804.json</code>. The stage <em>subject labels</em> were not taken from that report — they were guessed, and four are wrong.</p>
+  </div></div>
 
-    <div class="kpis" data-stagger="55">
-      <div class="kpi card" style="--kpi-c:var(--green)">
-        <div class="kl">Certified starting point</div>
-        <div class="kv"><span>71.77 s</span></div>
-        <div class="kd up"><span class="arr"></span>within 0.4% <span class="vs">of prior 71.46 s flagship</span></div>
-      </div>
-      <div class="kpi card" style="--kpi-c:var(--blue)">
-        <div class="kl">Launch overhead</div>
-        <div class="kv"><span>≈86 ms</span></div>
-        <div class="kd"><span class="vs">646 × 87–134 μs fresh-CB ceiling</span></div>
-      </div>
-      <div class="kpi card kpi--neg" style="--kpi-c:var(--red)">
-        <div class="kl">Global address-major</div>
-        <div class="kv"><span>&gt;68×</span></div>
-        <div class="kd down"><span class="arr"></span>regression floor <span class="vs">at 2²²; killed</span></div>
-      </div>
-    </div>
+  <h3>Confirmed misattributions</h3>
+  <p class="prose">Ground truth is the stage module docs (<code class="hash">crates/jolt-prover/src/stages/stage*.rs</code>) and the raw trace's member→span map (which <code>prove_round</code> spans fire inside which <code>prove_stage*</code> span).</p>
 
-    <div class="callout callout--warn reveal">
-      <span class="cl">Measurement boundary</span>
-      <p>The public M5 Max Metal runtime exposes only timestamp counters on this host; direct ALU occupancy, cache-miss, and DRAM-byte counters are unavailable. Classification below triangulates fresh device-active samples, GPU timestamps, bandwidth/compute roofs, thread scaling, and controlled co-runs.</p>
-    </div>
-    <div class="callout callout--info reveal">
-      <span class="cl">Wave-close variance</span>
-      <p>The unchanged prover path closed at 81.54 s (stage 0 = 19.3 s), then 100.25 s after a four-minute gap (stage 6b = 31.0 s). The timed cap is exhausted; the clean 71.77 s campaign-start run remains the flagship, while these tails strengthen the stage-specific contention diagnosis.</p>
-    </div>
-  </div></section>
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Stage</th><th>Prior audit said</th><th>Actually is (trace-verified)</th><th>Why it matters</th></tr></thead>
+      <tbody>
+        <tr><td class="k">st4</td><td class="neg">“Instruction RAF”</td><td>Registers read/write checking + RAM Val check</td><td class="sub">Instruction read+RAF runs in st5. A reader targeting st4's host gap would open the wrong sumcheck.</td></tr>
+        <tr><td class="k">st5</td><td class="neg">“Booleanity/RAM”</td><td>Instruction read+RAF (312 round spans, 9.7 s of 14.7) + RamRA CR + Registers Val</td><td class="sub">Booleanity lives in 6a/6b. st5 is now the #1 wave-3 target — under its audit name you'd hunt the wrong kernels.</td></tr>
+        <tr><td class="k">st6b</td><td class="neg">“Bytecode RAF”</td><td>11-member cycle-phase batch: BytecodeRRC 5.6 s, RamRA + InstrRA virtualization, Booleanity, IncCR (prepare 1.79 s), Hamming, 4 precommitted members</td><td class="sub">Names one member of eleven. The −9.33 s wave-2 fix landed in the members the label hides (RA-virt/Bool adoption).</td></tr>
+        <tr><td class="k">st7</td><td class="neg">“Output checks”</td><td>Hamming-weight claim reduction — 99.7% is <code>HWCR::prepare</code> (1.887 of 1.893 s)</td><td class="sub">RAM output check is a stage-2 member. The wave-2 st7 fix was a Hamming pushforward rebuild.</td></tr>
+      </tbody>
+    </table>
+  </div></div>
 
-  <section id="stages"><div class="wrap block">
-    <div class="sec-head reveal">
-      <div>
-        <p class="eyebrow">02 · Stage attribution</p>
-        <h2>Four bottleneck regimes, not one</h2>
-        <p>Fresh monitored 2²⁷ run: 80.99 s attribution wall time; percentages are time-weighted ioreg samples, not ALU counters.</p>
-      </div>
-    </div>
+  <div class="callout callout--done reveal">
+    <span class="cl">Verified clean</span>
+    <p>Recomputed from the raw trace: stage walls, GPU/CPU utilization (±0.7 pp, left-hold convention), sampled-zero runs (st3 2.48 s, st4 4.76 s total / 2.58 s max, st6b 10.60 s total, st7 1.62 s — all bracketed by raw-span vs held-sample conventions), 646 CBs × 133.8 µs = 86 ms launch ceiling, 357→162 GB/s (−55%) contention probe, 11.30 Gmul/s roof, address-major &gt;68× kill, radix-4 bind 1.51–1.98×. <b>Nothing fabricated.</b></p>
+  </div>
 
-    <div class="tblwrap card reveal">
-      <div class="table-scroll">
-        <table class="tbl">
-          <thead><tr><th>Stage</th><th class="r">Wall</th><th class="r">GPU</th><th class="r">CPU</th><th>Dominant roof</th><th>Evidence / implication</th></tr></thead>
-          <tbody>
-            <tr><td class="k">0 · Trace commitment</td><td class="r">18.01 s</td><td class="r hi">79.4%</td><td class="r">61.9%</td><td>Shared fabric + local occupancy</td><td class="sub">GPU-heavy while CPU record walk overlaps; bimodal tail remains the consistency prize.</td></tr>
-            <tr><td class="k">1–2</td><td class="r">7.66 s</td><td class="r">65.9%</td><td class="r">14.7%</td><td>Mixed / low priority</td><td class="sub">No single large recoverable term in the current trace.</td></tr>
-            <tr class="hl"><td class="k">3 · Instruction input</td><td class="r">3.00 s</td><td class="r neg">16.1%</td><td class="r">37.0%</td><td>Serial host preparation</td><td class="sub">2.48 s sampled-zero hold; GPU arithmetic is not the limiting resource.</td></tr>
-            <tr class="hl"><td class="k">4 · Instruction RAF</td><td class="r">9.28 s</td><td class="r">40.2%</td><td class="r">22.3%</td><td>Host/device phase boundary</td><td class="sub">4.76 s total sampled-zero, 2.58 s max run; strongest bounded host-gap target.</td></tr>
-            <tr><td class="k">5 · Booleanity/RAM</td><td class="r">14.67 s</td><td class="r hi">77.6%</td><td class="r">25.0%</td><td>Streaming bytes + queue pressure</td><td class="sub">Large dense passes; fixed launch removal cannot move this roof.</td></tr>
-            <tr class="hl"><td class="k">6b · Bytecode RAF</td><td class="r">17.49 s</td><td class="r">34.5%</td><td class="r">18.6%</td><td>Gather ALU + waits + tail occupancy</td><td class="sub">Dense streams are only ≈0.3 s at roof; 10.60 s sampled-zero total exposes serialization and host glue.</td></tr>
-            <tr class="hl"><td class="k">7 · Output checks</td><td class="r">1.89 s</td><td class="r neg">13.5%</td><td class="r hi">65.6%</td><td>CPU-serial</td><td class="sub">1.62 s sampled-zero run; upper bound is small but unusually clean.</td></tr>
-            <tr><td class="k">8 · Dory opening</td><td class="r">8.70 s</td><td class="r hi">86.6%</td><td class="r">10.2%</td><td>Miller ALU / occupancy</td><td class="sub">Thread-scaling and compute-roof behavior; aggregate GPU% does not reveal SIMD efficiency.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+  <div class="callout callout--info reveal">
+    <span class="cl">Audit beat journal once</span>
+    <p>The campaign journal claims a st7 zero-run of <span class="num">2.11 s</span> — impossible inside a 1.89 s stage. The attribution report shows it is a <em>boundary</em> run extending into st8; the audit correctly used the in-stage 1.615 s. Journal text is the sloppier artifact on this point.</p>
+  </div>
 
-    <p class="prose"><b>Bandwidth evidence.</b> Streaming roof: 357–485 GB/s. Concurrent GPU bind + CPU field multiplication cuts GPU bandwidth by roughly 54–60% and CPU throughput by 32–45%: unified-memory overlap is contention, not free parallelism.</p>
-  </div></section>
+  <div class="callout callout--warn reveal">
+    <span class="cl">Ranking deviation</span>
+    <p>The audit promoted st0 scheduling to bet #1 and “recommended next action” — <em>deviating from its own source</em>, which ranked st4/st6b above it. Wave-2 killed the st0 door within hours (bimodality is ambient device power/clock state: 3.8→22.5 s solo commit at constant CPU time — no walk, no scheduling defect), while st6b, ranked #2 at “2–5%”, delivered 13%. The one editorial judgment the audit added on top of its source was wrong in both directions.</p>
+  </div>
 
-  <section id="protocol"><div class="wrap block">
-    <div class="sec-head reveal">
-      <div>
-        <p class="eyebrow">03 · Protocol and layout probes</p>
-        <h2>Radix-4 has a real bind win—and a nontrivial PCS bill</h2>
-        <p>The sound prototype is retained locally; production integration is parked.</p>
-      </div>
-    </div>
+  <h3>The four files</h3>
+  <ul class="prose">
+    <li><code class="hash">/tmp/metal-m5-saturation-audit-20260804.html</code> — v1, still carries the later-withdrawn stage-4 “1.2–2.2 s” radix-4 candidate (built on cycle bits misread as address bits).</li>
+    <li><code class="hash">/tmp/metal-m5-saturation-audit-20260804-final.html</code> — v2 after the r4-pin correction; byte-identical to the worktree copy. The correction itself was honest and prompt.</li>
+    <li><code class="hash">/tmp/metal-saturation-journal-*.md</code> ×2 — stale snapshots of the live worktree journal at wave-1 close.</li>
+  </ul>
+  <p class="prose">All four are superseded by this document; the /tmp copies are deleted.</p>
+</div></section>
 
-    <div class="callout callout--danger reveal">
-      <span class="cl">Rejected construction</span>
-      <p>Degree-3d corner interpolation plus ordinary MLE binding/opening is inconsistent. For U(X,Y)=XY, cubic digit interpolation differs from x(Z)y(Z) away from digit nodes. Two ordinary round polynomials sharing one challenge remains forbidden.</p>
-    </div>
+<section id="attribution"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">02 · Corrected stage attribution</p>
+    <h2>What each stage is, what limits it, what happened to it</h2>
+    <p>Monitor columns from the wave-1 2²⁷ attribution run (80.99 s wall); “now” = wave-2 record run (69.63 s). GPU% is a time-weighted <code>ioreg</code> activity sample, not an ALU counter.</p>
+  </div></div>
 
-    <h3>Sound shape exercised</h3>
-    <ul class="prose">
-      <li>One four-point polynomial q(Z), one Fiat–Shamir challenge, direct quaternary Lagrange bind.</li>
-      <li>Dense degree-2 relation G=U·V: degree ≤6=3d; four-corner claim identity; terminal relation match.</li>
-      <li>Tamper polynomial cZ(Z−1)(Z−2)(Z−3) preserves every digit node and is rejected at the random point.</li>
-      <li>Metal direct bind-by-two: 1.51–1.98× faster than two binary binds at 2²⁴.</li>
-    </ul>
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Stage</th><th>Actual contents</th><th class="r">GPU%</th><th class="r">zero&nbsp;s</th><th class="r">baseline</th><th class="r">now</th><th>Limiting resource (evidence in §3)</th></tr></thead>
+      <tbody>
+        <tr><td class="k">st0</td><td class="sub">FS preamble + witness commitment (Dory streaming) over hoisted CPU trace-record walk</td><td class="r num">79.4</td><td class="r num">0.6</td><td class="r num">12.08</td><td class="r num">17.98</td><td class="sub">Shared memory fabric + <b>ambient device power state</b> (±5 s bimodality, exists with zero co-runner)</td></tr>
+        <tr><td class="k">st1</td><td class="sub">Spartan outer uni-skip + outer remainder</td><td class="r num">77.1</td><td class="r num">0.9</td><td class="r num">4.46</td><td class="r num">5.45</td><td class="sub">Host prepare/glue at 2.2 cores; GPU% contaminated by adjacent device work</td></tr>
+        <tr><td class="k">st2</td><td class="sub">Product uni-skip + 5-member batch (RamRWC, product remainder, InstrCR, RamRAF, <b>RAM output check</b>)</td><td class="r num">48.3</td><td class="r num">1.3</td><td class="r num">2.78</td><td class="r num">2.98</td><td class="sub">Mixed host prepare / device rounds</td></tr>
+        <tr><td class="k">st3</td><td class="sub">SpartanShift + InstructionInput + RegistersCR</td><td class="r num">16.1</td><td class="r num">2.5</td><td class="r num">2.40</td><td class="r num">2.30</td><td class="sub">Host-serial round 0 (<code>native_q_evals</code> 2.14 s) — cut by <code>jk_instr_input_q0</code> (w2, 8.4–9.2× isolated)</td></tr>
+        <tr class="hl"><td class="k">st4</td><td class="sub">Registers read/write checking + RAM Val check</td><td class="r num">40.2</td><td class="r num">4.8</td><td class="r num">8.77</td><td class="r num">9.52</td><td class="sub">Host/device alternation: device message → host <code>scanned_offsets</code>+alloc → bind, every round; RegistersRWC::prepare 2.45 s</td></tr>
+        <tr class="hl"><td class="k">st5</td><td class="sub">Instruction read+RAF (d=6) + RamRA CR + Registers Val</td><td class="r num">77.6</td><td class="r num">2.1</td><td class="r num">14.22</td><td class="r num">14.81</td><td class="sub">Device-dominated scan/reduce; ALU-vs-bandwidth unresolved (no HW counters) — wave-3 lane harnessing</td></tr>
+        <tr><td class="k">st6a</td><td class="sub">Bytecode RAF + booleanity address phases</td><td class="r num">—</td><td class="r num">0</td><td class="r num">0.25</td><td class="r num">0.19</td><td class="sub">Negligible</td></tr>
+        <tr><td class="k">st6b</td><td class="sub">11-member cycle batch: BytecodeRRC, Booleanity, RamHamming, RamRA+InstrRA virt, IncCR, precommitted CRs</td><td class="r num">34.5</td><td class="r num">10.6</td><td class="r num">16.35</td><td class="r num">7.02</td><td class="sub">Was: synchronous adoption allocation (3× <code>jk_ra_materialize</code>, 28.5 GiB fresh ping-pong, blocked≈2×gpu). <b>Fixed w2: −9.33 s.</b> NOT bandwidth (dense streams ≈0.3 s at roof)</td></tr>
+        <tr><td class="k">st7</td><td class="sub">Hamming-weight claim reduction + precommitted address phases</td><td class="r num">13.5</td><td class="r num">1.6</td><td class="r num">1.91</td><td class="r num">1.33</td><td class="sub">Pure host-serial prepare (99.7%) — rebuilt on split-eq pushforward (w2, 1.71×)</td></tr>
+        <tr><td class="k">st8</td><td class="sub">Joint batched Dory opening (Miller loops / pairings)</td><td class="r num">86.6</td><td class="r num">0.8</td><td class="r num">8.51</td><td class="r num">7.99</td><td class="sub">ALU + occupancy: per-pair cost collapses until 4k–8k threads exposed; insensitive to CPU memory soak</td></tr>
+      </tbody>
+    </table>
+  </div></div>
 
-    <div class="verdict card verdict--yellow reveal">
-      <span class="vlabel">Radix-4 decision</span>
-      <blockquote>Retain the isolated Metal kernel and soundness tests; kill the scoped production mapping. The measured stage-4 Metal prefix binds committed cycle coordinates, while legal virtual address coordinates require a new state representation and an unpriced protocol rewrite.</blockquote>
-      <div class="vwho">Hard blocker: wrong variable order · unchanged-CSR 1.2–2.2 s estimate withdrawn · no active prover change</div>
-    </div>
+  <div class="callout callout--note reveal">
+    <span class="cl">Ambient caveat</span>
+    <p>The wave-2 record run carries ≈<span class="num">+8.4 s</span> of ambient penalty on untouched stages (st0 17.98 vs 12.08 baseline; both fresh runs sat near 18 s). Same trunk in a baseline-quality st0 window models ≈<span class="num">64 s</span>. All wave-2 A/B claims were same-window interleaved per the campaign bench rule; cross-window stage deltas here are labeled as such.</p>
+  </div>
+</div></section>
 
-    <h3>Address-major</h3>
-    <p class="prose">The protocol already supports address-major, but Metal does not: commitments materialize a full strided grid per polynomial and stage 8 falls back to CPU. At 2²², cycle-major finished in 3.52 s / 1.192 MHz; address-major exceeded 240 s at roughly 12 CPU cores and was terminated. CUDA’s sharding prize does not transfer automatically to this unified-memory fast path.</p>
-    <div class="callout callout--done reveal">
-      <span class="cl">Layout decision</span>
-      <p>Kill global address-major. Keep targeted block-local AoSoA/transposes as kernel-level experiments only.</p>
-    </div>
-  </div></section>
+<section id="gpu"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">03 · How the GPU actually works</p>
+    <h2>The M5 Max, mechanically, and how we read it blind</h2>
+    <p>Requested explainer. What the machine is, what the four limiting regimes mean physically, and how each is identified from the instruments this host actually has.</p>
+  </div></div>
 
-  <section id="ideas"><div class="wrap block">
-    <div class="sec-head reveal">
-      <div>
-        <p class="eyebrow">04 · Ranked next bets</p>
-        <h2>Attack wall time, not the utilization number</h2>
-        <p>Estimated gains are campaign-planning ranges, not measured wins.</p>
-      </div>
-    </div>
+  <h3>The machine</h3>
+  <p class="prose">The M5 Max GPU is a tiled array of <b>GPU cores</b> sharing one LPDDR memory system and a system-level cache (SLC) with the CPU — <b>unified memory</b>: same silicon carries CPU loads and GPU streams, so they can starve each other (measured: concurrent CPU field-mul cuts GPU streaming 357→162 GB/s, −55%, while the CPU side loses 45%).</p>
+  <p class="prose">Work arrives as <b>threadgroups</b>, dispatched from command buffers. Each core executes threads in <b>SIMD-groups of 32</b> in lockstep. A core keeps many SIMD-groups <em>resident</em> simultaneously and switches between them every cycle — that residency is <b>occupancy</b>, and it is the only latency-hiding mechanism: when one SIMD-group stalls on a memory load, another issues. Residency is capped by whichever runs out first: registers per thread, threadgroup memory, or simply too few threads in the dispatch.</p>
+  <p class="prose">Measured roofs for this silicon (wave-1 microbenches): <b>11.30&nbsp;Gmont-mul/s</b> compute; <b>485&nbsp;GB/s</b> best isolated stream, <b>357&nbsp;GB/s</b> sustained under contention; empty command-buffer round trip <b>133.8&nbsp;µs</b>.</p>
 
-    <div class="tblwrap card reveal">
-      <div class="table-scroll">
-        <table class="tbl">
-          <thead><tr><th>Rank</th><th>Idea</th><th class="r">Whole-proof gain</th><th>Cost</th><th>Risk</th><th>Gate</th></tr></thead>
-          <tbody>
-            <tr class="hl"><td class="k">1</td><td>Stage-0 trace-walk / commit scheduling; eliminate bad-mode overlap contention</td><td class="r hi">0–7%</td><td>Medium</td><td>Medium</td><td class="sub">Target variance first: save the occasional ≈5 s tail without hurting good mode.</td></tr>
-            <tr><td class="k">2</td><td>Stage-6b cross-member fusion, wait removal, gather/tail occupancy</td><td class="r hi">2–5%</td><td>Medium–high</td><td>Medium</td><td class="sub">Avoid address relayout: no address axis remains and dense streams are ≈2% of stage wall.</td></tr>
-            <tr><td class="k">3</td><td>Stage-4 bounded device scan / remove host phase boundary</td><td class="r hi">1–3%</td><td>Medium</td><td>Medium</td><td class="sub">Delete a measured zero-GPU window; preserve tamper/e2e gates.</td></tr>
-            <tr><td class="k">4</td><td>Stage-7 sparse reuse / device preparation</td><td class="r">1–2%</td><td>Medium</td><td>Low–medium</td><td class="sub">Small ceiling; pursue only after larger roofs.</td></tr>
-            <tr><td class="k">5</td><td>Address-first register-state algorithm</td><td class="r">Unpriced</td><td>Very high</td><td>High</td><td class="sub">Research only: prove a sparse Val-state construction before protocol or Metal work.</td></tr>
-            <tr><td class="k">Kill</td><td>Stage-4 unchanged-CSR radix-4 prefix</td><td class="r neg">Estimate withdrawn</td><td>—</td><td>—</td><td class="sub">Measured prefix is cycle-domain; legal address-domain work needs a different representation.</td></tr>
-            <tr><td class="k">Kill</td><td>More fixed command-buffer batching</td><td class="r neg">&lt;0.5%</td><td>Low</td><td>Low</td><td class="sub">646 fresh launches cap the global prize near 86 ms.</td></tr>
-            <tr><td class="k">Kill</td><td>Global address-major flip</td><td class="r neg">&gt;68× regression</td><td>Very high</td><td>High</td><td class="sub">Requires a new Metal commitment/opening backend before reconsideration.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div></section>
+  <h3>The four regimes</h3>
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Regime</th><th>What is physically saturated</th><th>Fingerprint on this host</th></tr></thead>
+      <tbody>
+        <tr><td class="k">ALU-bound</td><td class="sub">Every SIMD issue slot doing arithmetic; memory system idle-ish</td><td class="sub">Achieved mul/s ≈ 11.30 G roof · unchanged under co-run memory soak (Miller: 82.4→82.1 ms) · flat scaling once occupied</td></tr>
+        <tr><td class="k">Bandwidth-bound</td><td class="sub">DRAM/SLC bytes per second at the fabric roof; ALUs wait</td><td class="sub">Achieved GB/s ≈ 357–485 roof · co-running CPU memory traffic slows the kernel (−55%) and vice versa · more threads don't help</td></tr>
+        <tr><td class="k">Occupancy-limited</td><td class="sub">Too few resident SIMD-groups to hide latency; both ALU and fabric under-used</td><td class="sub">Per-item cost collapses as exposed threads grow (Miller: improves until 4k–8k threads) · tail sumcheck rounds shrink below device width</td></tr>
+        <tr><td class="k">Host-serial</td><td class="sub">Nothing queued: GPU idle while one CPU function runs</td><td class="sub">Sampled-zero GPU windows with a covering CPU span (st7: <code>HWCR::prepare</code> 1.887 s of a 1.893 s stage) · launch cost ruled out globally (646 CBs ⇒ 86 ms ceiling, 0.44%)</td></tr>
+      </tbody>
+    </table>
+  </div></div>
 
-  <section id="evidence"><div class="wrap block">
-    <div class="sec-head reveal">
-      <div>
-        <p class="eyebrow">05 · Evidence ledger</p>
-        <h2>What is measured; what remains inferred</h2>
-      </div>
-    </div>
-    <ul class="prose">
-      <li><b>Measured:</b> 2²⁵ baseline 19.67 s / 1.706 MHz; 2²⁷ baseline 71.77 s / 1.870 MHz.</li>
-      <li><b>Measured:</b> wave-close 2²⁵ 20.13 s; 2²⁷ tails 81.54 s and 100.25 s, localized to stage 0 and stage 6b rather than the unused prototype.</li>
-      <li><b>Measured:</b> fresh per-stage monitor trace, zero-run ledger, command-buffer count/timestamps, memory/compute micro-roofs, contention co-runs.</li>
-      <li><b>Measured:</b> radix-4 Metal bind A/B and accept/tamper algebra tests; address-major 2²² kill gate.</li>
-      <li><b>Inferred:</b> exact ALU-versus-cache split inside stages 0 and 8 because public hardware counters are absent.</li>
-      <li><b>Not claimed:</b> bind-only radix-4 speedup as an end-to-end proof win.</li>
-    </ul>
-    <div class="callout callout--info reveal">
-      <span class="cl">Recommended next action</span>
-      <p>Run the stage-0 trace-walk versus commit-bandwidth experiment first: it attacks the largest variance-adjusted prize without changing the protocol.</p>
-    </div>
-  </div></section>
+  <h3>Reading it blind</h3>
+  <p class="prose">This host has no <code>xctrace</code>/Instruments; public Metal exposes only timestamp counters — no ALU-occupancy, SIMD-utilization, cache-miss, or DRAM-byte counters. So regime identification triangulates: <code>ioreg</code> device-active samples (~4/s) for idle windows, command-buffer GPU timestamps for queue/execution split, controlled roof microbenches for ceilings, thread-scaling sweeps for occupancy, and co-run contention probes for fabric sharing. A multi-second exact-zero sample run rejects device occupancy; a high GPU% does <em>not</em> prove ALU saturation — this is exactly the relabeling the audit was checked for and did not commit.</p>
+
+  <h3>Our stages on the taxonomy</h3>
+  <ul class="prose">
+    <li><b>st0 — fabric contention + ambient clock.</b> GPU commit streams while the hoisted CPU record walk (13.3 s span) shares the memory system. The ±5 s bimodality survives with the walk removed (solo commit 3.8→22.5 s, constant utime) ⇒ device power/clock state, unfixable in-process. Contention is real but secondary and tracks co-runner <em>residency</em>, not intensity.</li>
+    <li><b>st3, st7 — host-serial, now largely cut.</b> Single CPU functions covering sampled-zero windows; both got device or parallel rebuilds in wave 2.</li>
+    <li><b>st4 — host/device ping-pong.</b> Not one big gap but a per-round alternation (message → host scan/alloc → bind), 4.8 s held-zero across 51 CBs. The wave-3 lane owns the W2B device-prepare salvage (−64.6% cool @2²⁵ in isolation) plus wait/scan fusion.</li>
+        <li><b>st5 — device-saturated, regime unresolved.</b> 77.6% active, InstrReadRAF d=6 rounds dominate. ALU vs bandwidth genuinely unknown without counters; the wave-3 lane's harness must report achieved mul/s against the 11.30 G roof.</li>
+    <li><b>st6b — was allocation/sync, not bandwidth.</b> Its dense streams cost ≈0.3 s at roof against a 16.35 s stage; the mass was three serialized synchronous adoption materializations writing 28.5 GiB of fresh pages. Deferred+fused adoption (one detached CB at T/16) took it to 7.02 s. Residual: gather arithmetic, per-round waits, shrinking-tail occupancy.</li>
+    <li><b>st8 — ALU/occupancy.</b> 86.6% active, Miller-loop pairing math near the compute roof, insensitive to memory soak, and per-pair cost collapsing until 4k–8k threads are exposed ⇒ dispatch geometry, not bytes. Wave-3 lane on occupancy/packing.</li>
+  </ul>
+</div></section>
+
+<section id="campaign"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">04 · Waves 1–2</p>
+    <h2>Kills, retains, and the certified gate</h2>
+  </div></div>
+
+  <h3>Wave 1 — scoping (all doors priced, most killed)</h3>
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Door</th><th>Verdict</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Radix-4 fused rounds, 3d message + ordinary Dory</td><td class="neg">KILL (unsound)</td><td class="sub">Pro-model counterexample U=XY: digit interpolation ≠ MLE binding away from nodes. Sound 6d prototype retained with tamper test.</td></tr>
+        <tr><td class="k">Metal bind4 kernel</td><td class="pos">RETAIN (isolated)</td><td class="sub">1.51–1.98× vs two binary binds at 2²⁴; algebraic shape + tamper rejection proven; not in the live prover.</td></tr>
+        <tr><td class="k">Global address-major layout</td><td class="neg">KILL</td><td class="sub">2²² A/B: 3.52 s cycle-major vs &gt;240 s (terminated) ⇒ &gt;68× floor.</td></tr>
+        <tr><td class="k">st4 radix-4 on unchanged CSR</td><td class="neg">KILL</td><td class="sub">Leading 7 vars are cycle bits, not address bits; 1.2–2.2 s estimate withdrawn (audit v1→v2 correction).</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <h3>Wave 2 — five lanes, three landed, two killed with mechanism</h3>
+  <div class="tblwrap card reveal"><div class="table-scroll">
+    <table class="tbl">
+      <thead><tr><th>Lane</th><th>Result</th><th class="r">Modeled</th><th class="r">Certified @2²⁷</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td class="k">st6b deferred+fused adoption (Rav + Bool drivers)</td><td class="sub">Adoption rides next message as ONE detached CB; begin_round 64.3→0.47 ms; fresh alloc 28.5→14.25 GiB</td><td class="r num">−1…−2 s</td><td class="r hi num">−9.33 s (16.35→7.02)</td></tr>
+        <tr><td class="k">st7 split-eq pushforward</td><td class="sub">1.71× isolated, non-overlapping CIs</td><td class="r num">−0.78 s</td><td class="r num">−0.58 s</td></tr>
+        <tr><td class="k">st3 <code>jk_instr_input_q0</code></td><td class="sub">8.4–9.2× isolated on round 0</td><td class="r num">−0.40 s</td><td class="r num">−0.10 s (ambient-masked)</td></tr>
+        <tr><td class="k">st0 scheduling matrix</td><td class="neg">KILL — bimodality is ambient power state; every in-process fix null or harmful</td><td class="r num">—</td><td class="r num">harness retained</td></tr>
+        <tr><td class="k">st4 address-first (Gate 1)</td><td class="neg">KILL — both arms &gt;42× over the 0.15 s kill line; radix-4 loses to binary</td><td class="r num">(was 1.5–2.5 s)</td><td class="r num">salvage: normative Val convention + parity suite</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+
+  <div class="callout callout--done reveal">
+    <span class="cl">Gate</span>
+    <p><b>Full battery green</b> (clippy both modes · muldiv host+zk · legacy 444/444 + zk 480 + akita 445 · verifier 85/85 · metal union 77/77). Certification: 2²⁵ <b>19.01 s / −2.3 GiB RSS</b>; 2²⁷ <b>69.63 s / 1.928 MHz</b> (second run; first hit a bad st0 window at 72.93 s — disagreement third run sanctioned). Net −2.14 s while absorbing ≈+8.4 s ambient on untouched stages.</p>
+  </div>
+
+  <p class="prose">The st6b result is the campaign's one large win and it validates the corrected attribution: the fix targeted allocation/synchronization in the members the old audit's “Bytecode RAF” label obscured, and beat its own model 5–9×. Tail-mode fuel (fresh-allocation volume) was halved twice, killing the 100 s close mode's mechanism.</p>
+</div></section>
+
+<section id="wave3"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">05 · Wave-3 surface</p>
+    <h2>Where the 69.63 s lives now</h2>
+    <p>Post-gate stage mass, lanes running under the single-kernel harness doctrine + night mandate (prepare→GPU sweep).</p>
+  </div></div>
+
+  <div class="kpis" data-stagger="55">
+    <div class="kpi card" style="--kpi-c:var(--orange)"><div class="kl">st5 InstrReadRAF</div><div class="kv"><span class="num">14.8 s</span></div><div class="kd"><span class="vs">lane: kernel harness + ALU/occupancy max</span></div></div>
+    <div class="kpi card" style="--kpi-c:var(--orange)"><div class="kl">st4 RegistersRWC</div><div class="kv"><span class="num">9.5 s</span></div><div class="kd"><span class="vs">lane: W2B prepare salvage + wait/scan fusion</span></div></div>
+    <div class="kpi card" style="--kpi-c:var(--orange)"><div class="kl">st8 Dory/Miller</div><div class="kv"><span class="num">8.0 s</span></div><div class="kd"><span class="vs">lane: dispatch geometry / occupancy</span></div></div>
+    <div class="kpi card" style="--kpi-c:var(--blue)"><div class="kl">st6b residual</div><div class="kv"><span class="num">7.0 s</span></div><div class="kd"><span class="vs">parked: gather + waits + tail</span></div></div>
+  </div>
+
+  <ul class="prose">
+    <li><b>st0 17.98 s</b> is ambient-dominated; the in-process door is killed. Only exotic salvage (bg12 + starvation guard) remains, fail-unsafe, needs explicit mandate.</li>
+    <li>Prepare-sweep lane hunting every ≥0.2 s host prepare slice; expected #1: st6b <code>IncCR::prepare</code> 1.79 s, untouched by the adoption fixes.</li>
+    <li>Parked protocol doors: typed-Dory st6b/st7 packing (oracle GO, must re-price post-fix), st1 packing (await attribution). st1 5.45 s residual unowned.</li>
+  </ul>
+</div></section>
+
+<section id="verdict"><div class="wrap block">
+  <div class="sec-head reveal"><div>
+    <p class="eyebrow">06 · Honest verdict</p>
+    <h2>Was the reporting agent bullshitting?</h2>
+  </div></div>
+
+  <div class="verdict card verdict--yellow reveal">
+    <span class="vlabel">Verdict</span>
+    <blockquote>No fabrication, real measurement discipline, sloppy presentation. Every number survives independent recomputation from raw artifacts, conventions were declared, and the wave-1 self-correction (withdrawing the stage-4 estimate) was honest. But the user-facing HTML invented four of nine stage subjects instead of copying them from its own source report, promoted the one next-bet its source ranked lower — which died within hours — and left four redundant files behind.</blockquote>
+    <div class="vwho">Basis: raw monitor JSON recompute · stage source code · member→span trace map · lane reports · wave-2 certification</div>
+  </div>
+
+  <ul class="prose">
+    <li><b>Right:</b> the core thesis (“not one roof; host serialization + fabric contention, not missing dispatches”) — wave-2 outcomes confirmed it. Zero-run ledger, launch-ceiling math, roofs, contention probes: all reproducible. Refusing to relabel <code>ioreg</code>% as ALU saturation was correct rigor.</li>
+    <li><b>Sloppy:</b> stage subjects written from a generic zkVM pipeline memory rather than the evidence one directory over; st0 promoted to bet #1 against its own source's ranking; st6b's 2–5% estimate low by ~3×; four artifact files where one belongs.</li>
+    <li><b>Misleading (mildly):</b> only the labels. Anyone navigating by protocol member — which is how the wave-2/3 lanes actually work — would have been sent to the wrong code for st4, st5, st6b, and st7. The campaign avoided damage because the lanes worked from the journal and lane reports, not the HTML.</li>
+  </ul>
+</div></section>
+
 </main>
 
 <footer><div class="wrap fwrap">
-  <div class="ftop"><span class="ft-title">Jolt Metal M5 Saturation Audit</span></div>
-  <p class="fmeta">Fresh campaign artifacts · local branch only · generated 04 Aug 2026</p>
+  <div class="ftop"><span class="ft-title">Metal M5 saturation — canonical report</span></div>
+  <div class="srcs"><a href="#">.journals/metal-saturation.md</a><a href="#">lane-reports/ (20 files)</a><a href="#" class="hash">artifacts/monitor-2to27-20260804.json</a><a href="#">crates/jolt-prover/src/stages/</a></div>
+  <p class="fmeta">Generated Aug 5, 2026 · supersedes all four Aug-4 audit/journal snapshots · Pika</p>
 </div></footer>
+
 
 <script>
 (function () {
