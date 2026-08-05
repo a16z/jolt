@@ -139,6 +139,12 @@ harness = false
 required-features = ["metal"]
 
 [[bench]]
+name = "inc_prepare"
+path = "benches/metal/inc_prepare.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
 name = "eq_evals"
 path = "benches/callgrind/eq_evals.rs"
 harness = false

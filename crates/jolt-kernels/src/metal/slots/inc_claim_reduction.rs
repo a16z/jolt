@@ -2,13 +2,13 @@
 //! [`OptimizedIncClaimReduction`], byte-identical round polynomials by
 //! construction.
 //!
-//! Table construction (paired-eq fusion `A·RamInc + B·RdInc`) is shared with
-//! the optimized kernel ([`build_inc_tables`]); this slot serves the four
-//! dense tables from unified-memory ping-pong buffers and runs each round as
-//! ONE `jk_inc_round` dispatch — fold all four tables with the previous
-//! challenge and tree-reduce the summand's `t ∈ {0, 2}` evaluations to
-//! per-threadgroup partials — in one command buffer with one wait. The host
-//! sums the partials and assembles the wire polynomial through the same
+//! The fast prepare path fills paired-eq weights on the device while the host
+//! materializes the independent increment columns. Its fallback uses the
+//! optimized kernel's [`crate::optimized::inc_claim_reduction::build_inc_tables`].
+//! Rounds serve the four dense tables from unified-memory ping-pong buffers:
+//! ONE `jk_inc_round` dispatch folds with the previous challenge and
+//! tree-reduces the summand's `t ∈ {0, 2}` evaluations to per-threadgroup
+//! partials. The host assembles the wire polynomial through the same
 //! `round_poly_from_skipped_evals` recipe as the optimized tier.
 
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -23,14 +23,17 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::{num_threadgroups, slot_round_params, DeviceRound, Partials, RoundTable};
-use crate::metal::runtime::{KernelId, MetalContext};
-use crate::metal::{metal_gate, testing, MetalError};
+use crate::metal::buffers::{OwnedDeviceBuffer, PageAlignedVec};
+use crate::metal::runtime::{DetachedPass, KernelId, MetalContext};
+use crate::metal::{fr_to_u32_limbs, metal_gate, testing, MetalError};
+#[cfg(any(test, feature = "bench-utils"))]
+use crate::optimized::inc_claim_reduction::IncTables;
 use crate::optimized::inc_claim_reduction::{
-    build_inc_tables, IncTables, OptimizedIncClaimReduction,
+    materialize_inc_columns, validate_inc_relation, OptimizedIncClaimReduction,
 };
 #[cfg(feature = "parallel")]
 use crate::optimized::support::merge_evals;
-use crate::optimized::support::round_poly_from_skipped_evals;
+use crate::optimized::support::{eq_table, round_poly_from_skipped_evals};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -54,11 +57,35 @@ impl PrepareKernel<Fr, IncClaimReduction<Fr>> for MetalIncClaimReduction {
         if metal_gate(KIND, 1usize << inputs.relation.rounds()) {
             match MetalContext::global() {
                 Ok(context) => {
-                    // Structural errors propagate — the fallback would fail
-                    // identically; only device failures fall back.
-                    let tables = build_inc_tables(witness, &inputs)?;
-                    match MetalIncKernel::new(context, tables) {
-                        Ok(kernel) => return Ok(Box::new(kernel)),
+                    let cycles = validate_inc_relation(inputs.relation)?;
+                    let weights = DeviceIncWeights::launch(
+                        context,
+                        inputs.relation.cycle_points(),
+                        inputs.challenges.gamma,
+                    );
+                    match weights {
+                        Ok(weights) => {
+                            // The independent raw-column walks cover the
+                            // device fill's latency before its only wait.
+                            let (ram_inc, rd_inc) = materialize_inc_columns(witness, cycles)?;
+                            match weights.wait().and_then(|(ram_weights, rd_weights)| {
+                                MetalIncKernel::new_prepared(
+                                    context,
+                                    inputs.relation.rounds(),
+                                    ram_inc,
+                                    rd_inc,
+                                    ram_weights,
+                                    rd_weights,
+                                )
+                            }) {
+                                Ok(kernel) => return Ok(Box::new(kernel)),
+                                Err(error) => tracing::warn!(
+                                    slot = KIND,
+                                    %error,
+                                    "device prepare failed; using the optimized fallback"
+                                ),
+                            }
+                        }
                         Err(error) => tracing::warn!(
                             slot = KIND,
                             %error,
@@ -77,6 +104,80 @@ impl PrepareKernel<Fr, IncClaimReduction<Fr>> for MetalIncClaimReduction {
     }
 }
 
+struct DeviceIncWeights {
+    // Drops first on an early return, settling the flight before its buffers.
+    pass: DetachedPass,
+    ram: RoundTable,
+    rd: RoundTable,
+    factors: OwnedDeviceBuffer<Fr>,
+}
+
+impl DeviceIncWeights {
+    fn launch(
+        context: &'static MetalContext,
+        cycle_points: [&[Fr]; 4],
+        gamma: Fr,
+    ) -> Result<Self, MetalError> {
+        let rounds = cycle_points[0].len();
+        let high_bits = rounds / 2;
+        let low_bits = rounds - high_bits;
+        let n = 1usize << rounds;
+        let mut offsets = [0u32; 8];
+        let mut flat = Vec::new();
+        for (point_index, point) in cycle_points.into_iter().enumerate() {
+            for (side, factor) in [eq_table(&point[..high_bits]), eq_table(&point[high_bits..])]
+                .into_iter()
+                .enumerate()
+            {
+                offsets[2 * point_index + side] = flat.len() as u32;
+                flat.extend(factor);
+            }
+        }
+        let factors = context.own_page_aligned(PageAlignedVec::from_slice(&flat))?;
+        let ram = RoundTable::new_device_filled(context, n)?;
+        let rd = RoundTable::new_device_filled(context, n)?;
+        let gamma2 = gamma * gamma;
+        let gamma3 = gamma2 * gamma;
+        let mut params = vec![n as u32, low_bits as u32, (n >> high_bits) as u32 - 1];
+        params.extend_from_slice(&offsets);
+        params.extend_from_slice(&fr_to_u32_limbs(gamma));
+        params.extend_from_slice(&fr_to_u32_limbs(gamma2));
+        params.extend_from_slice(&fr_to_u32_limbs(gamma3));
+        let factor_buffer = factors.device_buffer();
+        let ram_buffer = ram.cur().device_buffer();
+        let rd_buffer = rd.cur().device_buffer();
+        let mut pass = context.begin_pass()?;
+        pass.dispatch(
+            KernelId::IncPrepare,
+            &params,
+            &[&factor_buffer, &ram_buffer, &rd_buffer],
+            n,
+        );
+        // SAFETY: all three backings move into `Self` and remain host-
+        // untouched until `wait` consumes the flight.
+        let pass = unsafe { pass.commit().detach() };
+        drop((factor_buffer, ram_buffer, rd_buffer));
+        Ok(Self {
+            pass,
+            ram,
+            rd,
+            factors,
+        })
+    }
+
+    fn wait(self) -> Result<(RoundTable, RoundTable), MetalError> {
+        let Self {
+            pass,
+            ram,
+            rd,
+            factors,
+        } = self;
+        pass.wait()?;
+        drop(factors);
+        Ok((ram, rd))
+    }
+}
+
 struct MetalIncKernel {
     rounds: usize,
     rounds_bound: usize,
@@ -91,16 +192,37 @@ struct MetalIncKernel {
 }
 
 impl MetalIncKernel {
+    #[cfg(any(test, feature = "bench-utils"))]
     fn new(context: &'static MetalContext, tables: IncTables<Fr>) -> Result<Self, MetalError> {
-        let len = tables.ram_inc.len();
+        let ram_weights = RoundTable::new(context, tables.ram_weights)?;
+        let rd_weights = RoundTable::new(context, tables.rd_weights)?;
+        Self::new_prepared(
+            context,
+            tables.rounds,
+            tables.ram_inc,
+            tables.rd_inc,
+            ram_weights,
+            rd_weights,
+        )
+    }
+
+    fn new_prepared(
+        context: &'static MetalContext,
+        rounds: usize,
+        ram_inc: Vec<Fr>,
+        rd_inc: Vec<Fr>,
+        ram_weights: RoundTable,
+        rd_weights: RoundTable,
+    ) -> Result<Self, MetalError> {
+        let len = ram_inc.len();
         Ok(Self {
-            rounds: tables.rounds,
+            rounds,
             rounds_bound: 0,
             len,
-            ram_inc: RoundTable::new(context, tables.ram_inc)?,
-            rd_inc: RoundTable::new(context, tables.rd_inc)?,
-            ram_weights: RoundTable::new(context, tables.ram_weights)?,
-            rd_weights: RoundTable::new(context, tables.rd_weights)?,
+            ram_inc: RoundTable::new(context, ram_inc)?,
+            rd_inc: RoundTable::new(context, rd_inc)?,
+            ram_weights,
+            rd_weights,
             partials: Partials::new(context, 2, len / 2)?,
             device: DeviceRound::new(context, KIND),
         })
@@ -278,6 +400,147 @@ impl SumcheckKernel<Fr> for MetalIncKernel {
             ram_inc: self.ram_inc.cur_slice(1)[0],
             rd_inc: self.rd_inc.cur_slice(1)[0],
         })
+    }
+}
+
+#[cfg(feature = "bench-utils")]
+pub(super) mod bench {
+    use jolt_field::{Fr, FromPrimitiveInt};
+    #[cfg(feature = "parallel")]
+    use rayon::prelude::*;
+
+    use super::*;
+
+    pub struct IncPrepareFixture {
+        points: [Vec<Fr>; 4],
+        gamma: Fr,
+        ram_raw: Vec<i128>,
+        rd_raw: Vec<i128>,
+    }
+
+    pub struct PreparedInc {
+        _kernel: MetalIncKernel,
+    }
+
+    impl IncPrepareFixture {
+        pub fn production_geometry(log_t: usize) -> Self {
+            let point = |seed: u64| {
+                (0..log_t)
+                    .map(|index| Fr::from_u64(seed.wrapping_add(17 * index as u64 + 1)))
+                    .collect()
+            };
+            let n = 1usize << log_t;
+            Self {
+                points: [point(3), point(5), point(7), point(11)],
+                gamma: Fr::from_u64(29),
+                ram_raw: (0..n)
+                    .map(|index| (index as i128 & 0xffff) - 0x8000)
+                    .collect(),
+                rd_raw: (0..n)
+                    .map(|index| ((3 * index) as i128 & 0x1ffff) - 0x10000)
+                    .collect(),
+            }
+        }
+
+        fn point_refs(&self) -> [&[Fr]; 4] {
+            self.points.each_ref().map(Vec::as_slice)
+        }
+
+        fn materialize_columns(&self) -> (Vec<Fr>, Vec<Fr>) {
+            #[cfg(feature = "parallel")]
+            {
+                rayon::join(
+                    || {
+                        self.ram_raw
+                            .par_iter()
+                            .map(|value| Fr::from_i128(*value))
+                            .collect()
+                    },
+                    || {
+                        self.rd_raw
+                            .par_iter()
+                            .map(|value| Fr::from_i128(*value))
+                            .collect()
+                    },
+                )
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                (
+                    self.ram_raw
+                        .iter()
+                        .map(|value| Fr::from_i128(*value))
+                        .collect(),
+                    self.rd_raw
+                        .iter()
+                        .map(|value| Fr::from_i128(*value))
+                        .collect(),
+                )
+            }
+        }
+
+        pub fn host_prepare(&self) -> Result<PreparedInc, MetalError> {
+            let context = MetalContext::global()?;
+            let (ram_weights, rd_weights) =
+                crate::optimized::inc_claim_reduction::build_inc_weights(
+                    self.point_refs(),
+                    self.gamma,
+                );
+            let (ram_inc, rd_inc) = self.materialize_columns();
+            Ok(PreparedInc {
+                _kernel: MetalIncKernel::new(
+                    context,
+                    IncTables {
+                        rounds: self.points[0].len(),
+                        ram_inc,
+                        rd_inc,
+                        ram_weights,
+                        rd_weights,
+                    },
+                )?,
+            })
+        }
+
+        pub fn metal_prepare(&self) -> Result<PreparedInc, MetalError> {
+            let context = MetalContext::global()?;
+            let weights = DeviceIncWeights::launch(context, self.point_refs(), self.gamma)?;
+            let (ram_inc, rd_inc) = self.materialize_columns();
+            let (ram_weights, rd_weights) = weights.wait()?;
+            Ok(PreparedInc {
+                _kernel: MetalIncKernel::new_prepared(
+                    context,
+                    self.points[0].len(),
+                    ram_inc,
+                    rd_inc,
+                    ram_weights,
+                    rd_weights,
+                )?,
+            })
+        }
+
+        pub fn assert_oracle(&self) -> Result<(), MetalError> {
+            let host = self.host_prepare()?;
+            let metal = self.metal_prepare()?;
+            let host = &host._kernel;
+            let metal = &metal._kernel;
+            assert_eq!(
+                host.ram_inc.cur_slice(host.len),
+                metal.ram_inc.cur_slice(metal.len)
+            );
+            assert_eq!(
+                host.rd_inc.cur_slice(host.len),
+                metal.rd_inc.cur_slice(metal.len)
+            );
+            assert_eq!(
+                host.ram_weights.cur_slice(host.len),
+                metal.ram_weights.cur_slice(metal.len)
+            );
+            assert_eq!(
+                host.rd_weights.cur_slice(host.len),
+                metal.rd_weights.cur_slice(metal.len)
+            );
+            Ok(())
+        }
     }
 }
 

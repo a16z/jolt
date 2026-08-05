@@ -54,22 +54,20 @@ pub(crate) struct IncTables<F> {
     pub(crate) rd_weights: Vec<F>,
 }
 
-pub(crate) fn build_inc_tables<F: Field>(
-    witness: &dyn JoltWitnessPlane<F>,
-    inputs: &ProverInputs<'_, F, IncClaimReduction<F>>,
-) -> Result<IncTables<F>, KernelError<F>> {
-    let relation = inputs.relation;
-    let cycle_points = relation.cycle_points();
-    for point in cycle_points {
+pub(crate) fn validate_inc_relation<F: Field>(
+    relation: &IncClaimReduction<F>,
+) -> Result<usize, KernelError<F>> {
+    for point in relation.cycle_points() {
         if point.len() != relation.rounds() {
             return Err(KernelError::InvariantViolation {
                 reason: "increment reduction cycle point has the wrong variable count",
             });
         }
     }
-    let cycles = 1usize << relation.rounds();
+    Ok(1usize << relation.rounds())
+}
 
-    let gamma = inputs.challenges.gamma;
+pub(crate) fn build_inc_weights<F: Field>(cycle_points: [&[F]; 4], gamma: F) -> (Vec<F>, Vec<F>) {
     let gamma_squared = gamma * gamma;
     // A = eq(ram rw) + γ·eq(ram val); B = γ²·eq(reg rw) + γ³·eq(reg val).
     let combine = |first: &[F], first_scale: F, second: &[F], second_scale: F| -> Vec<F> {
@@ -87,14 +85,21 @@ pub(crate) fn build_inc_tables<F: Field>(
             .for_each(|(acc, term)| *acc += *term);
         table
     };
-    let ram_weights = combine(cycle_points[0], F::one(), cycle_points[1], gamma);
-    let rd_weights = combine(
-        cycle_points[2],
-        gamma_squared,
-        cycle_points[3],
-        gamma_squared * gamma,
-    );
+    (
+        combine(cycle_points[0], F::one(), cycle_points[1], gamma),
+        combine(
+            cycle_points[2],
+            gamma_squared,
+            cycle_points[3],
+            gamma_squared * gamma,
+        ),
+    )
+}
 
+pub(crate) fn materialize_inc_columns<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<(Vec<F>, Vec<F>), KernelError<F>> {
     let dense =
         |id: jolt_claims::protocols::jolt::JoltOpeningId| -> Result<Vec<F>, KernelError<F>> {
             let table = witness.oracle_table(id.polynomial_id())?;
@@ -107,11 +112,23 @@ pub(crate) fn build_inc_tables<F: Field>(
             }
             Ok(table)
         };
+    Ok((dense(ram_inc_reduced())?, dense(rd_inc_reduced())?))
+}
+
+pub(crate) fn build_inc_tables<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: &ProverInputs<'_, F, IncClaimReduction<F>>,
+) -> Result<IncTables<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let cycle_points = relation.cycle_points();
+    let cycles = validate_inc_relation(relation)?;
+    let (ram_weights, rd_weights) = build_inc_weights(cycle_points, inputs.challenges.gamma);
+    let (ram_inc, rd_inc) = materialize_inc_columns(witness, cycles)?;
 
     Ok(IncTables {
         rounds: relation.rounds(),
-        ram_inc: dense(ram_inc_reduced())?,
-        rd_inc: dense(rd_inc_reduced())?,
+        ram_inc,
+        rd_inc,
         ram_weights,
         rd_weights,
     })
