@@ -89,3 +89,23 @@ Doctrine: single-kernel + prepare→GPU. Off `3830f4da8`+.
 - **st0 G1 XYZZ mixed-add: RETAIN, merged.** jk_g1_seg_sum 2^22 −51.4%; full commitment @2^24 18.10→16.18 s (−10.6% interleaved); modeled st0 −1.90 s @2^27. `44b0c8174` — 11→10 Fq products per mixed add; achieved 2.52 vs 11.30 Gmul/s roof (headroom noted). Oracle exact, parity 4/4.
 - **Gate interlude:** first 2^25 gate run 86.02 s — uniform 3-5× on device stages only; FrBind microbench 1.34 ms vs 255 µs healthy ⇒ degraded device power window after ~3 h sustained GPU load (st0 lane's ambient mode, not a regression; st7/st6a normal). New rule: **cooldown + FrBind health check (<350 µs) before certification runs.**
 - **Gate blocked on device window:** wave-2 certified commit (3830f4da8) also measures FrBind 1.34 ms in the current window — code exonerated, GPU pinned in degraded power state after sustained load; 12-min idle did not recover. Certification deferred until health probe <350 µs.
+
+## Wave-3 gate (battery CLOSED green; certification DEFERRED)
+
+Battery on final trunk `95511fa07`+: clippy host+zk clean · muldiv 3/3+3/3 ·
+prover-legacy 444/480/445 (default/zk/akita) · verifier 85 · dory 47 ·
+tracer 127 · witness 34 · metal suites 353/353.
+
+Wave-3 shipped (modeled @2^27, vs 69.63 s wave-2 flagship):
+st5 −3.94 (phase+suffix scans) · st0 −1.90 (XYZZ) · st4 −1.58 (GPU CSR
+prepare) · st6b −1.48 (IncCR prepare) · st8 −0.6..−1.05 (parallel fold)
+⇒ **−9.5..−10.0 s modeled → ~60 s expected**. NO-GOs with mechanism:
+st6b gathers, st2 (both env-gated default-off), st5 buckets, st4 loop
+fusion (opt-in probe).
+
+**Certification blocked:** GPU pinned in degraded power window (FrBind
+1.33 ms vs 255 µs; uniform ~5× on all device work; wave-2 code equally
+slow ⇒ code exonerated; no zombie process, Renderer 1%, recoveryCount 0;
+~100 min idle no recovery). Needs reboot/driver reset or spontaneous
+window flip. Watchdog continues 30-min probes; certification fires
+automatically at the next healthy window (<0.40 ms).
