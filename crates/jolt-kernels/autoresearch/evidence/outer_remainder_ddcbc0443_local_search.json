@@ -1,0 +1,90 @@
+{
+  "schema": "outer_remainder_local_search_evidence_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-05T21:06:17.039233Z",
+  "base_revision": "ddcbc0443ce31f5d7229b9b5b37b2581f94a028c",
+  "run": {
+    "path": "benchmark-runs/metal-autoresearch/outer-remainder-v1",
+    "sha256": "45b8449b4f7dd96b8cd9d67a4447072202617c17c33159abb2ddd9da4f654a16",
+    "workload": "fibonacci",
+    "log_n": 26,
+    "pairs": 5,
+    "rayon_threads": 16,
+    "parameters": {
+      "materialize_threads": 256,
+      "transition_threads": 128,
+      "output_threads": 256,
+      "cutoff_log2": 16,
+      "trace_cutoff_log2": 18
+    }
+  },
+  "baseline": {
+    "result_sha256": "c2d514bbf8446d8f8619ea592709b3059f62c0be38df209af975bccbcfa84b52",
+    "source_sha256": "a23748ad7a597fe0a169563ec7df3d0a884d1c2cb4338e20e8a2416be3c3f7fd",
+    "binary_sha256": "98cdb48c7765ebcd75f9725535c396b13182c0baba3a439ee79d9a81f8a420ee",
+    "cpu_member_ns": [880090083, 888110959, 881996125, 927252292, 865618709],
+    "metal_member_ns": [219203375, 221509625, 218757041, 221086208, 219486667],
+    "paired_speedups": [
+      4.014947684998007,
+      4.009356067484652,
+      4.0318525107495855,
+      4.194075697385881,
+      3.9438327659328847
+    ],
+    "median_paired_speedup": 4.014947684998007,
+    "cpu_first_median_speedup": 4.014947684998007,
+    "metal_first_median_speedup": 4.101715882435267,
+    "median_cpu_member_ns": 881996125,
+    "median_metal_member_ns": 219486667,
+    "opening_gpu_active_ns": [62768250, 63239750, 63104125, 62988125, 63238500],
+    "median_opening_gpu_active_ns": 63104125,
+    "median_output_component_ns": 82164625,
+    "local_gate_eligible": true,
+    "all_exact": true,
+    "gpu_seconds": 195.779212708
+  },
+  "candidate": {
+    "id": "outer-u224-deferred-001",
+    "status": "rejected",
+    "summary": "defer reduction of the 13 u64 opening columns in seven exact limbs",
+    "manifest_sha256": "5a533c2d5fb1e3f3dc749c6c6455fc19974d161da86b34e3d83f5a903c7a948b",
+    "patch_sha256": "66cffe9f0e0c2534f149fbf8bd158c45186674eab34274d33076af27805986d3",
+    "analysis_sha256": "19ea2289ed6558a32bdfe4142d9b134d04205b51db8fa4e4c52709c875abb109",
+    "result_sha256": "22f64d404188d406701df839dd59d223cf9aa15360ad110127a55d68039b0b64",
+    "source_sha256": "4addfc46ed3da23977d1947377e14fd629949d0da5e584714369bfb2acda1e67",
+    "binary_sha256": "9752b33137c2264d2f1109dddbd05694c6b8389c0d4b055abf5ed9fd92e8c0a1",
+    "cpu_member_ns": [888993791, 881620541, 884730583, 893098083, 904386959],
+    "metal_member_ns": [217694125, 217392125, 219773834, 226713959, 235333584],
+    "paired_speedups": [
+      4.083682970314427,
+      4.055439179317098,
+      4.025641118860401,
+      3.9393166920083647,
+      3.8429999816770732
+    ],
+    "median_paired_speedup": 4.025641118860401,
+    "cpu_first_median_speedup": 4.025641118860401,
+    "metal_first_median_speedup": 3.9973779356627315,
+    "median_cpu_member_ns": 888993791,
+    "median_metal_member_ns": 219773834,
+    "opening_gpu_active_ns": [59357417, 58804417, 62496958, 60887125, 62278875],
+    "median_opening_gpu_active_ns": 60887125,
+    "median_output_component_ns": 82451500,
+    "local_gate_eligible": false,
+    "all_exact": true,
+    "gpu_seconds": 200.278900875
+  },
+  "decision": {
+    "minimum_local_speedup": 4.0,
+    "minimum_relative_improvement": 0.03,
+    "required_speedup": 4.135396115547947,
+    "observed_relative_improvement": 0.002663405528881446,
+    "opening_gpu_active_fractional_improvement": 0.03513241012374402,
+    "opening_gpu_active_ns_saved": 2217000,
+    "output_component_fractional_change": 0.0034914660658402763,
+    "member_fractional_change": 0.0013083573773526869,
+    "verdict": "discard",
+    "reason": "the exact candidate reduced opening GPU-active time but did not improve complete output or member throughput beyond noise"
+  },
+  "disposition": "retained shader parent restored; next phase isolates resident opening access and work ownership"
+}

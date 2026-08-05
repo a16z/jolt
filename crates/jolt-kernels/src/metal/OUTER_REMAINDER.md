@@ -42,6 +42,14 @@ on Metal, or 4.096x. Full initialization of its 4,300,079,856-byte scratch set t
 diagnostic. This pair validates the mechanism but is not promotion evidence; the
 five-pair fixed evaluator remains authoritative.
 
+The closed five-pair evaluator measured a 4.01495x median paired speedup. Optimized
+CPU and Metal member medians were 881.996 and 219.487 ms. The CPU-first and
+Metal-first strata measured 4.01495x and 4.10172x, so the resident implementation
+clears the 4x local floor with every exactness and lifecycle guard satisfied. Its
+76.601-ms median scratch preparation remains outside the primary member; charging
+it produces a 298.111-ms median cold-inclusive Metal diagnostic and a 2.94269x
+median paired speedup.
+
 ## Resident lifetime
 
 Backend witness preparation already creates the split stage-1 row plane. The
@@ -120,10 +128,13 @@ canonical R1CS-input evaluations. A threadgroup tile loads 64 packed rows and th
 `E_in` weights once into roughly 11 KiB of shared memory. Each SIMD group owns a
 uniform subset of columns while its lanes walk tile rows, avoiding the baseline's
 35-way divergent column switch. Eighteen boolean columns conditionally add the
-weight. Thirteen `u64` and four signed or unsigned `u128` columns currently use the
-same generic wide product and block-local reduction. Specializing the 13 narrow
-columns without another row scan is the next arithmetic candidate. Each block
-result is scaled by one `E_out` value.
+weight. Thirteen `u64` and four signed or unsigned `u128` columns use the same
+generic wide product and block-local reduction. A fixed-256 experiment accumulated
+the narrow products exactly in seven limbs and reduced once per dot product. That
+removed nearly all per-product canonical reductions without adding a row scan, but
+opening GPU-active time improved by only 2.217 ms. The next opening experiment must
+target row extraction, threadgroup traffic, or work ownership rather than scalar
+field arithmetic. Each block result is scaled by one `E_out` value.
 
 At the baseline cap, the first dispatch writes `35 * 8192` partial field sums, or
 4.375 MiB. A second dispatch reduces by column, and the host reads exactly 35
@@ -167,9 +178,10 @@ weight additions. The specialized stream bind and fused GPU prefix perform about
 field-by-word products; its 18 boolean columns need no multiplication. At the
 measured 16.42-Gproduct/s compute control these phases sum to roughly 192 ms before
 command and reduction overhead, while the faster 24.08-Gproduct/s fused-transition
-rate gives a 131-ms arithmetic projection. Specialized scalar products and
-deferred reduction are therefore required. Treating all three phases as generic
-pointwise multiplication is a conservative model, not the implementation plan.
+rate gives a 131-ms arithmetic projection. The deferred-`u64` result shows that this
+generic-product model overstates the opening's reducible arithmetic share. Treating
+all three phases as pointwise multiplication is therefore a conservative roof, not
+a measured decomposition.
 
 ## Fixed evaluator
 
@@ -233,9 +245,7 @@ bind, and 62.1-ms opening scan. Two analytical candidates were rejected on exact
 218.015-ms member versus the retained 217.138-ms parent; its 85.367-ms first message
 also missed the parent's 84.641 ms. Reducing the opening accumulator array from nine
 to five slots increased opening GPU-active time from 62.075 ms to 85.088 ms and the
-member to 248.279 ms. Both changes were fully reverted. The next search halves the
-schoolbook limb products for the 13 true `u64` opening columns while preserving the
-single resident-row scan.
+member to 248.279 ms. Both changes were fully reverted.
 
 That mixed-width candidate was also exact but did not improve the target kernel:
 opening GPU-active time was 62.187 ms and member wall was 220.625 ms, versus 62.075
@@ -245,5 +255,16 @@ product took 183.02 us on this compiler and GPU. Removing source-level multiplie
 introduced a longer dependency/code-generation path. The helper, probe, tests, and
 integration were fully reverted. The next opening design must reduce the number of
 canonical reductions or change work ownership; another eager mixed-width product
-is pruned. The controller should continue toward 5x when measured headroom remains
+is pruned.
+
+A seven-limb deferred-dot candidate then removed per-product reduction for all 13
+true `u64` columns while preserving the one-scan schedule. It passed the real-device
+field oracle and every exact five-pair proof and lifecycle guard. Opening GPU-active
+median improved from 63.104 to 60.887 ms, but complete output time moved from 82.165
+to 82.452 ms and member median from 219.487 to 219.774 ms. Its primary paired ratio
+was 4.02564x versus the 4.01495x parent, a 0.27% change below the fixed 3% promotion
+threshold, so the controller restored the parent. The result rejects canonical
+reduction as the dominant opening bottleneck. Further opening work starts with a
+reusable resident-dispatch benchmark and targets threadgroup access or work
+ownership. The controller should continue toward 5x when measured headroom remains
 plausible.
