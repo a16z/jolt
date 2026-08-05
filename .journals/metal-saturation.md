@@ -146,3 +146,4 @@ Wave-2-window-equivalent extrapolation: 69.63 × (78.46/95.11) ≈ **57.4 s
 deferred to the next fresh window (post-reboot). 69.63 s remains the best
 absolute measured. Wave 3 CLOSED.
 - **Typed-Dory packing: NO-GO, door closed.** Likely +0.08 s @2^27 vs 18-25 lane-days. `3f96921a3` — shrinking lazy widths leave no round mass to halve; descriptor cost eats the remainder.
+- **st8 fly restructure: door PRICED SHUT, merged (harness+lever, defaults unchanged).** Spill map: cliff below one Fq6 (fq6 sqr 2.8× off CIOS roof at 48 u32 live; fly peak ≈430 u32). Split ladder +12.7..18.2% (killed). NEW lever: TG cap 64 → −8.6% @2^13 hook but −2.8% @2^17 ⇒ ~0.19 s, below bar, env-gated JOLT_METAL_PAIRING_TG_CAP. `a18bfb890`. Handoff: jk_miller_table −24% at cap 32 on commit shape. Bundle door: cap-64 + dispatch-merge ≈ 0.4 s. 253/253+47/47.
