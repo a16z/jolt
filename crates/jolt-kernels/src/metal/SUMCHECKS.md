@@ -1196,6 +1196,33 @@ speedup was 1.897x (1.866x--1.930x), or 1.850x when backend witness preparation 
 charged. The source fingerprint was clean and the promotion evidence hash is
 `0a99bced26449f8d084a5a4a1836f200570bf343d0afed9b6a8ee60104c80687`.
 
+## Outer remainder next phase
+
+The post-Hamming five-pair production profile measures 19.192 s optimized CPU and
+7.363 s Metal for the PIOP, a 2.619x paired median. Four times requires at most
+4.798 s, so roughly 2.57 s remains. The next controller-selected member is
+`OuterRemainder`: it takes 905.872 ms in the optimized process and 912.167 ms in the
+Metal process, where it still uses the CPU slot. Its prepare, rounds, and 35-opening
+walk contribute 534.417, 176.538, and 200.190 ms.
+
+The port retains the existing 48-byte compact and 112-byte residual Spartan rows
+after Metal uni-skip. Round zero scans that 10-GiB plane, computes `Az` transiently,
+stores only the two `Bz` stream values, and emits `q(0)` and `q(infinity)`. The
+stream bind reconstructs `Az` from the compact flag word, binds `Bz`, and enters an
+interleaved two-buffer fused bind-and-message sequence. A cooperative final scan
+computes all 35 openings on Metal; leaving the 200-ms CPU walk in place caps the
+otherwise free member at only about 4.5x.
+
+At `2^26`, the B-only schedule owns two 2-GiB buffers and models 32.485 GiB of total
+traffic: 12 GiB for materialization, 10.477 GiB for the stream bind and GPU prefix
+to `2^18`, and 10.009 GiB for output openings. The 420.68-GiB/s copy control gives a
+77.2-ms traffic floor. The measured 16.42- and 24.08-Gproduct/s controls bracket the
+arithmetic projection at roughly 192 and 131 ms before overhead. The working target
+is 200 ms, the promotion floor is 226 ms (4x), and 181 ms is the 5x stretch target.
+
+The exact lifecycle, arithmetic schedule, capacity calculation, evaluator boundary,
+and correctness hazards are frozen in [`OUTER_REMAINDER.md`](OUTER_REMAINDER.md).
+
 ## Requirement map and open points
 
 | Requirement | Planned mechanism | Acceptance evidence |
