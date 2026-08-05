@@ -20,9 +20,19 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
 }
 
 /// Runs the canned trace against a caller-selected padded cycle domain.
-#[expect(clippy::unwrap_used, reason = "test fixture construction")]
 pub fn with_sample_backend_at_log_t<R>(
     log_t: usize,
+    log_k_chunk: u8,
+    f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
+    with_sample_backend_at_geometry(log_t, 2, log_k_chunk, f)
+}
+
+/// Runs the canned trace with caller-selected cycle and bytecode domains.
+#[expect(clippy::unwrap_used, reason = "test fixture construction")]
+pub fn with_sample_backend_at_geometry<R>(
+    log_t: usize,
+    log_k: usize,
     log_k_chunk: u8,
     f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
 ) -> R {
@@ -50,18 +60,23 @@ pub fn with_sample_backend_at_log_t<R>(
         },
         ..Default::default()
     };
+    let mut bytecode = BytecodePreprocessing::preprocess(
+        vec![instruction, store],
+        instruction.address as u64,
+        RV64IMAC_JOLT,
+    )
+    .unwrap();
+    let bytecode_rows = 1usize.checked_shl(log_k as u32).unwrap();
+    assert!(bytecode_rows >= bytecode.bytecode.len());
+    let padding = *bytecode.bytecode.last().unwrap();
+    bytecode.bytecode.resize(bytecode_rows, padding);
+    bytecode.code_size = bytecode_rows;
     let preprocessing = JoltProgramPreprocessing {
-        bytecode: BytecodePreprocessing::preprocess(
-            vec![instruction, store],
-            instruction.address as u64,
-            RV64IMAC_JOLT,
-        )
-        .unwrap(),
+        bytecode,
         ram: RAMPreprocessing::default(),
         memory_layout: Default::default(),
         max_padded_trace_length: 4.max(1usize << log_t),
     };
-    let program = JoltProgram::default();
     let rows = vec![
         TraceRow {
             instruction,
@@ -103,6 +118,139 @@ pub fn with_sample_backend_at_log_t<R>(
             field_inline: None,
         },
     ];
+    with_backend(log_t, log_k_chunk, preprocessing, rows, f)
+}
+
+/// Runs a compact but address-diverse trace over a full bytecode domain.
+#[expect(clippy::unwrap_used, reason = "test fixture construction")]
+pub fn with_diverse_sample_backend_at_geometry<R>(
+    log_t: usize,
+    log_k: usize,
+    log_k_chunk: u8,
+    f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
+    let bytecode_rows = 1usize.checked_shl(log_k as u32).unwrap();
+    assert!(log_t >= 1 && bytecode_rows >= 4);
+    let instructions = (0..bytecode_rows - 1)
+        .map(|index| {
+            let address = 0x8000_0000usize + 4 * index;
+            if index % 4 == 3 {
+                JoltInstructionRow {
+                    instruction_kind: JoltInstructionKind::SD,
+                    address,
+                    operands: NormalizedOperands {
+                        rd: None,
+                        rs1: Some(2),
+                        rs2: Some(3),
+                        imm: 0,
+                    },
+                    ..Default::default()
+                }
+            } else {
+                let magnitude = (index % 31 + 1) as i128;
+                JoltInstructionRow {
+                    instruction_kind: JoltInstructionKind::ADDI,
+                    address,
+                    operands: NormalizedOperands {
+                        rd: Some(1),
+                        rs1: Some(2),
+                        rs2: None,
+                        imm: if index % 8 >= 4 {
+                            -magnitude
+                        } else {
+                            magnitude
+                        },
+                    },
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    let bytecode = BytecodePreprocessing::preprocess(
+        instructions.clone(),
+        instructions[0].address as u64,
+        RV64IMAC_JOLT,
+    )
+    .unwrap();
+    assert_eq!(bytecode.bytecode.len(), bytecode_rows);
+    let preprocessing = JoltProgramPreprocessing {
+        bytecode,
+        ram: RAMPreprocessing::default(),
+        memory_layout: Default::default(),
+        max_padded_trace_length: 4.max(1usize << log_t),
+    };
+    let trace_rows = (1usize << log_t).min(instructions.len());
+    let rows = (0..trace_rows)
+        .map(|cycle| {
+            let index = cycle * (instructions.len() - 1) / (trace_rows - 1);
+            diverse_trace_row(instructions[index], index)
+        })
+        .collect();
+    with_backend(log_t, log_k_chunk, preprocessing, rows, f)
+}
+
+fn diverse_trace_row(instruction: JoltInstructionRow, index: usize) -> TraceRow {
+    let delta = (index % 31 + 1) as u64;
+    let base = 1_000 + 64 * index as u64;
+    let post_value = if index % 8 >= 4 {
+        base - delta
+    } else {
+        base + delta
+    };
+    if instruction.instruction_kind == JoltInstructionKind::SD {
+        TraceRow {
+            instruction,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 0x8000_1008,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 3,
+                    value: post_value,
+                }),
+                ..Default::default()
+            },
+            ram_access: RamAccess::Write(RamWrite {
+                address: 0x8000_1008,
+                pre_value: base,
+                post_value,
+            }),
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
+        }
+    } else {
+        TraceRow {
+            instruction,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: base,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: base,
+                    post_value,
+                }),
+                ..Default::default()
+            },
+            ram_access: RamAccess::NoOp,
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
+        }
+    }
+}
+
+fn with_backend<R>(
+    log_t: usize,
+    log_k_chunk: u8,
+    preprocessing: JoltProgramPreprocessing,
+    rows: Vec<TraceRow>,
+    f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
+    let program = JoltProgram::default();
     let config = JoltVmWitnessConfig::new(
         log_t,
         64,
@@ -142,4 +290,31 @@ where
             "bundle column diverges from oracle_table for {id:?}"
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_claims::protocols::jolt::JoltVirtualPolynomial;
+    use jolt_field::FromPrimitiveInt;
+
+    use super::*;
+
+    #[test]
+    #[expect(clippy::unwrap_used, reason = "test assertion")]
+    fn diverse_fixture_covers_both_pc_chunks_and_increment_signs() {
+        with_diverse_sample_backend_at_geometry(9, 9, 8, |backend| {
+            let pcs =
+                JoltWitnessOracle::<Fr>::oracle_table(backend, JoltVirtualPolynomial::PC.into())
+                    .unwrap();
+            let increments = JoltWitnessOracle::<Fr>::oracle_table(
+                backend,
+                JoltVirtualPolynomial::FusedInc.into(),
+            )
+            .unwrap();
+
+            assert!(pcs.contains(&Fr::from_u64(511)));
+            assert!(increments.contains(&Fr::from_u64(1)));
+            assert!(increments.contains(&-Fr::from_u64(5)));
+        });
+    }
 }

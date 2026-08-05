@@ -2,7 +2,12 @@
   "algorithm_contract": {
     "cpu_control": "optimized Q10 prepare, all rounds, finish, and output claims",
     "cpu_tail": "one five-table readback followed by the optimized Q10 CPU kernel",
-    "fiat_shamir": "host-derived frozen challenge tape",
+    "fiat_shamir": "host-derived challenge tape, included in the primary member metric",
+    "fixture_distribution": "8191 diverse leading rows and canonical padding over the remaining log-26 cycle domain; use the local evaluator for exactness and geometry, with held-out Fibonacci required for distribution transfer",
+    "input_claim": "independent direct sum of the full-program cycle relation, reference-checked at small scale",
+    "output_check": "verifier-owned expected_output equals the final sumcheck claim",
+    "production_metric_boundary": "the local proxy includes isolated host Fiat-Shamir; the held-out local production span excludes batch Fiat-Shamir and the overall PIOP gate includes it",
+    "relation": "full-program relation over a diverse 8192-row preprocessing table",
     "resident_input": "stage-5 witness-derived 40-byte cycle rows uploaded before the member timer",
     "sample_grid": [
       0,
@@ -10,7 +15,7 @@
       3,
       4
     ],
-    "timed_member": "prepare plus every prove_round plus finish_rounds plus output_claims"
+    "timed_member": "prepare plus every prove_round plus finish_rounds plus output_claims plus host Fiat-Shamir"
   },
   "baseline_params": {
     "JOLT_METAL_BYTECODE_CUTOFF_LOG2": "16",
@@ -19,7 +24,7 @@
     "JOLT_METAL_BYTECODE_TRACE_CUTOFF_LOG2": "18",
     "JOLT_METAL_BYTECODE_TRANSITION_THREADS": "128"
   },
-  "baseline_repeats": 3,
+  "baseline_repeats": 5,
   "budget": {
     "max_gpu_seconds": 1200,
     "max_seconds": 3600,
@@ -59,7 +64,8 @@
       "crates/jolt-witness/src/testing.rs",
       "scripts/metal_autoresearch.py"
     ],
-    "parser": "last schema-version 1 JSON object on stdout",
+    "parser": "exactly one schema-version 1 JSON object on stdout",
+    "result_contract": "bytecode_read_raf_cycle_v1",
     "timeout_seconds": 900
   },
   "final_validation": {
@@ -170,6 +176,10 @@
   "goal": "maximize exact Bytecode read-RAF cycle member throughput; 4x at production log 26 is a floor, not a cap",
   "guards": {
     "required_true": [
+      "honest_input_claim_nonzero",
+      "expected_output_matches_final_claim",
+      "full_program_relation",
+      "diverse_pc_and_fused_inc_fixture",
       "exact_round_polys",
       "exact_challenges",
       "exact_final_claim",
@@ -178,6 +188,8 @@
       "exact_transcript_state",
       "host_fiat_shamir",
       "optimized_q10_cpu_control",
+      "cpu_no_resident_control_exact",
+      "cpu_denominator_stable",
       "cpu_metal_spans_absent",
       "metal_backend_exercised",
       "exact_metal_schedule",

@@ -75,6 +75,19 @@ PRODUCTION_LOCAL_KERNELS = {
         },
     },
 }
+LOCAL_RESULT_CONTRACTS = {"bytecode_read_raf_cycle_v1"}
+BYTECODE_LOCAL_FINGERPRINT_PARAMETERS = {
+    "message_threads": "JOLT_METAL_BYTECODE_MESSAGE_THREADS",
+    "transition_threads": "JOLT_METAL_BYTECODE_TRANSITION_THREADS",
+    "max_threadgroups": "JOLT_METAL_BYTECODE_MAX_THREADGROUPS",
+    "cutoff_log2": "JOLT_METAL_BYTECODE_CUTOFF_LOG2",
+    "trace_cutoff_log2": "JOLT_METAL_BYTECODE_TRACE_CUTOFF_LOG2",
+}
+BYTECODE_LOCAL_FINGERPRINT_ENV = {
+    "log_n": "JOLT_METAL_EVAL_LOG_N",
+    "repeats": "JOLT_METAL_EVAL_REPEATS",
+    "seed": "JOLT_METAL_EVAL_SEED",
+}
 
 
 def utc_now() -> str:
@@ -238,17 +251,39 @@ def git_worktree_clean(root: Path) -> bool:
     return not result.stdout
 
 
-def parse_schema_result(stdout: str, schema_version: int) -> dict[str, Any]:
-    for line in reversed(stdout.splitlines()):
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict) and value.get("schema_version") == schema_version:
-            return value
-    raise ValueError(
-        f"evaluator stdout contains no schema-version {schema_version} JSON object"
+def git_changed_paths(root: Path, base_revision: str, revision: str) -> set[str]:
+    result = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            f"{base_revision}..{revision}",
+            "--",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
     )
+    return {os.fsdecode(raw) for raw in result.stdout.split(b"\0") if raw}
+
+
+def validate_production_revision_scope(
+    root: Path,
+    base_revision: str,
+    revision: str,
+    editable: list[str],
+) -> None:
+    outside = sorted(
+        path
+        for path in git_changed_paths(root, base_revision, revision)
+        if not path_is_in_scope(path, editable)
+    )
+    if outside:
+        raise ValueError(
+            f"production revision changed paths outside the editable scope: {outside}"
+        )
 
 
 def parse_unique_schema_result(stdout: str, schema_version: int) -> dict[str, Any]:
@@ -267,10 +302,6 @@ def parse_unique_schema_result(stdout: str, schema_version: int) -> dict[str, An
     return matches[0]
 
 
-def parse_result(stdout: str) -> dict[str, Any]:
-    return parse_schema_result(stdout, SCHEMA_VERSION)
-
-
 def validate_template(template: dict[str, Any]) -> None:
     required = {
         "schema_version",
@@ -284,6 +315,7 @@ def validate_template(template: dict[str, Any]) -> None:
         "scope",
         "budget",
         "search_space",
+        "baseline_params",
         "baseline_repeats",
         "candidate_repeats",
         "stopping_conditions",
@@ -313,6 +345,10 @@ def validate_template(template: dict[str, Any]) -> None:
     if template["portfolio_contract"] not in frozen:
         raise ValueError("the portfolio contract must be in the frozen path set")
     search_space = template["search_space"]
+    if set(template["baseline_params"]) != set(search_space):
+        raise ValueError("baseline parameters must close the search space")
+    if any(not isinstance(values, list) or not values for values in search_space.values()):
+        raise ValueError("every search parameter must have at least one allowed value")
     for combination in template.get("invalid_parameter_combinations", []):
         if not isinstance(combination, dict) or not combination:
             raise ValueError("invalid parameter combinations must be non-empty objects")
@@ -327,6 +363,34 @@ def validate_template(template: dict[str, Any]) -> None:
     )
     if not evaluator_paths or not evaluator_paths <= frozen:
         raise ValueError("evaluator frozen_paths must be a subset of scope.frozen")
+    evaluator = template["evaluator"]
+    if EVALUATOR_LOCK_HELD_ENV in evaluator.get("env", {}):
+        raise ValueError("the local evaluator environment cannot override the lock token")
+    result_contract = evaluator.get("result_contract")
+    if (
+        template["kernel"] == "bytecode_read_raf_cycle"
+        and result_contract != "bytecode_read_raf_cycle_v1"
+    ):
+        raise ValueError("the Bytecode evaluator requires its closed result contract")
+    if result_contract is not None and result_contract not in LOCAL_RESULT_CONTRACTS:
+        raise ValueError("the local evaluator names an unknown result contract")
+    if result_contract == "bytecode_read_raf_cycle_v1":
+        if template["kernel"] != "bytecode_read_raf_cycle":
+            raise ValueError("the Bytecode result contract requires the Bytecode kernel")
+        missing_env = sorted(
+            set(BYTECODE_LOCAL_FINGERPRINT_ENV.values()) - set(evaluator.get("env", {}))
+        )
+        if missing_env:
+            raise ValueError(
+                f"the Bytecode result contract is missing evaluator environment: {missing_env}"
+            )
+        required_params = set(BYTECODE_LOCAL_FINGERPRINT_PARAMETERS.values())
+        if required_params - set(template["search_space"]) or required_params - set(
+            template.get("baseline_params", {})
+        ):
+            raise ValueError(
+                "the Bytecode result contract requires every launch parameter in the search space and baseline"
+            )
     collaboration = template.get("collaboration")
     if collaboration is not None:
         if collaboration.get("promotion_owner") != "root":
@@ -555,7 +619,16 @@ def run_evaluator(
     remaining_seconds: Optional[float] = None,
 ) -> tuple[dict[str, Any], float]:
     command = config["evaluator"]["command"]
-    environment = os.environ.copy()
+    inherited = os.environ.copy()
+    lock_token = inherited.get(EVALUATOR_LOCK_HELD_ENV)
+    environment = {
+        name: value
+        for name, value in inherited.items()
+        if not name.startswith("JOLT_METAL_")
+        and not name.startswith("JOLT_AUTORESEARCH_")
+    }
+    if lock_token is not None:
+        environment[EVALUATOR_LOCK_HELD_ENV] = lock_token
     environment.update({str(k): str(v) for k, v in config["evaluator"].get("env", {}).items()})
     environment.update(params)
     environment["JOLT_AUTORESEARCH_EVAL_DIR"] = str(log_dir / f"{label}.artifacts")
@@ -583,13 +656,327 @@ def run_evaluator(
     (log_dir / f"{label}.stderr").write_text(result.stderr)
     if result.returncode != 0:
         raise ValueError(f"evaluator exited with status {result.returncode}")
-    output = parse_result(result.stdout)
+    output = parse_unique_schema_result(result.stdout, SCHEMA_VERSION)
     if output.get("kernel") != config["kernel"]:
         raise ValueError("evaluator returned the wrong kernel")
+    validate_local_result_contract(config, output, params)
     metric = output.get("metrics", {}).get(config["metric"]["name"])
     if isinstance(metric, bool) or not isinstance(metric, (int, float)) or not math.isfinite(metric):
         raise ValueError("evaluator returned a non-finite primary metric")
     return output, elapsed
+
+
+def positive_integer_samples(
+    metrics: dict[str, Any], name: str, repeats: int
+) -> list[int]:
+    samples = metrics.get(name)
+    if (
+        not isinstance(samples, list)
+        or len(samples) != repeats
+        or any(type(value) is not int or value <= 0 for value in samples)
+    ):
+        raise ValueError(f"Bytecode evaluator {name} samples are invalid")
+    return samples
+
+
+def validate_bytecode_phase_sample(
+    sample: Any, log_n: int, cutoff_log2: int
+) -> None:
+    prefix = "MetalBytecodeReadRafCycle::"
+    expected_counts = {
+        f"{prefix}allocation_plan": 1,
+        f"{prefix}cpu_tail": cutoff_log2,
+        f"{prefix}dense_round": log_n - cutoff_log2 - 1,
+        f"{prefix}first_bind": 1,
+        f"{prefix}first_message": 1,
+        f"{prefix}prepare": 1,
+        f"{prefix}readback": 1,
+    }
+    if not isinstance(sample, dict) or set(sample) != {
+        "counts",
+        "allocation",
+        "readback",
+    }:
+        raise ValueError("Bytecode evaluator phase schedule is incomplete")
+    if sample.get("counts") != expected_counts:
+        raise ValueError("Bytecode evaluator phase schedule is invalid")
+
+    allocation = sample.get("allocation")
+    allocation_fields = {
+        "current_device_bytes",
+        "device_buffers",
+        "planned_device_bytes",
+        "recommended_device_bytes",
+    }
+    if not isinstance(allocation, dict) or set(allocation) != allocation_fields:
+        raise ValueError("Bytecode evaluator phase schedule has no allocation plan")
+    if any(type(allocation[name]) is not int or allocation[name] < 0 for name in allocation_fields):
+        raise ValueError("Bytecode evaluator phase schedule has invalid allocation values")
+    if (
+        allocation["device_buffers"] != 17
+        or allocation["planned_device_bytes"] <= 0
+        or allocation["recommended_device_bytes"] <= 0
+        or allocation["current_device_bytes"]
+        + allocation["planned_device_bytes"]
+        > allocation["recommended_device_bytes"]
+    ):
+        raise ValueError("Bytecode evaluator phase schedule violates device admission")
+
+    expected_readback = {"bytes": 5 * (1 << cutoff_log2) * 16}
+    if sample.get("readback") != expected_readback:
+        raise ValueError("Bytecode evaluator phase schedule has the wrong readback")
+
+
+def validate_local_result_contract(
+    config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
+) -> None:
+    contract = config["evaluator"].get("result_contract")
+    if contract is None:
+        return
+    if contract != "bytecode_read_raf_cycle_v1":
+        raise ValueError("unknown local evaluator result contract")
+
+    fingerprint = output.get("fingerprint")
+    if not isinstance(fingerprint, dict):
+        raise ValueError("Bytecode evaluator result has no fingerprint")
+    environment = config["evaluator"].get("env", {})
+    expected = {
+        field: int(environment[name])
+        for field, name in BYTECODE_LOCAL_FINGERPRINT_ENV.items()
+    }
+    try:
+        expected.update(
+            {
+                field: int(params[name])
+                for field, name in BYTECODE_LOCAL_FINGERPRINT_PARAMETERS.items()
+            }
+        )
+    except KeyError as error:
+        raise ValueError(
+            f"Bytecode evaluator parameters are missing {error.args[0]}"
+        ) from error
+    expected.update(
+        trace_elements=1 << expected["log_n"],
+        cutoff_elements=1 << expected["cutoff_log2"],
+        trace_cutoff_elements=1 << expected["trace_cutoff_log2"],
+    )
+    for name, value in expected.items():
+        if type(fingerprint.get(name)) is not int or fingerprint[name] != value:
+            raise ValueError(f"Bytecode evaluator fingerprint does not match {name}")
+
+    repeats = expected["repeats"]
+    orders = [
+        ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+        for index in range(repeats)
+    ]
+    if fingerprint.get("orders") != orders:
+        raise ValueError("Bytecode evaluator fingerprint has the wrong backend orders")
+    fixed_fingerprint = {
+        "cpu_algebra": "q10",
+        "entry_bytecode_index": 1,
+        "fixture": "address-diverse TraceBackend in a full 8192-row program and padded cycle domain",
+        "fixture_program_rows": 1 << 13,
+        "fixture_trace_rows": min(1 << expected["log_n"], (1 << 13) - 1),
+        "covers_high_ra_chunk": True,
+        "fused_inc_fixture": "mixed rd and RAM signed deltas",
+        "relation_variant": "full-program",
+        "initial_claim": "independent direct cycle-domain sum",
+        "primary_metric_includes_host_fs": True,
+    }
+    for name, value in fixed_fingerprint.items():
+        if type(fingerprint.get(name)) is not type(value) or fingerprint[name] != value:
+            raise ValueError(
+                f"Bytecode evaluator fingerprint violates the {name} algorithm contract"
+            )
+
+    metrics = output.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValueError("Bytecode evaluator result has no metrics")
+    paired = metrics.get("paired_speedups")
+    cpu_rounds = metrics.get("cpu_round_ns_samples")
+    metal_rounds = metrics.get("metal_round_ns_samples")
+    for name, samples in (
+        ("paired_speedups", paired),
+        ("cpu_round_ns_samples", cpu_rounds),
+        ("metal_round_ns_samples", metal_rounds),
+        ("phase_samples", output.get("phase_samples")),
+    ):
+        if not isinstance(samples, list) or len(samples) != repeats:
+            raise ValueError(
+                f"Bytecode evaluator result has the wrong number of {name}"
+            )
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+        for value in paired
+    ):
+        raise ValueError("Bytecode evaluator paired speedups are invalid")
+    if any(
+        not isinstance(rounds, list)
+        or len(rounds) != expected["log_n"]
+        or any(type(value) is not int or value <= 0 for value in rounds)
+        for rounds in [*cpu_rounds, *metal_rounds]
+    ):
+        raise ValueError("Bytecode evaluator round samples are invalid")
+
+    component_names = (
+        "cpu_member_ns_samples",
+        "metal_member_ns_samples",
+        "cpu_no_resident_member_ns_samples",
+        "cpu_core_ns_samples",
+        "metal_core_ns_samples",
+        "cpu_prepare_ns_samples",
+        "metal_prepare_ns_samples",
+        "cpu_host_fs_ns_samples",
+        "metal_host_fs_ns_samples",
+    )
+    timing = {
+        name: positive_integer_samples(metrics, name, repeats)
+        for name in component_names
+    }
+    cpu_samples = timing["cpu_member_ns_samples"]
+    metal_samples = timing["metal_member_ns_samples"]
+    cpu_controls = timing["cpu_no_resident_member_ns_samples"]
+    for arm in ("cpu", "metal"):
+        member = timing[f"{arm}_member_ns_samples"]
+        prepare = timing[f"{arm}_prepare_ns_samples"]
+        core = timing[f"{arm}_core_ns_samples"]
+        host_fs = timing[f"{arm}_host_fs_ns_samples"]
+        rounds = cpu_rounds if arm == "cpu" else metal_rounds
+        if any(
+            core_ns <= sum(round_samples)
+            for core_ns, round_samples in zip(core, rounds)
+        ):
+            raise ValueError("Bytecode evaluator core timing has no finish/output residual")
+        if any(
+            total != prepare_ns + core_ns + host_fs_ns
+            for total, prepare_ns, core_ns, host_fs_ns in zip(
+                member, prepare, core, host_fs
+            )
+        ):
+            raise ValueError("Bytecode evaluator member timing is not fully reconciled")
+
+    recomputed = [cpu / metal for cpu, metal in zip(cpu_samples, metal_samples)]
+    if any(
+        not math.isclose(float(actual), expected_value, rel_tol=1e-12)
+        for actual, expected_value in zip(paired, recomputed)
+    ):
+        raise ValueError("Bytecode evaluator paired speedups disagree with member samples")
+    primary = metrics.get(config["metric"]["name"])
+    if (
+        isinstance(primary, bool)
+        or not isinstance(primary, (int, float))
+        or not math.isfinite(primary)
+        or not math.isclose(float(primary), statistics.median(recomputed), rel_tol=1e-12)
+    ):
+        raise ValueError("Bytecode evaluator primary metric disagrees with its pairs")
+
+    recomputed_mad = statistics.median(
+        abs(value - statistics.median(recomputed)) for value in recomputed
+    )
+    reported_mad = metrics.get("paired_speedup_mad")
+    if (
+        isinstance(reported_mad, bool)
+        or not isinstance(reported_mad, (int, float))
+        or not math.isclose(float(reported_mad), recomputed_mad, rel_tol=1e-12)
+    ):
+        raise ValueError("Bytecode evaluator paired-speedup dispersion is invalid")
+
+    kernel_only = [
+        (cpu - cpu_fs) / (metal - metal_fs)
+        for cpu, cpu_fs, metal, metal_fs in zip(
+            cpu_samples,
+            timing["cpu_host_fs_ns_samples"],
+            metal_samples,
+            timing["metal_host_fs_ns_samples"],
+        )
+    ]
+    reported_kernel_pairs = metrics.get("kernel_only_paired_speedups")
+    if (
+        not isinstance(reported_kernel_pairs, list)
+        or len(reported_kernel_pairs) != repeats
+        or any(
+            isinstance(actual, bool)
+            or not isinstance(actual, (int, float))
+            or not math.isclose(float(actual), expected_value, rel_tol=1e-12)
+            for actual, expected_value in zip(reported_kernel_pairs, kernel_only)
+        )
+    ):
+        raise ValueError("Bytecode evaluator kernel-only pairs are invalid")
+    reported_kernel_median = metrics.get("kernel_only_hybrid_speedup")
+    if (
+        isinstance(reported_kernel_median, bool)
+        or not isinstance(reported_kernel_median, (int, float))
+        or not math.isclose(
+            float(reported_kernel_median), statistics.median(kernel_only), rel_tol=1e-12
+        )
+    ):
+        raise ValueError("Bytecode evaluator kernel-only median is invalid")
+
+    for name, samples in (("cpu", cpu_samples), ("metal", metal_samples)):
+        reported_ms = metrics.get(f"{name}_member_ms_median")
+        expected_ms = statistics.median(samples) / 1e6
+        if (
+            isinstance(reported_ms, bool)
+            or not isinstance(reported_ms, (int, float))
+            or not math.isclose(float(reported_ms), expected_ms, rel_tol=1e-12)
+        ):
+            raise ValueError(f"Bytecode evaluator {name} member median is invalid")
+
+    cpu_control_median = statistics.median(cpu_controls)
+    paired_cpu_median = statistics.median(cpu_samples)
+    denominator_ratio = max(cpu_control_median, paired_cpu_median) / min(
+        cpu_control_median, paired_cpu_median
+    )
+    reported_ratio = metrics.get("cpu_denominator_ratio")
+    guards = output.get("guards")
+    stable = denominator_ratio <= 1.10
+    if (
+        isinstance(reported_ratio, bool)
+        or not isinstance(reported_ratio, (int, float))
+        or not math.isclose(float(reported_ratio), denominator_ratio, rel_tol=1e-12)
+        or not isinstance(guards, dict)
+        or guards.get("cpu_denominator_stable") is not stable
+    ):
+        raise ValueError("Bytecode evaluator CPU denominator claim is invalid")
+
+    for sample in output["phase_samples"]:
+        validate_bytecode_phase_sample(sample, expected["log_n"], expected["cutoff_log2"])
+    if (
+        guards.get("metal_backend_exercised") is not True
+        or guards.get("exact_metal_schedule") is not True
+    ):
+        raise ValueError("Bytecode evaluator phase schedule guard is invalid")
+
+    resources = output.get("resources")
+    resource_fields = {
+        "gpu_seconds",
+        "metal_hybrid_wall_seconds",
+        "input_claim_precompute_ns",
+        "resident_upload_ns",
+        "resident_row_bytes",
+    }
+    if not isinstance(resources, dict) or set(resources) != resource_fields:
+        raise ValueError("Bytecode evaluator resource record is incomplete")
+    metal_seconds = sum(metal_samples) / 1e9
+    if any(
+        isinstance(resources[name], bool)
+        or not isinstance(resources[name], (int, float))
+        or not math.isfinite(resources[name])
+        or not math.isclose(float(resources[name]), metal_seconds, rel_tol=1e-12)
+        for name in ("gpu_seconds", "metal_hybrid_wall_seconds")
+    ):
+        raise ValueError("Bytecode evaluator resource timing is invalid")
+    if (
+        type(resources["input_claim_precompute_ns"]) is not int
+        or resources["input_claim_precompute_ns"] <= 0
+        or type(resources["resident_upload_ns"]) is not int
+        or resources["resident_upload_ns"] <= 0
+        or resources["resident_row_bytes"] != 40 * expected["trace_elements"]
+    ):
+        raise ValueError("Bytecode evaluator resident-row fingerprint is invalid")
 
 
 def guards_pass(config: dict[str, Any], output: dict[str, Any]) -> tuple[bool, str]:
@@ -613,6 +1000,115 @@ def expected_fingerprint_value(specification: dict[str, Any], value: str) -> Any
     if conversion == "str":
         return value
     raise ValueError(f"unknown fingerprint conversion {conversion}")
+
+
+def validate_production_bytecode_member(
+    member: Any, backend: str, log_n: int, cutoff_log2: int
+) -> int:
+    fields = {
+        "prepare_ns",
+        "rounds_ns",
+        "rounds_total_ns",
+        "finish_ns",
+        "output_claims_ns",
+        "member_ns",
+        "outer_counts",
+        "metal_counts",
+        "resource_observation",
+    }
+    if not isinstance(member, dict) or set(member) != fields:
+        raise ValueError("production Bytecode member record is incomplete")
+    scalar_names = (
+        "prepare_ns",
+        "rounds_total_ns",
+        "finish_ns",
+        "output_claims_ns",
+        "member_ns",
+    )
+    if any(type(member[name]) is not int or member[name] <= 0 for name in scalar_names):
+        raise ValueError("production Bytecode member timing is invalid")
+    rounds = member["rounds_ns"]
+    if (
+        not isinstance(rounds, list)
+        or len(rounds) != log_n
+        or any(type(value) is not int or value <= 0 for value in rounds)
+        or member["rounds_total_ns"] != sum(rounds)
+        or member["member_ns"]
+        != member["prepare_ns"]
+        + member["rounds_total_ns"]
+        + member["finish_ns"]
+        + member["output_claims_ns"]
+    ):
+        raise ValueError("production Bytecode member timing is not reconciled")
+    if member["outer_counts"] != {
+        "prepare": 1,
+        "prove_round": log_n,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }:
+        raise ValueError("production Bytecode outer schedule is invalid")
+
+    expected_metal_counts = {
+        "prepare": 0,
+        "allocation_plan": 0,
+        "first_message": 0,
+        "first_bind": 0,
+        "dense_round": 0,
+        "readback": 0,
+        "cpu_tail": 0,
+        "invalid_round": 0,
+    }
+    if backend == "metal":
+        expected_metal_counts.update(
+            {
+                "prepare": 1,
+                "allocation_plan": 1,
+                "first_message": 1,
+                "first_bind": 1,
+                "dense_round": log_n - cutoff_log2 - 1,
+                "readback": 1,
+                "cpu_tail": cutoff_log2,
+            }
+        )
+    if member["metal_counts"] != expected_metal_counts:
+        raise ValueError("production Bytecode Metal schedule is invalid")
+
+    observation = member["resource_observation"]
+    if backend == "optimized":
+        if observation is not None:
+            raise ValueError("production optimized Bytecode arm has Metal resources")
+    else:
+        if not isinstance(observation, dict) or set(observation) != {
+            "allocation",
+            "readback_bytes",
+        }:
+            raise ValueError("production Bytecode Metal resource record is incomplete")
+        allocation = observation["allocation"]
+        allocation_fields = {
+            "current_device_bytes",
+            "device_buffers",
+            "planned_device_bytes",
+            "recommended_device_bytes",
+        }
+        if not isinstance(allocation, dict) or set(allocation) != allocation_fields:
+            raise ValueError("production Bytecode Metal allocation record is incomplete")
+        if any(
+            type(allocation[name]) is not int or allocation[name] < 0
+            for name in allocation_fields
+        ):
+            raise ValueError("production Bytecode Metal allocation values are invalid")
+        if (
+            allocation["device_buffers"] != 17
+            or allocation["planned_device_bytes"] <= 0
+            or allocation["recommended_device_bytes"] <= 0
+            or allocation["current_device_bytes"]
+            + allocation["planned_device_bytes"]
+            > allocation["recommended_device_bytes"]
+            or type(observation["readback_bytes"]) is not int
+            or observation["readback_bytes"] != 5 * (1 << cutoff_log2) * 16
+        ):
+            raise ValueError("production Bytecode Metal resource accounting is invalid")
+    return member["member_ns"]
 
 
 def validate_production_result(
@@ -681,7 +1177,95 @@ def validate_production_result(
         raise ValueError("production result has invalid local paired speedups")
     if not math.isclose(float(metric), statistics.median(local_pairs), rel_tol=1e-12):
         raise ValueError("production local-speedup summary disagrees with its pairs")
+    pair_records = None
+    if result_schema >= 5:
+        pair_records = result.get("pairs")
+        if not isinstance(pair_records, list) or len(pair_records) != len(pairs):
+            raise ValueError("production result has incomplete raw PIOP pair records")
+        raw_cpu_piop = []
+        raw_metal_piop = []
+        for index, (record, reported_speedup) in enumerate(zip(pair_records, pairs)):
+            expected_order = (
+                ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
+            )
+            if (
+                not isinstance(record, dict)
+                or set(record) != {"index", "order", "arms"}
+                or record.get("index") != index + 1
+                or record.get("order") != expected_order
+            ):
+                raise ValueError("production raw PIOP pairs do not alternate correctly")
+            arms = record.get("arms")
+            if not isinstance(arms, dict) or set(arms) != {"optimized", "metal"}:
+                raise ValueError("production raw PIOP pair has invalid arms")
+            try:
+                cpu_piop = arms["optimized"]["piop_ns"]
+                metal_piop = arms["metal"]["piop_ns"]
+            except (KeyError, TypeError) as error:
+                raise ValueError("production raw PIOP pair is incomplete") from error
+            if (
+                type(cpu_piop) is not int
+                or cpu_piop <= 0
+                or type(metal_piop) is not int
+                or metal_piop <= 0
+                or not math.isclose(
+                    float(reported_speedup), cpu_piop / metal_piop, rel_tol=1e-9
+                )
+            ):
+                raise ValueError("production raw PIOP pair disagrees with its speedup")
+            raw_cpu_piop.append(cpu_piop)
+            raw_metal_piop.append(metal_piop)
+        for name, raw_samples in (
+            ("cpu_piop_ms_samples", raw_cpu_piop),
+            ("metal_piop_ms_samples", raw_metal_piop),
+        ):
+            reported_samples = metrics.get(name)
+            if (
+                not isinstance(reported_samples, list)
+                or len(reported_samples) != len(raw_samples)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isfinite(reported)
+                    or not math.isclose(
+                        float(reported) * 1e6,
+                        raw,
+                        rel_tol=1e-12,
+                        abs_tol=0.500001,
+                    )
+                    for reported, raw in zip(reported_samples, raw_samples)
+                )
+            ):
+                raise ValueError("production PIOP sample summary is invalid")
+        resources = result.get("resources")
+        reported_metal_seconds = (
+            resources.get("metal_piop_seconds") if isinstance(resources, dict) else None
+        )
+        raw_metal_seconds = sum(raw_metal_piop) / 1e9
+        if (
+            isinstance(reported_metal_seconds, bool)
+            or not isinstance(reported_metal_seconds, (int, float))
+            or not math.isfinite(reported_metal_seconds)
+            or not math.isclose(
+                float(reported_metal_seconds),
+                raw_metal_seconds,
+                rel_tol=1e-9,
+                abs_tol=len(raw_metal_piop) / 2e9 + 1e-12,
+            )
+        ):
+            raise ValueError("production PIOP resource summary is invalid")
     if local_kernel == "BytecodeReadRafCycle":
+        bytecode_fingerprint = result.get("fingerprint")
+        if not isinstance(bytecode_fingerprint, dict):
+            raise ValueError("production Bytecode result has no fingerprint")
+        log_n = bytecode_fingerprint.get("log_n")
+        cutoff_log2 = bytecode_fingerprint.get("bytecode_metal_cutoff_log2")
+        if (
+            type(log_n) is not int
+            or type(cutoff_log2) is not int
+            or not 1 <= cutoff_log2 <= log_n - 2
+        ):
+            raise ValueError("production Bytecode result has invalid cycle geometry")
         decision = metrics.get("bytecode_read_raf_cycle_decision")
         if not isinstance(decision, dict) or decision.get("clears") is not True:
             raise ValueError("production Bytecode result did not clear its fixed local decision")
@@ -695,9 +1279,10 @@ def validate_production_result(
             rel_tol=1e-12,
         ):
             raise ValueError("production Bytecode decision disagrees with its scalar metric")
-        pair_records = result.get("pairs")
-        if not isinstance(pair_records, list) or len(pair_records) != len(local_pairs):
+        if pair_records is None or len(pair_records) != len(local_pairs):
             raise ValueError("production Bytecode result has incomplete raw pair records")
+        optimized_first_speedups = []
+        metal_first_speedups = []
         for index, (record, local_speedup) in enumerate(zip(pair_records, local_pairs)):
             expected_order = (
                 ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
@@ -706,22 +1291,56 @@ def validate_production_result(
                 raise ValueError("production Bytecode raw pair order is invalid")
             arms = record.get("arms", {})
             try:
-                cpu_member = arms["optimized"]["bytecode"]["member_ns"]
-                metal_member = arms["metal"]["bytecode"]["member_ns"]
+                cpu_record = arms["optimized"]["bytecode"]
+                metal_record = arms["metal"]["bytecode"]
             except (KeyError, TypeError) as error:
                 raise ValueError("production Bytecode raw pair is incomplete") from error
+            cpu_member = validate_production_bytecode_member(
+                cpu_record, "optimized", log_n, cutoff_log2
+            )
+            metal_member = validate_production_bytecode_member(
+                metal_record, "metal", log_n, cutoff_log2
+            )
             if (
-                isinstance(cpu_member, bool)
-                or not isinstance(cpu_member, int)
-                or cpu_member <= 0
-                or isinstance(metal_member, bool)
-                or not isinstance(metal_member, int)
-                or metal_member <= 0
-                or not math.isclose(
+                not math.isclose(
                     float(local_speedup), cpu_member / metal_member, rel_tol=1e-9
                 )
             ):
                 raise ValueError("production Bytecode raw pair disagrees with its speedup")
+            (
+                optimized_first_speedups
+                if expected_order == ["optimized", "metal"]
+                else metal_first_speedups
+            ).append(float(local_speedup))
+        optimized_first_median = statistics.median(optimized_first_speedups)
+        metal_first_median = statistics.median(metal_first_speedups)
+        minimum_speedup = float(gate["minimum_local_speedup"])
+        if (
+            optimized_first_median < minimum_speedup
+            or metal_first_median < minimum_speedup
+        ):
+            raise ValueError("production Bytecode order stratum does not clear the local gate")
+        decision_values = {
+            "minimum_speedup": minimum_speedup,
+            "median_speedup": float(metric),
+            "optimized_first_median_speedup": optimized_first_median,
+            "metal_first_median_speedup": metal_first_median,
+        }
+        for name, expected in decision_values.items():
+            actual = decision.get(name)
+            if (
+                isinstance(actual, bool)
+                or not isinstance(actual, (int, float))
+                or not math.isclose(float(actual), expected, rel_tol=1e-12)
+            ):
+                raise ValueError(
+                    f"production Bytecode decision disagrees with recomputed {name}"
+                )
+        if (
+            decision.get("minimum_pairs") != int(gate["minimum_pairs"])
+            or decision.get("clears_order_strata") is not True
+        ):
+            raise ValueError("production Bytecode decision has an invalid order-strata claim")
     piop_speedup = metrics.get("piop_speedup")
     if (
         isinstance(piop_speedup, bool)
@@ -769,7 +1388,77 @@ def validate_production_result(
         "minimum_local_speedup": float(gate["minimum_local_speedup"]),
         "pairs": len(pairs),
         "piop_speedup": float(piop_speedup),
+        **(
+            {
+                "optimized_first_median_speedup": optimized_first_median,
+                "metal_first_median_speedup": metal_first_median,
+            }
+            if local_kernel == "BytecodeReadRafCycle"
+            else {}
+        ),
     }
+
+
+def validate_loaded_event(
+    run_dir: Path,
+    config: dict[str, Any],
+    event: dict[str, Any],
+    number: int,
+    expected_parent: str,
+) -> None:
+    required = {
+        "schema_version",
+        "index",
+        "trial_id",
+        "parent_id",
+        "candidate_revision",
+        "proposal_summary",
+        "candidate_id",
+        "candidate_manifest_sha256",
+        "params",
+        "started_at",
+        "elapsed_seconds",
+        "metric_value",
+        "measurements",
+        "guards",
+        "resources",
+        "verdict",
+        "reason",
+    }
+    if set(event) != required:
+        raise ValueError(f"events.jsonl:{number}: event schema is not closed")
+    if (
+        event.get("schema_version") != SCHEMA_VERSION
+        or event.get("index") != number
+        or event.get("trial_id") != f"trial-{number:03d}"
+        or event.get("parent_id") != expected_parent
+        or event.get("verdict") not in VERDICTS
+    ):
+        raise ValueError(f"events.jsonl:{number}: invalid event identity or lineage")
+    params = event.get("params")
+    if (
+        not isinstance(params, dict)
+        or set(params) != set(config["search_space"])
+        or any(type(name) is not str or type(value) is not str for name, value in params.items())
+    ):
+        raise ValueError(f"events.jsonl:{number}: invalid parameter record")
+    validate_params(config, params)
+    candidate_revision = event.get("candidate_revision")
+    if (
+        not isinstance(candidate_revision, str)
+        or re.fullmatch(r"[0-9a-f]{64}", candidate_revision) is None
+    ):
+        raise ValueError(f"events.jsonl:{number}: invalid candidate revision")
+    if event["verdict"] == "keep":
+        snapshot = run_dir / "snapshots" / event["trial_id"]
+        if not snapshot.is_dir():
+            raise ValueError(f"events.jsonl:{number}: accepted snapshot is missing")
+        source = path_digest(snapshot, config["scope"]["editable"])
+        expected_revision = sha256(canonical_json({"source": source, "params": params}))
+        if candidate_revision != expected_revision:
+            raise ValueError(
+                f"events.jsonl:{number}: accepted snapshot does not match its revision"
+            )
 
 
 def load_run(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -778,20 +1467,43 @@ def load_run(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     expected = (run_dir / "run.sha256").read_text().strip()
     if sha256(run_path.read_bytes()) != expected:
         raise ValueError("run.json changed after initialization")
+    strict_events = (
+        isinstance(config.get("search_space"), dict)
+        and isinstance(config.get("scope", {}).get("editable"), list)
+        and isinstance(config.get("fingerprint", {}).get("editable_paths_sha256"), str)
+    )
+    if strict_events:
+        baseline_params = {
+            str(name): str(value)
+            for name, value in config["baseline"]["params"].items()
+        }
+        if set(baseline_params) != set(config["search_space"]):
+            raise ValueError("baseline parameters do not close the search space")
+        validate_params(config, baseline_params)
+        baseline_snapshot = run_dir / "snapshots" / "baseline"
+        if path_digest(baseline_snapshot, config["scope"]["editable"]) != config[
+            "fingerprint"
+        ]["editable_paths_sha256"]:
+            raise ValueError("baseline snapshot changed after initialization")
+
     events: list[dict[str, Any]] = []
-    accepted = {"baseline"}
+    current_parent = "baseline"
     seen = {"baseline"}
     for number, line in enumerate((run_dir / "events.jsonl").read_text().splitlines(), 1):
         if not line:
             raise ValueError(f"events.jsonl:{number}: blank record")
         event = json.loads(line)
-        if event.get("index") != number or event.get("verdict") not in VERDICTS:
+        if not isinstance(event, dict):
             raise ValueError(f"events.jsonl:{number}: invalid event")
-        if event.get("trial_id") in seen or event.get("parent_id") not in accepted:
+        if strict_events:
+            validate_loaded_event(run_dir, config, event, number, current_parent)
+        elif event.get("index") != number or event.get("verdict") not in VERDICTS:
+            raise ValueError(f"events.jsonl:{number}: invalid event")
+        if event.get("trial_id") in seen or event.get("parent_id") != current_parent:
             raise ValueError(f"events.jsonl:{number}: invalid lineage")
         seen.add(event["trial_id"])
         if event["verdict"] == "keep":
-            accepted.add(event["trial_id"])
+            current_parent = event["trial_id"]
         events.append(event)
     return config, events
 
@@ -1033,7 +1745,11 @@ def command_init(args: argparse.Namespace) -> int:
     snapshots = run_dir / "snapshots"
     snapshots.mkdir()
     snapshot_paths(root, template["scope"]["editable"], snapshots / "baseline")
-    initial_editable_digest = path_digest(root, template["scope"]["editable"])
+    initial_editable_digest = path_digest(
+        snapshots / "baseline", template["scope"]["editable"]
+    )
+    if path_digest(root, template["scope"]["editable"]) != initial_editable_digest:
+        raise ValueError("baseline snapshot changed during initialization")
     initial_frozen_digest = path_digest(root, template["scope"]["frozen"])
     initial_evaluator_digest = path_digest(
         root,
@@ -1321,11 +2037,25 @@ def command_trial(args: argparse.Namespace) -> int:
         "reason": reason,
     }
     if verdict == "keep":
+        accepted_snapshot = run_dir / "snapshots" / trial_id
         snapshot_paths(
             root,
             config["scope"]["editable"],
-            run_dir / "snapshots" / trial_id,
+            accepted_snapshot,
         )
+        if path_digest(accepted_snapshot, config["scope"]["editable"]) != candidate_revision:
+            quarantine = run_dir / "quarantine" / utc_now().replace(":", "-")
+            quarantine.mkdir(parents=True)
+            shutil.move(accepted_snapshot, quarantine / "orphan-accepted-snapshot")
+            restore_snapshot(
+                root,
+                config["scope"]["editable"],
+                run_dir / "snapshots" / parent_id,
+            )
+            verdict = "crash"
+            metric_value = None
+            reason = "editable source changed while snapshotting the accepted candidate"
+            event.update(verdict=verdict, metric_value=metric_value, reason=reason)
     else:
         restore_snapshot(
             root,
@@ -1512,14 +2242,68 @@ def run_production_evaluator(
     if completed.returncode != 0:
         raise ValueError(f"production evaluator exited with status {completed.returncode}")
     result_schema = int(evaluator.get("schema_version", 4))
-    result = (
-        parse_unique_schema_result(completed.stdout, result_schema)
-        if result_schema == 5
-        else parse_schema_result(completed.stdout, result_schema)
-    )
+    result = parse_unique_schema_result(completed.stdout, result_schema)
     result_bytes = canonical_json(result)
     (attempt / "result.json").write_bytes(result_bytes)
     return result, result_bytes, attempt
+
+
+def validate_cached_production_promotion(
+    root: Path,
+    run_dir: Path,
+    config: dict[str, Any],
+    params: dict[str, str],
+    parent_id: str,
+    record: dict[str, Any],
+    expected_revision: str,
+) -> dict[str, Any]:
+    if (
+        record.get("schema_version") != SCHEMA_VERSION
+        or record.get("status") != "promoted"
+        or record.get("parent_id") != parent_id
+        or not isinstance(record.get("result_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", record["result_sha256"]) is None
+        or not isinstance(record.get("attempt"), str)
+        or not isinstance(record.get("recorded_at"), str)
+    ):
+        raise ValueError("cached production promotion record is incomplete")
+    attempt = Path(record["attempt"]).resolve()
+    attempts = (run_dir / "production-attempts").resolve()
+    if attempt.parent != attempts:
+        raise ValueError("cached production promotion names an invalid attempt")
+    result_path = attempt / "result.json"
+    if not result_path.is_file():
+        raise ValueError("cached production promotion has no result artifact")
+    result_bytes = result_path.read_bytes()
+    if sha256(result_bytes) != record["result_sha256"]:
+        raise ValueError("cached production promotion result hash changed")
+    try:
+        result = json.loads(result_bytes)
+    except json.JSONDecodeError as error:
+        raise ValueError("cached production promotion result is not JSON") from error
+    if canonical_json(result) != result_bytes:
+        raise ValueError("cached production promotion result is not canonical")
+    evidence = validate_production_result(
+        config,
+        result,
+        expected_revision,
+        params,
+        git_worktree_clean(root),
+    )
+    expected_fields = {
+        "schema_version",
+        "status",
+        "parent_id",
+        "result_sha256",
+        "attempt",
+        "recorded_at",
+        *evidence,
+    }
+    if set(record) != expected_fields or any(
+        record.get(name) != value for name, value in evidence.items()
+    ):
+        raise ValueError("cached production promotion evidence changed")
+    return evidence
 
 
 def command_validate_production(args: argparse.Namespace) -> int:
@@ -1528,22 +2312,30 @@ def command_validate_production(args: argparse.Namespace) -> int:
     config, events = load_run(run_dir)
     parent_id, _ = accepted_parent(config, events)
     params = accepted_parent_params(config, events)
+    validate_params(config, params)
     ledger = run_dir / "production-validations.jsonl"
     if not ledger.exists():
         ledger.touch()
     prior = [json.loads(line) for line in ledger.read_text().splitlines()]
-    successful = next(
-        (
-            record
-            for record in prior
-            if record.get("parent_id") == parent_id and record.get("status") == "promoted"
-        ),
-        None,
-    )
-    if successful is not None:
-        repair_candidate_promotion(run_dir, events, parent_id)
-        print(json.dumps(successful, sort_keys=True))
-        return 0
+    successful_records = [
+        record
+        for record in prior
+        if record.get("parent_id") == parent_id and record.get("status") == "promoted"
+    ]
+    if len(successful_records) > 1:
+        raise ValueError("cached production promotion ledger has duplicate successes")
+    successful = successful_records[0] if successful_records else None
+    if successful is not None and not {
+        "schema_version",
+        "status",
+        "parent_id",
+        "result_sha256",
+        "attempt",
+        "recorded_at",
+    } <= set(successful):
+        raise ValueError(
+            "cached production promotion record is incomplete"
+        )
     rejected = next(
         (
             record
@@ -1567,6 +2359,25 @@ def command_validate_production(args: argparse.Namespace) -> int:
     if not git_worktree_clean(root):
         raise ValueError("production evaluation requires a clean source worktree")
     expected_revision = git_head(root)
+    validate_production_revision_scope(
+        root,
+        config["base_revision"],
+        expected_revision,
+        editable,
+    )
+    if successful is not None:
+        validate_cached_production_promotion(
+            root,
+            run_dir,
+            config,
+            params,
+            parent_id,
+            successful,
+            expected_revision,
+        )
+        repair_candidate_promotion(run_dir, events, parent_id)
+        print(json.dumps(successful, sort_keys=True))
+        return 0
     result, result_bytes, attempt = run_production_evaluator(root, run_dir, config, params)
     try:
         evidence = validate_production_result(

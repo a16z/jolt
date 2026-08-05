@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
-use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
+use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::AkitaField;
 use jolt_kernels::metal::solinas::BytecodeCycleSequenceConfig;
 use jolt_kernels::metal::{
@@ -24,10 +25,11 @@ use jolt_sumcheck::{append_sumcheck_claim, CompressedLabeledRoundPoly, RoundMess
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::{
-    BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycle, BytecodeReadRafCycleOutputClaims,
+    BytecodeReadRafCycle, BytecodeReadRafCycleInputs, BytecodeReadRafCycleOutputClaims,
     BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
+    BytecodeReadRafTableFoldInputs,
 };
-use jolt_witness::testing::with_sample_backend_at_log_t;
+use jolt_witness::testing::with_diverse_sample_backend_at_geometry;
 use jolt_witness::JoltWitnessPlane;
 use serde_json::json;
 use tracing::field::{Field as TracingField, Visit};
@@ -157,6 +159,10 @@ impl MemberRun {
     fn core_time(&self) -> Duration {
         self.rounds.iter().copied().sum::<Duration>() + self.finish + self.output_claims
     }
+
+    fn member_with_host_fs_time(&self) -> Duration {
+        self.member_time() + self.host_fs
+    }
 }
 
 struct Instance {
@@ -186,28 +192,54 @@ fn point(length: usize, seed: u64) -> Vec<AkitaField> {
     (0..length).map(|index| field(seed, index)).collect()
 }
 
-fn instance(log_t: usize, seed: u64) -> Instance {
+fn instance(
+    log_t: usize,
+    seed: u64,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+) -> EvalResult<Instance> {
     let dimensions = BytecodeReadRafDimensions::new(log_t, 13, 2);
-    let relation = BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
+    let r_address = point(13, seed ^ 0x243f_6a88_85a3_08d3);
+    let stage_cycle_points =
+        std::array::from_fn(|stage| point(log_t, seed ^ (0x1319_8a2e_0370_7344 + stage as u64)));
+    let register_read_write_point = point(REGISTER_ADDRESS_BITS, seed ^ 0x4528_21e6_38d0_1377);
+    let register_val_evaluation_point = point(REGISTER_ADDRESS_BITS, seed ^ 0xbe54_66cf_34e9_0c6c);
+    let address_challenges = BytecodeReadRafAddressPhaseChallenges {
+        gamma: field(seed ^ 0xc0ac_29b7_c97c_50dd, 0),
+        stage1_gamma: field(seed ^ 0x3f84_d5b5_b547_0917, 0),
+        stage2_gamma: field(seed ^ 0x9216_d5d9_8979_fb1b, 0),
+        stage3_gamma: field(seed ^ 0xd131_0ba6_98df_b5ac, 0),
+        stage4_gamma: field(seed ^ 0x2ffd_72db_d01a_dfb7, 0),
+        stage5_gamma: field(seed ^ 0xb8e1_afed_6a26_7e96, 0),
+    };
+    let stage_gammas = address_challenges.stage_gamma_powers();
+    let cycle_gamma = address_challenges.gamma;
+    let program = witness.program_preprocessing();
+    if program.bytecode.bytecode.len() != 1 << 13 {
+        return Err("Bytecode evaluator fixture has the wrong program domain".into());
+    }
+    let entry_bytecode_index = program
+        .bytecode
+        .entry_bytecode_index()
+        .ok_or("Bytecode evaluator fixture has no entry bytecode index")?;
+    let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
         dimensions,
-        r_address: point(13, seed ^ 0x243f_6a88_85a3_08d3),
-        stage_cycle_points: std::array::from_fn(|stage| {
-            point(log_t, seed ^ (0x1319_8a2e_0370_7344 + stage as u64))
-        }),
-        entry_bytecode_index: 17,
+        r_address,
+        stage_cycle_points,
+        entry_bytecode_index,
         committed_chunk_bits: 8,
-        val_stages: (0..NUM_BYTECODE_VAL_STAGES)
-            .map(|stage| field(seed ^ 0xa409_3822_299f_31d0, stage))
-            .collect(),
-    });
-    Instance {
+        table_fold: Some(BytecodeReadRafTableFoldInputs {
+            bytecode: &program.bytecode.bytecode,
+            register_read_write_point: &register_read_write_point,
+            register_val_evaluation_point: &register_val_evaluation_point,
+            stage_gammas: std::array::from_fn(|stage| stage_gammas[stage].as_slice()),
+        }),
+    })?;
+    Ok(Instance {
         relation,
         claims: BytecodeReadRafInputClaims::default(),
         points: BytecodeReadRafInputClaims::default(),
-        challenges: BytecodeReadRafCyclePhaseCommittedChallenges {
-            gamma: field(seed ^ 0x082e_fa98_ec4e_6c89, 0),
-        },
-    }
+        challenges: BytecodeReadRafCyclePhaseCommittedChallenges { gamma: cycle_gamma },
+    })
 }
 
 fn transcript(initial_claim: AkitaField) -> EvalTranscript {
@@ -219,7 +251,7 @@ fn transcript(initial_claim: AkitaField) -> EvalTranscript {
 fn run_member(
     arm: Arm,
     backend: &MetalBackend,
-    resident_rows: &BytecodeReadRafResidentRows,
+    resident_rows: Option<&BytecodeReadRafResidentRows>,
     witness: &dyn JoltWitnessPlane<AkitaField>,
     instance: &Instance,
     challenge_tape: Option<&[AkitaField]>,
@@ -228,7 +260,9 @@ fn run_member(
     observer.clear();
     let mut session = ProofSession::default();
     if matches!(arm, Arm::Metal) {
-        resident_rows.install(&mut session);
+        resident_rows
+            .ok_or("Metal Bytecode evaluator arm has no resident rows")?
+            .install(&mut session);
     }
     let inputs = || ProverInputs {
         relation: &instance.relation,
@@ -256,12 +290,13 @@ fn run_member(
         return Err("Bytecode evaluator kernel round count disagrees with the relation".into());
     }
 
+    let host_started = Instant::now();
     let mut transcript = transcript(instance.claims.address_phase);
+    let mut host_fs = host_started.elapsed();
     let mut claim = instance.claims.address_phase;
     let mut round_polys = Vec::with_capacity(kernel.num_rounds());
     let mut challenges = Vec::with_capacity(kernel.num_rounds());
     let mut rounds = Vec::with_capacity(kernel.num_rounds());
-    let mut host_fs = Duration::ZERO;
     for round in 0..kernel.num_rounds() {
         let bind = round.checked_sub(1).map(|previous| challenges[previous]);
         let round_started = Instant::now();
@@ -290,12 +325,21 @@ fn run_member(
     let finish_started = Instant::now();
     kernel.finish_rounds(final_bind)?;
     let finish = finish_started.elapsed();
-    let output_started = Instant::now();
-    let output_claims = kernel.output_claims(&instance.claims)?;
-    let output_claims_time = output_started.elapsed();
     let output_points = instance
         .relation
         .derive_opening_points(&challenges, &instance.points)?;
+    let output_started = Instant::now();
+    let output_claims = kernel.output_claims(&instance.claims)?;
+    let output_claims_time = output_started.elapsed();
+    let expected_output = instance.relation.expected_output(
+        &instance.points,
+        &output_claims,
+        &output_points,
+        &instance.challenges,
+    )?;
+    if expected_output != claim {
+        return Err("Bytecode evaluator final claim disagrees with expected output".into());
+    }
     let phases = observer.snapshot();
     Ok(MemberRun {
         trace: MemberTrace {
@@ -429,22 +473,45 @@ fn main() -> EvalResult<()> {
         },
         ..Default::default()
     })?;
-    let instance = instance(log_n, seed);
-
-    with_sample_backend_at_log_t(log_n, 8, |witness| -> EvalResult<()> {
-        let upload_started = Instant::now();
-        let resident_rows =
-            backend.prepare_bytecode_read_raf_resident_rows(witness, trace_elements)?;
-        let resident_upload = upload_started.elapsed();
+    with_diverse_sample_backend_at_geometry(log_n, 13, 8, |witness| -> EvalResult<()> {
+        let mut instance = instance(log_n, seed, witness)?;
+        let input_claim_started = Instant::now();
+        let input_claim = MetalBackend::bytecode_read_raf_input_claim(
+            witness,
+            &instance.relation,
+            &instance.challenges,
+        )?;
+        let input_claim_time = input_claim_started.elapsed();
+        if input_claim == AkitaField::zero() {
+            return Err("Bytecode evaluator honest input claim is zero".into());
+        }
+        instance.claims.address_phase = input_claim;
         let oracle = run_member(
             Arm::Cpu,
             &backend,
-            &resident_rows,
+            None,
             witness,
             &instance,
             None,
             &observer,
         )?;
+        let mut cpu_controls = Vec::with_capacity(repeats);
+        for _ in 0..repeats {
+            cpu_controls.push(run_member(
+                Arm::Cpu,
+                &backend,
+                None,
+                witness,
+                &instance,
+                Some(&oracle.trace.challenges),
+                &observer,
+            )?);
+        }
+
+        let upload_started = Instant::now();
+        let resident_rows =
+            backend.prepare_bytecode_read_raf_resident_rows(witness, trace_elements)?;
+        let resident_upload = upload_started.elapsed();
 
         let mut cpu_runs = Vec::with_capacity(repeats);
         let mut metal_runs = Vec::with_capacity(repeats);
@@ -460,7 +527,7 @@ fn main() -> EvalResult<()> {
                 run_member(
                     Arm::Cpu,
                     &backend,
-                    &resident_rows,
+                    None,
                     witness,
                     &instance,
                     Some(&oracle.trace.challenges),
@@ -471,7 +538,7 @@ fn main() -> EvalResult<()> {
                 run_member(
                     Arm::Metal,
                     &backend,
-                    &resident_rows,
+                    Some(&resident_rows),
                     witness,
                     &instance,
                     Some(&oracle.trace.challenges),
@@ -489,19 +556,33 @@ fn main() -> EvalResult<()> {
             metal_runs.push(metal);
         }
 
+        let exact_cpu_control = cpu_controls.iter().all(|run| run.trace == oracle.trace);
         let exact_cpu = cpu_runs.iter().all(|run| run.trace == oracle.trace);
         let exact_metal = metal_runs.iter().all(|run| run.trace == oracle.trace);
-        let cpu_phases_absent = cpu_runs
+        let cpu_phases_absent = cpu_controls
             .iter()
+            .chain(&cpu_runs)
             .all(|run| run.phases == PhaseObservation::default());
         let metal_schedules = metal_runs
             .iter()
             .all(|run| exact_metal_schedule(&run.phases, log_n, tuning.cutoff_log2));
         let cpu_ns = cpu_runs
             .iter()
-            .map(|run| ns(run.member_time()))
+            .map(|run| ns(run.member_with_host_fs_time()))
             .collect::<Vec<_>>();
         let metal_ns = metal_runs
+            .iter()
+            .map(|run| ns(run.member_with_host_fs_time()))
+            .collect::<Vec<_>>();
+        let cpu_control_ns = cpu_controls
+            .iter()
+            .map(|run| ns(run.member_with_host_fs_time()))
+            .collect::<Vec<_>>();
+        let kernel_only_cpu_ns = cpu_runs
+            .iter()
+            .map(|run| ns(run.member_time()))
+            .collect::<Vec<_>>();
+        let kernel_only_metal_ns = metal_runs
             .iter()
             .map(|run| ns(run.member_time()))
             .collect::<Vec<_>>();
@@ -510,22 +591,44 @@ fn main() -> EvalResult<()> {
             .zip(&metal_ns)
             .map(|(cpu, metal)| *cpu as f64 / *metal as f64)
             .collect::<Vec<_>>();
+        let kernel_only_speedups = kernel_only_cpu_ns
+            .iter()
+            .zip(&kernel_only_metal_ns)
+            .map(|(cpu, metal)| *cpu as f64 / *metal as f64)
+            .collect::<Vec<_>>();
         let median_speedup = median(&paired_speedups);
+        let cpu_control_median = median(
+            &cpu_control_ns
+                .iter()
+                .map(|value| *value as f64)
+                .collect::<Vec<_>>(),
+        );
+        let paired_cpu_median =
+            median(&cpu_ns.iter().map(|value| *value as f64).collect::<Vec<_>>());
+        let cpu_denominator_ratio =
+            cpu_control_median.max(paired_cpu_median) / cpu_control_median.min(paired_cpu_median);
+        let cpu_denominator_stable = cpu_denominator_ratio <= 1.10;
         let guards = json!({
-            "exact_round_polys": exact_cpu && exact_metal,
-            "exact_challenges": exact_cpu && exact_metal,
-            "exact_final_claim": exact_cpu && exact_metal,
-            "exact_opening_points": exact_cpu && exact_metal,
-            "exact_output_claims": exact_cpu && exact_metal,
-            "exact_transcript_state": exact_cpu && exact_metal,
+            "honest_input_claim_nonzero": true,
+            "expected_output_matches_final_claim": true,
+            "full_program_relation": true,
+            "diverse_pc_and_fused_inc_fixture": true,
+            "exact_round_polys": exact_cpu_control && exact_cpu && exact_metal,
+            "exact_challenges": exact_cpu_control && exact_cpu && exact_metal,
+            "exact_final_claim": exact_cpu_control && exact_cpu && exact_metal,
+            "exact_opening_points": exact_cpu_control && exact_cpu && exact_metal,
+            "exact_output_claims": exact_cpu_control && exact_cpu && exact_metal,
+            "exact_transcript_state": exact_cpu_control && exact_cpu && exact_metal,
             "host_fiat_shamir": true,
             "optimized_q10_cpu_control": true,
+            "cpu_no_resident_control_exact": exact_cpu_control,
+            "cpu_denominator_stable": cpu_denominator_stable,
             "cpu_metal_spans_absent": cpu_phases_absent,
             "metal_backend_exercised": metal_schedules,
             "exact_metal_schedule": metal_schedules,
             "resident_rows_prepared_outside_timer": true,
             "alternating_pair_order": true,
-            "all_exact": exact_cpu && exact_metal && cpu_phases_absent && metal_schedules,
+            "all_exact": exact_cpu_control && exact_cpu && exact_metal && cpu_phases_absent && metal_schedules,
         });
         let result = json!({
             "schema_version": 1,
@@ -534,12 +637,18 @@ fn main() -> EvalResult<()> {
                 "hybrid_speedup": median_speedup,
                 "paired_speedups": paired_speedups,
                 "paired_speedup_mad": mad(&paired_speedups),
+                "kernel_only_hybrid_speedup": median(&kernel_only_speedups),
+                "kernel_only_paired_speedups": kernel_only_speedups,
                 "cpu_member_ms_median": median(&cpu_ns.iter().map(|value| *value as f64 / 1e6).collect::<Vec<_>>()),
                 "metal_member_ms_median": median(&metal_ns.iter().map(|value| *value as f64 / 1e6).collect::<Vec<_>>()),
                 "cpu_member_ns_samples": cpu_ns,
                 "metal_member_ns_samples": metal_ns,
+                "cpu_no_resident_member_ns_samples": cpu_control_ns,
+                "cpu_denominator_ratio": cpu_denominator_ratio,
                 "cpu_core_ns_samples": cpu_runs.iter().map(|run| ns(run.core_time())).collect::<Vec<_>>(),
                 "metal_core_ns_samples": metal_runs.iter().map(|run| ns(run.core_time())).collect::<Vec<_>>(),
+                "cpu_round_ns_samples": cpu_runs.iter().map(|run| run.rounds.iter().map(|round| ns(*round)).collect::<Vec<_>>()).collect::<Vec<_>>(),
+                "metal_round_ns_samples": metal_runs.iter().map(|run| run.rounds.iter().map(|round| ns(*round)).collect::<Vec<_>>()).collect::<Vec<_>>(),
                 "cpu_prepare_ns_samples": cpu_runs.iter().map(|run| ns(run.prepare)).collect::<Vec<_>>(),
                 "metal_prepare_ns_samples": metal_runs.iter().map(|run| ns(run.prepare)).collect::<Vec<_>>(),
                 "cpu_host_fs_ns_samples": cpu_runs.iter().map(|run| ns(run.host_fs)).collect::<Vec<_>>(),
@@ -548,7 +657,9 @@ fn main() -> EvalResult<()> {
             "guards": guards,
             "phase_samples": metal_runs.iter().map(|run| phase_json(&run.phases)).collect::<Vec<_>>(),
             "resources": {
-                "gpu_seconds": metal_runs.iter().map(|run| run.member_time().as_secs_f64()).sum::<f64>(),
+                "gpu_seconds": metal_runs.iter().map(|run| run.member_with_host_fs_time().as_secs_f64()).sum::<f64>(),
+                "metal_hybrid_wall_seconds": metal_runs.iter().map(|run| run.member_with_host_fs_time().as_secs_f64()).sum::<f64>(),
+                "input_claim_precompute_ns": ns(input_claim_time),
                 "resident_upload_ns": ns(resident_upload),
                 "resident_row_bytes": 40u64 * trace_elements as u64,
             },
@@ -566,8 +677,15 @@ fn main() -> EvalResult<()> {
                 "trace_cutoff_log2": tuning.trace_cutoff_log2,
                 "trace_cutoff_elements": trace_cutoff_elements,
                 "orders": orders,
-                "fixture": "two-row real TraceBackend with padded cycle domain",
-                "initial_claim": "zero synthetic stage input",
+                "entry_bytecode_index": instance.relation.entry_bytecode_index(),
+                "fixture": "address-diverse TraceBackend in a full 8192-row program and padded cycle domain",
+                "fixture_trace_rows": trace_elements.min((1usize << 13) - 1),
+                "fixture_program_rows": 1usize << 13,
+                "covers_high_ra_chunk": true,
+                "fused_inc_fixture": "mixed rd and RAM signed deltas",
+                "relation_variant": "full-program",
+                "initial_claim": "independent direct cycle-domain sum",
+                "primary_metric_includes_host_fs": true,
             },
         });
         println!("{result}");

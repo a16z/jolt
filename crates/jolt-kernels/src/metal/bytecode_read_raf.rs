@@ -1,10 +1,16 @@
 use jolt_field::AkitaField;
+use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
-use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
+use jolt_verifier::stages::stage6b::bytecode_read_raf::{
+    BytecodeReadRafCycle, BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
+};
 use jolt_witness::JoltWitnessPlane;
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::instruction_read_raf::MetalBackend;
 use super::solinas::{
@@ -13,7 +19,7 @@ use super::solinas::{
 };
 use crate::optimized::bytecode_read_raf::{
     prepare_metal_bytecode_cycle_shell, BytecodeCycleAlgebra, BytecodeCycleDenseState, CycleKernel,
-    OptimizedBytecodeReadRafCycle,
+    MetalBytecodeCycleInputs, OptimizedBytecodeReadRafCycle,
 };
 use crate::optimized::instruction_read_raf::{collect_instruction_cycle_rows, InstructionCycleRow};
 use crate::{
@@ -52,6 +58,37 @@ impl BytecodeReadRafResidentRows {
 
 impl MetalBackend {
     #[doc(hidden)]
+    pub fn bytecode_read_raf_input_claim(
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+        relation: &BytecodeReadRafCycle<AkitaField>,
+        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<AkitaField>,
+    ) -> Result<AkitaField, KernelError<AkitaField>> {
+        let trace_elements = 1usize
+            .checked_shl(relation.dimensions().log_t() as u32)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Bytecode evaluator trace domain overflows usize",
+            })?;
+        let rows = collect_instruction_cycle_rows(witness, trace_elements)?;
+        let claims = BytecodeReadRafInputClaims::default();
+        let points = BytecodeReadRafInputClaims::default();
+        let (_, metadata) = prepare_metal_bytecode_cycle_shell(
+            ProverInputs {
+                relation,
+                claims: &claims,
+                points: &points,
+                challenges,
+            },
+            BytecodeCycleAlgebra::Q10,
+        )?;
+        let address_elements = 1usize
+            .checked_shl(relation.dimensions().log_k() as u32)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Bytecode evaluator address domain overflows usize",
+            })?;
+        exact_bytecode_cycle_input_claim(&rows, &metadata, address_elements)
+    }
+
+    #[doc(hidden)]
     pub fn prepare_bytecode_read_raf_resident_rows(
         &self,
         witness: &dyn JoltWitnessPlane<AkitaField>,
@@ -69,6 +106,87 @@ impl MetalBackend {
             .map_err(|error| KernelError::from(metal_error(error.to_string())))?;
         Ok(BytecodeReadRafResidentRows(resident_rows))
     }
+}
+
+fn exact_bytecode_cycle_input_claim(
+    rows: &[InstructionCycleRow],
+    inputs: &MetalBytecodeCycleInputs,
+    address_elements: usize,
+) -> Result<AkitaField, KernelError<AkitaField>> {
+    if rows.len() < 4
+        || !rows.len().is_power_of_two()
+        || inputs.stage_points.len() != 9
+        || inputs.stage_weights.len() != 9
+        || inputs.ra0.len() != 256
+        || inputs.ra1.len() != 256
+    {
+        return Err(KernelError::InvariantViolation {
+            reason: "Bytecode evaluator input-claim geometry is invalid",
+        });
+    }
+    let log_t = rows.len().ilog2() as usize;
+    if inputs.stage_points.iter().any(|point| point.len() != log_t) {
+        return Err(KernelError::InvariantViolation {
+            reason: "Bytecode evaluator stage point has the wrong variable count",
+        });
+    }
+    let lo_bits = log_t / 2;
+    let hi_bits = log_t - lo_bits;
+    let lo_length = 1usize << lo_bits;
+    let roots = inputs
+        .stage_points
+        .iter()
+        .map(|point| {
+            (
+                EqPolynomial::<AkitaField>::evals(&point[..hi_bits], None),
+                EqPolynomial::<AkitaField>::evals(&point[hi_bits..], None),
+            )
+        })
+        .collect::<Vec<_>>();
+    let invalid_pc = |row: &InstructionCycleRow| {
+        row.mapped_pc()
+            .is_some_and(|mapped_pc| mapped_pc >= address_elements)
+    };
+    #[cfg(feature = "parallel")]
+    let has_invalid_pc = rows.par_iter().any(invalid_pc);
+    #[cfg(not(feature = "parallel"))]
+    let has_invalid_pc = rows.iter().any(invalid_pc);
+    if has_invalid_pc {
+        return Err(KernelError::InvariantViolation {
+            reason: "Bytecode evaluator mapped PC exceeds the address domain",
+        });
+    }
+
+    let term = |index: usize| {
+        let row = &rows[index];
+        let Some(mapped_pc) = row.mapped_pc() else {
+            return AkitaField::zero();
+        };
+        let ra = inputs.ra0[mapped_pc >> 8] * inputs.ra1[mapped_pc & 0xff];
+        let hi = index >> lo_bits;
+        let lo = index & (lo_length - 1);
+        let stage_eq = |stage: usize| roots[stage].0[hi] * roots[stage].1[lo];
+        let combined = (0..5).fold(AkitaField::zero(), |sum, stage| {
+            sum + inputs.stage_weights[stage] * stage_eq(stage)
+        });
+        let fused_combined = (5..9).fold(AkitaField::zero(), |sum, stage| {
+            sum + inputs.stage_weights[stage] * stage_eq(stage)
+        });
+        let entry = if index == 0 {
+            inputs.entry_weight
+        } else {
+            AkitaField::zero()
+        };
+        ra * (combined + row.fused_inc::<AkitaField>() * fused_combined + entry)
+    };
+    #[cfg(feature = "parallel")]
+    let claim = (0..rows.len())
+        .into_par_iter()
+        .fold(AkitaField::zero, |sum, index| sum + term(index))
+        .reduce(AkitaField::zero, |left, right| left + right);
+    #[cfg(not(feature = "parallel"))]
+    let claim = (0..rows.len()).fold(AkitaField::zero(), |sum, index| sum + term(index));
+    Ok(claim)
 }
 
 impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBackend {
@@ -320,13 +438,15 @@ mod tests {
         BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
         BytecodeReadRafInputClaims, READ_RAF_CYCLE_STAGES,
     };
+    use jolt_witness::testing::with_sample_backend_at_geometry;
+    use jolt_witness::witnesses::FusedInc;
 
     use super::*;
-    use crate::optimized::booleanity::testing::with_booleanity_backend;
     use crate::optimized::harness::probe_input_claim;
     use crate::optimized::instruction_read_raf::{
         collect_instruction_cycle_rows, InstructionCycleRow,
     };
+    use crate::ReferenceBackend;
 
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {
         (0..len as u64)
@@ -335,9 +455,39 @@ mod tests {
     }
 
     #[test]
+    fn direct_input_claim_rejects_pc_outside_relation_domain() {
+        let rows = (0..4)
+            .map(|index| {
+                InstructionCycleRow::new(
+                    0,
+                    None,
+                    false,
+                    Some(if index == 0 { 4 } else { index }),
+                    None,
+                    FusedInc(0),
+                )
+            })
+            .collect::<Vec<_>>();
+        let inputs = MetalBytecodeCycleInputs {
+            stage_points: (0..9).map(|stage| point(2, stage)).collect(),
+            stage_weights: vec![AkitaField::one(); 9],
+            entry_weight: AkitaField::one(),
+            ra0: vec![AkitaField::one(); 256],
+            ra1: vec![AkitaField::one(); 256],
+        };
+
+        assert!(matches!(
+            exact_bytecode_cycle_input_claim(&rows, &inputs, 4),
+            Err(KernelError::InvariantViolation {
+                reason: "Bytecode evaluator mapped PC exceeds the address domain"
+            })
+        ));
+    }
+
+    #[test]
     fn production_kernel_matches_optimized_cpu_through_handoff() {
         let log_t = 10;
-        with_booleanity_backend(log_t, 8, |witness, _| {
+        with_sample_backend_at_geometry(log_t, 13, 8, |witness| {
             let dimensions = BytecodeReadRafDimensions::new(log_t, 13, 2);
             let relation = BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
                 dimensions,
@@ -362,7 +512,7 @@ mod tests {
                 challenges: &challenges,
             };
 
-            let (mut shell, _) =
+            let (mut shell, metadata) =
                 prepare_metal_bytecode_cycle_shell(inputs(), BytecodeCycleAlgebra::Q10Accum)
                     .unwrap();
             assert_eq!(shell.metal_elements().unwrap(), 1 << log_t);
@@ -377,6 +527,21 @@ mod tests {
             shell.metal_commit_bind((1 << log_t) / 2).unwrap();
             assert_eq!(shell.metal_rounds_bound(), 1);
             assert_eq!(shell.metal_elements().unwrap(), (1 << log_t) / 2);
+
+            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+            let claim = exact_bytecode_cycle_input_claim(&packed, &metadata, 1 << 13).unwrap();
+            let mut reference = <ReferenceBackend as PrepareKernel<
+                AkitaField,
+                BytecodeReadRafCycle<AkitaField>,
+            >>::prepare(
+                &ReferenceBackend,
+                &mut ProofSession::default(),
+                witness,
+                inputs(),
+            )
+            .unwrap();
+            assert_eq!(claim, probe_input_claim(reference.as_mut()));
+            assert_ne!(claim, AkitaField::zero());
 
             let mut expected = OptimizedBytecodeReadRafCycle::new(BytecodeCycleAlgebra::Q10Accum)
                 .prepare(&mut ProofSession::default(), witness, inputs())
@@ -395,7 +560,6 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
             let resident = metal
                 .context
                 .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
@@ -409,7 +573,6 @@ mod tests {
             .unwrap();
             assert!(session.state::<BooleanityRows>().is_some());
 
-            let claim = probe_input_claim(expected.as_mut());
             let mut round_challenges = point(log_t, 211);
             round_challenges[0] = AkitaField::zero();
             round_challenges[1] = AkitaField::one();
