@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "metal_outer_remainder_eval.py"
@@ -445,6 +447,53 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
             result["metrics"]["median_paired_speedup"],
         )
         self.assertEqual(result["resources"]["output_readback_bytes"], 560)
+        self.assertEqual(
+            result["resources"]["metal_full_prove_ns_samples"], [1] * 6
+        )
+        self.assertEqual(result["resources"]["gpu_seconds"], 6e-9)
+
+    def test_gpu_accounting_includes_warmup_and_all_timed_metal_arms(self) -> None:
+        events, runner = fixture()
+        expected = [11, 22, 33, 44, 55, 66]
+        for pair, duration in zip(
+            [runner["warmup"], *runner["samples"]], expected
+        ):
+            pair["metal"]["full_prove_ns"] = duration
+
+        result = self.parse(events, runner)
+
+        self.assertEqual(
+            result["resources"]["metal_full_prove_ns_samples"], expected
+        )
+        self.assertEqual(
+            result["resources"]["gpu_seconds"], sum(expected) / 1e9
+        )
+
+    def test_every_metal_full_prove_duration_must_be_positive(self) -> None:
+        for index in range(EVAL.PAIRS + 1):
+            with self.subTest(index=index):
+                events, runner = fixture()
+                [runner["warmup"], *runner["samples"]][index]["metal"][
+                    "full_prove_ns"
+                ] = 0
+                with self.assertRaisesRegex(ValueError, "full-prove durations"):
+                    self.parse(events, runner)
+
+    def test_artifact_directory_prefers_explicit_then_controller_environment(
+        self,
+    ) -> None:
+        root = Path("root")
+        explicit = Path("explicit")
+        configured = Path("configured")
+        with mock.patch.dict(
+            os.environ,
+            {"JOLT_AUTORESEARCH_EVAL_DIR": str(configured)},
+            clear=False,
+        ):
+            self.assertEqual(EVAL.resolve_artifact_dir(root, explicit), explicit)
+            self.assertEqual(
+                EVAL.resolve_artifact_dir(root, None), configured.resolve()
+            )
 
     def test_proof_mismatch_fails_correctness_and_promotion(self) -> None:
         events, runner = fixture()

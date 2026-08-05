@@ -163,6 +163,31 @@ PRODUCTION_LOCAL_KERNELS = {
             "rayon_threads_pinned",
         },
     },
+    "OuterRemainder": {
+        "metric": "outer_remainder_speedup",
+        "paired_metric": "paired_outer_remainder_speedups",
+        "parameters": frozenset(
+            {
+                "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS",
+                "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS",
+                "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS",
+                "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2",
+                "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2",
+            }
+        ),
+        "required_guards": COMMON_PRODUCTION_GUARDS
+        | {
+            "outer_remainder_cpu_control",
+            "outer_remainder_metal_backend_exercised",
+            "outer_remainder_round_topology_exact",
+            "outer_remainder_resident_lifecycle_exact",
+            "outer_remainder_working_set_admitted",
+            "outer_remainder_readback_exact",
+            "outer_remainder_zero_member_allocations",
+            "outer_remainder_local_gate",
+            "rayon_threads_pinned",
+        },
+    },
 }
 LOCAL_RESULT_CONTRACTS = {
     "bytecode_read_raf_cycle_v1",
@@ -171,6 +196,7 @@ LOCAL_RESULT_CONTRACTS = {
     "instruction_input_v2",
     "instruction_input_v3",
     "instruction_input_v4",
+    "outer_remainder_v3",
 }
 LOCAL_RESULT_SCHEMA_VERSIONS = {
     "bytecode_read_raf_cycle_v1": 1,
@@ -179,6 +205,7 @@ LOCAL_RESULT_SCHEMA_VERSIONS = {
     "instruction_input_v2": 2,
     "instruction_input_v3": 3,
     "instruction_input_v4": 4,
+    "outer_remainder_v3": 3,
 }
 BYTECODE_LOCAL_FINGERPRINT_PARAMETERS = {
     "message_threads": "JOLT_METAL_BYTECODE_MESSAGE_THREADS",
@@ -233,6 +260,18 @@ INSTRUCTION_INPUT_LOCAL_FINGERPRINT_ENV = {
 }
 INSTRUCTION_INPUT_V3_FINGERPRINT_ENV = {
     "frozen_cpu_reference_ns": "JOLT_METAL_EVAL_CPU_REFERENCE_NS",
+}
+OUTER_REMAINDER_LOCAL_FINGERPRINT_PARAMETERS = {
+    "materialize_threads": "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS",
+    "transition_threads": "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS",
+    "output_threads": "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS",
+    "cutoff_log2": "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2",
+    "trace_cutoff_log2": "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2",
+}
+OUTER_REMAINDER_LOCAL_FINGERPRINT_ENV = {
+    "log_n": "JOLT_METAL_EVAL_LOG_N",
+    "pairs": "JOLT_METAL_EVAL_REPEATS",
+    "rayon_threads": "RAYON_NUM_THREADS",
 }
 INSTRUCTION_INPUT_V3_CPU_REFERENCE_NS = 814_395_125
 INSTRUCTION_INPUT_V3_CPU_REFERENCE_PROVENANCE = (
@@ -896,12 +935,26 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
         raise ValueError("unsupported template schema")
     if template["metric"]["direction"] not in {"min", "max"}:
         raise ValueError("metric direction must be min or max")
-    if template["baseline_repeats"] < 3:
-        raise ValueError("baseline_repeats must be at least three")
-    if template["baseline_repeats"] % 2 == 0:
-        raise ValueError("baseline_repeats must be odd")
+    evaluator = template["evaluator"]
+    replication = evaluator.get("replication")
+    internal_replication = replication is not None
+    if internal_replication:
+        if evaluator.get("result_contract") != "outer_remainder_v3" or replication != {
+            "mode": "internal_paired",
+            "pairs": 5,
+            "excluded_warmup_pairs": 1,
+            "sample_metric": "paired_speedups",
+        }:
+            raise ValueError("internal evaluator replication has an unsupported contract")
+        if template["baseline_repeats"] != 1 or template["candidate_repeats"] != 1:
+            raise ValueError("internally replicated evaluators must run exactly once")
+    else:
+        if template["baseline_repeats"] < 3:
+            raise ValueError("baseline_repeats must be at least three")
+        if template["baseline_repeats"] % 2 == 0:
+            raise ValueError("baseline_repeats must be odd")
     candidate_repeats = template["candidate_repeats"]
-    if candidate_repeats < 1 or candidate_repeats % 2 == 0:
+    if not internal_replication and (candidate_repeats < 1 or candidate_repeats % 2 == 0):
         raise ValueError("candidate_repeats must be a positive odd integer")
     if template["budget"]["max_trials"] < 1:
         raise ValueError("max_trials must be positive")
@@ -978,7 +1031,6 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
     )
     if not evaluator_paths or not evaluator_paths <= frozen:
         raise ValueError("evaluator frozen_paths must be a subset of scope.frozen")
-    evaluator = template["evaluator"]
     if EVALUATOR_LOCK_HELD_ENV in evaluator.get("env", {}):
         raise ValueError("the local evaluator environment cannot override the lock token")
     result_contract = evaluator.get("result_contract")
@@ -1218,6 +1270,61 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
             raise ValueError(
                 "the InstructionInput search scope must remain shader-only"
             )
+    if result_contract == "outer_remainder_v3":
+        if template["kernel"] != "OuterRemainder":
+            raise ValueError("the OuterRemainder result contract requires its kernel")
+        if replication != {
+            "mode": "internal_paired",
+            "pairs": 5,
+            "excluded_warmup_pairs": 1,
+            "sample_metric": "paired_speedups",
+        }:
+            raise ValueError("the OuterRemainder evaluator requires internal paired replication")
+        missing_env = sorted(
+            set(OUTER_REMAINDER_LOCAL_FINGERPRINT_ENV.values())
+            - set(evaluator.get("env", {}))
+        )
+        if missing_env:
+            raise ValueError(
+                "the OuterRemainder result contract is missing evaluator environment: "
+                f"{missing_env}"
+            )
+        try:
+            log_n = int(evaluator["env"]["JOLT_METAL_EVAL_LOG_N"])
+            pairs = int(evaluator["env"]["JOLT_METAL_EVAL_REPEATS"])
+            rayon_threads = int(evaluator["env"]["RAYON_NUM_THREADS"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "the OuterRemainder evaluator requires integer launch geometry"
+            ) from error
+        if log_n != 26 or pairs != 5 or rayon_threads != 16:
+            raise ValueError("the OuterRemainder evaluator launch geometry is not frozen")
+        required_params = set(OUTER_REMAINDER_LOCAL_FINGERPRINT_PARAMETERS.values())
+        if required_params - set(template["search_space"]) or required_params - set(
+            template.get("baseline_params", {})
+        ):
+            raise ValueError(
+                "the OuterRemainder result contract requires every launch parameter"
+            )
+        if template.get("scope", {}).get("editable") != [
+            "crates/jolt-kernels/src/metal/solinas/outer_remainder.metal"
+        ]:
+            raise ValueError("the OuterRemainder search scope must remain shader-only")
+        final_validation = template.get("final_validation")
+        if not isinstance(final_validation, dict) or set(final_validation) != {
+            "primary_log_n",
+            "production_gate",
+        }:
+            raise ValueError("the OuterRemainder final-validation contract is incomplete")
+        if final_validation["primary_log_n"] != log_n:
+            raise ValueError("the OuterRemainder final validation targets the wrong scale")
+        metric = template.get("metric", {})
+        if (
+            metric.get("name") != "hybrid_speedup"
+            or metric.get("role") != "search_proxy"
+            or float(metric.get("target", 0.0)) != 5.0
+        ):
+            raise ValueError("the OuterRemainder metric must retain its 5x search target")
     collaboration = template.get("collaboration")
     if collaboration is not None:
         if collaboration.get("promotion_owner") != "root":
@@ -1519,7 +1626,50 @@ def run_evaluator(
     metric = output.get("metrics", {}).get(config["metric"]["name"])
     if isinstance(metric, bool) or not isinstance(metric, (int, float)) or not math.isfinite(metric):
         raise ValueError("evaluator returned a non-finite primary metric")
+    if config["evaluator"].get("result_contract") == "outer_remainder_v3":
+        expected_artifacts = Path(environment["JOLT_AUTORESEARCH_EVAL_DIR"]).resolve()
+        reported_artifacts = output.get("artifacts")
+        if not isinstance(reported_artifacts, str) or Path(reported_artifacts).resolve() != expected_artifacts:
+            raise ValueError("OuterRemainder evaluator reported the wrong artifact directory")
+        result_path = expected_artifacts / "result.json"
+        if not result_path.is_file() or read_json(result_path) != output:
+            raise ValueError("OuterRemainder evaluator artifact does not match stdout")
     return output, elapsed
+
+
+def evaluator_metric_observations(
+    config: dict[str, Any], output: dict[str, Any]
+) -> list[float]:
+    metric_name = config["metric"]["name"]
+    primary = output.get("metrics", {}).get(metric_name)
+    if (
+        isinstance(primary, bool)
+        or not isinstance(primary, (int, float))
+        or not math.isfinite(primary)
+    ):
+        raise ValueError("evaluator returned a non-finite primary metric")
+    replication = config.get("evaluator", {}).get("replication")
+    if replication is None:
+        return [float(primary)]
+    samples = output.get("metrics", {}).get(replication["sample_metric"])
+    if (
+        not isinstance(samples, list)
+        or len(samples) != replication["pairs"]
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0.0
+            for value in samples
+        )
+    ):
+        raise ValueError("internally replicated evaluator observations are invalid")
+    observations = [float(value) for value in samples]
+    if not math.isclose(
+        float(primary), statistics.median(observations), rel_tol=1e-12, abs_tol=0.0
+    ):
+        raise ValueError("internally replicated observations disagree with the primary metric")
+    return observations
 
 
 def positive_integer_samples(
@@ -3079,6 +3229,335 @@ def validate_hamming_weight_local_result(
     )
 
 
+def validate_outer_remainder_local_result(
+    config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
+) -> None:
+    top_fields = {
+        "schema",
+        "schema_version",
+        "kernel",
+        "workload",
+        "fingerprint",
+        "metrics",
+        "samples",
+        "excluded_warmup",
+        "guards",
+        "all_exact",
+        "resources",
+        "promotion",
+        "oracle_limits",
+        "artifacts",
+        "run",
+    }
+    if (
+        set(output) != top_fields
+        or output.get("schema") != "outer_remainder_v3"
+        or output.get("schema_version") != 3
+        or output.get("kernel") != "OuterRemainder"
+        or output.get("workload") != "fibonacci"
+    ):
+        raise ValueError("OuterRemainder evaluator result contract is incomplete")
+
+    environment = config["evaluator"].get("env", {})
+    try:
+        expected = {
+            field: int(environment[name])
+            for field, name in OUTER_REMAINDER_LOCAL_FINGERPRINT_ENV.items()
+        }
+        expected.update(
+            {
+                field: int(params[name])
+                for field, name in OUTER_REMAINDER_LOCAL_FINGERPRINT_PARAMETERS.items()
+            }
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("OuterRemainder evaluator launch parameters are incomplete") from error
+    if (
+        expected["log_n"] != 26
+        or expected["pairs"] != 5
+        or expected["rayon_threads"] != 16
+        or expected["materialize_threads"] not in {128, 256, 512}
+        or expected["transition_threads"] not in {64, 128, 256, 512}
+        or expected["output_threads"] not in {128, 256, 512}
+        or expected["cutoff_log2"] not in {14, 15, 16, 17, 18}
+        or expected["trace_cutoff_log2"] != 18
+    ):
+        raise ValueError("OuterRemainder evaluator launch geometry is invalid")
+
+    rows = 1 << expected["log_n"]
+    orders = [
+        ["optimized", "metal"] if pair % 2 == 0 else ["metal", "optimized"]
+        for pair in range(expected["pairs"])
+    ]
+    fingerprint = output["fingerprint"]
+    fingerprint_fields = {
+        "fixture",
+        "log_n",
+        "trace_elements",
+        "trace_rows",
+        "pairs",
+        "excluded_warmup_pairs",
+        "orders",
+        "rayon_threads",
+        "materialize_threads",
+        "transition_threads",
+        "output_threads",
+        "cutoff_log2",
+        "trace_cutoff_log2",
+        "storage_initialization",
+        "member_span",
+        "rounds",
+        "output_claims",
+        "source_sha256",
+        "binary_sha256",
+    }
+    if not isinstance(fingerprint, dict) or set(fingerprint) != fingerprint_fields:
+        raise ValueError("OuterRemainder evaluator fingerprint is incomplete")
+    for name, value in expected.items():
+        if fingerprint.get(name) != value or type(fingerprint.get(name)) is not int:
+            raise ValueError(f"OuterRemainder evaluator fingerprint does not match {name}")
+    if (
+        fingerprint["fixture"] != "real-fibonacci-akita-proof"
+        or fingerprint["trace_elements"] != rows
+        or type(fingerprint["trace_rows"]) is not int
+        or not 0 < fingerprint["trace_rows"] <= rows
+        or fingerprint["excluded_warmup_pairs"] != 1
+        or fingerprint["orders"] != orders
+        or fingerprint["storage_initialization"] != "full"
+        or fingerprint["member_span"] != "OuterRemainder::complete_member"
+        or fingerprint["rounds"] != 27
+        or fingerprint["output_claims"] != 35
+        or any(
+            not isinstance(fingerprint[name], str)
+            or re.fullmatch(r"[0-9a-f]{64}", fingerprint[name]) is None
+            for name in ("source_sha256", "binary_sha256")
+        )
+    ):
+        raise ValueError("OuterRemainder evaluator fingerprint diverged")
+
+    metrics = output["metrics"]
+    metric_fields = {
+        "hybrid_speedup",
+        "cpu_member_ns_samples",
+        "metal_member_ns_samples",
+        "paired_speedups",
+        "storage_prepare_ns_samples",
+        "metal_cold_inclusive_ns_samples",
+        "cold_inclusive_speedups",
+        "median_cpu_member_ns",
+        "median_metal_member_ns",
+        "median_paired_speedup",
+        "median_storage_prepare_ns",
+        "median_metal_cold_inclusive_ns",
+        "median_cold_inclusive_speedup",
+        "cpu_first_median_speedup",
+        "metal_first_median_speedup",
+        "median_fractional_improvement",
+        "fractional_improvement_mad",
+    }
+    if not isinstance(metrics, dict) or set(metrics) != metric_fields:
+        raise ValueError("OuterRemainder evaluator metrics are incomplete")
+
+    def numeric_samples(name: str, count: int) -> list[float]:
+        values = metrics.get(name)
+        if (
+            not isinstance(values, list)
+            or len(values) != count
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0.0
+                for value in values
+            )
+        ):
+            raise ValueError(f"OuterRemainder evaluator {name} samples are invalid")
+        return [float(value) for value in values]
+
+    cpu_ns = numeric_samples("cpu_member_ns_samples", 5)
+    metal_ns = numeric_samples("metal_member_ns_samples", 5)
+    storage_ns = numeric_samples("storage_prepare_ns_samples", 5)
+    cold_ns = numeric_samples("metal_cold_inclusive_ns_samples", 5)
+    paired = [cpu / metal for cpu, metal in zip(cpu_ns, metal_ns)]
+    cold_paired = [cpu / cold for cpu, cold in zip(cpu_ns, cold_ns)]
+    improvements = [1.0 - metal / cpu for cpu, metal in zip(cpu_ns, metal_ns)]
+    improvement_median = statistics.median(improvements)
+    improvement_mad = statistics.median(
+        abs(value - improvement_median) for value in improvements
+    )
+    expected_scalars = {
+        "hybrid_speedup": statistics.median(paired),
+        "median_cpu_member_ns": statistics.median(cpu_ns),
+        "median_metal_member_ns": statistics.median(metal_ns),
+        "median_paired_speedup": statistics.median(paired),
+        "median_storage_prepare_ns": statistics.median(storage_ns),
+        "median_metal_cold_inclusive_ns": statistics.median(cold_ns),
+        "median_cold_inclusive_speedup": statistics.median(cold_paired),
+        "cpu_first_median_speedup": statistics.median(paired[0::2]),
+        "metal_first_median_speedup": statistics.median(paired[1::2]),
+        "median_fractional_improvement": improvement_median,
+        "fractional_improvement_mad": improvement_mad,
+    }
+    expected_lists = {
+        "paired_speedups": paired,
+        "cold_inclusive_speedups": cold_paired,
+    }
+    for name, wanted in expected_scalars.items():
+        actual = metrics.get(name)
+        if (
+            isinstance(actual, bool)
+            or not isinstance(actual, (int, float))
+            or not math.isfinite(actual)
+            or not math.isclose(float(actual), wanted, rel_tol=1e-12, abs_tol=0.0)
+        ):
+            raise ValueError(f"OuterRemainder evaluator {name} is inconsistent")
+    for name, wanted in expected_lists.items():
+        actual = metrics.get(name)
+        if not isinstance(actual, list) or len(actual) != len(wanted) or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isclose(float(value), expected_value, rel_tol=1e-12, abs_tol=0.0)
+            for value, expected_value in zip(actual, wanted)
+        ):
+            raise ValueError(f"OuterRemainder evaluator {name} is inconsistent")
+    if any(
+        not math.isclose(cold, metal + storage, rel_tol=0.0, abs_tol=0.0)
+        for cold, metal, storage in zip(cold_ns, metal_ns, storage_ns)
+    ):
+        raise ValueError("OuterRemainder cold-inclusive accounting is inconsistent")
+
+    samples = output["samples"]
+    if not isinstance(samples, list) or len(samples) != 5:
+        raise ValueError("OuterRemainder evaluator has the wrong sample cardinality")
+    for pair, sample in enumerate(samples):
+        if (
+            not isinstance(sample, dict)
+            or sample.get("pair") != pair
+            or sample.get("order") != orders[pair]
+            or not isinstance(sample.get("optimized"), dict)
+            or not isinstance(sample.get("metal"), dict)
+            or sample["optimized"].get("member_ns") != round(cpu_ns[pair])
+            or sample["metal"].get("member_ns") != round(metal_ns[pair])
+            or sample["metal"].get("cold_inclusive_ns") != round(cold_ns[pair])
+        ):
+            raise ValueError("OuterRemainder raw samples disagree with their metrics")
+    excluded_warmup = output["excluded_warmup"]
+    if (
+        not isinstance(excluded_warmup, dict)
+        or set(excluded_warmup) != {"optimized", "metal"}
+        or any(
+            not isinstance(excluded_warmup[backend], dict)
+            or type(excluded_warmup[backend].get("member_ns")) is not int
+            or excluded_warmup[backend]["member_ns"] <= 0
+            for backend in ("optimized", "metal")
+        )
+    ):
+        raise ValueError("OuterRemainder excluded warmup is invalid")
+
+    guard_names = {
+        "correctness_exact",
+        "sample_cardinality_exact",
+        "alternating_orders_exact",
+        "actual_arm_order_exact",
+        "rayon_threads_pinned",
+        "target_scale",
+        "round_topology_exact",
+        "component_timings_reconciled",
+        "optimized_cpu_output_walk_exact",
+        "metal_output_replaces_cpu_walk",
+        "metal_phase_schedule_exact",
+        "metal_gpu_timing_exact",
+        "metal_sequence_geometry_exact",
+        "metal_phase_chronology_exact",
+        "metal_row_identity_exact",
+        "metal_readback_exact",
+        "metal_working_set_admitted",
+        "metal_storage_preparation_exact",
+        "metal_storage_preparation_outside_member",
+        "resident_row_lifecycle_exact",
+        "optimized_has_no_metal_member_spans",
+        "member_durations_positive",
+        "speedups_finite_positive",
+        "all_exact",
+    }
+    guards = output["guards"]
+    if (
+        not isinstance(guards, dict)
+        or set(guards) != guard_names
+        or any(guards[name] is not True for name in guard_names)
+        or output["all_exact"] is not True
+    ):
+        raise ValueError("OuterRemainder evaluator exactness guards failed")
+
+    resources = output["resources"]
+    resource_fields = {
+        "compact_row_bytes",
+        "residual_row_bytes",
+        "resident_row_bytes",
+        "outer_remainder_storage_bytes",
+        "maximum_storage_buffer_bytes",
+        "table_readback_bytes",
+        "output_readback_bytes",
+        "metal_full_prove_ns_samples",
+        "gpu_seconds",
+    }
+    if not isinstance(resources, dict) or set(resources) != resource_fields:
+        raise ValueError("OuterRemainder evaluator resources are incomplete")
+    full_prove = resources["metal_full_prove_ns_samples"]
+    if (
+        not isinstance(full_prove, list)
+        or len(full_prove) != 6
+        or any(type(value) is not int or value <= 0 for value in full_prove)
+        or resources["compact_row_bytes"] != 48
+        or resources["residual_row_bytes"] != 112
+        or resources["resident_row_bytes"] != rows * 160
+        or resources["outer_remainder_storage_bytes"] != 4_300_079_856
+        or resources["maximum_storage_buffer_bytes"] != 2 * (1 << 30)
+        or resources["table_readback_bytes"] != 32 * (1 << expected["cutoff_log2"])
+        or resources["output_readback_bytes"] != 560
+        or not math.isclose(
+            float(resources["gpu_seconds"]),
+            sum(full_prove) / 1e9,
+            rel_tol=1e-12,
+            abs_tol=0.0,
+        )
+    ):
+        raise ValueError("OuterRemainder evaluator resource accounting is invalid")
+
+    local_gate = (
+        statistics.median(paired) >= 4.0
+        and statistics.median(paired[0::2]) >= 4.0
+        and statistics.median(paired[1::2]) >= 4.0
+        and statistics.median(metal_ns) < statistics.median(cpu_ns)
+        and improvement_median > 3.0 * improvement_mad
+    )
+    if output["promotion"] != {
+        "eligible": local_gate,
+        "minimum_speedup": 4.0,
+        "production_holdout_required": True,
+        "continue_above_floor": True,
+    }:
+        raise ValueError("OuterRemainder evaluator promotion record is invalid")
+    if output["oracle_limits"] != [
+        "Chrome span wall time is authoritative; gpu_active_ns is implementation telemetry",
+        "cold_inclusive adds only OuterRemainder storage preparation to the resident member",
+        "full-proof equality assumes deterministic clear Akita proving",
+        "promotion still requires a separate five-pair production PIOP holdout",
+    ]:
+        raise ValueError("OuterRemainder evaluator oracle limits diverged")
+    if not isinstance(output["artifacts"], str) or not output["artifacts"]:
+        raise ValueError("OuterRemainder evaluator artifact path is invalid")
+    run = output["run"]
+    if (
+        not isinstance(run, dict)
+        or set(run) != {"created_at", "host", "platform", "command"}
+        or not all(isinstance(run[name], str) and run[name] for name in ("created_at", "host", "platform"))
+        or not isinstance(run["command"], list)
+        or not run["command"]
+    ):
+        raise ValueError("OuterRemainder evaluator run record is invalid")
+
+
 def validate_local_result_contract(
     config: dict[str, Any], output: dict[str, Any], params: dict[str, str]
 ) -> None:
@@ -3097,6 +3576,9 @@ def validate_local_result_contract(
         return
     if contract == "hamming_weight_claim_reduction_v1":
         validate_hamming_weight_local_result(config, output, params)
+        return
+    if contract == "outer_remainder_v3":
+        validate_outer_remainder_local_result(config, output, params)
         return
     if contract != "bytecode_read_raf_cycle_v1":
         raise ValueError("unknown local evaluator result contract")
@@ -5481,6 +5963,7 @@ def validate_accepted_parent_for_production(
         "instruction_input_v2",
         "booleanity_address_v1",
         "hamming_weight_claim_reduction_v1",
+        "outer_remainder_v3",
     }:
         return
     minimum = float(
@@ -5752,7 +6235,7 @@ def command_init(args: argparse.Namespace) -> int:
         passed, reason = guards_pass(template, output)
         if not passed:
             raise ValueError(f"baseline {index + 1} is invalid: {reason}")
-        measurements.append(float(output["metrics"][template["metric"]["name"]]))
+        measurements.extend(evaluator_metric_observations(template, output))
         elapsed_total += elapsed
         gpu_seconds += float(output.get("resources", {}).get("gpu_seconds", 0.0))
         if gpu_seconds > float(template["budget"]["max_gpu_seconds"]):
@@ -5958,7 +6441,7 @@ def command_trial(args: argparse.Namespace) -> int:
             gpu_seconds += float(output.get("resources", {}).get("gpu_seconds", 0.0))
             if gpu_used + gpu_seconds > float(config["budget"]["max_gpu_seconds"]):
                 raise ValueError("candidate GPU budget exhausted")
-            measurements.append(float(output["metrics"][config["metric"]["name"]]))
+            measurements.extend(evaluator_metric_observations(config, output))
             passed, reason = guards_pass(config, output)
             for name in combined_guards:
                 combined_guards[name] = combined_guards[name] and output["guards"].get(name) is True

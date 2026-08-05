@@ -45,6 +45,39 @@ class MetalAutoresearchTests(unittest.TestCase):
             root, ["editable.txt"], run_dir / "snapshots" / "baseline"
         )
 
+    def outer_remainder_local_contract_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        config = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/outer_remainder.template.json"
+        )
+        params = {
+            name: str(value) for name, value in config["baseline_params"].items()
+        }
+        fixture_path = ROOT / "scripts/tests/test_metal_outer_remainder_eval.py"
+        fixture_spec = importlib.util.spec_from_file_location(
+            "outer_remainder_autoresearch_fixture", fixture_path
+        )
+        assert fixture_spec is not None and fixture_spec.loader is not None
+        fixture_module = importlib.util.module_from_spec(fixture_spec)
+        sys.modules[fixture_spec.name] = fixture_module
+        fixture_spec.loader.exec_module(fixture_module)
+        events, runner = fixture_module.fixture()
+        output = fixture_module.EVAL.parse_outer_remainder_result(
+            events,
+            runner,
+            source_sha256="a" * 64,
+            binary_sha256="b" * 64,
+            artifact_dir="test-artifacts",
+        )
+        output["run"] = {
+            "created_at": "2026-08-05T00:00:00+00:00",
+            "host": "test-host",
+            "platform": "test-platform",
+            "command": ["python3", "scripts/metal_outer_remainder_eval.py"],
+        }
+        return config, params, output
+
     def bytecode_local_contract_fixture(
         self,
     ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
@@ -2002,6 +2035,179 @@ class MetalAutoresearchTests(unittest.TestCase):
         passed, reason = metal_autoresearch.guards_pass(config, output)
         self.assertTrue(passed, reason)
         self.assertTrue(output["all_exact"])
+
+    def test_outer_remainder_template_and_closed_local_result(self) -> None:
+        config, params, output = self.outer_remainder_local_contract_fixture()
+
+        metal_autoresearch.validate_template(config, ROOT)
+        metal_autoresearch.validate_new_run_template(config)
+        metal_autoresearch.validate_local_result_contract(config, output, params)
+        passed, reason = metal_autoresearch.guards_pass(config, output)
+        self.assertTrue(passed, reason)
+        observations = metal_autoresearch.evaluator_metric_observations(
+            config, output
+        )
+        self.assertEqual(observations, output["metrics"]["paired_speedups"])
+        self.assertEqual(
+            statistics.median(observations), output["metrics"]["hybrid_speedup"]
+        )
+
+    def test_outer_remainder_internal_replication_is_closed(self) -> None:
+        config, _, _ = self.outer_remainder_local_contract_fixture()
+        mutations = (
+            (
+                "pair count",
+                lambda value: value["evaluator"]["replication"].__setitem__(
+                    "pairs", 3
+                ),
+                "internal evaluator replication|internal paired replication",
+            ),
+            (
+                "controller baseline repeats",
+                lambda value: value.__setitem__("baseline_repeats", 3),
+                "exactly once",
+            ),
+            (
+                "controller candidate repeats",
+                lambda value: value.__setitem__("candidate_repeats", 3),
+                "exactly once",
+            ),
+            (
+                "missing replication",
+                lambda value: value["evaluator"].pop("replication"),
+                "baseline_repeats",
+            ),
+        )
+        for name, mutate, message in mutations:
+            with self.subTest(name=name):
+                tampered = copy.deepcopy(config)
+                mutate(tampered)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_template(tampered, ROOT)
+
+    def test_outer_remainder_local_result_recomputes_raw_evidence(self) -> None:
+        config, params, output = self.outer_remainder_local_contract_fixture()
+        mutations = (
+            (
+                "paired speedup",
+                lambda value: value["metrics"]["paired_speedups"].__setitem__(
+                    0, 4.0
+                ),
+                "paired_speedups is inconsistent",
+            ),
+            (
+                "raw member sample",
+                lambda value: value["samples"][0]["optimized"].__setitem__(
+                    "member_ns", 1
+                ),
+                "raw samples",
+            ),
+            (
+                "fingerprint parameter",
+                lambda value: value["fingerprint"].__setitem__(
+                    "materialize_threads", 512
+                ),
+                "fingerprint does not match",
+            ),
+            (
+                "source hash",
+                lambda value: value["fingerprint"].__setitem__(
+                    "source_sha256", "not-a-digest"
+                ),
+                "fingerprint diverged",
+            ),
+            (
+                "GPU seconds",
+                lambda value: value["resources"].__setitem__("gpu_seconds", 1.0),
+                "resource accounting",
+            ),
+            (
+                "full proof sample",
+                lambda value: value["resources"][
+                    "metal_full_prove_ns_samples"
+                ].__setitem__(0, 0),
+                "resource accounting",
+            ),
+            (
+                "promotion eligibility",
+                lambda value: value["promotion"].__setitem__("eligible", False),
+                "promotion record",
+            ),
+            (
+                "exactness guard",
+                lambda value: value["guards"].__setitem__(
+                    "round_topology_exact", False
+                ),
+                "exactness guards",
+            ),
+            (
+                "extra schema field",
+                lambda value: value.__setitem__("unsupported", True),
+                "contract is incomplete",
+            ),
+        )
+        for name, mutate, message in mutations:
+            with self.subTest(name=name):
+                tampered = copy.deepcopy(output)
+                mutate(tampered)
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_autoresearch.validate_local_result_contract(
+                        config, tampered, params
+                    )
+
+    def test_outer_remainder_local_result_binds_all_five_parameters(self) -> None:
+        config, params, output = self.outer_remainder_local_contract_fixture()
+        replacements = {
+            "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": "512",
+            "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": "256",
+            "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": "512",
+            "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": "17",
+            "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": "19",
+        }
+        for parameter, replacement in replacements.items():
+            with self.subTest(parameter=parameter):
+                tampered_params = {**params, parameter: replacement}
+                with self.assertRaisesRegex(ValueError, "fingerprint|geometry"):
+                    metal_autoresearch.validate_local_result_contract(
+                        config, output, tampered_params
+                    )
+
+    def test_outer_remainder_evaluator_artifact_is_controller_owned(self) -> None:
+        config, params, output = self.outer_remainder_local_contract_fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            log_dir = Path(directory)
+            artifact_dir = log_dir / "candidate.artifacts"
+            artifact_dir.mkdir()
+            output["artifacts"] = str(artifact_dir)
+            (artifact_dir / "result.json").write_text(json.dumps(output))
+            completed = SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(output) + "\n",
+                stderr="",
+            )
+            with mock.patch.object(
+                metal_autoresearch.subprocess, "run", return_value=completed
+            ):
+                observed, _ = metal_autoresearch.run_evaluator(
+                    ROOT, config, params, log_dir, "candidate"
+                )
+            self.assertEqual(observed, output)
+
+            output["artifacts"] = str(log_dir / "wrong")
+            completed.stdout = json.dumps(output) + "\n"
+            with mock.patch.object(
+                metal_autoresearch.subprocess, "run", return_value=completed
+            ):
+                with self.assertRaisesRegex(ValueError, "wrong artifact directory"):
+                    metal_autoresearch.run_evaluator(
+                        ROOT, config, params, log_dir, "candidate"
+                    )
+
+    def test_outer_remainder_production_requires_equal_input_local_bar(self) -> None:
+        config, _, _ = self.outer_remainder_local_contract_fixture()
+        metal_autoresearch.validate_accepted_parent_for_production(config, 4.0)
+        with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
+            metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)
 
     def test_hamming_weight_template_and_closed_local_result(self) -> None:
         config, params, output = self.hamming_weight_local_contract_fixture()

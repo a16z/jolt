@@ -634,6 +634,14 @@ def parse_outer_remainder_result(
         )
     ):
         raise ValueError("runner samples do not match their frozen pair strata")
+    metal_full_prove_ns_samples = [
+        pair.get("metal", {}).get("full_prove_ns") for pair in all_runner_pairs
+    ]
+    if any(
+        type(value) is not int or value <= 0
+        for value in metal_full_prove_ns_samples
+    ):
+        raise ValueError("runner Metal full-prove durations must be positive integers")
     correctness_exact = all(
         pair.get("proofs_exact") is True
         and pair.get("optimized", {}).get("proof_verified") is True
@@ -965,6 +973,8 @@ def parse_outer_remainder_result(
             "maximum_storage_buffer_bytes": MAXIMUM_STORAGE_BUFFER_BYTES,
             "table_readback_bytes": FIELD_BYTES * 2 * (1 << cutoff_log2),
             "output_readback_bytes": FIELD_BYTES * OUTPUT_CLAIMS,
+            "metal_full_prove_ns_samples": metal_full_prove_ns_samples,
+            "gpu_seconds": sum(metal_full_prove_ns_samples) / 1e9,
         },
         "promotion": {
             "eligible": local_gate,
@@ -997,6 +1007,20 @@ def load_events(path: Path) -> list[dict[str, Any]]:
     if not isinstance(parsed, list) or not all(isinstance(event, dict) for event in parsed):
         raise ValueError("trace must be a JSON event array")
     return parsed
+
+
+def resolve_artifact_dir(root: Path, explicit: Path | None) -> Path:
+    if explicit is not None:
+        return explicit
+    configured = os.environ.get("JOLT_AUTORESEARCH_EVAL_DIR")
+    if configured:
+        return Path(configured).resolve()
+    return (
+        root
+        / "benchmark-runs"
+        / "metal-outer-remainder-eval"
+        / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1053,12 +1077,7 @@ def main() -> int:
     if args.log_n != LOG_N or args.pairs != PAIRS:
         raise ValueError("outer_remainder_v3 is frozen at log_n=26 and five pairs")
     root = Path(__file__).resolve().parents[1]
-    artifact_dir = args.artifact_dir or (
-        root
-        / "benchmark-runs"
-        / "metal-outer-remainder-eval"
-        / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    )
+    artifact_dir = resolve_artifact_dir(root, args.artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=False)
     trace_path = artifact_dir / "trace.json"
     binary = root / "target" / "release" / "examples" / EXAMPLE
