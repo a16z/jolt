@@ -98,6 +98,7 @@ pub enum KernelId {
     OuterT1,
     OuterAzbz,
     OuterRound,
+    OuterClaims,
     ProductT1,
     ProductLr,
     IcrInit,
@@ -120,7 +121,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-    pub const ALL: [Self; 69] = [
+    pub const ALL: [Self; 70] = [
         Self::Noop,
         Self::FrMul,
         Self::FrAdd,
@@ -171,6 +172,7 @@ impl KernelId {
         Self::OuterT1,
         Self::OuterAzbz,
         Self::OuterRound,
+        Self::OuterClaims,
         Self::ProductT1,
         Self::ProductLr,
         Self::IcrInit,
@@ -244,6 +246,7 @@ impl KernelId {
             Self::OuterT1 => "jk_outer_t1",
             Self::OuterAzbz => "jk_outer_azbz",
             Self::OuterRound => "jk_outer_round",
+            Self::OuterClaims => "jk_outer_claims",
             Self::ProductT1 => "jk_product_t1",
             Self::ProductLr => "jk_product_lr",
             Self::IcrInit => "jk_icr_init",

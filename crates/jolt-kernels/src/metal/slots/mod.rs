@@ -63,6 +63,8 @@ pub use ram_hamming_booleanity::MetalRamHammingBooleanity;
 pub use ram_raf_evaluation::MetalRamRafEvaluation;
 pub use ram_read_write::MetalRamReadWriteChecking;
 pub use registers_read_write::MetalRegistersReadWriteChecking;
+#[cfg(feature = "bench-utils")]
+pub use spartan_outer::bench::SpartanOuterClaimsFixture;
 pub use spartan_outer::{MetalOuterRemainder, MetalOuterUniskip};
 pub use spartan_product::{MetalProductRemainder, MetalProductUniskip};
 

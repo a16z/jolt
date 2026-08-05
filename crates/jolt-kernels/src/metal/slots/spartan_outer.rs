@@ -46,6 +46,9 @@ const DOMAIN: usize = OUTER_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
+const VARIABLE_COUNT: usize = 35;
+const CLAIM_TILES: usize = VARIABLE_COUNT.div_ceil(4);
+const CLAIMS_MIN_TERMS: usize = 1 << 24;
 
 pub struct MetalOuterUniskip {
     fallback: OptimizedOuterUniskip,
@@ -279,6 +282,7 @@ struct MetalOuterRemainderKernel {
     derived: DerivedWeights,
     partials: Partials,
     device: DeviceRound,
+    context: &'static MetalContext,
 }
 
 impl MetalOuterRemainderKernel {
@@ -339,6 +343,7 @@ impl MetalOuterRemainderKernel {
                 derived,
                 partials,
                 device: DeviceRound::new(context, KIND),
+                context,
             })
         })();
         Ok(result)
@@ -458,7 +463,17 @@ impl SumcheckKernel<Fr> for MetalOuterRemainderKernel {
         if remaining != 0 {
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
-        let values = claimed_inputs_from_record(Arc::clone(&self.record), &self.challenges);
+        let values = if self.record.len() < CLAIMS_MIN_TERMS {
+            claimed_inputs_from_record(Arc::clone(&self.record), &self.challenges)
+        } else {
+            match dispatch_claimed_inputs(self.context, &self.record, &self.challenges) {
+                Ok(values) => values,
+                Err(error) => {
+                    tracing::warn!(slot = KIND, %error, "device claims failed; using optimized fallback");
+                    claimed_inputs_from_record(Arc::clone(&self.record), &self.challenges)
+                }
+            }
+        };
         let claims: BTreeMap<JoltOpeningId, Fr> =
             self.opening_ids.iter().copied().zip(values).collect();
         SumcheckOutputClaims::<Fr, Self::Relation>::from_opening_values(|id| {
@@ -551,6 +566,44 @@ fn record_buffers<'a>(
             .sum(),
     );
     Ok(buffers)
+}
+
+fn dispatch_claimed_inputs(
+    context: &'static MetalContext,
+    record: &TraceRecord,
+    challenges: &[Fr],
+) -> Result<Vec<Fr>, MetalError> {
+    let reversed: Vec<Fr> = challenges[1..].iter().rev().copied().collect();
+    let hi_bits = reversed.len() / 2;
+    let e_out = jolt_poly::EqPolynomial::<Fr>::evals(&reversed[..hi_bits], None);
+    let e_in = jolt_poly::EqPolynomial::<Fr>::evals(&reversed[hi_bits..], None);
+    if e_out.len() * e_in.len() != record.len() {
+        return Err(MetalError::UnsupportedShape("outer claims geometry"));
+    }
+    let partials = Partials::new(context, VARIABLE_COUNT, e_out.len() * 256)?;
+    let record_buffers = record_buffers(context, record)?;
+    let e_in_buffer = context.wrap_slice(fr_as_u32s(&e_in))?;
+    let partial_buffer = partials.buffer().device_buffer();
+    let mut buffers: Vec<&DeviceBuffer<'_>> = record_buffers.iter().collect();
+    buffers.extend([&e_in_buffer, &partial_buffer]);
+    let params = [record.len() as u32, e_in.len() as u32, e_out.len() as u32];
+    let threads = CLAIM_TILES * e_out.len() * 256;
+    let mut pass = context.begin_pass()?;
+    pass.dispatch(KernelId::OuterClaims, &params, &buffers, threads);
+    pass.run()?;
+    testing::note_device_round();
+
+    let raw = partials.buffer().as_slice();
+    Ok((0..VARIABLE_COUNT)
+        .map(|column| {
+            raw[column * e_out.len()..(column + 1) * e_out.len()]
+                .iter()
+                .zip(&e_out)
+                .fold(Fr::from_u64(0), |sum, (partial, weight)| {
+                    sum + *weight * *partial
+                })
+        })
+        .collect())
 }
 
 fn dispatch_t1(
@@ -663,6 +716,255 @@ pub(super) fn dispatch_round(
     Ok(partials.sums(num_tgs))
 }
 
+#[cfg(feature = "bench-utils")]
+pub mod bench {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::lagrange::{
+        centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
+    };
+    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+    #[cfg(feature = "parallel")]
+    use rayon::prelude::*;
+
+    use super::{
+        claimed_inputs_from_record, derived_weights, dispatch_azbz, dispatch_claimed_inputs,
+        dispatch_t1, outer_opening, PairTables, Partials, DOMAIN, DOMAIN_START, EXTENDED_START,
+    };
+    use crate::metal::{MetalContext, MetalError};
+    use crate::mmap_vec::MmapVec;
+    use crate::optimized::lifetime_trace::LifetimeTag;
+    use crate::optimized::ram_trace::RamAccessColumns;
+    use crate::optimized::trace_record::{RegisterLanes, TraceRecord};
+
+    #[derive(Debug)]
+    pub struct SpartanOuterAttribution {
+        pub t1_message: Duration,
+        pub first_round_host: Duration,
+        pub remainder_prepare_host: Duration,
+        pub azbz_message: Duration,
+        pub round_loop: Duration,
+        pub final_bind_host: Duration,
+        pub claimed_inputs_host: Duration,
+    }
+
+    pub struct SpartanOuterClaimsFixture {
+        context: &'static MetalContext,
+        log_t: usize,
+        record: Arc<TraceRecord>,
+        challenges: Vec<Fr>,
+        expected: Vec<Fr>,
+    }
+
+    impl SpartanOuterClaimsFixture {
+        pub fn production_geometry(log_t: usize) -> Result<Self, MetalError> {
+            let context = MetalContext::global()?;
+            let record = synthetic_record(log_t);
+            let challenges = (0..=log_t)
+                .map(|round| Fr::from_u64(0x9e37_79b9 ^ (31 * round as u64)))
+                .collect::<Vec<_>>();
+            let expected = claimed_inputs_from_record(Arc::clone(&record), &challenges);
+            Ok(Self {
+                context,
+                log_t,
+                record,
+                challenges,
+                expected,
+            })
+        }
+
+        pub fn host_claims(&self) -> Vec<Fr> {
+            claimed_inputs_from_record(Arc::clone(&self.record), &self.challenges)
+        }
+
+        pub fn metal_claims(&self) -> Result<Vec<Fr>, MetalError> {
+            dispatch_claimed_inputs(self.context, &self.record, &self.challenges)
+        }
+
+        pub fn assert_oracle(&self) -> Result<(), MetalError> {
+            assert_eq!(self.host_claims(), self.expected);
+            assert_eq!(self.metal_claims()?, self.expected);
+            Ok(())
+        }
+
+        pub fn attribute(&self) -> Result<SpartanOuterAttribution, MetalError> {
+            let tau = (0..self.log_t + 2)
+                .map(|index| Fr::from_u64(0x1000 + 17 * index as u64))
+                .collect::<Vec<_>>();
+            let tau_low = &tau[..=self.log_t];
+
+            let start = Instant::now();
+            let t1_values = dispatch_t1(self.context, &self.record, tau_low)?;
+            let t1_message = start.elapsed();
+
+            let start = Instant::now();
+            let kernel_values = centered_lagrange_evals::<Fr>(DOMAIN, tau[self.log_t + 1])
+                .map_err(|_| MetalError::UnsupportedShape("outer interpolation"))?;
+            let kernel_coefficients = interpolate_to_coeffs(DOMAIN_START, &kernel_values);
+            let t1_coefficients = interpolate_to_coeffs(EXTENDED_START, &t1_values);
+            let _first_round = poly_mul(&kernel_coefficients, &t1_coefficients);
+            let first_round_host = start.elapsed();
+
+            let stream_challenge = self.challenges[0];
+            let start = Instant::now();
+            let lagrange = centered_lagrange_evals::<Fr>(DOMAIN, stream_challenge)
+                .map_err(|_| MetalError::UnsupportedShape("outer lagrange"))?;
+            let kernel_scale =
+                centered_lagrange_kernel::<Fr>(DOMAIN, tau[self.log_t + 1], stream_challenge)
+                    .map_err(|_| MetalError::UnsupportedShape("outer kernel scale"))?;
+            let mut split_eq = GruenSplitEqPolynomial::new_with_scaling(
+                tau_low,
+                BindingOrder::LowToHigh,
+                Some(kernel_scale),
+            );
+            let dimensions = SpartanOuterDimensions::rv64(self.log_t);
+            let opening_ids = dimensions
+                .variables()
+                .iter()
+                .map(|&variable| outer_opening(variable))
+                .collect::<Vec<_>>();
+            let _derived = derived_weights(stream_challenge, opening_ids.len())
+                .map_err(|_| MetalError::UnsupportedShape("outer derived weights"))?;
+            let tables = PairTables::new(self.context, 2 * self.record.len())?;
+            let partials = Partials::new(self.context, 2, self.record.len())?;
+            let remainder_prepare_host = start.elapsed();
+
+            let start = Instant::now();
+            let _endpoints = dispatch_azbz(
+                self.context,
+                &self.record,
+                &lagrange,
+                &split_eq,
+                &tables.cur,
+                &partials,
+            )?;
+            let azbz_message = start.elapsed();
+
+            let mut tables = tables;
+            let start = Instant::now();
+            for challenge in &self.challenges[..self.log_t] {
+                split_eq.bind(*challenge);
+                let groups = tables.len / 4;
+                if groups == 0 {
+                    break;
+                }
+                let _endpoints = super::dispatch_round(
+                    self.context,
+                    &tables,
+                    &split_eq,
+                    &partials,
+                    *challenge,
+                    groups,
+                )?;
+                tables.swap();
+            }
+            let round_loop = start.elapsed();
+
+            let start = Instant::now();
+            tables.bind_cpu(self.challenges[self.log_t]);
+            let final_bind_host = start.elapsed();
+
+            let start = Instant::now();
+            let claims = self.host_claims();
+            let _claims = std::hint::black_box(claims);
+            let claimed_inputs_host = start.elapsed();
+
+            Ok(SpartanOuterAttribution {
+                t1_message,
+                first_round_host,
+                remainder_prepare_host,
+                azbz_message,
+                round_loop,
+                final_bind_host,
+                claimed_inputs_host,
+            })
+        }
+    }
+
+    fn synthetic_record(log_t: usize) -> Arc<TraceRecord> {
+        let len = 1usize << log_t;
+        let u64_lane = |salt: u64| lane(len, |index| mix64(index as u64 ^ salt));
+        let i128_lane = |salt: u64| {
+            lane(len, |index| {
+                let lo = mix64(index as u64 ^ salt);
+                let hi = mix64(index as u64 ^ salt.rotate_left(23));
+                (((hi as u128) << 64) | lo as u128) as i128
+            })
+        };
+        let u128_lane = |salt: u64| {
+            lane(len, |index| {
+                let lo = mix64(index as u64 ^ salt);
+                let hi = mix64(index as u64 ^ salt.rotate_left(23));
+                ((hi as u128) << 64) | lo as u128
+            })
+        };
+        let flags = lane(len, |index| {
+            let value = mix64(index as u64 ^ 0xa409_3822_299f_31d0);
+            (value as u32 & 0x3fff)
+                | (((value >> 14) as u32 & 1) << 24)
+                | (((value >> 15) as u32 & 1) << 25)
+                | (((value >> 16) as u32 & 1) << 27)
+        });
+        let registers = Arc::new(RegisterLanes {
+            rs1_value: u64_lane(0x082e_fa98_ec4e_6c89),
+            rs2_value: u64_lane(0x4528_21e6_38d0_1377),
+            rd_pre_value: MmapVec::zeroed(len),
+            rd_post_value: u64_lane(0xbe54_66cf_34e9_0c6c),
+            rs1_index: MmapVec::zeroed(len),
+            rs2_index: MmapVec::zeroed(len),
+            rd_index: MmapVec::zeroed(len),
+            _lifetime: LifetimeTag::new("RegisterLanes(outer-bench)", len * 35),
+        });
+        let ram = Arc::new(RamAccessColumns {
+            addresses: u64_lane(0xc0ac_29b7_c97c_50dd),
+            pre_values: u64_lane(0x3f84_d5b5_b547_0917),
+            post_values: u64_lane(0x9216_d5d9_8979_fb1b),
+            _lifetime: LifetimeTag::new("RamAccessColumns(outer-bench)", len * 24),
+        });
+        Arc::new(TraceRecord {
+            pc: u64_lane(0x243f_6a88_85a3_08d3),
+            unexpanded_pc: u64_lane(0x1319_8a2e_0370_7344),
+            imm: i128_lane(0xa409_3822_299f_31d0),
+            registers,
+            ram_address: u64_lane(0x8eba_fa98_ec4e_6c89),
+            left_lookup_operand: u64_lane(0x4528_21e6_38d0_1377),
+            right_lookup_operand: u128_lane(0xbe54_66cf_34e9_0c6c),
+            left_instruction_input: u64_lane(0xc0ac_29b7_c97c_50dd),
+            right_instruction_input: i128_lane(0x3f84_d5b5_b547_0917),
+            product_magnitude_lo: u64_lane(0x9216_d5d9_8979_fb1b),
+            product_magnitude_hi: u64_lane(0xd131_0ba6_98df_b5ac),
+            lookup_output: u64_lane(0x2ffd_72db_d01a_dfb7),
+            flags,
+            ram,
+            _lifetime: LifetimeTag::new("TraceRecord(outer-bench)", len * 116),
+        })
+    }
+
+    fn lane<T: Copy + Send + Sync>(len: usize, value: impl Fn(usize) -> T + Sync) -> MmapVec<T> {
+        let mut output = MmapVec::zeroed(len);
+        #[cfg(feature = "parallel")]
+        output
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(index, output)| *output = value(index));
+        #[cfg(not(feature = "parallel"))]
+        output
+            .iter_mut()
+            .enumerate()
+            .for_each(|(index, output)| *output = value(index));
+        output
+    }
+
+    fn mix64(mut value: u64) -> u64 {
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -771,5 +1073,15 @@ mod tests {
         let _lock = gpu_lock();
         force_device();
         run_package_parity(5, 91);
+    }
+
+    #[cfg(feature = "bench-utils")]
+    #[test]
+    fn outer_claims_device_matches_host_oracle() {
+        let _lock = gpu_lock();
+        super::bench::SpartanOuterClaimsFixture::production_geometry(8)
+            .unwrap()
+            .assert_oracle()
+            .unwrap();
     }
 }

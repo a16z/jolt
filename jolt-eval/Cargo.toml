@@ -122,6 +122,12 @@ harness = false
 required-features = ["metal"]
 
 [[bench]]
+name = "spartan_outer_claims"
+path = "benches/metal/spartan_outer_claims.rs"
+harness = false
+required-features = ["metal"]
+
+[[bench]]
 name = "metal_fr_bind"
 path = "benches/metal/metal_fr_bind.rs"
 harness = false
