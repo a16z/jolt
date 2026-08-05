@@ -53,6 +53,16 @@ const BOOL_KIND: &str = "booleanity_cycle";
 const RAV_KIND: &str = "instruction_ra_virtualization";
 const RAM_RAV_KIND: &str = "ram_ra_virtualization";
 
+/// Deferred fused adoption for the RA-virtualization drivers (see
+/// [`RavDriver::deferred`]). Default on; `JOLT_RAV_DEFERRED_ADOPT=0`/`off`
+/// restores the legacy synchronous width-8 adoption. Read per driver build
+/// (once per proof per consumer — nothing hot), so ablations can flip arms
+/// inside one process.
+fn deferred_adopt_enabled() -> bool {
+    !std::env::var("JOLT_RAV_DEFERRED_ADOPT")
+        .is_ok_and(|value| matches!(value.trim(), "0" | "off" | "OFF"))
+}
+
 /// The packed-row gather family of the +1-sentinel remapped RAM address
 /// (`jk_ra_hot_index` kind 2 in `ra_lazy.metal`).
 const RAM_ADDRESS_KIND: u32 = 2;
@@ -223,12 +233,28 @@ fn build_ram_rav_driver(inputs: RamRaVirtualizationDeviceInputs<'_, Fr>) -> Opti
         inputs.committed_chunk_bits,
         batch,
     ) {
-        Ok(core) => Some(RavDriver { core, batch }),
+        Ok(core) => Some(RavDriver {
+            core,
+            batch,
+            deferred: deferred_adopt_enabled(),
+        }),
         Err(error) => {
             tracing::warn!(slot = RAM_RAV_KIND, %error, "driver build failed; staying on the CPU");
             None
         }
     }
+}
+
+/// Bench seam (`metal::st6b_bench`): the instruction-RAV device driver from
+/// raw parts, type-erased exactly as the slot front installs it.
+pub(crate) fn rav_driver_for_bench(
+    rows: &Arc<InstructionRows>,
+    num_committed: usize,
+    batch: usize,
+    chunk_bits: usize,
+) -> Option<Box<dyn LazyRaDevice<Fr>>> {
+    build_rav_driver(rows, num_committed, batch, chunk_bits)
+        .map(|driver| Box::new(driver) as Box<dyn LazyRaDevice<Fr>>)
 }
 
 fn build_rav_driver(
@@ -264,7 +290,11 @@ fn build_rav_driver(
         chunk_bits,
         batch,
     ) {
-        Ok(core) => Some(RavDriver { core, batch }),
+        Ok(core) => Some(RavDriver {
+            core,
+            batch,
+            deferred: deferred_adopt_enabled(),
+        }),
         Err(error) => {
             tracing::warn!(slot = RAV_KIND, %error, "driver build failed; staying on the CPU");
             None
@@ -300,6 +330,10 @@ struct InFlight {
     num_tgs: usize,
     /// `Some(bound)` for a dense flight: advance the ping-pong on collect.
     dense_bound: Option<bool>,
+    /// An adoption flight's freshly allocated ping-pong (the fused kernel
+    /// writes `cur`): installed as the dense state on a successful collect,
+    /// dropped whole on failure (the host never read it).
+    adopt: Option<DenseTables>,
     /// A lazy flight's flattened branch-table upload (no-copy wrapped).
     _flat: Vec<Fr>,
     /// The round's gruen levels, copied into flight-owned buffers (see
@@ -363,6 +397,9 @@ impl DeviceLazyRa {
             Ok(()) => {
                 testing::note_device_round();
                 let lanes = self.partials.sums(flight.num_tgs);
+                if let Some(dense) = flight.adopt {
+                    self.dense = Some(dense);
+                }
                 if let Some(bound) = flight.dense_bound {
                     self.dense_advance(bound);
                 }
@@ -746,6 +783,7 @@ impl LazyRaDevice<Fr> for BoolDriver {
                 pass,
                 num_tgs: geometry.num_tgs,
                 dense_bound: None,
+                adopt: None,
                 _flat: flat,
                 _eq: eq,
             }))
@@ -780,6 +818,7 @@ impl LazyRaDevice<Fr> for BoolDriver {
                 pass,
                 num_tgs: geometry.num_tgs,
                 dense_bound: Some(bind.is_some()),
+                adopt: None,
                 _flat: Vec::new(),
                 _eq: eq,
             })
@@ -806,6 +845,13 @@ impl LazyRaDevice<Fr> for BoolDriver {
 struct RavDriver {
     core: DeviceLazyRa,
     batch: usize,
+    /// Deferred adoption (the default): a fourth lazy round runs at width 8
+    /// and the dense materialization lands at `cycles / 16` — half the
+    /// legacy footprint — fused with that round's message in ONE detached
+    /// command buffer (`jk_rav_adopt_round`), so `begin_round` never blocks
+    /// on the adoption. `JOLT_RAV_DEFERRED_ADOPT=0` restores the legacy
+    /// synchronous width-8 adoption (same-binary ablation knob).
+    deferred: bool,
 }
 
 // SAFETY: see [`BoolDriver`] — identical argument.
@@ -941,9 +987,140 @@ impl RavDriver {
         testing::note_device_round();
         Ok(self.core.partials.sums(geometry.num_tgs))
     }
+
+    /// Encode + commit the fused adoption round (`jk_rav_adopt_round`):
+    /// materialize every polynomial dense at `cycles / width` into a fresh
+    /// ping-pong AND emit this round's message lanes in one dispatch —
+    /// the width-`width` gathers are read once instead of a materialize
+    /// pass the message round then re-walks. `Ok(None)` = soft decline
+    /// (ineligible wrap or degenerate geometry), nothing ran.
+    fn launch_adopt_flight(
+        &mut self,
+        tables: &[Vec<Fr>],
+        width: usize,
+        e_in: &[Fr],
+        e_out: &[Fr],
+    ) -> Result<Option<InFlight>, MetalError> {
+        let core = &self.core;
+        debug_assert!(core.dense.is_none(), "adoption over live dense tables");
+        let new_len = core.rows.len() / width;
+        let Some(context) = core.device.gated(new_len) else {
+            return Ok(None);
+        };
+        let groups = new_len / 2;
+        if groups == 0 || !e_in.len().is_power_of_two() || e_in.len() * e_out.len() != groups {
+            return Ok(None);
+        }
+        let Some(rows_buffer) = context.wrap_slice_nocopy(core.rows.as_slice()) else {
+            return Ok(None);
+        };
+        let Some(cur) = own_uninit_frs(context, core.num_polys * new_len)? else {
+            return Ok(None);
+        };
+        let Some(nxt) = own_uninit_frs(context, core.num_polys * (new_len / 2))? else {
+            return Ok(None);
+        };
+        let flat = concat_tables(tables, width * core.k_entries);
+        let tables_buffer = context.wrap_slice(fr_as_u32s(&flat))?;
+        testing::note_copied_buffers(u64::from(tables_buffer.was_copied()));
+        let eq = own_eq(context, e_in, e_out)?;
+        let num_tgs = num_threadgroups(groups);
+        let params = [
+            groups as u32,
+            num_tgs as u32,
+            e_in.len().trailing_zeros(),
+            width as u32,
+            core.num_polys as u32,
+            self.batch as u32,
+            core.k_entries as u32,
+            core.mask,
+            new_len as u32,
+        ];
+        let meta = core.meta.device_buffer();
+        let cur_buffer = cur.device_buffer();
+        let partials = core.partials.buffer().device_buffer();
+        let mut pass = context.begin_pass()?;
+        pass.dispatch(
+            KernelId::RavAdoptRound,
+            &params,
+            &[
+                &rows_buffer,
+                &meta,
+                &tables_buffer,
+                &cur_buffer,
+                &eq.0.device_buffer(),
+                &eq.1.device_buffer(),
+                &partials,
+            ],
+            groups,
+        );
+        // SAFETY: as in `commit_lazy` — every dispatched backing outlives
+        // the flight and stays host-untouched until its wait: `flat` and the
+        // eq copies ride in the flight, `cur` rides in `flight.adopt` (the
+        // host reads it only after a successful collect installs it), `rows`
+        // is Arc'd, `meta`/`partials` are driver-owned, copied uploads are
+        // Metal-owned.
+        let pass = unsafe { pass.commit().detach() };
+        drop(cur_buffer);
+        Ok(Some(InFlight {
+            pass,
+            num_tgs,
+            dense_bound: None,
+            adopt: Some(DenseTables {
+                cur,
+                nxt,
+                len: new_len,
+            }),
+            _flat: flat,
+            _eq: eq,
+        }))
+    }
 }
 
 impl LazyRaDevice<Fr> for RavDriver {
+    fn lazy_horizon(&self) -> usize {
+        if self.deferred {
+            8
+        } else {
+            4
+        }
+    }
+
+    fn adopt_round(
+        &mut self,
+        tables: &[Vec<Fr>],
+        width: usize,
+        e_in: &[Fr],
+        e_out: &[Fr],
+    ) -> Option<Vec<Fr>> {
+        if !self.launch_adopt(tables, width, e_in, e_out) {
+            return None;
+        }
+        self.core.collect()
+    }
+
+    fn launch_adopt(
+        &mut self,
+        tables: &[Vec<Fr>],
+        width: usize,
+        e_in: &[Fr],
+        e_out: &[Fr],
+    ) -> bool {
+        match self.launch_adopt_flight(tables, width, e_in, e_out) {
+            Ok(Some(flight)) => {
+                self.core.in_flight = Some(flight);
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                // Nothing committed reached live state — the fresh ping-pong
+                // drops with the failed flight; tables/source are untouched
+                // for the CPU materialization.
+                self.core.device.failed(&error);
+                false
+            }
+        }
+    }
     fn lazy_lanes(
         &mut self,
         tables: &[Vec<Fr>],
@@ -1000,6 +1177,7 @@ impl LazyRaDevice<Fr> for RavDriver {
                 pass,
                 num_tgs: geometry.num_tgs,
                 dense_bound: None,
+                adopt: None,
                 _flat: flat,
                 _eq: eq,
             }))
@@ -1034,6 +1212,7 @@ impl LazyRaDevice<Fr> for RavDriver {
                 pass,
                 num_tgs: geometry.num_tgs,
                 dense_bound: Some(bind.is_some()),
+                adopt: None,
                 _flat: Vec::new(),
                 _eq: eq,
             })
@@ -1144,8 +1323,19 @@ mod tests {
     }
 
     fn rav_parity(log_t: usize, min_terms: usize, device_rounds: u64, drive: Drive) {
+        rav_parity_arm(log_t, min_terms, device_rounds, drive, true);
+    }
+
+    fn rav_parity_arm(
+        log_t: usize,
+        min_terms: usize,
+        device_rounds: u64,
+        drive: Drive,
+        deferred: bool,
+    ) {
         std::env::remove_var("JOLT_METAL_DISABLE");
         std::env::set_var("JOLT_METAL_MIN_TERMS", min_terms.to_string());
+        std::env::set_var("JOLT_RAV_DEFERRED_ADOPT", if deferred { "1" } else { "0" });
         let (num_virtual, per_virtual, chunk_bits) = (4usize, 4usize, 8usize);
         let num_committed = num_virtual * per_virtual;
         let mut state = 0x5EED_0000 + log_t as u64;
@@ -1210,29 +1400,51 @@ mod tests {
         );
     }
 
-    /// Every phase on device: 3 lazy rounds + the adopting materialization
-    /// + one per dense message.
+    /// Every phase on device (deferred adoption, the default): 4 lazy
+    /// rounds + the fused adopt round at `cycles / 16` + one per dense
+    /// message.
     #[test]
     fn rav_parity_full_device() {
         let _lock = gpu_lock();
-        rav_parity(13, 0, 3 + 1 + 10, Drive::Sync);
+        rav_parity(13, 0, 4 + 1 + 8, Drive::Sync);
     }
 
     /// Full-device run through the engine's two-phase path: launches park a
-    /// flight, collects wait — byte-equal to the synchronous CPU twin.
+    /// flight (the fused adoption included), collects wait — byte-equal to
+    /// the synchronous CPU twin.
     #[test]
     fn rav_parity_full_device_two_phase() {
         let _lock = gpu_lock();
-        rav_parity(13, 0, 3 + 1 + 10, Drive::TwoPhase);
+        rav_parity(13, 0, 4 + 1 + 8, Drive::TwoPhase);
     }
 
-    /// The gate declines mid-dense (cycles 8192: lazy 8192/4096/2048,
-    /// adopt at 1024, four fused dense rounds down to len 256, then
+    /// The gate declines mid-dense (cycles 8192: lazy 8192/4096/2048/1024,
+    /// fused adopt at 512, two fused dense rounds down to len 256, then
     /// 128 < 256 hands off with a pending fold).
     #[test]
     fn rav_parity_dense_handoff() {
         let _lock = gpu_lock();
-        rav_parity(13, 256, 3 + 1 + 4, Drive::Sync);
+        rav_parity(13, 256, 4 + 1 + 2, Drive::Sync);
+    }
+
+    /// The gate declines exactly AT the fused adoption (512 < 1024): the
+    /// pending state materializes on the CPU and the same round recomputes
+    /// host-side, both drive shapes.
+    #[test]
+    fn rav_parity_adopt_decline() {
+        let _lock = gpu_lock();
+        rav_parity(13, 1024, 4, Drive::Sync);
+        rav_parity(13, 1024, 4, Drive::TwoPhase);
+    }
+
+    /// The legacy synchronous adoption arm (`JOLT_RAV_DEFERRED_ADOPT=0`):
+    /// 3 lazy rounds + the blocking width-8 materialization + one per dense
+    /// message — the pre-lane schedule, kept as the ablation knob.
+    #[test]
+    fn rav_parity_legacy_sync_adopt() {
+        let _lock = gpu_lock();
+        rav_parity_arm(13, 0, 3 + 1 + 10, Drive::Sync, false);
+        rav_parity_arm(13, 0, 3 + 1 + 10, Drive::TwoPhase, false);
     }
 
     fn bool_parity(
@@ -1324,6 +1536,7 @@ mod tests {
     }
 
     fn ram_rav_parity(log_t: usize, min_terms: usize, device_rounds: u64, drive: Drive) {
+        std::env::set_var("JOLT_RAV_DEFERRED_ADOPT", "1");
         use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
         use jolt_claims::protocols::jolt::geometry::ram::{
             committed_ram_ra, RamRaVirtualizationDimensions,
@@ -1430,11 +1643,11 @@ mod tests {
     }
 
     /// Every phase on device (real trace-backed witness: mostly-cold RAM
-    /// address column exercises the sentinel gathers).
+    /// address column exercises the sentinel gathers), deferred adoption.
     #[test]
     fn ram_rav_parity_full_device() {
         let _lock = gpu_lock();
-        ram_rav_parity(13, 0, 3 + 1 + 10, Drive::Sync);
+        ram_rav_parity(13, 0, 4 + 1 + 8, Drive::Sync);
     }
 
     /// Full-device run through the engine's two-phase path (the mid-dense
@@ -1442,7 +1655,7 @@ mod tests {
     #[test]
     fn ram_rav_parity_full_device_two_phase() {
         let _lock = gpu_lock();
-        ram_rav_parity(13, 0, 3 + 1 + 10, Drive::TwoPhase);
+        ram_rav_parity(13, 0, 4 + 1 + 8, Drive::TwoPhase);
     }
 
     /// Two-phase drive across the mid-dense gate handoff: launches decline
@@ -1451,13 +1664,13 @@ mod tests {
     #[test]
     fn ram_rav_parity_dense_handoff_two_phase() {
         let _lock = gpu_lock();
-        ram_rav_parity(13, 256, 3 + 1 + 4, Drive::TwoPhase);
+        ram_rav_parity(13, 256, 4 + 1 + 2, Drive::TwoPhase);
     }
 
     /// Mid-dense handoff, as the instruction variant.
     #[test]
     fn ram_rav_parity_dense_handoff() {
         let _lock = gpu_lock();
-        ram_rav_parity(13, 256, 3 + 1 + 4, Drive::Sync);
+        ram_rav_parity(13, 256, 4 + 1 + 2, Drive::Sync);
     }
 }

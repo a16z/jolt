@@ -40,6 +40,7 @@ mod hint_combine;
 pub mod miller;
 mod runtime;
 mod slots;
+pub mod st6b_bench;
 pub mod testing;
 
 pub use buffers::{DeviceBuffer, OwnedDeviceBuffer, PageAlignedVec, PAGE_SIZE};

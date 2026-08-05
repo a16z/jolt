@@ -270,6 +270,90 @@ kernel void jk_rav_lazy_round(
     }
 }
 
+struct RavAdoptParams {
+    uint groups;     // new_len / 2 message pairs
+    uint num_tgs;
+    uint log_in;
+    uint width;      // branch count (2 · lazy horizon, i.e. 16)
+    uint num_polys;
+    uint batch;
+    uint k_entries;
+    uint mask;
+    uint len;        // dense length = cycles / width (cur stride)
+};
+
+// RA-virtualization fused adoption round: thread `gid` gathers each
+// polynomial's (lo, hi) dense pair at width `width` — the same values
+// lazy_ra::materialize would store — writes them into the flat poly-major
+// `cur` (stride `len`), and accumulates the same batched product grid as
+// jk_rav_dense_round. One pass over the rows replaces the legacy
+// materialize dispatch PLUS the message round's full re-read of `cur`.
+kernel void jk_rav_adopt_round(
+    device const uint* rows [[buffer(0)]],
+    device const uint* meta [[buffer(1)]],
+    device const uint* tables [[buffer(2)]],
+    device uint* cur [[buffer(3)]],
+    device const uint* e_in [[buffer(4)]],
+    device const uint* e_out [[buffer(5)]],
+    device uint* partials [[buffer(6)]],
+    constant RavAdoptParams& p [[buffer(7)]],
+    uint gid [[thread_position_in_grid]],
+    uint lid [[thread_position_in_threadgroup]],
+    uint tg [[threadgroup_position_in_grid]])
+{
+    threadgroup uint scratch[FR_LIMBS * JK_TG_SIZE];
+    bool active = gid < p.groups;
+    Fr256 eq = fr_zero();
+    if (active) {
+        eq = fr_mont_mul(fr_load(e_out, gid >> p.log_in),
+                         fr_load(e_in, gid & ((1u << p.log_in) - 1u)));
+    }
+    uint batch = min(p.batch, JK_RAV_MAX_BATCH);
+    uint per_poly = p.width * p.k_entries * FR_LIMBS;
+    Fr256 evals[JK_RAV_MAX_BATCH];
+    Fr256 steps[JK_RAV_MAX_BATCH];
+    Fr256 acc[JK_RAV_MAX_BATCH];
+    for (uint l = 0u; l < batch; l++) {
+        acc[l] = fr_zero();
+    }
+    for (uint i = 0u; active && i < p.num_polys; i += batch) {
+        for (uint f = 0u; f < batch; f++) {
+            uint poly = i + f;
+            uint kind = meta[2u * poly];
+            uint shift = meta[2u * poly + 1u];
+            device const uint* table = tables + poly * per_poly;
+            Fr256 lo =
+                jk_ra_gather(rows, table, p.width, p.k_entries, kind, shift, p.mask, 2u * gid);
+            Fr256 hi = jk_ra_gather(rows, table, p.width, p.k_entries, kind, shift, p.mask,
+                                    2u * gid + 1u);
+            fr_store(cur, poly * p.len + 2u * gid, lo);
+            fr_store(cur, poly * p.len + 2u * gid + 1u, hi);
+            evals[f] = hi;
+            steps[f] = fr_sub(hi, lo);
+        }
+        for (uint t = 1u; t < batch; t++) {
+            Fr256 prod = evals[0];
+            for (uint f = 1u; f < batch; f++) {
+                prod = fr_mont_mul(prod, evals[f]);
+            }
+            acc[t - 1u] = fr_add(acc[t - 1u], prod);
+            if (t + 1u < batch) {
+                for (uint f = 0u; f < batch; f++) {
+                    evals[f] = fr_add(evals[f], steps[f]);
+                }
+            }
+        }
+        Fr256 lead = steps[0];
+        for (uint f = 1u; f < batch; f++) {
+            lead = fr_mont_mul(lead, steps[f]);
+        }
+        acc[batch - 1u] = fr_add(acc[batch - 1u], lead);
+    }
+    for (uint l = 0u; l < batch; l++) {
+        jk_tg_sum(scratch, lid, tg, fr_mont_mul(eq, acc[l]), partials, l, p.num_tgs);
+    }
+}
+
 struct RavDenseParams {
     uint groups;
     uint do_bind;

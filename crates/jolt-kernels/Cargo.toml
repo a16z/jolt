@@ -92,3 +92,9 @@ required-features = ["metal"]
 [[example]]
 name = "mulrate_microbench"
 required-features = ["metal"]
+
+# W2-st6b lane harness: the stage-6b instruction-RA-virtualization round
+# pipeline in isolation (metal::st6b_bench); sync vs deferred adoption arms.
+[[example]]
+name = "st6b_rav_microbench"
+required-features = ["metal"]
