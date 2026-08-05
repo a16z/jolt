@@ -45,8 +45,7 @@ use akita_prover::{
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims,
+    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PolynomialGroupClaims,
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
@@ -54,7 +53,7 @@ use jolt_akita::{
     AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
-use jolt_field::{Fr, JoltField, Ring};
+use jolt_field::{Fr, JoltField, Ring, Zero};
 use jolt_openings::{
     prove_packed_openings, BatchOpeningScheme, CommitmentScheme, EvaluationClaim,
     PackedOpeningProof, PackedProverGroup, PackedProverObject, PrefixPackedStatement,
@@ -601,13 +600,9 @@ fn akita_prover_claims<'a, P>(
     commitment: &BackendCommitment,
     hint: BackendHint,
 ) -> ProverOpeningData<'a, AkitaField, P, AkitaField> {
-    let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
-        evaluations,
-        commitment.clone(),
-    )
-    .expect("prover group claims");
-    let claims = OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("prover claims");
+    let group = PolynomialGroupClaims::new(point.to_vec(), evaluations, commitment.clone())
+        .expect("prover group claims");
+    let claims = OpeningClaims::from_groups(vec![group]).expect("prover claims");
     ProverOpeningData::new(claims, vec![hint], vec![polynomials]).expect("prover opening data")
 }
 

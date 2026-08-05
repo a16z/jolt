@@ -632,6 +632,7 @@ mod tests {
 
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
+    use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
 
     #[test]
@@ -867,6 +868,7 @@ mod flavor_bench {
     )]
 
     use super::*;
+    use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
     use std::time::Instant;
 

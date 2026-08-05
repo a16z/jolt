@@ -268,8 +268,8 @@ fn akita_native_batching_rejects_corrupted_proof_payloads() {
 #[test]
 fn akita_zk_interfaces_are_explicitly_unsupported() {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly = polynomial(13, 1);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly = polynomial(14, 1);
+    let point: Vec<_> = (0..14).map(|i| f(2 + 3 * i)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).unwrap();
 
@@ -323,9 +323,9 @@ fn native_proof_fixture(
     label: &'static [u8],
 ) -> (VerifierSetup, AkitaNativeBatchStatement, AkitaBatchProof) {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(14, 1);
+    let poly_b = polynomial(14, 20);
+    let point: Vec<_> = (0..14).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =

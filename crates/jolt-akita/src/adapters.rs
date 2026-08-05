@@ -9,7 +9,7 @@ use akita_types::{
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
 };
-use jolt_field::CanonicalBytes;
+use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -17,7 +17,10 @@ use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub(crate) type AkitaConfig = akita_config::proof_optimized::fp128::D64Dense;
+// The Jolt-owned dense-catalog delegate over `fp128::D64Dense`: post-cutover
+// Akita resolves runtime schedules from generated catalogs only, and the
+// upstream dense catalog is not present in a Git-dependency checkout.
+pub(crate) type AkitaConfig = crate::configs::JoltD64Dense;
 pub(crate) type AkitaOneHotK16Config = crate::configs::JoltD64OneHotK16;
 pub(crate) type AkitaOneHotK256Config = crate::configs::JoltD64OneHotK256;
 pub(crate) const AKITA_D: usize = AkitaConfig::D;
@@ -637,7 +640,7 @@ pub(crate) fn one_hot_setup_prover(
     one_hot_k: usize,
     max_num_vars: usize,
     max_num_polys: usize,
-) -> Result<AkitaBackendProverSetup, akita_pcs::AkitaError> {
+) -> Result<AkitaBackendProverSetup, akita_error::AkitaError> {
     with_backend_pool(|| match one_hot_k {
         AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::setup_prover(max_num_vars, max_num_polys),
         AKITA_ONE_HOT_K256 => {

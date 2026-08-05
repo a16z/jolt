@@ -125,7 +125,7 @@ fn akita_commit_group_rejects_shape_pathologies() {
     ));
 
     let (wrong_dimension_setup, _) =
-        AkitaScheme::setup(AkitaSetupParams::new(13, 2, layout(7))).unwrap();
+        AkitaScheme::setup(AkitaSetupParams::new(15, 2, layout(7))).unwrap();
     assert!(matches!(
         AkitaScheme::commit_group(&wrong_dimension_setup, layout(7), &[poly_a]),
         Err(OpeningsError::InvalidBatch(_))

@@ -447,8 +447,12 @@ impl<const P: u128> Fp128<P> {
     }
 
     /// Create from a canonical representative in `[0, P)`.
+    ///
+    /// `const` so downstream adapters can build associated constants (the
+    /// legacy prover's Akita fp128 glue constructs its Montgomery-identity
+    /// constants this way).
     #[inline]
-    pub fn from_canonical_u128(x: u128) -> Self {
+    pub const fn from_canonical_u128(x: u128) -> Self {
         debug_assert!(x < P);
         Self(split(x))
     }

@@ -9,14 +9,19 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [dependencies]
-akita-config = { workspace = true, features = [
-  "schedules-fp128-d64-dense",
-  "schedules-fp128-d64-onehot",
-] }
+# No `schedules-*` features: post-cutover Akita gitignores the generated
+# schedule tables (`crates/akita-schedules/src/generated/fp*.rs`) and
+# regenerates them in its own bootstrap, so a Git-dependency checkout cannot
+# compile with those features enabled. Upstream presets fall back to planner
+# DP when `schedule_catalog()` is `None`; the production `OneHotTrace` shapes
+# use this crate's own checked-in catalogs (see `crate::schedules`).
+akita-config = { workspace = true }
+akita-error.workspace = true
 akita-pcs = { workspace = true, features = ["parallel"] }
 akita-prover = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
+akita-schedules.workspace = true
 akita-transcript.workspace = true
 akita-types.workspace = true
 jolt-crypto.workspace = true

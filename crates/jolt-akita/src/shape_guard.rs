@@ -17,6 +17,7 @@ use akita_types::{
     FoldSchedule, LevelProofShape, NextWitnessBindingShape, OpeningClaimsLayout,
     RecursiveFoldParams, TerminalLevelProofShape,
 };
+use jolt_field::Zero;
 
 use crate::adapters::{
     deserialize_akita, invalid_batch, AkitaBackendCommitment, AkitaBackendFlavor,
@@ -336,6 +337,7 @@ mod tests {
 
     use super::*;
     use crate::adapters::serialize_akita;
+    use jolt_field::Ring;
 
     fn dense_commitment(num_vars: usize, poly_count: usize) -> AkitaCommitment {
         AkitaCommitment {
@@ -407,7 +409,7 @@ mod tests {
 
     #[test]
     fn forged_commitment_coeff_len_rejects_before_deserialization() {
-        let num_vars = 13;
+        let num_vars = 14;
         let point = point(num_vars);
         let mut commitment = dense_commitment(num_vars, 2);
         // A honest-shape claim would be a few thousand coefficients; forge the
@@ -428,7 +430,7 @@ mod tests {
 
     #[test]
     fn commitment_byte_length_must_match_coeff_len() {
-        let num_vars = 13;
+        let num_vars = 14;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let mut commitment = dense_commitment(num_vars, 2);
@@ -450,7 +452,7 @@ mod tests {
 
     #[test]
     fn oversized_proof_shape_blob_rejects() {
-        let num_vars = 13;
+        let num_vars = 14;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let mut commitment = dense_commitment(num_vars, 2);
@@ -473,7 +475,7 @@ mod tests {
 
     #[test]
     fn scheduled_shape_passes_validation() {
-        let num_vars = 13;
+        let num_vars = 14;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let commitment = dense_commitment(num_vars, 2);
@@ -484,7 +486,7 @@ mod tests {
 
     #[test]
     fn forged_shape_counts_reject_against_schedule() {
-        let num_vars = 13;
+        let num_vars = 14;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let mut commitment = dense_commitment(num_vars, 2);
@@ -513,7 +515,7 @@ mod tests {
 
     #[test]
     fn forged_terminal_payload_budget_rejects_against_schedule() {
-        let num_vars = 13;
+        let num_vars = 14;
         let point = point(num_vars);
         let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
         let commitment = dense_commitment(num_vars, 2);

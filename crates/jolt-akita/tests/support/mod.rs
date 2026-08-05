@@ -7,6 +7,7 @@ use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatchStatement,
     AkitaScheme, AkitaSetupParams,
 };
+use jolt_field::Ring;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, OpeningsError, PrefixPacking, VerifierOpeningClaim,
 };
@@ -55,7 +56,12 @@ pub fn native_setup() -> (
     <AkitaScheme as CommitmentScheme>::ProverSetup,
     <AkitaScheme as CommitmentScheme>::VerifierSetup,
 ) {
-    setup_for(13, 2, layout(7))
+    // Dense-only: post-cutover one-hot setup sizing needs catalog rows a
+    // Git-dependency checkout of akita cannot provide at test-scale shapes
+    // (upstream tables are gitignored; the planner DP is offline-only), and
+    // every native-fixture consumer exercises dense objects only.
+    AkitaScheme::setup(AkitaSetupParams::dense_only(14, 2, layout(7)))
+        .expect("Akita setup should succeed")
 }
 
 /// PCS setup pair sized for one packed commitment object.

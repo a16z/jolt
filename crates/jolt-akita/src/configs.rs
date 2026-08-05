@@ -10,7 +10,7 @@
 //! silently planning a different schedule.
 
 use akita_config::CommitmentConfig;
-use akita_pcs::AkitaError;
+use akita_error::AkitaError;
 use akita_planner::GeneratedScheduleTable;
 use akita_types::{
     setup_matrix_envelope_for_schedule, AkitaScheduleLookupKey, SetupMatrixEnvelope,
@@ -44,7 +44,7 @@ fn catalog_setup_envelope<Cfg: CommitmentConfig>(
         let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             entry.root.final_group.layout,
         ))?;
-        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
     Ok(Some(envelope))
@@ -72,7 +72,7 @@ macro_rules! delegate_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_pcs::AkitaError>
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError>
             {
                 <$base>::ring_challenge_config(d)
             }
@@ -94,9 +94,9 @@ macro_rules! delegate_preset {
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_pcs::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixEnvelope, akita_error::AkitaError> {
                 if max_num_batched_polys == 0 {
-                    return Err(akita_pcs::AkitaError::InvalidSetup(
+                    return Err(akita_error::AkitaError::InvalidSetup(
                         "max_num_batched_polys must be at least 1".to_string(),
                     ));
                 }
@@ -138,7 +138,7 @@ macro_rules! delegate_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_pcs::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_error::AkitaError> {
                 if layout.num_groups() == 1 {
                     layout.check()?;
                     Self::runtime_schedule(akita_types::AkitaScheduleLookupKey::single(
@@ -151,6 +151,19 @@ macro_rules! delegate_preset {
         }
     };
 }
+
+delegate_preset!(
+    /// `D64Dense` with the Jolt-generated dense catalog.
+    ///
+    /// Post-cutover Akita resolves runtime schedules from generated catalogs
+    /// only (the planner DP became offline-only), and the upstream dense
+    /// catalog is a gitignored bootstrap artifact that a Git-dependency
+    /// checkout does not contain — so Jolt owns a dense catalog over its
+    /// reachable dense-flavor grid, exactly as it owns the one-hot catalogs.
+    JoltD64Dense,
+    akita_config::proof_optimized::fp128::D64Dense,
+    crate::schedules::jolt_fp128_d64_dense_table()
+);
 
 delegate_preset!(
     /// `D64OneHotK16` with the Jolt-generated K=16 schedule catalog.

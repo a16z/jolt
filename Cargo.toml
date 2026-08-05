@@ -186,11 +186,15 @@ lto = "fat"
 strip = false
 codegen-units = 1
 
-[replace]
-"ark-bn254:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-ff:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-ec:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-serialize:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+# Formerly the deprecated `[replace]` table; converted to `[patch.crates-io]`
+# because cargo forbids mixing `[replace]` with the `[patch]` table the
+# shared-field identity wiring below requires. Same pins, same semantics for
+# these exact-version overrides.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -287,14 +291,18 @@ dory = { package = "dory-pcs", version = "0.4.0", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
+# Post-cutover Akita (consumes the shared `jolt-field`; `akita-field` no
+# longer exists as a crate).
+# WARNING: stacked-review pin; re-point to the LayerZero-Labs/akita merge revision of #307 before landing.
+akita-config = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
+akita-error = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
+akita-pcs = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
+akita-prover = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
+akita-planner = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
+akita-schedules = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
+akita-challenges = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
+akita-transcript = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
+akita-types = { git = "https://github.com/Acentelles/akita.git", rev = "21b114d1d6332dbc92d3fedd66753fd4869cc074", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -451,3 +459,14 @@ jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
 jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
+
+# Post-cutover Akita consumes `jolt-field` through its Git pin. Without this
+# patch the workspace would resolve TWO `jolt-field` package identities (the
+# workspace path plus Akita's Git pin) and the shared field types would stop
+# unifying. `scripts/check-shared-field-identity.sh` enforces the single
+# identity structurally.
+# WARNING: stacked-review pin; re-point to the LayerZero-Labs/akita merge revision of #307 before landing.
+# (At landing, Akita's `jolt-field` pin moves to a16z/jolt — re-point this
+# patch table URL to match, i.e. [patch."https://github.com/a16z/jolt.git"].)
+[patch."https://github.com/Acentelles/jolt.git"]
+jolt-field = { path = "crates/jolt-field" }
