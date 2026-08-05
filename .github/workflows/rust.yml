@@ -53,7 +53,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Require one jolt-field identity (bootstrap akita-field pin allowed)
+      - name: Require one jolt-field identity (no akita-field post-cutover)
         run: scripts/check-shared-field-identity.sh
       - name: Check no backend
         run: cargo check -p jolt-field --no-default-features
