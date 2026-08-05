@@ -117,15 +117,28 @@ allocations, and finite wall/GPU-active timings. Small adversarial rows cover si
 `i128` immediates, selector combinations, loads with canonical zero `rs2`, and values
 that would expose a packed-row mismatch.
 
+A pre-freeze `2^26` console check at the baseline `256/128/128` threadgroup widths
+and `2^16` CPU cutoff measured about 4.9x paired steady-state speedup. Its excluded
+first Metal pass spent roughly 235 ms outside GPU-active execution. This diagnostic
+only tests the evaluator hypothesis; the immutable run ledger establishes the local
+baseline, and the production PIOP gate establishes any speedup claim.
+
 A real `2^18` traced smoke run validates the serialized contract: the CPU preparation
 and stage-3 identities match, the Metal preparation/stage-1/stage-3 identities match,
 and cutoff `2^10` produces one readback followed by nine CPU round spans and one
 CPU finish span. This is protocol and telemetry evidence, not target-scale performance
 evidence.
 
-The search uses interleaved CPU/Metal samples at `2^26`, a fixed empirical noise
-gate, and one accepted parent. Its CPU implementation is an exact standalone mirror,
-so this result ranks shader candidates but does not replace the production control.
+The search uses matched CPU/Metal protocol tapes at `2^26`, a fixed empirical noise
+gate, and one accepted parent. The first baseline showed a repeatable 170--250 ms
+outside GPU timestamps when a multi-gigabyte CPU trial immediately preceded a Metal
+trial. The fixed search schedule therefore runs all CPU controls first, performs one
+exact full-sequence Metal residency warmup, and then runs the timed Metal trials
+back-to-back. Resident rows and sequence storage are materialized only after the CPU
+batch. The warmup is reported and charged to the GPU budget but excluded from the
+primary metric. This single-process steady-state result ranks shader candidates; it
+is neither a first-use latency claim nor a replacement for the separate-process
+production control.
 Threadgroup widths and the CPU cutoff are the first phase; the Rust allocation and
 telemetry wrapper is frozen, and an algebra or evaluator change starts a new run.
 An accepted parent must clear 4x on the complete standalone metric before it can run

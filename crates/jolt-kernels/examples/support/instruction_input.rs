@@ -130,7 +130,7 @@ fn row_fields(row: CpuInstructionInputRow) -> [AkitaField; TABLES] {
 pub struct Workload {
     pub log_n: usize,
     pub cpu_rows: Arc<Vec<CpuInstructionInputRow>>,
-    resident_source: Option<Vec<SpartanOuterUniskipRow>>,
+    resident_seed: Option<u64>,
     pub point: Vec<AkitaField>,
     pub gamma: AkitaField,
     pub initial_claim: AkitaField,
@@ -148,16 +148,11 @@ impl Workload {
                 .map(|index| make_cpu_row(index, seed))
                 .collect::<Vec<_>>(),
         );
-        let resident_source = cpu_rows
-            .par_iter()
-            .enumerate()
-            .map(|(index, row)| resident_row(index, *row, seed))
-            .collect::<Vec<_>>();
         let (point, gamma, initial_claim) = protocol(log_n, &cpu_rows, seed)?;
         Ok(Self {
             log_n,
             cpu_rows,
-            resident_source: Some(resident_source),
+            resident_seed: Some(seed),
             point,
             gamma,
             initial_claim,
@@ -177,7 +172,7 @@ impl Workload {
         Ok(Self {
             log_n: self.log_n,
             cpu_rows: Arc::clone(&self.cpu_rows),
-            resident_source: None,
+            resident_seed: None,
             point,
             gamma,
             initial_claim,
@@ -189,10 +184,16 @@ impl Workload {
         context: &SolinasMetal,
         dispatch: SequenceDispatch,
     ) -> EvalResult<InstructionInputSequence> {
-        let rows = self
-            .resident_source
+        let seed = self
+            .resident_seed
             .take()
             .ok_or("InstructionInput resident source was already consumed")?;
+        let rows = self
+            .cpu_rows
+            .par_iter()
+            .enumerate()
+            .map(|(index, row)| resident_row(index, *row, seed))
+            .collect::<Vec<_>>();
         let sequence = context.prepare_instruction_input_sequence(&rows, dispatch.config())?;
         drop(rows);
         Ok(sequence)

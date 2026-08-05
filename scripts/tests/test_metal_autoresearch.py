@@ -209,6 +209,14 @@ class MetalAutoresearchTests(unittest.TestCase):
         ]
         gpu_wall_samples = [50 + 10 * index for index in range(repeats)]
         gpu_active_samples = [40 + 10 * index for index in range(repeats)]
+        warmup_wall = 220
+        warmup_reset = 20
+        warmup_gpu_wall = 180
+        warmup_gpu_active = 160
+        warmup_host = 5
+        warmup_readback = 5
+        warmup_tail = 5
+        validation_gpu_active = 30
         host_samples = [10 + index for index in range(repeats)]
         readback_samples = [5 + index for index in range(repeats)]
         tail_samples = [10 + index for index in range(repeats)]
@@ -225,7 +233,9 @@ class MetalAutoresearchTests(unittest.TestCase):
         resident_rows_bytes = 160 * rows
         persistent_bytes = cpu_rows_bytes + resident_rows_bytes + sequence_bytes
         cpu_first_dense_bytes = 8 * (rows // 2) * 16
+        cpu_bind_scratch_bytes = (rows // 4) * 16
         hybrid_tail_bytes = 2 * 8 * cutoff * 16
+        hybrid_tail_bind_scratch_bytes = (cutoff // 2) * 16
         protocol_seeds = [
             seed ^ ((0x9E3779B97F4A7C15 * (index + 1)) & ((1 << 64) - 1))
             for index in range(repeats)
@@ -255,12 +265,13 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "round_device_buffer_allocations_zero",
                 "host_fiat_shamir",
                 "cpu_tail_uses_exact_four_samples",
+                "exactly_one_excluded_residency_warmup",
                 "all_exact",
             )
         }
         output = {
-            "schema": "instruction_input_v1",
-            "schema_version": 1,
+            "schema": "instruction_input_v2",
+            "schema_version": 2,
             "kernel": "instruction_input",
             "metrics": {
                 "hybrid_speedup": statistics.median(paired),
@@ -278,8 +289,8 @@ class MetalAutoresearchTests(unittest.TestCase):
                 / 1e6,
             },
             "timings": {
-                "workload_and_source_preparation_seconds": 1.0,
-                "sequence_upload_and_storage_preparation_seconds": 2.0,
+                "workload_and_protocol_preparation_seconds": 1.0,
+                "resident_source_sequence_upload_and_storage_preparation_seconds": 2.0,
                 "cpu_median_seconds": statistics.median(cpu_samples) / 1e9,
                 "hybrid_median_seconds": statistics.median(hybrid_samples) / 1e9,
                 "resident_median_seconds": statistics.median(resident_samples) / 1e9,
@@ -292,7 +303,24 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "host_round_median_seconds": statistics.median(host_samples) / 1e9,
                 "readback_median_seconds": statistics.median(readback_samples) / 1e9,
                 "cpu_tail_median_seconds": statistics.median(tail_samples) / 1e9,
-                "gpu_active_total_seconds": sum(gpu_active_samples) / 1e9,
+                "timed_gpu_active_total_seconds": sum(gpu_active_samples) / 1e9,
+                "evaluator_gpu_active_total_seconds": (
+                    validation_gpu_active
+                    + warmup_gpu_active
+                    + sum(gpu_active_samples)
+                )
+                / 1e9,
+                "validation_gpu_active_ns": validation_gpu_active,
+                "residency_warmup_wall_ns": warmup_wall,
+                "residency_warmup_resident_ns": warmup_wall - warmup_reset,
+                "residency_warmup_reset_ns": warmup_reset,
+                "residency_warmup_gpu_dispatch_wall_ns": warmup_gpu_wall,
+                "residency_warmup_host_round_ns": warmup_host,
+                "residency_warmup_readback_ns": warmup_readback,
+                "residency_warmup_cpu_tail_ns": warmup_tail,
+                "residency_warmup_gpu_active_ns": warmup_gpu_active,
+                "residency_warmup_to_timed_gpu_active_ratio": warmup_gpu_active
+                / statistics.median(gpu_active_samples),
                 "sequence_reset_ns_samples": reset_samples,
                 "gpu_dispatch_wall_ns_samples": gpu_wall_samples,
                 "host_round_ns_samples": host_samples,
@@ -303,18 +331,37 @@ class MetalAutoresearchTests(unittest.TestCase):
             },
             "guards": guards,
             "resources": {
-                "gpu_seconds": sum(gpu_active_samples) / 1e9,
+                "gpu_seconds": (
+                    validation_gpu_active
+                    + sum(gpu_active_samples)
+                    + warmup_gpu_active
+                )
+                / 1e9,
                 "cpu_native_rows_bytes": cpu_rows_bytes,
                 "resident_stage1_rows_bytes": resident_rows_bytes,
                 "sequence_owned_working_storage_bytes": sequence_bytes,
-                "persistent_modeled_bytes_during_primary_trials": persistent_bytes,
+                "cpu_phase_persistent_modeled_bytes": cpu_rows_bytes,
                 "cpu_first_dense_table_bytes": cpu_first_dense_bytes,
-                "cpu_trial_peak_modeled_bytes": persistent_bytes
-                + cpu_first_dense_bytes,
+                "cpu_bind_scratch_capacity_bytes": cpu_bind_scratch_bytes,
+                "cpu_trial_peak_modeled_bytes": cpu_rows_bytes
+                + cpu_first_dense_bytes
+                + cpu_bind_scratch_bytes,
+                "metal_phase_persistent_modeled_bytes": persistent_bytes,
                 "hybrid_readback_plus_tail_table_capacity_bytes": hybrid_tail_bytes,
-                "hybrid_trial_peak_modeled_bytes": persistent_bytes
-                + hybrid_tail_bytes,
-                "resident_source_host_copy_bytes_dropped_before_primary_trials": resident_rows_bytes,
+                "hybrid_cpu_tail_bind_scratch_capacity_bytes": hybrid_tail_bind_scratch_bytes,
+                "metal_warmup_and_trial_peak_modeled_bytes": persistent_bytes
+                + hybrid_tail_bytes
+                + hybrid_tail_bind_scratch_bytes,
+                "sequence_setup_peak_modeled_bytes": persistent_bytes
+                + resident_rows_bytes,
+                "evaluator_peak_modeled_bytes": max(
+                    cpu_rows_bytes + cpu_first_dense_bytes + cpu_bind_scratch_bytes,
+                    persistent_bytes
+                    + hybrid_tail_bytes
+                    + hybrid_tail_bind_scratch_bytes,
+                    persistent_bytes + resident_rows_bytes,
+                ),
+                "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_rows_bytes,
                 "setup_peak_increment_from_resident_source_copy_bytes": resident_rows_bytes,
                 "cutoff_readback_bytes": 8 * cutoff * 16,
                 "unified_memory_no_per_round_row_upload": True,
@@ -343,14 +390,19 @@ class MetalAutoresearchTests(unittest.TestCase):
                     params["JOLT_METAL_INSTRUCTION_INPUT_DENSE_TRANSITION_THREADS"]
                 ),
                 "host_fiat_shamir": True,
-                "primary_timing": "resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
+                "primary_timing": "after one excluded full-sequence residency warmup: resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
                 "workload_preparation_in_primary_metric": False,
                 "sequence_preparation_in_primary_metric": False,
+                "resident_source_materialization_in_primary_metric": False,
+                "residency_warmup_in_primary_metric": False,
+                "residency_warmup_reuses_first_protocol_tape": True,
+                "residency_warmup_runs": 1,
                 "host_readback_allocation_in_primary_metric": False,
                 "protocol_tape_preparation_in_primary_metric": False,
                 "protocol_tapes_per_process": repeats,
                 "protocol_tape_derivation": "base_seed xor ((repeat + 1) * 0x9e3779b97f4a7c15 modulo 2^64)",
-                "cpu_trials_run_while_resident_metal_sequence_is_allocated": True,
+                "cpu_trials_run_while_resident_metal_sequence_is_allocated": False,
+                "cpu_trials_run_before_resident_source_materialization": True,
                 "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
                 "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage",
             },
@@ -383,10 +435,17 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "dense_transition_threads": int(
                     params["JOLT_METAL_INSTRUCTION_INPUT_DENSE_TRANSITION_THREADS"]
                 ),
-                "orders": [
-                    ["cpu", "metal"] if index % 2 == 0 else ["metal", "cpu"]
-                    for index in range(repeats)
+                "arm_schedule": [
+                    "cpu_batch",
+                    "excluded_full_metal_warmup",
+                    "metal_timed_batch",
                 ],
+                "process_model": "single_process_steady_state_search_proxy",
+                "warmup_tape_index": 0,
+                "validation_full_sequence_metal_runs": 1,
+                "residency_warmup_runs": 1,
+                "timed_full_sequence_metal_runs": repeats,
+                "evaluator_full_sequence_metal_runs": repeats + 2,
                 "protocol_seeds": protocol_seeds,
                 "protocol_transcript_states": [
                     [index + 1] * 32 for index in range(repeats)
@@ -860,6 +919,31 @@ class MetalAutoresearchTests(unittest.TestCase):
         config, params, output = self.instruction_input_local_contract_fixture()
         metal_autoresearch.validate_local_result_contract(config, output, params)
 
+    def test_instruction_input_run_evaluator_accepts_schema_two(self) -> None:
+        config, params, output = self.instruction_input_local_contract_fixture()
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(output) + "\n",
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            with mock.patch.object(
+                metal_autoresearch.subprocess, "run", return_value=completed
+            ):
+                parsed, _ = metal_autoresearch.run_evaluator(
+                    path, config, params, path, "instruction-input-v2"
+                )
+        self.assertEqual(parsed["schema_version"], 2)
+
+    def test_instruction_input_template_pins_schema_two(self) -> None:
+        template = metal_autoresearch.read_json(
+            ROOT / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
+        )
+        template["evaluator"]["result_schema_version"] = 1
+        with self.assertRaisesRegex(ValueError, "schema version mismatches"):
+            metal_autoresearch.validate_template(template)
+
     def test_instruction_input_local_result_rejects_schema_extensions(self) -> None:
         config, params, output = self.instruction_input_local_contract_fixture()
         output["undeclared"] = True
@@ -902,9 +986,23 @@ class MetalAutoresearchTests(unittest.TestCase):
             (
                 "GPU total",
                 lambda output: output["timings"].__setitem__(
-                    "gpu_active_total_seconds", 99.0
+                    "timed_gpu_active_total_seconds", 99.0
                 ),
                 "GPU-active total",
+            ),
+            (
+                "residency warmup",
+                lambda output: output["timings"].__setitem__(
+                    "residency_warmup_gpu_active_ns", 999
+                ),
+                "residency warmup timing",
+            ),
+            (
+                "evaluator GPU total",
+                lambda output: output["timings"].__setitem__(
+                    "evaluator_gpu_active_total_seconds", 99.0
+                ),
+                "total GPU-active time",
             ),
             (
                 "GPU resource",
@@ -914,9 +1012,17 @@ class MetalAutoresearchTests(unittest.TestCase):
                 "GPU resource timing",
             ),
             (
+                "GPU resource omits warmup",
+                lambda output: output["resources"].__setitem__(
+                    "gpu_seconds",
+                    output["timings"]["timed_gpu_active_total_seconds"],
+                ),
+                "GPU resource timing",
+            ),
+            (
                 "resource total",
                 lambda output: output["resources"].__setitem__(
-                    "persistent_modeled_bytes_during_primary_trials", 1
+                    "metal_phase_persistent_modeled_bytes", 1
                 ),
                 "resource",
             ),
@@ -931,6 +1037,16 @@ class MetalAutoresearchTests(unittest.TestCase):
                     )
 
     def test_instruction_input_local_result_rejects_protocol_tampering(self) -> None:
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["fingerprint"]["arm_schedule"] = ["metal", "cpu"]
+        with self.assertRaisesRegex(ValueError, "phased schedule"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
+        config, params, output = self.instruction_input_local_contract_fixture()
+        output["fingerprint"]["residency_warmup_runs"] = 0
+        with self.assertRaisesRegex(ValueError, "warmup fingerprint"):
+            metal_autoresearch.validate_local_result_contract(config, output, params)
+
         config, params, output = self.instruction_input_local_contract_fixture()
         output["fingerprint"]["repeats"] = 3
         with self.assertRaisesRegex(ValueError, "fingerprint does not match repeats"):

@@ -176,12 +176,14 @@ fn main() -> EvalResult<()> {
     let mut validation_sequence = validation.prepare_sequence(&context, dispatch)?;
     let validation_cpu = run_cpu(&validation, validation_cutoff, Capture::VALIDATION)?;
     let validation_actual = run_actual_optimized(&validation)?;
+    let mut validation_full_sequence_metal_runs = 0usize;
     let validation_hybrid = run_hybrid(
         &mut validation_sequence,
         &validation,
         validation_cutoff,
         Capture::VALIDATION,
     )?;
+    validation_full_sequence_metal_runs += 1;
     let mut guards = Guards::from_pair(
         &validation,
         &validation_cpu.trace,
@@ -197,6 +199,7 @@ fn main() -> EvalResult<()> {
         && validation_cpu.trace.final_claims == validation_actual.final_claims
         && validation_cpu.trace.final_sumcheck_claim == validation_actual.final_sumcheck_claim
         && validation_cpu.trace.transcript_state == validation_actual.transcript_state;
+    let validation_gpu_active = validation_hybrid.gpu_active;
     drop(validation_sequence);
     drop(validation);
 
@@ -214,13 +217,6 @@ fn main() -> EvalResult<()> {
         .iter()
         .all(|trial| trial.cpu_rows_identity() == cpu_rows_identity);
     let workload_preparation = workload_preparation_started.elapsed();
-    let sequence_preparation_started = Instant::now();
-    let mut sequence = workload.prepare_sequence(&context, dispatch)?;
-    let sequence_preparation = sequence_preparation_started.elapsed();
-    let sequence_owned_bytes = sequence.owned_storage_bytes();
-    let native_message_limits = sequence.native_message_pipeline_limits();
-    let native_transition_limits = sequence.native_transition_pipeline_limits();
-    let dense_transition_limits = sequence.dense_transition_pipeline_limits();
 
     let mut cpu_times = Vec::with_capacity(repeats);
     let mut hybrid_times = Vec::with_capacity(repeats);
@@ -233,31 +229,54 @@ fn main() -> EvalResult<()> {
     let mut gpu_active_times = Vec::with_capacity(repeats);
     let mut paired_hybrid_speedups = Vec::with_capacity(repeats);
     let mut paired_resident_speedups = Vec::with_capacity(repeats);
-    let mut gpu_active_total = Duration::ZERO;
+    let mut timed_gpu_active_total = Duration::ZERO;
     let mut protocol_tapes = HashSet::with_capacity(repeats);
     let mut protocol_transcript_states = Vec::with_capacity(repeats);
 
-    for (repeat, trial_workload) in trial_workloads.iter().enumerate() {
-        let (cpu, hybrid) = if repeat.is_multiple_of(2) {
-            let cpu = black_box(run_cpu(trial_workload, cutoff, Capture::TARGET)?);
-            let hybrid = black_box(run_hybrid(
-                &mut sequence,
-                trial_workload,
-                cutoff,
-                Capture::TARGET,
-            )?);
-            (cpu, hybrid)
-        } else {
-            let hybrid = black_box(run_hybrid(
-                &mut sequence,
-                trial_workload,
-                cutoff,
-                Capture::TARGET,
-            )?);
-            let cpu = black_box(run_cpu(trial_workload, cutoff, Capture::TARGET)?);
-            (cpu, hybrid)
-        };
+    let cpu_results = trial_workloads
+        .iter()
+        .map(|trial_workload| black_box(run_cpu(trial_workload, cutoff, Capture::TARGET)))
+        .collect::<EvalResult<Vec<_>>>()?;
+    let sequence_preparation_started = Instant::now();
+    let mut sequence = workload.prepare_sequence(&context, dispatch)?;
+    let sequence_preparation = sequence_preparation_started.elapsed();
+    let sequence_owned_bytes = sequence.owned_storage_bytes();
+    let native_message_limits = sequence.native_message_pipeline_limits();
+    let native_transition_limits = sequence.native_transition_pipeline_limits();
+    let dense_transition_limits = sequence.dense_transition_pipeline_limits();
+    // A target-size CPU pass adds 170--250 ms before the next GPU timestamp. Warm
+    // the exact sequence once so the search metric ranks steady-state shader work.
+    let mut residency_warmup_runs = 0usize;
+    let residency_warmup = black_box(run_hybrid(
+        &mut sequence,
+        &trial_workloads[0],
+        cutoff,
+        Capture::TARGET,
+    )?);
+    residency_warmup_runs += 1;
+    guards.merge(Guards::from_pair(
+        &trial_workloads[0],
+        &cpu_results[0].trace,
+        &residency_warmup.trace,
+        &residency_warmup,
+        cutoff,
+    ));
+    let mut hybrid_results = Vec::with_capacity(repeats);
+    let mut timed_full_sequence_metal_runs = 0usize;
+    for trial_workload in &trial_workloads {
+        let result = black_box(run_hybrid(
+            &mut sequence,
+            trial_workload,
+            cutoff,
+            Capture::TARGET,
+        )?);
+        timed_full_sequence_metal_runs += 1;
+        hybrid_results.push(result);
+    }
 
+    for ((trial_workload, cpu), hybrid) in
+        trial_workloads.iter().zip(cpu_results).zip(hybrid_results)
+    {
         guards.merge(Guards::from_pair(
             trial_workload,
             &cpu.trace,
@@ -279,7 +298,7 @@ fn main() -> EvalResult<()> {
         readback_times.push(hybrid.readback);
         cpu_tail_times.push(hybrid.cpu_tail);
         gpu_active_times.push(hybrid.gpu_active);
-        gpu_active_total += hybrid.gpu_active;
+        timed_gpu_active_total += hybrid.gpu_active;
     }
     guards.distinct_protocol_tapes &= protocol_tapes.len() == repeats
         && protocol_seeds.iter().copied().collect::<HashSet<_>>().len() == repeats;
@@ -294,6 +313,18 @@ fn main() -> EvalResult<()> {
             && accounted.is_some_and(|value| value <= resident_times[index])
             && gpu_active_times[index] <= gpu_wall_times[index]
     });
+    let residency_warmup_resident_wall = residency_warmup
+        .wall
+        .checked_sub(residency_warmup.reset)
+        .ok_or("InstructionInput warmup reset exceeds wall time")?;
+    let residency_warmup_accounted = residency_warmup
+        .gpu_wall
+        .checked_add(residency_warmup.host_rounds)
+        .and_then(|value| value.checked_add(residency_warmup.readback))
+        .and_then(|value| value.checked_add(residency_warmup.cpu_tail));
+    guards.raw_timing_relations &= residency_warmup_accounted
+        .is_some_and(|value| value <= residency_warmup_resident_wall)
+        && residency_warmup.gpu_active <= residency_warmup.gpu_wall;
 
     let cpu_median = median(&cpu_times);
     let hybrid_median = median(&hybrid_times);
@@ -308,18 +339,28 @@ fn main() -> EvalResult<()> {
     let rows = workload.rows();
     let cpu_row_bytes = size_of::<instruction_input::CpuInstructionInputRow>() * rows;
     let resident_row_bytes = size_of::<SpartanOuterUniskipRow>() * rows;
-    let persistent_modeled_bytes = cpu_row_bytes
+    let metal_phase_persistent_modeled_bytes = cpu_row_bytes
         .checked_add(resident_row_bytes)
         .and_then(|value| value.checked_add(sequence_owned_bytes as usize))
         .ok_or("InstructionInput resource accounting overflow")?;
     let cpu_first_dense_bytes = TABLES * (rows / 2) * 16;
-    let cpu_trial_peak_modeled_bytes = persistent_modeled_bytes
+    let cpu_bind_scratch_capacity_bytes = (rows / 4) * 16;
+    let cpu_trial_peak_modeled_bytes = cpu_row_bytes
         .checked_add(cpu_first_dense_bytes)
+        .and_then(|value| value.checked_add(cpu_bind_scratch_capacity_bytes))
         .ok_or("InstructionInput CPU peak accounting overflow")?;
     let hybrid_tail_allocated_bytes = 2 * TABLES * cutoff * 16;
-    let hybrid_trial_peak_modeled_bytes = persistent_modeled_bytes
+    let hybrid_cpu_tail_bind_scratch_capacity_bytes = (cutoff / 2) * 16;
+    let metal_warmup_and_trial_peak_modeled_bytes = metal_phase_persistent_modeled_bytes
         .checked_add(hybrid_tail_allocated_bytes)
+        .and_then(|value| value.checked_add(hybrid_cpu_tail_bind_scratch_capacity_bytes))
         .ok_or("InstructionInput hybrid peak accounting overflow")?;
+    let sequence_setup_peak_modeled_bytes = metal_phase_persistent_modeled_bytes
+        .checked_add(resident_row_bytes)
+        .ok_or("InstructionInput setup peak accounting overflow")?;
+    let evaluator_peak_modeled_bytes = cpu_trial_peak_modeled_bytes
+        .max(sequence_setup_peak_modeled_bytes)
+        .max(metal_warmup_and_trial_peak_modeled_bytes);
     let device_info = context.device_info();
     let cpu_ns_samples = duration_ns_samples(&cpu_times)?;
     let hybrid_ns_samples = duration_ns_samples(&hybrid_times)?;
@@ -330,26 +371,39 @@ fn main() -> EvalResult<()> {
     let readback_ns_samples = duration_ns_samples(&readback_times)?;
     let cpu_tail_ns_samples = duration_ns_samples(&cpu_tail_times)?;
     let gpu_active_ns_samples = duration_ns_samples(&gpu_active_times)?;
-    let orders = (0..repeats)
-        .map(|repeat| {
-            if repeat.is_multiple_of(2) {
-                ["cpu", "metal"]
-            } else {
-                ["metal", "cpu"]
-            }
-        })
-        .collect::<Vec<_>>();
+    let validation_gpu_active_ns = duration_ns(validation_gpu_active)?;
+    let residency_warmup_wall_ns = duration_ns(residency_warmup.wall)?;
+    let residency_warmup_resident_ns = duration_ns(residency_warmup_resident_wall)?;
+    let residency_warmup_reset_ns = duration_ns(residency_warmup.reset)?;
+    let residency_warmup_gpu_wall_ns = duration_ns(residency_warmup.gpu_wall)?;
+    let residency_warmup_host_round_ns = duration_ns(residency_warmup.host_rounds)?;
+    let residency_warmup_readback_ns = duration_ns(residency_warmup.readback)?;
+    let residency_warmup_cpu_tail_ns = duration_ns(residency_warmup.cpu_tail)?;
+    let residency_warmup_gpu_active_ns = duration_ns(residency_warmup.gpu_active)?;
+    let evaluator_gpu_active_total = validation_gpu_active
+        .checked_add(residency_warmup.gpu_active)
+        .and_then(|value| value.checked_add(timed_gpu_active_total))
+        .ok_or("InstructionInput evaluator GPU time overflow")?;
+    let evaluator_full_sequence_metal_runs = validation_full_sequence_metal_runs
+        + residency_warmup_runs
+        + timed_full_sequence_metal_runs;
     let round_device_buffer_allocations_zero = sequence.round_device_buffer_allocations() == 0;
-    let all_exact = guards.all_exact() && round_device_buffer_allocations_zero;
+    let exactly_one_excluded_residency_warmup = validation_full_sequence_metal_runs == 1
+        && residency_warmup_runs == 1
+        && timed_full_sequence_metal_runs == repeats
+        && evaluator_full_sequence_metal_runs == repeats + 2;
+    let all_exact = guards.all_exact()
+        && round_device_buffer_allocations_zero
+        && exactly_one_excluded_residency_warmup;
     if !all_exact {
         return Err("InstructionInput evaluator correctness guard failed".into());
     }
 
-    // `instruction_input_v1` is a closed schema: every emitted field is declared here,
+    // `instruction_input_v2` is a closed schema: every emitted field is declared here,
     // with no extension/property map whose keys vary between runs.
     let output = json!({
-        "schema": "instruction_input_v1",
-        "schema_version": 1,
+        "schema": "instruction_input_v2",
+        "schema_version": 2,
         "kernel": "instruction_input",
         "metrics": {
             "hybrid_speedup": hybrid_speedup,
@@ -363,8 +417,8 @@ fn main() -> EvalResult<()> {
             "hybrid_million_rows_per_second": rows as f64 / hybrid_median.as_secs_f64() / 1e6
         },
         "timings": {
-            "workload_and_source_preparation_seconds": workload_preparation.as_secs_f64(),
-            "sequence_upload_and_storage_preparation_seconds": sequence_preparation.as_secs_f64(),
+            "workload_and_protocol_preparation_seconds": workload_preparation.as_secs_f64(),
+            "resident_source_sequence_upload_and_storage_preparation_seconds": sequence_preparation.as_secs_f64(),
             "cpu_median_seconds": cpu_median.as_secs_f64(),
             "hybrid_median_seconds": hybrid_median.as_secs_f64(),
             "resident_median_seconds": resident_median.as_secs_f64(),
@@ -373,7 +427,18 @@ fn main() -> EvalResult<()> {
             "host_round_median_seconds": host_round_median.as_secs_f64(),
             "readback_median_seconds": readback_median.as_secs_f64(),
             "cpu_tail_median_seconds": cpu_tail_median.as_secs_f64(),
-            "gpu_active_total_seconds": gpu_active_total.as_secs_f64(),
+            "timed_gpu_active_total_seconds": timed_gpu_active_total.as_secs_f64(),
+            "evaluator_gpu_active_total_seconds": evaluator_gpu_active_total.as_secs_f64(),
+            "validation_gpu_active_ns": validation_gpu_active_ns,
+            "residency_warmup_wall_ns": residency_warmup_wall_ns,
+            "residency_warmup_resident_ns": residency_warmup_resident_ns,
+            "residency_warmup_reset_ns": residency_warmup_reset_ns,
+            "residency_warmup_gpu_dispatch_wall_ns": residency_warmup_gpu_wall_ns,
+            "residency_warmup_host_round_ns": residency_warmup_host_round_ns,
+            "residency_warmup_readback_ns": residency_warmup_readback_ns,
+            "residency_warmup_cpu_tail_ns": residency_warmup_cpu_tail_ns,
+            "residency_warmup_gpu_active_ns": residency_warmup_gpu_active_ns,
+            "residency_warmup_to_timed_gpu_active_ratio": residency_warmup.gpu_active.as_secs_f64() / median(&gpu_active_times).as_secs_f64(),
             "sequence_reset_ns_samples": reset_ns_samples,
             "gpu_dispatch_wall_ns_samples": gpu_wall_ns_samples,
             "host_round_ns_samples": host_round_ns_samples,
@@ -405,19 +470,25 @@ fn main() -> EvalResult<()> {
             "round_device_buffer_allocations_zero": round_device_buffer_allocations_zero,
             "host_fiat_shamir": true,
             "cpu_tail_uses_exact_four_samples": true,
+            "exactly_one_excluded_residency_warmup": exactly_one_excluded_residency_warmup,
             "all_exact": all_exact
         },
         "resources": {
-            "gpu_seconds": gpu_active_total.as_secs_f64(),
+            "gpu_seconds": evaluator_gpu_active_total.as_secs_f64(),
             "cpu_native_rows_bytes": cpu_row_bytes,
             "resident_stage1_rows_bytes": resident_row_bytes,
             "sequence_owned_working_storage_bytes": sequence_owned_bytes,
-            "persistent_modeled_bytes_during_primary_trials": persistent_modeled_bytes,
+            "cpu_phase_persistent_modeled_bytes": cpu_row_bytes,
             "cpu_first_dense_table_bytes": cpu_first_dense_bytes,
+            "cpu_bind_scratch_capacity_bytes": cpu_bind_scratch_capacity_bytes,
             "cpu_trial_peak_modeled_bytes": cpu_trial_peak_modeled_bytes,
+            "metal_phase_persistent_modeled_bytes": metal_phase_persistent_modeled_bytes,
             "hybrid_readback_plus_tail_table_capacity_bytes": hybrid_tail_allocated_bytes,
-            "hybrid_trial_peak_modeled_bytes": hybrid_trial_peak_modeled_bytes,
-            "resident_source_host_copy_bytes_dropped_before_primary_trials": resident_row_bytes,
+            "hybrid_cpu_tail_bind_scratch_capacity_bytes": hybrid_cpu_tail_bind_scratch_capacity_bytes,
+            "metal_warmup_and_trial_peak_modeled_bytes": metal_warmup_and_trial_peak_modeled_bytes,
+            "sequence_setup_peak_modeled_bytes": sequence_setup_peak_modeled_bytes,
+            "evaluator_peak_modeled_bytes": evaluator_peak_modeled_bytes,
+            "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_row_bytes,
             "setup_peak_increment_from_resident_source_copy_bytes": resident_row_bytes,
             "cutoff_readback_bytes": TABLES * cutoff * 16,
             "unified_memory_no_per_round_row_upload": true,
@@ -440,14 +511,19 @@ fn main() -> EvalResult<()> {
             "native_transition_threads": native_transition_threads,
             "dense_transition_threads": dense_transition_threads,
             "host_fiat_shamir": true,
-            "primary_timing": "resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
+            "primary_timing": "after one excluded full-sequence residency warmup: resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
             "workload_preparation_in_primary_metric": false,
             "sequence_preparation_in_primary_metric": false,
+            "resident_source_materialization_in_primary_metric": false,
+            "residency_warmup_in_primary_metric": false,
+            "residency_warmup_reuses_first_protocol_tape": true,
+            "residency_warmup_runs": 1,
             "host_readback_allocation_in_primary_metric": false,
             "protocol_tape_preparation_in_primary_metric": false,
             "protocol_tapes_per_process": repeats,
             "protocol_tape_derivation": "base_seed xor ((repeat + 1) * 0x9e3779b97f4a7c15 modulo 2^64)",
-            "cpu_trials_run_while_resident_metal_sequence_is_allocated": true,
+            "cpu_trials_run_while_resident_metal_sequence_is_allocated": false,
+            "cpu_trials_run_before_resident_source_materialization": true,
             "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
             "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage"
         },
@@ -476,7 +552,13 @@ fn main() -> EvalResult<()> {
             "native_message_threads": native_message_threads,
             "native_transition_threads": native_transition_threads,
             "dense_transition_threads": dense_transition_threads,
-            "orders": orders
+            "arm_schedule": ["cpu_batch", "excluded_full_metal_warmup", "metal_timed_batch"],
+            "process_model": "single_process_steady_state_search_proxy",
+            "warmup_tape_index": 0,
+            "validation_full_sequence_metal_runs": validation_full_sequence_metal_runs,
+            "residency_warmup_runs": residency_warmup_runs,
+            "timed_full_sequence_metal_runs": timed_full_sequence_metal_runs,
+            "evaluator_full_sequence_metal_runs": evaluator_full_sequence_metal_runs
         }
     });
     println!("{}", serde_json::to_string(&output)?);
@@ -490,11 +572,10 @@ fn median_f64(values: &[f64]) -> f64 {
 }
 
 fn duration_ns_samples(values: &[Duration]) -> EvalResult<Vec<u64>> {
-    values
-        .iter()
-        .map(|value| {
-            u64::try_from(value.as_nanos())
-                .map_err(|_| "InstructionInput duration exceeds u64 nanoseconds".into())
-        })
-        .collect()
+    values.iter().copied().map(duration_ns).collect()
+}
+
+fn duration_ns(value: Duration) -> EvalResult<u64> {
+    u64::try_from(value.as_nanos())
+        .map_err(|_| "InstructionInput duration exceeds u64 nanoseconds".into())
 }

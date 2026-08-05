@@ -100,7 +100,11 @@ PRODUCTION_LOCAL_KERNELS = {
         },
     },
 }
-LOCAL_RESULT_CONTRACTS = {"bytecode_read_raf_cycle_v1", "instruction_input_v1"}
+LOCAL_RESULT_CONTRACTS = {"bytecode_read_raf_cycle_v1", "instruction_input_v2"}
+LOCAL_RESULT_SCHEMA_VERSIONS = {
+    "bytecode_read_raf_cycle_v1": 1,
+    "instruction_input_v2": 2,
+}
 BYTECODE_LOCAL_FINGERPRINT_PARAMETERS = {
     "message_threads": "JOLT_METAL_BYTECODE_MESSAGE_THREADS",
     "transition_threads": "JOLT_METAL_BYTECODE_TRANSITION_THREADS",
@@ -419,6 +423,9 @@ def validate_template(template: dict[str, Any]) -> None:
     if EVALUATOR_LOCK_HELD_ENV in evaluator.get("env", {}):
         raise ValueError("the local evaluator environment cannot override the lock token")
     result_contract = evaluator.get("result_contract")
+    result_schema_version = evaluator.get("result_schema_version", SCHEMA_VERSION)
+    if type(result_schema_version) is not int or result_schema_version < 1:
+        raise ValueError("the local evaluator result schema version must be positive")
     if (
         template["kernel"] == "bytecode_read_raf_cycle"
         and result_contract != "bytecode_read_raf_cycle_v1"
@@ -426,11 +433,16 @@ def validate_template(template: dict[str, Any]) -> None:
         raise ValueError("the Bytecode evaluator requires its closed result contract")
     if (
         template["kernel"] == "instruction_input"
-        and result_contract != "instruction_input_v1"
+        and result_contract != "instruction_input_v2"
     ):
         raise ValueError("the InstructionInput evaluator requires its closed result contract")
     if result_contract is not None and result_contract not in LOCAL_RESULT_CONTRACTS:
         raise ValueError("the local evaluator names an unknown result contract")
+    if (
+        result_contract is not None
+        and result_schema_version != LOCAL_RESULT_SCHEMA_VERSIONS[result_contract]
+    ):
+        raise ValueError("the local evaluator result schema version mismatches its contract")
     if result_contract == "bytecode_read_raf_cycle_v1":
         if template["kernel"] != "bytecode_read_raf_cycle":
             raise ValueError("the Bytecode result contract requires the Bytecode kernel")
@@ -448,7 +460,7 @@ def validate_template(template: dict[str, Any]) -> None:
             raise ValueError(
                 "the Bytecode result contract requires every launch parameter in the search space and baseline"
             )
-    if result_contract == "instruction_input_v1":
+    if result_contract == "instruction_input_v2":
         if template["kernel"] != "instruction_input":
             raise ValueError(
                 "the InstructionInput result contract requires the InstructionInput kernel"
@@ -764,7 +776,12 @@ def run_evaluator(
     (log_dir / f"{label}.stderr").write_text(result.stderr)
     if result.returncode != 0:
         raise ValueError(f"evaluator exited with status {result.returncode}")
-    output = parse_unique_schema_result(result.stdout, SCHEMA_VERSION)
+    result_schema_version = config["evaluator"].get(
+        "result_schema_version", SCHEMA_VERSION
+    )
+    if type(result_schema_version) is not int or result_schema_version < 1:
+        raise ValueError("evaluator result schema version is invalid")
+    output = parse_unique_schema_result(result.stdout, result_schema_version)
     if output.get("kernel") != config["kernel"]:
         raise ValueError("evaluator returned the wrong kernel")
     validate_local_result_contract(config, output, params)
@@ -852,8 +869,8 @@ def validate_instruction_input_local_result(
     }
     if (
         set(output) != top_fields
-        or output.get("schema") != "instruction_input_v1"
-        or output.get("schema_version") != 1
+        or output.get("schema") != "instruction_input_v2"
+        or output.get("schema_version") != 2
         or output.get("kernel") != "instruction_input"
     ):
         raise ValueError("InstructionInput evaluator result violates its top-level schema")
@@ -879,11 +896,6 @@ def validate_instruction_input_local_result(
         raise ValueError("InstructionInput evaluator requires at least five odd repeats")
     rows = 1 << expected["log_n"]
     cutoff = 1 << expected["cutoff_log2"]
-    orders = [
-        ["cpu", "metal"] if index % 2 == 0 else ["metal", "cpu"]
-        for index in range(repeats)
-    ]
-
     fingerprint = output["fingerprint"]
     fingerprint_fields = {
         "device",
@@ -900,7 +912,13 @@ def validate_instruction_input_local_result(
         "native_message_threads",
         "native_transition_threads",
         "dense_transition_threads",
-        "orders",
+        "arm_schedule",
+        "process_model",
+        "warmup_tape_index",
+        "validation_full_sequence_metal_runs",
+        "residency_warmup_runs",
+        "timed_full_sequence_metal_runs",
+        "evaluator_full_sequence_metal_runs",
         "protocol_seeds",
         "protocol_transcript_states",
     }
@@ -909,8 +927,26 @@ def validate_instruction_input_local_result(
     for name, value in expected.items():
         if type(fingerprint.get(name)) is not int or fingerprint[name] != value:
             raise ValueError(f"InstructionInput evaluator fingerprint does not match {name}")
-    if fingerprint["orders"] != orders:
-        raise ValueError("InstructionInput evaluator has the wrong interleaved order")
+    if fingerprint["arm_schedule"] != [
+        "cpu_batch",
+        "excluded_full_metal_warmup",
+        "metal_timed_batch",
+    ]:
+        raise ValueError("InstructionInput evaluator has the wrong phased schedule")
+    if (
+        fingerprint["process_model"] != "single_process_steady_state_search_proxy"
+        or type(fingerprint["warmup_tape_index"]) is not int
+        or fingerprint["warmup_tape_index"] != 0
+        or type(fingerprint["validation_full_sequence_metal_runs"]) is not int
+        or fingerprint["validation_full_sequence_metal_runs"] != 1
+        or type(fingerprint["residency_warmup_runs"]) is not int
+        or fingerprint["residency_warmup_runs"] != 1
+        or type(fingerprint["timed_full_sequence_metal_runs"]) is not int
+        or fingerprint["timed_full_sequence_metal_runs"] != repeats
+        or type(fingerprint["evaluator_full_sequence_metal_runs"]) is not int
+        or fingerprint["evaluator_full_sequence_metal_runs"] != repeats + 2
+    ):
+        raise ValueError("InstructionInput evaluator warmup fingerprint is invalid")
     protocol_seeds = [
         expected["seed"] ^ ((0x9E3779B97F4A7C15 * (index + 1)) & ((1 << 64) - 1))
         for index in range(repeats)
@@ -972,11 +1008,16 @@ def validate_instruction_input_local_result(
         "primary_timing",
         "workload_preparation_in_primary_metric",
         "sequence_preparation_in_primary_metric",
+        "resident_source_materialization_in_primary_metric",
+        "residency_warmup_in_primary_metric",
+        "residency_warmup_reuses_first_protocol_tape",
+        "residency_warmup_runs",
         "host_readback_allocation_in_primary_metric",
         "protocol_tape_preparation_in_primary_metric",
         "protocol_tapes_per_process",
         "protocol_tape_derivation",
         "cpu_trials_run_while_resident_metal_sequence_is_allocated",
+        "cpu_trials_run_before_resident_source_materialization",
         "cpu_control",
         "metal_control",
     }
@@ -999,14 +1040,19 @@ def validate_instruction_input_local_result(
         "native_transition_threads": expected["native_transition_threads"],
         "dense_transition_threads": expected["dense_transition_threads"],
         "host_fiat_shamir": True,
-        "primary_timing": "resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
+        "primary_timing": "after one excluded full-sequence residency warmup: resident sequence reset plus Metal rounds, host Fiat-Shamir, one dense readback, and exact four-sample CPU tail",
         "workload_preparation_in_primary_metric": False,
         "sequence_preparation_in_primary_metric": False,
+        "resident_source_materialization_in_primary_metric": False,
+        "residency_warmup_in_primary_metric": False,
+        "residency_warmup_reuses_first_protocol_tape": True,
+        "residency_warmup_runs": 1,
         "host_readback_allocation_in_primary_metric": False,
         "protocol_tape_preparation_in_primary_metric": False,
         "protocol_tapes_per_process": repeats,
         "protocol_tape_derivation": "base_seed xor ((repeat + 1) * 0x9e3779b97f4a7c15 modulo 2^64)",
-        "cpu_trials_run_while_resident_metal_sequence_is_allocated": True,
+        "cpu_trials_run_while_resident_metal_sequence_is_allocated": False,
+        "cpu_trials_run_before_resident_source_materialization": True,
         "cpu_control": "standalone row-stride and arithmetic mirror of OptimizedInstructionInputKernel",
         "metal_control": "public InstructionInputSequence over resident SpartanOuterUniskipRow storage",
     }
@@ -1038,6 +1084,13 @@ def validate_instruction_input_local_result(
         ):
             raise ValueError(f"InstructionInput evaluator {name} samples are invalid")
         return values
+
+    def integer_value(record: dict[str, Any], name: str, allow_zero: bool = False) -> int:
+        value = record.get(name)
+        minimum = 0 if allow_zero else 1
+        if type(value) is not int or value < minimum:
+            raise ValueError(f"InstructionInput evaluator {name} is invalid")
+        return value
 
     cpu_samples = integer_samples(metrics, "cpu_ns_samples")
     hybrid_samples = integer_samples(metrics, "hybrid_ns_samples")
@@ -1087,8 +1140,8 @@ def validate_instruction_input_local_result(
 
     timings = output["timings"]
     timing_fields = {
-        "workload_and_source_preparation_seconds",
-        "sequence_upload_and_storage_preparation_seconds",
+        "workload_and_protocol_preparation_seconds",
+        "resident_source_sequence_upload_and_storage_preparation_seconds",
         "cpu_median_seconds",
         "hybrid_median_seconds",
         "resident_median_seconds",
@@ -1097,7 +1150,18 @@ def validate_instruction_input_local_result(
         "host_round_median_seconds",
         "readback_median_seconds",
         "cpu_tail_median_seconds",
-        "gpu_active_total_seconds",
+        "timed_gpu_active_total_seconds",
+        "evaluator_gpu_active_total_seconds",
+        "validation_gpu_active_ns",
+        "residency_warmup_wall_ns",
+        "residency_warmup_resident_ns",
+        "residency_warmup_reset_ns",
+        "residency_warmup_gpu_dispatch_wall_ns",
+        "residency_warmup_host_round_ns",
+        "residency_warmup_readback_ns",
+        "residency_warmup_cpu_tail_ns",
+        "residency_warmup_gpu_active_ns",
+        "residency_warmup_to_timed_gpu_active_ratio",
         "sequence_reset_ns_samples",
         "gpu_dispatch_wall_ns_samples",
         "host_round_ns_samples",
@@ -1159,8 +1223,8 @@ def validate_instruction_input_local_result(
         ):
             raise ValueError(f"InstructionInput evaluator {name} is invalid")
     for name in (
-        "workload_and_source_preparation_seconds",
-        "sequence_upload_and_storage_preparation_seconds",
+        "workload_and_protocol_preparation_seconds",
+        "resident_source_sequence_upload_and_storage_preparation_seconds",
     ):
         value = timings[name]
         if (
@@ -1170,7 +1234,7 @@ def validate_instruction_input_local_result(
             or value <= 0
         ):
             raise ValueError(f"InstructionInput evaluator {name} is invalid")
-    gpu_active_total = timings["gpu_active_total_seconds"]
+    gpu_active_total = timings["timed_gpu_active_total_seconds"]
     if (
         isinstance(gpu_active_total, bool)
         or not isinstance(gpu_active_total, (int, float))
@@ -1179,6 +1243,49 @@ def validate_instruction_input_local_result(
         )
     ):
         raise ValueError("InstructionInput evaluator GPU-active total is invalid")
+    validation_gpu_active = integer_value(timings, "validation_gpu_active_ns")
+    warmup_wall = integer_value(timings, "residency_warmup_wall_ns")
+    warmup_resident = integer_value(timings, "residency_warmup_resident_ns")
+    warmup_reset = integer_value(
+        timings, "residency_warmup_reset_ns", allow_zero=True
+    )
+    warmup_gpu_wall = integer_value(
+        timings, "residency_warmup_gpu_dispatch_wall_ns"
+    )
+    warmup_host = integer_value(timings, "residency_warmup_host_round_ns")
+    warmup_readback = integer_value(timings, "residency_warmup_readback_ns")
+    warmup_tail = integer_value(timings, "residency_warmup_cpu_tail_ns")
+    warmup_gpu_active = integer_value(timings, "residency_warmup_gpu_active_ns")
+    if not (
+        warmup_wall == warmup_reset + warmup_resident
+        and warmup_gpu_wall + warmup_host + warmup_readback + warmup_tail
+        <= warmup_resident
+        and warmup_gpu_active <= warmup_gpu_wall
+    ):
+        raise ValueError("InstructionInput evaluator residency warmup timing is invalid")
+    warmup_ratio = timings["residency_warmup_to_timed_gpu_active_ratio"]
+    wanted_warmup_ratio = warmup_gpu_active / statistics.median(gpu_active_samples)
+    if (
+        isinstance(warmup_ratio, bool)
+        or not isinstance(warmup_ratio, (int, float))
+        or not math.isfinite(warmup_ratio)
+        or not math.isclose(float(warmup_ratio), wanted_warmup_ratio, rel_tol=1e-12)
+    ):
+        raise ValueError("InstructionInput evaluator residency warmup ratio is invalid")
+    evaluator_gpu_active_total = timings["evaluator_gpu_active_total_seconds"]
+    expected_evaluator_gpu_active_total = (
+        validation_gpu_active + warmup_gpu_active + sum(gpu_active_samples)
+    ) / 1e9
+    if (
+        isinstance(evaluator_gpu_active_total, bool)
+        or not isinstance(evaluator_gpu_active_total, (int, float))
+        or not math.isclose(
+            float(evaluator_gpu_active_total),
+            expected_evaluator_gpu_active_total,
+            rel_tol=1e-12,
+        )
+    ):
+        raise ValueError("InstructionInput evaluator total GPU-active time is invalid")
 
     guards = output["guards"]
     guard_fields = {
@@ -1204,6 +1311,7 @@ def validate_instruction_input_local_result(
         "round_device_buffer_allocations_zero",
         "host_fiat_shamir",
         "cpu_tail_uses_exact_four_samples",
+        "exactly_one_excluded_residency_warmup",
         "all_exact",
     }
     if (
@@ -1219,12 +1327,17 @@ def validate_instruction_input_local_result(
         "cpu_native_rows_bytes",
         "resident_stage1_rows_bytes",
         "sequence_owned_working_storage_bytes",
-        "persistent_modeled_bytes_during_primary_trials",
+        "cpu_phase_persistent_modeled_bytes",
         "cpu_first_dense_table_bytes",
+        "cpu_bind_scratch_capacity_bytes",
         "cpu_trial_peak_modeled_bytes",
+        "metal_phase_persistent_modeled_bytes",
         "hybrid_readback_plus_tail_table_capacity_bytes",
-        "hybrid_trial_peak_modeled_bytes",
-        "resident_source_host_copy_bytes_dropped_before_primary_trials",
+        "hybrid_cpu_tail_bind_scratch_capacity_bytes",
+        "metal_warmup_and_trial_peak_modeled_bytes",
+        "sequence_setup_peak_modeled_bytes",
+        "evaluator_peak_modeled_bytes",
+        "resident_source_host_copy_bytes_dropped_before_metal_trials",
         "setup_peak_increment_from_resident_source_copy_bytes",
         "cutoff_readback_bytes",
         "unified_memory_no_per_round_row_upload",
@@ -1238,41 +1351,54 @@ def validate_instruction_input_local_result(
         or not isinstance(gpu_seconds, (int, float))
         or not math.isfinite(gpu_seconds)
         or not math.isclose(
-            float(gpu_seconds), sum(gpu_active_samples) / 1e9, rel_tol=1e-12
+            float(gpu_seconds),
+            expected_evaluator_gpu_active_total,
+            rel_tol=1e-12,
         )
     ):
         raise ValueError("InstructionInput evaluator GPU resource timing is invalid")
     cpu_rows_bytes = workload["cpu_native_row_bytes"] * rows
     resident_rows_bytes = workload["resident_stage1_row_bytes"] * rows
     sequence_bytes = resources["sequence_owned_working_storage_bytes"]
-    expected_resources = {
-        "cpu_native_rows_bytes": cpu_rows_bytes,
-        "resident_stage1_rows_bytes": resident_rows_bytes,
-        "persistent_modeled_bytes_during_primary_trials": cpu_rows_bytes
-        + resident_rows_bytes
-        + sequence_bytes,
-        "cpu_first_dense_table_bytes": 8 * (rows // 2) * 16,
-        "hybrid_readback_plus_tail_table_capacity_bytes": 2 * 8 * cutoff * 16,
-        "resident_source_host_copy_bytes_dropped_before_primary_trials": resident_rows_bytes,
-        "setup_peak_increment_from_resident_source_copy_bytes": resident_rows_bytes,
-        "cutoff_readback_bytes": 8 * cutoff * 16,
-    }
     if (
         type(sequence_bytes) is not int
         or sequence_bytes != instruction_input_sequence_storage_bytes(expected["log_n"])
     ):
         raise ValueError("InstructionInput evaluator sequence storage is invalid")
+    cpu_first_dense_bytes = 8 * (rows // 2) * 16
+    cpu_bind_scratch_bytes = (rows // 4) * 16
+    hybrid_tail_bytes = 2 * 8 * cutoff * 16
+    hybrid_tail_bind_scratch_bytes = (cutoff // 2) * 16
+    metal_persistent_bytes = cpu_rows_bytes + resident_rows_bytes + sequence_bytes
+    cpu_peak_bytes = cpu_rows_bytes + cpu_first_dense_bytes + cpu_bind_scratch_bytes
+    metal_peak_bytes = (
+        metal_persistent_bytes + hybrid_tail_bytes + hybrid_tail_bind_scratch_bytes
+    )
+    setup_peak_bytes = metal_persistent_bytes + resident_rows_bytes
+    expected_resources = {
+        "cpu_native_rows_bytes": cpu_rows_bytes,
+        "resident_stage1_rows_bytes": resident_rows_bytes,
+        "cpu_phase_persistent_modeled_bytes": cpu_rows_bytes,
+        "cpu_first_dense_table_bytes": cpu_first_dense_bytes,
+        "cpu_bind_scratch_capacity_bytes": cpu_bind_scratch_bytes,
+        "cpu_trial_peak_modeled_bytes": cpu_peak_bytes,
+        "metal_phase_persistent_modeled_bytes": metal_persistent_bytes,
+        "hybrid_readback_plus_tail_table_capacity_bytes": hybrid_tail_bytes,
+        "hybrid_cpu_tail_bind_scratch_capacity_bytes": hybrid_tail_bind_scratch_bytes,
+        "metal_warmup_and_trial_peak_modeled_bytes": metal_peak_bytes,
+        "sequence_setup_peak_modeled_bytes": setup_peak_bytes,
+        "evaluator_peak_modeled_bytes": max(
+            cpu_peak_bytes, metal_peak_bytes, setup_peak_bytes
+        ),
+        "resident_source_host_copy_bytes_dropped_before_metal_trials": resident_rows_bytes,
+        "setup_peak_increment_from_resident_source_copy_bytes": resident_rows_bytes,
+        "cutoff_readback_bytes": 8 * cutoff * 16,
+    }
     for name, wanted in expected_resources.items():
         if type(resources[name]) is not int or resources[name] != wanted:
             raise ValueError(f"InstructionInput evaluator resource {name} is invalid")
     if (
-        resources["cpu_trial_peak_modeled_bytes"]
-        != resources["persistent_modeled_bytes_during_primary_trials"]
-        + resources["cpu_first_dense_table_bytes"]
-        or resources["hybrid_trial_peak_modeled_bytes"]
-        != resources["persistent_modeled_bytes_during_primary_trials"]
-        + resources["hybrid_readback_plus_tail_table_capacity_bytes"]
-        or resources["unified_memory_no_per_round_row_upload"] is not True
+        resources["unified_memory_no_per_round_row_upload"] is not True
         or resources[
             "sequence_owned_storage_includes_dense_ping_pong_weights_and_reductions"
         ]
@@ -1311,7 +1437,7 @@ def validate_local_result_contract(
     contract = config["evaluator"].get("result_contract")
     if contract is None:
         return
-    if contract == "instruction_input_v1":
+    if contract == "instruction_input_v2":
         validate_instruction_input_local_result(config, output, params)
         return
     if contract != "bytecode_read_raf_cycle_v1":
@@ -2418,7 +2544,7 @@ def accepted_parent(config: dict[str, Any], events: list[dict[str, Any]]) -> tup
 def validate_accepted_parent_for_production(
     config: dict[str, Any], metric_value: float
 ) -> None:
-    if config.get("evaluator", {}).get("result_contract") != "instruction_input_v1":
+    if config.get("evaluator", {}).get("result_contract") != "instruction_input_v2":
         return
     minimum = float(
         config["final_validation"]["production_gate"]["minimum_local_speedup"]

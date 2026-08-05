@@ -3,8 +3,11 @@
     "cpu_control": "standalone target-scale mirror pinned to OptimizedInstructionInputKernel on an adversarial validation workload",
     "cpu_tail": "one eight-table readback followed by the exact four-sample optimized schedule",
     "fiat_shamir": "Blake2b challenges drawn on the host and included in the primary metric",
-    "paired_tapes": "each interleaved CPU/Metal pair uses a distinct deterministic protocol tape over the same resident rows",
+    "arm_schedule": "run every CPU control first, one excluded exact full-sequence Metal residency warmup second, and every timed resident Metal trial last",
+    "process_model": "single-process steady-state shader-ranking proxy; only the separate-process production gate can establish the speedup claim",
+    "paired_tapes": "each Metal/CPU comparison uses a distinct deterministic protocol tape over the same resident rows",
     "relation": "eq(r_product, cycle) times the gamma-folded left and right instruction-input products",
+    "residency_warmup": "one exact full-sequence run reusing the first protocol tape; excluded from the primary metric but included in the GPU budget",
     "resident_input": "the exact stage-1 160-byte packed row allocation, uploaded before the primary timer",
     "sample_grid": [0, 1, 2, 3],
     "timed_member": "resident reset, every Metal and CPU-tail round, host Fiat-Shamir, one readback, finish, and output extraction"
@@ -59,8 +62,9 @@
       "crates/jolt-kernels/src/optimized/instruction_input.rs",
       "scripts/metal_autoresearch.py"
     ],
-    "parser": "exactly one schema-version 1 instruction_input_v1 JSON object on stdout",
-    "result_contract": "instruction_input_v1",
+    "parser": "exactly one schema-version 2 instruction_input_v2 JSON object on stdout",
+    "result_contract": "instruction_input_v2",
+    "result_schema_version": 2,
     "timeout_seconds": 900
   },
   "final_validation": {
@@ -189,6 +193,7 @@
       "round_device_buffer_allocations_zero",
       "host_fiat_shamir",
       "cpu_tail_uses_exact_four_samples",
+      "exactly_one_excluded_residency_warmup",
       "all_exact"
     ]
   },
