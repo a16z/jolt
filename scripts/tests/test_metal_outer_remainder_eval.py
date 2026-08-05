@@ -101,6 +101,7 @@ def arm_events(
                         "initialization_mode": "full",
                         "admitted": "true",
                         "initialized": "true",
+                        "fallback_reason": "none",
                         "device_buffers": str(EVAL.STORAGE_BUFFERS),
                         "initialization_bytes": str(EVAL.STORAGE_BYTES),
                         "initialization_wall_ns": "8000",
@@ -243,6 +244,7 @@ def arm_events(
                     "storage_initialization_mode": "full",
                     "preinitialized_device_bytes": str(EVAL.STORAGE_BYTES),
                     "initialization_bytes": str(EVAL.STORAGE_BYTES),
+                    "attached_owned_bytes": str(EVAL.STORAGE_BYTES),
                     **{
                         f"storage_buffer_{index}": str(
                             identity + (1 if wrong_storage_id and index == 0 else 0)
@@ -324,6 +326,16 @@ def arm_events(
                     "resident_rows": str(rows),
                     "row_upload_bytes": "0",
                     "device_allocations": "0",
+                    "residual_row_bytes": str(rows * EVAL.RESIDUAL_ROW_BYTES),
+                    "remaining_sequence_storage_bytes": str(
+                        EVAL.REMAINING_SEQUENCE_STORAGE_BYTES
+                    ),
+                    "compact_release_bytes": "0",
+                    "released_owned_bytes": str(
+                        rows * EVAL.RESIDUAL_ROW_BYTES
+                        + EVAL.REMAINING_SEQUENCE_STORAGE_BYTES
+                    ),
+                    "release_completed": "true",
                     "residual_released": "true",
                     "compact_retained": "true",
                 },
@@ -507,6 +519,42 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
     def test_storage_identity_must_survive_member_handoff(self) -> None:
         result = self.parse(*fixture(wrong_storage_id=True))
         self.assertFalse(result["guards"]["metal_sequence_geometry_exact"])
+        self.assertFalse(result["guards"]["resident_row_lifecycle_exact"])
+        self.assertFalse(result["promotion"]["eligible"])
+
+    def test_attached_storage_byte_count_is_checked(self) -> None:
+        events, runner = fixture()
+        sequence = next(
+            event
+            for event in events
+            if event["name"] == EVAL.METAL_SEQUENCE_PREPARE and event["ph"] == "X"
+        )
+        sequence["args"]["attached_owned_bytes"] = "1"
+        result = self.parse(events, runner)
+        self.assertFalse(result["guards"]["metal_sequence_geometry_exact"])
+        self.assertFalse(result["promotion"]["eligible"])
+
+    def test_release_owned_byte_count_is_checked(self) -> None:
+        events, runner = fixture()
+        release = next(
+            event
+            for event in events
+            if event["name"] == EVAL.METAL_ROW_RELEASE and event["ph"] == "X"
+        )
+        release["args"]["released_owned_bytes"] = "1"
+        result = self.parse(events, runner)
+        self.assertFalse(result["guards"]["resident_row_lifecycle_exact"])
+        self.assertFalse(result["promotion"]["eligible"])
+
+    def test_incomplete_release_is_rejected(self) -> None:
+        events, runner = fixture()
+        release = next(
+            event
+            for event in events
+            if event["name"] == EVAL.METAL_ROW_RELEASE and event["ph"] == "X"
+        )
+        release["args"]["release_completed"] = "false"
+        result = self.parse(events, runner)
         self.assertFalse(result["guards"]["resident_row_lifecycle_exact"])
         self.assertFalse(result["promotion"]["eligible"])
 

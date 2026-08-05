@@ -23,8 +23,8 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA = "outer_remainder_v2"
-SCHEMA_VERSION = 2
+SCHEMA = "outer_remainder_v3"
+SCHEMA_VERSION = 3
 RUNNER_SCHEMA = "outer_remainder_runner_v2"
 FEATURES = "metal,prover-fixtures"
 EXAMPLE = "metal-outer-remainder-eval"
@@ -37,6 +37,8 @@ COMPACT_ROW_BYTES = 48
 RESIDUAL_ROW_BYTES = 112
 STORAGE_BUFFERS = 9
 STORAGE_BYTES = 4_300_079_856
+DENSE_STORAGE_BYTES = 4 * (1 << 30)
+REMAINING_SEQUENCE_STORAGE_BYTES = STORAGE_BYTES - DENSE_STORAGE_BYTES
 MAXIMUM_STORAGE_BUFFER_BYTES = 2 * (1 << 30)
 MIN_SPEEDUP = 4.0
 RAYON_THREADS = 16
@@ -416,6 +418,7 @@ def parse_outer_remainder_member(
         and arg_int(sequence, "planned_device_bytes") == STORAGE_BYTES
         and arg_int(sequence, "preinitialized_device_bytes") == STORAGE_BYTES
         and arg_int(sequence, "initialization_bytes") == STORAGE_BYTES
+        and arg_int(sequence, "attached_owned_bytes") == STORAGE_BYTES
         and len(set(sequence_storage_ids)) == STORAGE_BUFFERS
     )
     expected_table_elements = 2 * cutoff
@@ -549,6 +552,7 @@ def parse_outer_remainder_storage(
         and arg_string(storage, "initialization_mode") == "full"
         and arg_bool(storage, "admitted")
         and arg_bool(storage, "initialized")
+        and arg_string(storage, "fallback_reason") == "none"
         and arg_int(storage, "device_buffers") == STORAGE_BUFFERS
         and arg_int(storage, "initialization_bytes") == STORAGE_BYTES
         and initialization_gpu_active_ns <= initialization_wall_ns
@@ -778,6 +782,27 @@ def parse_outer_remainder_result(
             and trace_int(handoff_args.get("device_allocations"), "row_handoff.device_allocations") == 0
             and trace_int(release_args.get("row_upload_bytes"), "row_release.row_upload_bytes") == 0
             and trace_int(release_args.get("device_allocations"), "row_release.device_allocations") == 0
+            and trace_int(release_args.get("residual_row_bytes"), "row_release.residual_row_bytes")
+            == rows * RESIDUAL_ROW_BYTES
+            and trace_int(
+                release_args.get("remaining_sequence_storage_bytes"),
+                "row_release.remaining_sequence_storage_bytes",
+            )
+            == REMAINING_SEQUENCE_STORAGE_BYTES
+            and trace_int(
+                release_args.get("compact_release_bytes"),
+                "row_release.compact_release_bytes",
+            )
+            == 0
+            and trace_int(
+                release_args.get("released_owned_bytes"),
+                "row_release.released_owned_bytes",
+            )
+            == rows * RESIDUAL_ROW_BYTES + REMAINING_SEQUENCE_STORAGE_BYTES
+            and trace_bool(
+                release_args.get("release_completed"),
+                "row_release.release_completed",
+            )
             and trace_bool(release_args.get("residual_released"), "row_release.residual_released")
             and trace_bool(release_args.get("compact_retained"), "row_release.compact_retained")
             and trace_int(handoff_args.get("device_registry_id"), "row_handoff.device_registry_id", positive=True)
@@ -1025,7 +1050,7 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     if args.log_n != LOG_N or args.pairs != PAIRS:
-        raise ValueError("outer_remainder_v2 is frozen at log_n=26 and five pairs")
+        raise ValueError("outer_remainder_v3 is frozen at log_n=26 and five pairs")
     root = Path(__file__).resolve().parents[1]
     artifact_dir = args.artifact_dir or (
         root

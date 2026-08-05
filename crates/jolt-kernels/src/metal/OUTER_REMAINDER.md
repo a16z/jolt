@@ -65,8 +65,11 @@ the active sequence. There is no row upload or device-buffer allocation inside t
 timed remainder member.
 The CPU `SpartanOuterCarry` remains available until the adapter has made its
 pre-submit admission decision, so an ineligible trace or capacity rejection can
-select the optimized kernel. Any error after command submission aborts the proof;
-the adapter never retries from mutated state.
+select the optimized kernel. Capacity, initialization-command, and initialization
+timestamp failures are recoverable before protocol state changes; invalid geometry,
+configuration, pipeline, and state errors remain fatal. The fallback reason is
+recorded in the trace. Any error after command submission aborts the proof; the
+adapter never retries from mutated state.
 
 `with_metal_compute` installs the uni-skip producer and remainder consumer as one
 residency family. Replacing only one slot is legal at the type level but may retain
@@ -117,9 +120,10 @@ canonical R1CS-input evaluations. A threadgroup tile loads 64 packed rows and th
 `E_in` weights once into roughly 11 KiB of shared memory. Each SIMD group owns a
 uniform subset of columns while its lanes walk tile rows, avoiding the baseline's
 35-way divergent column switch. Eighteen boolean columns conditionally add the
-weight. Thirteen `u64` and four signed or unsigned `u128` columns use
-width-specialized products and block-local reduction. Each block result is scaled
-by one `E_out` value.
+weight. Thirteen `u64` and four signed or unsigned `u128` columns currently use the
+same generic wide product and block-local reduction. Specializing the 13 narrow
+columns without another row scan is the next arithmetic candidate. Each block
+result is scaled by one `E_out` value.
 
 At the baseline cap, the first dispatch writes `35 * 8192` partial field sums, or
 4.375 MiB. A second dispatch reduces by column, and the host reads exactly 35
@@ -199,7 +203,10 @@ polynomial, host challenge, running claim, final claim, all 35 openings, derived
 value, and transcript digest. Resource guards cover row and scratch identities,
 full initialization outside the member, zero member allocations/uploads, command
 and dispatch counts, per-round table lengths, one prefix-to-tail transition, and
-one 35-field readback.
+one 35-field readback. Evaluator schema `outer_remainder_v3` additionally verifies
+the active post-attach scratch identities and logical ownership released after the
+opening. It does not claim that Metal immediately returns cached allocations to the
+operating system.
 
 The production holdout remains five fresh alternating full-PIOP pairs at Fibonacci
 `2^26`, with both proofs verified and the same lifecycle topology. A local winner is
@@ -221,6 +228,12 @@ tuning protocol-visible behavior.
 
 The resident remap is now below the 4x floor but above the original 200-ms working
 target. Its dominant GPU-active phases are the 84.6-ms first message, 25.0-ms first
-bind, and 62.1-ms opening scan. The next search removes field multiplications from
-the flag-only `Az` fold and treats the opening scan as a separate occupancy problem;
-the controller should continue toward 5x when those ceilings remain plausible.
+bind, and 62.1-ms opening scan. Two analytical candidates were rejected on exact
+`2^26` pairs. Rewriting the flag-only `Az` fold as affine additions produced a
+218.015-ms member versus the retained 217.138-ms parent; its 85.367-ms first message
+also missed the parent's 84.641 ms. Reducing the opening accumulator array from nine
+to five slots increased opening GPU-active time from 62.075 ms to 85.088 ms and the
+member to 248.279 ms. Both changes were fully reverted. The next search halves the
+schoolbook limb products for the 13 true `u64` opening columns while preserving the
+single resident-row scan; the controller should continue toward 5x when measured
+headroom remains plausible.

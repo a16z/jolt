@@ -217,6 +217,7 @@ impl MetalBackend {
             initialization_mode = config.dispatch.storage_initialization.as_str(),
             admitted = tracing::field::Empty,
             initialized = tracing::field::Empty,
+            fallback_reason = tracing::field::Empty,
             device_buffers = tracing::field::Empty,
             initialization_bytes = tracing::field::Empty,
             initialization_wall_ns = tracing::field::Empty,
@@ -241,6 +242,7 @@ impl MetalBackend {
                 let ids = initialization.buffer_identities;
                 let _ = span.record("admitted", true);
                 let _ = span.record("initialized", initialization.bytes != 0);
+                let _ = span.record("fallback_reason", "none");
                 let _ = span.record("device_buffers", initialization.device_buffers);
                 let _ = span.record("initialization_bytes", initialization.bytes);
                 let _ = span.record(
@@ -268,18 +270,34 @@ impl MetalBackend {
                 session.park(storage);
                 Ok(())
             }
-            Err(error) if error.is_capacity_error() => {
-                let _ = span.record("admitted", false);
-                let _ = span.record("initialized", false);
-                tracing::warn!(
-                    target: "jolt::metal",
-                    error = %error,
-                    "outer-remainder Metal storage was not admitted"
-                );
-                Ok(())
-            }
-            Err(error) => Err(metal_prepare_error(error)),
+            Err(error) => match outer_remainder_storage_fallback_reason(&error) {
+                Some(reason) => {
+                    let _ = span.record("admitted", false);
+                    let _ = span.record("initialized", false);
+                    let _ = span.record("fallback_reason", reason);
+                    tracing::warn!(
+                        target: "jolt::metal",
+                        error = %error,
+                        fallback_reason = reason,
+                        "outer-remainder Metal storage preparation failed; using optimized CPU"
+                    );
+                    Ok(())
+                }
+                None => Err(metal_prepare_error(error)),
+            },
         }
+    }
+}
+
+fn outer_remainder_storage_fallback_reason(error: &MetalError) -> Option<&'static str> {
+    if error.is_capacity_error() {
+        return Some("capacity");
+    }
+    match error {
+        MetalError::CommandFailed(_) => Some("command_failed"),
+        MetalError::GpuTimestampLookup { .. } => Some("gpu_timestamp_lookup"),
+        MetalError::InvalidGpuTimestamps { .. } => Some("invalid_gpu_timestamps"),
+        _ => None,
     }
 }
 
@@ -378,10 +396,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         admitted_plan = Some(candidate);
                         break;
                     }
-                    Err(
-                        error @ (MetalError::BufferTooLong { .. }
-                        | MetalError::WorkingSetTooLarge { .. }),
-                    ) => {
+                    Err(error) if error.is_capacity_error() => {
                         tracing::warn!(
                             target: "jolt::metal",
                             error = %error,
@@ -675,39 +690,57 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             },
         )?;
         let storage_initialization = storage.initialization();
-        let storage_buffer_ids = storage_initialization.buffer_identities;
-        let sequence = {
-            let _span = tracing::info_span!(
-                "MetalOuterRemainder::sequence_prepare",
-                resident_rows = cycles,
-                rounds,
-                cutoff_elements = dispatch.cpu_tail_elements,
-                trace_cutoff_elements = self.config.spartan_outer_remainder.trace_cutoff_elements,
-                planned_device_bytes,
-                compact_rows_storage_id,
-                residual_rows_storage_id,
-                device_registry_id,
-                storage_reused = true,
-                storage_initialization_mode = dispatch.storage_initialization.as_str(),
-                preinitialized_device_bytes = planned_device_bytes,
-                initialization_bytes = storage_initialization.bytes,
-                storage_buffer_0 = storage_buffer_ids[0],
-                storage_buffer_1 = storage_buffer_ids[1],
-                storage_buffer_2 = storage_buffer_ids[2],
-                storage_buffer_3 = storage_buffer_ids[3],
-                storage_buffer_4 = storage_buffer_ids[4],
-                storage_buffer_5 = storage_buffer_ids[5],
-                storage_buffer_6 = storage_buffer_ids[6],
-                storage_buffer_7 = storage_buffer_ids[7],
-                storage_buffer_8 = storage_buffer_ids[8],
-                row_upload_bytes = 0u64,
-                full_domain_copy_dispatches = 0u64,
-                sequence_device_buffer_allocations = 0u64,
-                round_device_buffer_allocations = 0u64,
-            )
-            .entered();
-            storage.attach(rows).map_err(metal_prepare_error)?
-        };
+        let sequence_span = tracing::info_span!(
+            "MetalOuterRemainder::sequence_prepare",
+            resident_rows = cycles,
+            rounds,
+            cutoff_elements = dispatch.cpu_tail_elements,
+            trace_cutoff_elements = self.config.spartan_outer_remainder.trace_cutoff_elements,
+            planned_device_bytes,
+            compact_rows_storage_id,
+            residual_rows_storage_id,
+            device_registry_id,
+            storage_reused = true,
+            storage_initialization_mode = dispatch.storage_initialization.as_str(),
+            preinitialized_device_bytes = planned_device_bytes,
+            initialization_bytes = storage_initialization.bytes,
+            attached_owned_bytes = tracing::field::Empty,
+            storage_buffer_0 = tracing::field::Empty,
+            storage_buffer_1 = tracing::field::Empty,
+            storage_buffer_2 = tracing::field::Empty,
+            storage_buffer_3 = tracing::field::Empty,
+            storage_buffer_4 = tracing::field::Empty,
+            storage_buffer_5 = tracing::field::Empty,
+            storage_buffer_6 = tracing::field::Empty,
+            storage_buffer_7 = tracing::field::Empty,
+            storage_buffer_8 = tracing::field::Empty,
+            row_upload_bytes = 0u64,
+            full_domain_copy_dispatches = 0u64,
+            sequence_device_buffer_allocations = 0u64,
+            round_device_buffer_allocations = 0u64,
+        );
+        let _sequence_span = sequence_span.enter();
+        let sequence = storage.attach(rows).map_err(metal_prepare_error)?;
+        let attached = sequence.storage_stats().map_err(metal_prepare_error)?;
+        if attached.owned_bytes != planned_device_bytes
+            || attached.buffer_identities != storage_initialization.buffer_identities
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "attached outer-remainder storage changed allocation identity",
+            });
+        }
+        let attached_ids = attached.buffer_identities;
+        let _ = sequence_span.record("attached_owned_bytes", attached.owned_bytes);
+        let _ = sequence_span.record("storage_buffer_0", attached_ids[0]);
+        let _ = sequence_span.record("storage_buffer_1", attached_ids[1]);
+        let _ = sequence_span.record("storage_buffer_2", attached_ids[2]);
+        let _ = sequence_span.record("storage_buffer_3", attached_ids[3]);
+        let _ = sequence_span.record("storage_buffer_4", attached_ids[4]);
+        let _ = sequence_span.record("storage_buffer_5", attached_ids[5]);
+        let _ = sequence_span.record("storage_buffer_6", attached_ids[6]);
+        let _ = sequence_span.record("storage_buffer_7", attached_ids[7]);
+        let _ = sequence_span.record("storage_buffer_8", attached_ids[8]);
+        drop(_sequence_span);
 
         // Prepared storage and resident rows have now been consumed together.
         // Subsequent device failures are terminal because the sumcheck state
@@ -1230,6 +1263,29 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
             claimed
         };
+        let remaining_sequence_storage_bytes = sequence
+            .storage_stats()
+            .map_err(metal_output_error)?
+            .owned_bytes;
+        let compact_row_bytes =
+            instruction_input_row_bytes(self.resident_rows).map_err(metal_output_error)?;
+        let residual_row_bytes = spartan_outer_uniskip_row_bytes(self.resident_rows)
+            .map_err(metal_output_error)?
+            .checked_sub(compact_row_bytes)
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "outer-remainder residual row accounting underflowed",
+            })?;
+        let compact_release_bytes = if self.compact_retained {
+            0
+        } else {
+            compact_row_bytes
+        };
+        let released_owned_bytes = remaining_sequence_storage_bytes
+            .checked_add(residual_row_bytes)
+            .and_then(|bytes| bytes.checked_add(compact_release_bytes))
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "outer-remainder release byte count overflowed",
+            })?;
         let release = tracing::info_span!(
             "MetalOuterRemainder::row_release",
             compact_rows_storage_id = self.compact_rows_storage_id,
@@ -1238,7 +1294,12 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             resident_rows = self.resident_rows,
             row_upload_bytes = 0u64,
             device_allocations = 0u64,
-            residual_released = true,
+            residual_row_bytes,
+            remaining_sequence_storage_bytes,
+            compact_release_bytes,
+            released_owned_bytes,
+            release_completed = tracing::field::Empty,
+            residual_released = tracing::field::Empty,
             compact_retained = self.compact_retained,
         );
         {
@@ -1252,6 +1313,8 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                 });
             }
             drop(compact);
+            let _ = release.record("release_completed", true);
+            let _ = release.record("residual_released", true);
         }
         self.host.output_claims(inputs, &claimed)
     }
@@ -1283,10 +1346,11 @@ mod tests {
     use jolt_witness::BundleSource;
 
     use super::{
-        prepare_cpu_instruction_input_now, resident_row_admission_candidates,
-        resident_row_consumers, resident_row_working_set, use_metal_remainder, use_metal_stage1,
-        validate_resident_row_buffer, MetalOuterRemainderHost, OuterRemainder, ResidentRowPlan,
-        SpartanOuterDimensions, OUTER_DOMAIN, OUTER_VARIABLES,
+        outer_remainder_storage_fallback_reason, prepare_cpu_instruction_input_now,
+        resident_row_admission_candidates, resident_row_consumers, resident_row_working_set,
+        use_metal_remainder, use_metal_stage1, validate_resident_row_buffer,
+        MetalOuterRemainderHost, OuterRemainder, ResidentRowPlan, SpartanOuterDimensions,
+        OUTER_DOMAIN, OUTER_VARIABLES,
     };
     use crate::metal::solinas::{MetalError, OuterRemainderSequenceConfig};
     use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
@@ -1432,6 +1496,30 @@ mod tests {
                 maximum: 42_949_672_959,
             })
         ));
+    }
+
+    #[test]
+    fn storage_fallback_is_limited_to_recoverable_preprotocol_errors() {
+        assert_eq!(
+            outer_remainder_storage_fallback_reason(&MetalError::BufferTooLong {
+                requested: 2,
+                maximum: 1,
+            }),
+            Some("capacity")
+        );
+        assert_eq!(
+            outer_remainder_storage_fallback_reason(&MetalError::GpuTimestampLookup {
+                name: "test",
+                message: "missing".to_owned(),
+            }),
+            Some("gpu_timestamp_lookup")
+        );
+        assert_eq!(
+            outer_remainder_storage_fallback_reason(&MetalError::InvalidOuterRemainderConfig(
+                "invalid test configuration",
+            )),
+            None
+        );
     }
 
     #[test]
