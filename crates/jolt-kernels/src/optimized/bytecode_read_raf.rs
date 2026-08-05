@@ -49,9 +49,13 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+use jolt_field::AkitaField;
 use jolt_field::Field;
 #[cfg(feature = "akita")]
 use jolt_field::{AdditiveAccumulator, RingAccumulator};
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+use jolt_poly::eq_index_msb;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -843,16 +847,130 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
             degree: relation.degree(),
             #[cfg(feature = "akita")]
             algebra: self.algebra,
-            ra,
-            combined: Polynomial::new(combined),
-            #[cfg(feature = "akita")]
-            fused_inc,
-            #[cfg(feature = "akita")]
-            fused_combined,
+            tables: CycleTableState::Cpu(CycleCpuTables {
+                ra,
+                combined: Polynomial::new(combined),
+                #[cfg(feature = "akita")]
+                fused_inc,
+                #[cfg(feature = "akita")]
+                fused_combined,
+            }),
             output_openings,
             rounds_bound: 0,
         }))
     }
+}
+
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+pub(crate) struct MetalBytecodeCycleInputs {
+    pub stage_points: Vec<Vec<AkitaField>>,
+    pub stage_weights: Vec<AkitaField>,
+    pub entry_weight: AkitaField,
+    pub ra0: Vec<AkitaField>,
+    pub ra1: Vec<AkitaField>,
+}
+
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_bytecode_cycle_shell(
+    inputs: ProverInputs<'_, AkitaField, BytecodeReadRafCycle<AkitaField>>,
+    cpu_tail_algebra: BytecodeCycleAlgebra,
+) -> Result<(CycleKernel<AkitaField>, MetalBytecodeCycleInputs), KernelError<AkitaField>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let cycles = 1usize << dimensions.log_t();
+    let num_ra = dimensions.num_committed_ra_polys();
+    if relation.degree() != 4 || num_ra != 2 || relation.committed_chunk_bits() != 8 {
+        return Err(KernelError::InvariantViolation {
+            reason: "Metal bytecode cycle shell requires degree four and two 8-bit RA chunks",
+        });
+    }
+
+    let stage_points = relation.stage_cycle_points();
+    let base_stages = bytecode::BYTECODE_STAGE_GAMMA_COUNTS.len();
+    let num_stages = stage_points.len();
+    if base_stages != 5 || num_stages != 9 {
+        return Err(KernelError::InvariantViolation {
+            reason: "Metal bytecode cycle shell requires five base and four fused stages",
+        });
+    }
+    for point in stage_points {
+        if point.len() != dimensions.log_t() {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode stage cycle point has the wrong variable count",
+            });
+        }
+    }
+
+    let stage_values = relation.stage_values_at_r_address()?;
+    let gamma = inputs.challenges.gamma;
+    let mut gamma_powers = vec![AkitaField::one(); num_stages + 3];
+    for index in 1..gamma_powers.len() {
+        gamma_powers[index] = gamma_powers[index - 1] * gamma;
+    }
+    let r_address = relation.r_address();
+    let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
+    let mut stage_weights = (0..base_stages)
+        .map(|stage| gamma_powers[stage] * stage_values[stage])
+        .collect::<Vec<_>>();
+    stage_weights[0] += gamma_powers[num_stages] * int_at_r_address;
+    stage_weights[2] += gamma_powers[num_stages + 1] * int_at_r_address;
+    let store = stage_values[base_stages];
+    stage_weights.extend((base_stages..num_stages).map(|stage| {
+        let value = if stage < base_stages + 2 {
+            store
+        } else {
+            AkitaField::one() - store
+        };
+        gamma_powers[stage] * value
+    }));
+
+    let entry_index = u128::try_from(relation.entry_bytecode_index()).map_err(|_| {
+        KernelError::InvariantViolation {
+            reason: "bytecode entry index exceeds u128",
+        }
+    })?;
+    let entry_weight =
+        gamma_powers[num_stages + 2] * eq_index_msb::<AkitaField>(r_address, entry_index);
+    let chunks = committed_address_chunks(r_address, relation.committed_chunk_bits());
+    if chunks.len() != 2 || chunks.iter().any(|chunk| chunk.len() != 8) {
+        return Err(KernelError::InvariantViolation {
+            reason: "Metal bytecode cycle RA chunk geometry is not two by eight",
+        });
+    }
+    let selectors = (0..2)
+        .map(|index| RaChunkSelector::new(index, 2, 8).map_err(KernelError::from))
+        .collect::<Result<Vec<_>, _>>()?;
+    if selectors[0].shift() != 8 || selectors[1].shift() != 0 {
+        return Err(KernelError::InvariantViolation {
+            reason: "Metal bytecode cycle RA chunks are not most-significant first",
+        });
+    }
+    let ra0 = eq_table(&chunks[0]);
+    let ra1 = eq_table(&chunks[1]);
+    let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
+    if output_openings.len() != 2 {
+        return Err(KernelError::InvariantViolation {
+            reason: "Metal bytecode cycle output opening count is not two",
+        });
+    }
+
+    Ok((
+        CycleKernel {
+            rounds: relation.rounds(),
+            degree: relation.degree(),
+            algebra: cpu_tail_algebra,
+            tables: CycleTableState::Offloaded { elements: cycles },
+            output_openings,
+            rounds_bound: 0,
+        },
+        MetalBytecodeCycleInputs {
+            stage_points: stage_points.to_vec(),
+            stage_weights,
+            entry_weight,
+            ra0,
+            ra1,
+        },
+    ))
 }
 
 /// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
@@ -896,21 +1014,42 @@ impl ChunkIndexSource for BytecodePcChunks {
     }
 }
 
-struct CycleKernel<F: Field> {
+pub(crate) struct CycleKernel<F: Field> {
     rounds: usize,
     degree: usize,
     #[cfg(feature = "akita")]
     algebra: BytecodeCycleAlgebra,
+    tables: CycleTableState<F>,
+    /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
+    /// order (index-aligned with the RA tables).
+    output_openings: Vec<JoltOpeningId>,
+    rounds_bound: usize,
+}
+
+struct CycleCpuTables<F: Field> {
     ra: LazyFoldedRa<F, BytecodePcChunks>,
     combined: Polynomial<F>,
     #[cfg(feature = "akita")]
     fused_inc: LazyFusedInc<F>,
     #[cfg(feature = "akita")]
     fused_combined: Polynomial<F>,
-    /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
-    /// order (index-aligned with `ra`).
-    output_openings: Vec<JoltOpeningId>,
-    rounds_bound: usize,
+}
+
+enum CycleTableState<F: Field> {
+    Cpu(CycleCpuTables<F>),
+    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+    Offloaded {
+        elements: usize,
+    },
+}
+
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+pub(crate) struct BytecodeCycleDenseState {
+    pub combined: Vec<jolt_field::AkitaField>,
+    pub fused_combined: Vec<jolt_field::AkitaField>,
+    pub fused_inc: Vec<jolt_field::AkitaField>,
+    pub ra0: Vec<jolt_field::AkitaField>,
+    pub ra1: Vec<jolt_field::AkitaField>,
 }
 
 #[cfg(feature = "allocative")]
@@ -918,21 +1057,23 @@ impl<F: Field> allocative::Allocative for CycleKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::{poly_heap_bytes, vec_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("ra"), self.ra.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("combined"),
-            poly_heap_bytes(&self.combined),
-        );
-        #[cfg(feature = "akita")]
-        visitor.visit_simple(
-            allocative::Key::new("fused_inc"),
-            self.fused_inc.heap_bytes(),
-        );
-        #[cfg(feature = "akita")]
-        visitor.visit_simple(
-            allocative::Key::new("fused_combined"),
-            poly_heap_bytes(&self.fused_combined),
-        );
+        if let Ok(tables) = self.cpu_tables() {
+            visitor.visit_simple(allocative::Key::new("ra"), tables.ra.heap_bytes());
+            visitor.visit_simple(
+                allocative::Key::new("combined"),
+                poly_heap_bytes(&tables.combined),
+            );
+            #[cfg(feature = "akita")]
+            visitor.visit_simple(
+                allocative::Key::new("fused_inc"),
+                tables.fused_inc.heap_bytes(),
+            );
+            #[cfg(feature = "akita")]
+            visitor.visit_simple(
+                allocative::Key::new("fused_combined"),
+                poly_heap_bytes(&tables.fused_combined),
+            );
+        }
         visitor.visit_simple(
             allocative::Key::new("output_openings"),
             vec_heap_bytes(&self.output_openings),
@@ -941,7 +1082,7 @@ impl<F: Field> allocative::Allocative for CycleKernel<F> {
     }
 }
 
-impl<F: Field> CycleKernel<F> {
+impl<F: Field> CycleCpuTables<F> {
     fn bind(&mut self, challenge: F) {
         bind_all([&mut self.combined], challenge);
         #[cfg(feature = "akita")]
@@ -949,7 +1090,6 @@ impl<F: Field> CycleKernel<F> {
         self.ra.bind(challenge);
         #[cfg(feature = "akita")]
         self.fused_inc.bind(challenge);
-        self.rounds_bound += 1;
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
@@ -976,7 +1116,7 @@ impl<F: Field> CycleKernel<F> {
         acc[0] += ra_pairs
             .iter()
             .fold(coefficient_at_zero, |acc, (lo, _)| acc * *lo);
-        for (slot, t) in (2..=self.degree).enumerate() {
+        for (slot, t) in (2..=acc.len()).enumerate() {
             let t_value = F::from_u64(t as u64);
             let coefficient = c_lo + t_value * c_delta;
             #[cfg(feature = "akita")]
@@ -1113,6 +1253,117 @@ impl<F: Field> CycleKernel<F> {
     }
 }
 
+impl<F: Field> CycleKernel<F> {
+    fn cpu_tables(&self) -> Result<&CycleCpuTables<F>, SumcheckError<F>> {
+        match &self.tables {
+            CycleTableState::Cpu(tables) => Ok(tables),
+            #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+            CycleTableState::Offloaded { .. } => Err(bytecode_cycle_state_error(
+                "CPU bytecode cycle operation reached offloaded tables",
+            )),
+        }
+    }
+
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        match &mut self.tables {
+            CycleTableState::Cpu(tables) => tables.bind(challenge),
+            #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+            CycleTableState::Offloaded { .. } => {
+                return Err(bytecode_cycle_state_error(
+                    "CPU bytecode cycle bind reached offloaded tables",
+                ));
+            }
+        }
+        self.rounds_bound += 1;
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+impl CycleKernel<AkitaField> {
+    pub(crate) fn metal_message(
+        &self,
+        evals: [AkitaField; 4],
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        if self.degree != 4 {
+            return Err(bytecode_cycle_state_error(
+                "Metal bytecode cycle message requires degree four",
+            ));
+        }
+        let _ = self.metal_elements()?;
+        Ok(round_poly_from_skipped_evals(&evals, previous_claim))
+    }
+
+    pub(crate) fn metal_commit_bind(
+        &mut self,
+        device_elements: usize,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        let CycleTableState::Offloaded { elements } = &mut self.tables else {
+            return Err(bytecode_cycle_state_error(
+                "Metal bytecode cycle bind commit requires offloaded tables",
+            ));
+        };
+        if *elements < 2 || device_elements != *elements / 2 || self.rounds_bound >= self.rounds {
+            return Err(bytecode_cycle_state_error(
+                "Metal bytecode cycle bind commit disagrees with the resident length",
+            ));
+        }
+        *elements = device_elements;
+        self.rounds_bound += 1;
+        Ok(())
+    }
+
+    pub(crate) fn metal_restore_dense(
+        &mut self,
+        state: BytecodeCycleDenseState,
+    ) -> Result<(), SumcheckError<AkitaField>> {
+        let expected = self.metal_elements()?;
+        for (name, got) in [
+            ("combined", state.combined.len()),
+            ("fused_combined", state.fused_combined.len()),
+            ("fused_inc", state.fused_inc.len()),
+            ("ra0", state.ra0.len()),
+            ("ra1", state.ra1.len()),
+        ] {
+            if got != expected {
+                return Err(bytecode_cycle_state_error(format!(
+                    "Metal bytecode cycle {name} readback has length {got}, expected {expected}"
+                )));
+            }
+        }
+        self.tables = CycleTableState::Cpu(CycleCpuTables {
+            ra: LazyFoldedRa::Dense(vec![Polynomial::new(state.ra0), Polynomial::new(state.ra1)]),
+            combined: Polynomial::new(state.combined),
+            fused_inc: LazyFusedInc::Dense(Polynomial::new(state.fused_inc)),
+            fused_combined: Polynomial::new(state.fused_combined),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn metal_elements(&self) -> Result<usize, SumcheckError<AkitaField>> {
+        match &self.tables {
+            CycleTableState::Offloaded { elements } => Ok(*elements),
+            CycleTableState::Cpu(_) => Err(bytecode_cycle_state_error(
+                "Metal bytecode cycle operation reached restored CPU tables",
+            )),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn metal_rounds_bound(&self) -> usize {
+        self.rounds_bound
+    }
+}
+
+#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+fn bytecode_cycle_state_error<F: Field>(message: impl Into<String>) -> SumcheckError<F> {
+    SumcheckError::ComputeBackend {
+        backend: "bytecode-cycle",
+        message: message.into(),
+    }
+}
+
 #[cfg(feature = "akita")]
 #[inline]
 fn quadratic_grid<F: Field>(left: (F, F), right: (F, F)) -> [F; 4] {
@@ -1146,18 +1397,19 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
-        let half = self.combined.len() / 2;
+        let tables = self.cpu_tables()?;
+        let half = tables.combined.len() / 2;
         let slots = self.degree;
-        let num_ra = self.ra.num_polys();
+        let num_ra = tables.ra.num_polys();
 
         #[cfg(feature = "akita")]
         if num_ra == 2 && slots == 4 {
             let evals = match self.algebra {
-                BytecodeCycleAlgebra::Generic => self.target_evals::<false>(half),
-                BytecodeCycleAlgebra::Q10 => self.target_evals::<true>(half),
-                BytecodeCycleAlgebra::Q10Accum => self.q10_wide_evals(half),
+                BytecodeCycleAlgebra::Generic => tables.target_evals::<false>(half),
+                BytecodeCycleAlgebra::Q10 => tables.target_evals::<true>(half),
+                BytecodeCycleAlgebra::Q10Accum => tables.q10_wide_evals(half),
             };
             return Ok(round_poly_from_skipped_evals(&evals, previous_claim));
         }
@@ -1168,7 +1420,7 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
             .fold(
                 || (vec![F::zero(); slots], vec![(F::zero(), F::zero()); num_ra]),
                 |(mut acc, mut ra_pairs), y| {
-                    self.accumulate_group(y, &mut acc, &mut ra_pairs);
+                    tables.accumulate_group(y, &mut acc, &mut ra_pairs);
                     (acc, ra_pairs)
                 },
             )
@@ -1178,7 +1430,7 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
         let evals = {
             let mut ra_pairs = vec![(F::zero(), F::zero()); num_ra];
             (0..half).fold(vec![F::zero(); slots], |mut acc, y| {
-                self.accumulate_group(y, &mut acc, &mut ra_pairs);
+                tables.accumulate_group(y, &mut acc, &mut ra_pairs);
                 acc
             })
         };
@@ -1187,8 +1439,7 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -1204,12 +1455,23 @@ impl<F: Field> SumcheckKernel<F> for CycleKernel<F> {
                 remaining: self.rounds - self.rounds_bound,
             });
         }
-        let ra = &self.ra;
+        #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
+        let tables = match &self.tables {
+            CycleTableState::Cpu(tables) => tables,
+            CycleTableState::Offloaded { .. } => {
+                return Err(SumcheckKernelError::InvariantViolation {
+                    reason: "bytecode cycle output requested while tables remain offloaded",
+                });
+            }
+        };
+        #[cfg(not(all(feature = "akita", feature = "metal", target_os = "macos")))]
+        let CycleTableState::Cpu(tables) = &self.tables;
+        let ra = &tables.ra;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {
             #[cfg(feature = "akita")]
             if *id == bytecode::fused_inc_read_raf_opening() {
-                return Some(self.fused_inc.value(0));
+                return Some(tables.fused_inc.value(0));
             }
             output_openings
                 .iter()

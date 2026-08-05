@@ -49,6 +49,7 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
         let trace_elements = 1usize << inputs.relation.dimensions().log_t;
         let mut cpu = prepare_optimized_booleanity_cycle(session, witness, inputs)?;
         if trace_elements < self.config.booleanity_cycle.trace_cutoff_elements {
+            let _ = session.take::<BooleanityRows>();
             return Ok(Box::new(cpu));
         }
         let resident_rows = match session.take::<BooleanityRows>() {

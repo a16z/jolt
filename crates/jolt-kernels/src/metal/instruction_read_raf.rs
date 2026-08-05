@@ -8,6 +8,7 @@ use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
 use super::booleanity::BooleanityMetalConfig;
+use super::bytecode_read_raf::BytecodeReadRafMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows, MetalError, Product5Sequence,
@@ -55,6 +56,8 @@ pub struct MetalConfig {
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-6b Booleanity cycle settings.
     pub booleanity_cycle: BooleanityMetalConfig,
+    /// Stage-6b bytecode read-RAF cycle settings.
+    pub bytecode_read_raf_cycle: BytecodeReadRafMetalConfig,
     /// Stage-6b instruction RA virtualization settings.
     pub instruction_ra_virtualization: InstructionRaVirtualizationMetalConfig,
 }
@@ -81,6 +84,8 @@ impl MetalBackend {
             config.spartan_outer_uniskip.trace_cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
+            config.bytecode_read_raf_cycle.trace_cutoff_elements,
+            config.bytecode_read_raf_cycle.cutoff_elements,
             config.instruction_ra_virtualization.trace_cutoff_elements,
             config.instruction_ra_virtualization.cutoff_elements,
         ] {
@@ -110,6 +115,7 @@ where
     pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Self {
         self.spartan_outer_uniskip = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
+        self.bytecode_read_raf_cycle = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());
         self.instruction_ra_virtualization = Box::new(metal.clone());
         self
@@ -135,9 +141,12 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 .instruction_ra_virtualization
                 .trace_cutoff_elements;
         let cpu = prepare_metal_instruction_read_raf(session, witness, inputs, use_metal_address)?;
-        if trace_elements >= self.config.booleanity_cycle.trace_cutoff_elements
-            && session.state::<BooleanityRows>().is_none()
-        {
+        let resident_row_cutoff = self
+            .config
+            .booleanity_cycle
+            .trace_cutoff_elements
+            .min(self.config.bytecode_read_raf_cycle.trace_cutoff_elements);
+        if trace_elements >= resident_row_cutoff && session.state::<BooleanityRows>().is_none() {
             let rows = cpu
                 .metal_prepare_booleanity_rows(&self.context)
                 .map_err(KernelError::from)?;

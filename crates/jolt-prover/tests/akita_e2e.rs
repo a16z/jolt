@@ -253,6 +253,11 @@ mod muldiv {
                 cutoff_elements: 2,
                 ..Default::default()
             },
+            bytecode_read_raf_cycle: jolt_kernels::metal::BytecodeReadRafMetalConfig {
+                trace_cutoff_elements: 2,
+                cutoff_elements: 2,
+                ..Default::default()
+            },
             instruction_ra_virtualization:
                 jolt_kernels::metal::InstructionRaVirtualizationMetalConfig {
                     trace_cutoff_elements: 8,

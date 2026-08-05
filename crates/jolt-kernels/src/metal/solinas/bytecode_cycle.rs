@@ -175,6 +175,19 @@ impl SolinasMetal {
         elements_per_table: usize,
         config: BytecodeCycleSequenceConfig,
     ) -> Result<BytecodeCycleSequence, MetalError> {
+        self.prepare_empty_bytecode_cycle_sequence_with_partial_capacity(
+            elements_per_table,
+            config,
+            0,
+        )
+    }
+
+    pub(super) fn prepare_empty_bytecode_cycle_sequence_with_partial_capacity(
+        &self,
+        elements_per_table: usize,
+        config: BytecodeCycleSequenceConfig,
+        minimum_partial_capacity: usize,
+    ) -> Result<BytecodeCycleSequence, MetalError> {
         if self.offset != AKITA_OFFSET_FFFFA7F7 {
             return Err(MetalError::UnexpectedSolinasOffset {
                 expected: AKITA_OFFSET_FFFFA7F7,
@@ -189,6 +202,11 @@ impl SolinasMetal {
         }
         if config.max_threadgroups == 0 {
             return Err(MetalError::InvalidBytecodeCycleThreadgroups(0));
+        }
+        if minimum_partial_capacity > config.max_threadgroups {
+            return Err(MetalError::InvalidBytecodeCycleThreadgroups(
+                minimum_partial_capacity,
+            ));
         }
         let _ = u32::try_from(elements_per_table)
             .map_err(|_| MetalError::InputTooLong(elements_per_table))?;
@@ -229,7 +247,9 @@ impl SolinasMetal {
         let transition_partial_capacity = config
             .max_threadgroups
             .min((elements_per_table / 4).div_ceil(transition_threads_per_threadgroup));
-        let partial_capacity = message_partial_capacity.max(transition_partial_capacity);
+        let partial_capacity = message_partial_capacity
+            .max(transition_partial_capacity)
+            .max(minimum_partial_capacity);
         let partial_elements = BYTECODE_CYCLE_SAMPLES
             .checked_mul(partial_capacity)
             .ok_or(MetalError::InputTooLong(partial_capacity))?;
@@ -435,28 +455,7 @@ impl BytecodeCycleSequence {
         }
         self.gpu_active_time += Duration::from_secs_f64(end - start);
 
-        let mut reductions = threadgroups;
-        let mut final_in_a = true;
-        while reductions > 1 {
-            reductions = reductions.div_ceil(self.reduction_limits.thread_execution_width);
-            final_in_a = !final_in_a;
-        }
-        let final_buffer = if final_in_a {
-            &self.buffers.partial_a
-        } else {
-            &self.buffers.partial_b
-        };
-        // SAFETY: the main dispatch and recursive reductions have completed
-        // and leave four canonical fields at the selected buffer's front.
-        let values = unsafe {
-            slice::from_raw_parts(
-                final_buffer.contents().cast::<Fp128>(),
-                BYTECODE_CYCLE_SAMPLES,
-            )
-        };
-        self.context
-            .validate_inputs("bytecode cycle message", values)?;
-        let message = std::array::from_fn(|index| values[index].into_jolt_field());
+        let message = self.read_reduced_message(threadgroups)?;
         if challenge.is_some() {
             self.current_elements /= 2;
             self.source_in_a = !self.source_in_a;
@@ -464,7 +463,11 @@ impl BytecodeCycleSequence {
         Ok(message)
     }
 
-    fn encode_reductions(&self, encoder: &metal::ComputeCommandEncoderRef, mut input_count: usize) {
+    pub(super) fn encode_reductions(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        mut input_count: usize,
+    ) {
         let mut input_a = true;
         while input_count > 1 {
             let output_count = input_count.div_ceil(self.reduction_limits.thread_execution_width);
@@ -497,6 +500,41 @@ impl BytecodeCycleSequence {
             input_count = output_count;
             input_a = !input_a;
         }
+    }
+
+    pub(super) fn read_reduced_message(
+        &self,
+        mut input_count: usize,
+    ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
+        let mut final_in_a = true;
+        while input_count > 1 {
+            input_count = input_count.div_ceil(self.reduction_limits.thread_execution_width);
+            final_in_a = !final_in_a;
+        }
+        let final_buffer = if final_in_a {
+            &self.buffers.partial_a
+        } else {
+            &self.buffers.partial_b
+        };
+        // SAFETY: the main dispatch and recursive reductions have completed
+        // and leave four canonical fields at the selected buffer's front.
+        let values = unsafe {
+            slice::from_raw_parts(
+                final_buffer.contents().cast::<Fp128>(),
+                BYTECODE_CYCLE_SAMPLES,
+            )
+        };
+        self.context
+            .validate_inputs("bytecode cycle message", values)?;
+        Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
+    }
+
+    pub(super) fn initial_table_buffers(&self) -> &[Buffer] {
+        &self.buffers.tables_a
+    }
+
+    pub(super) fn partial_buffer(&self) -> &Buffer {
+        &self.buffers.partial_a
     }
 
     fn source_buffers(&self) -> &[Buffer] {

@@ -28,6 +28,7 @@ const BOOLEANITY_SOURCE: &str = include_str!("booleanity.metal");
 const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization.metal");
 const INSTRUCTION_RA_SEQUENCE_SOURCE: &str = include_str!("instruction_ra_sequence.metal");
 const BYTECODE_CYCLE_SOURCE: &str = include_str!("bytecode_cycle.metal");
+const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
 
 mod address_raf;
@@ -37,6 +38,7 @@ mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
 mod bytecode_cycle;
+mod bytecode_row;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
 mod product5;
@@ -61,6 +63,7 @@ pub use bytecode_cycle::{
     BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables,
     BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
+pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
 pub(crate) use instruction_ra_sequence::{
     instruction_ra_weight_capacities, InstructionRaSequenceStorage,
 };
@@ -381,6 +384,24 @@ pub enum MetalError {
         got: usize,
     },
     #[error(
+        "row-derived bytecode cycle needs {expected} stages, got {points} points and {weights} weights"
+    )]
+    BytecodeCycleRowStageCount {
+        expected: usize,
+        points: usize,
+        weights: usize,
+    },
+    #[error("row-derived bytecode cycle point {stage} has length {got}, expected {expected}")]
+    BytecodeCycleRowPointLength {
+        stage: usize,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "row-derived bytecode cycle needs {required} threadgroups, configured maximum is {maximum}"
+    )]
+    BytecodeCycleRowThreadgroups { required: usize, maximum: usize },
+    #[error(
         "five-factor kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
     InvalidProduct5TableLength { minimum: usize, got: usize },
@@ -474,7 +495,7 @@ impl SolinasMetal {
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
         let source = format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
         );
         let library = device
             .new_library_with_source(&source, &options)
