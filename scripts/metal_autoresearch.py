@@ -1307,7 +1307,7 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
                 "the OuterRemainder result contract requires every launch parameter"
             )
         if template.get("scope", {}).get("editable") != [
-            "crates/jolt-kernels/src/metal/solinas/outer_remainder.metal"
+            "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
         ]:
             raise ValueError("the OuterRemainder search scope must remain shader-only")
         final_validation = template.get("final_validation")

@@ -311,7 +311,7 @@
   "schema_version": 2,
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder.metal"
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
     ],
     "frozen": [
       "crates/jolt-field/src/akita.rs",
@@ -324,7 +324,8 @@
       "crates/jolt-kernels/src/metal/spartan_outer.rs",
       "crates/jolt-kernels/src/metal/solinas/fp128.metal",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.rs",
       "crates/jolt-kernels/src/metal/solinas/runtime.rs",
       "crates/jolt-kernels/src/metal/solinas/source.rs",
       "crates/jolt-kernels/src/optimized/spartan_outer.rs",

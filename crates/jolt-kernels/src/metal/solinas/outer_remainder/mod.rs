@@ -15,18 +15,20 @@ use super::{
     SolinasMetal, SpartanOuterUniskipRows,
 };
 
+mod shader;
+
+pub(super) use shader::SOURCE;
+use shader::{
+    MATERIALIZE_PIPELINE, OPENING_PIPELINE, REDUCTION_PIPELINE, STREAM_BIND_PIPELINE,
+    TRANSITION_PIPELINE,
+};
+
 pub const OUTER_REMAINDER_OPENINGS: usize = 35;
 const OUTER_REMAINDER_STREAM_ROWS: usize = 10;
 const OUTER_REMAINDER_TILE_ROWS: usize = 64;
 const OUTER_REMAINDER_ROW_WORDS: usize = 20;
 const SIMD_WIDTH: usize = 32;
 const DEVICE_BUFFERS: usize = 9;
-
-const MATERIALIZE_PIPELINE: &str = "solinas_outer_remainder_materialize_b_and_message";
-const STREAM_BIND_PIPELINE: &str = "solinas_outer_remainder_stream_bind_and_message";
-const TRANSITION_PIPELINE: &str = "solinas_outer_remainder_bind_and_message";
-const OPENING_PIPELINE: &str = "solinas_outer_remainder_opening_tiles";
-const REDUCTION_PIPELINE: &str = "solinas_outer_remainder_reduce_columns";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OuterRemainderSequenceConfig {

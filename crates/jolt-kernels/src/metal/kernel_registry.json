@@ -214,7 +214,7 @@
     },
     {
       "id": "outer_remainder",
-      "path": "crates/jolt-kernels/src/metal/solinas/outer_remainder.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
       "source_constant": "OUTER_REMAINDER_SOURCE",
       "entry_points": [
         "solinas_outer_remainder_materialize_b_and_message",
@@ -476,7 +476,7 @@
     {
       "id": "outer_remainder_sequence",
       "status": "production",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/outer_remainder.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
       "rust_symbols": ["OuterRemainderSequence", "OuterRemainderSequenceConfig"],
       "source_ids": ["fp128", "spartan_outer_uniskip", "outer_remainder"],
       "pipeline_entry_points": [

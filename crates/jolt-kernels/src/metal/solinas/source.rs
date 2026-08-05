@@ -15,7 +15,7 @@ const INSTRUCTION_INPUT_SOURCE: &str = include_str!("instruction_input.metal");
 const BYTECODE_CYCLE_SOURCE: &str = include_str!("bytecode_cycle.metal");
 const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
-const OUTER_REMAINDER_SOURCE: &str = include_str!("outer_remainder.metal");
+const OUTER_REMAINDER_SOURCE: &str = super::outer_remainder::SOURCE;
 
 const LIBRARY_SOURCE_FRAGMENTS: &[&str] = &[
     FIELD_SOURCE,
