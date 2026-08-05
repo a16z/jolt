@@ -68,6 +68,7 @@ const FLAG_LEFT_OPERAND_IS_RS1: u32 = 20;
 const FLAG_LEFT_OPERAND_IS_PC: u32 = 21;
 const FLAG_RIGHT_OPERAND_IS_RS2: u32 = 22;
 const FLAG_RIGHT_OPERAND_IS_IMM: u32 = 23;
+pub(crate) const FLAG_IS_FIRST: u32 = 24;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -202,6 +203,7 @@ impl SpartanOuterUniskipRow {
         set(FLAG_LEFT_OPERAND_IS_PC, row.left_operand_is_pc.0);
         set(FLAG_RIGHT_OPERAND_IS_RS2, row.right_operand_is_rs2.0);
         set(FLAG_RIGHT_OPERAND_IS_IMM, row.right_operand_is_imm.0);
+        set(FLAG_IS_FIRST, row.is_first_in_sequence.0);
         Self {
             words: [
                 row.left_instruction_input.0,
@@ -918,6 +920,9 @@ const _: () = assert!(size_of::<Params>() == 16);
 mod tests {
     use jolt_field::FromPrimitiveInt;
     use jolt_poly::EqPolynomial;
+    use jolt_witness::testing::with_sample_backend;
+    use jolt_witness::witnesses::OpFlag;
+    use jolt_witness::BundleSource;
 
     use super::*;
 
@@ -927,6 +932,22 @@ mod tests {
             spartan_outer_uniskip_row_bytes(1 << 26).unwrap(),
             10_737_418_240
         );
+    }
+
+    #[test]
+    fn packed_row_preserves_is_first_in_sequence() {
+        with_sample_backend(|backend| {
+            let mut rows: Vec<SpartanOuterRow> = backend.bundles().unwrap();
+            rows[0].is_first_in_sequence = OpFlag(true);
+            rows[1].is_first_in_sequence = OpFlag(false);
+            for row in rows.into_iter().take(2) {
+                let packed = SpartanOuterUniskipRow::from_spartan_outer(&row);
+                assert_eq!(
+                    (packed.words()[19] >> FLAG_IS_FIRST) & 1,
+                    u64::from(row.is_first_in_sequence.0)
+                );
+            }
+        });
     }
 
     #[test]
