@@ -2248,8 +2248,7 @@ dependencies = [
 [[package]]
 name = "dory-derive"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc9c63de9e3d87d5be179ce2ddde4f31d95c12c1f20ccdbc3a70b004813959ca"
+source = "git+https://github.com/a16z/dory?rev=6c6e5df6e838ae298bd980ab8310a760f2751a21#6c6e5df6e838ae298bd980ab8310a760f2751a21"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2259,8 +2258,7 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c6a5b6aa708db35ced06eeef3d2b4408004c76279091e0bc387f8fd42796555"
+source = "git+https://github.com/a16z/dory?rev=6c6e5df6e838ae298bd980ab8310a760f2751a21#6c6e5df6e838ae298bd980ab8310a760f2751a21"
 dependencies = [
  "ark-bn254 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3715,6 +3713,7 @@ dependencies = [
  "jolt-witness",
  "postcard",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

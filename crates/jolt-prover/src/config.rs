@@ -12,11 +12,15 @@ use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_field::FieldCore;
 use jolt_program::execution::{RamAccess, TraceRow};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use crate::ProverError;
 
 /// The full instruction lookup key width: two `XLEN`-bit operands.
 const LOOKUP_ADDRESS_BITS: usize = 2 * XLEN;
+#[cfg(feature = "parallel")]
+const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
 
 /// The proof-shape configuration for one proving run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +47,7 @@ impl ProverConfig {
     /// final no-op), size RAM to the highest touched (remapped) address or the
     /// program image extent, and pick the chunking policies from `log_T`.
     #[expect(non_snake_case)]
+    #[tracing::instrument(skip_all, name = "ProverConfig::derive", fields(rows = rows.len()))]
     pub fn derive<F: FieldCore>(
         rows: &[TraceRow],
         memory_layout: &MemoryLayout,
@@ -61,18 +66,25 @@ impl ProverConfig {
             });
         }
 
-        let touched = rows
-            .iter()
-            .filter_map(|row| {
-                let address = match row.ram_access {
-                    RamAccess::Read(read) => read.address,
-                    RamAccess::Write(write) => write.address,
-                    RamAccess::NoOp => 0,
-                };
-                remap_address(address, memory_layout)
-            })
-            .max()
-            .unwrap_or(0);
+        let touched_address = |row: &TraceRow| {
+            let address = match row.ram_access {
+                RamAccess::Read(read) => read.address,
+                RamAccess::Write(write) => write.address,
+                RamAccess::NoOp => 0,
+            };
+            remap_address(address, memory_layout)
+        };
+        #[cfg(feature = "parallel")]
+        let touched = if rows.len() >= PARALLEL_DERIVE_MIN_ROWS {
+            rows.par_iter()
+                .filter_map(touched_address)
+                .max()
+                .unwrap_or(0)
+        } else {
+            rows.iter().filter_map(touched_address).max().unwrap_or(0)
+        };
+        #[cfg(not(feature = "parallel"))]
+        let touched = rows.iter().filter_map(touched_address).max().unwrap_or(0);
         let image_end = remap_address(min_bytecode_address, memory_layout).unwrap_or(0)
             + program_image_len_words as u64
             + 1;

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{mem::MaybeUninit, path::PathBuf};
 
 use jolt_program::execution::{
     ExecutionBackend, JoltProgram, MemoryImage, OwnedTrace, RamAccess as ProgramRamAccess,
@@ -48,10 +48,7 @@ impl ExecutionBackend for TracerBackend {
             None,
         );
 
-        let rows = cycles
-            .into_iter()
-            .map(trace_row_from_cycle)
-            .collect::<Result<Vec<_>, _>>()?;
+        let rows = rows_from_cycles(cycles)?;
         Ok(TraceOutput::new(
             OwnedTrace::new(rows),
             device,
@@ -60,6 +57,116 @@ impl ExecutionBackend for TracerBackend {
             }),
         ))
     }
+}
+
+const MIN_ROWS_PER_CONVERSION_WORKER: usize = 1 << 14;
+
+fn rows_from_cycles(cycles: Vec<Cycle>) -> Result<Vec<TraceRow>, TraceError> {
+    let workers = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(256)
+        .min(cycles.len().div_ceil(MIN_ROWS_PER_CONVERSION_WORKER).max(1));
+    rows_from_cycles_with_workers(cycles, workers)
+}
+
+fn rows_from_cycles_with_workers(
+    cycles: Vec<Cycle>,
+    workers: usize,
+) -> Result<Vec<TraceRow>, TraceError> {
+    let _span = tracing::info_span!(
+        "trace_rows_from_cycles",
+        rows = cycles.len(),
+        workers = workers
+    )
+    .entered();
+    if workers <= 1 || cycles.len() < 2 {
+        return cycles.into_iter().map(trace_row_from_cycle).collect();
+    }
+
+    struct InitializedRows<'a> {
+        rows: &'a mut [MaybeUninit<TraceRow>],
+        len: usize,
+        keep: bool,
+    }
+
+    impl Drop for InitializedRows<'_> {
+        fn drop(&mut self) {
+            if !self.keep {
+                for row in &mut self.rows[..self.len] {
+                    // SAFETY: this worker increments `len` after initializing each slot.
+                    unsafe { row.assume_init_drop() };
+                }
+            }
+        }
+    }
+
+    let len = cycles.len();
+    let chunk_len = len.div_ceil(workers);
+    let mut rows = Vec::with_capacity(len);
+    // SAFETY: `MaybeUninit<TraceRow>` permits uninitialized elements; workers fill all slots.
+    unsafe { rows.set_len(len) };
+
+    let statuses = std::thread::scope(|scope| {
+        let handles: Vec<_> = cycles
+            .chunks(chunk_len)
+            .zip(rows.chunks_mut(chunk_len))
+            .map(|(cycles, rows)| {
+                scope.spawn(move || {
+                    let mut initialized = InitializedRows {
+                        rows,
+                        len: 0,
+                        keep: false,
+                    };
+                    for (index, cycle) in cycles.iter().enumerate() {
+                        let row = trace_row_from_cycle(*cycle)?;
+                        initialized.rows[index].write(row);
+                        initialized.len += 1;
+                    }
+                    initialized.keep = true;
+                    Ok::<usize, TraceError>(initialized.len)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join())
+            .collect::<Vec<_>>()
+    });
+
+    if statuses.iter().any(|status| !matches!(status, Ok(Ok(_)))) {
+        let mut error = None;
+        let mut panic = None;
+        for (status, chunk) in statuses.into_iter().zip(rows.chunks_mut(chunk_len)) {
+            match status {
+                Ok(Ok(initialized)) => {
+                    for row in &mut chunk[..initialized] {
+                        // SAFETY: the successful worker initialized exactly this prefix.
+                        unsafe { row.assume_init_drop() };
+                    }
+                }
+                Ok(Err(worker_error)) => {
+                    error.get_or_insert(worker_error);
+                }
+                Err(worker_panic) => {
+                    panic.get_or_insert(worker_panic);
+                }
+            };
+        }
+        if let Some(worker_panic) = panic {
+            std::panic::resume_unwind(worker_panic);
+        }
+        if let Some(worker_error) = error {
+            return Err(worker_error);
+        }
+        unreachable!("failed cycle conversion without an error or panic");
+    }
+
+    let capacity = rows.capacity();
+    let pointer = rows.as_mut_ptr().cast::<TraceRow>();
+    std::mem::forget(rows);
+    // SAFETY: every slot was initialized exactly once; `MaybeUninit<T>` has T's layout.
+    Ok(unsafe { Vec::from_raw_parts(pointer, len, capacity) })
 }
 
 fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
@@ -115,9 +222,8 @@ impl From<RAMAccess> for ProgramRamAccess {
 }
 
 #[cfg(test)]
-#[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
+#[expect(clippy::unwrap_used)]
 mod tests {
-    #[cfg(feature = "field-inline")]
     use crate::{
         emulator::{cpu::Cpu, default_terminal::DefaultTerminal},
         instruction::Instruction,
@@ -126,6 +232,20 @@ mod tests {
     use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
+
+    #[test]
+    fn parallel_cycle_conversion_matches_serial() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        let instruction = Instruction::decode(0x0010_0093, 0x8000_0000, false).unwrap();
+        let mut trace = Vec::new();
+        instruction.trace(&mut cpu, Some(&mut trace));
+        assert_eq!(trace.len(), 1);
+
+        let cycles = vec![trace[0]; 1 << 15];
+        let serial = super::rows_from_cycles_with_workers(cycles.clone(), 1).unwrap();
+        let parallel = super::rows_from_cycles_with_workers(cycles, 4).unwrap();
+        assert_eq!(parallel, serial);
+    }
 
     #[cfg(feature = "field-inline")]
     fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {

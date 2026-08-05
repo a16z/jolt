@@ -142,12 +142,18 @@ impl CommitmentScheme for DoryCommitmentScheme {
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
-        // The prepared-point cache in dory-pcs is global and can only be initialized once.
-        // In unit tests, multiple setups with different sizes are created, so initializing the
-        // cache with a small setup can break later tests that need more generators.
-        // We therefore disable cache initialization in `cfg(test)` builds.
+        // The setup vectors are already the exact square-grid prefix consumed by Dory:
+        // 2^ceil(max_num_vars / 2) generators per group. dory-pcs prepares both vectors in
+        // parallel; no larger cache or prefix-specific API is needed.
+        //
+        // The prepared-point cache is global. Unit tests create multiple setup sizes, so a
+        // smaller setup could leave later tests with too few generators; keep initialization
+        // disabled in `cfg(test)` builds.
         #[cfg(not(test))]
-        DoryGlobals::init_prepared_cache(&setup.g1_vec, &setup.g2_vec);
+        {
+            let _span = trace_span!("init_prepared_cache").entered();
+            DoryGlobals::init_prepared_cache(&setup.g1_vec, &setup.g2_vec);
+        }
 
         setup
     }
