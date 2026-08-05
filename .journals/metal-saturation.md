@@ -50,14 +50,16 @@ baseline's window; baseline-window model ≈ 64 s.
 - Generic radix-4/round-pairing outside st4: slots already fuse bind+eval;
   packed challenges are rank-2 weights, illegal in Dory opening points.
 - `malloc_zone_pressure_relief` on freed huge regions: no-op.
+- Typed-Dory quaternary packing (st6b/st7): PRICED NO-GO — likely gain
+  ~0.08 s @2^27 (best +0.40, worst −0.45; st7 negligible) vs 18-25
+  lane-days protocol/PCS blast radius; shrinking w1/w2/w4/w8 rounds leave
+  nothing to halve. Oracle soundness GO stands if geometry ever changes.
 - st6b gather residual kernels: measured NO-GO — width-1/2/4 lazy gathers
   are the mass (75/43/31 ms @2^24); row-batching and SIMD-reduction
   prototypes both overlapped baseline. Attribution harness retained.
 
 ## Parked doors
 
-- Typed-Dory quaternary factor (st6b/st7 packing): oracle GO w/ conditions
-  (ec0b50d07d63); re-price against post-adoption-fix st6b anatomy.
 - st0 bg12 E-cluster commit + starvation guard: fail-unsafe without guard;
   needs explicit mandate + 2^27 cert.
 - Radix-4 packed round oracle-SOUND (3dbb9c10e48a Q1/Q2/Q4) if a PCS-clean
@@ -143,3 +145,4 @@ Wave-2-window-equivalent extrapolation: 69.63 × (78.46/95.11) ≈ **57.4 s
 (~2.34 MHz)** — labeled cross-window model; absolute record attempt
 deferred to the next fresh window (post-reboot). 69.63 s remains the best
 absolute measured. Wave 3 CLOSED.
+- **Typed-Dory packing: NO-GO, door closed.** Likely +0.08 s @2^27 vs 18-25 lane-days. `3f96921a3` — shrinking lazy widths leave no round mass to halve; descriptor cost eats the remainder.
