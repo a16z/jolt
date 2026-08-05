@@ -60,7 +60,7 @@ pub use runtime::{
 #[cfg(feature = "bench-utils")]
 pub use slots::{
     registers_rw_bench as st4_registers_rw_bench, InstructionInputRound0Fixture,
-    IrrPhaseScanFixture, SpartanOuterClaimsFixture,
+    IrrPhaseScanFixture, IrrSuffixScanFixture, SpartanOuterClaimsFixture,
 };
 pub use slots::{
     MetalBooleanityCycle, MetalBytecodeReadRafCycle, MetalHammingWeightClaimReduction,
