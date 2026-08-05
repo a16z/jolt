@@ -63,6 +63,18 @@ pub(crate) fn outer_remainder_sequence_storage_bytes_with_config(
     Ok(storage_geometry(rows, config)?.owned_bytes)
 }
 
+pub(crate) fn outer_remainder_sequence_max_buffer_bytes_with_config(
+    rows: usize,
+    config: OuterRemainderSequenceConfig,
+) -> Result<u64, MetalError> {
+    storage_geometry(rows, config)?
+        .element_counts
+        .into_iter()
+        .try_fold(0, |maximum, elements| {
+            Ok(maximum.max(field_bytes(elements)?))
+        })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OuterRemainderPhase {
     BeforeMaterialize,
@@ -155,9 +167,13 @@ struct Threads {
     reduction: usize,
 }
 
-struct Buffers {
+struct DenseBuffers {
     state_a: Buffer,
     state_b: Buffer,
+}
+
+struct Buffers {
+    dense: Option<DenseBuffers>,
     e_in: Buffer,
     e_out: Buffer,
     lagrange: Buffer,
@@ -168,22 +184,24 @@ struct Buffers {
 }
 
 impl Buffers {
-    fn all(&self) -> [&Buffer; DEVICE_BUFFERS] {
-        [
-            &self.state_a,
-            &self.state_b,
-            &self.e_in,
-            &self.e_out,
-            &self.lagrange,
-            &self.message_partials,
-            &self.message_output,
-            &self.opening_partials,
-            &self.opening_output,
-        ]
-    }
-
     fn identities(&self) -> [usize; DEVICE_BUFFERS] {
-        self.all().map(|buffer| buffer.as_ptr() as usize)
+        let dense = self.dense.as_ref().map_or([0, 0], |dense| {
+            [
+                dense.state_a.as_ptr() as usize,
+                dense.state_b.as_ptr() as usize,
+            ]
+        });
+        [
+            dense[0],
+            dense[1],
+            self.e_in.as_ptr() as usize,
+            self.e_out.as_ptr() as usize,
+            self.lagrange.as_ptr() as usize,
+            self.message_partials.as_ptr() as usize,
+            self.message_output.as_ptr() as usize,
+            self.opening_partials.as_ptr() as usize,
+            self.opening_output.as_ptr() as usize,
+        ]
     }
 }
 
@@ -195,6 +213,7 @@ struct Storage {
     buffers: Buffers,
     weight_capacity: usize,
     max_threadgroups: usize,
+    dense_bytes: u64,
     owned_bytes: u64,
 }
 
@@ -207,6 +226,21 @@ pub struct OuterRemainderSequence {
     dense_in_a: bool,
     gpu_active: Duration,
     dispatch_counts: OuterRemainderDispatchCounts,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for OuterRemainderSequence {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_storage"),
+            self.storage.owned_bytes as usize,
+        );
+        if let Some(rows) = &self.rows {
+            visitor.visit_field(allocative::Key::new("resident_rows"), rows);
+        }
+        visitor.exit();
+    }
 }
 
 impl SolinasMetal {
@@ -293,9 +327,14 @@ impl SolinasMetal {
         self.validate_additional_working_set(outer_remainder_sequence_storage_bytes_with_config(
             cycles, config,
         )?)?;
+        let dense_bytes = field_bytes(current_elements)?
+            .checked_mul(2)
+            .ok_or(MetalError::InputTooLong(current_elements))?;
         let buffers = Buffers {
-            state_a: new_field_buffer(self, current_elements)?,
-            state_b: new_field_buffer(self, current_elements)?,
+            dense: Some(DenseBuffers {
+                state_a: new_field_buffer(self, current_elements)?,
+                state_b: new_field_buffer(self, current_elements)?,
+            }),
             e_in: new_field_buffer(self, weight_capacity)?,
             e_out: new_field_buffer(self, weight_capacity)?,
             lagrange: new_field_buffer(self, OUTER_REMAINDER_STREAM_ROWS)?,
@@ -314,6 +353,7 @@ impl SolinasMetal {
                 buffers,
                 weight_capacity,
                 max_threadgroups,
+                dense_bytes,
                 owned_bytes: geometry.owned_bytes,
             },
             rows: Some(rows),
@@ -346,6 +386,7 @@ impl OuterRemainderSequence {
         let blocks = e_out.len().min(self.storage.max_threadgroups);
         let params = self.phase_params(blocks, e_in.len(), e_out.len())?;
         let rows = self.rows()?;
+        let dense = self.dense_storage()?;
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
         autoreleasepool(|| {
@@ -356,7 +397,7 @@ impl OuterRemainderSequence {
             encoder.set_buffer(2, Some(&self.storage.buffers.lagrange), 0);
             encoder.set_buffer(3, Some(&self.storage.buffers.e_in), 0);
             encoder.set_buffer(4, Some(&self.storage.buffers.e_out), 0);
-            encoder.set_buffer(5, Some(&self.storage.buffers.state_a), 0);
+            encoder.set_buffer(5, Some(&dense.state_a), 0);
             encoder.set_buffer(6, Some(&self.storage.buffers.message_partials), 0);
             set_inline_bytes(encoder, 7, &params);
             encoder.set_threadgroup_memory_length(
@@ -414,14 +455,15 @@ impl OuterRemainderSequence {
             .context
             .validate_inputs("outer challenge", slice::from_ref(&challenge))?;
         let rows = self.rows()?;
+        let dense = self.dense_storage()?;
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.storage.pipelines.stream_bind);
             encoder.set_buffer(0, Some(rows.instruction_input_buffer()), 0);
-            encoder.set_buffer(1, Some(&self.storage.buffers.state_a), 0);
-            encoder.set_buffer(2, Some(&self.storage.buffers.state_b), 0);
+            encoder.set_buffer(1, Some(&dense.state_a), 0);
+            encoder.set_buffer(2, Some(&dense.state_b), 0);
             encoder.set_buffer(3, Some(&self.storage.buffers.lagrange), 0);
             encoder.set_buffer(4, Some(&self.storage.buffers.e_in), 0);
             encoder.set_buffer(5, Some(&self.storage.buffers.e_out), 0);
@@ -482,7 +524,7 @@ impl OuterRemainderSequence {
         self.storage
             .context
             .validate_inputs("outer challenge", slice::from_ref(&challenge))?;
-        let (source, destination) = self.dense_buffers();
+        let (source, destination) = self.dense_buffers()?;
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
         autoreleasepool(|| {
@@ -540,7 +582,7 @@ impl OuterRemainderSequence {
                 bz: bz.len(),
             });
         }
-        let source = self.dense_source();
+        let source = self.dense_source()?.clone();
         // SAFETY: all commands are completed synchronously, the active buffer has
         // exactly two initialized fields per current cell, and shared storage is
         // CPU-visible for the lifetime of `self`.
@@ -554,6 +596,25 @@ impl OuterRemainderSequence {
             az[index] = pair[0].into_jolt_field();
             bz[index] = pair[1].into_jolt_field();
         }
+        drop(source);
+        let dense =
+            self.storage
+                .buffers
+                .dense
+                .take()
+                .ok_or(MetalError::InvalidOuterRemainderState {
+                    expected: "resident dense buffers before CPU-tail release",
+                    got: self.phase.name(),
+                })?;
+        self.storage.owned_bytes = self
+            .storage
+            .owned_bytes
+            .checked_sub(self.storage.dense_bytes)
+            .ok_or(MetalError::InvalidOuterRemainderState {
+                expected: "owned storage at least as large as dense storage",
+                got: self.phase.name(),
+            })?;
+        drop(dense);
         self.phase = OuterRemainderPhase::Exported;
         self.dispatch_counts.cpu_tail_exports += 1;
         Ok(())
@@ -760,19 +821,32 @@ impl OuterRemainderSequence {
         })
     }
 
-    fn dense_source(&self) -> &Buffer {
+    fn dense_storage(&self) -> Result<&DenseBuffers, MetalError> {
+        self.storage
+            .buffers
+            .dense
+            .as_ref()
+            .ok_or(MetalError::InvalidOuterRemainderState {
+                expected: "resident dense buffers",
+                got: self.phase.name(),
+            })
+    }
+
+    fn dense_source(&self) -> Result<&Buffer, MetalError> {
+        let dense = self.dense_storage()?;
         if self.dense_in_a {
-            &self.storage.buffers.state_a
+            Ok(&dense.state_a)
         } else {
-            &self.storage.buffers.state_b
+            Ok(&dense.state_b)
         }
     }
 
-    fn dense_buffers(&self) -> (&Buffer, &Buffer) {
+    fn dense_buffers(&self) -> Result<(&Buffer, &Buffer), MetalError> {
+        let dense = self.dense_storage()?;
         if self.dense_in_a {
-            (&self.storage.buffers.state_a, &self.storage.buffers.state_b)
+            Ok((&dense.state_a, &dense.state_b))
         } else {
-            (&self.storage.buffers.state_b, &self.storage.buffers.state_a)
+            Ok((&dense.state_b, &dense.state_a))
         }
     }
 

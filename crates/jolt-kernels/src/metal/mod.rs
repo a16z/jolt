@@ -19,4 +19,4 @@ pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 #[cfg(test)]
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
 pub use instruction_read_raf::{InstructionReadRafMetalConfig, MetalBackend, MetalConfig};
-pub use spartan_outer::SpartanOuterUniskipMetalConfig;
+pub use spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};

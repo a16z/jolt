@@ -36,6 +36,14 @@ pub enum SumcheckKernelError<F: FieldCore> {
     #[error("final table values requested with {remaining} unbound rounds")]
     NotFullyBound { remaining: usize },
 
+    /// A device command failed after the typed kernel was prepared. This is
+    /// terminal: callers must not retry from already-mutated sumcheck state.
+    #[error("{backend} compute backend failed: {message}")]
+    ComputeBackend {
+        backend: &'static str,
+        message: String,
+    },
+
     /// A bound derived table's final value disagrees with the verifier's
     /// `derive_output_term` at the bound point — the hand-written table
     /// resolver drifted from the relation's scalar path.

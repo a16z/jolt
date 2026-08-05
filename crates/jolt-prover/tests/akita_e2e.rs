@@ -243,6 +243,13 @@ mod muldiv {
                 trace_cutoff_elements: 2,
                 ..Default::default()
             },
+            spartan_outer_remainder: jolt_kernels::metal::SpartanOuterRemainderMetalConfig {
+                trace_cutoff_elements: 4,
+                dispatch: jolt_kernels::metal::solinas::OuterRemainderSequenceConfig {
+                    cpu_tail_elements: 2,
+                    ..Default::default()
+                },
+            },
             instruction_input: jolt_kernels::metal::InstructionInputMetalConfig {
                 trace_cutoff_elements: 2,
                 cutoff_elements: 2,

@@ -1,24 +1,47 @@
+use std::collections::BTreeMap;
+
+use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
+use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
+use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
+use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::AkitaField;
-use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::SumcheckError;
+use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::{
+    ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
+    SumcheckOutputClaims, SumcheckOutputPoints,
+};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::instruction_input::PreparedInstructionInput;
 use super::instruction_read_raf::{MetalBackend, MetalConfig};
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
-    instruction_ra_weight_capacities, spartan_outer_uniskip_invocation_bytes,
+    instruction_ra_weight_capacities, outer_remainder_sequence_max_buffer_bytes_with_config,
+    outer_remainder_sequence_storage_bytes_with_config, spartan_outer_uniskip_invocation_bytes,
     spartan_outer_uniskip_row_bytes, InstructionInputRows, InstructionRaSequenceStorage,
-    MetalError, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
+    MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
+    SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
 use crate::optimized::spartan_outer::{
     prepare_metal_instruction_input_witness_rows, prepare_metal_spartan_outer_uniskip,
-    prepare_metal_spartan_outer_witness_rows, OptimizedOuterUniskip,
+    prepare_metal_spartan_outer_witness_rows, take_metal_spartan_outer_tau,
+    OptimizedOuterRemainder, OptimizedOuterUniskip,
 };
 use crate::uniskip::UniskipKernel;
-use crate::{KernelError, ProofSession};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
+
+const OUTER_DOMAIN: usize = OUTER_UNISKIP_DOMAIN_SIZE;
+const OUTER_VARIABLES: usize = 35;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanOuterUniskipMetalConfig {
@@ -26,8 +49,31 @@ pub struct SpartanOuterUniskipMetalConfig {
     pub dispatch: SpartanOuterUniskipConfig,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpartanOuterRemainderMetalConfig {
+    pub trace_cutoff_elements: usize,
+    pub dispatch: OuterRemainderSequenceConfig,
+}
+
+impl Default for SpartanOuterRemainderMetalConfig {
+    fn default() -> Self {
+        Self {
+            trace_cutoff_elements: 1 << 18,
+            dispatch: OuterRemainderSequenceConfig::default(),
+        }
+    }
+}
+
+fn use_metal_remainder(cycles: usize, config: &MetalConfig, resident: bool) -> bool {
+    cycles >= 4 && cycles >= config.spartan_outer_remainder.trace_cutoff_elements && resident
+}
+
 fn resident_row_consumers(cycles: usize, config: &MetalConfig) -> (bool, bool) {
-    let stage1 = cycles >= config.spartan_outer_uniskip.trace_cutoff_elements;
+    let stage1 = cycles
+        >= config
+            .spartan_outer_uniskip
+            .trace_cutoff_elements
+            .min(config.spartan_outer_remainder.trace_cutoff_elements);
     let instruction_input = cycles >= config.instruction_input.trace_cutoff_elements
         && cycles > config.instruction_input.cutoff_elements;
     (stage1, instruction_input)
@@ -37,25 +83,36 @@ fn resident_row_working_set(
     cycles: usize,
     stage1: bool,
     instruction_input: bool,
+    metal_uniskip: bool,
+    metal_remainder: bool,
+    remainder_dispatch: OuterRemainderSequenceConfig,
 ) -> Result<u64, MetalError> {
-    let mut bytes = if stage1 {
+    let row_bytes = if stage1 {
         spartan_outer_uniskip_row_bytes(cycles)?
     } else if instruction_input {
         instruction_input_row_bytes(cycles)?
     } else {
         0
     };
-    if stage1 {
-        bytes = bytes
-            .checked_add(spartan_outer_uniskip_invocation_bytes(cycles)?)
-            .ok_or(MetalError::InputTooLong(cycles))?;
-    }
-    if instruction_input {
-        bytes = bytes
-            .checked_add(instruction_input_sequence_storage_bytes(cycles)?)
-            .ok_or(MetalError::InputTooLong(cycles))?;
-    }
-    Ok(bytes)
+    let instruction_input_bytes = if instruction_input {
+        instruction_input_sequence_storage_bytes(cycles)?
+    } else {
+        0
+    };
+    let uniskip_bytes = if metal_uniskip {
+        spartan_outer_uniskip_invocation_bytes(cycles)?
+    } else {
+        0
+    };
+    let remainder_bytes = if metal_remainder {
+        outer_remainder_sequence_storage_bytes_with_config(cycles, remainder_dispatch)?
+    } else {
+        0
+    };
+    row_bytes
+        .checked_add(instruction_input_bytes)
+        .and_then(|bytes| bytes.checked_add(uniskip_bytes.max(remainder_bytes)))
+        .ok_or(MetalError::InputTooLong(cycles))
 }
 
 fn validate_resident_row_buffer(row_bytes: u64, maximum: u64) -> Result<(), MetalError> {
@@ -185,10 +242,32 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             validate_resident_row_buffer(residual_bytes, device.max_buffer_length)
                         })
                         .and_then(|()| {
+                            if candidate.stage1
+                                && cycles
+                                    >= self.config.spartan_outer_remainder.trace_cutoff_elements
+                            {
+                                validate_resident_row_buffer(
+                                    outer_remainder_sequence_max_buffer_bytes_with_config(
+                                        cycles,
+                                        self.config.spartan_outer_remainder.dispatch,
+                                    )?,
+                                    device.max_buffer_length,
+                                )?;
+                            }
                             resident_row_working_set(
                                 cycles,
                                 candidate.stage1,
                                 candidate.instruction_input,
+                                candidate.stage1
+                                    && cycles
+                                        >= self.config.spartan_outer_uniskip.trace_cutoff_elements,
+                                candidate.stage1
+                                    && cycles
+                                        >= self
+                                            .config
+                                            .spartan_outer_remainder
+                                            .trace_cutoff_elements,
+                                self.config.spartan_outer_remainder.dispatch,
                             )
                         })
                         .and_then(|additional| {
@@ -263,7 +342,10 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let cycles = 1usize << log_t;
         let resident_rows = session.state::<SpartanOuterUniskipRows>().is_some();
         if !use_metal_stage1(cycles, &self.config, resident_rows) {
-            drop(session.take::<SpartanOuterUniskipRows>());
+            let retain_for_remainder = use_metal_remainder(cycles, &self.config, resident_rows);
+            if !retain_for_remainder {
+                drop(session.take::<SpartanOuterUniskipRows>());
+            }
             if prepare_cpu_instruction_input_now(
                 session.state::<PreparedInstructionInput>().is_some(),
                 false,
@@ -274,10 +356,11 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                     OuterRemainder<AkitaField>,
                 >>::prepare_witness(&OptimizedOuterUniskip, session, log_t, witness)?;
             }
-            return <OptimizedOuterUniskip as UniskipKernel<
+            <OptimizedOuterUniskip as UniskipKernel<
                 AkitaField,
                 OuterRemainder<AkitaField>,
-            >>::prepare(&OptimizedOuterUniskip, session, log_t, tau, witness);
+            >>::prepare(&OptimizedOuterUniskip, session, log_t, tau, witness)?;
+            return Ok(());
         }
         let stage1_compact_rows_storage_id = session
             .state::<SpartanOuterUniskipRows>()
@@ -345,16 +428,723 @@ fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
     .into()
 }
 
+fn metal_round_error(error: MetalError) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    }
+}
+
+fn metal_output_error(error: MetalError) -> SumcheckKernelError<AkitaField> {
+    SumcheckKernelError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    }
+}
+
+fn invalid_outer_remainder_state(expected: &'static str, got: &'static str) -> MetalError {
+    MetalError::InvalidOuterRemainderState { expected, got }
+}
+
+impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+        inputs: ProverInputs<'_, AkitaField, OuterRemainder<AkitaField>>,
+    ) -> Result<
+        Box<dyn SumcheckKernel<AkitaField, Relation = OuterRemainder<AkitaField>>>,
+        KernelError<AkitaField>,
+    > {
+        let rounds = inputs.relation.rounds();
+        let log_t = rounds
+            .checked_sub(1)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Spartan outer remainder has no stream round",
+            })?;
+        let cycles = 1usize
+            .checked_shl(log_t as u32)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Spartan outer remainder trace length overflows usize",
+            })?;
+        let resident = session.state::<SpartanOuterUniskipRows>().is_some();
+        if !use_metal_remainder(cycles, &self.config, resident) {
+            drop(session.take::<SpartanOuterUniskipRows>());
+            return OptimizedOuterRemainder.prepare(session, witness, inputs);
+        }
+
+        let rows =
+            session
+                .state::<SpartanOuterUniskipRows>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "Metal outer remainder lost its resident row owner",
+                })?;
+        if rows.len() != cycles || rows.device_registry_id() != self.context.device_registry_id() {
+            return Err(KernelError::InvariantViolation {
+                reason: "Metal outer remainder resident rows have the wrong shape or device",
+            });
+        }
+        let dispatch = self.config.spartan_outer_remainder.dispatch;
+        let device = self.context.device_info();
+        let additional = outer_remainder_sequence_storage_bytes_with_config(cycles, dispatch)
+            .and_then(|bytes| {
+                let maximum_buffer =
+                    outer_remainder_sequence_max_buffer_bytes_with_config(cycles, dispatch)?;
+                validate_resident_row_buffer(maximum_buffer, device.max_buffer_length)?;
+                self.context.validate_additional_working_set(bytes)?;
+                Ok(bytes)
+            });
+        let planned_device_bytes = match additional {
+            Ok(bytes) => bytes,
+            Err(error) if error.is_capacity_error() => {
+                tracing::warn!(
+                    target: "jolt::metal",
+                    error = %error,
+                    cycles,
+                    "Metal outer remainder was not admitted; using optimized CPU"
+                );
+                drop(session.take::<SpartanOuterUniskipRows>());
+                return OptimizedOuterRemainder.prepare(session, witness, inputs);
+            }
+            Err(error) => return Err(metal_prepare_error(error)),
+        };
+
+        let rows =
+            session
+                .take::<SpartanOuterUniskipRows>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "Metal outer remainder rows disappeared after admission",
+                })?;
+        let compact_rows_storage_id = rows.instruction_input_allocation_identity();
+        let residual_rows_storage_id = rows.allocation_identity();
+        let device_registry_id = rows.device_registry_id();
+        let sequence = {
+            let _span = tracing::info_span!(
+                "MetalOuterRemainder::sequence_prepare",
+                cycles,
+                planned_device_bytes,
+                compact_rows_storage_id,
+                residual_rows_storage_id,
+                device_registry_id,
+                row_upload_bytes = 0u64,
+                full_domain_copy_dispatches = 0u64,
+            )
+            .entered();
+            match self
+                .context
+                .prepare_outer_remainder_sequence(rows, dispatch)
+            {
+                Ok(sequence) => sequence,
+                Err(error) if error.is_capacity_error() => {
+                    tracing::warn!(
+                        target: "jolt::metal",
+                        error = %error,
+                        cycles,
+                        "Metal outer remainder allocation failed; using optimized CPU"
+                    );
+                    return OptimizedOuterRemainder.prepare(session, witness, inputs);
+                }
+                Err(error) => return Err(metal_prepare_error(error)),
+            }
+        };
+
+        // The CPU carry remains parked through every fallible capacity check.
+        // Once storage exists, subsequent device failures are terminal because
+        // the sumcheck state may already have advanced.
+        let tau = take_metal_spartan_outer_tau(session, log_t)?;
+        let host = MetalOuterRemainderHost::new(log_t, &tau, inputs.relation.uniskip_challenge())?;
+        let mut sequence = sequence;
+        let endpoints = {
+            let _span = tracing::info_span!("MetalOuterRemainder::materialize").entered();
+            let (e_in, e_out) = host.current_weights();
+            sequence
+                .materialize_and_first_message(host.stream_lagrange(), e_in, e_out)
+                .map_err(metal_prepare_error)?
+        };
+        #[cfg(any(test, feature = "test-utils"))]
+        let _ = self
+            .outer_remainder_sequences
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tail_elements = cycles.min(
+            self.config
+                .spartan_outer_remainder
+                .dispatch
+                .cpu_tail_elements,
+        );
+        Ok(Box::new(MetalOuterRemainderKernel {
+            host,
+            sequence: Some(sequence),
+            cpu_tail: None,
+            host_tail: Some((
+                vec![AkitaField::zero(); tail_elements],
+                vec![AkitaField::zero(); tail_elements],
+            )),
+            pending_endpoints: Some((endpoints[0], endpoints[1])),
+            compact_rows_storage_id,
+            cpu_tail_elements: tail_elements,
+        }))
+    }
+}
+
+struct MetalOuterCpuTail {
+    az: Polynomial<AkitaField>,
+    bz: Polynomial<AkitaField>,
+    scratch: Vec<AkitaField>,
+}
+
+impl MetalOuterCpuTail {
+    fn new(az: Vec<AkitaField>, bz: Vec<AkitaField>) -> Result<Self, SumcheckError<AkitaField>> {
+        if az.len() != bz.len() || az.is_empty() || !az.len().is_power_of_two() {
+            return Err(metal_round_error(invalid_outer_remainder_state(
+                "equal nonempty power-of-two CPU-tail tables",
+                "inconsistent CPU-tail table lengths",
+            )));
+        }
+        Ok(Self {
+            az: Polynomial::new(az),
+            bz: Polynomial::new(bz),
+            scratch: Vec::new(),
+        })
+    }
+
+    fn bind(&mut self, challenge: AkitaField) {
+        self.az
+            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+        self.bz
+            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+    }
+
+    fn endpoints(
+        &self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<(AkitaField, AkitaField), SumcheckError<AkitaField>> {
+        let az = self.az.evals();
+        let bz = self.bz.evals();
+        let in_len = e_in.len();
+        let expected = e_out
+            .len()
+            .checked_mul(in_len)
+            .and_then(|pairs| pairs.checked_mul(2));
+        if expected != Some(az.len()) || bz.len() != az.len() {
+            return Err(metal_round_error(invalid_outer_remainder_state(
+                "CPU-tail Az/Bz lengths equal 2 * e_in * e_out",
+                "inconsistent CPU-tail weight geometry",
+            )));
+        }
+        let block = |x_out: usize| {
+            let mut q_zero = AkitaField::zero();
+            let mut q_infinity = AkitaField::zero();
+            for (x_in, &e) in e_in.iter().enumerate() {
+                let pair = 2 * (x_out * in_len + x_in);
+                let az_low = az[pair];
+                let az_high = az[pair + 1];
+                let bz_low = bz[pair];
+                let bz_high = bz[pair + 1];
+                q_zero += e * az_low * bz_low;
+                q_infinity += e * (az_high - az_low) * (bz_high - bz_low);
+            }
+            (e_out[x_out] * q_zero, e_out[x_out] * q_infinity)
+        };
+        let add = |left: (AkitaField, AkitaField), right: (AkitaField, AkitaField)| {
+            (left.0 + right.0, left.1 + right.1)
+        };
+        #[cfg(feature = "parallel")]
+        let endpoints = (0..e_out.len())
+            .into_par_iter()
+            .map(block)
+            .reduce(|| (AkitaField::zero(), AkitaField::zero()), add);
+        #[cfg(not(feature = "parallel"))]
+        let endpoints = (0..e_out.len())
+            .map(block)
+            .fold((AkitaField::zero(), AkitaField::zero()), add);
+        Ok(endpoints)
+    }
+}
+
+struct MetalOuterDerived {
+    az_weights: [Vec<AkitaField>; 2],
+    bz_weights: [Vec<AkitaField>; 2],
+    az_constant: [AkitaField; 2],
+    bz_constant: [AkitaField; 2],
+}
+
+struct MetalOuterRemainderHost {
+    rounds: usize,
+    split_eq: GruenSplitEqPolynomial<AkitaField>,
+    challenges: Vec<AkitaField>,
+    opening_ids: Vec<JoltOpeningId>,
+    derived: MetalOuterDerived,
+    stream_lagrange: [AkitaField; OUTER_DOMAIN],
+}
+
+impl MetalOuterRemainderHost {
+    fn new(
+        log_t: usize,
+        tau: &[AkitaField],
+        uniskip_challenge: AkitaField,
+    ) -> Result<Self, KernelError<AkitaField>> {
+        if tau.len() != log_t + 2 {
+            return Err(KernelError::InvariantViolation {
+                reason: "Spartan outer tau must carry log_t + 2 challenges",
+            });
+        }
+        let tau_high = tau[log_t + 1];
+        let tau_low = &tau[..=log_t];
+        let stream_lagrange: [AkitaField; OUTER_DOMAIN] =
+            centered_lagrange_evals(OUTER_DOMAIN, uniskip_challenge)?
+                .try_into()
+                .map_err(|_| KernelError::InvariantViolation {
+                    reason: "Spartan outer stream Lagrange vector has the wrong length",
+                })?;
+        let kernel = centered_lagrange_kernel(OUTER_DOMAIN, tau_high, uniskip_challenge)?;
+        let split_eq = GruenSplitEqPolynomial::new_with_scaling(
+            tau_low,
+            BindingOrder::LowToHigh,
+            Some(kernel),
+        );
+        let opening_ids = SpartanOuterDimensions::rv64(log_t)
+            .variables()
+            .iter()
+            .map(|&variable| outer_opening(variable))
+            .collect::<Vec<_>>();
+        let matrices = spartan_outer_constraints::<AkitaField>();
+        let columns = (1..=opening_ids.len()).collect::<Vec<_>>();
+        let mut derived = MetalOuterDerived {
+            az_weights: [Vec::new(), Vec::new()],
+            bz_weights: [Vec::new(), Vec::new()],
+            az_constant: [AkitaField::zero(); 2],
+            bz_constant: [AkitaField::zero(); 2],
+        };
+        for (index, stream) in [AkitaField::zero(), AkitaField::one()]
+            .into_iter()
+            .enumerate()
+        {
+            let weights = spartan_outer_row_weights(uniskip_challenge, stream)?;
+            let weighted = matrices.weighted_columns(&weights, &columns)?;
+            let constants = matrices.public_column_contributions(&weights, 0, AkitaField::one())?;
+            derived.az_weights[index] = weighted.a;
+            derived.bz_weights[index] = weighted.b;
+            derived.az_constant[index] = constants.a;
+            derived.bz_constant[index] = constants.b;
+        }
+        Ok(Self {
+            rounds: log_t + 1,
+            split_eq,
+            challenges: Vec::with_capacity(log_t + 1),
+            opening_ids,
+            derived,
+            stream_lagrange,
+        })
+    }
+
+    fn stream_lagrange(&self) -> &[AkitaField; OUTER_DOMAIN] {
+        &self.stream_lagrange
+    }
+
+    fn current_weights(&self) -> (&[AkitaField], &[AkitaField]) {
+        (self.split_eq.e_in_current(), self.split_eq.e_out_current())
+    }
+
+    fn bind(&mut self, challenge: AkitaField) {
+        self.split_eq.bind(challenge);
+        self.challenges.push(challenge);
+    }
+
+    fn polynomial(
+        &self,
+        endpoints: (AkitaField, AkitaField),
+        previous_claim: AkitaField,
+    ) -> UnivariatePoly<AkitaField> {
+        self.split_eq
+            .gruen_poly_deg_3(endpoints.0, endpoints.1, previous_claim)
+    }
+
+    fn opening_weights(&self) -> (Vec<AkitaField>, Vec<AkitaField>) {
+        let point = self.challenges[1..]
+            .iter()
+            .rev()
+            .copied()
+            .collect::<Vec<_>>();
+        let split = point.len() / 2;
+        let (out_point, in_point) = point.split_at(split);
+        (
+            EqPolynomial::evals(in_point, None),
+            EqPolynomial::evals(out_point, None),
+        )
+    }
+
+    fn output_claims(
+        &self,
+        inputs: &SumcheckInputClaims<AkitaField, OuterRemainder<AkitaField>>,
+        claimed: &[AkitaField; OUTER_VARIABLES],
+    ) -> Result<
+        SumcheckOutputClaims<AkitaField, OuterRemainder<AkitaField>>,
+        SumcheckKernelError<AkitaField>,
+    > {
+        let claims: BTreeMap<JoltOpeningId, AkitaField> = self
+            .opening_ids
+            .iter()
+            .copied()
+            .zip(claimed.iter().copied())
+            .collect();
+        SumcheckOutputClaims::<AkitaField, OuterRemainder<AkitaField>>::from_opening_values(|id| {
+            claims.get(id).copied().or_else(|| inputs.resolve_input(id))
+        })
+        .map_err(SumcheckKernelError::from)
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &OuterRemainder<AkitaField>,
+        input_points: &SumcheckInputPoints<AkitaField, OuterRemainder<AkitaField>>,
+        output_points: &SumcheckOutputPoints<AkitaField, OuterRemainder<AkitaField>>,
+        challenges: &ConcreteSumcheckChallenges<AkitaField, OuterRemainder<AkitaField>>,
+    ) -> Result<(), SumcheckKernelError<AkitaField>> {
+        let remaining = self.rounds - self.challenges.len();
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        let stream = self.challenges[0];
+        let blend = |pair: [&AkitaField; 2]| *pair[0] + stream * (*pair[1] - *pair[0]);
+        let ids = std::iter::once(SpartanOuterPublic::TauKernel)
+            .chain((0..self.opening_ids.len()).map(SpartanOuterPublic::AzWeight))
+            .chain((0..self.opening_ids.len()).map(SpartanOuterPublic::BzWeight))
+            .chain([
+                SpartanOuterPublic::AzConstant,
+                SpartanOuterPublic::BzConstant,
+            ]);
+        for public_id in ids {
+            let id = JoltDerivedId::from(public_id);
+            let expected =
+                match relation.derive_output_term(&id, input_points, output_points, challenges) {
+                    Ok(value) => value,
+                    Err(VerifierError::MissingStageClaimDerived { .. }) => continue,
+                    Err(error) => return Err(error.into()),
+                };
+            let got = match public_id {
+                SpartanOuterPublic::TauKernel => self.split_eq.current_scalar(),
+                SpartanOuterPublic::AzWeight(index) => blend([
+                    &self.derived.az_weights[0][index],
+                    &self.derived.az_weights[1][index],
+                ]),
+                SpartanOuterPublic::BzWeight(index) => blend([
+                    &self.derived.bz_weights[0][index],
+                    &self.derived.bz_weights[1][index],
+                ]),
+                SpartanOuterPublic::AzConstant => {
+                    blend([&self.derived.az_constant[0], &self.derived.az_constant[1]])
+                }
+                SpartanOuterPublic::BzConstant => {
+                    blend([&self.derived.bz_constant[0], &self.derived.bz_constant[1]])
+                }
+            };
+            if got != expected {
+                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+            }
+        }
+        Ok(())
+    }
+}
+
+struct MetalOuterRemainderKernel {
+    host: MetalOuterRemainderHost,
+    sequence: Option<OuterRemainderSequence>,
+    cpu_tail: Option<MetalOuterCpuTail>,
+    host_tail: Option<(Vec<AkitaField>, Vec<AkitaField>)>,
+    pending_endpoints: Option<(AkitaField, AkitaField)>,
+    compact_rows_storage_id: usize,
+    cpu_tail_elements: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalOuterRemainderKernel {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(sequence) = &self.sequence {
+            visitor.visit_field(allocative::Key::new("sequence"), sequence);
+        }
+        if let Some((az, bz)) = &self.host_tail {
+            visitor.visit_simple(
+                allocative::Key::new("host_tail"),
+                crate::backend::vec_heap_bytes(az) + crate::backend::vec_heap_bytes(bz),
+            );
+        }
+        visitor.exit();
+    }
+}
+
+impl MetalOuterRemainderKernel {
+    fn restore_cpu_tail(&mut self) -> Result<(), SumcheckError<AkitaField>> {
+        let _span = tracing::info_span!("MetalOuterRemainder::readback").entered();
+        let sequence = self.sequence.as_mut().ok_or_else(|| {
+            metal_round_error(invalid_outer_remainder_state(
+                "resident sequence during CPU-tail export",
+                "absent device sequence",
+            ))
+        })?;
+        let current = sequence.current_elements();
+        let (mut az, mut bz) = self.host_tail.take().ok_or_else(|| {
+            metal_round_error(invalid_outer_remainder_state(
+                "available CPU-tail buffers",
+                "already-consumed CPU-tail buffers",
+            ))
+        })?;
+        if current > az.len() || current > bz.len() {
+            return Err(metal_round_error(invalid_outer_remainder_state(
+                "resident table within CPU-tail capacity",
+                "oversized resident table",
+            )));
+        }
+        sequence
+            .export_cpu_tail(&mut az[..current], &mut bz[..current])
+            .map_err(metal_round_error)?;
+        az.truncate(current);
+        bz.truncate(current);
+        self.cpu_tail = Some(MetalOuterCpuTail::new(az, bz)?);
+        Ok(())
+    }
+}
+
+impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
+    fn num_rounds(&self) -> usize {
+        self.host.rounds
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<AkitaField>,
+        _round: usize,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        let endpoints = if let Some(challenge) = bind {
+            let should_handoff = self.cpu_tail.is_none()
+                && self.sequence.as_ref().is_some_and(|sequence| {
+                    sequence.phase() == OuterRemainderPhase::Interleaved
+                        && sequence.current_elements() <= self.cpu_tail_elements
+                });
+            if should_handoff {
+                self.restore_cpu_tail()?;
+            }
+            self.host.bind(challenge);
+            let (e_in, e_out) = self.host.current_weights();
+            if let Some(tail) = self.cpu_tail.as_mut() {
+                let _span = tracing::info_span!("MetalOuterRemainder::cpu_tail").entered();
+                tail.bind(challenge);
+                tail.endpoints(e_in, e_out)?
+            } else {
+                let _span = tracing::info_span!("MetalOuterRemainder::resident_round").entered();
+                let sequence = self.sequence.as_mut().ok_or_else(|| {
+                    metal_round_error(invalid_outer_remainder_state(
+                        "resident sequence before a Metal round",
+                        "absent device sequence",
+                    ))
+                })?;
+                let output = if self.host.challenges.len() == 1 {
+                    sequence.bind_stream_and_message(
+                        challenge,
+                        self.host.stream_lagrange(),
+                        e_in,
+                        e_out,
+                    )
+                } else {
+                    sequence.bind_and_message(challenge, e_in, e_out)
+                }
+                .map_err(metal_round_error)?;
+                (output[0], output[1])
+            }
+        } else {
+            self.pending_endpoints.take().ok_or_else(|| {
+                metal_round_error(invalid_outer_remainder_state(
+                    "pending first remainder message",
+                    "already-consumed first remainder message",
+                ))
+            })?
+        };
+        Ok(self.host.polynomial(endpoints, previous_claim))
+    }
+
+    fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
+        if self.cpu_tail.is_none() {
+            self.restore_cpu_tail()?;
+        }
+        self.host.bind(bind);
+        self.cpu_tail
+            .as_mut()
+            .ok_or_else(|| {
+                metal_round_error(invalid_outer_remainder_state(
+                    "CPU tail before the terminal bind",
+                    "absent CPU tail",
+                ))
+            })?
+            .bind(bind);
+        Ok(())
+    }
+}
+
+impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
+    type Relation = OuterRemainder<AkitaField>;
+
+    fn output_claims(
+        &mut self,
+        inputs: &SumcheckInputClaims<AkitaField, Self::Relation>,
+    ) -> Result<SumcheckOutputClaims<AkitaField, Self::Relation>, SumcheckKernelError<AkitaField>>
+    {
+        let remaining = self.host.rounds - self.host.challenges.len();
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        let (e_in, e_out) = self.host.opening_weights();
+        let mut sequence = self
+            .sequence
+            .take()
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "Metal outer remainder released resident rows before openings",
+            })?;
+        let claimed = {
+            let _span = tracing::info_span!("MetalOuterRemainder::opening_scan").entered();
+            sequence
+                .evaluate_openings(&e_in, &e_out)
+                .map_err(metal_output_error)?
+        };
+        let compact = sequence
+            .into_instruction_input_rows()
+            .map_err(metal_output_error)?;
+        if compact.allocation_identity() != self.compact_rows_storage_id {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "Metal outer remainder changed the shared compact allocation",
+            });
+        }
+        let _release = tracing::info_span!(
+            "MetalOuterRemainder::row_release",
+            compact_rows_storage_id = self.compact_rows_storage_id,
+            residual_releases = 1u64,
+            compact_copy_bytes = 0u64,
+        )
+        .entered();
+        drop(compact);
+        self.host.output_claims(inputs, &claimed)
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &Self::Relation,
+        input_points: &SumcheckInputPoints<AkitaField, Self::Relation>,
+        output_points: &SumcheckOutputPoints<AkitaField, Self::Relation>,
+        challenges: &ConcreteSumcheckChallenges<AkitaField, Self::Relation>,
+    ) -> Result<(), SumcheckKernelError<AkitaField>> {
+        self.host
+            .validate_derived_tables(relation, input_points, output_points, challenges)
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_claims::{NoChallenges, OutputClaims as _};
+    use jolt_poly::lagrange::centered_lagrange_kernel;
+    use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
+    use jolt_verifier::stages::relations::ConcreteSumcheck as _;
+    use jolt_verifier::stages::stage1::outer_remainder::{
+        outer_remainder_input_values_from_uniskip_output, OuterRemainderInputClaims,
+    };
+    use jolt_witness::testing::with_sample_backend_at_log_t;
+    use jolt_witness::witnesses::{SpartanOuterRow, ToField};
+    use jolt_witness::BundleSource;
+
     use super::{
         prepare_cpu_instruction_input_now, resident_row_admission_candidates,
-        resident_row_consumers, resident_row_working_set, use_metal_stage1,
-        validate_resident_row_buffer, ResidentRowPlan,
+        resident_row_consumers, resident_row_working_set, use_metal_remainder, use_metal_stage1,
+        validate_resident_row_buffer, MetalOuterRemainderHost, OuterRemainder, ResidentRowPlan,
+        SpartanOuterDimensions, OUTER_DOMAIN, OUTER_VARIABLES,
     };
-    use crate::metal::solinas::MetalError;
-    use crate::metal::MetalConfig;
+    use crate::metal::solinas::{MetalError, OuterRemainderSequenceConfig};
+    use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
+    use crate::optimized::harness::run_lockstep;
+    use crate::optimized::spartan_outer::{
+        prepare_metal_spartan_outer_witness_rows, OptimizedOuterRemainder, OptimizedOuterUniskip,
+    };
+    use crate::uniskip::UniskipKernel;
+    use crate::{PrepareKernel, ProofSession, ProverInputs};
+    use jolt_field::AkitaField;
+    use jolt_poly::EqPolynomial;
+
+    fn variable_field_value(row: &SpartanOuterRow, index: usize) -> AkitaField {
+        match index {
+            0 => row.left_instruction_input.to_field(),
+            1 => row.right_instruction_input.to_field(),
+            2 => row.product.to_field(),
+            3 => row.should_branch.to_field(),
+            4 => row.pc.to_field(),
+            5 => row.unexpanded_pc.to_field(),
+            6 => row.imm.to_field(),
+            7 => row.ram_address.to_field(),
+            8 => row.rs1_value.to_field(),
+            9 => row.rs2_value.to_field(),
+            10 => row.rd_write_value.to_field(),
+            11 => row.ram_read_value.to_field(),
+            12 => row.ram_write_value.to_field(),
+            13 => row.left_lookup_operand.to_field(),
+            14 => row.right_lookup_operand.to_field(),
+            15 => row.next_unexpanded_pc.to_field(),
+            16 => row.next_pc.to_field(),
+            17 => row.next_is_virtual.to_field(),
+            18 => row.next_is_first_in_sequence.to_field(),
+            19 => row.lookup_output.to_field(),
+            20 => row.should_jump.to_field(),
+            21 => row.add_operands.to_field(),
+            22 => row.subtract_operands.to_field(),
+            23 => row.multiply_operands.to_field(),
+            24 => row.load.to_field(),
+            25 => row.store.to_field(),
+            26 => row.jump.to_field(),
+            27 => row.write_lookup_output_to_rd.to_field(),
+            28 => row.virtual_instruction.to_field(),
+            29 => row.assert_flag.to_field(),
+            30 => row.do_not_update_unexpanded_pc.to_field(),
+            31 => row.advice.to_field(),
+            32 => row.is_compressed.to_field(),
+            33 => row.is_first_in_sequence.to_field(),
+            34 => row.is_last_in_sequence.to_field(),
+            _ => unreachable!("35 canonical R1CS inputs"),
+        }
+    }
+
+    fn true_input_claim(
+        rows: &[SpartanOuterRow],
+        tau: &[AkitaField],
+        r0: AkitaField,
+        log_t: usize,
+    ) -> AkitaField {
+        let tau_low = &tau[..=log_t];
+        let tau_high = tau[log_t + 1];
+        let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
+        let kernel = centered_lagrange_kernel(OUTER_DOMAIN, tau_high, r0).unwrap();
+        let matrices = spartan_outer_constraints::<AkitaField>();
+        let columns = (1..=OUTER_VARIABLES).collect::<Vec<_>>();
+        let mut total = AkitaField::zero();
+        for (stream_index, stream) in [AkitaField::zero(), AkitaField::one()]
+            .into_iter()
+            .enumerate()
+        {
+            let weights = spartan_outer_row_weights(r0, stream).unwrap();
+            let weighted = matrices.weighted_columns(&weights, &columns).unwrap();
+            let constants = matrices
+                .public_column_contributions(&weights, 0, AkitaField::one())
+                .unwrap();
+            for (cycle, row) in rows.iter().enumerate() {
+                let mut az = constants.a;
+                let mut bz = constants.b;
+                for (index, (&a, &b)) in weighted.a.iter().zip(&weighted.b).enumerate() {
+                    let value = variable_field_value(row, index);
+                    az += a * value;
+                    bz += b * value;
+                }
+                total += eq[(cycle << 1) | stream_index] * az * bz;
+            }
+        }
+        kernel * total
+    }
 
     #[test]
     fn resident_rows_follow_actual_consumer_thresholds() {
@@ -370,29 +1160,34 @@ mod tests {
 
         config.spartan_outer_uniskip.trace_cutoff_elements = 1 << 12;
         assert_eq!(resident_row_consumers(1 << 10, &config), (false, true));
+        config.spartan_outer_remainder.trace_cutoff_elements = 1 << 10;
+        assert_eq!(resident_row_consumers(1 << 10, &config), (true, true));
     }
 
     #[test]
     fn aggregate_instruction_input_working_set_matches_production_geometry() {
         assert_eq!(
-            resident_row_working_set(1 << 26, true, true).unwrap(),
-            17_182_425_248
+            resident_row_working_set(1 << 26, true, true, true, true, Default::default(),).unwrap(),
+            21_480_932_080
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, true, true).unwrap(),
-            68_724_588_704
+            resident_row_working_set(1 << 28, true, true, true, true, Default::default(),).unwrap(),
+            85_906_686_704
         );
         assert_eq!(
-            resident_row_working_set(1 << 26, false, true).unwrap(),
+            resident_row_working_set(1 << 26, false, true, false, false, Default::default(),)
+                .unwrap(),
             9_664_659_456
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, false, true).unwrap(),
+            resident_row_working_set(1 << 28, false, true, false, false, Default::default(),)
+                .unwrap(),
             38_656_671_744
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, true, false).unwrap(),
-            42_952_818_848
+            resident_row_working_set(1 << 28, true, false, true, true, Default::default(),)
+                .unwrap(),
+            60_134_916_848
         );
     }
 
@@ -445,5 +1240,183 @@ mod tests {
         assert!(prepare_cpu_instruction_input_now(false, false, false));
         assert!(!prepare_cpu_instruction_input_now(true, false, false));
         assert!(!prepare_cpu_instruction_input_now(false, false, true));
+    }
+
+    #[test]
+    fn remainder_requires_both_cutoff_and_resident_rows() {
+        let mut config = MetalConfig::default();
+        config.spartan_outer_remainder.trace_cutoff_elements = 1 << 10;
+        assert!(!use_metal_remainder(2, &config, true));
+        assert!(!use_metal_remainder(1 << 9, &config, true));
+        assert!(!use_metal_remainder(1 << 10, &config, false));
+        assert!(use_metal_remainder(1 << 10, &config, true));
+    }
+
+    #[test]
+    fn opening_factorization_matches_dense_low_to_high_point() {
+        let log_t = 8;
+        let tau = (0..log_t + 2)
+            .map(|index| AkitaField::from_u64(17 + index as u64))
+            .collect::<Vec<_>>();
+        let mut host =
+            MetalOuterRemainderHost::new(log_t, &tau, AkitaField::from_u64(101)).unwrap();
+        for index in 0..=log_t {
+            host.bind(AkitaField::from_u64(211 + index as u64));
+        }
+        let point = host.challenges[1..]
+            .iter()
+            .rev()
+            .copied()
+            .collect::<Vec<_>>();
+        let dense = EqPolynomial::evals(&point, None);
+        let (e_in, e_out) = host.opening_weights();
+        let factored = e_out
+            .iter()
+            .flat_map(|outer| e_in.iter().map(move |inner| *outer * *inner))
+            .collect::<Vec<_>>();
+        assert_eq!(factored, dense);
+    }
+
+    fn adapter_parity_case(log_t: usize, cpu_tail_elements: usize) {
+        let cycles = 1usize << log_t;
+        with_sample_backend_at_log_t(log_t, 4, |witness| {
+            let tau = (0..log_t + 2)
+                .map(|index| AkitaField::from_u64(71 + 19 * index as u64))
+                .collect::<Vec<_>>();
+            let r0 = AkitaField::from_u64(12_289);
+            let relation =
+                OuterRemainder::new(SpartanOuterDimensions::rv64(log_t), tau.clone(), r0);
+            let rows = witness.bundles().unwrap();
+            let input_claim = true_input_claim(&rows, &tau, r0, log_t);
+            assert_ne!(input_claim, AkitaField::zero());
+            let claims = outer_remainder_input_values_from_uniskip_output(input_claim);
+            let points = OuterRemainderInputClaims::<Vec<AkitaField>>::default();
+            let no_challenges = NoChallenges::<AkitaField>::default();
+
+            let mut cpu_session = ProofSession::default();
+            <OptimizedOuterUniskip as UniskipKernel<
+                AkitaField,
+                OuterRemainder<AkitaField>,
+            >>::prepare(
+                &OptimizedOuterUniskip,
+                &mut cpu_session,
+                log_t,
+                &tau,
+                witness,
+            )
+            .unwrap();
+
+            let mut metal_session = ProofSession::default();
+            <OptimizedOuterUniskip as UniskipKernel<
+                AkitaField,
+                OuterRemainder<AkitaField>,
+            >>::prepare(
+                &OptimizedOuterUniskip,
+                &mut metal_session,
+                log_t,
+                &tau,
+                witness,
+            )
+            .unwrap();
+            let metal = MetalBackend::new(MetalConfig {
+                spartan_outer_remainder: SpartanOuterRemainderMetalConfig {
+                    trace_cutoff_elements: 4,
+                    dispatch: OuterRemainderSequenceConfig {
+                        max_threadgroups: 2,
+                        cpu_tail_elements,
+                        ..Default::default()
+                    },
+                },
+                ..Default::default()
+            })
+            .unwrap();
+            let rows =
+                prepare_metal_spartan_outer_witness_rows(&metal.context, witness, cycles).unwrap();
+            metal_session.park(rows);
+
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &no_challenges,
+            };
+            let mut cpu = <OptimizedOuterRemainder as PrepareKernel<
+                AkitaField,
+                OuterRemainder<AkitaField>,
+            >>::prepare(
+                &OptimizedOuterRemainder,
+                &mut cpu_session,
+                witness,
+                inputs(),
+            )
+            .unwrap();
+            let mut device = <MetalBackend as PrepareKernel<
+                AkitaField,
+                OuterRemainder<AkitaField>,
+            >>::prepare(&metal, &mut metal_session, witness, inputs())
+            .unwrap();
+            assert_eq!(metal.outer_remainder_sequences(), 1);
+
+            let round_challenges = (0..=log_t)
+                .map(|index| AkitaField::from_u64(65_537 + 31 * index as u64))
+                .collect::<Vec<_>>();
+            run_lockstep(
+                cpu.as_mut(),
+                device.as_mut(),
+                input_claim,
+                &round_challenges,
+            );
+
+            let cpu_outputs = cpu.output_claims(&claims).unwrap();
+            let device_outputs = device.output_claims(&claims).unwrap();
+            assert_eq!(device_outputs, cpu_outputs);
+            assert_eq!(
+                device_outputs.canonical_order(),
+                cpu_outputs.canonical_order()
+            );
+            assert_eq!(
+                device_outputs.opening_values(),
+                cpu_outputs.opening_values()
+            );
+            assert_eq!(device_outputs.opening_values().len(), 35);
+
+            let output_points = relation
+                .derive_opening_points(&round_challenges, &points)
+                .unwrap();
+            cpu.validate_derived_tables(&relation, &points, &output_points, &no_challenges)
+                .unwrap();
+            device
+                .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn outer_remainder_adapter_matches_optimized_cpu_all_rounds_and_openings() {
+        adapter_parity_case(5, 8);
+    }
+
+    #[test]
+    fn outer_remainder_handoff_waits_for_the_stream_bind() {
+        adapter_parity_case(3, 16);
+    }
+
+    #[test]
+    fn invalid_remainder_geometry_is_rejected_before_device_setup() {
+        let mut config = MetalConfig::default();
+        config.spartan_outer_remainder.trace_cutoff_elements = 2;
+        assert!(matches!(
+            MetalBackend::new(config),
+            Err(MetalError::InvalidHybridCutoff(2))
+        ));
+
+        let mut config = MetalConfig::default();
+        config.spartan_outer_remainder.dispatch.max_threadgroups = 0;
+        assert!(matches!(
+            MetalBackend::new(config),
+            Err(MetalError::InvalidOuterRemainderConfig(
+                "max_threadgroups must be nonzero"
+            ))
+        ));
     }
 }

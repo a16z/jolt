@@ -537,7 +537,7 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
     let (out_point, in_point) = tau_low.split_at(split);
     let e_out = EqPolynomial::<AkitaField>::evals(out_point, None);
     let e_in = EqPolynomial::<AkitaField>::evals(in_point, None);
-    let extended = {
+    let (extended, resident) = {
         let resident = {
             let _span = tracing::info_span!("MetalSpartanOuterUniskip::row_handoff").entered();
             match session.take::<SpartanOuterUniskipRows>() {
@@ -568,8 +568,9 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
         }
         let output = invocation.read_output().map_err(metal_outer_error)?;
         drop(invocation);
-        output
+        (output, resident)
     };
+    session.park(resident);
     let mut t1_values = vec![AkitaField::zero(); EXTENDED_SIZE];
     for ((position, _), value) in extension_coefficients().iter().zip(extended) {
         t1_values[*position] = value;
@@ -581,6 +582,25 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
         t1_values,
     });
     Ok(())
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn take_metal_spartan_outer_tau(
+    session: &mut ProofSession,
+    expected_log_t: usize,
+) -> Result<Vec<AkitaField>, KernelError<AkitaField>> {
+    let carry =
+        session
+            .take::<SpartanOuterCarry<AkitaField>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Metal outer remainder found no uni-skip carry",
+            })?;
+    if carry.log_t != expected_log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "Metal outer remainder carry disagrees with relation geometry",
+        });
+    }
+    Ok(carry.tau)
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -801,6 +821,10 @@ impl<F: Field> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
         _witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, OuterRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
+        // A mixed Metal-uni-skip/CPU-remainder registry must not retain the
+        // now-unused residual allocation through the rest of the proof.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        drop(session.take::<SpartanOuterUniskipRows>());
         let carry =
             session
                 .take::<SpartanOuterCarry<F>>()

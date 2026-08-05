@@ -94,6 +94,10 @@ pub use instruction_ra_sequence::{
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
 };
+pub(crate) use outer_remainder::{
+    outer_remainder_sequence_max_buffer_bytes_with_config,
+    outer_remainder_sequence_storage_bytes_with_config,
+};
 pub use outer_remainder::{
     OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
     OuterRemainderSequenceConfig, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,

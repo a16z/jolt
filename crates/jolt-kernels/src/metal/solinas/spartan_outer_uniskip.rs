@@ -1349,6 +1349,10 @@ mod tests {
                 },
             )
             .unwrap();
+        let storage_before_export = sequence.storage_stats().unwrap();
+        assert!(storage_before_export.buffer_identities[..2]
+            .iter()
+            .all(|identity| *identity != 0));
         assert_eq!(
             sequence
                 .materialize_and_first_message(&lagrange, &initial_in, &initial_out)
@@ -1400,6 +1404,12 @@ mod tests {
             .unwrap();
         assert_eq!(actual_az, az);
         assert_eq!(actual_bz, bz);
+        let storage_after_export = sequence.storage_stats().unwrap();
+        assert_eq!(storage_after_export.buffer_identities[..2], [0, 0]);
+        assert_eq!(
+            storage_before_export.owned_bytes - storage_after_export.owned_bytes,
+            (4 * packed.len() * size_of::<Fp128>()) as u64
+        );
 
         let opening_in = (0..4)
             .map(|index| AkitaField::from_u64(71 + index))
