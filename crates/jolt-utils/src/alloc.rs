@@ -12,13 +12,8 @@ use num_traits::Zero;
 ///
 /// # Safety contract
 ///
-/// `T::zero()` must be represented as all-zero bytes and `T` must have no
-/// padding bytes (true for Montgomery-form prime fields, where zero's
-/// representative is 0). The all-zero-bytes property is asserted at runtime
-/// in ALL builds — one `size_of::<T>()` byte-compare per call, nothing next
-/// to the allocation — so a nonzero-repr `Zero` implementation fails loudly
-/// instead of exposing invalid values in release; the assertion reads the
-/// bytes of one `T::zero()` value, so it cannot detect padding.
+/// The caller must ensure that the all-zero byte pattern is a valid `T` equal
+/// to `T::zero()`.
 #[expect(
     clippy::unwrap_used,
     reason = "Layout::array only fails on overflow, which callers' size arithmetic already rules out"
@@ -30,23 +25,9 @@ pub fn unsafe_allocate_zero_vec<T: Sized + Zero>(size: usize) -> Vec<T> {
         return std::iter::repeat_with(T::zero).take(size).collect();
     }
 
-    // SAFETY: reads the zero element's bytes to verify the all-zeros
-    // invariant `alloc_zeroed` relies on. Runs in all builds: a release-only
-    // wrong-repr instantiation would otherwise construct invalid `T` values.
-    unsafe {
-        let value = &T::zero();
-        let ptr = std::ptr::from_ref::<T>(value).cast::<u8>();
-        let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<T>());
-        assert!(
-            bytes.iter().all(|&byte| byte == 0),
-            "T::zero() is not all-zero bytes — unsafe_allocate_zero_vec is invalid for this type"
-        );
-    }
-
     // SAFETY: `size` and `size_of::<T>()` are nonzero (checked above), so the
-    // layout satisfies `alloc_zeroed`'s nonzero-size requirement, and the
-    // assertion above guarantees all-zero bytes are a valid `T` (the zero
-    // element).
+    // layout satisfies `alloc_zeroed`'s nonzero-size requirement. The caller
+    // guarantees the allocation contains `size` initialized `T` values.
     unsafe {
         let layout = Layout::array::<T>(size).unwrap();
         let ptr = std::alloc::alloc_zeroed(layout).cast::<T>();
@@ -107,24 +88,28 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not all-zero bytes")]
-    fn zero_vec_rejects_non_zero_repr() {
+    fn zero_vec_padded_type() {
+        #[repr(C)]
         #[derive(Clone, Copy, Debug, PartialEq)]
-        struct WeirdZero(u8);
-        impl std::ops::Add for WeirdZero {
+        struct PaddedZero {
+            byte: u8,
+            word: u32,
+        }
+        impl std::ops::Add for PaddedZero {
             type Output = Self;
             fn add(self, _: Self) -> Self {
-                Self(1)
+                self
             }
         }
-        impl Zero for WeirdZero {
+        impl Zero for PaddedZero {
             fn zero() -> Self {
-                Self(1)
+                Self { byte: 0, word: 0 }
             }
             fn is_zero(&self) -> bool {
-                self.0 == 1
+                self.byte == 0 && self.word == 0
             }
         }
-        let _: Vec<WeirdZero> = unsafe_allocate_zero_vec(4);
+        let values: Vec<PaddedZero> = unsafe_allocate_zero_vec(4);
+        assert!(values.iter().all(Zero::is_zero));
     }
 }

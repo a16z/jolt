@@ -89,18 +89,36 @@ fn check_key_invariants<F: Field>(
             "num_cycles must be a power of two, got {num_cycles}"
         ));
     }
-    if num_constraints_padded != matrices.num_constraints.next_power_of_two() {
+    let expected_num_constraints_padded = matrices
+        .num_constraints
+        .checked_next_power_of_two()
+        .ok_or_else(|| {
+            format!(
+                "next power of two overflows usize for {} constraints",
+                matrices.num_constraints
+            )
+        })?;
+    if num_constraints_padded != expected_num_constraints_padded {
         return Err(format!(
             "num_constraints_padded = {num_constraints_padded}, expected {} (next power of two of {} constraints)",
-            matrices.num_constraints.next_power_of_two(),
+            expected_num_constraints_padded,
             matrices.num_constraints,
         ));
     }
-    if num_vars_padded != matrices.num_vars.next_power_of_two() {
+    let expected_num_vars_padded =
+        matrices
+            .num_vars
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                format!(
+                    "next power of two overflows usize for {} variables",
+                    matrices.num_vars
+                )
+            })?;
+    if num_vars_padded != expected_num_vars_padded {
         return Err(format!(
             "num_vars_padded = {num_vars_padded}, expected {} (next power of two of {} variables)",
-            matrices.num_vars.next_power_of_two(),
-            matrices.num_vars,
+            expected_num_vars_padded, matrices.num_vars,
         ));
     }
     // Guarantees total_rows()/total_cols() cannot overflow downstream.
@@ -122,16 +140,21 @@ impl<F: Field> R1csKey<F> {
     ///
     /// # Panics
     ///
-    /// Panics if `num_cycles` is not a power of two, or if the total
-    /// row/column counts (`num_cycles` times the padded per-cycle
-    /// dimensions) overflow `usize`.
+    /// Panics if `num_cycles` is not a power of two, or if a padded dimension
+    /// or total row/column count overflows `usize`.
     #[expect(
         clippy::expect_used,
         reason = "constructor invariant violation indicates a programmer error"
     )]
     pub fn new(matrices: ConstraintMatrices<F>, num_cycles: usize) -> Self {
-        let num_constraints_padded = matrices.num_constraints.next_power_of_two();
-        let num_vars_padded = matrices.num_vars.next_power_of_two();
+        let num_constraints_padded = matrices
+            .num_constraints
+            .checked_next_power_of_two()
+            .expect("R1csKey constraint dimension exceeds the maximum power of two");
+        let num_vars_padded = matrices
+            .num_vars
+            .checked_next_power_of_two()
+            .expect("R1csKey variable dimension exceeds the maximum power of two");
         check_key_invariants(
             &matrices,
             num_cycles,
@@ -457,6 +480,19 @@ mod tests {
         assert!(R1csKey::try_from(raw_key(4, 2, 2)).is_err());
         // total_rows()/total_cols() products must not overflow.
         assert!(R1csKey::try_from(raw_key(1 << 63, 2, 4)).is_err());
+    }
+
+    #[test]
+    fn try_from_rejects_padded_dimension_overflow() {
+        let matrices = ConstraintMatrices::<Fr>::new(0, usize::MAX, vec![], vec![], vec![]);
+        let raw = RawR1csKey {
+            matrices,
+            num_cycles: 1,
+            num_constraints_padded: 1,
+            num_vars_padded: 0,
+        };
+
+        assert!(R1csKey::try_from(raw).is_err());
     }
 
     #[test]
