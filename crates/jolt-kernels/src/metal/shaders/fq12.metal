@@ -79,6 +79,11 @@ inline Fq6El fq6_mul_by_v(Fq6El a) {
 }
 
 // Karatsuba (6 Fq2 muls) — arkworks CubicExtField::mul_assign.
+// W3-st8 tried schoolbook accumulation (9 muls, minimal live set) against
+// the spill hypothesis: T1 chain rates dropped 29-35% and the fly kernel
+// held (−3%), so the extra products cost more than the smaller live set
+// saves — the fly kernel's pressure is its persistent f/G2Hom state, not
+// intra-mul temporaries. Keep Karatsuba.
 inline Fq6El fq6_mul(Fq6El x, Fq6El y) {
     Fq2El ad = fq2_mul(x.c0, y.c0);
     Fq2El be = fq2_mul(x.c1, y.c1);

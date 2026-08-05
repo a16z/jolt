@@ -87,6 +87,16 @@ required-features = ["metal"]
 name = "miller_microbench"
 required-features = ["metal"]
 
+# W3-st8 dispatch-geometry probe: pairing pipeline occupancy limits.
+[[example]]
+name = "pairing_pipeline_stats"
+required-features = ["metal"]
+
+# W3-st8 decomposition probe: multi-pair CPU co-execution arm anatomy.
+[[example]]
+name = "miller_cpu_probe"
+required-features = ["metal"]
+
 # W7 probe microbench: M4 mul rates, small-limb Montgomery, [0,2p) lazy
 # reduction. Measurement-only; nothing in it ships.
 [[example]]

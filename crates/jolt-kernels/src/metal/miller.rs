@@ -29,7 +29,7 @@ use ark_bn254::{Bn254, Fq, Fq12, Fq2, Fq6, G1Affine, G1Projective, G2Affine, G2P
 use ark_ec::pairing::{MillerLoopOutput, Pairing};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInt, Field, Fp6Config, One};
-use dory::backends::arkworks::{ArkG1, ArkG2, ArkGT};
+pub use dory::backends::arkworks::{ArkG1, ArkG2, ArkGT};
 
 use super::error::MetalError;
 use super::field::{FR_U32_LIMBS, G1_AFFINE_U32_STRIDE, G2_AFFINE_U32_STRIDE};
@@ -258,6 +258,48 @@ pub fn product_of_partials(partials: &[u32]) -> <Bn254 as Pairing>::TargetField 
         })
 }
 
+/// Deterministic projective pairing inputs for the stage-8 multi-pair
+/// benches: generator multiples of a splitmix64 scalar stream (the
+/// [`super::testing::seeded_frs`] generator), rayon-parallel under
+/// `parallel`. Miller cost is data-oblivious, so generator multiples time
+/// identically to uniform points.
+pub fn seeded_pairing_inputs(seed: u64, n: usize) -> (Vec<ArkG1>, Vec<ArkG2>) {
+    use ark_ff::PrimeField;
+    let mut state = seed;
+    let mut next_u64 = move || {
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    };
+    let scalars: Vec<(ark_bn254::Fr, ark_bn254::Fr)> = (0..n)
+        .map(|_| {
+            let mut fr = || {
+                let mut bytes = [0u8; 64];
+                for chunk in bytes.chunks_exact_mut(8) {
+                    chunk.copy_from_slice(&next_u64().to_le_bytes());
+                }
+                ark_bn254::Fr::from_le_bytes_mod_order(&bytes)
+            };
+            (fr(), fr())
+        })
+        .collect();
+    let point_pair = |(s1, s2): &(ark_bn254::Fr, ark_bn254::Fr)| {
+        (
+            ArkG1(G1Affine::generator() * s1),
+            ArkG2(G2Affine::generator() * s2),
+        )
+    };
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        scalars.par_iter().map(point_pair).unzip()
+    }
+    #[cfg(not(feature = "parallel"))]
+    scalars.iter().map(point_pair).unzip()
+}
+
 /// Uniform `pairs_per_thread` segmentation — the test/bench convenience
 /// for [`miller_table_partials`]' ragged segment interface.
 pub fn uniform_seg_starts(n_pairs: usize, pairs_per_thread: usize) -> Vec<u32> {
@@ -389,6 +431,89 @@ pub fn miller_fly_indexed_partials(
 /// **≥2048 → 2.02/2.02**, ≥1024 → 2.11 (the third reduce round loses).
 pub(super) const MILLER_FLY_WORK_PER_PAIR_LOG2: usize = 5;
 
+/// Percent of a served multi-pair evaluated on the CPU concurrently with
+/// the device dispatch (`JOLT_MILLER_CPU_PCT`, clamped to 90; 0 = pure
+/// device). **Default 0 — measured NO-GO on the M5 Max (W3-st8):** the
+/// device sustains 2.75-3.5 µs/pair at production reduce-round sizes,
+/// while the honest co-run CPU rate is 45-55 µs/pair — wave-1's 13.5
+/// µs/pair "fly twin" was a lucky draw of `multi_miller_loop`'s internal
+/// 4-pair re-chunking, and even the deterministic prepared-ladder path
+/// hits a ~2.7×/18-thread parallel-scaling ceiling on chunky pairing
+/// tasks. At 20% the split REGRESSED the 2^17 hook call 375 → ~900 ms.
+/// The mechanism (exact-partition Miller split, one final exponentiation)
+/// stays for machines where the ratio differs; parity is pinned across
+/// shares. Read per call — the hook fires ~100 times per proof, and the
+/// benches A/B it in-process.
+pub const ENV_MILLER_CPU_PCT: &str = "JOLT_MILLER_CPU_PCT";
+const DEFAULT_MILLER_CPU_PCT: usize = 0;
+
+/// CPU shares below this many pairs stay on the device: the rayon fan-out
+/// plus per-chunk G2 preparation has nothing to amortize against.
+const MILLER_CPU_MIN_PAIRS: usize = 512;
+
+fn miller_cpu_tail(n_pairs: usize) -> usize {
+    let pct = std::env::var(ENV_MILLER_CPU_PCT)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(DEFAULT_MILLER_CPU_PCT)
+        .min(90);
+    let tail = n_pairs * pct / 100;
+    if tail < MILLER_CPU_MIN_PAIRS {
+        0
+    } else {
+        tail
+    }
+}
+
+/// The CPU share of a split multi-pair: `jolt_dory`'s deterministic
+/// chunked prepared-ladder Miller (NOT `Bn254::multi_miller_loop`, whose
+/// internal 4-pair re-chunking is nondeterministically 3-4× slower on a
+/// saturated rayon pool). Identity filtering matches the device sentinel
+/// skip. Empty input is the empty product.
+fn cpu_miller_product(ps: &[G1Affine], qs: &[G2Affine]) -> Fq12 {
+    if ps.is_empty() {
+        return Fq12::one();
+    }
+    jolt_dory::multi_miller_affine(ps, qs)
+}
+
+/// [`product_of_partials`] on rayon chunks — the same value by
+/// associativity/commutativity of the Fq12 product, off the caller's
+/// critical path at reduce-round sizes (10⁵ sequential Fq12 muls
+/// otherwise).
+pub fn product_of_partials_par(partials: &[u32]) -> Fq12 {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        partials
+            .par_chunks(256 * FQ12_U32S)
+            .map(product_of_partials)
+            .product()
+    }
+    #[cfg(not(feature = "parallel"))]
+    product_of_partials(partials)
+}
+
+#[cfg(feature = "parallel")]
+fn join<A, B, RA, RB>(a: A, b: B) -> (RA, RB)
+where
+    A: FnOnce() -> RA + Send,
+    B: FnOnce() -> RB + Send,
+    RA: Send,
+    RB: Send,
+{
+    rayon::join(a, b)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn join<A, B, RA, RB>(a: A, b: B) -> (RA, RB)
+where
+    A: FnOnce() -> RA,
+    B: FnOnce() -> RB,
+{
+    (a(), b())
+}
+
 /// The stage-8 device multi-pairing — dory's `multi_pair*` hook. Serves
 /// the call with the exact GT the CPU path computes (device Miller
 /// partials → Fq12 product → arkworks final exponentiation) or declines
@@ -396,7 +521,17 @@ pub(super) const MILLER_FLY_WORK_PER_PAIR_LOG2: usize = 5;
 /// path run. Both paths batch-normalize the same projective inputs, so
 /// the device sees the same affine pairs (identities included — the
 /// sentinel skip mirrors the CPU pair filter).
-#[tracing::instrument(skip_all, name = "miller_fly_device", fields(pairs = ps.len()))]
+///
+/// A tail share of the pairs is evaluated on the otherwise-idle CPU
+/// concurrently with the device dispatch ([`ENV_MILLER_CPU_PCT`]); the two
+/// partial Miller products multiply into one value before the single final
+/// exponentiation, so the split is invisible to the transcript — Miller
+/// products over any pair partition are exact and order-free.
+#[tracing::instrument(
+    skip_all,
+    name = "miller_fly_device",
+    fields(pairs = ps.len(), cpu_pairs = tracing::field::Empty)
+)]
 pub fn multi_pair_device(ps: &[ArkG1], qs: &[ArkG2]) -> Option<ArkGT> {
     if !super::metal_gate("miller_fly", ps.len() << MILLER_FLY_WORK_PER_PAIR_LOG2) {
         return None;
@@ -404,7 +539,14 @@ pub fn multi_pair_device(ps: &[ArkG1], qs: &[ArkG2]) -> Option<ArkGT> {
     let ctx = MetalContext::global().ok()?;
     let ps_affine = G1Projective::normalize_batch(&ps.iter().map(|p| p.0).collect::<Vec<_>>());
     let qs_affine = G2Projective::normalize_batch(&qs.iter().map(|q| q.0).collect::<Vec<_>>());
-    let partials = match miller_fly_partials(ctx, &ps_affine, &qs_affine) {
+    let cpu_pairs = miller_cpu_tail(ps_affine.len());
+    let _ = tracing::Span::current().record("cpu_pairs", cpu_pairs as u64);
+    let device_pairs = ps_affine.len() - cpu_pairs;
+    let (device_partials, cpu_product) = join(
+        || miller_fly_partials(ctx, &ps_affine[..device_pairs], &qs_affine[..device_pairs]),
+        || cpu_miller_product(&ps_affine[device_pairs..], &qs_affine[device_pairs..]),
+    );
+    let partials = match device_partials {
         Ok(partials) => partials,
         Err(error) => {
             tracing::warn!(%error, "device multi-pair failed; falling back to the CPU path");
@@ -412,7 +554,7 @@ pub fn multi_pair_device(ps: &[ArkG1], qs: &[ArkG2]) -> Option<ArkGT> {
         }
     };
     super::testing::note_miller_dispatch();
-    let miller = product_of_partials(&partials);
+    let miller = product_of_partials_par(&partials) * cpu_product;
     // A `None` final exponentiation (zero Miller product) cannot arise from
     // well-formed pairs; decline and let the CPU path handle it identically.
     let gt = Bn254::final_exponentiation(MillerLoopOutput(miller))?;
@@ -775,6 +917,54 @@ mod tests {
         let cpu = <dory::backends::arkworks::BN254 as
             dory::primitives::arithmetic::PairingCurve>::multi_pair(&ps, &qs);
         assert_eq!(device.0, cpu.0);
+    }
+
+    /// The device+CPU split: every share (device-only, calibrated default,
+    /// extreme, and a non-dividing percent) must produce the exact GT of
+    /// dory's CPU `multi_pair` on the same projective inputs, identities on
+    /// both sides of the split boundary included. st8 is consensus-critical
+    /// — this is the parity oracle for [`miller_cpu_tail`]'s partition.
+    #[test]
+    fn multi_pair_device_split_matches_dory_cpu() {
+        let _lock = gpu_lock();
+        std::env::set_var("JOLT_METAL_MIN_TERMS_MILLER_FLY", "1");
+        let mut rng = rng();
+        let n = 1500usize;
+        let mut ps: Vec<ArkG1> = (0..n)
+            .map(|_| ArkG1(ark_bn254::G1Projective::rand(&mut rng)))
+            .collect();
+        let mut qs: Vec<ArkG2> = (0..n)
+            .map(|_| ArkG2(ark_bn254::G2Projective::rand(&mut rng)))
+            .collect();
+        // Identities in the device head and the CPU tail for every share
+        // below (tails: 90% → 1350, 50% → 750, 20% → 0 via the 512 floor).
+        ps[3] = ArkG1(ark_bn254::G1Projective::zero());
+        qs[200] = ArkG2(ark_bn254::G2Projective::zero());
+        ps[900] = ArkG1(ark_bn254::G1Projective::zero());
+        qs[1400] = ArkG2(ark_bn254::G2Projective::zero());
+
+        let cpu = <dory::backends::arkworks::BN254 as
+            dory::primitives::arithmetic::PairingCurve>::multi_pair(&ps, &qs);
+        for pct in ["0", "20", "37", "50", "90"] {
+            std::env::set_var(ENV_MILLER_CPU_PCT, pct);
+            let split = multi_pair_device(&ps, &qs).expect("gate forced open");
+            assert_eq!(split.0, cpu.0, "cpu share {pct}%");
+        }
+        std::env::remove_var(ENV_MILLER_CPU_PCT);
+    }
+
+    /// The parallel partial fold is the sequential fold (associative +
+    /// commutative product), across the chunk boundary.
+    #[test]
+    fn parallel_partial_fold_matches_sequential() {
+        let mut rng = rng();
+        let partials: Vec<u32> = (0..600)
+            .flat_map(|_| fq12_to_device_limbs(&Fq12::rand(&mut rng)))
+            .collect();
+        assert_eq!(
+            product_of_partials_par(&partials),
+            product_of_partials(&partials)
+        );
     }
 
     /// Fly-kernel Miller product vs arkworks: random pairs, single pair,
