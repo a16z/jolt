@@ -1,0 +1,234 @@
+{
+  "baseline_params": {
+    "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": 16,
+    "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": 256,
+    "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": 256,
+    "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": 18,
+    "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": 128
+  },
+  "budget": {
+    "reserves": [
+      {
+        "invocations": 2,
+        "resources": {
+          "active_evaluator_seconds": 3600,
+          "exclusive_machine_seconds": 3600,
+          "gpu_active_seconds": 3600
+        },
+        "tier_id": "representative"
+      },
+      {
+        "invocations": 1,
+        "resources": {
+          "active_evaluator_seconds": 7200,
+          "exclusive_machine_seconds": 7200,
+          "gpu_active_seconds": 7200
+        },
+        "tier_id": "piop_holdout"
+      }
+    ],
+    "total": {
+      "max_active_evaluator_seconds": 28800,
+      "max_calendar_seconds": 43200,
+      "max_candidates_admitted": 12,
+      "max_exclusive_machine_seconds": 28800,
+      "max_gpu_active_seconds": 21600,
+      "max_monetary_usd": 0,
+      "max_tokens": 0
+    }
+  },
+  "collaboration": {
+    "evaluator_concurrency": 1,
+    "evaluator_owner": "root",
+    "proposal_agents": 3,
+    "worktree_writer": "root"
+  },
+  "evaluation": {
+    "tier_result_schema": "metal_autoresearch_tier_result_v1",
+    "tiers": [
+      {
+        "applicable": false,
+        "id": "screen",
+        "reason": "no cheaper OuterRemainder scale has been calibrated against the fixed log-26 evaluator",
+        "role": "proxy"
+      },
+      {
+        "applicable": true,
+        "cost_limit": {
+          "active_evaluator_seconds": 1800,
+          "exclusive_machine_seconds": 1800,
+          "gpu_active_seconds": 1800
+        },
+        "evaluator": {
+          "command": [
+            "python3",
+            "scripts/metal_outer_remainder_eval.py"
+          ],
+          "env": {
+            "JOLT_METAL_EVAL_LOG_N": "26",
+            "JOLT_METAL_EVAL_REPEATS": "5",
+            "RAYON_NUM_THREADS": "16"
+          },
+          "result_adapter": "outer_remainder_v3",
+          "timeout_seconds": 1800
+        },
+        "id": "representative",
+        "promotion": {
+          "comparison": "accepted_parent",
+          "kind": "relative_improvement",
+          "minimum_accepted_speedup": 5.0,
+          "minimum_relative_improvement": 0.03,
+          "noise_multiplier": 3.0
+        },
+        "replication": {
+          "aggregate": "median_of_pair_effects",
+          "effect": "control_over_treatment",
+          "excluded_warmup_pairs": 1,
+          "first_order": [
+            "control",
+            "treatment"
+          ],
+          "included_pairs": 5,
+          "input_policy": {
+            "across_pairs": "same_fixture",
+            "within_pair": "identical"
+          },
+          "minimum_pairs_per_order_stratum": 2,
+          "mode": "internal_paired",
+          "order_policy": "alternating"
+        },
+        "role": "representative"
+      },
+      {
+        "applicable": true,
+        "cost_limit": {
+          "active_evaluator_seconds": 7200,
+          "exclusive_machine_seconds": 7200,
+          "gpu_active_seconds": 7200
+        },
+        "evaluator": {
+          "command": [
+            "python3",
+            "scripts/metal_piop_eval.py",
+            "--workload",
+            "fibonacci",
+            "--log-n",
+            "26",
+            "--repeats",
+            "5"
+          ],
+          "parameter_bindings": [
+            {
+              "flag": "--outer-remainder-metal-materialize-threads",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS"
+            },
+            {
+              "flag": "--outer-remainder-metal-transition-threads",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS"
+            },
+            {
+              "flag": "--outer-remainder-metal-output-threads",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS"
+            },
+            {
+              "flag": "--outer-remainder-metal-cutoff-log2",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2"
+            },
+            {
+              "flag": "--outer-remainder-metal-trace-cutoff-log2",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2"
+            }
+          ],
+          "result_adapter": "metal_piop_v7",
+          "timeout_seconds": 7200
+        },
+        "id": "piop_holdout",
+        "promotion": {
+          "kind": "portfolio_acceptance",
+          "minimum_accepted_speedup": 5.0,
+          "minimum_local_speedup": 5.0
+        },
+        "replication": {
+          "aggregate": "median_of_pair_effects",
+          "effect": "control_over_treatment",
+          "excluded_warmup_pairs": 0,
+          "first_order": [
+            "control",
+            "treatment"
+          ],
+          "included_pairs": 5,
+          "input_policy": {
+            "across_pairs": "same_fixture",
+            "within_pair": "identical"
+          },
+          "minimum_pairs_per_order_stratum": 2,
+          "mode": "internal_paired",
+          "order_policy": "alternating"
+        },
+        "role": "holdout"
+      }
+    ]
+  },
+  "goal": "reach at least 5x exact OuterRemainder complete-member throughput at log 26, then pursue any materially higher measured ceiling",
+  "hypothesis": "resident rows and sequence storage make one internally paired evaluator invocation sufficient; nested controller repeats add cost without independent evidence",
+  "kernel": "outer_remainder",
+  "metric": {
+    "direction": "max",
+    "name": "hybrid_speedup",
+    "unit": "x"
+  },
+  "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.v2.json",
+  "registry_contract": "crates/jolt-kernels/src/metal/kernel_registry.json",
+  "schema_version": 2,
+  "scope": {
+    "editable": [
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder.metal"
+    ],
+    "frozen": [
+      "crates/jolt-field/src/akita.rs",
+      "crates/jolt-kernels/autoresearch/outer_remainder.template.json",
+      "crates/jolt-kernels/autoresearch/piop_goal.v2.json",
+      "crates/jolt-kernels/src/metal/OUTER_REMAINDER.md",
+      "crates/jolt-kernels/src/metal/kernel_registry.json",
+      "crates/jolt-kernels/src/metal/spartan_outer.rs",
+      "crates/jolt-kernels/src/metal/solinas/fp128.metal",
+      "crates/jolt-kernels/src/metal/solinas/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder.rs",
+      "crates/jolt-kernels/src/optimized/spartan_outer.rs",
+      "crates/jolt-prover/examples/metal-outer-remainder-eval.rs",
+      "crates/jolt-prover/examples/modular_benchmark.rs",
+      "crates/jolt-prover/src/stages/stage1.rs",
+      "scripts/metal_outer_remainder_eval.py",
+      "scripts/metal_piop_eval.py",
+      "scripts/metal_research/contracts.py"
+    ]
+  },
+  "search_space": {
+    "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": [
+      14,
+      15,
+      16,
+      17,
+      18
+    ],
+    "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": [
+      128,
+      256,
+      512
+    ],
+    "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": [
+      128,
+      256,
+      512
+    ],
+    "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": [
+      18
+    ],
+    "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": [
+      64,
+      128,
+      256
+    ]
+  },
+  "slot_id": "spartan_outer_remainder"
+}

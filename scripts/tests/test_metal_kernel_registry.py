@@ -49,6 +49,18 @@ class MetalKernelRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not include source product5"):
             metal_kernel_registry.validate_registry(ROOT, registry)
 
+    def test_template_is_owned_by_its_declared_slot(self) -> None:
+        registry = metal_kernel_registry.read_registry(REGISTRY)
+        template = next(
+            artifact
+            for artifact in registry["artifacts"]["templates"]
+            if artifact["id"] == "outer_remainder_search"
+        )
+        template["slot_id"] = "instruction_input"
+
+        with self.assertRaisesRegex(ValueError, "template ownership"):
+            metal_kernel_registry.validate_registry(ROOT, registry)
+
 
 if __name__ == "__main__":
     unittest.main()

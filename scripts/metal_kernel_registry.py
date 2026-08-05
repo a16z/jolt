@@ -326,10 +326,26 @@ def _validate_slots_and_handoffs(
 def _validate_slot_artifacts(
     registry: dict[str, Any], artifact_ids: dict[str, set[str]]
 ) -> None:
+    artifacts = {
+        kind: {artifact["id"]: artifact for artifact in records}
+        for kind, records in registry["artifacts"].items()
+    }
     for slot in registry["slots"]:
         for kind, identifiers in slot["artifacts"].items():
             if not set(_strings(identifiers, f"slot {kind} artifacts")) <= artifact_ids[kind]:
                 raise ValueError(f"slot {slot['id']} references an unknown {kind} artifact")
+            if kind == "templates" and any(
+                artifacts[kind][identifier].get("slot_id") != slot["id"]
+                for identifier in identifiers
+            ):
+                raise ValueError(f"slot {slot['id']} template ownership is inconsistent")
+    referenced_templates = {
+        identifier
+        for slot in registry["slots"]
+        for identifier in slot["artifacts"]["templates"]
+    }
+    if referenced_templates != artifact_ids["templates"]:
+        raise ValueError("template ownership does not cover every registered template")
 
 
 def validate_registry(root: Path, registry: dict[str, Any]) -> None:
