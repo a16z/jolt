@@ -548,3 +548,26 @@ remains sound research on the trunk.
 Worktrees pruned: metal-w2-{radix4,st0,harness,r4gate1} removed (merged).
 Active: metal-w2-hostgaps (st1) · metal-w2-st6b (Bool). Wave-2 gate
 (full battery + 2^25/2^27 certification) fires when those two land.
+
+### Wake 5 (00:59 UTC): Bool driver RETAIN — st6b lane complete
+
+**c42e074e Bool door: RETAIN, merged** (`4ff7ba75a` → merge `d21e5ed1a`;
+KernelId::ALL union re-bumped 69→70, union parity 30/30). BoolDriver
+(booleanity-cycle, 20 polys — the biggest st6b adopter) on the deferred
+schedule: lazy horizon 8, ONE detached `jk_bool_adopt_round` (width-16
+gather → dense write at T/16 + both summand lanes). Isolated @2^24:
+adopt-begin 68.7–71.3 → 0.44–0.51 ms (−99.3%), total −7.7…−8.3%,
+2 agreeing interleaved quiet runs, CPU-twin byte-parity oracle.
+**Alloc: Bool adoption 15 → 7.5 GiB @2^27; combined with Rav, st6b
+adoption-round fresh allocation 28.5 → 14.25 GiB and all three phase-1
+blocking materialize waits eliminated.** Modeled good-mode st6b −1…−2 s
+@2^27 across the three drivers; tail mode loses half its allocation fuel.
+`JOLT_BOOL_DEFERRED_ADOPT=0` legacy knob. jolt-kernels metal 248/248.
+st6b lane closed; worktree removed.
+
+Wave-2 ledger (stage-calibrated, uncertified): st7 −0.78 s · st6b −1…−2 s
+(good mode, both drivers) · st3 −0.40 s ⇒ **~−2.2…−3.2 s modeled** vs the
+71.77 s flagship, plus tail-mode variance halved twice (adoption fuel).
+Waiting on the last lane: e371fb72 st1 attribution+cut. Then the wave-2
+gate: clippy both modes, muldiv host+zk, full nextest, 2^25 + 2^27
+certification pair, dashboard point, parent report.
