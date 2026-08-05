@@ -165,28 +165,51 @@ def _validate_sources(
     library = registry["library"]
     _exact_keys(
         library,
-        {"rust_path", "context_symbol", "source_order"},
+        {
+            "facade_path",
+            "runtime_path",
+            "source_path",
+            "context_symbol",
+            "source_order",
+        },
         "library",
     )
-    library_path = _relative_file(root, library["rust_path"], "library")
+    facade_path = _relative_file(root, library["facade_path"], "library facade")
+    runtime_path = _relative_file(root, library["runtime_path"], "library runtime")
+    source_path = _relative_file(root, library["source_path"], "library source")
     if not isinstance(library["context_symbol"], str):
         raise ValueError("library context_symbol must be a string")
-    library_text = library_path.read_text()
-    if library["context_symbol"] not in library_text:
-        raise ValueError("library context symbol is missing from its Rust path")
+    context_symbol = library["context_symbol"]
+    if context_symbol not in runtime_path.read_text():
+        raise ValueError("library context symbol is missing from its runtime path")
+    if not re.search(
+        rf"pub use runtime::\{{[^}}]*\b{re.escape(context_symbol)}\b",
+        facade_path.read_text(),
+        re.DOTALL,
+    ):
+        raise ValueError("library context symbol is not re-exported by its facade")
     source_order = _strings(library["source_order"], "library source_order")
     if set(source_order) != source_ids:
         raise ValueError("library source_order must contain every source exactly once")
-    builder = re.search(r"let source = format!\((.*?)\n\s*\);", library_text, re.DOTALL)
-    if builder is None:
-        raise ValueError("library source builder was not found")
-    observed_constants = re.findall(r"\{([A-Z][A-Z0-9_]*_SOURCE)\}", builder.group(1))
+    source_text = source_path.read_text()
+    manifest = re.search(
+        r"const LIBRARY_SOURCE_FRAGMENTS:.*?=\s*&\[(.*?)\];",
+        source_text,
+        re.DOTALL,
+    )
+    if manifest is None:
+        raise ValueError("library source fragment manifest was not found")
+    observed_constants = re.findall(
+        r"\b([A-Z][A-Z0-9_]*_SOURCE)\s*,", manifest.group(1)
+    )
+    if set(observed_constants) != set(constants):
+        raise ValueError("library source manifest does not contain every source constant")
     try:
         observed_order = [constants[name] for name in observed_constants]
     except KeyError as error:
         raise ValueError(f"library uses an unregistered source constant: {error.args[0]}") from error
     if observed_order != source_order:
-        raise ValueError("library source_order does not match SolinasMetal::new")
+        raise ValueError("library source_order does not match its fragment manifest")
     return source_ids, entry_point_sources
 
 
@@ -387,7 +410,7 @@ def _validate_slot_artifacts(
 
 def validate_registry(root: Path, registry: dict[str, Any]) -> None:
     _exact_keys(registry, ROOT_KEYS, "registry")
-    if registry["schema_version"] != 1:
+    if registry["schema_version"] != 2:
         raise ValueError("unsupported kernel registry schema")
     source_ids, entry_point_sources = _validate_sources(root, registry)
     component_ids = _validate_components(
@@ -399,6 +422,9 @@ def validate_registry(root: Path, registry: dict[str, Any]) -> None:
 
 
 def registered_paths(registry: dict[str, Any]) -> Iterable[str]:
+    yield registry["library"]["facade_path"]
+    yield registry["library"]["runtime_path"]
+    yield registry["library"]["source_path"]
     for source in registry["sources"]:
         yield source["path"]
     for component in registry["components"]:

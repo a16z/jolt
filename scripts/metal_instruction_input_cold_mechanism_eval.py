@@ -54,6 +54,8 @@ RELEVANT_PATHS = (
     "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
     "crates/jolt-kernels/src/metal/solinas/mod.rs",
     "crates/jolt-kernels/src/metal/solinas/probes.metal",
+    "crates/jolt-kernels/src/metal/solinas/runtime.rs",
+    "crates/jolt-kernels/src/metal/solinas/source.rs",
     "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.metal",
     "crates/jolt-kernels/src/optimized/instruction_input.rs",
     "scripts/metal_instruction_input_cold_mechanism_eval.py",

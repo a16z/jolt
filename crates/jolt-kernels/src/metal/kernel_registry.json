@@ -1,7 +1,9 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "library": {
-    "rust_path": "crates/jolt-kernels/src/metal/solinas/mod.rs",
+    "facade_path": "crates/jolt-kernels/src/metal/solinas/mod.rs",
+    "runtime_path": "crates/jolt-kernels/src/metal/solinas/runtime.rs",
+    "source_path": "crates/jolt-kernels/src/metal/solinas/source.rs",
     "context_symbol": "SolinasMetal",
     "source_order": [
       "fp128",

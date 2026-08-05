@@ -81,6 +81,21 @@ class MetalKernelRegistryTests(unittest.TestCase):
             ),
         )
 
+    def test_library_source_order_is_bound_to_the_fragment_manifest(self) -> None:
+        registry = metal_kernel_registry.read_registry(REGISTRY)
+        source_order = registry["library"]["source_order"]
+        source_order[0], source_order[1] = source_order[1], source_order[0]
+
+        with self.assertRaisesRegex(ValueError, "fragment manifest"):
+            metal_kernel_registry.validate_registry(ROOT, registry)
+
+    def test_library_source_path_must_own_the_fragment_manifest(self) -> None:
+        registry = metal_kernel_registry.read_registry(REGISTRY)
+        registry["library"]["source_path"] = registry["library"]["facade_path"]
+
+        with self.assertRaisesRegex(ValueError, "fragment manifest"):
+            metal_kernel_registry.validate_registry(ROOT, registry)
+
 
 if __name__ == "__main__":
     unittest.main()

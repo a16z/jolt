@@ -60,6 +60,8 @@
       "crates/jolt-kernels/src/metal/solinas/booleanity_address.rs",
       "crates/jolt-kernels/src/metal/solinas/deferred_sum.metal",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/runtime.rs",
+      "crates/jolt-kernels/src/metal/solinas/source.rs",
       "crates/jolt-kernels/src/optimized/booleanity.rs",
       "scripts/metal_autoresearch.py"
     ],
@@ -259,6 +261,8 @@
       "crates/jolt-kernels/src/metal/solinas/booleanity_address.rs",
       "crates/jolt-kernels/src/metal/solinas/deferred_sum.metal",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/runtime.rs",
+      "crates/jolt-kernels/src/metal/solinas/source.rs",
       "crates/jolt-kernels/src/optimized/booleanity.rs",
       "crates/jolt-prover/examples/modular_benchmark.rs",
       "scripts/metal_autoresearch.py",

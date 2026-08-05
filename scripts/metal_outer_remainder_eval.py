@@ -82,6 +82,8 @@ SOURCE_PATHS = (
     "crates/jolt-kernels/src/metal/solinas/mod.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder.metal",
+    "crates/jolt-kernels/src/metal/solinas/runtime.rs",
+    "crates/jolt-kernels/src/metal/solinas/source.rs",
     "crates/jolt-kernels/src/optimized/spartan_outer.rs",
     "crates/jolt-prover/Cargo.toml",
     "scripts/metal_outer_remainder_eval.py",

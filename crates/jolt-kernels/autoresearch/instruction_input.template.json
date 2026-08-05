@@ -275,6 +275,8 @@
       "crates/jolt-kernels/src/metal/instruction_input.rs",
       "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/runtime.rs",
+      "crates/jolt-kernels/src/metal/solinas/source.rs",
       "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.metal",
       "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.rs",
       "crates/jolt-kernels/src/metal/spartan_outer.rs",
