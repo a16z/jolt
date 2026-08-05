@@ -42,7 +42,9 @@ use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks
 use jolt_claims::protocols::jolt::relations::instruction::InstructionRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerivedId};
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_poly::Polynomial;
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::relations::{
@@ -248,6 +250,7 @@ impl<F: Field> InstructionRaInitialization<F> {
 
     /// The current Metal sequence is specialized for four virtual products,
     /// each with four 8-bit committed factors.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn supports_metal_sequence(&self) -> bool {
         self.num_committed_per_virtual == 4
             && self.committed_chunk_bits == 8
@@ -280,6 +283,7 @@ impl<F: Field> InstructionRaInitialization<F> {
         Ok(self.into_kernel(num_committed, tables))
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn into_offloaded(
         mut self,
     ) -> Result<(OptimizedInstructionRaVirtualizationKernel<F>, Vec<F>), KernelError<F>> {
@@ -318,6 +322,7 @@ impl<F: Field> InstructionRaInitialization<F> {
 
 enum InstructionRaTableState<F: Field> {
     Cpu(LazyFoldedRa<F, LookupIndexChunks>),
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     Device,
 }
 
@@ -341,10 +346,7 @@ impl<F: Field> allocative::Allocative for OptimizedInstructionRaVirtualizationKe
             allocative::Key::new("gamma_powers_inv"),
             vec_heap_bytes(&self.gamma_powers_inv),
         );
-        let table_bytes = match &self.tables {
-            InstructionRaTableState::Cpu(tables) => tables.heap_bytes(),
-            InstructionRaTableState::Device => 0,
-        };
+        let table_bytes = self.cpu_tables().map_or(0, |tables| tables.heap_bytes());
         visitor.visit_simple(allocative::Key::new("folded_ra"), table_bytes);
         visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
         visitor.exit();
@@ -377,11 +379,17 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     }
 
     fn cpu_tables(&self) -> Result<&LazyFoldedRa<F, LookupIndexChunks>, SumcheckError<F>> {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
         match &self.tables {
             InstructionRaTableState::Cpu(tables) => Ok(tables),
             InstructionRaTableState::Device => Err(instruction_ra_state_error(
                 "CPU tables requested while instruction RA is resident on Metal",
             )),
+        }
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        {
+            let InstructionRaTableState::Cpu(tables) = &self.tables;
+            Ok(tables)
         }
     }
 
@@ -391,24 +399,31 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
                 "instruction RA received more binds than cycle variables",
             ));
         }
-        if !matches!(self.tables, InstructionRaTableState::Cpu(_)) {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if let InstructionRaTableState::Device = self.tables {
             return Err(instruction_ra_state_error(
                 "CPU bind requested while instruction RA is resident on Metal",
             ));
         }
         self.gruen.bind(challenge);
-        let InstructionRaTableState::Cpu(tables) = &mut self.tables else {
-            unreachable!("instruction RA table state was checked above")
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let InstructionRaTableState::Cpu(tables) = &mut self.tables
+        else {
+            unreachable!("instruction RA device state returned above")
         };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let InstructionRaTableState::Cpu(tables) = &mut self.tables;
         tables.bind(challenge);
         self.rounds_bound += 1;
         Ok(())
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn metal_num_polys(&self) -> usize {
         self.num_committed
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn metal_weights(&self) -> Result<(&[F], &[F]), SumcheckError<F>> {
         if !matches!(self.tables, InstructionRaTableState::Device) {
             return Err(instruction_ra_state_error(
@@ -423,6 +438,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         Ok((self.gruen.e_in_current(), self.gruen.e_out_current()))
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn metal_bind_offloaded(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         if !matches!(self.tables, InstructionRaTableState::Device) {
             return Err(instruction_ra_state_error(
@@ -439,6 +455,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         Ok(())
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn metal_message(
         &self,
         q_evals: [F; 4],
@@ -457,6 +474,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         Ok(self.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn metal_restore_dense(
         &mut self,
         flat_tables: &[F],
@@ -745,11 +763,15 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
         }
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
-        let InstructionRaTableState::Cpu(tables) = &self.tables else {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let InstructionRaTableState::Cpu(tables) = &self.tables
+        else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "instruction RA output claims requested while tables remain on Metal",
             });
         };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let InstructionRaTableState::Cpu(tables) = &self.tables;
         let mut committed_instruction_ra = tables.final_values();
         for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
             if index % self.num_committed_per_virtual == 0 {
