@@ -9,6 +9,7 @@ mod hamming_weight_claim_reduction;
 mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
+mod registers_val_evaluation;
 pub mod solinas;
 mod spartan_outer;
 
@@ -21,6 +22,7 @@ pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 pub use instruction_read_raf::InstructionReadRafMetalConfig;
 #[cfg(test)]
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
+pub use registers_val_evaluation::RegistersValEvaluationMetalConfig;
 #[cfg(feature = "test-utils")]
 #[doc(hidden)]
 pub use spartan_outer::{

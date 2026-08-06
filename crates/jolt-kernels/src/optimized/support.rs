@@ -236,6 +236,14 @@ impl<F: Field> SplitLt<F> {
         }
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn split_lo(&self) -> Option<&[F]> {
+        match self {
+            Self::Split { lt_lo, .. } => Some(lt_lo),
+            Self::Dense(_) => None,
+        }
+    }
+
     pub(crate) fn final_value(&self) -> F {
         match self {
             Self::Dense(table) => {

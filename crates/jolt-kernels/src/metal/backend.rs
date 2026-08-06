@@ -11,6 +11,7 @@ use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::instruction_read_raf::InstructionReadRafMetalConfig;
+use super::registers_val_evaluation::RegistersValEvaluationMetalConfig;
 #[cfg(feature = "test-utils")]
 use super::solinas::OuterKernelArtifact;
 use super::solinas::{MetalError, SolinasMetal};
@@ -28,6 +29,8 @@ pub struct MetalConfig {
     pub instruction_input: InstructionInputMetalConfig,
     /// Stage-5 instruction read-RAF settings.
     pub instruction_read_raf: InstructionReadRafMetalConfig,
+    /// Stage-5 registers value-evaluation settings.
+    pub registers_val_evaluation: RegistersValEvaluationMetalConfig,
     /// Stage-6a Booleanity address settings.
     pub booleanity_address: BooleanityAddressMetalConfig,
     /// Stage-6b Booleanity cycle settings.
@@ -49,6 +52,8 @@ pub struct MetalBackend {
     pub(super) hamming_dispatches: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) outer_remainder_sequences: Arc<AtomicUsize>,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) registers_val_sequences: Arc<AtomicUsize>,
 }
 
 impl MetalBackend {
@@ -97,6 +102,8 @@ impl MetalBackend {
             config.spartan_outer_remainder.dispatch.cpu_tail_elements,
             config.instruction_input.trace_cutoff_elements,
             config.instruction_input.cutoff_elements,
+            config.registers_val_evaluation.trace_cutoff_elements,
+            config.registers_val_evaluation.cutoff_elements,
             config.booleanity_address.trace_cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
@@ -128,6 +135,8 @@ impl MetalBackend {
             hamming_dispatches: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
             outer_remainder_sequences: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "test-utils"))]
+            registers_val_sequences: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -144,6 +153,13 @@ impl MetalBackend {
         self.outer_remainder_sequences
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
+    pub fn registers_val_sequences(&self) -> usize {
+        self.registers_val_sequences
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl<PCS> JoltBackend<AkitaField, PCS>
@@ -156,6 +172,7 @@ where
         self.spartan_outer_remainder = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
+        self.registers_val_evaluation = Box::new(metal.clone());
         self.booleanity_address = Box::new(metal.clone());
         self.bytecode_read_raf_cycle = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());

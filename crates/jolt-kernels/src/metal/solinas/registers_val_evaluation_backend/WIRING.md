@@ -1,9 +1,19 @@
 # Registers value-evaluation Metal backend contract
 
-This directory contains the continuation design for the high-level
-`RegistersValEvaluation` member. Its Rust ABI, model, and oracle have unit
-tests. A test-only direct first-message candidate was measured at log 26,
-rejected, and removed; the exact screening artifact is
+This directory contains the design record for the high-level
+`RegistersValEvaluation` member. The retained factorized path is now installed
+through `metal/registers_val_evaluation.rs`: it runs a Metal prefix, reads one
+dense state back, and finishes with the actual optimized CPU kernel. Its first
+integration test matches every round polynomial, running claim, derived LT
+scalar, and output claim. Complete log-26 member timing is still pending, so
+this is not yet a speedup result.
+
+The current integration eagerly materializes the increment table during
+stage-5 preparation, reclaims the stage-4 `rd` index carry when available,
+and copies both into sequence-owned Metal buffers. It does not yet implement
+the target stage-4 resident owner or asynchronous first-message overlap
+described below. A test-only direct first-message candidate was measured at
+log 26, rejected, and removed; the exact screening artifact is
 `autoresearch/evidence/registers_val_direct_log26_rejected_85c57314d.json`.
 The existing low-level implementation in `solinas/registers_val/` owns the
 four retained factorized entry points:
@@ -118,8 +128,9 @@ sumcheck. It does not call the optimized split-LT or sparse-WA code. It also
 constructs the output point as
 `r_address || reverse(bind_challenges)`. This is the intended parity oracle
 for native, dense, handoff, and terminal comparisons. The rejected
-first-message screen compared both candidates against it before timing. No
-complete-sequence or production integration test uses it yet.
+first-message screen compared both candidates against it before timing. The
+production integration test separately compares the complete hybrid sequence
+against `OptimizedRegistersValEvaluation`.
 
 The kernel's fully bound LT scalar must equal
 
@@ -209,9 +220,10 @@ without changing a message byte:
    planes. Build only the 128-entry address equality table and the three
    split-LT tables on the host. Allocate both dense arenas and reduction
    scratch once.
-2. Submit the first-message command during `prepare`. It has no pending
-   challenge, so it can run during the member's 128 inactive batch rounds.
-   The first active `prove_round` joins it and returns `[s(0), s(2), s(3)]`.
+2. The current adapter submits and joins the first-message command in the
+   first active `prove_round`, returning `[s(0), s(2), s(3)]`. A later owner
+   can submit it during `prepare` and overlap the member's 128 inactive batch
+   rounds without changing protocol state.
 3. After host challenge `c_0`, run the native transition. It binds raw
    `rd_inc` and sparse `rd_index`/address equality into a resident
    32-byte `{inc, wa}` row and computes message one from those register
@@ -242,9 +254,10 @@ that challenge is incorrect.
 
 There is an exact producer at the stage-4 boundary; no future grouped or
 device-native row source is assumed. `OptimizedRegistersReadWrite::prepare`
-already materializes the canonical `inc_table` and collects `rd_indices`
-before moving them into its CPU kernel. The first implementation copies those
-two already-required arrays once into a typed proof-session owner:
+already collects `rd_indices` and parks them for this member. The installed
+adapter reclaims that carry, eagerly obtains the canonical `inc_table`, and
+copies both through the low-level sequence constructor. The target follow-up
+is a typed proof-session owner with these planes:
 
 | Plane | ABI | Log-26 bytes |
 | --- | ---: | ---: |
@@ -259,26 +272,27 @@ At 451,701,710,520 B/s its copy floor is 5.199915 ms and its 80%-roof cap is
 option-to-sentinel conversion remain timed; the roof is not a promise that
 they are free.
 
-`RegistersValResidentInputAbi` records row count, exact byte lengths,
+The design-only `RegistersValResidentInputAbi` records row count, exact byte lengths,
 device-registry ID, two distinct allocation identities, a nonzero proof
 generation, stage 4 as producer, cycle order, and field canonicality. The
-member holds the owner through the native transition because both message
-zero and message one read it. It releases the owner only after that command
-completes.
+installed adapter does not yet construct or admit this owner. Its low-level
+invocation retains the copied buffers through the native transition because
+both message zero and message one read them.
 
-Publication fills the final shared Metal allocations directly. A temporary
-`Vec<Fp128>` or second sentinel-index vector is rejected: either would add an
-uncharged whole-plane copy. The carry raises the existing stage-4 peak by
-exactly 1,140,850,688 buffer bytes at log 26, then survives the stage boundary
-until message one's command completes. Admission reserves that delta before
-either allocation and also checks the later 2,752,645,120-byte stage-5 set;
-failure leaves the CPU sources untouched and selects CPU.
+The target publication fills the final shared Metal allocations directly. The
+current constructor instead creates a temporary canonical `Fp128` vector and
+a sentinel-index vector before allocating the shared buffers; those costs are
+inside `prepare` and must remain charged to the Metal member. Aggregate
+working-set admission covers the complete 2,752,645,120-byte log-26 device set
+before the first Metal allocation. Capacity failure selects the ready
+optimized CPU kernel before any command; a later device failure aborts the
+proof.
 
-The CPU fallback keeps `SharedRdIndices`; publishing the Metal owner does not
-consume the only fallback source. A wrong device, stale generation, invalid
-index, failed capacity check, or publication failure selects CPU before the
-first device command. Once a device command succeeds, later errors abort the
-proof rather than retrying from mutated state.
+The installed adapter consumes `SharedRdIndices`, but retains its owned host
+vectors until low-level preparation succeeds. A failed capacity check can
+therefore construct the optimized CPU state without walking the witness
+again. Once a device command succeeds, later errors abort the proof rather
+than retrying from mutated state.
 
 Starting the timer with free populated inputs is not a valid complete-member
 comparison. The local Metal service interval includes the incremental stage-4
@@ -495,33 +509,35 @@ The rejected direct slice does not remain an occupancy work item. Any future
 alternative requires a different algorithmic hypothesis and a new
 preregistered screen; thread-width tuning of the deleted design is not enough.
 
-## Integration steps
+## Integration status and next steps
 
-1. In stage 4, publish the already-materialized `inc_table` and collected
+1. **Next:** in stage 4, publish the already-materialized `inc_table` and collected
    `rd_indices` into the typed owner, while retaining the CPU fallback carry.
    Add a low-level constructor that borrows those buffers and validates
    identity, generation, shape, device, ABI, and allocation limits.
-2. `RegistersValSequence::read_current_dense_state_into` now fills
+2. **Done:** `RegistersValSequence::read_current_dense_state_into` fills
    preallocated host storage and validates the exact row count. The production
-   adapter must report its `32C`-byte readback boundary.
-3. Implement the high-level `PrepareKernel` adapter with an asynchronous,
-   protocol-inert first-message submission. Its state machine must distinguish
-   submitted, joined, native, dense, CPU-tail, and finished states.
-4. Keep a host split-LT mirror. At handoff, build the optimized dense CPU tail
-   from the exact resident state; deliver the last device message's pending
-   challenge on the first CPU call.
-5. Emit outer spans for `prepare`, every `prove_round`, `finish_rounds`, and
+   adapter reports its `32C`-byte readback boundary.
+3. **Partial:** the high-level `PrepareKernel` adapter has explicit first,
+   native, dense, and CPU-tail states. First-message submission remains
+   synchronous until the resident owner exists.
+4. **Done:** the optimized CPU shell keeps the host split-LT mirror. Handoff
+   restores the exact dense state and applies the pending challenge once on
+   the first CPU call.
+5. **Partial:** emit outer spans for `prepare`, every `prove_round`, `finish_rounds`, and
    `output_claims`, plus inner Metal spans for storage, first-message submit
    and join, native transition, dense rounds, readback, and CPU tail.
-6. Add a parser that requires 26 outer rounds, selects the 26 enclosing
+   The current adapter emits prepare, phase, readback, and CPU-tail spans; the
+   complete evaluator parser remains.
+6. **Next:** add a parser that requires 26 outer rounds, selects the 26 enclosing
    Fiat--Shamir spans, checks the configured device/CPU topology, validates
    zero round allocations, input identities, command completion, and exact
    readback, and computes complete service and member walls separately.
-7. Run the cutoff sweep once, freeze the winner, then run five alternating
+7. **Next:** run the cutoff sweep once, freeze the winner, then run five alternating
    optimized/Metal log-26 pairs from one stable binary. Whole-PIOP proof bytes,
    verifier acceptance, transcript state, and every member-local message must
    match.
-8. Close the direct-LT branch. Integrate and tune only the factorized sequence;
+8. **Closed:** the direct-LT branch is rejected. Tune only the factorized sequence;
    after it clears 5x, move to the next measured bottleneck unless a materially
    different algorithmic hypothesis is derived.
 

@@ -1,4 +1,9 @@
-use std::{cell::Cell, mem::size_of, slice, time::Duration};
+use std::{
+    cell::Cell,
+    mem::{size_of, size_of_val},
+    slice,
+    time::Duration,
+};
 
 use jolt_field::AkitaField;
 use jolt_poly::{EqPolynomial, LtPolynomial};
@@ -265,6 +270,29 @@ impl SolinasMetal {
 
         let threadgroups = lt_hi.len();
         let partial_count = threadgroups;
+        let dense_bytes = inc
+            .len()
+            .checked_add(inc.len() / 2)
+            .and_then(|elements| elements.checked_mul(size_of::<Fp128>()))
+            .ok_or(MetalError::InputTooLong(inc.len()))?;
+        let partial_bytes = 2usize
+            .checked_mul(SAMPLES)
+            .and_then(|factor| factor.checked_mul(partial_count))
+            .and_then(|elements| elements.checked_mul(size_of::<Fp128>()))
+            .ok_or(MetalError::InputTooLong(partial_count))?;
+        let input_bytes = size_of_val(inc.as_slice())
+            .checked_add(size_of_val(rd))
+            .and_then(|bytes| bytes.checked_add(size_of_val(eq_address.as_slice())))
+            .and_then(|bytes| bytes.checked_add(size_of_val(lt_lo.as_slice())))
+            .and_then(|bytes| bytes.checked_add(size_of_val(lt_hi.as_slice())))
+            .and_then(|bytes| bytes.checked_add(size_of_val(eq_hi.as_slice())))
+            .ok_or(MetalError::InputTooLong(inc.len()))?;
+        let additional_bytes = input_bytes
+            .checked_add(dense_bytes)
+            .and_then(|bytes| bytes.checked_add(partial_bytes))
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(inc.len()))?;
+        self.validate_additional_working_set(additional_bytes)?;
         let params = MessageParams {
             cycles: u32::try_from(inc.len()).map_err(|_| MetalError::InputTooLong(inc.len()))?,
             high_blocks: u32::try_from(threadgroups)
@@ -693,24 +721,38 @@ impl RegistersValFirstTransitionInvocation {
         Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
     }
 
-    #[cfg(feature = "test-utils")]
-    pub fn read_dense_state(&self) -> Result<Vec<[AkitaField; 2]>, MetalError> {
+    /// Copies the dense state after the native first transition.
+    pub fn read_dense_state_into(&self, output: &mut [[AkitaField; 2]]) -> Result<(), MetalError> {
         if !self.completed.get() {
             return Err(MetalError::NotExecuted);
+        }
+        let expected = self.current_elements();
+        if output.len() != expected {
+            return Err(MetalError::RegistersValStateLength {
+                expected,
+                got: output.len(),
+            });
         }
         // SAFETY: the transition writes two fields for every current element.
         let values = unsafe {
             slice::from_raw_parts(
                 self.buffers.dense_a.contents().cast::<Fp128>(),
-                2 * self.current_elements(),
+                2 * expected,
             )
         };
         self.context
             .validate_inputs("registers val dense state", values)?;
-        Ok(values
-            .chunks_exact(2)
-            .map(|row| [row[0].into_jolt_field(), row[1].into_jolt_field()])
-            .collect())
+        for (output, row) in output.iter_mut().zip(values.chunks_exact(2)) {
+            *output = [row[0].into_jolt_field(), row[1].into_jolt_field()];
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn read_dense_state(&self) -> Result<Vec<[AkitaField; 2]>, MetalError> {
+        let mut output = vec![[AkitaField::zero(); 2]; self.current_elements()];
+        self.read_dense_state_into(&mut output)?;
+        Ok(output)
     }
 }
 
