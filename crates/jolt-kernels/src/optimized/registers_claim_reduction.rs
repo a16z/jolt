@@ -37,15 +37,12 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage3::registers_claim_reduction::{
     RegistersClaimReduction, RegistersClaimReductionOutputClaims,
 };
-use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{
-    bind_pairs, collect_rows, fmadd_u64_split, pin_derived_term, RoundChallenges,
-};
+use super::support::collect_rows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -57,8 +54,8 @@ struct RegisterValuesRow([u64; 3]);
 
 impl WitnessBundle for RegisterValuesRow {
     fn from_row(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
+        row: &jolt_witness::__private::TraceRow,
+        _next: Option<&jolt_witness::__private::TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self([
@@ -71,6 +68,23 @@ impl WitnessBundle for RegisterValuesRow {
     fn annotated_ids() -> Vec<JoltPolynomialId> {
         Vec::new()
     }
+}
+
+/// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
+/// accumulator without overflowing it: the accumulator's headroom is one
+/// extra limb, which ~4 full-magnitude `field × u64` products exhaust, so the
+/// value is split into u32 halves (products ≤ 2^286, headroom ≥ 2^34 terms).
+/// `eq_shifted` must be `eq · 2^32`; the two fused adds sum to exactly
+/// `eq · F(value)`.
+#[inline]
+fn fmadd_u64_split<F: Field>(
+    accumulator: &mut F::SmallScalarAccumulator,
+    eq: F,
+    eq_shifted: F,
+    value: u64,
+) {
+    accumulator.fmadd_u64(eq_shifted, value >> 32);
+    accumulator.fmadd_u64(eq, value & 0xFFFF_FFFF);
 }
 
 pub struct OptimizedRegistersClaimReduction;
@@ -142,7 +156,7 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegiste
             tau: tau.to_vec(),
             values,
             phase: Phase::PrefixSuffix { p, q },
-            challenges: RoundChallenges::new(log_t),
+            bound_challenges: Vec::with_capacity(log_t),
         }))
     }
 }
@@ -168,39 +182,59 @@ struct ClaimReductionKernel<F: Field> {
     /// Raw per-cycle `u64` values, kept for the phase-2 regeneration.
     values: Vec<RegisterValuesRow>,
     phase: Phase<F>,
-    challenges: RoundChallenges<F>,
+    bound_challenges: Vec<F>,
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ClaimReductionKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    let phase = match &kernel.phase {
-        Phase::PrefixSuffix { p, q } => vec_heap_bytes(p) + vec_heap_bytes(q),
-        Phase::Dense {
-            eq,
-            rd_write_value,
-            rs1_value,
-            rs2_value,
-        } => {
-            vec_heap_bytes(eq)
-                + vec_heap_bytes(rd_write_value)
-                + vec_heap_bytes(rs1_value)
-                + vec_heap_bytes(rs2_value)
-        }
-    };
-    vec_heap_bytes(&kernel.tau)
-        + vec_heap_bytes(&kernel.values)
-        + phase
-        + kernel.challenges.heap_bytes()
-});
+impl<F: Field> allocative::Allocative for ClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
+        visitor.visit_simple(allocative::Key::new("values"), vec_heap_bytes(&self.values));
+        let phase_bytes = match &self.phase {
+            Phase::PrefixSuffix { p, q } => vec_heap_bytes(p) + vec_heap_bytes(q),
+            Phase::Dense {
+                eq,
+                rd_write_value,
+                rs1_value,
+                rs2_value,
+            } => {
+                vec_heap_bytes(eq)
+                    + vec_heap_bytes(rd_write_value)
+                    + vec_heap_bytes(rs1_value)
+                    + vec_heap_bytes(rs2_value)
+            }
+        };
+        visitor.visit_simple(allocative::Key::new("phase"), phase_bytes);
+        visitor.visit_simple(
+            allocative::Key::new("bound_challenges"),
+            vec_heap_bytes(&self.bound_challenges),
+        );
+        visitor.exit();
+    }
+}
 
 impl<F: Field> ClaimReductionKernel<F> {
+    fn rounds_bound(&self) -> usize {
+        self.bound_challenges.len()
+    }
+
+    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
+        let remaining = self.log_t - self.rounds_bound();
+        if remaining == 0 {
+            Ok(())
+        } else {
+            Err(SumcheckKernelError::NotFullyBound { remaining })
+        }
+    }
+
     /// Regenerate the dense phase from the raw values: the three columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix
     /// eq table scaled by the bound-prefix eq factor.
     fn transition_to_dense(&mut self) {
-        let bound = self.challenges.bound();
-        let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
+        let bound = self.rounds_bound();
+        let r_prefix: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
         let eq_prefix = EqPolynomial::<F>::evals(&r_prefix, None);
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
         let chunk = eq_prefix.len();
@@ -238,7 +272,7 @@ impl<F: Field> ClaimReductionKernel<F> {
     }
 
     fn bind(&mut self, r: F) {
-        self.challenges.push(r);
+        self.bound_challenges.push(r);
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q.
         if matches!(&self.phase, Phase::PrefixSuffix { p, .. } if p.len() == 2) {
@@ -248,7 +282,12 @@ impl<F: Field> ClaimReductionKernel<F> {
         match &mut self.phase {
             Phase::PrefixSuffix { p, q } => {
                 for table in [p, q] {
-                    bind_pairs(table, r);
+                    let half = table.len() / 2;
+                    for y in 0..half {
+                        let lo = table[2 * y];
+                        table[y] = lo + r * (table[2 * y + 1] - lo);
+                    }
+                    table.truncate(half);
                 }
             }
             Phase::Dense {
@@ -258,7 +297,12 @@ impl<F: Field> ClaimReductionKernel<F> {
                 rs2_value,
             } => {
                 for table in [eq, rd_write_value, rs1_value, rs2_value] {
-                    bind_pairs(table, r);
+                    let half = table.len() / 2;
+                    for y in 0..half {
+                        let lo = table[2 * y];
+                        table[y] = lo + r * (table[2 * y + 1] - lo);
+                    }
+                    table.truncate(half);
                 }
             }
         }
@@ -333,7 +377,7 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RegistersClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        self.challenges.require_complete()?;
+        self.require_fully_bound()?;
         let Phase::Dense {
             rd_write_value,
             rs1_value,
@@ -361,20 +405,22 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.challenges.require_complete()?;
+        self.require_fully_bound()?;
         let Phase::Dense { eq, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "claim reduction must finish in the dense phase",
             });
         };
-        pin_derived_term(
-            relation,
-            JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan),
-            input_points,
-            output_points,
-            challenges,
-            eq[0],
-        )
+        let id = JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan);
+        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
+        if eq[0] != expected {
+            return Err(SumcheckKernelError::DerivedTableDrift {
+                id,
+                expected,
+                got: eq[0],
+            });
+        }
+        Ok(())
     }
 }
 

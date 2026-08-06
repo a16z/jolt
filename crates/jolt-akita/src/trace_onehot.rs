@@ -23,7 +23,6 @@ use akita_prover::compute::{
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
-use akita_prover::kernels::linear::decompose_commit_blocks_into;
 use akita_prover::{
     BatchDecomposeFoldOutcome, CommitInnerWitness, ComputeBackendSetup, CpuBackend,
     RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorProjectionPoly,
@@ -859,7 +858,6 @@ fn commit_packed<const D: usize>(
         n_a = plan.n_a,
         positions_per_block = plan.num_positions_per_block,
         inner_digits = plan.num_digits_inner,
-        outer_digits = plan.num_digits_outer,
     )
     .entered();
     let _prepare_span = tracing::info_span!("trace_onehot_commit_prepare").entered();
@@ -1195,20 +1193,7 @@ fn commit_packed<const D: usize>(
             .collect()
     };
 
-    let _decompose_span = tracing::info_span!(
-        "trace_onehot_commit_decompose",
-        num_blocks,
-        n_a = plan.n_a,
-        outer_digits = plan.num_digits_outer,
-        outer_log_basis = plan.log_basis_outer,
-    )
-    .entered();
-    let digits = decompose_commit_blocks_into::<AkitaField, D>(
-        &rows,
-        plan.num_digits_outer,
-        plan.log_basis_outer,
-    )?;
-    CommitInnerWitness::from_parts(rows, digits)
+    Ok(CommitInnerWitness::from_rows(rows))
 }
 
 fn opening_fold_packed<const D: usize>(

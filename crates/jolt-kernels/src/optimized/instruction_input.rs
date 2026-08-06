@@ -32,7 +32,8 @@ use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, ToField, UnexpandedPc};
@@ -40,7 +41,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
+use super::support::collect_rows;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -113,22 +114,32 @@ enum InputState<F: Field> {
 }
 
 pub struct OptimizedInstructionInputKernel<F: Field> {
-    progress: RoundProgress,
+    log_t: usize,
     gamma: F,
     state: InputState<F>,
     gruen: GruenSplitEqPolynomial<F>,
     bind_scratch: Vec<F>,
+    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedInstructionInputKernel, |kernel| {
-    use crate::backend::{polys_heap_bytes, vec_heap_bytes};
-    let state = match &kernel.state {
-        InputState::Native(rows) => vec_heap_bytes(rows),
-        InputState::Dense(polys) => polys_heap_bytes(polys),
-    };
-    state + kernel.gruen.heap_bytes() + vec_heap_bytes(&kernel.bind_scratch)
-});
+impl<F: Field> allocative::Allocative for OptimizedInstructionInputKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, polys_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        let state_bytes = match &self.state {
+            InputState::Native(rows) => vec_heap_bytes(rows),
+            InputState::Dense(polys) => polys_heap_bytes(polys),
+        };
+        visitor.visit_simple(allocative::Key::new("state"), state_bytes);
+        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        visitor.visit_simple(
+            allocative::Key::new("bind_scratch"),
+            vec_heap_bytes(&self.bind_scratch),
+        );
+        visitor.exit();
+    }
+}
 
 /// `(value at t = 0, step)` of the pair's linear extension, as exact
 /// integers.
@@ -157,11 +168,12 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
             });
         }
         Ok(Self {
-            progress: RoundProgress::new(log_t),
+            log_t,
             gamma,
             state: InputState::Native(rows),
             gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
             bind_scratch: Vec::new(),
+            rounds_bound: 0,
         })
     }
 
@@ -279,12 +291,29 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let mut q_evals = match &self.state {
+        let q_evals = match &self.state {
             InputState::Native(rows) => self.native_q_evals(rows),
             InputState::Dense(tables) => self.dense_q_evals(tables),
         };
-        self.gruen
-            .checked_round_poly(&mut q_evals, previous_claim, round)
+
+        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
+        let l_step = l_at_1 - l_at_0;
+        let mut l_eval = l_at_0;
+        let mut evals = [F::zero(); 4];
+        for (eval, q) in evals.iter_mut().zip(&q_evals) {
+            *eval = l_eval * *q;
+            l_eval += l_step;
+        }
+
+        let round_sum = evals[0] + evals[1];
+        if round_sum != previous_claim {
+            return Err(SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual: round_sum,
+            });
+        }
+        Ok(UnivariatePoly::from_evals(&evals))
     }
 
     fn bind(&mut self, challenge: F) {
@@ -320,7 +349,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
                 }
             }
         }
-        self.progress.advance();
+        self.rounds_bound += 1;
     }
 
     /// The eight fully bound table values, table order.
@@ -335,7 +364,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
 
 impl<F: Field> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.progress.total()
+        self.log_t
     }
 
     fn prove_round(
@@ -363,7 +392,11 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionInputOutputClaims<F>, SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        if self.rounds_bound != self.log_t {
+            return Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.log_t - self.rounds_bound,
+            });
+        }
         let [left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm] =
             self.final_values();
         Ok(InstructionInputOutputClaims {
@@ -388,15 +421,18 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
-        pin_derived_term(
-            relation,
-            JoltDerivedId::from(InstructionInputPublic::EqProduct),
-            input_points,
-            output_points,
-            challenges,
-            self.gruen.current_scalar(),
-        )
+        if self.rounds_bound != self.log_t {
+            return Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.log_t - self.rounds_bound,
+            });
+        }
+        let id = JoltDerivedId::from(InstructionInputPublic::EqProduct);
+        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
+        let got = self.gruen.current_scalar();
+        if got != expected {
+            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+        }
+        Ok(())
     }
 }
 

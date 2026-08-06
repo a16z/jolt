@@ -34,12 +34,12 @@ use jolt_field::Field;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::ram_output_check::{RamOutputCheck, RamOutputCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
 
-use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::dense_view;
 use crate::{
@@ -88,36 +88,56 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             .collect();
 
         Ok(Box::new(OutputCheckKernel {
-            progress: RoundProgress::new(ram_log_k),
+            ram_log_k,
             gruen: GruenSplitEqPolynomial::new(output_address_challenges, BindingOrder::LowToHigh),
             io_mask: Polynomial::new(io_mask),
             val_io: Polynomial::new(val_io),
             val_final: Polynomial::new(dense_view(witness, ram_val_final())?),
             bind_scratch: Vec::new(),
+            rounds_bound: 0,
         }))
     }
 }
 
 struct OutputCheckKernel<F: Field> {
-    progress: RoundProgress,
+    ram_log_k: usize,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
     val_io: Polynomial<F>,
     val_final: Polynomial<F>,
     bind_scratch: Vec<F>,
+    rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OutputCheckKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    kernel.gruen.heap_bytes()
-        + poly_heap_bytes(&kernel.io_mask)
-        + poly_heap_bytes(&kernel.val_io)
-        + poly_heap_bytes(&kernel.val_final)
-        + vec_heap_bytes(&kernel.bind_scratch)
-});
+impl<F: Field> allocative::Allocative for OutputCheckKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("gruen"), gruen_heap_bytes(&self.gruen));
+        for (key, bytes) in [
+            ("io_mask", poly_heap_bytes(&self.io_mask)),
+            ("val_io", poly_heap_bytes(&self.val_io)),
+            ("val_final", poly_heap_bytes(&self.val_final)),
+            ("bind_scratch", vec_heap_bytes(&self.bind_scratch)),
+        ] {
+            visitor.visit_simple(allocative::Key::new(key), bytes);
+        }
+        visitor.exit();
+    }
+}
 
 impl<F: Field> OutputCheckKernel<F> {
+    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
+        if self.rounds_bound == self.ram_log_k {
+            Ok(())
+        } else {
+            Err(SumcheckKernelError::NotFullyBound {
+                remaining: self.ram_log_k - self.rounds_bound,
+            })
+        }
+    }
+
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
     /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
     fn message(
@@ -127,7 +147,7 @@ impl<F: Field> OutputCheckKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         const POINTS: usize = 4;
 
-        let mut q_evals = self.gruen.par_fold_out_in(
+        let q_evals = self.gruen.par_fold_out_in(
             || [F::zero(); POINTS],
             |acc, row, _x_in, e_in| {
                 let pair = |table: &Polynomial<F>| {
@@ -161,8 +181,24 @@ impl<F: Field> OutputCheckKernel<F> {
             },
         );
 
-        self.gruen
-            .checked_round_poly(&mut q_evals, previous_claim, round)
+        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
+        let l_step = l_at_1 - l_at_0;
+        let mut l_eval = l_at_0;
+        let mut evals = [F::zero(); POINTS];
+        for (eval, q) in evals.iter_mut().zip(&q_evals) {
+            *eval = l_eval * *q;
+            l_eval += l_step;
+        }
+
+        let round_sum = evals[0] + evals[1];
+        if round_sum != previous_claim {
+            return Err(SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual: round_sum,
+            });
+        }
+        Ok(UnivariatePoly::from_evals(&evals))
     }
 
     fn bind(&mut self, challenge: F) {
@@ -170,13 +206,13 @@ impl<F: Field> OutputCheckKernel<F> {
         for table in [&mut self.io_mask, &mut self.val_io, &mut self.val_final] {
             table.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
         }
-        self.progress.advance();
+        self.rounds_bound += 1;
     }
 }
 
 impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.progress.total()
+        self.ram_log_k
     }
 
     fn prove_round(
@@ -204,7 +240,7 @@ impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamOutputCheckOutputClaims<F>, SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.require_fully_bound()?;
         Ok(RamOutputCheckOutputClaims {
             val_final: self.val_final.evals()[0],
         })
@@ -220,20 +256,18 @@ impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.require_fully_bound()?;
         for (public, got) in [
             (RamOutputCheckPublic::EqAddress, self.gruen.current_scalar()),
             (RamOutputCheckPublic::IoMask, self.io_mask.evals()[0]),
             (RamOutputCheckPublic::ValIo, self.val_io.evals()[0]),
         ] {
-            pin_derived_term(
-                relation,
-                JoltDerivedId::from(public),
-                input_points,
-                output_points,
-                challenges,
-                got,
-            )?;
+            let id = JoltDerivedId::from(public);
+            let expected =
+                relation.derive_output_term(&id, input_points, output_points, challenges)?;
+            if got != expected {
+                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+            }
         }
         Ok(())
     }
@@ -294,8 +328,7 @@ mod tests {
             is_first_in_sequence: false,
             is_compressed: false,
         };
-        use std::sync::Arc;
-        let preprocessing = Arc::new(JoltProgramPreprocessing {
+        let preprocessing = JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 vec![instruction],
                 instruction.address as u64,
@@ -305,7 +338,7 @@ mod tests {
             ram: RAMPreprocessing::default(),
             memory_layout: device.memory_layout.clone(),
             max_padded_trace_length: 1 << log_t,
-        });
+        };
         let rows = vec![TraceRow {
             instruction,
             ..TraceRow::default()
@@ -321,7 +354,7 @@ mod tests {
             ],
         };
 
-        let program = Arc::new(JoltProgram::default());
+        let program = JoltProgram::default();
         let config = JoltVmWitnessConfig::new(
             log_t,
             ram_k,

@@ -1,69 +1,10 @@
-//! Shared machinery of the optimized kernels: the split-eq (Gruen) round
-//! driver, round/typed-row bookkeeping, deferred-reduction accumulator
-//! helpers, and the cfg(parallel) fold shims. One home per idiom — kernels
-//! hold the summand math, this module holds the plumbing they all repeat.
+//! Small shared primitives of the optimized kernels.
 
-use std::ops::Range;
-use std::ptr;
-use std::sync::Arc;
-
-use jolt_claims::protocols::jolt::JoltDerivedId;
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, SignedScalarAccumulator};
-use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
-};
-use jolt_sumcheck::SumcheckError;
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
-};
-use jolt_verifier::VerifierError;
+use jolt_field::{Field, RingAccumulator};
+use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial, UnivariatePoly};
 use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
+    collect_bundles_par, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
 };
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
-use super::rows::RandomAccessRows;
-use crate::{KernelError, ProofSession, SumcheckKernelError};
-
-/// A kernel's bound-round count against its total — the one home of the
-/// "claims only after every round is bound" invariant.
-pub(crate) struct RoundProgress {
-    bound: usize,
-    total: usize,
-}
-
-impl RoundProgress {
-    pub(crate) fn new(total: usize) -> Self {
-        Self { bound: 0, total }
-    }
-
-    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
-    pub(crate) fn total(&self) -> usize {
-        self.total
-    }
-
-    /// Rounds bound so far (multi-phase kernels key their transitions on it).
-    pub(crate) fn bound(&self) -> usize {
-        self.bound
-    }
-
-    /// Record one bound round.
-    pub(crate) fn advance(&mut self) {
-        self.bound += 1;
-    }
-
-    /// Gate for every output-claim / derived-table entry point.
-    pub(crate) fn require_complete<F: Field>(&self) -> Result<(), SumcheckKernelError<F>> {
-        if self.bound == self.total {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.total - self.bound,
-            })
-        }
-    }
-}
 
 /// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
 /// rayon extraction dispatch amortizes (the stock bundle pass uses 2^12-row
@@ -76,20 +17,22 @@ const COLLECT_ROWS_CHUNK: usize = 1 << 16;
 /// realloc). Chunk size never changes the collected bundles — the pass
 /// carries the lookahead row across chunk boundaries — so this is walk-shape
 /// only.
-pub(crate) fn collect_rows<F: Field, B: WitnessBundle + Copy + Send + Sync>(
-    source: &dyn JoltWitnessPlane<F>,
+pub(crate) fn collect_rows<B: WitnessBundle + Clone + Send + Sync>(
+    source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
     // Slice-backed sources collect index-parallel — no chunk staging, no
     // serial consume copy (out-of-range requests fall through for the
     // walk's validation).
-    if let Some(access) = RandomAccessRows::new(source, cycles)? {
-        return super::rows::collect_bundles_par(&access, cycles);
+    if let Some(access) = source.random_access() {
+        if cycles <= access.cycles() {
+            return collect_bundles_par(&access, cycles);
+        }
     }
     struct Presized<B> {
         rows: Vec<B>,
     }
-    impl<B: WitnessBundle + Copy + Send + Sync> StreamConsumer for Presized<B> {
+    impl<B: WitnessBundle + Clone + Send + Sync> StreamConsumer for Presized<B> {
         type Witness = B;
 
         fn consume(&mut self, chunk: &[B]) {
@@ -114,90 +57,6 @@ pub(crate) fn accumulate_product<F: Field>(factors: &[F], lane: &mut F::Accumula
         product *= *factor;
     }
     lane.fmadd(product, factors[last]);
-}
-
-/// Walk one row's product grid: with `evals` seeded at the `t = 1` factor
-/// values and `steps` their per-factor linear steps, accumulate the factor
-/// product `Π evals` into `lanes[t − 1]` for `t = 1, …, n − 1` (advancing
-/// every factor by its step between points) and the leading coefficient
-/// `Π steps` into `lanes[n − 1]`, where `n = lanes.len()`.
-#[inline]
-pub(crate) fn accumulate_product_grid<F: Field>(
-    evals: &mut [F],
-    steps: &[F],
-    lanes: &mut [F::Accumulator],
-) {
-    let n = lanes.len();
-    accumulate_product(evals, &mut lanes[0]);
-    for lane in &mut lanes[1..n - 1] {
-        for (eval, step) in evals.iter_mut().zip(steps) {
-            *eval += *step;
-        }
-        accumulate_product(evals, lane);
-    }
-    accumulate_product(steps, &mut lanes[n - 1]);
-}
-
-/// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
-/// accumulator without overflowing it: the accumulator's headroom is one
-/// extra limb, which ~4 full-magnitude `field × u64` products exhaust, so the
-/// value is split into u32 halves (products ≤ 2^286, headroom ≥ 2^34 terms).
-/// `eq_shifted` must be `eq · 2^32`; the two fused adds sum to exactly
-/// `eq · F(value)`.
-#[inline]
-pub(crate) fn fmadd_u64_split<F: Field>(
-    accumulator: &mut F::SmallScalarAccumulator,
-    eq: F,
-    eq_shifted: F,
-    value: u64,
-) {
-    accumulator.fmadd_u64(eq_shifted, value >> 32);
-    accumulator.fmadd_u64(eq, value & 0xFFFF_FFFF);
-}
-
-/// `[1, γ, γ², …, γ^{N−1}]`.
-pub(crate) fn gamma_powers_array<F: Field, const N: usize>(gamma: F) -> [F; N] {
-    let mut powers = [F::one(); N];
-    for i in 1..N {
-        powers[i] = powers[i - 1] * gamma;
-    }
-    powers
-}
-
-/// `[1, γ, γ², …]` of length `count`.
-pub(crate) fn gamma_powers<F: Field>(gamma: F, count: usize) -> Vec<F> {
-    let mut powers = Vec::with_capacity(count);
-    let mut power = F::one();
-    for _ in 0..count {
-        powers.push(power);
-        power *= gamma;
-    }
-    powers
-}
-
-/// `(γ^i, γ^{-i})` pairs for pre-scaled shared tables. The inverse powers
-/// unscale the final claims back to the committed polynomials' values;
-/// `γ^i · γ^{-i} = 1` exactly, so unscaling is byte-exact. `reason` names
-/// the batching challenge in the (unreachable) non-invertible error.
-pub(crate) fn gamma_power_pairs<F: Field>(
-    gamma: F,
-    count: usize,
-    reason: &'static str,
-) -> Result<(Vec<F>, Vec<F>), KernelError<F>> {
-    let gamma_inv = gamma
-        .inverse()
-        .ok_or(KernelError::InvariantViolation { reason })?;
-    let mut powers = Vec::with_capacity(count);
-    let mut powers_inv = Vec::with_capacity(count);
-    let mut power = F::one();
-    let mut power_inv = F::one();
-    for _ in 0..count {
-        powers.push(power);
-        powers_inv.push(power_inv);
-        power *= gamma;
-        power_inv *= gamma_inv;
-    }
-    Ok((powers, powers_inv))
 }
 
 /// `scale · eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index
@@ -230,217 +89,6 @@ pub(crate) fn bind_all<'a, F: Field>(
     }
 }
 
-/// In-place low-to-high bind of a raw table:
-/// `t[y] ← t[2y] + r·(t[2y+1] − t[2y])`.
-pub(crate) fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
-    let half = table.len() / 2;
-    for y in 0..half {
-        let even = table[2 * y];
-        table[y] = even + r * (table[2 * y + 1] - even);
-    }
-    table.truncate(half);
-}
-
-/// The drawn challenges of a kernel's bound rounds, tracked against the
-/// round total — one authority for both the challenge history and the
-/// bound-rounds invariant. Kernels that never revisit their challenges use
-/// [`RoundProgress`] instead.
-pub(crate) struct RoundChallenges<F> {
-    challenges: Vec<F>,
-    total: usize,
-}
-
-impl<F: Field> RoundChallenges<F> {
-    pub(crate) fn new(total: usize) -> Self {
-        Self {
-            challenges: Vec::with_capacity(total),
-            total,
-        }
-    }
-
-    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
-    pub(crate) fn total(&self) -> usize {
-        self.total
-    }
-
-    /// Rounds bound so far.
-    pub(crate) fn bound(&self) -> usize {
-        self.challenges.len()
-    }
-
-    /// Record one bound round's challenge.
-    pub(crate) fn push(&mut self, challenge: F) {
-        self.challenges.push(challenge);
-    }
-
-    /// The challenges bound so far, in binding order.
-    pub(crate) fn as_slice(&self) -> &[F] {
-        &self.challenges
-    }
-
-    /// Gate for every output-claim / derived-table entry point.
-    pub(crate) fn require_complete(&self) -> Result<(), SumcheckKernelError<F>> {
-        if self.challenges.len() == self.total {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.total - self.challenges.len(),
-            })
-        }
-    }
-}
-
-#[cfg(feature = "allocative")]
-impl<F> RoundChallenges<F> {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        crate::backend::vec_heap_bytes(&self.challenges)
-    }
-}
-
-/// Pin a kernel-maintained derived value (typically its fully bound split-eq
-/// scalar) against the verifier's own `derive_output_term` — the optimized
-/// tier's drift detector for tables it never materializes, mirroring the
-/// naive tier's check on its hand-materialized derived tables.
-pub(crate) fn pin_derived_term<F: Field, R: ConcreteSumcheck<F>>(
-    relation: &R,
-    id: JoltDerivedId,
-    input_points: &SumcheckInputPoints<F, R>,
-    output_points: &SumcheckOutputPoints<F, R>,
-    challenges: &ConcreteSumcheckChallenges<F, R>,
-    got: F,
-) -> Result<(), SumcheckKernelError<F>> {
-    let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-    if got != expected {
-        return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-    }
-    Ok(())
-}
-
-/// [`pin_derived_term`], passing vacuously when the relation does not derive
-/// the term under this proof shape (`MissingStageClaimDerived`).
-pub(crate) fn pin_derived_term_if_derived<F: Field, R: ConcreteSumcheck<F>>(
-    relation: &R,
-    id: JoltDerivedId,
-    input_points: &SumcheckInputPoints<F, R>,
-    output_points: &SumcheckOutputPoints<F, R>,
-    challenges: &ConcreteSumcheckChallenges<F, R>,
-    got: F,
-) -> Result<(), SumcheckKernelError<F>> {
-    match relation.derive_output_term(&id, input_points, output_points, challenges) {
-        Ok(expected) if got != expected => {
-            Err(SumcheckKernelError::DerivedTableDrift { id, expected, got })
-        }
-        Ok(_) | Err(VerifierError::MissingStageClaimDerived { .. }) => Ok(()),
-        Err(error) => Err(error.into()),
-    }
-}
-
-/// Kernel-side extension of [`GruenSplitEqPolynomial`]: assemble a round
-/// message from the eq-stripped inner factor's evaluations.
-pub(crate) trait GruenRoundMessage<F: Field> {
-    /// `s(t) = ℓ(t) · q(t)` at `t = 0, 1, …, q_evals.len() − 1`, checked
-    /// against `s(0) + s(1) = previous_claim` (the reference tier's round
-    /// consistency pin) and interpolated through `UnivariatePoly::from_evals`.
-    /// `q_evals` is scaled into the `s` evaluations in place.
-    ///
-    /// This is the assembly half of the Gruen trick: the split-eq factor
-    /// contributes only its per-round linear term `ℓ`, so kernels sample the
-    /// remaining summand `q` alone and the product is restored per point —
-    /// never a full-domain eq-weighted sweep.
-    fn checked_round_poly(
-        &self,
-        q_evals: &mut [F],
-        previous_claim: F,
-        round: usize,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
-
-    /// `(q(0), q(∞))` of the two-table product summand
-    /// `Σ_y E(y) · a(y) · b(y)` over the remaining low-to-high `(lo, hi)`
-    /// pairs — the endpoints `gruen_poly_deg_3` completes into the cubic
-    /// round message with the running claim.
-    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F);
-}
-
-impl<F: Field> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
-    fn checked_round_poly(
-        &self,
-        q_evals: &mut [F],
-        previous_claim: F,
-        round: usize,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        debug_assert!(q_evals.len() >= 2);
-        let (l_at_0, l_at_1) = self.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let mut l_eval = l_at_0;
-        for q in q_evals.iter_mut() {
-            *q *= l_eval;
-            l_eval += l_step;
-        }
-
-        let round_sum = q_evals[0] + q_evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(q_evals))
-    }
-
-    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {
-        let a = a.evals();
-        let b = b.evals();
-        debug_assert_eq!(
-            self.e_out_current_len() * self.e_in_current_len() * 2,
-            a.len()
-        );
-        debug_assert_eq!(a.len(), b.len());
-        let [zero, infinity] = self.par_fold_out_in(
-            || [F::zero(); 2],
-            |accumulator, row, _x_in, e| {
-                let (a_low, a_high) = (a[2 * row], a[2 * row + 1]);
-                let (b_low, b_high) = (b[2 * row], b[2 * row + 1]);
-                accumulator[0] += e * (a_low * b_low);
-                accumulator[1] += e * ((a_high - a_low) * (b_high - b_low));
-            },
-            |_x_out, e_out, accumulator| [e_out * accumulator[0], e_out * accumulator[1]],
-            |left, right| [left[0] + right[0], left[1] + right[1]],
-        );
-        (zero, infinity)
-    }
-}
-
-/// Sum `task(0), …, task(tasks − 1)` elementwise (each yields a `len`-sized
-/// vector), failing fast on the first error.
-pub(crate) fn try_par_sum_vecs<F: Field, E: Send>(
-    tasks: usize,
-    len: usize,
-    task: impl Fn(usize) -> Result<Vec<F>, E> + Send + Sync,
-) -> Result<Vec<F>, E> {
-    let merge = |mut left: Vec<F>, right: Vec<F>| {
-        for (left, right) in left.iter_mut().zip(right) {
-            *left += right;
-        }
-        left
-    };
-    #[cfg(feature = "parallel")]
-    {
-        (0..tasks).into_par_iter().map(task).try_reduce(
-            || vec![F::zero(); len],
-            |left, right| Ok(merge(left, right)),
-        )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut folded = vec![F::zero(); len];
-        for index in 0..tasks {
-            folded = merge(folded, task(index)?);
-        }
-        Ok(folded)
-    }
-}
-
 /// Assemble a round message from evaluations at `{0, 2, 3, .., degree}`,
 /// recovering `s(1) = previous_claim − s(0)` — exactly the evaluation vector
 /// the reference tier computes directly (its own round check pins
@@ -467,176 +115,6 @@ pub(crate) fn merge_evals<F: Field>(mut left: Vec<F>, right: Vec<F>) -> Vec<F> {
     left
 }
 
-/// `s(t)` samples at `t ∈ {0, 2, 3}` of the cubic triple-product summand
-/// `Σ_y a(y) · b(y) · c(y)` over the remaining low-to-high `(lo, hi)` pairs,
-/// through the deferred-reduction accumulator; `s(1)` comes from the engine's
-/// `from_evals_and_hint` recovery.
-pub(crate) fn triple_product_round_evals<F: Field>(
-    half: usize,
-    a: impl Fn(usize) -> (F, F) + Send + Sync,
-    b: impl Fn(usize) -> (F, F) + Send + Sync,
-    c: impl Fn(usize) -> (F, F) + Send + Sync,
-) -> [F; 3] {
-    let accumulate = |y: usize, acc: &mut [F::Accumulator; 3]| {
-        let (a_0, a_1) = a(y);
-        let (b_0, b_1) = b(y);
-        let (c_0, c_1) = c(y);
-        let (a_m, b_m, c_m) = (a_1 - a_0, b_1 - b_0, c_1 - c_0);
-        let (a_2, b_2, c_2) = (a_1 + a_m, b_1 + b_m, c_1 + c_m);
-        acc[0].fmadd(a_0 * b_0, c_0);
-        acc[1].fmadd(a_2 * b_2, c_2);
-        acc[2].fmadd((a_2 + a_m) * (b_2 + b_m), c_2 + c_m);
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        (0..half)
-            .into_par_iter()
-            .fold(
-                || [F::Accumulator::default(); 3],
-                |mut acc, y| {
-                    accumulate(y, &mut acc);
-                    acc
-                },
-            )
-            .map(|acc| acc.map(F::Accumulator::reduce))
-            .reduce(
-                || [F::zero(); 3],
-                |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
-            )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut acc = [F::Accumulator::default(); 3];
-        for y in 0..half {
-            accumulate(y, &mut acc);
-        }
-        acc.map(F::Accumulator::reduce)
-    }
-}
-
-/// Sum per-pair-group evaluation contributions over `y = 0..groups` into a
-/// `slots`-sized vector — the dense-table round walk of the pair-group
-/// kernels ([`pair`] serves the `(lo, hi)` values inside `accumulate`).
-pub(crate) fn par_sum_pair_groups<F: Field>(
-    groups: usize,
-    slots: usize,
-    accumulate: impl Fn(&mut [F], usize) + Send + Sync,
-) -> Vec<F> {
-    par_sum_pair_groups_reusing(groups, slots, || (), |acc, (), y| accumulate(acc, y))
-}
-
-/// [`par_sum_pair_groups`] with a per-thread scratch buffer, for kernels
-/// whose group walk reuses an allocation across groups (the scratch is
-/// fully overwritten per group).
-pub(crate) fn par_sum_pair_groups_reusing<F: Field, S: Send>(
-    groups: usize,
-    slots: usize,
-    scratch: impl Fn() -> S + Send + Sync,
-    accumulate: impl Fn(&mut [F], &mut S, usize) + Send + Sync,
-) -> Vec<F> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..groups)
-            .into_par_iter()
-            .fold(
-                || (vec![F::zero(); slots], scratch()),
-                |(mut acc, mut scratch), y| {
-                    accumulate(&mut acc, &mut scratch, y);
-                    (acc, scratch)
-                },
-            )
-            .map(|(acc, _)| acc)
-            .reduce(|| vec![F::zero(); slots], merge_evals)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut acc = vec![F::zero(); slots];
-        let mut scratch = scratch();
-        for y in 0..groups {
-            accumulate(&mut acc, &mut scratch, y);
-        }
-        acc
-    }
-}
-
-// --- parallel shims --------------------------------------------------------
-//
-// Kernels' custom scans need chunked map-reduce and indexed maps; the serial
-// fallbacks compute the same field values (sums and products of the same
-// terms), so parity is unaffected by the feature.
-
-/// `merge`-fold of `map` over index chunks of at most `chunk_size`.
-pub(crate) fn map_reduce_chunks<R: Send>(
-    len: usize,
-    chunk_size: usize,
-    map: impl Fn(Range<usize>) -> R + Send + Sync,
-    merge: impl Fn(R, R) -> R + Send + Sync,
-    identity: impl Fn() -> R + Send + Sync,
-) -> R {
-    if len == 0 {
-        return identity();
-    }
-    #[cfg(feature = "parallel")]
-    {
-        let chunks = len.div_ceil(chunk_size);
-        (0..chunks)
-            .into_par_iter()
-            .map(|c| map(c * chunk_size..((c + 1) * chunk_size).min(len)))
-            .reduce(identity, merge)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let _ = (merge, identity, chunk_size);
-        map(0..len)
-    }
-}
-
-/// Collect `f(0), …, f(len − 1)`.
-pub(crate) fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..len).into_par_iter().map(f).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..len).map(f).collect()
-    }
-}
-
-/// Indexed in-place update of a slice.
-pub(crate) fn for_each_index_mut<T: Send>(
-    items: &mut [T],
-    f: impl Fn(usize, &mut T) + Send + Sync,
-) {
-    #[cfg(feature = "parallel")]
-    {
-        items
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        items
-            .iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-}
-
-/// Pool-scaled chunk size for the chunked scans.
-pub(crate) fn scan_chunk_size(len: usize) -> usize {
-    #[cfg(feature = "parallel")]
-    {
-        len.div_ceil(rayon::current_num_threads()).max(1024)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        len.max(1)
-    }
-}
-
 /// `LT(·, r) + constant` served from split tables and bound low-to-high
 /// (legacy `LtPolynomial` port).
 ///
@@ -658,8 +136,12 @@ pub(crate) enum SplitLt<F> {
     Dense(Vec<F>),
 }
 
-#[cfg(feature = "allocative")]
-impl<F> SplitLt<F> {
+impl<F: Field> SplitLt<F> {
+    pub(crate) fn new(r_cycle: &[F]) -> Self {
+        Self::new_plus_constant(r_cycle, F::zero())
+    }
+
+    #[cfg(feature = "allocative")]
     pub(crate) fn heap_bytes(&self) -> usize {
         use crate::backend::vec_heap_bytes;
         match self {
@@ -670,12 +152,6 @@ impl<F> SplitLt<F> {
             } => vec_heap_bytes(lt_lo) + vec_heap_bytes(lt_hi) + vec_heap_bytes(eq_hi),
             Self::Dense(table) => vec_heap_bytes(table),
         }
-    }
-}
-
-impl<F: Field> SplitLt<F> {
-    pub(crate) fn new(r_cycle: &[F]) -> Self {
-        Self::new_plus_constant(r_cycle, F::zero())
     }
 
     /// `LT(·, r_cycle) + constant` — the constant rides in the hi table.
@@ -731,8 +207,13 @@ impl<F: Field> SplitLt<F> {
                 lt_hi,
                 eq_hi,
             } => {
-                bind_pairs(lt_lo, r);
-                if lt_lo.len() == 1 {
+                let half = lt_lo.len() / 2;
+                for y in 0..half {
+                    let lo = lt_lo[2 * y];
+                    lt_lo[y] = lo + r * (lt_lo[2 * y + 1] - lo);
+                }
+                lt_lo.truncate(half);
+                if half == 1 {
                     // Lo variables exhausted: fold the lo scalar into the hi
                     // table and continue densely.
                     let lo_scalar = lt_lo[0];
@@ -744,7 +225,14 @@ impl<F: Field> SplitLt<F> {
                     *self = Self::Dense(dense);
                 }
             }
-            Self::Dense(table) => bind_pairs(table, r),
+            Self::Dense(table) => {
+                let half = table.len() / 2;
+                for y in 0..half {
+                    let lo = table[2 * y];
+                    table[y] = lo + r * (table[2 * y + 1] - lo);
+                }
+                table.truncate(half);
+            }
         }
     }
 
@@ -764,62 +252,46 @@ impl<F: Field> SplitLt<F> {
 /// materialized row vector never exists; re-emulating sources retain the
 /// collected rows. The generic twin of the spartan-outer kernel's store,
 /// for every carry-style typed-row consumer.
-pub(crate) enum BundleStore<F: Field, B> {
-    Owned {
-        witness: Arc<dyn JoltWitnessPlane<F>>,
-        cycles: usize,
-    },
+pub(crate) enum BundleStore<B> {
+    Owned(jolt_witness::OwnedRows),
     Retained(Vec<B>),
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field, B> BundleStore<F, B> {
+impl<B> BundleStore<B> {
     pub(crate) fn heap_bytes(&self) -> usize {
         match self {
-            Self::Owned { .. } => 0,
+            Self::Owned(_) => 0,
             Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
         }
     }
 }
 
-impl<F: Field, B: WitnessBundle + Copy + Send + Sync> BundleStore<F, B> {
+impl<B: WitnessBundle + Clone + Send + Sync> BundleStore<B> {
     /// Resolve for a witness plane: the owning handle when the source is
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.
-    pub(crate) fn resolve(
-        session: &ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
+    pub(crate) fn resolve<F: Field>(
+        witness: &dyn jolt_witness::JoltWitnessPlane<F>,
         cycles: usize,
-    ) -> Result<Self, KernelError<F>> {
-        if RandomAccessRows::new(witness, cycles)?.is_some() {
-            if let Some(owned) = session
-                .witness::<F>()
-                .filter(|owned| ptr::eq(owned.as_ref(), witness))
-            {
-                return Ok(Self::Owned {
-                    witness: Arc::clone(owned),
-                    cycles,
-                });
-            }
+    ) -> Result<Self, crate::KernelError<F>> {
+        match witness.owned_rows() {
+            Some(owned) if cycles <= owned.cycles() => Ok(Self::Owned(owned)),
+            _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
         }
-        Ok(Self::Retained(collect_rows(witness, cycles)?))
     }
 
-    pub(crate) fn access(&self) -> Result<BundleAccess<'_, B>, WitnessError> {
+    pub(crate) fn access(&self) -> BundleAccess<'_, B> {
         match self {
-            Self::Owned { witness, cycles } => RandomAccessRows::new(witness.as_ref(), *cycles)?
-                .map(BundleAccess::View)
-                .ok_or(WitnessError::UnavailableView {
-                    label: "random-access rows",
-                }),
-            Self::Retained(rows) => Ok(BundleAccess::Retained(rows)),
+            Self::Owned(owned) => BundleAccess::View(owned.view()),
+            Self::Retained(rows) => BundleAccess::Retained(rows),
         }
     }
 }
 
 /// One pass's borrowed row provider over a [`BundleStore`].
 pub(crate) enum BundleAccess<'a, B> {
-    View(RandomAccessRows<'a>),
+    View(jolt_witness::RandomAccessRows<'a>),
     Retained(&'a [B]),
 }
 

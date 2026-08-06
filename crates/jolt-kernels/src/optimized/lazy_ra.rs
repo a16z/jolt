@@ -8,7 +8,7 @@
 //! at scale (the committed instruction RA family alone is `8 × T`). But an
 //! unbound selector column is a point mass — `ra_i(·, j)` is
 //! `eq(r_chunk_i, chunk_i(j))`, one scale-table lookup per cycle — and the
-//! first cycle binds preserve that structure: after `b < 4` binds the bound
+//! first cycle binds preserve that structure: after `b < 3` binds the bound
 //! value at index `j` is the gather
 //!
 //! ```text
@@ -48,18 +48,24 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
     /// The scale-table index of polynomial `i`'s hot address at unbound
     /// cycle `j`; `None` when the cycle is cold for that polynomial.
     fn index(&self, i: usize, j: usize) -> Option<usize>;
+
+    /// Heap owned by source metadata, excluding shared witness columns.
+    #[cfg(feature = "allocative")]
+    fn heap_bytes(&self) -> usize {
+        0
+    }
 }
 
-/// `N` address-folded selector columns bound `LowToHigh`, lazily until the
-/// fourth bind materializes dense.
+/// `N` address-folded selector columns bound `LowToHigh`, lazily for the
+/// first three binds.
 pub(crate) enum LazyFoldedRa<F: Field, S> {
-    /// Fewer than four binds: per-polynomial branch scale tables (the base
+    /// Fewer than three binds: per-polynomial branch scale tables (the base
     /// table pre-scaled by each bound-bit pattern's eq weight), flattened
     /// offset-major — `tables[i][offset · stride_i + k]` with
     /// `stride_i = tables[i].len() / width` — plus the compact index source.
     Lazy {
         tables: Vec<Vec<F>>,
-        /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
+        /// Bound-bit branch count (`2^binds`: 1, 2, or 4).
         width: usize,
         source: S,
     },
@@ -68,17 +74,6 @@ pub(crate) enum LazyFoldedRa<F: Field, S> {
 }
 
 impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
-    #[cfg(feature = "allocative")]
-    pub(crate) fn heap_bytes(&self, source_heap_bytes: impl FnOnce(&S) -> usize) -> usize {
-        use crate::backend::{nested_vec_heap_bytes, polys_heap_bytes};
-        match self {
-            Self::Lazy { tables, source, .. } => {
-                nested_vec_heap_bytes(tables) + source_heap_bytes(source)
-            }
-            Self::Dense(polys) => polys_heap_bytes(polys),
-        }
-    }
-
     /// One scale table per selector polynomial, in polynomial order.
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
         debug_assert_eq!(tables.len(), source.num_polys());
@@ -93,6 +88,17 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         match self {
             Self::Lazy { tables, .. } => tables.len(),
             Self::Dense(polys) => polys.len(),
+        }
+    }
+
+    #[cfg(feature = "allocative")]
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::backend::{nested_vec_heap_bytes, polys_heap_bytes};
+        match self {
+            Self::Lazy { tables, source, .. } => {
+                nested_vec_heap_bytes(tables) + source.heap_bytes()
+            }
+            Self::Dense(polys) => polys_heap_bytes(polys),
         }
     }
 

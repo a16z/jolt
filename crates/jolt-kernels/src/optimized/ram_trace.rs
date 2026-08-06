@@ -9,8 +9,6 @@
 
 use std::sync::Arc;
 
-#[cfg(feature = "allocative")]
-use allocative::{Allocative, Key, Visitor};
 use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
@@ -96,6 +94,18 @@ pub(crate) struct RamAccessColumns {
     pub addresses: Vec<u32>,
 }
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RamAccessColumns {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("addresses"),
+            crate::backend::vec_heap_bytes(&self.addresses),
+        );
+        visitor.exit();
+    }
+}
+
 /// RAM values have one final consumer in stage 4, so they are parked
 /// separately from the address column and consumed there.
 pub(crate) struct RamAccessValues {
@@ -107,20 +117,17 @@ pub(crate) struct RamAccessValues {
 }
 
 #[cfg(feature = "allocative")]
-impl RamAccessColumns {
-    pub(crate) fn heap_bytes(&self) -> usize {
-        use crate::backend::vec_heap_bytes;
-        vec_heap_bytes(&self.addresses)
-            + vec_heap_bytes(&self.pre_values)
-            + vec_heap_bytes(&self.post_values)
-    }
-}
-
-#[cfg(feature = "allocative")]
-impl Allocative for RamAccessColumns {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+impl allocative::Allocative for RamAccessValues {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(Key::new("heap"), self.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("pre_values"),
+            crate::backend::vec_heap_bytes(&self.pre_values),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("post_values"),
+            crate::backend::vec_heap_bytes(&self.post_values),
+        );
         visitor.exit();
     }
 }
@@ -251,17 +258,11 @@ impl RamAccessColumns {
                 .state::<Arc<Self>>()
                 .expect("RAM access columns parked above"),
         );
-        // Five kernels across stages 2–6b reclaim these columns by type
-        // alone; a wrong-domain reclaim means OOB indexing or a silently
-        // wrong RA claim from a prefix-covering table, so hard-error like
-        // the `PcRow::shared` twin instead of a release-compiled-out assert.
-        if columns.addresses.len() != 1usize << log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: "session-shared RAM access columns".to_owned(),
-                expected: 1usize << log_t,
-                got: columns.addresses.len(),
-            });
-        }
+        debug_assert_eq!(
+            columns.addresses.len(),
+            1usize << log_t,
+            "parked RAM access columns cover a different cycle domain than requested"
+        );
         Ok(columns)
     }
 

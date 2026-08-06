@@ -268,11 +268,31 @@ pub(crate) fn collect_instruction_cycle_rows<F: Field>(
 /// carry back for the later stages.
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for SharedInstructionRows {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        crate::backend::visit_arc_vec(&mut visitor, allocative::Key::new("rows"), &self.0);
+        visitor.exit();
+    }
+}
+
 /// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
 /// so same-stage co-consumers share one collection but the 40 B × T rows
 /// never outlive their stage — later stages re-derive them index-parallel
 /// instead of carrying them across the prover's peak window.
 pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for SharedInstructionRowsWeak {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(rows) = self.0.upgrade() {
+            crate::backend::visit_arc_vec(&mut visitor, allocative::Key::new("rows"), &rows);
+        }
+        visitor.exit();
+    }
+}
 
 /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
 /// impossible to consume) or collect them fresh, and park the carry back
@@ -423,6 +443,16 @@ struct RafDecomposition<F: Field> {
     checkpoint: F,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> RafDecomposition<F> {
+    fn heap_bytes(&self) -> usize {
+        use crate::backend::poly_heap_bytes;
+        poly_heap_bytes(&self.prefix)
+            + poly_heap_bytes(&self.q_shift)
+            + poly_heap_bytes(&self.q_value)
+    }
+}
+
 impl<F: Field> RafDecomposition<F> {
     fn empty() -> Self {
         Self {
@@ -478,6 +508,20 @@ struct CycleState<F: Field> {
     tables: CycleTables<F>,
     /// Reused low-to-high binding buffer (swapped through every bind).
     bind_scratch: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> CycleState<F> {
+    fn heap_bytes(&self) -> usize {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
+        let tables = match &self.tables {
+            CycleTables::Pending(pending) => vec_heap_bytes(&pending.table_values),
+            CycleTables::Dense { combined_val, ra } => {
+                poly_heap_bytes(combined_val) + polys_heap_bytes(ra)
+            }
+        };
+        gruen_heap_bytes(&self.gruen) + tables + vec_heap_bytes(&self.bind_scratch)
+    }
 }
 
 /// The cycle tables' lifecycle. The address/cycle handoff leaves them
@@ -618,6 +662,75 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     /// only this byte per cycle.
     claim_columns: Vec<u8>,
     rounds_bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for OptimizedInstructionReadRafKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{
+            nested_vec_heap_bytes, polys_heap_bytes, vec_heap_bytes, visit_arc_vec,
+        };
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("r_reduction"),
+            vec_heap_bytes(&self.r_reduction),
+        );
+        visit_arc_vec(&mut visitor, allocative::Key::new("rows"), &self.rows);
+        visitor.visit_simple(
+            allocative::Key::new("buckets"),
+            nested_vec_heap_bytes(&self.buckets),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("u_evals"),
+            vec_heap_bytes(&self.u_evals),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("prefix_checkpoints"),
+            vec_heap_bytes(&self.prefix_checkpoints),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("prefix_tables"),
+            polys_heap_bytes(&self.prefix_tables),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("suffix_tables"),
+            self.suffix_tables.capacity()
+                * std::mem::size_of::<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>()
+                + self
+                    .suffix_tables
+                    .iter()
+                    .map(|(_, polys)| polys_heap_bytes(polys))
+                    .sum::<usize>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("raf"),
+            self.raf_left.heap_bytes()
+                + self.raf_right.heap_bytes()
+                + self.raf_identity.heap_bytes()
+                + self.raf_upper_all_ones.heap_bytes(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("v_tables"),
+            nested_vec_heap_bytes(&self.v_tables),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("phase_challenges"),
+            vec_heap_bytes(&self.phase_challenges),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("cycle_challenges"),
+            vec_heap_bytes(&self.cycle_challenges),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("cycle"),
+            self.cycle.as_ref().map_or(0, CycleState::heap_bytes),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("claim_columns"),
+            vec_heap_bytes(&self.claim_columns),
+        );
+        visitor.exit();
+    }
 }
 
 fn build_cycle_buckets<F: Field>(

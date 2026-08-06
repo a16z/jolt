@@ -24,10 +24,11 @@ use crate::stages::stage5::prove_stage5;
 use crate::stages::stage6a::prove_stage6a;
 use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 
 /// See [`super::prove`].
+#[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -50,6 +51,7 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
+    let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let mut session = backend.begin_proof();
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
         preprocessing,
@@ -63,34 +65,38 @@ where
     let mut transcript = stage0.transcript;
     let log_t = config.trace_length.ilog2() as usize;
 
-    let stage1 = prove_stage1::<F, PCS, VC::Output, T>(
+    let stage1 = prove_stage1::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
+        &mode,
         log_t,
         witness,
         &mut transcript,
     )?;
-    let stage2 = prove_stage2::<F, PCS, VC::Output, T>(
+    let stage2 = prove_stage2::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
+        &mode,
         config,
         public_io,
         &stage1.clear_output,
         witness,
         &mut transcript,
     )?;
-    let stage3 = prove_stage3::<F, PCS, VC::Output, T>(
+    let stage3 = prove_stage3::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
+        &mode,
         config,
         &stage1.clear_output,
         &stage2.clear_output,
         witness,
         &mut transcript,
     )?;
-    let stage4 = prove_stage4::<F, PCS, VC, VC::Output, T>(
+    let stage4 = prove_stage4::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
+        &mode,
         &checked,
         config,
         preprocessing,
@@ -99,9 +105,10 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage5 = prove_stage5::<F, PCS, VC, VC::Output, T>(
+    let stage5 = prove_stage5::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
+        &mode,
         &checked,
         config,
         preprocessing,
@@ -110,9 +117,10 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage6a = prove_stage6a::<F, PCS, VC, VC::Output, T>(
+    let stage6a = prove_stage6a::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
+        &mode,
         &checked,
         config,
         preprocessing,
@@ -124,9 +132,10 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage6b = prove_stage6b::<F, PCS, VC, VC::Output, T>(
+    let stage6b = prove_stage6b::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
+        &mode,
         &checked,
         config,
         preprocessing,
@@ -139,9 +148,10 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage7 = prove_stage7::<F, PCS, VC, VC::Output, T>(
+    let stage7 = prove_stage7::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
+        &mode,
         &checked,
         config,
         preprocessing,

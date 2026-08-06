@@ -372,6 +372,34 @@ struct HammingWeightKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for HammingWeightKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        #[cfg(feature = "akita")]
+        use crate::backend::poly_heap_bytes;
+        use crate::backend::{polys_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("g_tables"),
+            polys_heap_bytes(&self.g_tables),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("weight_tables"),
+            polys_heap_bytes(&self.weight_tables),
+        );
+        #[cfg(feature = "akita")]
+        visitor.visit_simple(
+            allocative::Key::new("baseline_table"),
+            poly_heap_bytes(&self.baseline_table),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("output_openings"),
+            vec_heap_bytes(&self.output_openings),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: Field> HammingWeightKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(

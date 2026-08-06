@@ -55,10 +55,10 @@ use jolt_field::{
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
@@ -308,6 +308,21 @@ struct SpartanOuterCarry<F: Field> {
     t1_values: Vec<F>,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanOuterCarry<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
+        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("t1_values"),
+            vec_heap_bytes(&self.t1_values),
+        );
+        visitor.exit();
+    }
+}
+
 /// Where the kernel's typed rows live. A slice-backed witness serves an
 /// owning handle and every pass re-extracts its windows on the fly — the
 /// materialized row vector (~176 B × T, the prover's peak allocation at
@@ -336,6 +351,16 @@ impl RowsStore {
         match self {
             Self::Owned(owned) => RowsAccess::View(owned.view()),
             Self::Retained(rows) => RowsAccess::Retained(rows),
+        }
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl RowsStore {
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Owned(_) => 0,
+            Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
         }
     }
 }
@@ -550,6 +575,43 @@ struct OuterRemainderKernel<F: Field> {
     rows: RowsStore,
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for OuterRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("az"), poly_heap_bytes(&self.az));
+        visitor.visit_simple(allocative::Key::new("bz"), poly_heap_bytes(&self.bz));
+        visitor.visit_simple(
+            allocative::Key::new("scratch"),
+            vec_heap_bytes(&self.scratch),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("split_eq"),
+            gruen_heap_bytes(&self.split_eq),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("challenges"),
+            vec_heap_bytes(&self.challenges),
+        );
+        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("opening_ids"),
+            vec_heap_bytes(&self.opening_ids),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("derived"),
+            self.derived
+                .az_weights
+                .iter()
+                .chain(&self.derived.bz_weights)
+                .map(vec_heap_bytes)
+                .sum::<usize>(),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> OuterRemainderKernel<F> {

@@ -41,7 +41,7 @@ fn not_served(id: JoltPolynomialId, reason: &'static str) -> WitnessError {
     }
 }
 
-impl<T: TraceSource + Clone> TraceBackend<T> {
+impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     pub(crate) fn shape_of(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         use JoltCommittedPolynomial as C;
         use JoltVirtualPolynomial as V;
@@ -205,7 +205,7 @@ fn advice_bytes_cell_vars(max_bytes: usize) -> usize {
     )
 }
 
-impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> {
+impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_, T> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         self.shape_of(id)
     }

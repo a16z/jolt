@@ -8,7 +8,6 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
@@ -225,11 +224,6 @@ pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
     v.capacity() * size_of::<T>()
 }
 
-#[cfg(feature = "allocative")]
-pub(crate) fn arc_vec_heap_bytes<T>(v: &Arc<Vec<T>>) -> usize {
-    size_of::<Vec<T>>() + v.capacity() * size_of::<T>()
-}
-
 /// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
 /// inner reservation.
 #[cfg(feature = "allocative")]
@@ -256,6 +250,49 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
         + polys.iter().map(poly_heap_bytes).sum::<usize>()
 }
 
+/// Heap retained by an unbound Gruen split-equality table. The cache stores
+/// every power-of-two prefix below each current table, so each side has
+/// `2 * current_len - 1` field elements.
+#[cfg(feature = "allocative")]
+pub(crate) fn gruen_heap_bytes<F: jolt_field::Field>(
+    split: &jolt_poly::GruenSplitEqPolynomial<F>,
+) -> usize {
+    let in_len = split.e_in_current_len();
+    let out_len = split.e_out_current_len();
+    let in_levels = in_len.ilog2() as usize + 1;
+    let out_levels = out_len.ilog2() as usize + 1;
+    let point_len = in_levels + out_levels - 1;
+    point_len * size_of::<F>()
+        + (in_levels + out_levels) * size_of::<Vec<F>>()
+        + (2 * in_len + 2 * out_len - 2) * size_of::<F>()
+}
+
+/// Visit a shared flat vector without walking its elements. This preserves
+/// `Arc` deduplication while keeping heap snapshots O(1) in the trace size.
+#[cfg(feature = "allocative")]
+pub(crate) fn visit_arc_vec<T>(
+    visitor: &mut allocative::Visitor<'_>,
+    key: allocative::Key,
+    value: &std::sync::Arc<Vec<T>>,
+) {
+    let Some(mut visitor) = visitor.enter_shared(
+        key,
+        size_of::<*const Vec<T>>(),
+        std::sync::Arc::as_ptr(value).cast(),
+    ) else {
+        return;
+    };
+    visitor.visit_simple(
+        allocative::Key::new("ArcInner"),
+        2 * size_of::<usize>() + size_of::<Vec<T>>(),
+    );
+    visitor.visit_simple(
+        allocative::Key::new("elements"),
+        value.capacity() * size_of::<T>(),
+    );
+    visitor.exit();
+}
+
 /// Backend-owned state with proof lifetime, opaque to orchestration.
 ///
 /// Slots stash and share private state keyed by a backend-private type, so
@@ -270,22 +307,9 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
 #[derive(Default)]
 pub struct ProofSession {
     state: HashMap<TypeId, Carry>,
-    witness: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl ProofSession {
-    /// Retain the proof's witness plane for kernels whose state outlives
-    /// their `prepare` borrow.
-    pub fn set_witness<F: Field>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
-        self.witness = Some(Box::new(witness));
-    }
-
-    /// The retained witness plane for `F`, when the proof was started from
-    /// an owned plane.
-    pub fn witness<F: Field>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
-        self.witness.as_ref()?.downcast_ref()
-    }
-
     /// The calling backend's private state, created by `init` on first
     /// access. `T` is the backend-private key: choose one type per backend
     /// family.

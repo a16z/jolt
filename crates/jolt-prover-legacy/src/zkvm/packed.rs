@@ -33,9 +33,12 @@ use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCom
 use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, PrefixPackedClaims,
 };
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
-use jolt_verifier::preprocessing::JoltVerifierPreprocessing;
+use jolt_verifier::preprocessing::{
+    JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
+};
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
 use jolt_verifier::VerifierError;
 
@@ -1673,14 +1676,12 @@ pub fn akita_verifier_preprocessing(
 ) -> JoltVerifierPreprocessing<AkitaScheme, AkitaVc> {
     let program = match &preprocessing.shared.program {
         crate::zkvm::program::ProgramPreprocessing::Full(full) => {
-            jolt_verifier::preprocessing::ProgramPreprocessing::Full(
-                jolt_program::preprocess::JoltProgramPreprocessing {
-                    bytecode: full.bytecode.as_ref().clone(),
-                    ram: full.ram.clone(),
-                    memory_layout: preprocessing.shared.memory_layout.clone(),
-                    max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                },
-            )
+            VerifierProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
+                bytecode: full.bytecode.as_ref().clone(),
+                ram: full.ram.clone(),
+                memory_layout: preprocessing.shared.memory_layout.clone(),
+                max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
+            }))
         }
         crate::zkvm::program::ProgramPreprocessing::Committed(committed) => {
             let program_one_hot = program_one_hot

@@ -358,6 +358,33 @@ struct OptimizedBooleanityAddressKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for OptimizedBooleanityAddressKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{
+            nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
+        };
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("gamma_weights"),
+            vec_heap_bytes(&self.gamma_weights),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("linear"),
+            polys_heap_bytes(&self.linear),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("squared"),
+            nested_vec_heap_bytes(&self.squared),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("eq_address"),
+            poly_heap_bytes(&self.eq_address),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: Field> OptimizedBooleanityAddressKernel<F> {
     fn new(rounds: usize, gamma: F, reference_address: &[F], masses: Vec<Vec<F>>) -> Self {
         let linear: Vec<Polynomial<F>> = masses.into_iter().map(Polynomial::new).collect();
@@ -591,6 +618,11 @@ impl ChunkIndexSource for BooleanityChunks {
     fn index(&self, i: usize, j: usize) -> Option<usize> {
         self.selectors[i].index(&self.rows[j])
     }
+
+    #[cfg(feature = "allocative")]
+    fn heap_bytes(&self) -> usize {
+        crate::backend::vec_heap_bytes(&self.selectors)
+    }
 }
 
 struct OptimizedBooleanityCycleKernel<F: Field> {
@@ -606,6 +638,29 @@ struct OptimizedBooleanityCycleKernel<F: Field> {
     gamma_powers_inv: Vec<F>,
     openings: Vec<JoltOpeningId>,
     rounds_bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for OptimizedBooleanityCycleKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("eq"), gruen_heap_bytes(&self.eq));
+        visitor.visit_simple(allocative::Key::new("tables"), self.tables.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("gamma_powers"),
+            vec_heap_bytes(&self.gamma_powers),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("gamma_powers_inv"),
+            vec_heap_bytes(&self.gamma_powers_inv),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("openings"),
+            vec_heap_bytes(&self.openings),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> OptimizedBooleanityCycleKernel<F> {

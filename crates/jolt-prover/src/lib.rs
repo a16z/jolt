@@ -27,18 +27,31 @@
 //! [`driver`]: StageProver
 //! [`error`]: ProverError
 
+#[cfg(all(feature = "akita", feature = "zk"))]
+compile_error!("the Akita prover does not support the zk feature");
+
 #[cfg(feature = "akita")]
 pub mod akita;
+#[cfg(feature = "zk")]
+mod blindfold;
 mod config;
 #[cfg(not(feature = "akita"))]
 pub mod dory;
 pub mod driver;
 mod error;
 mod preprocessing;
+#[cfg(feature = "profiling")]
+pub mod profile;
+mod recorder;
 pub mod stages;
 
+#[cfg(feature = "akita")]
+pub use akita::prove;
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
+#[cfg(not(feature = "akita"))]
+pub use dory::prove;
 pub use driver::{KernelSource, Proved, StageProver};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession};
 pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
+pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};
