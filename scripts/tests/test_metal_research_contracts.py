@@ -288,6 +288,50 @@ class VersionedContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "transfer acceptance"):
             validate_template(tampered, ROOT)
 
+    def test_repository_template_protects_one_validation_retry(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        reserves = {
+            reserve["id"]: reserve for reserve in template["budget"]["reserves"]
+        }
+        tiers = {
+            tier["role"]: tier
+            for tier in template["evaluation"]["tiers"]
+            if tier.get("applicable") is True
+        }
+        tier_by_reserve = {
+            "representative_revalidation": tiers["representative"],
+            "piop_holdout": tiers["holdout"],
+            "piop_transfer": tiers["transfer"],
+        }
+
+        for reserve_id, tier in tier_by_reserve.items():
+            reserve = reserves[reserve_id]
+            self.assertGreaterEqual(reserve["invocations"], 2)
+            for resource, cost_limit in tier["cost_limit"].items():
+                self.assertGreaterEqual(
+                    reserve["resources"][resource],
+                    reserve["invocations"] * cost_limit,
+                )
+
+    def test_kernel_validation_separates_local_and_portfolio_floors(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        for tier in template["evaluation"]["tiers"]:
+            if tier.get("role") not in {"holdout", "transfer"}:
+                continue
+            promotion = tier["promotion"]
+            self.assertGreaterEqual(promotion["minimum_local_speedup"], 5.0)
+            self.assertLess(promotion["minimum_portfolio_speedup"], 5.0)
+
     def test_schema_one_goal_and_template_remain_readable_by_legacy_controller(self) -> None:
         import scripts.metal_autoresearch as legacy
 

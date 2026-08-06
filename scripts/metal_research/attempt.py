@@ -7,6 +7,7 @@ import os
 import secrets
 import signal
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -44,7 +45,7 @@ def _read_lock_record() -> dict[str, Any]:
 @contextmanager
 def evaluator_lease(
     owner: dict[str, Any], timeout_seconds: Optional[float] = None
-) -> Iterator[dict[str, float]]:
+) -> Iterator[dict[str, Any]]:
     wait_started = time.monotonic()
     inherited_token = os.environ.get(EVALUATOR_LOCK_HELD_ENV)
     if inherited_token is not None and secrets.compare_digest(
@@ -99,6 +100,7 @@ def evaluator_lease(
         telemetry = {
             "queue_wait_seconds": acquired - wait_started,
             "exclusive_lease_seconds": 0.0,
+            "lock_fd": descriptor,
         }
         try:
             yield telemetry
@@ -174,6 +176,134 @@ def _stop_process_group(process: subprocess.Popen[str]) -> tuple[str, str]:
         return process.communicate()
 
 
+def _process_group_exists(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _recorded_process_owns_lease(identity: dict[str, Any]) -> bool:
+    descriptor = os.open(EVALUATOR_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            record = _read_lock_record()
+            if (
+                record.get("evaluation_id") != identity.get("evaluation_id")
+                or record.get("launch_token") != identity.get("launch_token")
+            ):
+                raise RuntimeError("the evaluator lease belongs to another launch")
+            controller_pid = record.get("pid")
+            if type(controller_pid) is int and _process_exists(controller_pid):
+                raise RuntimeError("the evaluator controller is still running")
+            return True
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(descriptor)
+
+
+def _recorded_process_command(pid: int) -> Optional[str]:
+    observed = subprocess.run(
+        ["ps", "-o", "command=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    if observed.returncode != 0:
+        return None
+    return observed.stdout.strip()
+
+
+def stop_recorded_process_group(identity: dict[str, Any]) -> None:
+    pid = identity.get("pid")
+    pgid = identity.get("pgid")
+    if type(pid) is not int or type(pgid) is not int or pid <= 1 or pgid <= 1:
+        raise ValueError("recorded evaluator process identity is invalid")
+    if pid != pgid:
+        raise ValueError("recorded evaluator is not its process-group leader")
+    if not _recorded_process_owns_lease(identity):
+        return
+    try:
+        observed = os.getpgid(pid)
+    except ProcessLookupError:
+        return
+    if observed != pgid:
+        raise ValueError("recorded evaluator process group no longer matches")
+    command = _recorded_process_command(pid)
+    if command is None:
+        return
+    if (
+        "scripts/metal_research/process_wrapper.py" not in command
+        or str(identity.get("launch_token")) not in command
+    ):
+        raise RuntimeError("recorded evaluator command no longer matches")
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 5.0
+    while _process_group_exists(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not _process_group_exists(pgid):
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 5.0
+    while _process_group_exists(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if _process_group_exists(pgid):
+        raise RuntimeError("recorded evaluator process group did not stop")
+
+
+def _tracked_command(
+    root: Path, command: list[str], process_tracking: Optional[dict[str, str]]
+) -> tuple[list[str], Optional[dict[str, str]]]:
+    if process_tracking is None:
+        return command, None
+    required = {"evaluation_id", "launch_token", "identity_path"}
+    if set(process_tracking) != required or not all(
+        isinstance(process_tracking[name], str) and process_tracking[name]
+        for name in required
+    ):
+        raise ValueError("evaluator process tracking is invalid")
+    identity_path = Path(process_tracking["identity_path"])
+    if not identity_path.is_absolute():
+        raise ValueError("evaluator process identity path must be absolute")
+    wrapper = root / "scripts/metal_research/process_wrapper.py"
+    tracked = [
+        sys.executable,
+        str(wrapper),
+        "--identity-path",
+        str(identity_path),
+        "--evaluation-id",
+        process_tracking["evaluation_id"],
+        "--launch-token",
+        process_tracking["launch_token"],
+        "--",
+        *command,
+    ]
+    return tracked, process_tracking
+
+
 def run_attempt(
     root: Path,
     evaluator: dict[str, Any],
@@ -181,10 +311,12 @@ def run_attempt(
     evaluation_dir: Path,
     tier_id: str,
     queue_timeout_seconds: Optional[float] = None,
+    process_tracking: Optional[dict[str, str]] = None,
 ) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
     evaluation_dir.mkdir(parents=True, exist_ok=False)
     artifact_dir = evaluation_dir / "artifacts"
     command = _command(evaluator, params)
+    launch_command, tracking = _tracked_command(root, command, process_tracking)
     attempt_started_at = _utc_now()
     stdout = ""
     stderr = ""
@@ -198,19 +330,26 @@ def run_attempt(
     }
 
     try:
-        with evaluator_lease(
-            {"tier_id": tier_id, "command": command}, queue_timeout_seconds
-        ) as lease:
+        lease_owner = {"tier_id": tier_id, "command": command}
+        if tracking is not None:
+            lease_owner.update(
+                {
+                    "evaluation_id": tracking["evaluation_id"],
+                    "launch_token": tracking["launch_token"],
+                }
+            )
+        with evaluator_lease(lease_owner, queue_timeout_seconds) as lease:
             started = time.monotonic()
             try:
                 process = subprocess.Popen(
-                    command,
+                    launch_command,
                     cwd=root,
                     env=_environment(evaluator, params, artifact_dir),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     start_new_session=True,
+                    pass_fds=(int(lease["lock_fd"]),) if "lock_fd" in lease else (),
                 )
                 try:
                     stdout, stderr = process.communicate(
@@ -273,6 +412,7 @@ def run_attempt(
             "gpu_active_charge_kind": "conservative_wall_upper_bound",
         },
         "result_sha256": result_sha256,
+        "process_tracking": tracking,
     }
     (evaluation_dir / "attempt.json").write_bytes(_encoded(attempt))
     return attempt, output

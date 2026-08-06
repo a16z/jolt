@@ -5,13 +5,20 @@ import hashlib
 import json
 import math
 import os
+import secrets
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from .attempt import run_attempt
+from .attempt import (
+    EvaluatorLeaseTimeout,
+    evaluator_lease,
+    run_attempt,
+    stop_recorded_process_group,
+)
 from .budget import BudgetExhausted, admit_tier, charge_attempt, empty_usage
 from .contracts import validate_goal_contract, validate_template
 from .results import adapt_result, validate_tier_result
@@ -361,6 +368,29 @@ def cost_limit_overages(
     ]
 
 
+def _arm_process_tracking(
+    run_dir: Path, evaluation_id: str
+) -> dict[str, str]:
+    inflight_path = run_dir / "inflight.json"
+    inflight = read_json(inflight_path)
+    if inflight.get("evaluation_id") != evaluation_id:
+        raise ValueError("inflight evaluation does not match the evaluator launch")
+    relative_identity = (
+        Path("evaluations") / evaluation_id / "process-identity.json"
+    )
+    tracking = {
+        "evaluation_id": evaluation_id,
+        "launch_token": secrets.token_hex(32),
+        "identity_path": relative_identity.as_posix(),
+    }
+    inflight["process_tracking"] = tracking
+    write_inflight(run_dir, inflight)
+    return {
+        **tracking,
+        "identity_path": str((run_dir / relative_identity).resolve()),
+    }
+
+
 def execute_tier(
     root: Path,
     run_dir: Path,
@@ -380,6 +410,7 @@ def execute_tier(
         budget_reserve,
     )
     evaluation_dir = run_dir / "evaluations" / evaluation_id
+    process_tracking = _arm_process_tracking(run_dir, evaluation_id)
     attempt, output = run_attempt(
         root,
         tier["evaluator"],
@@ -387,6 +418,7 @@ def execute_tier(
         evaluation_dir,
         tier["id"],
         queue_timeout_seconds=queue_budget,
+        process_tracking=process_tracking,
     )
     result = None
     if attempt["outcome"] == "success" and output is not None:
@@ -601,7 +633,7 @@ def trial(
     root = root.resolve()
     state = load_state(run_dir)
     _validate_live_state(root, state)
-    if state["status"] not in {"active", "portfolio_accepted", "transferred"}:
+    if state["status"] != "active":
         raise ValueError("run is not active")
     if (run_dir / "inflight.json").exists():
         raise ValueError("an interrupted evaluation must be recovered first")
@@ -782,9 +814,12 @@ def _acceptance_result(
     if result is None:
         return False, error or f"{tier['role']} evaluator is invalid"
     passed, reason = _required_guards(state, tier, result)
-    floor = float(tier["promotion"]["minimum_accepted_speedup"])
+    floor = float(tier["promotion"]["minimum_portfolio_speedup"])
     if passed and not _result_clears_floor(result, floor):
-        return False, f"PIOP {tier['role']} did not clear 5x in both order strata"
+        return (
+            False,
+            f"PIOP {tier['role']} fell below its kernel-validation portfolio floor",
+        )
     local = result.get("local", {})
     local_summary = local.get("replication", {}).get("summary", {})
     local_values = (
@@ -869,7 +904,7 @@ def validate_production(
     root = root.resolve()
     state = load_state(run_dir)
     _validate_live_state(root, state)
-    if state["status"] not in {"active", "portfolio_accepted", "transferred"}:
+    if state["status"] not in {"active", "kernel_accepted", "transferred"}:
         raise ValueError("run is not active")
     if (run_dir / "inflight.json").exists():
         raise ValueError("an interrupted evaluation must be recovered first")
@@ -998,8 +1033,8 @@ def validate_production(
             live_revision,
             validation_id,
             "piop_holdout",
-            "portfolio_accepted",
-            "active",
+            "kernel_accepted",
+            "holdout_rejected",
         )
         if not passed:
             (run_dir / "inflight.json").unlink()
@@ -1016,7 +1051,7 @@ def validate_production(
         validation_id,
         "piop_transfer",
         "transferred",
-        "portfolio_accepted",
+        "kernel_accepted",
     )
     (run_dir / "inflight.json").unlink()
     if not transferred:
@@ -1089,7 +1124,76 @@ def _recover_committed_candidate(
     return True, None
 
 
+def _recorded_process_identity(
+    run_dir: Path, inflight: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    tracking = inflight.get("process_tracking")
+    if tracking is None:
+        return None
+    required = {"evaluation_id", "launch_token", "identity_path"}
+    if not isinstance(tracking, dict) or set(tracking) != required:
+        raise ValueError("inflight process tracking is invalid")
+    if (
+        tracking["evaluation_id"] != inflight.get("evaluation_id")
+        or not isinstance(tracking["launch_token"], str)
+        or not tracking["launch_token"]
+    ):
+        raise ValueError("inflight process tracking does not match the evaluation")
+    relative = Path(tracking["identity_path"])
+    expected = (
+        Path("evaluations")
+        / str(inflight["evaluation_id"])
+        / "process-identity.json"
+    )
+    if relative.is_absolute() or ".." in relative.parts or relative != expected:
+        raise ValueError("inflight process identity path is invalid")
+    path = run_dir / relative
+    deadline = time.monotonic() + 2.0
+    while not path.is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not path.is_file():
+        try:
+            with evaluator_lease(
+                {
+                    "kind": "recovery_probe",
+                    "evaluation_id": inflight["evaluation_id"],
+                },
+                timeout_seconds=0.0,
+            ):
+                return None
+        except EvaluatorLeaseTimeout as error:
+            raise RuntimeError(
+                "tracked evaluator holds the lease but has not published its identity"
+            ) from error
+    identity = read_json(path)
+    if (
+        identity.get("schema_version") != 1
+        or identity.get("evaluation_id") != tracking["evaluation_id"]
+        or identity.get("launch_token") != tracking["launch_token"]
+    ):
+        raise ValueError("recorded evaluator identity does not match inflight state")
+    return identity
+
+
 def recover(root: Path, run_dir: Path) -> dict[str, Any]:
+    inflight_path = run_dir / "inflight.json"
+    if not inflight_path.is_file():
+        raise ValueError("there is no interrupted evaluation")
+    inflight = read_json(inflight_path)
+    identity = _recorded_process_identity(run_dir, inflight)
+    if identity is not None:
+        stop_recorded_process_group(identity)
+    with evaluator_lease(
+        {
+            "kind": "recovery",
+            "evaluation_id": inflight["evaluation_id"],
+        },
+        timeout_seconds=30.0,
+    ):
+        return _recover_under_lease(root, run_dir)
+
+
+def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
     state = load_state(run_dir)
     inflight_path = run_dir / "inflight.json"
     if not inflight_path.is_file():

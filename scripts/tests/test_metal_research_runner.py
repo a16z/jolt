@@ -2,14 +2,18 @@ import copy
 import json
 import signal
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 from unittest import mock
 
 from scripts.metal_research.attempt import EvaluatorLeaseTimeout, run_attempt
+from scripts.metal_research import attempt as attempt_runtime
+from scripts.metal_research import process_wrapper
 from scripts.metal_research.paired import paired_summary
 from scripts.metal_research.results import adapt_result, validate_tier_result
 from scripts.metal_research import runner
@@ -35,6 +39,7 @@ def fake_lease(
     telemetry = {
         "queue_wait_seconds": 2.0,
         "exclusive_lease_seconds": 0.0,
+        "lock_fd": 99,
     }
     yield telemetry
     telemetry["exclusive_lease_seconds"] = 11.0
@@ -58,6 +63,152 @@ def descriptor(warmups: int = 0) -> dict[str, object]:
 
 
 class AttemptTests(unittest.TestCase):
+    def test_tracked_attempt_runs_end_to_end(self) -> None:
+        tracked_evaluator = {
+            "command": [
+                sys.executable,
+                "-c",
+                "import json; print(json.dumps({'ok': True}))",
+            ],
+            "result_adapter": "test",
+            "timeout_seconds": 30,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            wrapper = root / "scripts/metal_research"
+            wrapper.mkdir(parents=True)
+            source = ROOT / "scripts/metal_research/process_wrapper.py"
+            (wrapper / "process_wrapper.py").write_bytes(source.read_bytes())
+            evaluation_dir = root / "evaluation"
+            tracking = {
+                "evaluation_id": "evaluation-001",
+                "launch_token": "launch-token",
+                "identity_path": str(evaluation_dir / "process-identity.json"),
+            }
+
+            observed, output = run_attempt(
+                root,
+                tracked_evaluator,
+                {},
+                evaluation_dir,
+                "representative",
+                process_tracking=tracking,
+            )
+
+            identity = json.loads(
+                (evaluation_dir / "process-identity.json").read_text()
+            )
+
+        self.assertEqual(observed["outcome"], "success")
+        self.assertEqual(output, {"ok": True})
+        self.assertEqual(identity["launch_token"], "launch-token")
+
+    def test_recovery_does_not_signal_a_reused_pid_after_lease_release(self) -> None:
+        identity = {
+            "evaluation_id": "evaluation-001",
+            "launch_token": "launch-token",
+            "pid": 321,
+            "pgid": 321,
+        }
+        with mock.patch.object(
+            attempt_runtime, "_recorded_process_owns_lease", return_value=False
+        ), mock.patch.object(attempt_runtime.os, "getpgid") as getpgid:
+            attempt_runtime.stop_recorded_process_group(identity)
+
+        getpgid.assert_not_called()
+
+    def test_recovery_signals_only_the_matching_tracked_process_group(self) -> None:
+        identity = {
+            "evaluation_id": "evaluation-001",
+            "launch_token": "launch-token",
+            "pid": 321,
+            "pgid": 321,
+        }
+        command = (
+            "python3 scripts/metal_research/process_wrapper.py "
+            "--launch-token launch-token"
+        )
+        with mock.patch.object(
+            attempt_runtime, "_recorded_process_owns_lease", return_value=True
+        ), mock.patch.object(
+            attempt_runtime, "_recorded_process_command", return_value=command
+        ), mock.patch.object(
+            attempt_runtime, "_process_group_exists", return_value=False
+        ), mock.patch.object(
+            attempt_runtime.os, "getpgid", return_value=321
+        ), mock.patch.object(attempt_runtime.os, "killpg") as killpg:
+            attempt_runtime.stop_recorded_process_group(identity)
+
+        killpg.assert_called_once_with(321, signal.SIGTERM)
+
+    def test_process_wrapper_publishes_identity_before_exec(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            identity_path = Path(directory) / "process-identity.json"
+
+            def execute(*_args: object, **_kwargs: object) -> int:
+                identity = json.loads(identity_path.read_text())
+                self.assertEqual(identity["evaluation_id"], "evaluation-001")
+                self.assertEqual(identity["launch_token"], "launch-token")
+                return 7
+
+            with mock.patch.object(
+                process_wrapper.subprocess, "call", side_effect=execute
+            ):
+                returncode = process_wrapper.main(
+                    [
+                        "--identity-path",
+                        str(identity_path),
+                        "--evaluation-id",
+                        "evaluation-001",
+                        "--launch-token",
+                        "launch-token",
+                        "--",
+                        "unused",
+                    ]
+                )
+
+            self.assertEqual(returncode, 7)
+
+    def test_tracked_attempt_inherits_lease_and_uses_wrapper(self) -> None:
+        process = SimpleNamespace(
+            returncode=0,
+            pid=321,
+            communicate=mock.Mock(return_value=(json.dumps({"ok": True}) + "\n", "")),
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen", return_value=process
+        ) as popen, mock.patch(
+            "scripts.metal_research.attempt.time.monotonic",
+            side_effect=[10.0, 11.0],
+        ):
+            evaluation_dir = Path(directory) / "evaluation"
+            tracking = {
+                "evaluation_id": "candidate-001-representative",
+                "launch_token": "unique-launch-token",
+                "identity_path": str(evaluation_dir / "process-identity.json"),
+            }
+            attempt, output = run_attempt(
+                Path(directory),
+                evaluator(),
+                {},
+                evaluation_dir,
+                "representative",
+                process_tracking=tracking,
+            )
+
+        command = popen.call_args.args[0]
+        self.assertTrue(
+            any(
+                item.endswith("scripts/metal_research/process_wrapper.py")
+                for item in command
+            )
+        )
+        self.assertEqual(popen.call_args.kwargs["pass_fds"], (99,))
+        self.assertEqual(attempt["command"], ["unused"])
+        self.assertEqual(output, {"ok": True})
+
     def test_tier_cost_limit_checks_every_accounting_dimension(self) -> None:
         tier = {
             "cost_limit": {
@@ -439,7 +590,10 @@ class RunnerIntegrationTests(unittest.TestCase):
         return attempt
 
     def tier_result(
-        self, tier: dict[str, object], speedup: float = 5.0
+        self,
+        tier: dict[str, object],
+        speedup: float = 5.0,
+        local_speedup: Optional[float] = None,
     ) -> dict[str, object]:
         replication = tier["replication"]
         raw_pairs = [
@@ -468,12 +622,69 @@ class RunnerIntegrationTests(unittest.TestCase):
             "guards": {name: True for name in required},
         }
         if tier["role"] in {"holdout", "transfer"}:
+            local_speedup = speedup if local_speedup is None else local_speedup
+            local_pairs = copy.deepcopy(raw_pairs)
+            for pair in local_pairs:
+                pair["arms"]["treatment"]["primary_ns"] = 500.0 / local_speedup
+                pair["effect"] = local_speedup
             result["local"] = {
                 "kernel": "OuterRemainder",
-                "primary": {"value": speedup},
-                "replication": {"pairs": raw_pairs, "summary": summary},
+                "primary": {"value": local_speedup},
+                "replication": {
+                    "pairs": local_pairs,
+                    "summary": paired_summary(local_pairs, replication),
+                },
             }
         return result
+
+    def test_kernel_holdout_accepts_before_the_portfolio_reaches_five_x(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        tier = copy.deepcopy(
+            next(
+                item
+                for item in template["evaluation"]["tiers"]
+                if item.get("role") == "holdout"
+            )
+        )
+        tier["promotion"].pop("minimum_accepted_speedup", None)
+        tier["promotion"]["minimum_portfolio_speedup"] = 2.5
+        result = self.tier_result(tier, speedup=3.0, local_speedup=5.2)
+
+        passed, reason = runner._acceptance_result(
+            {"goal": template}, tier, result, None
+        )
+
+        self.assertTrue(passed, reason)
+
+    def test_kernel_holdout_still_rejects_a_subfloor_local_kernel(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        tier = copy.deepcopy(
+            next(
+                item
+                for item in template["evaluation"]["tiers"]
+                if item.get("role") == "holdout"
+            )
+        )
+        tier["promotion"].pop("minimum_accepted_speedup", None)
+        tier["promotion"]["minimum_portfolio_speedup"] = 2.5
+        result = self.tier_result(tier, speedup=3.0, local_speedup=4.9)
+
+        passed, reason = runner._acceptance_result(
+            {"goal": template}, tier, result, None
+        )
+
+        self.assertFalse(passed)
+        self.assertIn("local-kernel", reason)
 
     def test_init_and_trial_launch_one_internally_paired_process_each(self) -> None:
         output = self.outer_output()
@@ -545,6 +756,81 @@ class RunnerIntegrationTests(unittest.TestCase):
             self.assertGreaterEqual(
                 recovered["usage"]["gpu_active_estimated_seconds"], 0.0
             )
+            self.assertFalse((run_dir / "inflight.json").exists())
+
+    def test_recovery_drains_the_recorded_process_before_releasing_inflight(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            state = runner.load_state(run_dir)
+            identity_path = (
+                run_dir
+                / "evaluations"
+                / "candidate-001-representative"
+                / "process-identity.json"
+            )
+            identity_path.parent.mkdir()
+            identity_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "evaluation_id": "candidate-001-representative",
+                        "launch_token": "orphan-token",
+                        "pid": 4321,
+                        "pgid": 4321,
+                    }
+                )
+            )
+            runner.write_inflight(
+                run_dir,
+                {
+                    "schema_version": 2,
+                    "kind": "candidate",
+                    "candidate_id": "candidate-001",
+                    "evaluation_id": "candidate-001-representative",
+                    "tier_id": "representative",
+                    "params": state["accepted_parent"]["params"],
+                    "editable_paths_sha256": state["fingerprint"][
+                        "editable_paths_sha256"
+                    ],
+                    "started_at": runner.utc_now(),
+                    "process_tracking": {
+                        "evaluation_id": "candidate-001-representative",
+                        "launch_token": "orphan-token",
+                        "identity_path": str(identity_path.relative_to(run_dir)),
+                    },
+                },
+            )
+            order: list[str] = []
+
+            @contextmanager
+            def recovery_lease(*_args: object, **_kwargs: object):
+                order.append("lease")
+                yield {}
+
+            def stop(identity: dict[str, object]) -> None:
+                self.assertTrue((run_dir / "inflight.json").exists())
+                self.assertEqual(identity["launch_token"], "orphan-token")
+                order.append("stop")
+
+            with mock.patch.object(
+                runner, "stop_recorded_process_group", side_effect=stop, create=True
+            ), mock.patch.object(
+                runner, "evaluator_lease", side_effect=recovery_lease, create=True
+            ):
+                runner.recover(ROOT, run_dir)
+
+            self.assertEqual(order, ["stop", "lease"])
             self.assertFalse((run_dir / "inflight.json").exists())
 
     def test_proxy_rejection_skips_the_representative_tier(self) -> None:
@@ -713,15 +999,73 @@ class RunnerIntegrationTests(unittest.TestCase):
             ), mock.patch.object(
                 metal_autoresearch, "validate_production_revision_scope"
             ), mock.patch.object(runner, "execute_tier", side_effect=execute):
-                with self.assertRaisesRegex(ValueError, "did not clear 5x"):
+                with self.assertRaisesRegex(ValueError, "local-kernel"):
                     runner.validate_production(ROOT, run_dir)
-                self.assertEqual(runner.load_state(run_dir)["status"], "portfolio_accepted")
+                self.assertEqual(
+                    runner.load_state(run_dir)["status"], "kernel_accepted"
+                )
                 _, state = runner.validate_production(ROOT, run_dir)
 
             self.assertEqual(
                 launches, ["representative", "holdout", "transfer", "transfer"]
             )
             self.assertEqual(state["status"], "transferred")
+
+    def test_failed_holdout_seals_the_run_against_further_tuning(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("role") == "representative"
+            )
+            accepted = self.tier_result(representative)
+            state["accepted_parent"]["metric"] = 5.0
+            state["accepted_parent"]["paired_summary"] = accepted["replication"][
+                "summary"
+            ]
+            runner.write_state(run_dir, state)
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                _params: dict[str, str],
+                _evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                if tier["role"] == "holdout":
+                    result = self.tier_result(
+                        tier, speedup=2.4, local_speedup=5.2
+                    )
+                else:
+                    result = self.tier_result(tier)
+                return ({"attempt": {"error": None, "outcome": "success"}}, result)
+
+            with mock.patch.object(
+                metal_autoresearch, "git_worktree_clean", return_value=True
+            ), mock.patch.object(
+                metal_autoresearch, "validate_production_revision_scope"
+            ), mock.patch.object(runner, "execute_tier", side_effect=execute):
+                with self.assertRaisesRegex(ValueError, "portfolio floor"):
+                    runner.validate_production(ROOT, run_dir)
+
+            self.assertEqual(runner.load_state(run_dir)["status"], "holdout_rejected")
+            with mock.patch.object(runner, "_validate_live_state"):
+                with self.assertRaisesRegex(ValueError, "not active"):
+                    runner.trial(ROOT, run_dir, [], "must not tune on holdout")
 
     def test_state_digest_is_committed_inside_the_atomic_state_file(self) -> None:
         output = self.outer_output()

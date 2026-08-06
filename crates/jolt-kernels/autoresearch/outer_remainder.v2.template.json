@@ -10,38 +10,38 @@
     "reserves": [
       {
         "id": "representative_revalidation",
-        "invocations": 1,
+        "invocations": 2,
         "resources": {
-          "active_evaluator_seconds": 1800,
-          "exclusive_machine_seconds": 1800,
-          "gpu_active_seconds": 1800
+          "active_evaluator_seconds": 3600,
+          "exclusive_machine_seconds": 3600,
+          "gpu_active_seconds": 3600
         }
       },
       {
         "id": "piop_holdout",
-        "invocations": 1,
-        "resources": {
-          "active_evaluator_seconds": 7200,
-          "exclusive_machine_seconds": 7200,
-          "gpu_active_seconds": 7200
-        }
-      },
-      {
-        "id": "piop_transfer",
-        "invocations": 1,
+        "invocations": 2,
         "resources": {
           "active_evaluator_seconds": 14400,
           "exclusive_machine_seconds": 14400,
           "gpu_active_seconds": 14400
         }
+      },
+      {
+        "id": "piop_transfer",
+        "invocations": 2,
+        "resources": {
+          "active_evaluator_seconds": 28800,
+          "exclusive_machine_seconds": 28800,
+          "gpu_active_seconds": 28800
+        }
       }
     ],
     "total": {
-      "max_active_evaluator_seconds": 43200,
-      "max_calendar_seconds": 57600,
+      "max_active_evaluator_seconds": 72000,
+      "max_calendar_seconds": 90000,
       "max_candidates_admitted": 12,
-      "max_exclusive_machine_seconds": 43200,
-      "max_gpu_active_seconds": 36000,
+      "max_exclusive_machine_seconds": 72000,
+      "max_gpu_active_seconds": 72000,
       "max_monetary_usd": 0,
       "max_tokens": 0
     }
@@ -161,7 +161,7 @@
           "log_n": 26,
           "local_kernel": "OuterRemainder",
           "local_metric": "outer_remainder_speedup",
-          "minimum_accepted_speedup": 5.0,
+          "minimum_portfolio_speedup": 2.5,
           "minimum_local_speedup": 5.0,
           "required_guards": [
             "cpu_proofs_verified",
@@ -255,7 +255,7 @@
           "local_kernel": "OuterRemainder",
           "local_metric": "outer_remainder_speedup",
           "log_n": 27,
-          "minimum_accepted_speedup": 5.0,
+          "minimum_portfolio_speedup": 2.5,
           "minimum_local_speedup": 5.0,
           "required_guards": [
             "cpu_proofs_verified",
@@ -345,6 +345,7 @@
       "scripts/metal_research/budget.py",
       "scripts/metal_research/contracts.py",
       "scripts/metal_research/paired.py",
+      "scripts/metal_research/process_wrapper.py",
       "scripts/metal_research/results.py",
       "scripts/metal_research/runner.py",
       "scripts/metal_research/versions.py"

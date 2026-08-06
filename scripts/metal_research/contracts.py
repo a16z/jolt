@@ -220,11 +220,19 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         < goal_floor
     ):
         raise ValueError(f"tier {tier_id} local-kernel promotion is invalid")
-    minimum = promotion.get("minimum_accepted_speedup")
-    if role in {"representative", "holdout", "transfer"} and (
-        minimum is None or _speedup(minimum, "tier acceptance floor") < goal_floor
-    ):
+    if role == "representative" and _speedup(
+        promotion.get("minimum_accepted_speedup"), "tier acceptance floor"
+    ) < goal_floor:
         raise ValueError(f"tier {tier_id} must retain the 5x acceptance floor")
+    if role in acceptance_kind:
+        portfolio_floor = _speedup(
+            promotion.get("minimum_portfolio_speedup"),
+            "kernel-validation portfolio floor",
+        )
+        if portfolio_floor >= goal_floor:
+            raise ValueError(
+                f"tier {tier_id} conflates kernel validation with portfolio acceptance"
+            )
     if role in acceptance_kind and (
         type(promotion.get("log_n")) is not int or promotion["log_n"] < 26
     ):
@@ -343,17 +351,35 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         not in transfer_contract["required_log_trace_sizes"]
         or transfer["replication"]["included_pairs"]
         != transfer_contract["pairs"]
-        or float(transfer["promotion"]["minimum_accepted_speedup"])
+        or float(transfer["promotion"]["minimum_local_speedup"])
         < float(transfer_contract["minimum_speedup"])
     ):
         raise ValueError("transfer tier does not match transfer acceptance")
-    reserves = {reserve["id"] for reserve in template["budget"]["reserves"]}
-    if not {
+    reserves = {
+        reserve["id"]: reserve for reserve in template["budget"]["reserves"]
+    }
+    required_reserves = {
         "representative_revalidation",
         "piop_holdout",
         "piop_transfer",
-    } <= reserves:
+    }
+    if not required_reserves <= set(reserves):
         raise ValueError("production validation reserves are incomplete")
+    validation_tiers = {
+        "representative_revalidation": executable["representative"],
+        "piop_holdout": holdout,
+        "piop_transfer": transfer,
+    }
+    for reserve_id, tier in validation_tiers.items():
+        reserve = reserves[reserve_id]
+        invocations = reserve["invocations"]
+        if invocations < 2:
+            raise ValueError(f"{reserve_id} must protect one retry")
+        for resource, cost_limit in tier["cost_limit"].items():
+            if float(reserve["resources"].get(resource, 0.0)) < (
+                invocations * float(cost_limit)
+            ):
+                raise ValueError(f"{reserve_id} retry resources are not protected")
     collaboration = template["collaboration"]
     if collaboration != {
         "proposal_agents": 3,
