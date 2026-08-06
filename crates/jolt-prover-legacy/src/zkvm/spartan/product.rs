@@ -181,8 +181,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualUniSkipParams<F> 
 pub struct ProductVirtualUniSkipProver<F: JoltField> {
     /// Evaluations of t1(Z) at the extended univariate-skip targets (outside base window)
     extended_evals: [F; PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE],
-    /// Verifier challenge for this univariate skip round
-    r0: Option<F::Challenge>,
     /// Prover message for this univariate skip round
     uni_poly: Option<UniPoly<F>>,
     pub params: ProductVirtualUniSkipParams<F>,
@@ -198,7 +196,6 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
         let instance = Self {
             extended_evals,
             params,
-            r0: None,
             uni_poly: None,
         };
 

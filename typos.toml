@@ -1,5 +1,12 @@
 [files]
-extend-exclude = ["patches/*.patch"]
+extend-exclude = [
+  "patches/*.patch",
+  "**/fuzz/artifacts/**",
+  "**/fuzz/corpus/**",
+  "**/fuzz/fixtures/**",
+  "**/fuzz/regressions/**",
+  "**/fuzz/seeds/**",
+]
 
 [default.extend-words]
 "groth" = "groth"

@@ -26,7 +26,10 @@ pub struct SplitEqBindInput {
 
 impl<'a> Arbitrary<'a> for SplitEqBindInput {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let num_vars = u.int_in_range(2u8..=16)? as usize;
+        // The check merges O(2^n) entries per round, so n·2^n work per input:
+        // 16 vars starves the fuzzer at ~1M field ops per execution. Cap
+        // generated cases at 12 vars; `seed_corpus` keeps one larger case.
+        let num_vars = u.int_in_range(2u8..=12)? as usize;
         let w: Vec<u128> = (0..num_vars)
             .map(|_| u.arbitrary())
             .collect::<arbitrary::Result<_>>()?;
