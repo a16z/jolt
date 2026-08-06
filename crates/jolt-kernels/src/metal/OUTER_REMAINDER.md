@@ -275,8 +275,8 @@ The frozen iteration preflight records one cold and one warm exact legacy A/A
 proxy cycle for an inert nonce in the padded fragment. It measures controller
 capacity, including source assembly, library and pipeline compilation,
 fixture/device setup, evaluation, result validation, and checkpoint computation.
-The cold and warm cycles took 2.255 and 1.939 seconds; controller overhead stayed
-below 0.08%, and the cold result supports 1,596 cycles/hour against the frozen
+The cold and warm cycles took 2.347 and 1.947 seconds; controller overhead stayed
+below 0.08%, and the cold result supports 1,533 cycles/hour against the frozen
 1,200-cycle/hour floor.
 It does not exercise the mixed legacy-to-padded plan change; the focused
 runtime-artifact test and the `log_t = 12` Metal/CPU parity test cover that branch.
@@ -284,6 +284,10 @@ Version-3 evidence also binds the controller source closure, reconstructed Akita
 offset, assembled shader sources, and sealed runner binary. The summary and raw
 outputs live under
 `autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight*`.
+The reduced runner is compiled with `metal-runtime-artifact-only`, so its frozen
+binary closure contains a fixed placeholder rather than the editable padded source;
+the sealed runtime artifact supplies the complete fragment. Production builds do
+not enable that feature and retain the embedded padded entrypoint.
 
 A candidate can become a search parent only by improving beyond the fixed log-26
 noise threshold. Production promotion additionally requires at least 5x in both

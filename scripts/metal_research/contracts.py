@@ -589,6 +589,32 @@ def _validate_sealed_binaries(
     if v2_tiers != consumers:
         raise ValueError("every successor v2 tier must consume one sealed binary")
 
+    runtime_artifact = template.get("runtime_artifact")
+    if runtime_artifact is not None:
+        runtime_tier = runtime_artifact["tier_id"]
+        runtime_binaries = [
+            contract
+            for contract in contracts.values()
+            if runtime_tier in contract["consumer_tiers"]
+        ]
+        if len(runtime_binaries) != 1:
+            raise ValueError("runtime artifact must bind one sealed binary")
+        runtime_binary = runtime_binaries[0]
+        command = runtime_binary["build"]["command"]
+        cargo_features: set[str] = set()
+        for index, argument in enumerate(command):
+            if argument == "--features" and index + 1 < len(command):
+                cargo_features.update(command[index + 1].split(","))
+            elif argument.startswith("--features="):
+                cargo_features.update(argument.removeprefix("--features=").split(","))
+        if (
+            runtime_artifact["source_path"] in runtime_binary["source_paths"]
+            or "metal-runtime-artifact-only" not in cargo_features
+        ):
+            raise ValueError(
+                "sealed proxy must compile in runtime-artifact-only mode"
+            )
+
 
 def _validate_mechanism_phase(
     phase: Any, budget: dict[str, Any]

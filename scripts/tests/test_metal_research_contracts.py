@@ -556,6 +556,29 @@ class VersionedContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "transfer acceptance"):
             validate_template(tampered, ROOT)
 
+    def test_runtime_artifact_proxy_binary_excludes_the_editable_fragment(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        source_path = template["runtime_artifact"]["source_path"]
+        contract = template["sealed_binaries"]["outer_remainder_eval"]
+        command = contract["build"]["command"]
+        features = command[command.index("--features") + 1].split(",")
+
+        self.assertNotIn(source_path, contract["source_paths"])
+        self.assertIn("metal-runtime-artifact-only", features)
+
+        tampered = copy.deepcopy(template)
+        build = tampered["sealed_binaries"]["outer_remainder_eval"]["build"]
+        build["command"][build["command"].index("--features") + 1] = (
+            "metal,parallel,test-utils"
+        )
+        with self.assertRaisesRegex(ValueError, "runtime-artifact-only"):
+            validate_template(tampered, ROOT, verify_iteration_profile=False)
+
     def test_sealed_binary_contract_closes_tokens_sources_and_consumers(self) -> None:
         template = json.loads(
             (
@@ -573,7 +596,12 @@ class VersionedContractTests(unittest.TestCase):
         template["sealed_binaries"] = {
             "outer_remainder_eval": {
                 "build": {
-                    "command": ["cargo", "build", "--release"],
+                    "command": [
+                        "cargo",
+                        "build",
+                        "--release",
+                        "--features=metal-runtime-artifact-only",
+                    ],
                     "output_path": "target/release/outer-remainder-eval",
                     "timeout_seconds": 1800,
                 },

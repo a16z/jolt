@@ -129,9 +129,14 @@ preflight evidence binds the controller source closure, the exact reconstructed
 shader fragments and assembled sources, and the sealed runner binary and source.
 A revision label alone is not sufficient provenance.
 
-The current OuterRemainder profile records 2.255 seconds cold and 1.939 seconds
+The reduced Outer successor binary uses the `metal-runtime-artifact-only` feature:
+its compiled library contains a fixed placeholder for the editable padded fragment,
+and the content-addressed runtime artifact is the only source used for that
+entrypoint. Normal production builds continue to embed the checked-in fragment.
+
+The current OuterRemainder profile records 2.347 seconds cold and 1.947 seconds
 warm for an exact log-25 controller cycle. Controller overhead is below 0.08%,
-and the cold cycle implies 1,596 cycles/hour; the contract freezes a conservative
+and the cold cycle implies 1,533 cycles/hour; the contract freezes a conservative
 1,200-cycle/hour floor. This is controller capacity for the proxy evaluator, not
 candidate-development throughput or the cadence of log-26, holdout, and transfer
 runs. Each phase's wall and candidate budgets are its timebox; its contract also

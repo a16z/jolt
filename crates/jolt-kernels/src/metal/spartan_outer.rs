@@ -1869,7 +1869,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(all(feature = "test-utils", not(feature = "metal-runtime-artifact-only")))]
     #[test]
     fn padded_56_runtime_artifact_matches_cpu_across_a_full_tile_and_tail() {
         adapter_parity_case(

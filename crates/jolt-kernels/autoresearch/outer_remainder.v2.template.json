@@ -368,10 +368,10 @@
   "hypothesis": "a 56-row opening tile with a 21-word padded stride can remove shared-memory bank conflicts and unused shard scratch, potentially increasing resident threadgroups without changing global traffic or protocol outputs",
   "iteration_profile": {
     "evidence_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.json",
-    "evidence_sha256": "37f5b6cfea7719559fb25761ada33a9737481f4fe997d4edae287894dd03c056",
+    "evidence_sha256": "33116d17407f52323a1dabe369fc8b6dcdee458a907f84cfed48b0c89050254a",
     "maximum_controller_overhead_fraction": 0.01,
     "minimum_valid_proxy_cycles_per_hour": 1200.0,
-    "profile_base_revision": "88608f8a23dab7317d09a59b5742b5128e0fb567"
+    "profile_base_revision": "0a295d34a056cc5883ab842995ebcbe3c630767f"
   },
   "kernel": "outer_remainder",
   "mechanism_phase": {
@@ -444,7 +444,7 @@
           "--example",
           "metal-outer-remainder-successor-eval",
           "--features",
-          "metal,parallel,test-utils"
+          "metal,metal-runtime-artifact-only,parallel,test-utils"
         ],
         "output_path": "target/release/examples/metal-outer-remainder-successor-eval",
         "timeout_seconds": 1800

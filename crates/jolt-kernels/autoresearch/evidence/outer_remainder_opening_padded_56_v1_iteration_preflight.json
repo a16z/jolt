@@ -1,8 +1,8 @@
 {
   "schema": "outer_remainder_iteration_profile_v3",
   "schema_version": 3,
-  "created_at": "2026-08-06T12:12:32.083167Z",
-  "profile_base_revision": "88608f8a23dab7317d09a59b5742b5128e0fb567",
+  "created_at": "2026-08-06T12:47:56.642335Z",
+  "profile_base_revision": "0a295d34a056cc5883ab842995ebcbe3c630767f",
   "machine": {
     "device_name": "Apple M4 Max",
     "os_product_version": "26.6",
@@ -37,8 +37,8 @@
     },
     {
       "path": "scripts/metal_research/contracts.py",
-      "bytes": 63541,
-      "sha256": "63af76ef852d14d4429d96b01c0845b04940d63afb91a2b638231a6676b2f658"
+      "bytes": 64723,
+      "sha256": "2d75ab24e9ebe8babf709ee665019545bed321edcd5692781bd551072b720b98"
     },
     {
       "path": "scripts/metal_research/iteration_profile.py",
@@ -68,8 +68,8 @@
   ],
   "evaluator": {
     "result_adapter": "outer_remainder_successor_v2",
-    "runner_binary_sha256": "3be3630addcd10b1fcbc79b18247c5506fdfdb6e52d29ddb537590feee324aa7",
-    "runner_source_sha256": "3886b938a51c6f9200a42ee1953952aa66ed377c1ae3cdee63ec333d82eafc9d",
+    "runner_binary_sha256": "d2328d495a4908a631a0e46e4e1f1780ba85e8190c50d038f3159f80bcabbef2",
+    "runner_source_sha256": "f6da982ebbd21f2f8cc4d98a820b399071d9d95df52060fa8957f9a8f84b5f76",
     "log_n": 25,
     "pairs": 4,
     "excluded_warmup_pairs": 1,
@@ -78,9 +78,9 @@
     "cpu_tail_elements": 65536,
     "trace_cutoff_elements": 262144,
     "parent_artifact_sha256": "1ef30560a1bda61bf8ffe27f0832e11f485d7efaccdb81e9df96743192d56756",
-    "candidate_artifact_sha256": "3ac4098fd0f57764cbfc006da2e955a0f71ad838858fde8931da10c3577f7655",
+    "candidate_artifact_sha256": "f5a70efe274aeaae2d16c1099bec2197343bea6f2c6296e30faffe4fd763d890",
     "parent_outer_source_sha256": "1631c8a98d1b2966c18d0b1e0f4156ed0326d94c1ae84751fb5286e731e30b8c",
-    "candidate_outer_source_sha256": "78629f09f2354ce21fd5ec685930989ddc4421fce9a3f936dde5ce5877b82569"
+    "candidate_outer_source_sha256": "780a0b64110db094dd77d2bd7b5b51693d19b565822c31a1e4969d15c207537b"
   },
   "minimal_closure": {
     "dependency_model": "outer_only_shader_closure_v1",
@@ -115,39 +115,39 @@
     "parent_assembled_source_bytes": 48539,
     "parent_assembled_source_sha256": "7a9224023d73777ff1fd3ae5cee284c8aa585b4752dbc07a4980bff5430fb745",
     "candidate_assembled_source_bytes": 48599,
-    "candidate_assembled_source_sha256": "9d7664e05ae8267472d764e92c95f5b7ec2bb19153e4aa24a917f125edcb04f3",
-    "candidate_source_suffix": "\n// iteration profile opening_padded_56_v1 a35ccb42b2bb1921\n"
+    "candidate_assembled_source_sha256": "d63806a6983e350bd1f1483f5b2c4bf8b0dc43dac61fce1c4a5220b1c7b71e3b",
+    "candidate_source_suffix": "\n// iteration profile opening_padded_56_v1 83d4f899cc4c1a47\n"
   },
   "cold_cycle": {
-    "controller_wall_ns": 2255029833,
-    "subprocess_wall_ns": 2253485333,
-    "parse_validate_checkpoint_ns": 194458,
-    "controller_overhead_ns": 1544500,
+    "controller_wall_ns": 2347469292,
+    "subprocess_wall_ns": 2346002541,
+    "parse_validate_checkpoint_ns": 192709,
+    "controller_overhead_ns": 1466751,
     "raw_result_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.cold.raw.json",
-    "raw_result_sha256": "c6f96e844b8aaded8d0cf9f4fd657c52435416411cd38d2b690521b30e480ab0",
-    "result_bytes": 8336,
-    "successor_speedup": 1.0021950185057256,
-    "gpu_active_total_ns": 1156729043,
+    "raw_result_sha256": "31098855cc262751808bf40dfb6064ccc82e09ded29ddfcb37bbe984408a3092",
+    "result_bytes": 8333,
+    "successor_speedup": 1.004965786288826,
+    "gpu_active_total_ns": 1158700503,
     "output_sha256": "9efbdf2c2bdac96cc9eebb621a5b614238924816efe746ad010888a2f0c99678",
     "candidate_phase_gpu_active_ns": {
-      "materialize": 49746041.5,
-      "first_bind": 20271187.5,
-      "dense_rounds": 7635833.0,
-      "openings": 31875416.5
+      "materialize": 49486750.0,
+      "first_bind": 20245062.5,
+      "dense_rounds": 7660417.0,
+      "openings": 31705562.5
     },
     "compilation": {
       "candidate": {
-        "assembled_source_sha256": "9d7664e05ae8267472d764e92c95f5b7ec2bb19153e4aa24a917f125edcb04f3",
-        "library_compile_ns": 146088000,
+        "assembled_source_sha256": "d63806a6983e350bd1f1483f5b2c4bf8b0dc43dac61fce1c4a5220b1c7b71e3b",
+        "library_compile_ns": 167105542,
         "pipeline_set_ns": [
-          324125,
-          33375,
-          22750,
-          24500,
-          37791
+          258666,
+          31833,
+          25209,
+          32708,
+          20083
         ],
-        "pipeline_set_total_ns": 442541,
-        "source_assembly_ns": 4417,
+        "pipeline_set_total_ns": 368499,
+        "source_assembly_ns": 6375,
         "source_bytes": 48599
       },
       "context_order": [
@@ -156,16 +156,16 @@
       ],
       "parent": {
         "assembled_source_sha256": "7a9224023d73777ff1fd3ae5cee284c8aa585b4752dbc07a4980bff5430fb745",
-        "library_compile_ns": 673542,
+        "library_compile_ns": 892625,
         "pipeline_set_ns": [
-          844250,
-          26667,
-          30875,
-          24125,
-          35041
+          844500,
+          23458,
+          32958,
+          25292,
+          34209
         ],
-        "pipeline_set_total_ns": 960958,
-        "source_assembly_ns": 24708,
+        "pipeline_set_total_ns": 960417,
+        "source_assembly_ns": 44833,
         "source_bytes": 48539
       }
     },
@@ -188,42 +188,42 @@
           "name": "openings_gpu_active_ms",
           "comparison": "lte",
           "threshold": 27.73,
-          "observed_ms": 31.8754165,
+          "observed_ms": 31.7055625,
           "passed": false
         }
       ]
     }
   },
   "warm_cycle": {
-    "controller_wall_ns": 1939123417,
-    "subprocess_wall_ns": 1937619417,
-    "parse_validate_checkpoint_ns": 242375,
-    "controller_overhead_ns": 1504000,
+    "controller_wall_ns": 1946915000,
+    "subprocess_wall_ns": 1945656375,
+    "parse_validate_checkpoint_ns": 198375,
+    "controller_overhead_ns": 1258625,
     "raw_result_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.warm.raw.json",
-    "raw_result_sha256": "5eef429c7b16841c5dd809db397baf34e4f89e0bd005bd35e07af250122de075",
-    "result_bytes": 8330,
-    "successor_speedup": 1.0017462004924784,
-    "gpu_active_total_ns": 1155959085,
+    "raw_result_sha256": "4e565fc2671cd0493c8caadf6124ebdaf0a3fc90127c0d30353ac4a040900eda",
+    "result_bytes": 8332,
+    "successor_speedup": 1.0039149727719026,
+    "gpu_active_total_ns": 1154468248,
     "output_sha256": "9efbdf2c2bdac96cc9eebb621a5b614238924816efe746ad010888a2f0c99678",
     "candidate_phase_gpu_active_ns": {
-      "materialize": 50047646.0,
-      "first_bind": 20357479.0,
-      "dense_rounds": 7737063.0,
-      "openings": 31668271.0
+      "materialize": 49670541.5,
+      "first_bind": 20245666.5,
+      "dense_rounds": 7639020.5,
+      "openings": 31660208.5
     },
     "compilation": {
       "candidate": {
-        "assembled_source_sha256": "9d7664e05ae8267472d764e92c95f5b7ec2bb19153e4aa24a917f125edcb04f3",
-        "library_compile_ns": 137208,
+        "assembled_source_sha256": "d63806a6983e350bd1f1483f5b2c4bf8b0dc43dac61fce1c4a5220b1c7b71e3b",
+        "library_compile_ns": 153125,
         "pipeline_set_ns": [
-          247125,
-          32333,
-          27958,
-          33041,
-          31583
+          257375,
+          29708,
+          31875,
+          23958,
+          32791
         ],
-        "pipeline_set_total_ns": 372040,
-        "source_assembly_ns": 4584,
+        "pipeline_set_total_ns": 375707,
+        "source_assembly_ns": 5000,
         "source_bytes": 48599
       },
       "context_order": [
@@ -232,16 +232,16 @@
       ],
       "parent": {
         "assembled_source_sha256": "7a9224023d73777ff1fd3ae5cee284c8aa585b4752dbc07a4980bff5430fb745",
-        "library_compile_ns": 749875,
+        "library_compile_ns": 679167,
         "pipeline_set_ns": [
-          867167,
-          31000,
-          33958,
-          26875,
-          34292
+          895375,
+          30416,
+          30417,
+          31291,
+          33917
         ],
-        "pipeline_set_total_ns": 993292,
-        "source_assembly_ns": 6667,
+        "pipeline_set_total_ns": 1021416,
+        "source_assembly_ns": 5708,
         "source_bytes": 48539
       }
     },
@@ -264,7 +264,7 @@
           "name": "openings_gpu_active_ms",
           "comparison": "lte",
           "threshold": 27.73,
-          "observed_ms": 31.668271,
+          "observed_ms": 31.6602085,
           "passed": false
         }
       ]
