@@ -334,6 +334,7 @@ name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-utils",
  "num-traits",
  "rand_core",
  "rayon",
@@ -349,6 +350,13 @@ dependencies = [
  "jolt-field",
  "jolt-poly",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "jolt-utils"
+version = "0.1.0"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

@@ -279,28 +279,27 @@ fuzz_target!(|data: &[u8]| {
         7 => {
             let (commitments, hints, evaluations) = commit_zk(&polynomials, &point, prover_setup);
             let mut prover_transcript = Blake2bTranscript::new(ZK_LABEL);
-            let (proof, hiding_commitment, _blind) =
-                <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
-                    prover_setup,
-                    point.clone(),
-                    commitments.clone(),
-                    sources(&polynomials),
-                    hints,
-                    evaluations,
-                    &mut prover_transcript,
-                )
-                .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
+            let opening = <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
+                prover_setup,
+                point.clone(),
+                commitments.clone(),
+                sources(&polynomials),
+                hints,
+                evaluations,
+                &mut prover_transcript,
+            )
+            .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
 
             let mut verifier_transcript = Blake2bTranscript::new(ZK_LABEL);
             let verifier_hiding = <DoryBatch as ZkBatchOpeningScheme>::verify_batch_zk(
                 verifier_setup,
                 point,
                 commitments,
-                &proof,
+                &opening.proof,
                 &mut verifier_transcript,
             )
             .unwrap_or_else(|error| panic!("honest ZK batch verification failed: {error}"));
-            assert_eq!(hiding_commitment, verifier_hiding);
+            assert_eq!(opening.hiding_commitment, verifier_hiding);
             assert_eq!(prover_transcript.state(), verifier_transcript.state());
         }
         8 => {
@@ -329,17 +328,16 @@ fuzz_target!(|data: &[u8]| {
             let (mut commitments, hints, evaluations) =
                 commit_zk(&polynomials, &point, prover_setup);
             let mut prover_transcript = Blake2bTranscript::new(ZK_LABEL);
-            let (proof, _hiding_commitment, _blind) =
-                <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
-                    prover_setup,
-                    point.clone(),
-                    commitments.clone(),
-                    sources(&polynomials),
-                    hints,
-                    evaluations,
-                    &mut prover_transcript,
-                )
-                .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
+            let opening = <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
+                prover_setup,
+                point.clone(),
+                commitments.clone(),
+                sources(&polynomials),
+                hints,
+                evaluations,
+                &mut prover_transcript,
+            )
+            .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
 
             let alternate = alternate_polynomial(&polynomials[0]);
             let (wrong_commitment, _) = DoryScheme::commit_zk(alternate.evaluations(), prover_setup)
@@ -355,7 +353,7 @@ fuzz_target!(|data: &[u8]| {
                     verifier_setup,
                     point,
                     commitments,
-                    &proof,
+                    &opening.proof,
                     &mut verifier_transcript,
                 )
                 .is_err(),

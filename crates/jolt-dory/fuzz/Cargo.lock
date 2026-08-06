@@ -466,9 +466,9 @@ dependencies = [
 
 [[package]]
 name = "dory-pcs"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c6a5b6aa708db35ced06eeef3d2b4408004c76279091e0bc387f8fd42796555"
+checksum = "bc655754c8ddb6b75f528efcfcddf2cd8db59bdea777de157400d642048bd2f4"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -651,6 +651,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
+ "jolt-optimizations",
  "jolt-poly",
  "jolt-transcript",
  "rayon",
@@ -696,6 +697,7 @@ dependencies = [
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-utils",
  "rayon",
  "serde",
  "thiserror 2.0.19",
@@ -703,10 +705,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-optimizations"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "arrayvec",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "rayon",
+]
+
+[[package]]
 name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
@@ -727,6 +748,13 @@ dependencies = [
  "light-poseidon",
  "rand 0.8.7",
  "spongefish",
+]
+
+[[package]]
+name = "jolt-utils"
+version = "0.1.0"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -819,6 +847,16 @@ version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
 dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+dependencies = [
+ "num-integer",
  "num-traits",
 ]
 

@@ -262,7 +262,15 @@ fn matches_program_kind_tracer_mask(kind: SourceInstructionKind, word: u32) -> b
         SourceInstructionKind::XORI => {
             matches_tracer_mask::<tracer::instruction::xori::XORI>(word)
         }
-        _ => true,
+        // Every word-decodable kind in this build (no `field-inline`, so no
+        // FIELD_* arm) is mapped above; the remaining Virtual* kinds are
+        // sequence-only and never come out of `decode_instruction`. A silent
+        // `true` here would wave a future word-decodable kind through with a
+        // wrong mask assumption, so fail loudly instead.
+        unmapped => panic!(
+            "decode_instruction produced {unmapped:?}, which has no tracer mask entry; \
+             add it to matches_program_kind_tracer_mask"
+        ),
     }
 }
 

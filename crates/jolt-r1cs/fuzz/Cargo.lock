@@ -567,6 +567,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-riscv",
+ "jolt-utils",
  "serde",
  "thiserror 2.0.19",
 ]
@@ -631,6 +632,7 @@ dependencies = [
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-utils",
  "rayon",
  "serde",
  "thiserror 2.0.19",
@@ -642,6 +644,7 @@ name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
@@ -695,6 +698,13 @@ dependencies = [
  "light-poseidon",
  "rand 0.8.7",
  "spongefish",
+]
+
+[[package]]
+name = "jolt-utils"
+version = "0.1.0"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
