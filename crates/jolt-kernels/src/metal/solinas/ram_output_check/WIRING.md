@@ -285,6 +285,11 @@ member. It clears the 346.916-us cap by 70.816 us. A production-domain
 `K=8192` lockstep test matches the reference kernel at every round and output
 claim; the existing smaller fixtures cover the all-deferred case.
 
+This is a common-path CPU improvement, not a Metal-over-current-CPU speedup:
+the optimized CPU backend and the Metal backend's retained CPU slot both use
+it. The slot therefore remains CPU-owned and contributes roughly equal time
+to both PIOP arms until a future fused producer can remove that common cost.
+
 ## Rejected schedules and reopen conditions
 
 A literal all-device port performs 33,786 message products plus 24,573 bind
@@ -325,5 +330,4 @@ round path. The Metal hybrid intentionally retains this optimized CPU slot.
 The remaining production gate is a paired proof-stage profile that confirms
 the focused complete-member result and derived-table checks under the retained
 Fibonacci fixture. Reusing the earlier RAM producer's native final-state
-allocation remains an optional preparation saving, not a requirement for the
-measured 5x result.
+allocation remains an optional preparation saving.
