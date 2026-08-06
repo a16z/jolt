@@ -38,10 +38,24 @@ use crate::emulator::{
     Emulator,
 };
 
-/// Initial trace capacity: covers the standard 2^23-cycle proving scale
-/// without Vec regrowth (each doubling past the hundreds of MB memcpys the
-/// whole trace). Reserved address space is only faulted in as rows are pushed.
-const TRACE_CAPACITY_RESERVE: usize = 1 << 24;
+/// Initial trace capacity, in rows (`JOLT_TRACER_CAPACITY_ROWS` overrides —
+/// the same knob the parallel path uses): the default covers the standard
+/// 2^23-cycle proving scale without Vec regrowth (each doubling past the
+/// hundreds of MB memcpys the whole trace). Reserved address space is only
+/// faulted in as rows are pushed.
+fn trace_capacity_reserve() -> usize {
+    env_rows("JOLT_TRACER_CAPACITY_ROWS", parallel::DEFAULT_CAPACITY_ROWS)
+}
+
+/// Positive row-count env override; unset, unparsable, or zero falls back to
+/// `default`.
+fn env_rows(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|&rows| rows > 0)
+        .unwrap_or(default)
+}
 
 /// Executes a RISC-V program to completion and materializes its execution
 /// trace.
@@ -98,7 +112,7 @@ pub fn trace(
             // lazy iterator's per-cycle buffer/reverse/pop round-trip.
             // Termination matches the lazy path: stop on the first step that
             // emits no rows (PC stall or a trap that produced no trace).
-            let mut trace: Vec<Cycle> = Vec::with_capacity(TRACE_CAPACITY_RESERVE);
+            let mut trace: Vec<Cycle> = Vec::with_capacity(trace_capacity_reserve());
             let mut prev_pc: u64 = 0;
             loop {
                 let rows_before = trace.len();
@@ -297,26 +311,16 @@ pub fn trace_checkpoints(
 /// Opt-in parallel tracing: `TRACER_PARALLEL=<workers>` (unset, 0, 1, or
 /// unparsable = serial — a single worker would only re-trace what pass-1
 /// already executed); `JOLT_TRACER_CHUNK_ROWS` overrides the default chunk
-/// size.
+/// size and `JOLT_TRACER_CAPACITY_ROWS` the up-front output reservation.
 fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
     let workers: usize = std::env::var("TRACER_PARALLEL").ok()?.parse().ok()?;
     if workers <= 1 {
         return None;
     }
-    let chunk_rows = std::env::var("JOLT_TRACER_CHUNK_ROWS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|&rows| rows > 0)
-        .unwrap_or(parallel::DEFAULT_CHUNK_ROWS);
-    let capacity_rows = std::env::var("JOLT_TRACER_CAPACITY_ROWS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|&rows| rows > 0)
-        .unwrap_or(parallel::DEFAULT_CAPACITY_ROWS);
     Some(parallel::TwoPassConfig {
         workers,
-        chunk_rows,
-        capacity_rows,
+        chunk_rows: env_rows("JOLT_TRACER_CHUNK_ROWS", parallel::DEFAULT_CHUNK_ROWS),
+        capacity_rows: env_rows("JOLT_TRACER_CAPACITY_ROWS", parallel::DEFAULT_CAPACITY_ROWS),
     })
 }
 

@@ -10,7 +10,8 @@
 //! * `JOLT_BENCH_SCALE=<n>` — multiply the ~9.6M-cycle target trace length
 //! * `TRACER_PARALLEL=<w>` — worker count for the parallel arm (default:
 //!   available parallelism − 1); `0` skips the arm
-//! * `JOLT_TRACER_CHUNK_ROWS`, `JOLT_TRACER_TIMING` pass through
+//! * `JOLT_TRACER_CHUNK_ROWS`, `JOLT_TRACER_CAPACITY_ROWS`,
+//!   `JOLT_TRACER_TIMING` pass through
 
 // Link inline crates so their inventory registrations reach the tracer.
 extern crate jolt_inlines_keccak256 as _;
