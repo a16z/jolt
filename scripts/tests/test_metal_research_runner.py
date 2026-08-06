@@ -603,7 +603,7 @@ class ArtifactContextTests(unittest.TestCase):
                     "plan_parameter": (
                         "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
                     ),
-                    "plans": ["b_only_v1", "split_ab_v1"],
+                    "plans": ["b_only_v1"],
                     "tier_id": "screen",
                 },
             },

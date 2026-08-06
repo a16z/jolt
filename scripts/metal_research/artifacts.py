@@ -27,11 +27,6 @@ OUTER_BINDING_PLANS = {
         "materialize": "solinas_outer_remainder_materialize_b_and_message",
         "stream_bind": "solinas_outer_remainder_stream_bind_and_message",
     },
-    "split_ab_v1": {
-        **_COMMON_ENTRYPOINTS,
-        "materialize": "solinas_outer_remainder_materialize_ab_and_message_v1",
-        "stream_bind": "solinas_outer_remainder_stream_bind_split_ab_v1",
-    },
 }
 OUTER_DISPATCH_PARAMETERS = {
     "materialize_threads": "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS",

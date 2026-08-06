@@ -11,21 +11,18 @@ use super::super::MetalError;
 pub enum OuterBindingPlan {
     #[default]
     BOnlyV1,
-    SplitAbV1,
 }
 
 impl OuterBindingPlan {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BOnlyV1 => "b_only_v1",
-            Self::SplitAbV1 => "split_ab_v1",
         }
     }
 
     pub fn from_id(value: &str) -> Option<Self> {
         match value {
             "b_only_v1" => Some(Self::BOnlyV1),
-            "split_ab_v1" => Some(Self::SplitAbV1),
             _ => None,
         }
     }
@@ -167,11 +164,11 @@ mod tests {
     fn artifact_closes_source_and_binding_plan() {
         let artifact = OuterKernelArtifact::new(
             "kernel void candidate() {}".to_owned(),
-            OuterBindingPlan::SplitAbV1,
+            OuterBindingPlan::BOnlyV1,
         )
         .unwrap();
 
-        assert_eq!(artifact.binding_plan(), OuterBindingPlan::SplitAbV1);
+        assert_eq!(artifact.binding_plan(), OuterBindingPlan::BOnlyV1);
         assert_ne!(artifact.source_sha256(), [0; 32]);
         assert_eq!(artifact.source(), "kernel void candidate() {}");
     }

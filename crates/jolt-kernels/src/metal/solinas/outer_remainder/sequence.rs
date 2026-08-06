@@ -13,7 +13,6 @@ use super::{
         OuterRemainderStorageInitializationStats, OuterRemainderStorageStats,
         OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_STREAM_ROWS,
     },
-    artifact::OuterBindingPlan,
     plan::{
         message_threadgroup_bytes, to_u32, OUTER_REMAINDER_ROW_WORDS, OUTER_REMAINDER_TILE_ROWS,
         SIMD_WIDTH,
@@ -156,19 +155,8 @@ impl OuterRemainderSequence {
             encoder.set_buffer(3, Some(&self.storage.buffers.e_in), 0);
             encoder.set_buffer(4, Some(&self.storage.buffers.e_out), 0);
             encoder.set_buffer(5, Some(&dense.state_a), 0);
-            let (partials_index, params_index) = match self.config.binding_plan {
-                OuterBindingPlan::BOnlyV1 => (6, 7),
-                OuterBindingPlan::SplitAbV1 => {
-                    encoder.set_buffer(6, Some(&dense.state_b), 0);
-                    (7, 8)
-                }
-            };
-            encoder.set_buffer(
-                partials_index,
-                Some(&self.storage.buffers.message_partials),
-                0,
-            );
-            set_inline_bytes(encoder, params_index, &params);
+            encoder.set_buffer(6, Some(&self.storage.buffers.message_partials), 0);
+            set_inline_bytes(encoder, 7, &params);
             encoder.set_threadgroup_memory_length(
                 0,
                 message_threadgroup_bytes(self.storage.threads.materialize),
@@ -230,29 +218,15 @@ impl OuterRemainderSequence {
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.storage.pipelines.stream_bind);
-            match self.config.binding_plan {
-                OuterBindingPlan::BOnlyV1 => {
-                    encoder.set_buffer(0, Some(rows.instruction_input_buffer()), 0);
-                    encoder.set_buffer(1, Some(&dense.state_a), 0);
-                    encoder.set_buffer(2, Some(&dense.state_b), 0);
-                    encoder.set_buffer(3, Some(&self.storage.buffers.lagrange), 0);
-                    encoder.set_buffer(4, Some(&self.storage.buffers.e_in), 0);
-                    encoder.set_buffer(5, Some(&self.storage.buffers.e_out), 0);
-                    encoder.set_buffer(6, Some(&self.storage.buffers.message_partials), 0);
-                    set_inline_bytes(encoder, 7, &challenge);
-                    set_inline_bytes(encoder, 8, &params);
-                }
-                OuterBindingPlan::SplitAbV1 => {
-                    encoder.set_buffer(0, Some(&dense.state_b), 0);
-                    encoder.set_buffer(1, Some(&dense.state_a), 0);
-                    encoder.set_buffer(2, Some(&dense.state_b), 0);
-                    encoder.set_buffer(3, Some(&self.storage.buffers.e_in), 0);
-                    encoder.set_buffer(4, Some(&self.storage.buffers.e_out), 0);
-                    encoder.set_buffer(5, Some(&self.storage.buffers.message_partials), 0);
-                    set_inline_bytes(encoder, 6, &challenge);
-                    set_inline_bytes(encoder, 7, &params);
-                }
-            }
+            encoder.set_buffer(0, Some(rows.instruction_input_buffer()), 0);
+            encoder.set_buffer(1, Some(&dense.state_a), 0);
+            encoder.set_buffer(2, Some(&dense.state_b), 0);
+            encoder.set_buffer(3, Some(&self.storage.buffers.lagrange), 0);
+            encoder.set_buffer(4, Some(&self.storage.buffers.e_in), 0);
+            encoder.set_buffer(5, Some(&self.storage.buffers.e_out), 0);
+            encoder.set_buffer(6, Some(&self.storage.buffers.message_partials), 0);
+            set_inline_bytes(encoder, 7, &challenge);
+            set_inline_bytes(encoder, 8, &params);
             encoder.set_threadgroup_memory_length(
                 0,
                 message_threadgroup_bytes(self.storage.threads.stream_bind),

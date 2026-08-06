@@ -35,10 +35,10 @@ class OuterArtifactTests(unittest.TestCase):
             source.write_text("kernel void candidate() {}")
 
             first = materialize_outer_artifact(
-                root, source, "split_ab_v1", DISPATCH
+                root, source, "b_only_v1", DISPATCH
             )
             second = materialize_outer_artifact(
-                root, source, "split_ab_v1", DISPATCH
+                root, source, "b_only_v1", DISPATCH
             )
 
             self.assertEqual(first, second)
@@ -46,26 +46,20 @@ class OuterArtifactTests(unittest.TestCase):
                 Path(first["artifact_path"]).name, first["artifact_sha256"]
             )
             self.assertEqual(
-                first["manifest"]["binding_plan"], "split_ab_v1"
+                first["manifest"]["binding_plan"], "b_only_v1"
             )
 
-    def test_plan_changes_the_artifact_identity(self) -> None:
+    def test_rejects_the_retired_split_plan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             prepare_store(root)
             source = root / "candidate.metal"
             source.write_text("kernel void candidate() {}")
 
-            b_only = materialize_outer_artifact(
-                root, source, "b_only_v1", DISPATCH
-            )
-            split = materialize_outer_artifact(
-                root, source, "split_ab_v1", DISPATCH
-            )
-
-            self.assertNotEqual(
-                b_only["artifact_sha256"], split["artifact_sha256"]
-            )
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                materialize_outer_artifact(
+                    root, source, "split_ab_v1", DISPATCH
+                )
 
     def test_rejects_symlink_nul_oversize_and_unknown_plan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -143,7 +137,7 @@ class OuterArtifactTests(unittest.TestCase):
             artifact_dir = root / record["artifact_path"]
             manifest_path = artifact_dir / "manifest.json"
             manifest = json.loads(manifest_path.read_text())
-            manifest["binding_plan"] = "split_ab_v1"
+            manifest["binding_plan_sha256"] = "0" * 64
             manifest_path.write_text(
                 json.dumps(manifest, sort_keys=True, separators=(",", ":"))
             )

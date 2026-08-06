@@ -291,9 +291,7 @@
       "source_constant": "OUTER_REMAINDER_SOURCE",
       "entry_points": [
         "solinas_outer_remainder_materialize_b_and_message",
-        "solinas_outer_remainder_materialize_ab_and_message_v1",
         "solinas_outer_remainder_stream_bind_and_message",
-        "solinas_outer_remainder_stream_bind_split_ab_v1",
         "solinas_outer_remainder_bind_and_message",
         "solinas_outer_remainder_opening_tiles",
         "solinas_outer_remainder_reduce_columns"

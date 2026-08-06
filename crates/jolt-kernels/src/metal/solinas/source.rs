@@ -61,6 +61,7 @@ pub(super) fn library_source(offset: u32) -> String {
     assemble_library_source(offset, None)
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 pub(super) fn library_source_with_outer(offset: u32, outer_source: &str) -> String {
     assemble_library_source(offset, Some(("outer_remainder", outer_source)))
 }
