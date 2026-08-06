@@ -1,8 +1,8 @@
 {
   "btreemap-guest": {
     "row_count": 625461,
-    "trace_hash": "45dfeb4eb195e11bbaaeb14f1f202bf18d3db85bd4de15e18e0b26a7f3f5fa7b",
-    "memory_hash": "472006eb9e97580de88f14e359d9f2b63acbb102b07ce07b76778c389fb9b781",
+    "trace_hash": "563df2db8fc06622191454fa1d5c4a0b4f7885d626af041b52ef4541ee4e4a79",
+    "memory_hash": "0e0674ee86a013afc032e2ec72798ac61f559a76accf6eac570b293b53abcbd8",
     "io_hash": "bb5f377d2f91bec13e4efa82f9da40616df9601fb23fa82cd7ede8eadedacf05"
   },
   "fibonacci-guest": {
