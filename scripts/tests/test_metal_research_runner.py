@@ -413,8 +413,429 @@ class AttemptTests(unittest.TestCase):
         self.assertEqual(output["declared"], "yes")
         self.assertEqual(output["parameter"], "candidate")
 
+    def test_attempt_passes_only_explicit_controller_artifacts(self) -> None:
+        def process(*_args: object, **kwargs: object) -> SimpleNamespace:
+            environment = kwargs["env"]
+            output = {
+                "parent": environment.get(
+                    "JOLT_AUTORESEARCH_PARENT_ARTIFACT"
+                ),
+                "candidate": environment.get(
+                    "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT"
+                ),
+                "forged": environment.get("JOLT_AUTORESEARCH_FORGED"),
+            }
+            return SimpleNamespace(
+                returncode=0,
+                pid=123,
+                communicate=mock.Mock(
+                    return_value=(json.dumps(output) + "\n", "")
+                ),
+            )
+
+        context = {
+            "JOLT_AUTORESEARCH_PARENT_ARTIFACT": "/sealed/parent",
+            "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT": "/sealed/candidate",
+        }
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            "os.environ", {"JOLT_AUTORESEARCH_FORGED": "ambient"}, clear=False
+        ), mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen", side_effect=process
+        ), mock.patch(
+            "scripts.metal_research.attempt.time.monotonic",
+            side_effect=[10.0, 11.0],
+        ):
+            attempt, output = run_attempt(
+                Path(directory),
+                evaluator(),
+                {},
+                Path(directory) / "evaluation",
+                "screen",
+                context_env=context,
+                context_record={"artifact_sha256": "a" * 64},
+            )
+
+        self.assertEqual(attempt["outcome"], "success")
+        self.assertEqual(output["parent"], "/sealed/parent")
+        self.assertEqual(output["candidate"], "/sealed/candidate")
+        self.assertIsNone(output["forged"])
+        self.assertEqual(
+            attempt["execution_context"], {"artifact_sha256": "a" * 64}
+        )
+
+    def test_attempt_rejects_evaluator_owned_controller_state(self) -> None:
+        declared = evaluator()
+        declared["env"] = {
+            "JOLT_AUTORESEARCH_PARENT_ARTIFACT": "/forged/parent"
+        }
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen"
+        ) as popen:
+            attempt, output = run_attempt(
+                Path(directory),
+                declared,
+                {},
+                Path(directory) / "evaluation",
+                "screen",
+            )
+
+        self.assertEqual(attempt["outcome"], "launch_error")
+        self.assertIsNone(output)
+        popen.assert_not_called()
+
+    def test_attempt_rejects_a_partial_controller_context(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen"
+        ) as popen:
+            attempt, output = run_attempt(
+                Path(directory),
+                evaluator(),
+                {},
+                Path(directory) / "evaluation",
+                "screen",
+                context_env={
+                    "JOLT_AUTORESEARCH_PARENT_ARTIFACT": "/sealed/parent"
+                },
+            )
+
+        self.assertEqual(attempt["outcome"], "launch_error")
+        self.assertIsNone(output)
+        popen.assert_not_called()
+
+    def test_attempt_rejects_reserved_search_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen"
+        ) as popen:
+            attempt, output = run_attempt(
+                Path(directory),
+                evaluator(),
+                {"JOLT_AUTORESEARCH_PARENT_ARTIFACT": "/forged"},
+                Path(directory) / "evaluation",
+                "screen",
+            )
+
+        self.assertEqual(attempt["outcome"], "launch_error")
+        self.assertIsNone(output)
+        popen.assert_not_called()
+
+
+class ArtifactContextTests(unittest.TestCase):
+    SOURCE = Path(
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
+    )
+    PARAMS = {
+        "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": "b_only_v1",
+        "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": "256",
+        "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": "128",
+        "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": "256",
+        "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": "16",
+        "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": "18",
+    }
+
+    def state(self, accepted_parent: object) -> dict[str, object]:
+        return {
+            "template": {
+                "baseline_params": self.PARAMS,
+                "runtime_artifact": {
+                    "kind": "outer_msl_v1",
+                    "source_path": self.SOURCE.as_posix(),
+                    "plan_parameter": (
+                        "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
+                    ),
+                    "plans": ["b_only_v1", "split_ab_v1"],
+                    "tier_id": "screen",
+                },
+            },
+            "accepted_parent": accepted_parent,
+        }
+
+    def test_baseline_screen_uses_the_snapshot_for_both_arms(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            run_dir = Path(directory) / "run"
+            live = root / self.SOURCE
+            baseline = run_dir / "snapshots/baseline" / self.SOURCE
+            live.parent.mkdir(parents=True)
+            baseline.parent.mkdir(parents=True)
+            (run_dir / "artifacts").mkdir()
+            live.write_text("kernel void live_candidate() {}")
+            baseline.write_text("kernel void sealed_baseline() {}")
+
+            environment, record = runner._runtime_artifact_context(
+                root,
+                run_dir,
+                self.state(None),
+                {"id": "screen"},
+                dict(self.PARAMS),
+            )
+
+            self.assertEqual(
+                record["parent"]["artifact_sha256"],
+                record["candidate"]["artifact_sha256"],
+            )
+            self.assertEqual(
+                environment["JOLT_AUTORESEARCH_PARENT_ARTIFACT"],
+                environment["JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT"],
+            )
+
+    def test_candidate_artifact_uses_live_source_and_its_own_params(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            run_dir = Path(directory) / "run"
+            live = root / self.SOURCE
+            baseline = run_dir / "snapshots/baseline" / self.SOURCE
+            live.parent.mkdir(parents=True)
+            baseline.parent.mkdir(parents=True)
+            (run_dir / "artifacts").mkdir()
+            live.write_text("kernel void live_candidate() {}")
+            baseline.write_text("kernel void sealed_baseline() {}")
+            candidate_params = dict(self.PARAMS)
+            candidate_params[
+                "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS"
+            ] = "256"
+            state = self.state(
+                {
+                    "snapshot": "baseline",
+                    "params": dict(self.PARAMS),
+                }
+            )
+
+            _, record = runner._runtime_artifact_context(
+                root,
+                run_dir,
+                state,
+                {"id": "screen"},
+                candidate_params,
+            )
+
+            self.assertNotEqual(
+                record["parent"]["artifact_sha256"],
+                record["candidate"]["artifact_sha256"],
+            )
+            self.assertEqual(
+                record["parent"]["manifest"]["dispatch"][
+                    "transition_threads"
+                ],
+                128,
+            )
+            self.assertEqual(
+                record["candidate"]["manifest"]["dispatch"][
+                    "transition_threads"
+                ],
+                256,
+            )
+
+    def test_output_fingerprint_must_match_both_controller_artifacts(self) -> None:
+        context = {
+            "kind": "outer_msl_v1",
+            "parent": {"artifact_sha256": "a" * 64},
+            "candidate": {"artifact_sha256": "b" * 64},
+        }
+        output = {
+            "fingerprint": {
+                "parent_artifact_sha256": "a" * 64,
+                "candidate_artifact_sha256": "b" * 64,
+            }
+        }
+
+        runner._validate_execution_fingerprint(output, context)
+        output["fingerprint"]["candidate_artifact_sha256"] = "c" * 64
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            runner._validate_execution_fingerprint(output, context)
+
+    def test_nonzero_attempt_records_artifact_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            (run_dir / "artifacts").mkdir()
+            source = run_dir / "candidate.metal"
+            source.write_text("kernel void candidate() {}")
+            dispatch = runner.outer_dispatch_from_params(self.PARAMS)
+            artifact = runner.materialize_outer_artifact(
+                run_dir, source, "b_only_v1", dispatch
+            )
+            context = {
+                "kind": "outer_msl_v1",
+                "parent": artifact,
+                "candidate": copy.deepcopy(artifact),
+            }
+            artifact_source = (
+                run_dir / artifact["artifact_path"] / "outer.metal"
+            )
+            artifact_source.write_text("kernel void tampered() {}")
+            attempt = {"outcome": "nonzero_exit", "error": "status 7"}
+
+            valid = runner._seal_attempt_artifacts(
+                run_dir, context, attempt
+            )
+
+        self.assertFalse(valid)
+        self.assertEqual(attempt["outcome"], "artifact_changed")
+        self.assertEqual(attempt["evaluator_outcome"], "nonzero_exit")
+
+    def test_recovery_rejects_attempt_and_inflight_context_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            (run_dir / "artifacts").mkdir()
+            source = run_dir / "candidate.metal"
+            source.write_text("kernel void candidate() {}")
+            artifact = runner.materialize_outer_artifact(
+                run_dir,
+                source,
+                "b_only_v1",
+                runner.outer_dispatch_from_params(self.PARAMS),
+            )
+            context = {
+                "kind": "outer_msl_v1",
+                "parent": artifact,
+                "candidate": copy.deepcopy(artifact),
+            }
+            error = runner._recovery_execution_context_error(
+                run_dir,
+                {"template": {"runtime_artifact": {"tier_id": "screen"}}},
+                {"tier_id": "screen", "execution_context": context},
+                {"execution_context": None},
+            )
+
+        self.assertEqual(error, "attempt and inflight artifact contexts differ")
+
 
 class ResultAdapterTests(unittest.TestCase):
+    def successor_tier(self) -> dict[str, object]:
+        return {
+            "id": "screen",
+            "role": "proxy",
+            "replication": descriptor(pairs=4, warmups=1),
+            "evaluator": {
+                "result_adapter": "outer_remainder_successor_v1"
+            },
+            "promotion": {
+                "kind": "successor_screen",
+                "log_n": 25,
+                "clear_loss_ratio": 0.98,
+                "minimum_uncertainty": 0.01,
+                "maximum_calibration_relative_mad": 0.02,
+            },
+        }
+
+    def successor_output(
+        self, parent_ns: int, candidate_ns: int
+    ) -> dict[str, object]:
+        orders = [
+            ["parent", "candidate"]
+            if index % 2 == 0
+            else ["candidate", "parent"]
+            for index in range(4)
+        ]
+        speedup = parent_ns / candidate_ns
+        return {
+            "schema": "outer_remainder_successor_v1",
+            "schema_version": 1,
+            "kernel": "OuterRemainder",
+            "fingerprint": {
+                "fixture": "resident-outer-remainder-v1",
+                "log_n": 25,
+                "pairs": 4,
+                "excluded_warmup_pairs": 1,
+                "orders": orders,
+                "parent_artifact_sha256": "a" * 64,
+                "candidate_artifact_sha256": "b" * 64,
+            },
+            "metrics": {"successor_speedup": speedup},
+            "samples": [
+                {
+                    "pair": index,
+                    "order": order,
+                    "parent": {
+                        "gpu_active_ns": parent_ns,
+                        "wall_ns": parent_ns,
+                    },
+                    "candidate": {
+                        "gpu_active_ns": candidate_ns,
+                        "wall_ns": candidate_ns,
+                    },
+                }
+                for index, order in enumerate(orders)
+            ],
+            "excluded_warmup": {
+                "order": ["parent", "candidate"],
+                "parent": {"gpu_active_ns": parent_ns},
+                "candidate": {"gpu_active_ns": candidate_ns},
+            },
+            "guards": {"all_exact": True},
+            "all_exact": True,
+            "resources": {
+                "gpu_seconds": 5 * (parent_ns + candidate_ns) / 1e9
+            },
+        }
+
+    def test_outer_successor_adapter_recomputes_four_raw_pairs(self) -> None:
+        tier = self.successor_tier()
+        output = self.successor_output(105, 100)
+
+        result, charge = adapt_result(tier, output, "outer_remainder")
+        validate_tier_result(result, tier)
+
+        self.assertEqual(result["primary"]["value"], 1.05)
+        self.assertEqual(result["primary"]["name"], "successor_speedup")
+        self.assertEqual(charge["gpu_active_seconds"], 1.025e-6)
+
+    def test_outer_successor_adapter_rejects_unearned_gpu_charge(self) -> None:
+        tier = self.successor_tier()
+        output = self.successor_output(105, 100)
+        output["resources"]["gpu_seconds"] = 1.0
+
+        with self.assertRaisesRegex(ValueError, "disagrees with raw arms"):
+            adapt_result(tier, output, "outer_remainder")
+
+    def test_outer_successor_adapter_rejects_legacy_arm_names(self) -> None:
+        output = self.successor_output(105, 100)
+        output["samples"][0]["order"] = ["optimized", "metal"]
+
+        with self.assertRaisesRegex(ValueError, "arm order"):
+            adapt_result(self.successor_tier(), output, "outer_remainder")
+
+    def test_outer_successor_result_closes_fixture_and_replication(self) -> None:
+        tier = self.successor_tier()
+        output = self.successor_output(105, 100)
+
+        runner._validate_closed_result(ROOT, tier, output, {})
+
+        for field, value in (
+            ("fixture", "different"),
+            ("log_n", 24),
+            ("pairs", 3),
+            ("orders", list(reversed(output["fingerprint"]["orders"]))),
+        ):
+            with self.subTest(field=field):
+                tampered = copy.deepcopy(output)
+                tampered["fingerprint"][field] = value
+                with self.assertRaisesRegex(ValueError, "not closed"):
+                    runner._validate_closed_result(ROOT, tier, tampered, {})
+
+    def test_successor_promotion_uses_one_as_its_neutral_point(self) -> None:
+        tier = self.successor_tier()
+        parent = {"metric": 1.5, "relative_mad": 0.005}
+        improvement, _ = adapt_result(
+            tier, self.successor_output(105, 100), "outer_remainder"
+        )
+        clear_loss, _ = adapt_result(
+            tier, self.successor_output(95, 100), "outer_remainder"
+        )
+
+        promoted, _ = runner._promotion_pass(tier, improvement, parent)
+        rejected, _ = runner._promotion_pass(tier, clear_loss, parent)
+
+        self.assertTrue(promoted)
+        self.assertFalse(rejected)
+
     def test_outer_screen_adapter_recomputes_three_raw_pairs(self) -> None:
         orders = [
             ["optimized", "metal"],
@@ -458,6 +879,10 @@ class ResultAdapterTests(unittest.TestCase):
 
         self.assertEqual(result["primary"]["value"], 4.0)
         self.assertEqual(charge["gpu_active_charge_seconds"], 0.25)
+
+        output["samples"][0]["order"] = ["parent", "candidate"]
+        with self.assertRaisesRegex(ValueError, "arm order"):
+            adapt_result(tier, output, "outer_remainder")
 
     def test_outer_remainder_adapter_recomputes_raw_pairs(self) -> None:
         orders = [
@@ -1083,6 +1508,118 @@ class RunnerIntegrationTests(unittest.TestCase):
                 recovered["usage"]["gpu_active_estimated_seconds"], 0.0
             )
             self.assertFalse((run_dir / "inflight.json").exists())
+
+    def test_recovery_preserves_and_verifies_published_artifacts(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            params = state["accepted_parent"]["params"]
+            source = (
+                ROOT
+                / "crates/jolt-kernels/src/metal/solinas/outer_remainder/"
+                "shader.metal"
+            )
+            artifact = runner.materialize_outer_artifact(
+                run_dir,
+                source,
+                "b_only_v1",
+                runner.outer_dispatch_from_params(params),
+            )
+            context = {
+                "kind": "outer_msl_v1",
+                "parent": artifact,
+                "candidate": copy.deepcopy(artifact),
+            }
+            runner.write_inflight(
+                run_dir,
+                {
+                    "schema_version": 2,
+                    "kind": "candidate",
+                    "candidate_id": "candidate-001",
+                    "evaluation_id": "candidate-001-screen",
+                    "tier_id": "screen",
+                    "params": params,
+                    "editable_paths_sha256": state["fingerprint"][
+                        "editable_paths_sha256"
+                    ],
+                    "execution_context": context,
+                    "started_at": runner.utc_now(),
+                },
+            )
+
+            @contextmanager
+            def recovery_lease(*_args: object, **_kwargs: object):
+                yield {}
+
+            with mock.patch.object(
+                runner, "evaluator_lease", side_effect=recovery_lease
+            ):
+                runner.recover(ROOT, run_dir)
+
+            event = json.loads(
+                (run_dir / "tier-events.jsonl").read_text().splitlines()[-1]
+            )
+
+        self.assertEqual(event["attempt"]["execution_context"], context)
+        self.assertTrue(event["attempt"]["artifact_context_valid"])
+
+    def test_recovery_marks_a_required_unpublished_context_invalid(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            state["template"]["runtime_artifact"] = {"tier_id": "screen"}
+            runner.write_state(run_dir, state)
+            runner.write_inflight(
+                run_dir,
+                {
+                    "schema_version": 2,
+                    "kind": "candidate",
+                    "candidate_id": "candidate-001",
+                    "evaluation_id": "candidate-001-screen",
+                    "tier_id": "screen",
+                    "params": state["accepted_parent"]["params"],
+                    "editable_paths_sha256": state["fingerprint"][
+                        "editable_paths_sha256"
+                    ],
+                    "started_at": runner.utc_now(),
+                },
+            )
+
+            @contextmanager
+            def recovery_lease(*_args: object, **_kwargs: object):
+                yield {}
+
+            with mock.patch.object(
+                runner, "evaluator_lease", side_effect=recovery_lease
+            ):
+                runner.recover(ROOT, run_dir)
+
+            event = json.loads(
+                (run_dir / "tier-events.jsonl").read_text().splitlines()[-1]
+            )
+
+        self.assertFalse(event["attempt"]["artifact_context_valid"])
+        self.assertIn("not published", event["attempt"]["error"])
 
     def test_interrupted_holdout_recovery_never_reopens_tuning(self) -> None:
         output = self.outer_output()

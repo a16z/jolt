@@ -48,6 +48,7 @@ impl OuterKernelArtifact {
         if source.is_empty()
             || source.len() > Self::MAX_SOURCE_BYTES
             || source.as_bytes().contains(&0)
+            || Self::has_external_source_reference(source.as_bytes())
         {
             return Err(MetalError::InvalidOuterArtifactSource);
         }
@@ -56,6 +57,84 @@ impl OuterKernelArtifact {
             source: Arc::from(source),
             source_sha256,
             binding_plan,
+        })
+    }
+
+    fn has_external_source_reference(source: &[u8]) -> bool {
+        if source.starts_with(b"\xef\xbb\xbf")
+            || source.contains(&b'\r')
+            || source.contains(&b'"')
+            || source.contains(&b'\'')
+            || source.windows(3).any(|window| {
+                window.starts_with(b"??")
+                    && matches!(
+                        window[2],
+                        b'=' | b'/' | b'\'' | b'(' | b')' | b'!' | b'<' | b'>' | b'-'
+                    )
+            })
+        {
+            return true;
+        }
+        let mut spliced = Vec::with_capacity(source.len());
+        let mut index = 0;
+        while index < source.len() {
+            if source[index] == b'\\' && source.get(index + 1) == Some(&b'\n') {
+                index += 2;
+            } else {
+                spliced.push(source[index]);
+                index += 1;
+            }
+        }
+
+        let mut normalized = Vec::with_capacity(spliced.len());
+        index = 0;
+        while index < spliced.len() {
+            if spliced[index..].starts_with(b"/*") {
+                index += 2;
+                while index < spliced.len() && !spliced[index..].starts_with(b"*/") {
+                    index += 1;
+                }
+                index = (index + 2).min(spliced.len());
+            } else if spliced[index..].starts_with(b"//") {
+                index += 2;
+                while index < spliced.len() && spliced[index] != b'\n' {
+                    index += 1;
+                }
+            } else if spliced[index..].starts_with(b"%:") {
+                normalized.push(b'#');
+                index += 2;
+            } else {
+                normalized.push(spliced[index]);
+                index += 1;
+            }
+        }
+        if [b"__has_include".as_slice(), b"__has_embed".as_slice()]
+            .iter()
+            .any(|needle| {
+                normalized
+                    .windows(needle.len())
+                    .any(|window| window == *needle)
+            })
+        {
+            return true;
+        }
+        normalized.split(|byte| *byte == b'\n').any(|line| {
+            let line = line
+                .iter()
+                .copied()
+                .skip_while(u8::is_ascii_whitespace)
+                .collect::<Vec<_>>();
+            let Some(directive) = line.strip_prefix(b"#") else {
+                return false;
+            };
+            let directive = directive
+                .iter()
+                .copied()
+                .skip_while(u8::is_ascii_whitespace)
+                .collect::<Vec<_>>();
+            directive.starts_with(b"include")
+                || directive.starts_with(b"import")
+                || directive.starts_with(b"embed")
         })
     }
 
@@ -98,11 +177,23 @@ mod tests {
     }
 
     #[test]
-    fn artifact_rejects_empty_nul_and_oversized_sources() {
+    fn artifact_rejects_unclosed_sources() {
         for source in [
             String::new(),
             "kernel\0void candidate() {}".to_owned(),
             "x".repeat(OuterKernelArtifact::MAX_SOURCE_BYTES + 1),
+            "# include \"/tmp/unsealed.metal\"".to_owned(),
+            "#inc\\\nlude \"/tmp/unsealed.metal\"".to_owned(),
+            "#inc/**/lude \"/tmp/unsealed.metal\"".to_owned(),
+            "#if __has_include(\"/tmp/unsealed.metal\")".to_owned(),
+            "%:include \"/tmp/unsealed.metal\"".to_owned(),
+            "??=include \"/tmp/unsealed.metal\"".to_owned(),
+            "\u{feff}#include \"/tmp/unsealed.metal\"".to_owned(),
+            "kernel void candidate() {}\r#include \"/tmp/unsealed.metal\"".to_owned(),
+            "constant char *a = \"/*\";\n#include <unsealed.metal>\nconstant char *b = \"*/\";"
+                .to_owned(),
+            "// /*\n#include <unsealed.metal>\n// */".to_owned(),
+            "#inc/\\\n*comment*/lude <unsealed.metal>".to_owned(),
         ] {
             assert!(matches!(
                 OuterKernelArtifact::new(source, OuterBindingPlan::BOnlyV1),

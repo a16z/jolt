@@ -136,6 +136,7 @@ class PairedContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at least five"):
             validate_replication(replication(3), "representative")
         validate_replication(replication(3), "proxy")
+        validate_replication(replication(4), "proxy")
 
 
 class BudgetContractTests(unittest.TestCase):
@@ -274,6 +275,87 @@ class VersionedContractTests(unittest.TestCase):
         tampered = copy.deepcopy(template)
         tampered["slot_id"] = "OuterRemainder"
         with self.assertRaisesRegex(ValueError, "registry slot"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["evaluation"]["tiers"][0]["evaluator"] = "malformed"
+        with self.assertRaisesRegex(ValueError, "evaluator is invalid"):
+            validate_template(tampered, ROOT)
+
+    def test_runtime_artifact_contract_closes_source_plan_and_env(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        plan_parameter = "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
+        plans = ["b_only_v1", "split_ab_v1"]
+        template["search_space"][plan_parameter] = plans
+        template["baseline_params"][plan_parameter] = "b_only_v1"
+        template["runtime_artifact"] = {
+            "kind": "outer_msl_v1",
+            "source_path": (
+                "crates/jolt-kernels/src/metal/solinas/outer_remainder/"
+                "shader.metal"
+            ),
+            "plan_parameter": plan_parameter,
+            "plans": plans,
+            "tier_id": "screen",
+        }
+        source_path = template["runtime_artifact"]["source_path"]
+        host_paths = set(template["scope"]["editable"]) - {source_path}
+        template["scope"]["editable"] = [source_path]
+        template["scope"]["frozen"] = sorted(
+            set(template["scope"]["frozen"]) | host_paths
+        )
+        screen = next(
+            tier
+            for tier in template["evaluation"]["tiers"]
+            if tier["id"] == "screen"
+        )
+        screen["evaluator"][
+            "result_adapter"
+        ] = "outer_remainder_successor_v1"
+        screen["promotion"].update(
+            {
+                "kind": "successor_screen",
+                "clear_loss_ratio": 0.98,
+                "minimum_uncertainty": 0.01,
+                "maximum_calibration_relative_mad": 0.02,
+            }
+        )
+
+        validate_template(template, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["runtime_artifact"]["plans"] = ["arbitrary_host_plan"]
+        with self.assertRaisesRegex(ValueError, "source or plans"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        host_path = sorted(host_paths)[0]
+        tampered["scope"]["editable"].append(host_path)
+        tampered["scope"]["frozen"].remove(host_path)
+        with self.assertRaisesRegex(ValueError, "source or plans"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        screen = next(
+            tier
+            for tier in tampered["evaluation"]["tiers"]
+            if tier["id"] == "screen"
+        )
+        screen["evaluator"]["env"][
+            "JOLT_AUTORESEARCH_PARENT_ARTIFACT"
+        ] = "/forged"
+        with self.assertRaisesRegex(ValueError, "evaluator is invalid"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["search_space"]["JOLT_AUTORESEARCH_FORGED"] = ["value"]
+        tampered["baseline_params"]["JOLT_AUTORESEARCH_FORGED"] = "value"
+        with self.assertRaisesRegex(ValueError, "baseline parameters"):
             validate_template(tampered, ROOT)
 
         tampered = copy.deepcopy(template)

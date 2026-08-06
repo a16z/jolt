@@ -37,10 +37,16 @@ def validate_replication(descriptor: dict[str, Any], role: str) -> None:
 
     pairs = descriptor["included_pairs"]
     minimum = 5 if role in {"representative", "holdout"} else 3
-    if type(pairs) is not int or pairs < minimum or pairs % 2 == 0:
+    requires_odd = role in {"representative", "holdout"}
+    if (
+        type(pairs) is not int
+        or pairs < minimum
+        or (requires_odd and pairs % 2 == 0)
+    ):
         qualifier = "five" if minimum == 5 else "three"
+        parity = " odd" if requires_odd else ""
         raise ValueError(
-            f"{role} internal paired replication requires at least {qualifier} odd pairs"
+            f"{role} internal paired replication requires at least {qualifier}{parity} pairs"
         )
     warmups = descriptor["excluded_warmup_pairs"]
     if type(warmups) is not int or warmups < 0:

@@ -20,6 +20,12 @@ from .attempt import (
     run_attempt,
     stop_recorded_process_group,
 )
+from .artifacts import (
+    materialize_outer_artifact,
+    outer_dispatch_from_params,
+    verify_artifact_store,
+    verify_outer_artifact,
+)
 from .budget import BudgetExhausted, admit_tier, charge_attempt, empty_usage
 from .contracts import validate_goal_contract, validate_template
 from .results import adapt_result, validate_tier_result
@@ -304,6 +310,55 @@ def _promotion_pass(
     kind = tier["promotion"]["kind"]
     if kind == "all_guards":
         return True, "all correctness guards passed"
+    if kind == "successor_screen":
+        metric = float(result["primary"]["value"])
+        summary = result["replication"]["summary"]
+        current_noise = float(summary["mad"]) / metric
+        calibration_noise = float(parent["relative_mad"])
+        uncertainty = max(
+            float(tier["promotion"]["minimum_uncertainty"]),
+            calibration_noise,
+            current_noise,
+        )
+        pairs = result["replication"]["pairs"]
+        every_active_pair_loses = all(float(pair["effect"]) < 1.0 for pair in pairs)
+        wall_effects: dict[tuple[str, ...], list[float]] = {
+            ("parent", "candidate"): [],
+            ("candidate", "parent"): [],
+        }
+        for sample in result.get("payload", {}).get("samples", []):
+            order = tuple(sample.get("order", []))
+            parent_wall = sample.get("parent", {}).get("wall_ns")
+            candidate_wall = sample.get("candidate", {}).get("wall_ns")
+            if (
+                order not in wall_effects
+                or isinstance(parent_wall, bool)
+                or not isinstance(parent_wall, (int, float))
+                or parent_wall <= 0
+                or isinstance(candidate_wall, bool)
+                or not isinstance(candidate_wall, (int, float))
+                or candidate_wall <= 0
+            ):
+                wall_effects = {}
+                break
+            wall_effects[order].append(float(parent_wall) / float(candidate_wall))
+        wall_fails_both_orders = bool(wall_effects) and all(
+            effects and statistics.median(effects) <= 1.0
+            for effects in wall_effects.values()
+        )
+        calibrated = calibration_noise <= float(
+            tier["promotion"]["maximum_calibration_relative_mad"]
+        )
+        optimistic = metric * math.exp(uncertainty)
+        clear_loss = (
+            calibrated
+            and optimistic <= float(tier["promotion"]["clear_loss_ratio"])
+            and every_active_pair_loses
+            and wall_fails_both_orders
+        )
+        if clear_loss:
+            return False, "successor is a calibrated clear loss"
+        return True, "successor screen is non-losing or inconclusive"
     if kind != "relative_improvement":
         raise ValueError(f"unsupported search-tier promotion kind: {kind}")
     metric = float(result["primary"]["value"])
@@ -325,6 +380,58 @@ def _validate_closed_result(
     params: dict[str, str],
 ) -> None:
     adapter = tier["evaluator"]["result_adapter"]
+    if adapter == "outer_remainder_successor_v1":
+        fingerprint = output.get("fingerprint")
+        if not isinstance(fingerprint, dict):
+            raise ValueError("OuterRemainder successor result is not closed")
+        pairs = tier["replication"]["included_pairs"]
+        first_order = tier["replication"]["first_order"]
+        raw_first = (
+            ["parent", "candidate"]
+            if first_order == ["control", "treatment"]
+            else ["candidate", "parent"]
+        )
+        orders = [
+            raw_first if pair % 2 == 0 else list(reversed(raw_first))
+            for pair in range(pairs)
+        ]
+        fields = {
+            "fixture",
+            "log_n",
+            "pairs",
+            "excluded_warmup_pairs",
+            "orders",
+            "parent_artifact_sha256",
+            "candidate_artifact_sha256",
+        }
+        digests = (
+            fingerprint.get("parent_artifact_sha256"),
+            fingerprint.get("candidate_artifact_sha256"),
+        )
+        if (
+            output.get("schema") != "outer_remainder_successor_v1"
+            or output.get("schema_version") != 1
+            or output.get("kernel") != "OuterRemainder"
+            or output.get("all_exact") is not True
+            or set(fingerprint) != fields
+            or fingerprint.get("fixture") != "resident-outer-remainder-v1"
+            or fingerprint.get("log_n") != tier["promotion"].get("log_n")
+            or fingerprint.get("pairs") != pairs
+            or fingerprint.get("excluded_warmup_pairs")
+            != tier["replication"]["excluded_warmup_pairs"]
+            or fingerprint.get("orders") != orders
+            or any(
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in digest
+                )
+                for digest in digests
+            )
+        ):
+            raise ValueError("OuterRemainder successor result is not closed")
+        return
     if adapter == "metal_piop_v7":
         if tier["promotion"].get("local_kernel") != "OuterRemainder":
             raise ValueError("schema-2 PIOP closure is not implemented for this kernel")
@@ -479,6 +586,163 @@ def _arm_process_tracking(
     }
 
 
+def _runtime_artifact_context(
+    root: Path,
+    run_dir: Path,
+    state: dict[str, Any],
+    tier: dict[str, Any],
+    params: dict[str, str],
+) -> tuple[dict[str, str], Optional[dict[str, Any]]]:
+    contract = state["template"].get("runtime_artifact")
+    if contract is None or tier["id"] != contract["tier_id"]:
+        return {}, None
+    if contract["kind"] != "outer_msl_v1":
+        raise ValueError("unsupported runtime artifact kind")
+    source_path = Path(contract["source_path"])
+    plan_parameter = contract["plan_parameter"]
+    accepted = state.get("accepted_parent")
+    if accepted is None:
+        parent_snapshot = "baseline"
+        parent_params = state["template"]["baseline_params"]
+        candidate_root = run_dir / "snapshots" / "baseline"
+    else:
+        parent_snapshot = accepted["snapshot"]
+        parent_params = accepted["params"]
+        candidate_root = root
+    parent_root = run_dir / "snapshots" / parent_snapshot
+    parent = materialize_outer_artifact(
+        run_dir,
+        parent_root / source_path,
+        str(parent_params[plan_parameter]),
+        outer_dispatch_from_params(parent_params),
+    )
+    candidate = materialize_outer_artifact(
+        run_dir,
+        candidate_root / source_path,
+        str(params[plan_parameter]),
+        outer_dispatch_from_params(params),
+    )
+    return (
+        {
+            "JOLT_AUTORESEARCH_PARENT_ARTIFACT": str(
+                (run_dir / parent["artifact_path"]).resolve()
+            ),
+            "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT": str(
+                (run_dir / candidate["artifact_path"]).resolve()
+            ),
+        },
+        {
+            "kind": contract["kind"],
+            "parent": parent,
+            "candidate": candidate,
+        },
+    )
+
+
+def _publish_execution_context(
+    run_dir: Path, evaluation_id: str, context: Optional[dict[str, Any]]
+) -> None:
+    if context is None:
+        return
+    inflight = read_json(run_dir / "inflight.json")
+    if inflight.get("evaluation_id") != evaluation_id:
+        raise ValueError("inflight evaluation does not match its artifacts")
+    inflight["execution_context"] = context
+    write_inflight(run_dir, inflight)
+
+
+def _verify_execution_context(
+    run_dir: Path, context: Optional[dict[str, Any]]
+) -> None:
+    if context is None:
+        return
+    if set(context) != {"kind", "parent", "candidate"}:
+        raise ValueError("runtime artifact context is invalid")
+    if context["kind"] != "outer_msl_v1":
+        raise ValueError("runtime artifact context kind is invalid")
+    verify_artifact_store(run_dir)
+    for role in ("parent", "candidate"):
+        expected = context[role]
+        if not isinstance(expected, dict) or set(expected) != {
+            "artifact_sha256",
+            "artifact_path",
+            "manifest",
+        }:
+            raise ValueError(f"{role} runtime artifact record is invalid")
+        relative = Path(expected["artifact_path"])
+        if relative.parts != (
+            "artifacts",
+            expected["artifact_sha256"],
+        ):
+            raise ValueError(f"{role} runtime artifact path is invalid")
+        observed = verify_outer_artifact(run_dir / relative)
+        sealed = dict(expected)
+        sealed.pop("artifact_path")
+        if canonical_json(observed) != canonical_json(sealed):
+            raise ValueError(f"{role} runtime artifact changed")
+
+
+def _validate_execution_fingerprint(
+    output: dict[str, Any], context: Optional[dict[str, Any]]
+) -> None:
+    if context is None:
+        return
+    fingerprint = output.get("fingerprint")
+    if not isinstance(fingerprint, dict):
+        raise ValueError("runtime artifact fingerprint is missing")
+    expected = {
+        "parent_artifact_sha256": context["parent"]["artifact_sha256"],
+        "candidate_artifact_sha256": context["candidate"]["artifact_sha256"],
+    }
+    if any(fingerprint.get(name) != value for name, value in expected.items()):
+        raise ValueError("runtime artifact fingerprint does not match the controller")
+
+
+def _seal_attempt_artifacts(
+    run_dir: Path,
+    context: Optional[dict[str, Any]],
+    attempt: dict[str, Any],
+) -> bool:
+    if context is None:
+        return True
+    try:
+        _verify_execution_context(run_dir, context)
+    except (OSError, ValueError) as error:
+        attempt["evaluator_outcome"] = attempt["outcome"]
+        attempt["outcome"] = "artifact_changed"
+        attempt["error"] = str(error)
+        return False
+    return True
+
+
+def _artifact_rejected_attempt(
+    tier: dict[str, Any],
+    error: Exception,
+    context: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "tier_id": tier["id"],
+        "outcome": "artifact_rejected",
+        "error": str(error),
+        "command": list(tier["evaluator"]["command"]),
+        "started_at": utc_now(),
+        "controller": {
+            "queue_wait_seconds": 0.0,
+            "exclusive_lease_seconds": 0.0,
+            "subprocess_wall_seconds": 0.0,
+        },
+        "resources": {
+            "gpu_active_seconds": 0.0,
+            "gpu_active_charge_seconds": 0.0,
+            "gpu_active_charge_kind": "validated",
+        },
+        "result_sha256": None,
+        "process_tracking": None,
+        "execution_context": context,
+    }
+
+
 def execute_tier(
     root: Path,
     run_dir: Path,
@@ -498,19 +762,35 @@ def execute_tier(
         budget_reserve,
     )
     evaluation_dir = run_dir / "evaluations" / evaluation_id
-    process_tracking = _arm_process_tracking(run_dir, evaluation_id)
-    attempt, output = run_attempt(
-        root,
-        tier["evaluator"],
-        params,
-        evaluation_dir,
-        tier["id"],
-        queue_timeout_seconds=queue_budget,
-        process_tracking=process_tracking,
-    )
+    context_record = None
+    try:
+        context_env, context_record = _runtime_artifact_context(
+            root, run_dir, state, tier, params
+        )
+        _publish_execution_context(run_dir, evaluation_id, context_record)
+    except (OSError, ValueError) as error:
+        evaluation_dir.mkdir(parents=True, exist_ok=False)
+        attempt = _artifact_rejected_attempt(tier, error, context_record)
+        output = None
+    else:
+        process_tracking = _arm_process_tracking(run_dir, evaluation_id)
+        attempt, output = run_attempt(
+            root,
+            tier["evaluator"],
+            params,
+            evaluation_dir,
+            tier["id"],
+            queue_timeout_seconds=queue_budget,
+            process_tracking=process_tracking,
+            context_env=context_env,
+            context_record=context_record,
+        )
+    if not _seal_attempt_artifacts(run_dir, context_record, attempt):
+        output = None
     result = None
     if attempt["outcome"] == "success" and output is not None:
         try:
+            _validate_execution_fingerprint(output, context_record)
             _validate_closed_result(root, tier, output, params)
             result, resource_charge = adapt_result(
                 tier, output, state["template"]["kernel"]
@@ -563,6 +843,7 @@ def _initialize_run_files(run_dir: Path) -> None:
     run_dir.mkdir(parents=True, exist_ok=False)
     (run_dir / "evaluations").mkdir()
     (run_dir / "snapshots").mkdir()
+    (run_dir / "artifacts").mkdir()
     for name in (
         "baseline-events.jsonl",
         "candidate-events.jsonl",
@@ -1074,13 +1355,17 @@ def trial(
         if snapshot_digest != editable_digest:
             raise ValueError("accepted candidate snapshot does not match its source")
         paired = representative_result["replication"]["summary"]
+        accepted_tiers = dict(tier_results)
+        for tier in _search_tiers(state["template"]):
+            if tier["promotion"]["kind"] == "successor_screen":
+                accepted_tiers[tier["id"]] = parent["tiers"][tier["id"]]
         state["accepted_parent"] = {
             "id": candidate_id,
             "params": params,
             "metric": float(representative_result["primary"]["value"]),
             "relative_mad": float(paired["mad"]) / float(paired["median"]),
             "paired_summary": paired,
-            "tiers": tier_results,
+            "tiers": accepted_tiers,
             "snapshot": candidate_id,
             "editable_paths_sha256": editable_digest,
             "snapshot_sha256": snapshot_digest,
@@ -1573,6 +1858,31 @@ def recover(root: Path, run_dir: Path) -> dict[str, Any]:
         return _recover_under_lease(root, run_dir)
 
 
+def _recovery_execution_context_error(
+    run_dir: Path,
+    state: dict[str, Any],
+    inflight: dict[str, Any],
+    attempt: Optional[dict[str, Any]],
+) -> Optional[str]:
+    context = inflight.get("execution_context")
+    runtime_artifact = state["template"].get("runtime_artifact")
+    context_required = (
+        isinstance(runtime_artifact, dict)
+        and runtime_artifact.get("tier_id") == inflight.get("tier_id")
+    )
+    if context_required and context is None:
+        return "required runtime artifact context was not published"
+    try:
+        _verify_execution_context(run_dir, context)
+    except (OSError, ValueError) as error:
+        return str(error)
+    if attempt is not None and canonical_json(
+        attempt.get("execution_context")
+    ) != canonical_json(context):
+        return "attempt and inflight artifact contexts differ"
+    return None
+
+
 def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
     state = load_state(run_dir)
     inflight_path = run_dir / "inflight.json"
@@ -1581,16 +1891,32 @@ def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
     inflight = read_json(inflight_path)
     evaluation_dir = run_dir / "evaluations" / inflight["evaluation_id"]
     attempt_path = evaluation_dir / "attempt.json"
-    if attempt_path.is_file():
-        attempt = read_json(attempt_path)
+    inflight_context = inflight.get("execution_context")
+    sealed_attempt = read_json(attempt_path) if attempt_path.is_file() else None
+    context_error = _recovery_execution_context_error(
+        run_dir, state, inflight, sealed_attempt
+    )
+    if sealed_attempt is not None:
+        attempt = sealed_attempt
         charged_ids = {
             event.get("evaluation_id")
             for event in _events(run_dir / "tier-events.jsonl")
         }
+        if (
+            inflight["evaluation_id"] in charged_ids
+            and context_error is not None
+        ):
+            raise ValueError(
+                f"sealed evaluation artifact context is invalid: {context_error}"
+            )
         if inflight["evaluation_id"] not in charged_ids:
             attempt["evaluator_outcome"] = attempt.get("outcome")
             attempt["outcome"] = "interrupted"
             attempt["error"] = "controller interrupted before sealing the tier ledger"
+            attempt["execution_context"] = inflight_context
+            attempt["artifact_context_valid"] = context_error is None
+            if context_error is not None:
+                attempt["error"] += f"; {context_error}"
             attempt["budget_reserve"] = inflight.get("budget_reserve")
             charge_attempt(state["usage"], attempt)
             append_event(
@@ -1627,8 +1953,12 @@ def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
                 "gpu_active_charge_kind": "conservative_wall_upper_bound",
             },
             "result_sha256": None,
+            "execution_context": inflight_context,
+            "artifact_context_valid": context_error is None,
             "budget_reserve": inflight.get("budget_reserve"),
         }
+        if context_error is not None:
+            attempt["error"] += f"; {context_error}"
         charge_attempt(state["usage"], attempt)
         append_event(
             run_dir / "tier-events.jsonl",

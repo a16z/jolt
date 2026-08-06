@@ -14,10 +14,12 @@ def _input_id(value: Any) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
-def _semantic_order(order: Any) -> list[str]:
-    if order == ["optimized", "metal"]:
+def _semantic_order(
+    order: Any, control_label: str, treatment_label: str
+) -> list[str]:
+    if order == [control_label, treatment_label]:
         return ["control", "treatment"]
-    if order == ["metal", "optimized"]:
+    if order == [treatment_label, control_label]:
         return ["treatment", "control"]
     raise ValueError("evaluator returned a non-alternating arm order")
 
@@ -29,6 +31,8 @@ def _pair(
     control_ns: Any,
     treatment_ns: Any,
     exact: bool,
+    control_label: str,
+    treatment_label: str,
 ) -> dict[str, Any]:
     if (
         isinstance(control_ns, bool)
@@ -44,7 +48,7 @@ def _pair(
     return {
         "index": index,
         "input_id": input_id,
-        "order": _semantic_order(order),
+        "order": _semantic_order(order, control_label, treatment_label),
         "arms": {
             "control": {"primary_ns": control_ns},
             "treatment": {"primary_ns": treatment_ns},
@@ -73,7 +77,12 @@ def _envelope(
             "name": (
                 "piop_speedup"
                 if tier["evaluator"]["result_adapter"] == "metal_piop_v7"
-                else "hybrid_speedup"
+                else (
+                    "successor_speedup"
+                    if tier["evaluator"]["result_adapter"]
+                    == "outer_remainder_successor_v1"
+                    else "hybrid_speedup"
+                )
             ),
             "unit": "x",
             "direction": "max",
@@ -124,6 +133,8 @@ def _adapt_outer(
                 sample.get("optimized", {}).get("member_ns"),
                 sample.get("metal", {}).get("member_ns"),
                 exact,
+                "optimized",
+                "metal",
             )
         )
     warmups = (
@@ -144,6 +155,105 @@ def _adapt_outer(
         "gpu_active_seconds": None,
         "gpu_active_charge_seconds": charge,
         "gpu_active_charge_kind": "treatment_wall_upper_bound",
+    }
+
+
+def _adapt_outer_successor(
+    tier: dict[str, Any], output: dict[str, Any], kernel: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if (
+        output.get("schema") != "outer_remainder_successor_v1"
+        or output.get("schema_version") != 1
+        or output.get("kernel") != "OuterRemainder"
+    ):
+        raise ValueError("OuterRemainder successor returned the wrong contract")
+    samples = output.get("samples")
+    if not isinstance(samples, list):
+        raise ValueError("OuterRemainder successor samples are missing")
+    input_id = _input_id(output.get("fingerprint", {}).get("fixture"))
+    exact = output.get("all_exact") is True
+    pairs = []
+    timed_gpu_active_ns = 0.0
+    for index, sample in enumerate(samples):
+        if sample.get("pair") != index:
+            raise ValueError("OuterRemainder successor sample index is invalid")
+        parent_ns = sample.get("parent", {}).get("gpu_active_ns")
+        candidate_ns = sample.get("candidate", {}).get("gpu_active_ns")
+        pairs.append(
+            _pair(
+                index,
+                input_id,
+                sample.get("order"),
+                parent_ns,
+                candidate_ns,
+                exact,
+                "parent",
+                "candidate",
+            )
+        )
+        timed_gpu_active_ns += float(parent_ns) + float(candidate_ns)
+    warmup = output.get("excluded_warmup")
+    if not isinstance(warmup, dict):
+        raise ValueError("OuterRemainder successor warmup is missing")
+    warmup_parent_ns = warmup.get("parent", {}).get("gpu_active_ns")
+    warmup_candidate_ns = warmup.get("candidate", {}).get("gpu_active_ns")
+    _pair(
+        -1,
+        input_id,
+        warmup.get("order"),
+        warmup_parent_ns,
+        warmup_candidate_ns,
+        exact,
+        "parent",
+        "candidate",
+    )
+    total_gpu_active_ns = (
+        timed_gpu_active_ns
+        + float(warmup_parent_ns)
+        + float(warmup_candidate_ns)
+    )
+    warmups = (
+        [{"payload": warmup}]
+        if tier["replication"]["excluded_warmup_pairs"] == 1
+        else []
+    )
+    result = _envelope(
+        tier,
+        kernel,
+        "outer_remainder_successor_v1",
+        output,
+        pairs,
+        warmups,
+    )
+    reported = output.get("metrics", {}).get("successor_speedup")
+    if isinstance(reported, bool) or not isinstance(reported, (int, float)):
+        raise ValueError("OuterRemainder successor metric is invalid")
+    if not math.isclose(
+        float(reported), result["primary"]["value"], rel_tol=1e-12, abs_tol=1e-12
+    ):
+        raise ValueError("OuterRemainder successor metric disagrees with raw pairs")
+    reported_charge = output.get("resources", {}).get("gpu_seconds")
+    if (
+        isinstance(reported_charge, bool)
+        or not isinstance(reported_charge, (int, float))
+        or not math.isfinite(reported_charge)
+        or reported_charge < 0
+    ):
+        raise ValueError("OuterRemainder successor GPU charge is invalid")
+    if not math.isclose(
+        float(reported_charge) * 1e9,
+        total_gpu_active_ns,
+        rel_tol=1e-12,
+        abs_tol=0.5,
+    ):
+        raise ValueError(
+            "OuterRemainder successor GPU charge disagrees with raw arms"
+        )
+    charge = total_gpu_active_ns / 1e9
+    return result, {
+        "gpu_active_seconds": charge,
+        "gpu_active_charge_seconds": charge,
+        "gpu_active_charge_kind": "validated",
     }
 
 
@@ -187,6 +297,8 @@ def _adapt_piop(
                 arms.get("optimized", {}).get("piop_ns"),
                 arms.get("metal", {}).get("piop_ns"),
                 proofs_exact,
+                "optimized",
+                "metal",
             )
         )
         optimized_local = arms.get("optimized", {}).get("local")
@@ -206,6 +318,8 @@ def _adapt_piop(
                 optimized_local.get("primary_ns"),
                 metal_local.get("primary_ns"),
                 proofs_exact,
+                "optimized",
+                "metal",
             )
         )
     result = _envelope(tier, kernel, "metal_piop_v7", output, pairs, [])
@@ -268,6 +382,8 @@ def adapt_result(
     tier: dict[str, Any], output: dict[str, Any], kernel: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     adapter = tier["evaluator"]["result_adapter"]
+    if adapter == "outer_remainder_successor_v1":
+        return _adapt_outer_successor(tier, output, kernel)
     if adapter in {"outer_remainder_v3", "outer_remainder_screen_v1"}:
         return _adapt_outer(tier, output, kernel)
     if adapter == "metal_piop_v7":

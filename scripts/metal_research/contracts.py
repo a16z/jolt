@@ -19,6 +19,7 @@ _ID = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
 _ROLES = {"correctness", "proxy", "representative", "holdout", "transfer"}
 _RESULT_ADAPTERS = {
     "outer_remainder_screen_v1",
+    "outer_remainder_successor_v1",
     "outer_remainder_v3",
     "metal_piop_v7",
 }
@@ -185,15 +186,25 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
     if set(tier) != required:
         raise ValueError(f"applicable tier {tier_id} fields are incomplete")
     evaluator = tier["evaluator"]
+    if not isinstance(evaluator, dict):
+        raise ValueError(f"tier {tier_id} evaluator is invalid")
+    evaluator_env = evaluator.get("env", {})
     if (
-        not isinstance(evaluator, dict)
-        or not isinstance(evaluator.get("command"), list)
+        not isinstance(evaluator.get("command"), list)
         or not evaluator["command"]
         or not all(isinstance(item, str) and item for item in evaluator["command"])
         or not isinstance(evaluator.get("result_adapter"), str)
         or evaluator["result_adapter"] not in _RESULT_ADAPTERS
         or not isinstance(evaluator.get("timeout_seconds"), (int, float))
         or evaluator["timeout_seconds"] <= 0
+        or not isinstance(evaluator_env, dict)
+        or not all(
+            isinstance(name, str)
+            and name
+            and not name.startswith("JOLT_AUTORESEARCH_")
+            and isinstance(value, str)
+            for name, value in evaluator_env.items()
+        )
     ):
         raise ValueError(f"tier {tier_id} evaluator is invalid")
     validate_replication(tier["replication"], role)
@@ -212,11 +223,33 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         raise ValueError(f"tier {tier_id} cost limit is invalid")
     promotion = tier["promotion"]
     kind = promotion.get("kind")
+    successor_screen = (
+        evaluator["result_adapter"] == "outer_remainder_successor_v1"
+    )
     if role == "correctness" and kind != "all_guards":
         raise ValueError(f"tier {tier_id} correctness promotion is invalid")
     minimum_relative = promotion.get("minimum_relative_improvement")
     noise_multiplier = promotion.get("noise_multiplier")
-    if role in {"proxy", "representative"} and (
+    if successor_screen:
+        values = (
+            promotion.get("clear_loss_ratio"),
+            promotion.get("minimum_uncertainty"),
+            promotion.get("maximum_calibration_relative_mad"),
+        )
+        if (
+            role != "proxy"
+            or kind != "successor_screen"
+            or tier["replication"]["excluded_warmup_pairs"] != 1
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not 0 < float(value) < 1
+                for value in values
+            )
+        ):
+            raise ValueError(f"tier {tier_id} successor promotion is invalid")
+    elif role in {"proxy", "representative"} and (
         kind != "relative_improvement"
         or isinstance(minimum_relative, bool)
         or not isinstance(minimum_relative, (int, float))
@@ -288,7 +321,12 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         "evaluation",
         "collaboration",
     }
-    if not isinstance(template, dict) or set(template) != required:
+    optional = {"runtime_artifact"}
+    if (
+        not isinstance(template, dict)
+        or not required <= set(template)
+        or set(template) - required - optional
+    ):
         raise ValueError("template fields are incomplete")
     if template["schema_version"] != TEMPLATE_SCHEMA_VERSION:
         raise ValueError("unsupported template schema")
@@ -308,7 +346,16 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         raise ValueError("v2 kernel searches must maximize a speedup")
     search_space = template["search_space"]
     baseline = template["baseline_params"]
-    if not isinstance(search_space, dict) or set(baseline) != set(search_space):
+    if (
+        not isinstance(search_space, dict)
+        or set(baseline) != set(search_space)
+        or any(
+            not isinstance(name, str)
+            or not name
+            or name.startswith("JOLT_AUTORESEARCH_")
+            for name in search_space
+        )
+    ):
         raise ValueError("baseline parameters must close the search space")
     for name, values in search_space.items():
         if not isinstance(values, list) or not values or baseline[name] not in values:
@@ -327,6 +374,33 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         raise ValueError("the goal contract must be frozen")
     if template["registry_contract"] not in frozen:
         raise ValueError("the kernel registry must be frozen")
+
+    runtime_artifact = template.get("runtime_artifact")
+    if runtime_artifact is not None:
+        fields = {
+            "kind",
+            "source_path",
+            "plan_parameter",
+            "plans",
+            "tier_id",
+        }
+        if not isinstance(runtime_artifact, dict) or set(runtime_artifact) != fields:
+            raise ValueError("runtime artifact contract is invalid")
+        if runtime_artifact["kind"] != "outer_msl_v1":
+            raise ValueError("runtime artifact kind is unsupported")
+        source_path = runtime_artifact["source_path"]
+        _relative_file(root, source_path, "runtime artifact source")
+        plan_parameter = runtime_artifact["plan_parameter"]
+        plans = runtime_artifact["plans"]
+        if (
+            editable != {source_path}
+            or not isinstance(plan_parameter, str)
+            or plan_parameter not in search_space
+            or plans != ["b_only_v1", "split_ab_v1"]
+            or search_space[plan_parameter] != plans
+            or baseline[plan_parameter] not in plans
+        ):
+            raise ValueError("runtime artifact source or plans are not closed")
 
     validate_budget(template["budget"])
     evaluation = template["evaluation"]
@@ -350,6 +424,32 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         if tier.get("applicable") is True:
             roles.add(tier["role"])
             ordered_roles.append(tier["role"])
+    successor_tiers = [
+        tier
+        for tier in tiers
+        if tier.get("applicable") is True
+        and tier["evaluator"]["result_adapter"]
+        == "outer_remainder_successor_v1"
+    ]
+    if runtime_artifact is not None:
+        artifact_tiers = [
+            tier
+            for tier in tiers
+            if tier.get("id") == runtime_artifact["tier_id"]
+            and tier.get("applicable") is True
+            and tier.get("role") == "proxy"
+        ]
+        if len(artifact_tiers) != 1:
+            raise ValueError("runtime artifact must bind one executable proxy tier")
+        if (
+            artifact_tiers[0]["evaluator"]["result_adapter"]
+            != "outer_remainder_successor_v1"
+        ):
+            raise ValueError("runtime artifact proxy must use its sealed adapter")
+        if successor_tiers != artifact_tiers:
+            raise ValueError("successor adapter is not bound to runtime artifacts")
+    elif successor_tiers:
+        raise ValueError("successor adapter requires runtime artifacts")
     if not {"representative", "holdout", "transfer"} <= roles:
         raise ValueError("evaluation requires representative, holdout, and transfer tiers")
     rank = {

@@ -144,7 +144,10 @@ def _command(evaluator: dict[str, Any], params: dict[str, str]) -> list[str]:
 
 
 def _environment(
-    evaluator: dict[str, Any], params: dict[str, str], artifact_dir: Path
+    evaluator: dict[str, Any],
+    params: dict[str, str],
+    artifact_dir: Path,
+    context_env: Optional[dict[str, str]] = None,
 ) -> dict[str, str]:
     result = {
         name: value
@@ -155,8 +158,25 @@ def _environment(
     token = os.environ.get(EVALUATOR_LOCK_HELD_ENV)
     if token is not None:
         result[EVALUATOR_LOCK_HELD_ENV] = token
-    result.update({str(name): str(value) for name, value in evaluator.get("env", {}).items()})
+    declared = {
+        str(name): str(value) for name, value in evaluator.get("env", {}).items()
+    }
+    if any(name.startswith("JOLT_AUTORESEARCH_") for name in declared):
+        raise ValueError("evaluator env cannot set controller-owned state")
+    result.update(declared)
+    if any(name.startswith("JOLT_AUTORESEARCH_") for name in params):
+        raise ValueError("search parameters cannot set controller-owned state")
     result.update(params)
+    context_env = context_env or {}
+    allowed_context = {
+        "JOLT_AUTORESEARCH_PARENT_ARTIFACT",
+        "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT",
+    }
+    if (context_env and set(context_env) != allowed_context) or any(
+        not isinstance(value, str) or not value for value in context_env.values()
+    ):
+        raise ValueError("controller evaluator context is invalid")
+    result.update(context_env)
     result["JOLT_AUTORESEARCH_EVAL_DIR"] = str(artifact_dir)
     return result
 
@@ -312,6 +332,8 @@ def run_attempt(
     tier_id: str,
     queue_timeout_seconds: Optional[float] = None,
     process_tracking: Optional[dict[str, str]] = None,
+    context_env: Optional[dict[str, str]] = None,
+    context_record: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
     evaluation_dir.mkdir(parents=True, exist_ok=False)
     artifact_dir = evaluation_dir / "artifacts"
@@ -346,7 +368,9 @@ def run_attempt(
                 process = subprocess.Popen(
                     launch_command,
                     cwd=root,
-                    env=_environment(evaluator, params, artifact_dir),
+                    env=_environment(
+                        evaluator, params, artifact_dir, context_env
+                    ),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -380,7 +404,7 @@ def run_attempt(
                             error_message = str(error)
                         else:
                             outcome = "success"
-            except OSError as error:
+            except (OSError, ValueError) as error:
                 subprocess_wall = time.monotonic() - started
                 outcome = "launch_error"
                 error_message = str(error)
@@ -415,6 +439,7 @@ def run_attempt(
         },
         "result_sha256": result_sha256,
         "process_tracking": tracking,
+        "execution_context": context_record,
     }
     (evaluation_dir / "attempt.json").write_bytes(_encoded(attempt))
     return attempt, output
