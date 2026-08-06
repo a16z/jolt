@@ -29,6 +29,7 @@ mod outer_remainder;
 mod product5;
 mod product_remainder;
 mod product_uniskip;
+mod ram_val_check;
 mod registers_read_write;
 mod registers_val;
 mod runtime;
@@ -112,6 +113,15 @@ pub use product_uniskip::{
     ProductUniskipInvocation, ProductUniskipKnownNodes, ProductUniskipShapeError,
     ProductUniskipStorageLayout, PRODUCT_UNISKIP_EXTENDED_NODES,
     PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS, PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
+};
+#[cfg(feature = "test-utils")]
+pub use ram_val_check::oracle as ram_val_check_oracle;
+pub use ram_val_check::{
+    RamValCheckConfig, RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan,
+    RamValCheckRowError, RamValCheckRows, RamValCheckSequence, RamValCheckShapeError,
+    RamValCheckStorageLayout, RAM_VAL_CHECK_DEFAULT_CPU_TAIL_ELEMENTS,
+    RAM_VAL_CHECK_FIVE_X_GATE_NS, RAM_VAL_CHECK_MESSAGE_COLUMNS, RAM_VAL_CHECK_NO_ACCESS,
+    RAM_VAL_CHECK_SIMD_WIDTH, RAM_VAL_CHECK_TARGET_CPU_NS,
 };
 pub use registers_read_write::{
     RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
@@ -472,6 +482,28 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
+    #[error(transparent)]
+    RamValCheckShape(#[from] ram_val_check::RamValCheckShapeError),
+    #[error("RAM value-check rows belong to Metal device {got}, expected {expected}")]
+    RamValCheckRowsDevice { expected: u64, got: u64 },
+    #[error(
+        "RAM value-check pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedRamValCheckExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "RAM value-check {phase} needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
+    )]
+    RamValCheckThreadgroupMemory {
+        phase: &'static str,
+        requested: u64,
+        maximum: u64,
+    },
+    #[error("invalid resident RAM value-check state: {0}")]
+    InvalidRamValCheckState(&'static str),
     #[error("invalid resident product remainder state: {0}")]
     InvalidProductRemainderState(&'static str),
     #[error(

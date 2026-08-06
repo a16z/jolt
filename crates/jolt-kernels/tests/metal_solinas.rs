@@ -6,11 +6,14 @@ use jolt_kernels::metal::solinas::{
     evaluate_product_uniskip_extensions_cpu, BooleanityRow, BooleanitySelector,
     BooleanitySequenceConfig, DispatchConfig, Fp128, InstructionRaFirstMessageConfig, MetalError,
     Probe, Product5Config, Product5SequenceConfig, ProductRemainderRow,
-    ProductRemainderSequenceConfig, ProductUniskipConfig, RegisterAccessRow,
-    RegistersReadWriteMessageConfig, RegistersValDenseConfig, RegistersValFirstMessageConfig,
-    RegistersValTransitionConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+    ProductRemainderSequenceConfig, ProductUniskipConfig, RamValCheckConfig, RamValCheckDenseRow,
+    RamValCheckNativeRow, RamValCheckPlan, RegisterAccessRow, RegistersReadWriteMessageConfig,
+    RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValTransitionConfig,
+    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
-use jolt_kernels::metal::solinas::{product_remainder_reference, product_uniskip_reference};
+use jolt_kernels::metal::solinas::{
+    product_remainder_reference, product_uniskip_reference, ram_val_check_oracle,
+};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
 mod support;
@@ -172,6 +175,146 @@ fn product_uniskip_matches_cpu_and_reuses_product_rows() {
         sequence.row_allocation_identity(),
         resident_rows.allocation_identity()
     );
+}
+
+#[test]
+fn ram_val_check_sequence_matches_cpu_at_every_boundary() {
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let log_t = 12;
+    let log_k = 5;
+    let cycles = 1usize << log_t;
+    let address_domain = 1usize << log_k;
+    let config = RamValCheckConfig {
+        first_message_threads: 32,
+        native_transition_threads: 32,
+        dense_transition_threads: 64,
+        cpu_tail_elements: 1 << 7,
+    };
+    let plan =
+        RamValCheckPlan::new(log_t, log_k, config).expect("RAM value-check plan should be valid");
+    let rows = (0..cycles)
+        .map(|index| {
+            let (address, increment) = match index % 11 {
+                0 => (None, 0),
+                1 => (Some((index % address_domain) as u32), u64::MAX as i128),
+                2 => (Some((index % address_domain) as u32), -(u64::MAX as i128)),
+                _ => (
+                    Some(((37 * index + 19) % address_domain) as u32),
+                    (index as i128 % 2001) - 1000,
+                ),
+            };
+            RamValCheckNativeRow::new(address, increment)
+                .expect("synthetic RAM value-check row should be valid")
+        })
+        .collect::<Vec<_>>();
+    let r_address = (0..log_k)
+        .map(|index| AkitaField::from_u64(0x101 + 17 * index as u64))
+        .collect::<Vec<_>>();
+    let r_cycle = (0..log_t)
+        .map(|index| AkitaField::from_u64(0x1001 + 29 * index as u64))
+        .collect::<Vec<_>>();
+    let eq_address = EqPolynomial::<AkitaField>::evals(&r_address, None);
+    let (r_hi, r_lo) = r_cycle.split_at(log_t - log_t / 2);
+    let mut lt_lo = LtPolynomial::<AkitaField>::evaluations(r_lo);
+    let gamma = AkitaField::from_u64(0xfeed_beef_cafe_babe);
+    let lt_hi = LtPolynomial::<AkitaField>::evaluations(r_hi)
+        .into_iter()
+        .map(|value| value + gamma)
+        .collect::<Vec<_>>();
+    let eq_hi = EqPolynomial::<AkitaField>::evals(r_hi, None);
+    let expected_first =
+        ram_val_check_oracle::first_message(&rows, &eq_address, &lt_lo, &lt_hi, &eq_hi)
+            .expect("CPU first message should be well-shaped");
+
+    let resident_rows = context
+        .prepare_ram_val_check_rows(&rows, address_domain)
+        .expect("RAM value-check rows should prepare");
+    let mut sequence = context
+        .prepare_ram_val_check_sequence(
+            resident_rows.clone(),
+            &eq_address,
+            &lt_lo,
+            &lt_hi,
+            &eq_hi,
+            plan,
+        )
+        .expect("RAM value-check sequence should prepare");
+    assert_eq!(sequence.round_device_buffer_allocations(), 0);
+    assert_eq!(
+        sequence.row_allocation_identity(),
+        resident_rows.allocation_identity()
+    );
+    assert_eq!(
+        sequence
+            .replay_first_message_timed()
+            .expect("first message should replay")
+            .0,
+        expected_first
+    );
+    assert_eq!(
+        sequence.message().expect("first message should execute"),
+        expected_first
+    );
+
+    let modulus_minus_one = AkitaField::from_u128(u128::MAX - AKITA_OFFSET_FFFFA7F7 as u128);
+    let challenges = [
+        AkitaField::from_u64(0),
+        AkitaField::from_u64(1),
+        modulus_minus_one,
+        AkitaField::from_u64(0x0123_4567_89ab_cdef),
+        AkitaField::from_u64(0x0ddc_0ffe_e15e_cafe),
+    ];
+    let mut expected_state: Option<Vec<RamValCheckDenseRow<AkitaField>>> = None;
+    for (round, challenge) in challenges
+        .into_iter()
+        .take(plan.gpu_bind_rounds())
+        .enumerate()
+    {
+        lt_lo = lt_lo
+            .chunks_exact(2)
+            .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+            .collect();
+        let expected = if let Some(state) = expected_state.as_ref() {
+            ram_val_check_oracle::dense_bind_and_message(state, challenge, &lt_lo, &lt_hi, &eq_hi)
+                .expect("CPU dense transition should be well-shaped")
+        } else {
+            ram_val_check_oracle::native_bind_and_message(
+                &rows,
+                &eq_address,
+                challenge,
+                &lt_lo,
+                &lt_hi,
+                &eq_hi,
+            )
+            .expect("CPU native transition should be well-shaped")
+        };
+        assert_eq!(
+            sequence
+                .replay_current_bind_and_message_timed(challenge, &lt_lo)
+                .expect("RAM value-check transition should replay")
+                .0,
+            expected.evals,
+            "replay round {round}"
+        );
+        assert_eq!(
+            sequence
+                .bind_and_message(challenge, &lt_lo)
+                .expect("RAM value-check transition should execute"),
+            expected.evals,
+            "round {round}"
+        );
+        assert_eq!(
+            sequence
+                .read_current_state()
+                .expect("RAM value-check dense state should read"),
+            expected.state,
+            "state round {round}"
+        );
+        expected_state = Some(expected.state);
+    }
+    assert!(sequence.at_cpu_handoff());
+    assert_eq!(sequence.current_elements(), config.cpu_tail_elements);
+    assert_eq!(sequence.current_lt_lo_length(), lt_lo.len());
 }
 
 fn assert_product_remainder_sequence(row_count: usize) {

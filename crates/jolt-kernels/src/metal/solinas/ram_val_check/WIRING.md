@@ -1,9 +1,11 @@
 # RAM value-check Metal contract
 
-This directory contains an isolated design and implementation slice for
-`RamValCheck`. The target is the production Fibonacci fixture with `log_T = 26`
-and `log_K = 13` on the measured M4 Max. Shared source registration, backend
-wiring, integration tests, and benchmarks are outside this slice.
+This directory contains the low-level Metal implementation for `RamValCheck`.
+The target is the production Fibonacci fixture with `log_T = 26` and
+`log_K = 13` on the measured M4 Max. Source and pipeline registration, the
+resident sequence API, an independent parity test, and Criterion microbenchmarks
+are wired. The proof-stage `SumcheckKernel` adapter and direct upstream row
+producer are not.
 
 ## Exact boundary
 
@@ -34,13 +36,14 @@ The host owns:
 - the stage-4 gamma draw and every round challenge;
 - the split `LT + gamma` state and its small low-table binds;
 - polynomial construction, batch combination, and clear or ZK proof recording;
-- the CPU tail from table length `2^16`;
+- the CPU tail from table length `2^16` in the retained configuration;
 - the final `LtCyclePlusGamma` scalar check and output-claim assembly.
 
 The advice and program-image output cells are copied from this member's input
 claims, as in the optimized CPU kernel. The CPU tail returns the fully bound
-`ram_inc` and `ram_ra` values. No transcript field, output claim, or protocol
-ordering changes.
+`ram_inc` and `ram_ra` values. The microbenchmark includes an exact dense
+continuation for cutoff selection; the production adapter will use the existing
+optimized tail. No transcript field, output claim, or protocol ordering changes.
 
 At `T = 2^26`, the device starts with a 1-GiB native row allocation. Each
 16-byte row contains a signed 64-bit magnitude and a remapped address:
@@ -187,9 +190,49 @@ all phase bars is necessary but not sufficient: the complete member, including
 the CPU tail and required host work, must be at most 46.931375 ms. If the
 measured roof supports substantially more than 5x, optimization continues.
 
+## Log-26 observations
+
+The retained schedule uses 32 threads for all three phase types, a balanced
+13/13 LT split, ten device binds, and a `2^16` CPU handoff. One warm observation
+after shader and allocation warmup measured:
+
+| Component | Wall or active time |
+| --- | ---: |
+| Resident Metal prefix wall, including 11 waits and 2-MiB readback | 26.580 ms |
+| Metal prefix active | 24.127 ms |
+| Exact dense CPU continuation, including dense-LT construction | 4.643 ms |
+| Hybrid wall without host Fiat-Shamir | 31.223 ms |
+
+The no-Fiat-Shamir diagnostic is 7.52x against the frozen 234.656875-ms CPU
+member. A focused Criterion run over 110 iterations measured the same hybrid at
+`[30.890, 31.106, 31.232] ms`, or 7.54x at the median. This is not the promoted
+member metric: the proof adapter must add host polynomial/transcript work and
+show that the native rows came directly from the upstream producer.
+
+The measured warm active phases were 7.653 ms for the first message, 7.431 ms
+for the native transition, and 9.042 ms for the nine-transition dense ladder.
+All pass their registered limits. The resident sequence allocates no buffers
+between rounds and reuses the exact native-row allocation identity.
+
+The retained choices came from these bounded ablations:
+
+- Threadgroup widths of 64, 128, and 512 did not improve the large phases;
+  32 threads gave the lowest complete-prefix active time.
+- A 14-bit LT low half raised warm prefix active time from about 24.1 ms to
+  25.2 ms and made the first two phases slower. The balanced split remains.
+- One-shot no-Fiat-Shamir hybrid times for 9, 10, 11, and 12 GPU binds were
+  32.425, 31.223, 30.427, and 31.528 ms. A repeated 11-bind run regressed to a
+  31.901-ms median versus 31.106 ms for ten binds, so ten remains the default.
+
+Uploading a separately built 1-GiB native row vector took 98--114 ms in these
+runs and is intentionally outside the resident metric. That path cannot meet
+5x and is inadmissible for promotion; the stage-4 producer must populate the
+retained allocation directly. Sequence setup was 0.8--1.3 ms when measured
+separately and must either be reused or charged by the production adapter.
+
 ## Pipeline and host sequence
 
-Source order after promotion is `fp128.metal`, `simd_reduce.metal`, then
+Source order is `fp128.metal`, `simd_reduce.metal`, then
 `ram_val_check/shader.metal`. Register four entry points:
 
 | Entry point | Purpose |
@@ -220,12 +263,14 @@ The host sequence is:
 
 ## Promotion work outside this slice
 
-- shared module, source registry, and kernel registry entries;
-- Metal pipeline objects, buffer ownership, asynchronous preparation, and
-  direct resident-row production;
-- the `SumcheckKernel` adapter and CPU-tail handoff;
+- direct resident-row production by the shared RAM witness producer;
+- the `SumcheckKernel` adapter and production optimized CPU-tail handoff;
 - clear and ZK parity tests at the stage-4 batch boundary;
-- Criterion phase measurements, paired cutoff search, and target-scale run;
+- a paired complete-member measurement including host Fiat-Shamir;
 - Instruments register, spill, and occupancy capture.
 
-The Rust oracle and shaders in this directory have not been compiled or run.
+The shader compiles on the measured M4 Max. The low-level test checks the first
+message and every native/dense transition against the independent Rust oracle,
+including signed increments, modulus-boundary values, no-access rows, and
+zero/one/minus-one/random challenges. All 244 `jolt-kernels` Metal tests passed
+after the target-scale run.
