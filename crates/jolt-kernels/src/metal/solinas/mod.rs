@@ -32,6 +32,8 @@ mod source;
 mod spartan_outer_uniskip;
 
 pub(crate) use runtime::validate_working_set;
+#[cfg(feature = "test-utils")]
+pub use runtime::SolinasMetalCompilationStats;
 use runtime::{buffer_from_slice, command_buffer_timestamp};
 pub use runtime::{DeviceInfo, PipelineLimits, SolinasMetal};
 

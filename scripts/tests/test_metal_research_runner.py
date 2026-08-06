@@ -1473,6 +1473,25 @@ class ResultAdapterTests(unittest.TestCase):
                 "parent_source_sha256": "e" * 64,
                 "candidate_source_sha256": "f" * 64,
                 "production_last_owner_release_deferred": True,
+                "compilation": {
+                    "context_order": ["parent", "candidate"],
+                    "parent": {
+                        "source_assembly_ns": 1,
+                        "library_compile_ns": 2,
+                        "source_bytes": 1024,
+                        "assembled_source_sha256": "1" * 64,
+                        "pipeline_set_ns": [1] * 5,
+                        "pipeline_set_total_ns": 5,
+                    },
+                    "candidate": {
+                        "source_assembly_ns": 1,
+                        "library_compile_ns": 2,
+                        "source_bytes": 1024,
+                        "assembled_source_sha256": "2" * 64,
+                        "pipeline_set_ns": [1] * 5,
+                        "pipeline_set_total_ns": 5,
+                    },
+                },
             },
         }
 
@@ -1558,6 +1577,27 @@ class ResultAdapterTests(unittest.TestCase):
             charge["gpu_active_charge_seconds"],
             output["resources"]["gpu_active_total_ns"] / 1e9,
         )
+
+    def test_outer_successor_v2_rejects_compile_telemetry_drift(self) -> None:
+        tier = self.successor_v2_tier()
+        output = self.successor_v2_output()
+
+        tampered = copy.deepcopy(output)
+        tampered["telemetry"]["compilation"]["parent"][
+            "pipeline_set_total_ns"
+        ] = 4
+        with self.assertRaisesRegex(ValueError, "compilation context"):
+            runner._validate_closed_result(ROOT, tier, tampered, {})
+
+        tampered = copy.deepcopy(output)
+        tampered["telemetry"]["compilation"]["candidate"][
+            "pipeline_set_ns"
+        ][0] = 16
+        tampered["telemetry"]["compilation"]["candidate"][
+            "pipeline_set_total_ns"
+        ] = 20
+        with self.assertRaisesRegex(ValueError, "exceeds setup wall"):
+            runner._validate_closed_result(ROOT, tier, tampered, {})
 
     def test_outer_successor_v2_rejects_raw_evidence_drift(self) -> None:
         mutations = {

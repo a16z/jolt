@@ -684,6 +684,72 @@ def _successor_screen_disposition(
     return "advance", "successor has no stable clear-loss signal"
 
 
+def _validate_successor_compilation_telemetry(
+    output: dict[str, Any], pair_count: int
+) -> None:
+    telemetry = output["telemetry"]["compilation"]
+    if (
+        not isinstance(telemetry, dict)
+        or set(telemetry) != {"context_order", "parent", "candidate"}
+        or telemetry["context_order"] != ["parent", "candidate"]
+    ):
+        raise ValueError("OuterRemainder compilation telemetry is invalid")
+    warmup = output.get("excluded_warmup")
+    samples = output.get("samples")
+    if (
+        not isinstance(warmup, dict)
+        or not isinstance(samples, list)
+        or len(samples) != pair_count
+    ):
+        raise ValueError("OuterRemainder compilation telemetry is incomplete")
+    records = [warmup, *samples]
+    fields = {
+        "source_assembly_ns",
+        "library_compile_ns",
+        "source_bytes",
+        "assembled_source_sha256",
+        "pipeline_set_ns",
+        "pipeline_set_total_ns",
+    }
+    for role in ("parent", "candidate"):
+        context = telemetry[role]
+        if not isinstance(context, dict) or set(context) != fields:
+            raise ValueError("OuterRemainder compilation context is invalid")
+        assembly_ns = context["source_assembly_ns"]
+        library_ns = context["library_compile_ns"]
+        source_bytes = context["source_bytes"]
+        digest = context["assembled_source_sha256"]
+        pipeline_ns = context["pipeline_set_ns"]
+        total_ns = context["pipeline_set_total_ns"]
+        if (
+            type(assembly_ns) is not int
+            or assembly_ns < 0
+            or type(library_ns) is not int
+            or library_ns <= 0
+            or type(source_bytes) is not int
+            or source_bytes <= 0
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            or not isinstance(pipeline_ns, list)
+            or len(pipeline_ns) != pair_count + 1
+            or any(type(value) is not int or value < 0 for value in pipeline_ns)
+            or type(total_ns) is not int
+            or total_ns != sum(pipeline_ns)
+        ):
+            raise ValueError("OuterRemainder compilation context is invalid")
+        for record, compile_ns in zip(records, pipeline_ns):
+            arm = record.get(role) if isinstance(record, dict) else None
+            if (
+                not isinstance(arm, dict)
+                or type(arm.get("setup_wall_ns")) is not int
+                or compile_ns > arm["setup_wall_ns"]
+            ):
+                raise ValueError(
+                    "OuterRemainder pipeline compilation exceeds setup wall"
+                )
+
+
 def _validate_closed_result(
     root: Path,
     tier: dict[str, Any],
@@ -784,6 +850,7 @@ def _validate_closed_result(
             "parent_source_sha256",
             "candidate_source_sha256",
             "production_last_owner_release_deferred",
+            "compilation",
         }
         digests = (
             fingerprint.get("parent_artifact_sha256")
@@ -846,6 +913,7 @@ def _validate_closed_result(
             or telemetry.get("production_last_owner_release_deferred") is not True
         ):
             raise ValueError("OuterRemainder successor v2 result is not closed")
+        _validate_successor_compilation_telemetry(output, pairs)
         return
     if adapter == "metal_piop_v7":
         if tier["promotion"].get("local_kernel") != "OuterRemainder":

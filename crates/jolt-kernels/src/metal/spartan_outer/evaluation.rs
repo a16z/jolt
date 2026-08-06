@@ -57,6 +57,7 @@ pub struct OuterRemainderEvalSample {
     pub member_gpu_active: Duration,
     pub setup_wall: Duration,
     pub setup_gpu_active: Duration,
+    pub pipeline_compile_wall: Duration,
     pub dispatch_counts: OuterRemainderDispatchCounts,
     pub initialized_bytes: u64,
     pub storage_owned_bytes: u64,
@@ -154,6 +155,7 @@ impl OuterRemainderEvalFixture {
         let setup_started = Instant::now();
         let storage = context.prepare_outer_remainder_sequence_storage(self.cycles(), config)?;
         let initialization = storage.initialization();
+        let pipeline_compile_wall = storage.pipeline_compile_wall();
         let storage_owned_bytes = storage.owned_bytes();
         let setup_wall = setup_started.elapsed();
 
@@ -304,6 +306,7 @@ impl OuterRemainderEvalFixture {
             member_gpu_active,
             setup_wall,
             setup_gpu_active: initialization.gpu_active,
+            pipeline_compile_wall,
             dispatch_counts,
             initialized_bytes: initialization.bytes,
             storage_owned_bytes,

@@ -7,7 +7,7 @@ use std::{env, error::Error, fmt::Write as _, fs, path::PathBuf, time::Duration}
 
 use jolt_field::FixedBytes;
 use jolt_kernels::metal::solinas::{
-    OuterRemainderDispatchCounts, SealedOuterArtifact, SolinasMetal,
+    OuterRemainderDispatchCounts, SealedOuterArtifact, SolinasMetal, SolinasMetalCompilationStats,
 };
 use jolt_kernels::metal::{
     OuterRemainderEvalFixture, OuterRemainderEvalResult, OuterRemainderEvalSample,
@@ -86,6 +86,9 @@ fn main() -> EvalResult<()> {
         .checked_add(arm_resource_gpu_active(&warmup_candidate)?)
         .ok_or_else(|| failure("warmup GPU charge overflowed"))?;
     let excluded_warmup = pair_record(["parent", "candidate"], &warmup_parent, &warmup_candidate)?;
+    let mut parent_pipeline_compile_ns = vec![duration_ns(warmup_parent.pipeline_compile_wall)?];
+    let mut candidate_pipeline_compile_ns =
+        vec![duration_ns(warmup_candidate.pipeline_compile_wall)?];
 
     let mut samples = Vec::with_capacity(pairs);
     let mut speedups = Vec::with_capacity(pairs);
@@ -112,6 +115,8 @@ fn main() -> EvalResult<()> {
             .ok_or_else(|| failure("timed GPU charge overflowed"))?;
         let parent_ns = duration_ns(parent.member_gpu_active)?;
         let candidate_ns = duration_ns(candidate.member_gpu_active)?;
+        parent_pipeline_compile_ns.push(duration_ns(parent.pipeline_compile_wall)?);
+        candidate_pipeline_compile_ns.push(duration_ns(candidate.pipeline_compile_wall)?);
         speedups.push(parent_ns as f64 / candidate_ns as f64);
         let order = if parent_first {
             ["parent", "candidate"]
@@ -185,6 +190,17 @@ fn main() -> EvalResult<()> {
             "parent_source_sha256": parent_artifact.outer_source_sha256(),
             "candidate_source_sha256": candidate_artifact.outer_source_sha256(),
             "production_last_owner_release_deferred": true,
+            "compilation": {
+                "context_order": ["parent", "candidate"],
+                "parent": compilation_record(
+                    parent_context.compilation_stats(),
+                    &parent_pipeline_compile_ns,
+                )?,
+                "candidate": compilation_record(
+                    candidate_context.compilation_stats(),
+                    &candidate_pipeline_compile_ns,
+                )?,
+            },
         },
     });
     println!("{result}");
@@ -291,10 +307,12 @@ fn arm_record(sample: &OuterRemainderEvalSample) -> EvalResult<Value> {
     let member_wall_ns = duration_ns(sample.member_wall)?;
     let setup_gpu_active_ns = duration_ns(sample.setup_gpu_active)?;
     let setup_wall_ns = duration_ns(sample.setup_wall)?;
+    let pipeline_compile_ns = duration_ns(sample.pipeline_compile_wall)?;
     if member_gpu_active_ns == 0
         || member_gpu_active_ns > member_wall_ns
         || setup_gpu_active_ns == 0
         || setup_gpu_active_ns > setup_wall_ns
+        || pipeline_compile_ns > setup_wall_ns
     {
         return Err(failure("GPU timestamps are not nested in wall timing"));
     }
@@ -313,6 +331,25 @@ fn arm_record(sample: &OuterRemainderEvalSample) -> EvalResult<Value> {
         "round_device_buffer_allocations": sample.round_device_buffer_allocations,
         "output_sha256": output_digest(&sample.result),
         "dispatch_counts": dispatch_counts(sample.dispatch_counts),
+    }))
+}
+
+fn compilation_record(
+    stats: &SolinasMetalCompilationStats,
+    pipeline_set_ns: &[u64],
+) -> EvalResult<Value> {
+    let pipeline_set_total_ns = pipeline_set_ns.iter().try_fold(0u64, |total, value| {
+        total
+            .checked_add(*value)
+            .ok_or_else(|| failure("pipeline compilation wall overflowed"))
+    })?;
+    Ok(json!({
+        "source_assembly_ns": duration_ns(stats.source_assembly_wall)?,
+        "library_compile_ns": duration_ns(stats.library_compile_wall)?,
+        "source_bytes": stats.source_bytes,
+        "assembled_source_sha256": hex_digest(&stats.assembled_source_sha256),
+        "pipeline_set_ns": pipeline_set_ns,
+        "pipeline_set_total_ns": pipeline_set_total_ns,
     }))
 }
 

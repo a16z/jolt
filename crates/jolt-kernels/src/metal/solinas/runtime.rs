@@ -1,4 +1,6 @@
 use std::ffi::c_void;
+#[cfg(feature = "test-utils")]
+use std::time::{Duration, Instant};
 
 use metal::{
     objc::{runtime::Sel, Message},
@@ -7,6 +9,8 @@ use metal::{
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "test-utils")]
+use sha2::{Digest, Sha256};
 
 #[cfg(feature = "test-utils")]
 use super::source::library_source_with_outer;
@@ -31,12 +35,23 @@ pub struct DeviceInfo {
     pub offset: u32,
 }
 
+#[cfg(feature = "test-utils")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SolinasMetalCompilationStats {
+    pub source_assembly_wall: Duration,
+    pub library_compile_wall: Duration,
+    pub source_bytes: usize,
+    pub assembled_source_sha256: [u8; 32],
+}
+
 #[derive(Clone)]
 pub struct SolinasMetal {
     pub(super) device: Device,
     pub(super) queue: CommandQueue,
     pub(super) library: Library,
     pub(super) offset: u32,
+    #[cfg(feature = "test-utils")]
+    compilation: SolinasMetalCompilationStats,
 }
 
 impl SolinasMetal {
@@ -53,6 +68,13 @@ impl SolinasMetal {
     }
 
     pub fn new(offset: u32) -> Result<Self, MetalError> {
+        #[cfg(feature = "test-utils")]
+        {
+            let assembly_started = Instant::now();
+            let source = library_source(offset);
+            Self::new_with_source(offset, source, assembly_started.elapsed())
+        }
+        #[cfg(not(feature = "test-utils"))]
         Self::new_with_source(offset, library_source(offset))
     }
 
@@ -61,21 +83,32 @@ impl SolinasMetal {
     pub fn for_akita_with_outer_artifact(
         artifact: &OuterKernelArtifact,
     ) -> Result<Self, MetalError> {
-        Self::new_with_source(
-            AKITA_OFFSET_FFFFA7F7,
-            library_source_with_outer(AKITA_OFFSET_FFFFA7F7, artifact.source()),
-        )
+        let assembly_started = Instant::now();
+        let source = library_source_with_outer(AKITA_OFFSET_FFFFA7F7, artifact.source());
+        Self::new_with_source(AKITA_OFFSET_FFFFA7F7, source, assembly_started.elapsed())
     }
 
-    fn new_with_source(offset: u32, source: String) -> Result<Self, MetalError> {
+    fn new_with_source(
+        offset: u32,
+        source: String,
+        #[cfg(feature = "test-utils")] source_assembly_wall: Duration,
+    ) -> Result<Self, MetalError> {
         if offset == 0 {
             return Err(MetalError::InvalidOffset);
         }
+        #[cfg(feature = "test-utils")]
+        let source_bytes = source.len();
+        #[cfg(feature = "test-utils")]
+        let assembled_source_sha256 = Sha256::digest(source.as_bytes()).into();
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
+        #[cfg(feature = "test-utils")]
+        let compile_started = Instant::now();
         let library = device
             .new_library_with_source(&source, &options)
             .map_err(MetalError::LibraryCompilation)?;
+        #[cfg(feature = "test-utils")]
+        let library_compile_wall = compile_started.elapsed();
         let queue = device.new_command_queue();
 
         Ok(Self {
@@ -83,7 +116,19 @@ impl SolinasMetal {
             queue,
             library,
             offset,
+            #[cfg(feature = "test-utils")]
+            compilation: SolinasMetalCompilationStats {
+                source_assembly_wall,
+                library_compile_wall,
+                source_bytes,
+                assembled_source_sha256,
+            },
         })
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn compilation_stats(&self) -> &SolinasMetalCompilationStats {
+        &self.compilation
     }
 
     pub fn device_info(&self) -> DeviceInfo {

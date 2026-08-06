@@ -117,6 +117,8 @@ pub(super) struct Storage {
     pub(super) dense_bytes: u64,
     pub(super) owned_bytes: u64,
     pub(super) initialization: OuterRemainderStorageInitializationStats,
+    #[cfg(feature = "test-utils")]
+    pub(super) pipeline_compile_wall: Duration,
 }
 
 pub(crate) struct OuterRemainderSequenceStorage {
@@ -153,6 +155,8 @@ impl SolinasMetal {
         let max_threadgroups = geometry.max_threadgroups;
 
         let names = pipeline_names(config.binding_plan);
+        #[cfg(feature = "test-utils")]
+        let pipeline_compile_started = Instant::now();
         let pipelines = Pipelines {
             materialize: self.compile_named_pipeline(names.materialize)?,
             stream_bind: self.compile_named_pipeline(names.stream_bind)?,
@@ -160,6 +164,8 @@ impl SolinasMetal {
             opening: self.compile_named_pipeline(names.opening)?,
             reduction: self.compile_named_pipeline(names.reduction)?,
         };
+        #[cfg(feature = "test-utils")]
+        let pipeline_compile_wall = pipeline_compile_started.elapsed();
         let limits = PipelineSetLimits {
             materialize: Self::limits(&pipelines.materialize),
             stream_bind: Self::limits(&pipelines.stream_bind),
@@ -246,6 +252,8 @@ impl SolinasMetal {
                 dense_bytes,
                 owned_bytes: geometry.owned_bytes,
                 initialization,
+                #[cfg(feature = "test-utils")]
+                pipeline_compile_wall,
             },
             cycles,
             config,
@@ -272,6 +280,11 @@ impl OuterRemainderSequenceStorage {
 
     pub(crate) const fn initialization(&self) -> OuterRemainderStorageInitializationStats {
         self.storage.initialization
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub(crate) const fn pipeline_compile_wall(&self) -> Duration {
+        self.storage.pipeline_compile_wall
     }
 }
 
