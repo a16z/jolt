@@ -72,7 +72,7 @@ inline void bytecode_cycle_finish_block(
     uint simdgroups)
 {
     for (uint sample = 0; sample < BYTECODE_CYCLE_SAMPLES; sample++) {
-        SolinasFp128 sum = instruction_ra_simd_sum(lanes[sample]);
+        SolinasFp128 sum = solinas_simd_sum_32(lanes[sample]);
         if (lane_in_simd == 0) {
             shared[sample * simdgroups + simdgroup] = sum;
         }
@@ -84,7 +84,7 @@ inline void bytecode_cycle_finish_block(
             SolinasFp128 sum = lane_in_simd < simdgroups
                 ? shared[sample * simdgroups + lane_in_simd]
                 : solinas_zero();
-            sum = instruction_ra_simd_sum(sum);
+            sum = solinas_simd_sum_32(sum);
             if (lane_in_simd == 0) {
                 partials[sample * groups + group] = sum;
             }

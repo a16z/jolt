@@ -1,13 +1,18 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "library": {
+    "backend_path": "crates/jolt-kernels/src/metal/backend.rs",
     "facade_path": "crates/jolt-kernels/src/metal/solinas/mod.rs",
     "runtime_path": "crates/jolt-kernels/src/metal/solinas/runtime.rs",
     "source_path": "crates/jolt-kernels/src/metal/solinas/source.rs",
     "context_symbol": "SolinasMetal",
     "source_order": [
       "fp128",
+      "simd_reduce",
       "deferred_sum",
+      "spartan_outer_common",
+      "booleanity_common",
+      "instruction_ra_common",
       "address_raf",
       "address_raf_direct",
       "address_suffix",
@@ -30,18 +35,56 @@
     {
       "id": "fp128",
       "path": "crates/jolt-kernels/src/metal/solinas/fp128.metal",
+      "role": "prelude",
+      "requires": [],
       "source_constant": "FIELD_SOURCE",
       "entry_points": []
     },
     {
       "id": "deferred_sum",
       "path": "crates/jolt-kernels/src/metal/solinas/deferred_sum.metal",
+      "role": "common",
+      "requires": ["fp128"],
       "source_constant": "DEFERRED_SUM_SOURCE",
+      "entry_points": []
+    },
+    {
+      "id": "simd_reduce",
+      "path": "crates/jolt-kernels/src/metal/solinas/simd_reduce.metal",
+      "role": "common",
+      "requires": ["fp128"],
+      "source_constant": "SIMD_REDUCE_SOURCE",
+      "entry_points": []
+    },
+    {
+      "id": "spartan_outer_common",
+      "path": "crates/jolt-kernels/src/metal/solinas/spartan_outer_common.metal",
+      "role": "common",
+      "requires": ["fp128"],
+      "source_constant": "SPARTAN_OUTER_COMMON_SOURCE",
+      "entry_points": []
+    },
+    {
+      "id": "booleanity_common",
+      "path": "crates/jolt-kernels/src/metal/solinas/booleanity_common.metal",
+      "role": "common",
+      "requires": [],
+      "source_constant": "BOOLEANITY_COMMON_SOURCE",
+      "entry_points": []
+    },
+    {
+      "id": "instruction_ra_common",
+      "path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_common.metal",
+      "role": "common",
+      "requires": ["fp128", "simd_reduce"],
+      "source_constant": "INSTRUCTION_RA_COMMON_SOURCE",
       "entry_points": []
     },
     {
       "id": "address_raf",
       "path": "crates/jolt-kernels/src/metal/solinas/address_raf.metal",
+      "role": "kernel",
+      "requires": ["fp128"],
       "source_constant": "ADDRESS_RAF_SOURCE",
       "entry_points": [
         "solinas_address_raf_histogram",
@@ -53,6 +96,8 @@
     {
       "id": "address_raf_direct",
       "path": "crates/jolt-kernels/src/metal/solinas/address_raf_direct.metal",
+      "role": "kernel",
+      "requires": ["deferred_sum"],
       "source_constant": "ADDRESS_RAF_DIRECT_SOURCE",
       "entry_points": [
         "solinas_address_raf_direct_tile",
@@ -62,6 +107,8 @@
     {
       "id": "address_suffix",
       "path": "crates/jolt-kernels/src/metal/solinas/address_suffix.metal",
+      "role": "kernel",
+      "requires": ["fp128"],
       "source_constant": "ADDRESS_SUFFIX_SOURCE",
       "entry_points": [
         "solinas_address_suffix_one_tile",
@@ -71,6 +118,8 @@
     {
       "id": "address_suffix_full",
       "path": "crates/jolt-kernels/src/metal/solinas/address_suffix_full.metal",
+      "role": "kernel",
+      "requires": ["fp128"],
       "source_constant": "ADDRESS_SUFFIX_FULL_SOURCE",
       "entry_points": [
         "solinas_address_suffix_full_tile",
@@ -80,6 +129,8 @@
     {
       "id": "address_cycle",
       "path": "crates/jolt-kernels/src/metal/solinas/address_cycle.metal",
+      "role": "kernel",
+      "requires": ["product5"],
       "source_constant": "ADDRESS_CYCLE_SOURCE",
       "entry_points": [
         "solinas_address_cycle_message",
@@ -90,6 +141,8 @@
     {
       "id": "probes",
       "path": "crates/jolt-kernels/src/metal/solinas/probes.metal",
+      "role": "kernel",
+      "requires": ["fp128"],
       "source_constant": "PROBE_SOURCE",
       "entry_points": [
         "solinas_noop",
@@ -107,6 +160,8 @@
     {
       "id": "product5",
       "path": "crates/jolt-kernels/src/metal/solinas/product5.metal",
+      "role": "kernel",
+      "requires": ["fp128", "simd_reduce"],
       "source_constant": "PRODUCT5_SOURCE",
       "entry_points": [
         "solinas_product5_message",
@@ -117,6 +172,8 @@
     {
       "id": "booleanity",
       "path": "crates/jolt-kernels/src/metal/solinas/booleanity.metal",
+      "role": "kernel",
+      "requires": ["booleanity_common", "fp128", "simd_reduce"],
       "source_constant": "BOOLEANITY_SOURCE",
       "entry_points": [
         "solinas_booleanity_lazy_message",
@@ -128,6 +185,8 @@
     {
       "id": "booleanity_address",
       "path": "crates/jolt-kernels/src/metal/solinas/booleanity_address.metal",
+      "role": "kernel",
+      "requires": ["booleanity_common", "deferred_sum"],
       "source_constant": "BOOLEANITY_ADDRESS_SOURCE",
       "entry_points": [
         "solinas_booleanity_address_tile",
@@ -152,6 +211,8 @@
     {
       "id": "instruction_ra_virtualization",
       "path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.metal",
+      "role": "kernel",
+      "requires": ["instruction_ra_common"],
       "source_constant": "INSTRUCTION_RA_SOURCE",
       "entry_points": [
         "solinas_instruction_ra_first_message",
@@ -161,6 +222,8 @@
     {
       "id": "instruction_ra_sequence",
       "path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.metal",
+      "role": "kernel",
+      "requires": ["instruction_ra_common"],
       "source_constant": "INSTRUCTION_RA_SEQUENCE_SOURCE",
       "entry_points": [
         "solinas_instruction_ra_message_width_2",
@@ -176,6 +239,8 @@
     {
       "id": "instruction_input",
       "path": "crates/jolt-kernels/src/metal/solinas/instruction_input.metal",
+      "role": "kernel",
+      "requires": ["simd_reduce", "spartan_outer_common"],
       "source_constant": "INSTRUCTION_INPUT_SOURCE",
       "entry_points": [
         "solinas_instruction_input_native_message",
@@ -187,6 +252,8 @@
     {
       "id": "bytecode_cycle",
       "path": "crates/jolt-kernels/src/metal/solinas/bytecode_cycle.metal",
+      "role": "kernel",
+      "requires": ["fp128", "simd_reduce"],
       "source_constant": "BYTECODE_CYCLE_SOURCE",
       "entry_points": [
         "solinas_bytecode_cycle_q10_message",
@@ -196,6 +263,8 @@
     {
       "id": "bytecode_row",
       "path": "crates/jolt-kernels/src/metal/solinas/bytecode_row.metal",
+      "role": "kernel",
+      "requires": ["booleanity_common", "bytecode_cycle"],
       "source_constant": "BYTECODE_ROW_SOURCE",
       "entry_points": [
         "solinas_bytecode_row_first_message",
@@ -206,6 +275,8 @@
     {
       "id": "spartan_outer_uniskip",
       "path": "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.metal",
+      "role": "kernel",
+      "requires": ["simd_reduce", "spartan_outer_common"],
       "source_constant": "SPARTAN_OUTER_UNISKIP_SOURCE",
       "entry_points": [
         "solinas_spartan_outer_uniskip_blocks",
@@ -215,13 +286,15 @@
     {
       "id": "outer_remainder",
       "path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
-    "source_constant": "OUTER_REMAINDER_SOURCE",
-    "entry_points": [
-      "solinas_outer_remainder_materialize_b_and_message",
-      "solinas_outer_remainder_materialize_ab_and_message_v1",
-      "solinas_outer_remainder_stream_bind_and_message",
-      "solinas_outer_remainder_stream_bind_split_ab_v1",
-      "solinas_outer_remainder_bind_and_message",
+      "role": "kernel",
+      "requires": ["simd_reduce", "spartan_outer_common"],
+      "source_constant": "OUTER_REMAINDER_SOURCE",
+      "entry_points": [
+        "solinas_outer_remainder_materialize_b_and_message",
+        "solinas_outer_remainder_materialize_ab_and_message_v1",
+        "solinas_outer_remainder_stream_bind_and_message",
+        "solinas_outer_remainder_stream_bind_split_ab_v1",
+        "solinas_outer_remainder_bind_and_message",
         "solinas_outer_remainder_opening_tiles",
         "solinas_outer_remainder_reduce_columns"
       ]

@@ -21,15 +21,6 @@ inline SolinasFp128 product5_product(thread const SolinasFp128* factors) {
     return product;
 }
 
-inline SolinasFp128 product5_simd_sum(SolinasFp128 value) {
-    for (ushort offset = 16; offset > 0; offset >>= 1) {
-        SolinasFp128 other;
-        other.limb = simd_shuffle_down(value.limb, offset);
-        value = solinas_add(value, other);
-    }
-    return value;
-}
-
 inline void product5_finish_block(
     thread SolinasFp128* lanes,
     SolinasFp128 outer_weight,
@@ -42,7 +33,7 @@ inline void product5_finish_block(
     uint simdgroups)
 {
     for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
-        SolinasFp128 sum = product5_simd_sum(lanes[sample]);
+        SolinasFp128 sum = solinas_simd_sum_32(lanes[sample]);
         if (lane_in_simd == 0) {
             shared[sample * simdgroups + simdgroup] = sum;
         }
@@ -54,7 +45,7 @@ inline void product5_finish_block(
             SolinasFp128 sum = lane_in_simd < simdgroups
                 ? shared[sample * simdgroups + lane_in_simd]
                 : solinas_zero();
-            sum = product5_simd_sum(sum);
+            sum = solinas_simd_sum_32(sum);
             if (lane_in_simd == 0) {
                 partials[sample * e_out_length + x_out] =
                     solinas_mul_wide(outer_weight, sum);
@@ -206,7 +197,7 @@ kernel void solinas_product5_reduce(
         SolinasFp128 value = gid < params.input_count
             ? input[sample * params.input_count + gid]
             : solinas_zero();
-        value = product5_simd_sum(value);
+        value = solinas_simd_sum_32(value);
         if (lane_in_simd == 0) {
             output[sample * params.output_count + gid / 32] = value;
         }

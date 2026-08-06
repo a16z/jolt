@@ -138,10 +138,27 @@ def _validate_sources(
     entry_point_sources: dict[str, str] = {}
     registered_paths: set[Path] = set()
     constants: dict[str, str] = {}
+    dependencies: dict[str, list[str]] = {}
     for source in sources:
-        _exact_keys(source, {"id", "path", "source_constant", "entry_points"}, "source")
+        _exact_keys(
+            source,
+            {
+                "id",
+                "path",
+                "role",
+                "requires",
+                "source_constant",
+                "entry_points",
+            },
+            "source",
+        )
         path = _relative_file(root, source["path"], "source")
         registered_paths.add(path.resolve())
+        if source["role"] not in {"prelude", "common", "kernel"}:
+            raise ValueError("source role is invalid")
+        dependencies[source["id"]] = _strings(
+            source["requires"], "source requires"
+        )
         source_constant = source["source_constant"]
         if not isinstance(source_constant, str) or not source_constant.endswith("_SOURCE"):
             raise ValueError("source_constant must name a Rust source constant")
@@ -166,6 +183,7 @@ def _validate_sources(
     _exact_keys(
         library,
         {
+            "backend_path",
             "facade_path",
             "runtime_path",
             "source_path",
@@ -175,6 +193,7 @@ def _validate_sources(
         "library",
     )
     facade_path = _relative_file(root, library["facade_path"], "library facade")
+    _relative_file(root, library["backend_path"], "Metal backend")
     runtime_path = _relative_file(root, library["runtime_path"], "library runtime")
     source_path = _relative_file(root, library["source_path"], "library source")
     if not isinstance(library["context_symbol"], str):
@@ -191,6 +210,12 @@ def _validate_sources(
     source_order = _strings(library["source_order"], "library source_order")
     if set(source_order) != source_ids:
         raise ValueError("library source_order must contain every source exactly once")
+    positions = {source_id: index for index, source_id in enumerate(source_order)}
+    for source_id, required in dependencies.items():
+        if source_id in required or not set(required) <= source_ids:
+            raise ValueError("source requires an invalid dependency")
+        if any(positions[dependency] >= positions[source_id] for dependency in required):
+            raise ValueError("library source_order is not topological")
     source_text = source_path.read_text()
     manifest = re.search(
         r"const LIBRARY_SOURCE_FRAGMENTS:.*?=\s*&\[(.*?)\];",
@@ -199,16 +224,22 @@ def _validate_sources(
     )
     if manifest is None:
         raise ValueError("library source fragment manifest was not found")
-    observed_constants = re.findall(
-        r"\b([A-Z][A-Z0-9_]*_SOURCE)\s*,", manifest.group(1)
+    observed_fragments = re.findall(
+        r'SourceFragment::new\(\s*"([a-z][a-z0-9_]*)"\s*,\s*'
+        r"([A-Z][A-Z0-9_]*_SOURCE)\s*,?\s*\)",
+        manifest.group(1),
     )
+    observed_ids = [source_id for source_id, _ in observed_fragments]
+    observed_constants = [constant for _, constant in observed_fragments]
     if set(observed_constants) != set(constants):
         raise ValueError("library source manifest does not contain every source constant")
+    if observed_ids != source_order:
+        raise ValueError("library source_order does not match its fragment manifest")
     try:
         observed_order = [constants[name] for name in observed_constants]
     except KeyError as error:
         raise ValueError(f"library uses an unregistered source constant: {error.args[0]}") from error
-    if observed_order != source_order:
+    if observed_order != source_order or observed_order != observed_ids:
         raise ValueError("library source_order does not match its fragment manifest")
     return source_ids, entry_point_sources
 
@@ -338,7 +369,7 @@ def _validate_slots_and_handoffs(
         if not isinstance(slot["artifacts"], dict) or set(slot["artifacts"]) != ARTIFACT_KINDS:
             raise ValueError("slot artifact references do not match the registry schema")
 
-    config_path = root / "crates/jolt-kernels/src/metal/instruction_read_raf.rs"
+    config_path = root / registry["library"]["backend_path"]
     config_text = config_path.read_text()
     config = re.search(r"pub struct MetalConfig \{(.*?)\n\}", config_text, re.DOTALL)
     if config is None:
@@ -410,7 +441,7 @@ def _validate_slot_artifacts(
 
 def validate_registry(root: Path, registry: dict[str, Any]) -> None:
     _exact_keys(registry, ROOT_KEYS, "registry")
-    if registry["schema_version"] != 2:
+    if registry["schema_version"] != 3:
         raise ValueError("unsupported kernel registry schema")
     source_ids, entry_point_sources = _validate_sources(root, registry)
     component_ids = _validate_components(
@@ -422,6 +453,7 @@ def validate_registry(root: Path, registry: dict[str, Any]) -> None:
 
 
 def registered_paths(registry: dict[str, Any]) -> Iterable[str]:
+    yield registry["library"]["backend_path"]
     yield registry["library"]["facade_path"]
     yield registry["library"]["runtime_path"]
     yield registry["library"]["source_path"]

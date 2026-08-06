@@ -67,24 +67,6 @@ inline SolinasFp128 outer_bind(
         solinas_mul_wide(challenge, solinas_sub(high, low)));
 }
 
-inline SolinasFp128 outer_half_simd_sum(SolinasFp128 value) {
-    for (ushort offset = 8; offset > 0; offset >>= 1) {
-        SolinasFp128 other;
-        other.limb = simd_shuffle_down(value.limb, offset);
-        value = solinas_add(value, other);
-    }
-    return value;
-}
-
-inline SolinasFp128 outer_simd_sum(SolinasFp128 value) {
-    for (ushort offset = 16; offset > 0; offset >>= 1) {
-        SolinasFp128 other;
-        other.limb = simd_shuffle_down(value.limb, offset);
-        value = solinas_add(value, other);
-    }
-    return value;
-}
-
 inline int outer_a_row(ulong flags, uint row, bool second_stream) {
     int load = outer_flag(flags, 0u);
     int store = outer_flag(flags, 1u);
@@ -369,8 +351,8 @@ inline void outer_finish_two_columns(
     uint threads,
     bool accumulate)
 {
-    q_zero = outer_simd_sum(q_zero);
-    q_infinity = outer_simd_sum(q_infinity);
+    q_zero = solinas_simd_sum_32(q_zero);
+    q_infinity = solinas_simd_sum_32(q_infinity);
     if (lane == 0u) {
         shared[2u * simdgroup] = q_zero;
         shared[2u * simdgroup + 1u] = q_infinity;
@@ -895,7 +877,7 @@ kernel void solinas_outer_remainder_opening_tiles(
              slot++) {
             uint column = simdgroup + slot * simdgroups;
             if (column < OUTER_REMAINDER_COLUMNS) {
-                SolinasFp128 column_sum = outer_simd_sum(sums[slot]);
+                SolinasFp128 column_sum = solinas_simd_sum_32(sums[slot]);
                 if (lane == 0u) {
                     uint output = block * OUTER_REMAINDER_COLUMNS + column;
                     partials[output] = solinas_add(
@@ -923,7 +905,7 @@ kernel void solinas_outer_remainder_reduce_columns(
     for (uint block = tid; block < params.input_count; block += threads) {
         sum = solinas_add(sum, partials[block * params.columns + column]);
     }
-    sum = outer_simd_sum(sum);
+    sum = solinas_simd_sum_32(sum);
     if (lane == 0u) {
         shared[simdgroup] = sum;
     }
@@ -931,7 +913,7 @@ kernel void solinas_outer_remainder_reduce_columns(
     if (simdgroup == 0u) {
         uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
         sum = lane < simdgroups ? shared[lane] : solinas_zero();
-        sum = outer_simd_sum(sum);
+        sum = solinas_simd_sum_32(sum);
         if (lane == 0u) {
             output[column] = sum;
         }

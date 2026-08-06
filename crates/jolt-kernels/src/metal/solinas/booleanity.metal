@@ -1,18 +1,5 @@
 #define BOOLEANITY_LANES 2u
 
-struct BooleanityRow {
-    ulong lookup_lo;
-    ulong lookup_hi;
-    ulong ram_address_plus_one;
-    ulong fused_inc_magnitude;
-    ulong packed_pc_and_flags;
-};
-
-struct BooleanitySelector {
-    uint kind;
-    uint shift;
-};
-
 struct BooleanityParams {
     uint rows;
     uint polys;
@@ -69,55 +56,6 @@ inline BooleanityRow booleanity_load_row(
         lane == 4 ? rows[row].packed_pc_and_flags : 0ul,
         4);
     return value;
-}
-
-inline bool booleanity_hot_index(
-    BooleanityRow row,
-    BooleanitySelector selector,
-    uint chunk_bits,
-    ulong inc_bias,
-    thread uint& hot)
-{
-    uint mask = (1u << chunk_bits) - 1u;
-    if (selector.kind == 0u) {
-        ulong word = selector.shift < 64u ? row.lookup_lo : row.lookup_hi;
-        uint shift = selector.shift < 64u ? selector.shift : selector.shift - 64u;
-        hot = (uint)(word >> shift) & mask;
-        return true;
-    }
-    if (selector.kind == 1u) {
-        ulong plus_one = row.packed_pc_and_flags & 0x00ffFFFFFFFFFFFFul;
-        if (plus_one == 0ul) {
-            return false;
-        }
-        hot = (uint)((plus_one - 1ul) >> selector.shift) & mask;
-        return true;
-    }
-    if (selector.kind == 2u) {
-        if (row.ram_address_plus_one == 0ul) {
-            return false;
-        }
-        hot = (uint)((row.ram_address_plus_one - 1ul) >> selector.shift) & mask;
-        return true;
-    }
-
-    bool negative = (row.packed_pc_and_flags >> 63) != 0ul;
-    ulong biased;
-    int carry;
-    if (negative) {
-        biased = inc_bias - row.fused_inc_magnitude;
-        carry = row.fused_inc_magnitude > inc_bias ? -1 : 0;
-    } else {
-        biased = inc_bias + row.fused_inc_magnitude;
-        carry = biased < inc_bias ? 1 : 0;
-    }
-    if (selector.kind == 3u) {
-        uint standard = (uint)(biased >> selector.shift) & mask;
-        hot = (standard + (1u << (chunk_bits - 1u))) & mask;
-    } else {
-        hot = (uint)carry & mask;
-    }
-    return true;
 }
 
 inline void booleanity_lazy_pair(
@@ -213,8 +151,8 @@ inline void booleanity_finish_block(
         SolinasFp128 leading_sum = lane < simdgroups
             ? shared[simdgroups + lane]
             : solinas_zero();
-        constant_sum = product5_simd_sum(constant_sum);
-        leading_sum = product5_simd_sum(leading_sum);
+        constant_sum = solinas_simd_sum_32(constant_sum);
+        leading_sum = solinas_simd_sum_32(leading_sum);
         if (lane == 0u) {
             partials[x_out] = solinas_mul_wide(outer_weight, constant_sum);
             partials[e_out_length + x_out] = solinas_mul_wide(outer_weight, leading_sum);
@@ -260,8 +198,8 @@ kernel void solinas_booleanity_lazy_message(
             dense,
             constant_lane,
             leading_lane);
-        constant_lane = product5_simd_sum(constant_lane);
-        leading_lane = product5_simd_sum(leading_lane);
+        constant_lane = solinas_simd_sum_32(constant_lane);
+        leading_lane = solinas_simd_sum_32(leading_lane);
         if (lane == 0u) {
             constant_sum = solinas_add(
                 constant_sum,
@@ -353,8 +291,8 @@ kernel void solinas_booleanity_dense_transition(
                 leading_lane,
                 solinas_mul_wide(delta, delta));
         }
-        constant_lane = product5_simd_sum(constant_lane);
-        leading_lane = product5_simd_sum(leading_lane);
+        constant_lane = solinas_simd_sum_32(constant_lane);
+        leading_lane = solinas_simd_sum_32(leading_lane);
         if (lane == 0u) {
             constant_sum = solinas_add(
                 constant_sum,
@@ -388,7 +326,7 @@ kernel void solinas_booleanity_reduce(
         SolinasFp128 value = gid < params.input_count
             ? input[value_index * params.input_count + gid]
             : solinas_zero();
-        value = product5_simd_sum(value);
+        value = solinas_simd_sum_32(value);
         if (lane == 0u) {
             output[value_index * params.output_count + gid / 32u] = value;
         }

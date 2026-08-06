@@ -1,5 +1,9 @@
 const FIELD_SOURCE: &str = include_str!("fp128.metal");
+const SIMD_REDUCE_SOURCE: &str = include_str!("simd_reduce.metal");
 const DEFERRED_SUM_SOURCE: &str = include_str!("deferred_sum.metal");
+const SPARTAN_OUTER_COMMON_SOURCE: &str = include_str!("spartan_outer_common.metal");
+const BOOLEANITY_COMMON_SOURCE: &str = include_str!("booleanity_common.metal");
+const INSTRUCTION_RA_COMMON_SOURCE: &str = include_str!("instruction_ra_common.metal");
 const ADDRESS_RAF_SOURCE: &str = include_str!("address_raf.metal");
 const ADDRESS_RAF_DIRECT_SOURCE: &str = include_str!("address_raf_direct.metal");
 const ADDRESS_SUFFIX_SOURCE: &str = include_str!("address_suffix.metal");
@@ -17,39 +21,59 @@ const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
 const OUTER_REMAINDER_SOURCE: &str = super::outer_remainder::SOURCE;
 
-const LIBRARY_SOURCE_FRAGMENTS: &[&str] = &[
-    FIELD_SOURCE,
-    DEFERRED_SUM_SOURCE,
-    ADDRESS_RAF_SOURCE,
-    ADDRESS_RAF_DIRECT_SOURCE,
-    ADDRESS_SUFFIX_SOURCE,
-    ADDRESS_SUFFIX_FULL_SOURCE,
-    PROBE_SOURCE,
-    PRODUCT5_SOURCE,
-    BOOLEANITY_SOURCE,
-    BOOLEANITY_ADDRESS_SOURCE,
-    INSTRUCTION_RA_SOURCE,
-    INSTRUCTION_RA_SEQUENCE_SOURCE,
-    BYTECODE_CYCLE_SOURCE,
-    BYTECODE_ROW_SOURCE,
-    SPARTAN_OUTER_UNISKIP_SOURCE,
-    INSTRUCTION_INPUT_SOURCE,
-    ADDRESS_CYCLE_SOURCE,
-    OUTER_REMAINDER_SOURCE,
+struct SourceFragment {
+    id: &'static str,
+    source: &'static str,
+}
+
+impl SourceFragment {
+    const fn new(id: &'static str, source: &'static str) -> Self {
+        Self { id, source }
+    }
+}
+
+const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
+    SourceFragment::new("fp128", FIELD_SOURCE),
+    SourceFragment::new("simd_reduce", SIMD_REDUCE_SOURCE),
+    SourceFragment::new("deferred_sum", DEFERRED_SUM_SOURCE),
+    SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
+    SourceFragment::new("booleanity_common", BOOLEANITY_COMMON_SOURCE),
+    SourceFragment::new("instruction_ra_common", INSTRUCTION_RA_COMMON_SOURCE),
+    SourceFragment::new("address_raf", ADDRESS_RAF_SOURCE),
+    SourceFragment::new("address_raf_direct", ADDRESS_RAF_DIRECT_SOURCE),
+    SourceFragment::new("address_suffix", ADDRESS_SUFFIX_SOURCE),
+    SourceFragment::new("address_suffix_full", ADDRESS_SUFFIX_FULL_SOURCE),
+    SourceFragment::new("probes", PROBE_SOURCE),
+    SourceFragment::new("product5", PRODUCT5_SOURCE),
+    SourceFragment::new("booleanity", BOOLEANITY_SOURCE),
+    SourceFragment::new("booleanity_address", BOOLEANITY_ADDRESS_SOURCE),
+    SourceFragment::new("instruction_ra_virtualization", INSTRUCTION_RA_SOURCE),
+    SourceFragment::new("instruction_ra_sequence", INSTRUCTION_RA_SEQUENCE_SOURCE),
+    SourceFragment::new("bytecode_cycle", BYTECODE_CYCLE_SOURCE),
+    SourceFragment::new("bytecode_row", BYTECODE_ROW_SOURCE),
+    SourceFragment::new("spartan_outer_uniskip", SPARTAN_OUTER_UNISKIP_SOURCE),
+    SourceFragment::new("instruction_input", INSTRUCTION_INPUT_SOURCE),
+    SourceFragment::new("address_cycle", ADDRESS_CYCLE_SOURCE),
+    SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
 ];
 
 pub(super) fn library_source(offset: u32) -> String {
-    library_source_with_outer(offset, OUTER_REMAINDER_SOURCE)
+    assemble_library_source(offset, None)
 }
 
 pub(super) fn library_source_with_outer(offset: u32, outer_source: &str) -> String {
-    let Some((_, frozen_fragments)) = LIBRARY_SOURCE_FRAGMENTS.split_last() else {
-        return format!("#define SOLINAS_OFFSET {offset}u\n{outer_source}");
-    };
-    format!(
-        "#define SOLINAS_OFFSET {offset}u\n{}\n{outer_source}",
-        frozen_fragments.join("\n")
-    )
+    assemble_library_source(offset, Some(("outer_remainder", outer_source)))
+}
+
+fn assemble_library_source(offset: u32, replacement: Option<(&str, &str)>) -> String {
+    let fragments = LIBRARY_SOURCE_FRAGMENTS
+        .iter()
+        .map(|fragment| match replacement {
+            Some((id, source)) if fragment.id == id => source,
+            _ => fragment.source,
+        })
+        .collect::<Vec<_>>();
+    format!("#define SOLINAS_OFFSET {offset}u\n{}", fragments.join("\n"))
 }
 
 #[cfg(test)]
@@ -58,7 +82,7 @@ mod tests {
 
     fn expected_library_source(offset: u32) -> String {
         format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}\n{OUTER_REMAINDER_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{BOOLEANITY_COMMON_SOURCE}\n{INSTRUCTION_RA_COMMON_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}\n{OUTER_REMAINDER_SOURCE}"
         )
     }
 
@@ -80,6 +104,7 @@ mod tests {
         assert!(source.contains(replacement));
         assert!(!source.contains(OUTER_REMAINDER_SOURCE));
         assert!(source.contains(FIELD_SOURCE));
+        assert!(source.contains(SPARTAN_OUTER_COMMON_SOURCE));
         assert!(source.contains(INSTRUCTION_INPUT_SOURCE));
         assert!(source.ends_with(replacement));
     }

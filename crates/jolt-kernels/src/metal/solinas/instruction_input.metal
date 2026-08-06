@@ -226,15 +226,6 @@ inline void instruction_input_accumulate_relation(
     }
 }
 
-inline SolinasFp128 instruction_input_simd_sum(SolinasFp128 value) {
-    for (ushort offset = 16; offset > 0; offset >>= 1) {
-        SolinasFp128 other;
-        other.limb = simd_shuffle_down(value.limb, offset);
-        value = solinas_add(value, other);
-    }
-    return value;
-}
-
 inline void instruction_input_finish_block(
     thread SolinasFp128* lanes,
     SolinasFp128 outer_weight,
@@ -247,7 +238,7 @@ inline void instruction_input_finish_block(
     uint simdgroups)
 {
     for (uint descriptor = 0; descriptor < INSTRUCTION_INPUT_COEFFICIENTS; descriptor++) {
-        SolinasFp128 sum = instruction_input_simd_sum(lanes[descriptor]);
+        SolinasFp128 sum = solinas_simd_sum_32(lanes[descriptor]);
         if (lane_in_simd == 0) {
             shared[descriptor * simdgroups + simdgroup] = sum;
         }
@@ -259,7 +250,7 @@ inline void instruction_input_finish_block(
             SolinasFp128 sum = lane_in_simd < simdgroups
                 ? shared[descriptor * simdgroups + lane_in_simd]
                 : solinas_zero();
-            sum = instruction_input_simd_sum(sum);
+            sum = solinas_simd_sum_32(sum);
             if (lane_in_simd == 0) {
                 partials[descriptor * e_out_length + x_out] =
                     solinas_mul_wide(outer_weight, sum);
@@ -548,7 +539,7 @@ kernel void solinas_instruction_input_reduce(
         SolinasFp128 value = gid < params.input_count
             ? input[descriptor * params.input_count + gid]
             : solinas_zero();
-        value = instruction_input_simd_sum(value);
+        value = solinas_simd_sum_32(value);
         if (lane_in_simd == 0) {
             output[descriptor * params.output_count + gid / 32u] = value;
         }

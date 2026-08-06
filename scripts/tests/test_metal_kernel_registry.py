@@ -84,7 +84,7 @@ class MetalKernelRegistryTests(unittest.TestCase):
     def test_library_source_order_is_bound_to_the_fragment_manifest(self) -> None:
         registry = metal_kernel_registry.read_registry(REGISTRY)
         source_order = registry["library"]["source_order"]
-        source_order[0], source_order[1] = source_order[1], source_order[0]
+        source_order[2], source_order[3] = source_order[3], source_order[2]
 
         with self.assertRaisesRegex(ValueError, "fragment manifest"):
             metal_kernel_registry.validate_registry(ROOT, registry)
@@ -94,6 +94,35 @@ class MetalKernelRegistryTests(unittest.TestCase):
         registry["library"]["source_path"] = registry["library"]["facade_path"]
 
         with self.assertRaisesRegex(ValueError, "fragment manifest"):
+            metal_kernel_registry.validate_registry(ROOT, registry)
+
+    def test_source_dependencies_are_known_and_acyclic(self) -> None:
+        registry = metal_kernel_registry.read_registry(REGISTRY)
+        source = next(
+            source
+            for source in registry["sources"]
+            if source["id"] == "spartan_outer_common"
+        )
+        source["requires"] = ["missing"]
+
+        with self.assertRaisesRegex(ValueError, "invalid dependency"):
+            metal_kernel_registry.validate_registry(ROOT, registry)
+
+    def test_library_source_order_must_be_topological(self) -> None:
+        registry = metal_kernel_registry.read_registry(REGISTRY)
+        order = registry["library"]["source_order"]
+        common = order.index("spartan_outer_common")
+        field = order.index("fp128")
+        order[common], order[field] = order[field], order[common]
+
+        with self.assertRaisesRegex(ValueError, "not topological"):
+            metal_kernel_registry.validate_registry(ROOT, registry)
+
+    def test_source_role_is_closed(self) -> None:
+        registry = metal_kernel_registry.read_registry(REGISTRY)
+        registry["sources"][0]["role"] = "misc"
+
+        with self.assertRaisesRegex(ValueError, "source role"):
             metal_kernel_registry.validate_registry(ROOT, registry)
 
 
