@@ -38,6 +38,7 @@ pub mod registers_val_evaluation_backend;
 mod runtime;
 mod source;
 mod spartan_outer_uniskip;
+pub mod spartan_shift;
 
 pub(crate) use runtime::validate_working_set;
 #[cfg(feature = "test-utils")]
