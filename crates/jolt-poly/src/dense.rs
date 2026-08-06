@@ -271,9 +271,11 @@ impl<F: Field> Polynomial<F> {
         assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         let half = self.evals.len() / 2;
         scratch.clear();
-        if scratch.capacity() < half {
-            scratch.reserve(half - scratch.capacity());
-        }
+        // `reserve` is relative to `len` (0 after `clear`), so this guarantees
+        // `capacity >= half`. Reserving only `half - capacity` would no-op
+        // whenever the shortfall fits in the existing capacity, leaving the
+        // spare-capacity slice below `half` and panicking in the parallel path.
+        scratch.reserve(half);
 
         #[cfg(feature = "parallel")]
         {
@@ -1089,6 +1091,67 @@ mod tests {
             compact.bind_to_field::<Fr>(scalar),
             recovered.bind_to_field::<Fr>(scalar)
         );
+    }
+
+    #[test]
+    fn bind_low_to_high_reusing_scratch_matches_plain_bind_across_rounds() {
+        let mut rng = ChaCha20Rng::seed_from_u64(600);
+        // One scratch buffer shared across every polynomial and round,
+        // pre-seeded with junk to prove stale contents cannot leak through.
+        let mut scratch: Vec<Fr> = vec![Fr::from_u64(0xbad); 7];
+        // n = 12 crosses PAR_THRESHOLD on the first bind, then successive
+        // rounds shrink below it, covering both the parallel and serial paths.
+        for n in [1usize, 2, 5, 12] {
+            let poly = Polynomial::<Fr>::random(n, &mut rng);
+            let mut with_scratch = poly.clone();
+            let mut reference = poly;
+            for round in 0..n {
+                let challenge = Fr::random(&mut rng);
+                reference.bind_with_order(challenge, crate::BindingOrder::LowToHigh);
+                with_scratch.bind_low_to_high_reusing_scratch(challenge, &mut scratch);
+                assert_eq!(with_scratch, reference, "n={n} round={round}");
+            }
+            assert_eq!(with_scratch.len(), 1, "n={n}");
+        }
+    }
+
+    #[test]
+    fn sumcheck_round_eval_equals_high_to_low_bound_evaluations() {
+        let mut rng = ChaCha20Rng::seed_from_u64(601);
+        let poly = Polynomial::<Fr>::random(5, &mut rng);
+        let point = Fr::random(&mut rng);
+
+        let mut bound = poly.clone();
+        bound.bind_with_order(point, crate::BindingOrder::HighToLow);
+        for index in 0..bound.len() {
+            assert_eq!(
+                poly.sumcheck_round_eval(index, point),
+                bound.evaluations()[index],
+                "index {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn sumcheck_round_eval_with_order_equals_bound_evaluations_for_both_orders() {
+        let mut rng = ChaCha20Rng::seed_from_u64(602);
+        let poly = Polynomial::<Fr>::random(6, &mut rng);
+        let point = Fr::random(&mut rng);
+
+        for order in [
+            crate::BindingOrder::HighToLow,
+            crate::BindingOrder::LowToHigh,
+        ] {
+            let mut bound = poly.clone();
+            bound.bind_with_order(point, order);
+            for index in 0..bound.len() {
+                assert_eq!(
+                    poly.sumcheck_round_eval_with_order(index, point, order),
+                    bound.evaluations()[index],
+                    "{order:?} index {index}"
+                );
+            }
+        }
     }
 
     #[test]

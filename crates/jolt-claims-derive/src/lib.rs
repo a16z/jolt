@@ -72,6 +72,9 @@
 //! value) and `from_transcript_values` (consume one drawn scalar per field in
 //! declaration order, erroring if the stream runs dry).
 
+#[cfg(test)]
+mod tests;
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;

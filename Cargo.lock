@@ -3253,6 +3253,7 @@ name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "bincode 2.0.1",
  "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-claims-derive",
@@ -3262,6 +3263,8 @@ dependencies = [
  "jolt-poly",
  "jolt-riscv",
  "jolt-utils",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -3270,6 +3273,7 @@ dependencies = [
 name = "jolt-claims-derive"
 version = "0.1.0"
 dependencies = [
+ "prettyplease",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

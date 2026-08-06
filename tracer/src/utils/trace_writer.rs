@@ -188,3 +188,69 @@ where
         self.total_items
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test-only assertions")]
+mod tests {
+    use super::*;
+
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("jolt-trace-writer-{}-{tag}", std::process::id()))
+    }
+
+    /// Decode consecutive postcard-encoded `Vec<u64>` batches from a file.
+    fn decode_batches(path: &Path) -> Vec<Vec<u64>> {
+        let bytes = std::fs::read(path).unwrap();
+        let mut remaining = bytes.as_slice();
+        let mut batches = Vec::new();
+        while !remaining.is_empty() {
+            let (batch, rest) = postcard::take_from_bytes::<Vec<u64>>(remaining).unwrap();
+            batches.push(batch);
+            remaining = rest;
+        }
+        batches
+    }
+
+    #[test]
+    fn collector_splits_items_into_batches_and_flushes_the_tail() {
+        let path = temp_path("batches");
+        let config = TraceWriterConfig {
+            batch_size: 2,
+            channel_depth: 2,
+            write_buffer_size: 1024,
+            slow_batch_threshold_ms: u128::MAX,
+        };
+        let writer = TraceWriter::<u64>::new(&path, config).unwrap();
+        let mut collector = TraceBatchCollector::new(writer);
+        for value in [1_u64, 2, 3, 4, 5] {
+            collector.push(value);
+        }
+        assert_eq!(collector.total_items(), 5);
+        let total = collector.finalize().unwrap();
+        assert_eq!(total, 5);
+
+        // Two full batches plus the flushed tail, in push order
+        assert_eq!(decode_batches(&path), vec![vec![1, 2], vec![3, 4], vec![5]]);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn direct_batch_sends_round_trip_through_the_writer_thread() {
+        let path = temp_path("direct");
+        let writer = TraceWriter::<u64>::with_defaults(&path).unwrap();
+        assert!(writer.send_batch(vec![7, 8, 9]));
+        writer.finalize().unwrap();
+        assert_eq!(decode_batches(&path), vec![vec![7, 8, 9]]);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn empty_collector_finalizes_to_an_empty_file() {
+        let path = temp_path("empty");
+        let writer = TraceWriter::<u64>::with_defaults(&path).unwrap();
+        let collector = TraceBatchCollector::new(writer);
+        assert_eq!(collector.finalize().unwrap(), 0);
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        std::fs::remove_file(&path).ok();
+    }
+}

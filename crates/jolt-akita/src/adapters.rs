@@ -856,3 +856,233 @@ where
     akita_transcript.append_field(b"jolt_statement_bridge", &bridge);
     bridge.to_bytes_le_vec()
 }
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        reason = "tests assert successful conversions and exact error text"
+    )]
+
+    use super::*;
+
+    fn af(value: u64) -> AkitaField {
+        AkitaField::from_u64(value)
+    }
+
+    /// Jolt indexes MLE evaluations big-endian (variable `j` carries index
+    /// weight `2^(n-1-j)`, see the `eq_table` convention in `scheme.rs`);
+    /// Akita indexes them little-endian (variable `j` carries weight `2^j`).
+    /// The tables below are derived by hand from those weight conventions —
+    /// e.g. for n = 3, jolt index 1 is the assignment (0, 0, 1), whose Akita
+    /// index is 1 * 2^2 = 4 — not by re-running any bit arithmetic.
+    #[test]
+    fn jolt_to_akita_index_matches_hand_derived_tables() {
+        let three_vars = [0, 4, 2, 6, 1, 5, 3, 7];
+        for (jolt_index, &akita_index) in three_vars.iter().enumerate() {
+            assert_eq!(
+                jolt_to_akita_index(3, jolt_index),
+                akita_index,
+                "num_vars=3, jolt index {jolt_index}",
+            );
+        }
+
+        let two_vars = [0, 2, 1, 3];
+        for (jolt_index, &akita_index) in two_vars.iter().enumerate() {
+            assert_eq!(
+                jolt_to_akita_index(2, jolt_index),
+                akita_index,
+                "num_vars=2, jolt index {jolt_index}",
+            );
+        }
+
+        assert_eq!(jolt_to_akita_index(1, 0), 0);
+        assert_eq!(jolt_to_akita_index(1, 1), 1);
+        assert_eq!(jolt_to_akita_index(0, 0), 0);
+    }
+
+    /// Reversing a reversal is the identity, and the map permutes the whole
+    /// domain (every Akita index is hit exactly once).
+    #[test]
+    fn jolt_to_akita_index_is_a_self_inverse_permutation() {
+        let num_vars = 4;
+        let mut seen = [false; 16];
+        for index in 0..16 {
+            let mapped = jolt_to_akita_index(num_vars, index);
+            assert!(mapped < 16);
+            assert!(!seen[mapped], "akita index {mapped} hit twice");
+            seen[mapped] = true;
+            assert_eq!(jolt_to_akita_index(num_vars, mapped), index);
+        }
+    }
+
+    #[test]
+    fn jolt_to_akita_evals_permutes_an_explicit_two_var_vector() {
+        let jolt = [af(10), af(20), af(30), af(40)];
+        let akita = jolt_to_akita_evals(2, &jolt).expect("well-formed evaluations convert");
+        // Jolt index 1 = assignment (0, 1) = Akita index 2, and vice versa;
+        // the all-zero and all-one corners are fixed points.
+        assert_eq!(akita, vec![af(10), af(30), af(20), af(40)]);
+    }
+
+    #[test]
+    fn jolt_to_akita_evals_passes_zero_var_polynomials_through() {
+        let jolt = [af(99)];
+        assert_eq!(
+            jolt_to_akita_evals(0, &jolt).expect("constant polynomial converts"),
+            vec![af(99)],
+        );
+    }
+
+    #[test]
+    fn jolt_to_akita_evals_rejects_length_domain_mismatch() {
+        let error = jolt_to_akita_evals(2, &[af(1), af(2), af(3)]).unwrap_err();
+        assert!(matches!(error, OpeningsError::InvalidBatch(_)));
+        assert_eq!(
+            error.to_string(),
+            "invalid batch opening: Akita polynomial has 3 evaluations but dimension 2 requires 4",
+        );
+    }
+
+    #[test]
+    fn jolt_to_akita_evals_rejects_dimension_beyond_usize_width() {
+        let error = jolt_to_akita_evals(usize::BITS as usize, &[]).unwrap_err();
+        assert!(matches!(error, OpeningsError::InvalidBatch(_)));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "invalid batch opening: Akita polynomial dimension {} exceeds usize bit width",
+                usize::BITS
+            ),
+        );
+    }
+
+    #[test]
+    fn reverse_point_reverses_coordinates_and_round_trips() {
+        let point = vec![af(1), af(2), af(3)];
+        assert_eq!(reverse_point(&point), vec![af(3), af(2), af(1)]);
+        assert_eq!(reverse_point(&reverse_point(&point)), point);
+        assert!(reverse_point(&[]).is_empty());
+    }
+
+    /// The identity the backend hand-off relies on: transforming the
+    /// evaluations with `jolt_to_akita_evals` AND the opening point with
+    /// `reverse_point` leaves the multilinear evaluation unchanged. Checked
+    /// against a hand-rolled big-endian MLE evaluator, so a bug in either
+    /// transform (or applying only one of them) fails this test.
+    #[test]
+    fn eval_and_point_transforms_together_preserve_mle_evaluation() {
+        fn mle_big_endian(evals: &[AkitaField], point: &[AkitaField]) -> AkitaField {
+            let one = af(1);
+            let mut acc = af(0);
+            for (index, &eval) in evals.iter().enumerate() {
+                let mut weight = one;
+                for (variable, &coordinate) in point.iter().enumerate() {
+                    let bit = (index >> (point.len() - 1 - variable)) & 1;
+                    weight *= if bit == 1 {
+                        coordinate
+                    } else {
+                        one - coordinate
+                    };
+                }
+                acc += weight * eval;
+            }
+            acc
+        }
+
+        let evals: Vec<AkitaField> = (0..8).map(|value| af(100 + 7 * value)).collect();
+        let point = vec![af(3), af(17), af(29)];
+        let transformed = jolt_to_akita_evals(3, &evals).expect("well-formed evaluations convert");
+
+        assert_eq!(
+            mle_big_endian(&transformed, &reverse_point(&point)),
+            mle_big_endian(&evals, &point),
+        );
+        // Applying only the evaluation transform must NOT preserve the value
+        // at this off-hypercube point — otherwise the check above is vacuous.
+        assert_ne!(
+            mle_big_endian(&transformed, &point),
+            mle_big_endian(&evals, &point),
+        );
+    }
+
+    #[test]
+    fn sparse_unit_polynomial_rejects_malformed_index_sets() {
+        let err = sparse_unit_polynomial(usize::BITS as usize, [0])
+            .expect_err("2^64 domain must overflow");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("bit width")),
+            "unexpected error: {err}"
+        );
+
+        let err =
+            sparse_unit_polynomial(3, [0]).expect_err("domain below the ring dimension rejects");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("smaller than ring dimension")),
+            "unexpected error: {err}"
+        );
+
+        let err = sparse_unit_polynomial(6, [64]).expect_err("out-of-domain index rejects");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("outside domain size 64")),
+            "unexpected error: {err}"
+        );
+
+        let err = sparse_unit_polynomial(6, [3, 3]).expect_err("duplicate index rejects");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("more than once")),
+            "unexpected error: {err}"
+        );
+    }
+
+    struct HugeDimensionPoly;
+
+    impl MultilinearPoly<AkitaField> for HugeDimensionPoly {
+        fn num_vars(&self) -> usize {
+            usize::BITS as usize
+        }
+
+        fn evaluate(&self, _point: &[AkitaField]) -> AkitaField {
+            unreachable!("the dimension check rejects before any evaluation")
+        }
+
+        fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[AkitaField])) {
+            unreachable!("the dimension check rejects before any row is streamed")
+        }
+    }
+
+    #[test]
+    fn akita_ordered_evaluations_rejects_unrepresentable_domains() {
+        let err = akita_ordered_evaluations(&HugeDimensionPoly)
+            .expect_err("2^64 evaluation domain must overflow");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("bit width")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn deserialize_akita_rejects_trailing_bytes() {
+        let shape = akita_types::LevelProofShape {
+            extension_opening_reduction: None,
+            v_coeffs: 3,
+            stage1_stages: Vec::new(),
+            stage2_sumcheck_proof: vec![3, 3],
+            stage3_sumcheck: None,
+            next_witness_binding: akita_types::NextWitnessBindingShape::TerminalInnerState,
+        };
+        let mut bytes = serialize_akita(&shape).expect("shape serializes");
+        let roundtrip: akita_types::LevelProofShape =
+            deserialize_akita(&bytes, &()).expect("exact bytes deserialize");
+        assert_eq!(roundtrip, shape);
+
+        bytes.push(0);
+        let err = deserialize_akita::<akita_types::LevelProofShape>(&bytes, &())
+            .expect_err("trailing bytes must be rejected");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")),
+            "unexpected error: {err}"
+        );
+    }
+}
