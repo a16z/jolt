@@ -1,0 +1,79 @@
+{
+  "schema": "metal_ram_output_check_observation_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-06",
+  "evidence_stage": "observed",
+  "candidate": {
+    "git_revision": "5da0a82d6c861ef07229ca74f764e3f00413dddd",
+    "binary_path": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "b6b7003d1a8f8a39242fdd2f24029ddab3c649cdbae638e38d604d5f829c3b77",
+    "rust_plan_sha256": "71a0574041761091c292526561d8c7f5f0baa6b5c97b015daf5e18686ecf06f9",
+    "rust_runtime_sha256": "7ad21c97bdf3f68084934c813334c4a2a067d553999d28560fa2494dfe965fdc",
+    "shader_source_sha256": "03f060947a419d9cf1de7a12979d8dcc29ba2519ffd6de182060c161e87df505",
+    "benchmark_source_sha256": "4b49dfb27b4e12537f3ec945a4d01714791065710f2643e62795aab78286b989"
+  },
+  "contract": {
+    "retained_command": "JOLT_SOLINAS_BENCH_FAMILY=ram-output-check JOLT_METAL_RAM_OUTPUT_WARMUP_MS=500 JOLT_METAL_RAM_OUTPUT_MEASUREMENT_MS=1500 cargo bench -p jolt-kernels --bench metal_solinas --features metal,test-utils -- ram_output_check_prefix",
+    "addresses": 8192,
+    "deferred_zero_rounds": 10,
+    "cpu_tail_rounds": 3,
+    "threads_per_threadgroup": 128,
+    "command_buffers": 1,
+    "dispatches": 2,
+    "device_products": 8192,
+    "borrowed_source_bytes": 65536,
+    "private_bytes": 17536,
+    "readback_bytes": 128,
+    "round_device_buffer_allocations": 0,
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "field_offset": 4294944759,
+    "cpu_reference": "frozen optimized RamOutputCheck complete member",
+    "cpu_reference_ns": 1734583,
+    "five_x_complete_member_cap_ns": 346916,
+    "producer_neutral_cpu_reference_ns": 1454541,
+    "producer_neutral_five_x_cap_ns": 290908
+  },
+  "one_shot_observation": {
+    "excluded_diagnostic_upload_us": 48.416,
+    "excluded_sequence_setup_us": 413.792,
+    "resident_cpu_fold_us": 22.750,
+    "cold_metal_wall_us": 3101.458,
+    "cold_metal_active_us": 31.708,
+    "warm_metal_wall_us": 524.667,
+    "warm_metal_active_us": 31.458
+  },
+  "criterion_observation": {
+    "resident_cpu_fold_interval_us": [26.905, 30.939, 35.852],
+    "resident_metal_wall_interval_us": [551.27, 830.27, 1134.1],
+    "resident_metal_active_interval_us": [44.277, 52.321, 60.639],
+    "metal_wall_to_cpu_median_ratio": 26.836,
+    "metal_active_to_cpu_median_ratio": 1.691,
+    "metal_wall_to_complete_member_cap_ratio": 2.393
+  },
+  "guards": {
+    "same_resident_allocation_used_by_cpu_and_metal": true,
+    "dense_ten_bind_oracle_matches_metal": true,
+    "zero_one_random_challenges_covered": true,
+    "zero_and_u64_max_source_values_covered": true,
+    "resident_allocation_identity_checked": true,
+    "all_246_jolt_kernel_tests_passed": true,
+    "clippy_all_targets_passed": true,
+    "source_assembly_and_pipeline_compile_passed": true
+  },
+  "rejected_adjustments": [
+    {
+      "adjustment": "threadgroup-width search",
+      "reason": "The median GPU-active time alone is 1.69x slower than the resident CPU fold, while Metal wall is 26.84x slower. Occupancy tuning cannot remove the required command wait or satisfy the registered CPU selector."
+    },
+    {
+      "adjustment": "literal 13-command Metal sumcheck",
+      "reason": "The frozen command-service control exceeds the complete-member 5x cap before relation work and readback."
+    }
+  ],
+  "verdict": {
+    "status": "gpu_rejected_cpu_deferred_adapter_pending",
+    "reason": "The one-command Metal fold is conclusively slower than the same resident specialized CPU fold, including when only GPU-active time is considered. The useful optimization is the exact ten-round zero-message deferral followed by an eight-element serial CPU tail.",
+    "next_test": "Implement the deferred-prefix SumcheckKernel in the Metal hybrid backend, certify equality of RamValFinal and public IO over the aligned mask, reuse producer-owned final-state storage, and compare all 13 round polynomials, output claims, derived tables, and complete-member wall time against the frozen optimized CPU member."
+  }
+}
