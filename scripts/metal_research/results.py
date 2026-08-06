@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import statistics
 from typing import Any
 
 from .paired import paired_summary, validate_paired_result
@@ -268,13 +269,14 @@ def _positive_integer(value: Any, description: str) -> int:
 
 def _successor_v2_arm(
     arm: Any, log_n: int
-) -> tuple[int, int, str, int]:
+) -> tuple[int, int, str, int, dict[str, int]]:
     fields = {
         "gpu_active_ns",
         "wall_ns",
         "resource_gpu_active_ns",
         "setup_gpu_active_ns",
         "setup_wall_ns",
+        "phase_gpu_active_ns",
         "tail_elements",
         "initialized_bytes",
         "storage_owned_bytes",
@@ -301,6 +303,19 @@ def _successor_v2_arm(
         or resource_ns != gpu_ns + setup_gpu_ns
     ):
         raise ValueError("OuterRemainder successor timestamps are inconsistent")
+    phase = arm["phase_gpu_active_ns"]
+    phase_fields = {"materialize", "first_bind", "dense_rounds", "openings"}
+    if not isinstance(phase, dict) or set(phase) != phase_fields:
+        raise ValueError("OuterRemainder successor phase timings are invalid")
+    phase_ns = {}
+    for name, value in phase.items():
+        if type(value) is not int or value < 0:
+            raise ValueError(f"{name} GPU time is invalid")
+        phase_ns[name] = value
+    if any(phase_ns[name] == 0 for name in phase_fields - {"dense_rounds"}):
+        raise ValueError("OuterRemainder successor phase timings are invalid")
+    if sum(phase_ns.values()) != gpu_ns:
+        raise ValueError("OuterRemainder successor phase timings do not sum")
     tail = _positive_integer(arm["tail_elements"], "CPU tail")
     if tail & (tail - 1) or tail > 1 << log_n:
         raise ValueError("OuterRemainder successor CPU tail is invalid")
@@ -345,9 +360,10 @@ def _successor_v2_arm(
         or counts["cpu_tail_exports"] != 1
         or counts["opening_scans"] != 1
         or counts["command_buffers"] != dense + 3
+        or (phase_ns["dense_rounds"] == 0) != (dense == 0)
     ):
         raise ValueError("OuterRemainder successor phase schedule is invalid")
-    return gpu_ns, resource_ns, output_sha256, tail
+    return gpu_ns, resource_ns, output_sha256, tail, phase_ns
 
 
 def _adapt_outer_successor_v2(
@@ -389,6 +405,12 @@ def _adapt_outer_successor_v2(
     resource_total_ns = 0
     output_digests: set[str] = set()
     tails: set[int] = set()
+    parent_phases: dict[str, list[int]] = {
+        name: [] for name in ("materialize", "first_bind", "dense_rounds", "openings")
+    }
+    candidate_phases: dict[str, list[int]] = {
+        name: [] for name in parent_phases
+    }
     raw_effects = []
     for index, sample in enumerate(samples):
         if not isinstance(sample, dict) or set(sample) != {
@@ -398,12 +420,20 @@ def _adapt_outer_successor_v2(
             "candidate",
         } or sample["pair"] != index:
             raise ValueError("OuterRemainder successor v2 sample is invalid")
-        parent_ns, parent_resource, parent_digest, parent_tail = _successor_v2_arm(
-            sample["parent"], log_n
-        )
-        candidate_ns, candidate_resource, candidate_digest, candidate_tail = (
-            _successor_v2_arm(sample["candidate"], log_n)
-        )
+        (
+            parent_ns,
+            parent_resource,
+            parent_digest,
+            parent_tail,
+            parent_phase,
+        ) = _successor_v2_arm(sample["parent"], log_n)
+        (
+            candidate_ns,
+            candidate_resource,
+            candidate_digest,
+            candidate_tail,
+            candidate_phase,
+        ) = _successor_v2_arm(sample["candidate"], log_n)
         pair = _pair(
             index,
             input_id,
@@ -419,6 +449,9 @@ def _adapt_outer_successor_v2(
         resource_total_ns += parent_resource + candidate_resource
         output_digests.update((parent_digest, candidate_digest))
         tails.update((parent_tail, candidate_tail))
+        for name in parent_phases:
+            parent_phases[name].append(parent_phase[name])
+            candidate_phases[name].append(candidate_phase[name])
 
     warmup = output.get("excluded_warmup")
     if not isinstance(warmup, dict) or set(warmup) != {
@@ -453,6 +486,15 @@ def _adapt_outer_successor_v2(
         pairs,
         [{"payload": warmup}],
     )
+    result["telemetry"] = {
+        "parent_phase_gpu_active_ns": {
+            name: statistics.median(values) for name, values in parent_phases.items()
+        },
+        "candidate_phase_gpu_active_ns": {
+            name: statistics.median(values)
+            for name, values in candidate_phases.items()
+        },
+    }
     metrics = output.get("metrics")
     sorted_effects = sorted(raw_effects)
     if not isinstance(metrics, dict) or set(metrics) != {

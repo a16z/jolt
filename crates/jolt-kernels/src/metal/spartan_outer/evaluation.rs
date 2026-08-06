@@ -19,7 +19,10 @@ use jolt_verifier::stages::stage1::outputs::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{MetalOuterRemainderKernel, MetalOuterResidentMetadata, OUTER_DOMAIN, OUTER_VARIABLES};
+use super::{
+    MetalOuterRemainderKernel, MetalOuterResidentMetadata, OuterRemainderGpuActiveBreakdown,
+    OUTER_DOMAIN, OUTER_VARIABLES,
+};
 use crate::metal::solinas::{
     MetalError, OuterRemainderDispatchCounts, OuterRemainderSequenceConfig, SolinasMetal,
     SpartanOuterUniskipRow, SpartanOuterUniskipRows,
@@ -55,6 +58,7 @@ pub struct OuterRemainderEvalSample {
     pub result: OuterRemainderEvalResult,
     pub member_wall: Duration,
     pub member_gpu_active: Duration,
+    pub phase_gpu_active: OuterRemainderGpuActiveBreakdown,
     pub setup_wall: Duration,
     pub setup_gpu_active: Duration,
     pub pipeline_compile_wall: Duration,
@@ -230,6 +234,10 @@ impl OuterRemainderEvalFixture {
             .inner
             .completed_gpu_active
             .ok_or_else(|| protocol_error("kernel did not retain completed GPU time"))?;
+        let phase_gpu_active = member
+            .inner
+            .completed_gpu_active_breakdown
+            .ok_or_else(|| protocol_error("kernel did not retain completed GPU phases"))?;
         let dispatch_counts = member
             .inner
             .completed_dispatch_counts
@@ -304,6 +312,7 @@ impl OuterRemainderEvalFixture {
             },
             member_wall,
             member_gpu_active,
+            phase_gpu_active,
             setup_wall,
             setup_gpu_active: initialization.gpu_active,
             pipeline_compile_wall,

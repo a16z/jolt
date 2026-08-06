@@ -580,12 +580,28 @@ fn record_gpu_phase(
     started: Instant,
     gpu_before: Duration,
     gpu_after: Duration,
-) {
+) -> Duration {
+    let gpu_active = gpu_after.saturating_sub(gpu_before);
     let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
-    let _ = span.record(
-        "gpu_active_ns",
-        duration_nanos(gpu_after.saturating_sub(gpu_before)),
-    );
+    let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
+    gpu_active
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OuterRemainderGpuActiveBreakdown {
+    pub materialize: Duration,
+    pub first_bind: Duration,
+    pub dense_rounds: Duration,
+    pub openings: Duration,
+}
+
+impl OuterRemainderGpuActiveBreakdown {
+    fn total(self) -> Option<Duration> {
+        self.materialize
+            .checked_add(self.first_bind)?
+            .checked_add(self.dense_rounds)?
+            .checked_add(self.openings)
+    }
 }
 
 impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
@@ -1062,8 +1078,11 @@ struct MetalOuterRemainderKernel {
     resident_rows: usize,
     compact_retained: bool,
     cpu_tail_elements: usize,
+    gpu_active_breakdown: OuterRemainderGpuActiveBreakdown,
     #[cfg(feature = "test-utils")]
     completed_gpu_active: Option<Duration>,
+    #[cfg(feature = "test-utils")]
+    completed_gpu_active_breakdown: Option<OuterRemainderGpuActiveBreakdown>,
     #[cfg(feature = "test-utils")]
     completed_dispatch_counts: Option<super::solinas::OuterRemainderDispatchCounts>,
     #[cfg(feature = "test-utils")]
@@ -1108,7 +1127,7 @@ impl MetalOuterRemainderKernel {
             });
         }
         let host = MetalOuterRemainderHost::new(log_t, tau, uniskip_challenge)?;
-        let endpoints = {
+        let (endpoints, materialize_gpu_active) = {
             let phase = tracing::info_span!(
                 "MetalOuterRemainder::first_message",
                 dispatch_wall_ns = tracing::field::Empty,
@@ -1121,8 +1140,9 @@ impl MetalOuterRemainderKernel {
             let endpoints = sequence
                 .materialize_and_first_message(host.stream_lagrange(), e_in, e_out)
                 .map_err(metal_prepare_error)?;
-            record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
-            endpoints
+            let gpu_active =
+                record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
+            (endpoints, gpu_active)
         };
         let tail_elements = metadata.resident_rows.min(cpu_tail_elements);
         Ok(Self {
@@ -1140,8 +1160,14 @@ impl MetalOuterRemainderKernel {
             resident_rows: metadata.resident_rows,
             compact_retained: metadata.compact_retained,
             cpu_tail_elements: tail_elements,
+            gpu_active_breakdown: OuterRemainderGpuActiveBreakdown {
+                materialize: materialize_gpu_active,
+                ..OuterRemainderGpuActiveBreakdown::default()
+            },
             #[cfg(feature = "test-utils")]
             completed_gpu_active: None,
+            #[cfg(feature = "test-utils")]
+            completed_gpu_active_breakdown: None,
             #[cfg(feature = "test-utils")]
             completed_dispatch_counts: None,
             #[cfg(feature = "test-utils")]
@@ -1257,7 +1283,13 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
                     sequence.bind_and_message(challenge, e_in, e_out)
                 }
                 .map_err(metal_round_error)?;
-                record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
+                let gpu_active =
+                    record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
+                if first_bind {
+                    self.gpu_active_breakdown.first_bind = gpu_active;
+                } else {
+                    self.gpu_active_breakdown.dense_rounds += gpu_active;
+                }
                 (output[0], output[1])
             }
         } else {
@@ -1325,12 +1357,20 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             let claimed = sequence
                 .evaluate_openings(&e_in, &e_out)
                 .map_err(metal_output_error)?;
-            record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
+            self.gpu_active_breakdown.openings =
+                record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
             claimed
         };
+        let completed_gpu_active = sequence.gpu_active_time();
+        if self.gpu_active_breakdown.total() != Some(completed_gpu_active) {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "Outer remainder GPU phase timings do not sum to the member total",
+            });
+        }
         #[cfg(feature = "test-utils")]
         {
-            self.completed_gpu_active = Some(sequence.gpu_active_time());
+            self.completed_gpu_active = Some(completed_gpu_active);
+            self.completed_gpu_active_breakdown = Some(self.gpu_active_breakdown);
             self.completed_dispatch_counts = Some(sequence.dispatch_counts());
             self.completed_tail_elements = Some(sequence.current_elements());
             self.completed_round_device_buffer_allocations =

@@ -308,8 +308,21 @@ fn arm_record(sample: &OuterRemainderEvalSample) -> EvalResult<Value> {
     let setup_gpu_active_ns = duration_ns(sample.setup_gpu_active)?;
     let setup_wall_ns = duration_ns(sample.setup_wall)?;
     let pipeline_compile_ns = duration_ns(sample.pipeline_compile_wall)?;
+    let materialize_ns = duration_ns(sample.phase_gpu_active.materialize)?;
+    let first_bind_ns = duration_ns(sample.phase_gpu_active.first_bind)?;
+    let dense_rounds_ns = duration_ns(sample.phase_gpu_active.dense_rounds)?;
+    let openings_ns = duration_ns(sample.phase_gpu_active.openings)?;
+    let phase_gpu_active_ns = [materialize_ns, first_bind_ns, dense_rounds_ns, openings_ns]
+        .into_iter()
+        .try_fold(0u64, |total, value| total.checked_add(value))
+        .ok_or_else(|| failure("phase GPU time overflowed"))?;
     if member_gpu_active_ns == 0
         || member_gpu_active_ns > member_wall_ns
+        || materialize_ns == 0
+        || first_bind_ns == 0
+        || (dense_rounds_ns == 0 && sample.dispatch_counts.dense_transitions != 0)
+        || openings_ns == 0
+        || phase_gpu_active_ns != member_gpu_active_ns
         || setup_gpu_active_ns == 0
         || setup_gpu_active_ns > setup_wall_ns
         || pipeline_compile_ns > setup_wall_ns
@@ -325,6 +338,12 @@ fn arm_record(sample: &OuterRemainderEvalSample) -> EvalResult<Value> {
         "resource_gpu_active_ns": resource_gpu_active_ns,
         "setup_gpu_active_ns": setup_gpu_active_ns,
         "setup_wall_ns": setup_wall_ns,
+        "phase_gpu_active_ns": {
+            "materialize": materialize_ns,
+            "first_bind": first_bind_ns,
+            "dense_rounds": dense_rounds_ns,
+            "openings": openings_ns,
+        },
         "tail_elements": sample.tail_elements,
         "initialized_bytes": sample.initialized_bytes,
         "storage_owned_bytes": sample.storage_owned_bytes,

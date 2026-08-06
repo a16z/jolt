@@ -25,6 +25,6 @@ pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
 #[doc(hidden)]
 pub use spartan_outer::{
     OuterRemainderEvalError, OuterRemainderEvalFixture, OuterRemainderEvalResult,
-    OuterRemainderEvalSample,
+    OuterRemainderEvalSample, OuterRemainderGpuActiveBreakdown,
 };
 pub use spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
