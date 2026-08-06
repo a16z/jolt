@@ -105,6 +105,15 @@ test file needed by the first pre-registered dataflow candidate and the next
 ranked phase candidates. Discovering a missing implementation file after the
 baseline supersedes the run; frozen scope is never widened in place.
 
+Before freezing a fresh mechanism phase, profile one cold and one warm exact
+controller cycle. Separate source assembly, compilation, fixture/device setup,
+queueing, evaluation, parsing, and checkpointing; freeze a valid-candidates-per-hour
+target. Compile a reduced evaluator only from its sealed transitive dependency
+closure and only after cold-path exact equivalence with the full path. Each phase's
+existing wall and candidate budgets are its timebox; its contract also names an
+analytical ceiling, progress checkpoint, and kill or redesign action. Missing that
+checkpoint ends the phase rather than spending its remaining budget by default.
+
 ## Durable records
 
 A schema-2 run contains an atomically replaced, self-digested `run.json`,

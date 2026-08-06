@@ -262,6 +262,15 @@ class VersionedContractTests(unittest.TestCase):
             ],
             7.0,
         )
+        prompt = goal["goal_prompt"]
+        for requirement in (
+            "cold and warm controller cycles",
+            "minimal transitive dependency closure",
+            "valid-candidates-per-hour target",
+            "wall-time and admitted-trial caps",
+            "kill or redesign rule",
+        ):
+            self.assertIn(requirement, prompt)
 
     def test_template_binds_a_canonical_registry_slot(self) -> None:
         template = json.loads(
