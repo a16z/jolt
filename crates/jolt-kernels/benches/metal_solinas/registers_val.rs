@@ -2,7 +2,9 @@ use std::{env, hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_field::{AdditiveAccumulator, AkitaAccumulator, AkitaField, RingAccumulator};
-use jolt_kernels::metal::solinas::{RegistersValFirstMessageConfig, SolinasMetal};
+use jolt_kernels::metal::solinas::{
+    RegistersValFirstMessageConfig, RegistersValTransitionConfig, SolinasMetal,
+};
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use rayon::prelude::*;
 
@@ -32,6 +34,18 @@ impl SplitLt {
         let base = self.hi[hi];
         let scale = self.eq_hi[hi];
         [base + scale * self.lo[lo], base + scale * self.lo[lo + 1]]
+    }
+
+    fn bind_lo(&self, challenge: AkitaField) -> Self {
+        Self {
+            lo: self
+                .lo
+                .chunks_exact(2)
+                .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+                .collect(),
+            hi: self.hi.clone(),
+            eq_hi: self.eq_hi.clone(),
+        }
     }
 }
 
@@ -99,6 +113,41 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
                 .expect("registers value first message should be readable"),
             expected
         );
+        let challenge = AkitaField::from_u64(0xfeed_beef_cafe_babe);
+        let bound_lt = lt.bind_lo(challenge);
+        let transition_source = context
+            .prepare_registers_val_first_message(
+                &inc,
+                &rd,
+                &r_address,
+                &r_cycle,
+                RegistersValFirstMessageConfig {
+                    threads_per_threadgroup: Some(threads_per_threadgroup),
+                },
+            )
+            .expect("registers value transition source should prepare");
+        transition_source
+            .execute()
+            .expect("registers value transition source should execute");
+        let transition = transition_source
+            .into_first_transition(
+                &bound_lt.lo,
+                RegistersValTransitionConfig {
+                    threads_per_threadgroup: Some(threads_per_threadgroup),
+                },
+            )
+            .expect("registers value first transition should prepare");
+        let transition_expected =
+            cpu_transition_message(&inc, &rd, &eq_address, challenge, &bound_lt);
+        transition
+            .execute(challenge)
+            .expect("registers value first transition should execute");
+        assert_eq!(
+            transition
+                .read_message()
+                .expect("registers value second message should be readable"),
+            transition_expected
+        );
 
         let _ = group.throughput(Throughput::Elements(elements as u64));
         let suffix = format!(
@@ -151,6 +200,49 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
             add_gpu(&mut group);
             add_cpu(&mut group);
         }
+        let _ = group.bench_function(
+            BenchmarkId::new("cpu_message_only_first_transition", &suffix),
+            |bench| {
+                bench.iter(|| {
+                    black_box(cpu_transition_message(
+                        &inc,
+                        &rd,
+                        &eq_address,
+                        challenge,
+                        &bound_lt,
+                    ))
+                });
+            },
+        );
+        let _ = group.bench_function(
+            BenchmarkId::new("metal_wall_resident_first_transition", &suffix),
+            |bench| {
+                bench.iter(|| {
+                    transition
+                        .execute(challenge)
+                        .expect("registers value first transition should execute");
+                    black_box(
+                        transition
+                            .read_message()
+                            .expect("registers value second message should be readable"),
+                    )
+                });
+            },
+        );
+        let _ = group.bench_function(
+            BenchmarkId::new("metal_active_resident_first_transition", &suffix),
+            |bench| {
+                bench.iter_custom(|iterations| {
+                    let mut active = Duration::ZERO;
+                    for _ in 0..iterations {
+                        active += transition
+                            .execute_timed(challenge)
+                            .expect("timed registers value first transition should execute");
+                    }
+                    active
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -190,6 +282,63 @@ fn cpu_message(
         );
     };
     (0..inc.len() / 2)
+        .into_par_iter()
+        .fold(
+            || [AkitaAccumulator::default(); 3],
+            |mut sums, pair| {
+                accumulate(pair, &mut sums);
+                sums
+            },
+        )
+        .map(|sums| sums.map(AkitaAccumulator::reduce))
+        .reduce(
+            || [AkitaField::from_u64(0); 3],
+            |left, right| [left[0] + right[0], left[1] + right[1], left[2] + right[2]],
+        )
+}
+
+fn cpu_transition_message(
+    inc: &[AkitaField],
+    rd: &[u8],
+    eq_address: &[AkitaField],
+    challenge: AkitaField,
+    bound_lt: &SplitLt,
+) -> [AkitaField; 3] {
+    let accumulate = |pair: usize, sums: &mut [AkitaAccumulator; 3]| {
+        let source = 4 * pair;
+        let bind = |low: AkitaField, high: AkitaField| low + challenge * (high - low);
+        let wa = [0, 1, 2, 3].map(|offset| {
+            let register = rd[source + offset];
+            if register == u8::MAX {
+                AkitaField::from_u64(0)
+            } else {
+                eq_address[register as usize]
+            }
+        });
+        let inc_pair = [
+            bind(inc[source], inc[source + 1]),
+            bind(inc[source + 2], inc[source + 3]),
+        ];
+        let wa_pair = [bind(wa[0], wa[1]), bind(wa[2], wa[3])];
+        let lt_pair = bound_lt.pair(pair);
+        let deltas = [
+            inc_pair[1] - inc_pair[0],
+            wa_pair[1] - wa_pair[0],
+            lt_pair[1] - lt_pair[0],
+        ];
+        let at_2 = [
+            inc_pair[1] + deltas[0],
+            wa_pair[1] + deltas[1],
+            lt_pair[1] + deltas[2],
+        ];
+        sums[0].fmadd(inc_pair[0] * wa_pair[0], lt_pair[0]);
+        sums[1].fmadd(at_2[0] * at_2[1], at_2[2]);
+        sums[2].fmadd(
+            (at_2[0] + deltas[0]) * (at_2[1] + deltas[1]),
+            at_2[2] + deltas[2],
+        );
+    };
+    (0..inc.len() / 4)
         .into_par_iter()
         .fold(
             || [AkitaAccumulator::default(); 3],

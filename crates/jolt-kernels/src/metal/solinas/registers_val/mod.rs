@@ -16,6 +16,7 @@ const SAMPLES: usize = 3;
 const ADDRESS_BITS: usize = 7;
 const ABSENT_REGISTER: u8 = u8::MAX;
 const MESSAGE_PIPELINE: &str = "solinas_registers_val_first_message_factorized";
+const NATIVE_TRANSITION_PIPELINE: &str = "solinas_registers_val_native_transition";
 const REDUCTION_PIPELINE: &str = "solinas_registers_val_reduce";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +25,19 @@ pub struct RegistersValFirstMessageConfig {
 }
 
 impl Default for RegistersValFirstMessageConfig {
+    fn default() -> Self {
+        Self {
+            threads_per_threadgroup: Some(32),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegistersValTransitionConfig {
+    pub threads_per_threadgroup: Option<usize>,
+}
+
+impl Default for RegistersValTransitionConfig {
     fn default() -> Self {
         Self {
             threads_per_threadgroup: Some(32),
@@ -72,6 +86,34 @@ pub struct RegistersValFirstMessageInvocation {
     message_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
+    params: MessageParams,
+    reduction_steps: Vec<ReductionStep>,
+    cycles: usize,
+    threadgroups: usize,
+    threads_per_threadgroup: usize,
+    final_in_a: bool,
+    completed: Cell<bool>,
+}
+
+struct TransitionBuffers {
+    inc: Buffer,
+    rd: Buffer,
+    eq_address: Buffer,
+    lt_lo: Buffer,
+    lt_hi: Buffer,
+    eq_hi: Buffer,
+    dense: Buffer,
+    partial_a: Buffer,
+    partial_b: Buffer,
+}
+
+pub struct RegistersValFirstTransitionInvocation {
+    context: SolinasMetal,
+    transition_pipeline: ComputePipelineState,
+    reduction_pipeline: ComputePipelineState,
+    transition_limits: PipelineLimits,
+    reduction_limits: PipelineLimits,
+    buffers: TransitionBuffers,
     params: MessageParams,
     reduction_steps: Vec<ReductionStep>,
     cycles: usize,
@@ -239,6 +281,90 @@ impl SolinasMetal {
 }
 
 impl RegistersValFirstMessageInvocation {
+    pub fn into_first_transition(
+        self,
+        bound_lt_lo: &[AkitaField],
+        config: RegistersValTransitionConfig,
+    ) -> Result<RegistersValFirstTransitionInvocation, MetalError> {
+        if !self.completed.get() {
+            return Err(MetalError::NotExecuted);
+        }
+        let expected = self.params.lt_lo_length as usize / 2;
+        if expected < 2 || bound_lt_lo.len() != expected {
+            return Err(MetalError::RegistersValLtLength {
+                expected,
+                got: bound_lt_lo.len(),
+            });
+        }
+        let bound_lt_lo = bound_lt_lo
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>();
+        self.context
+            .validate_inputs("registers val bound lt lo", &bound_lt_lo)?;
+
+        let transition_pipeline = self
+            .context
+            .compile_named_pipeline(NATIVE_TRANSITION_PIPELINE)?;
+        let transition_limits = SolinasMetal::limits(&transition_pipeline);
+        if transition_limits.thread_execution_width != SIMD_WIDTH {
+            return Err(MetalError::UnsupportedRegistersValExecutionWidth {
+                pipeline: NATIVE_TRANSITION_PIPELINE,
+                expected: SIMD_WIDTH,
+                got: transition_limits.thread_execution_width,
+            });
+        }
+        let threads_per_threadgroup = SolinasMetal::resolve_threadgroup_width(
+            config.threads_per_threadgroup,
+            transition_limits,
+        )?;
+        let dense = self.context.new_registers_val_buffer(self.cycles)?;
+        let params = MessageParams {
+            cycles: u32::try_from(self.cycles / 2)
+                .map_err(|_| MetalError::InputTooLong(self.cycles / 2))?,
+            high_blocks: self.params.high_blocks,
+            lt_lo_length: u32::try_from(bound_lt_lo.len())
+                .map_err(|_| MetalError::InputTooLong(bound_lt_lo.len()))?,
+            _reserved: 0,
+        };
+        let bound_lt_lo = buffer_from_slice(&self.context.device, &bound_lt_lo);
+        let Buffers {
+            inc,
+            rd,
+            eq_address,
+            lt_lo: _,
+            lt_hi,
+            eq_hi,
+            partial_a,
+            partial_b,
+        } = self.buffers;
+        Ok(RegistersValFirstTransitionInvocation {
+            context: self.context,
+            transition_pipeline,
+            reduction_pipeline: self.reduction_pipeline,
+            transition_limits,
+            reduction_limits: self.reduction_limits,
+            buffers: TransitionBuffers {
+                inc,
+                rd,
+                eq_address,
+                lt_lo: bound_lt_lo,
+                lt_hi,
+                eq_hi,
+                dense,
+                partial_a,
+                partial_b,
+            },
+            params,
+            reduction_steps: self.reduction_steps,
+            cycles: self.cycles,
+            threadgroups: self.threadgroups,
+            threads_per_threadgroup,
+            final_in_a: self.final_in_a,
+            completed: Cell::new(false),
+        })
+    }
+
     pub const fn name(&self) -> &'static str {
         MESSAGE_PIPELINE
     }
@@ -359,6 +485,155 @@ impl RegistersValFirstMessageInvocation {
         self.context
             .validate_inputs("registers val first message", values)?;
         Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
+    }
+}
+
+impl RegistersValFirstTransitionInvocation {
+    pub const fn name(&self) -> &'static str {
+        NATIVE_TRANSITION_PIPELINE
+    }
+
+    pub const fn source_cycles(&self) -> usize {
+        self.cycles
+    }
+
+    pub const fn current_elements(&self) -> usize {
+        self.cycles / 2
+    }
+
+    pub const fn threads_per_threadgroup(&self) -> usize {
+        self.threads_per_threadgroup
+    }
+
+    pub const fn pipeline_limits(&self) -> PipelineLimits {
+        self.transition_limits
+    }
+
+    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
+        self.reduction_limits
+    }
+
+    pub const fn execute_device_buffer_allocations(&self) -> usize {
+        0
+    }
+
+    pub const fn dynamic_threadgroup_memory_bytes(&self) -> usize {
+        2 * SAMPLES * (self.threads_per_threadgroup / SIMD_WIDTH) * size_of::<Fp128>()
+    }
+
+    pub fn execute(&self, challenge: AkitaField) -> Result<(), MetalError> {
+        self.execute_timed(challenge).map(|_| ())
+    }
+
+    pub fn execute_timed(&self, challenge: AkitaField) -> Result<Duration, MetalError> {
+        self.completed.set(false);
+        let challenge = Fp128::from_jolt_field(&challenge);
+        self.context
+            .validate_inputs("registers val first transition challenge", &[challenge])?;
+        autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.transition_pipeline);
+            encoder.set_buffer(0, Some(&self.buffers.inc), 0);
+            encoder.set_buffer(1, Some(&self.buffers.rd), 0);
+            encoder.set_buffer(2, Some(&self.buffers.eq_address), 0);
+            encoder.set_buffer(3, Some(&self.buffers.lt_lo), 0);
+            encoder.set_buffer(4, Some(&self.buffers.lt_hi), 0);
+            encoder.set_buffer(5, Some(&self.buffers.eq_hi), 0);
+            encoder.set_buffer(6, Some(&self.buffers.dense), 0);
+            encoder.set_buffer(7, Some(&self.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 8, &challenge);
+            set_inline_bytes(encoder, 9, &self.params);
+            encoder
+                .set_threadgroup_memory_length(0, self.dynamic_threadgroup_memory_bytes() as u64);
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: self.threadgroups as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.threads_per_threadgroup as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+
+            for step in &self.reduction_steps {
+                encoder.set_compute_pipeline_state(&self.reduction_pipeline);
+                let (input, output) = if step.input_a {
+                    (&self.buffers.partial_a, &self.buffers.partial_b)
+                } else {
+                    (&self.buffers.partial_b, &self.buffers.partial_a)
+                };
+                encoder.set_buffer(0, Some(input), 0);
+                encoder.set_buffer(1, Some(output), 0);
+                encoder.set_buffer(2, Some(&step.params), 0);
+                encoder.dispatch_thread_groups(
+                    MTLSize {
+                        width: step.output_count as u64,
+                        height: 1,
+                        depth: 1,
+                    },
+                    MTLSize {
+                        width: SIMD_WIDTH as u64,
+                        height: 1,
+                        depth: 1,
+                    },
+                );
+            }
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            let status = command_buffer.status();
+            if status != MTLCommandBufferStatus::Completed {
+                return Err(MetalError::CommandFailed(status));
+            }
+            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+                return Err(MetalError::InvalidGpuTimestamps { start, end });
+            }
+            self.completed.set(true);
+            Ok(Duration::from_secs_f64(end - start))
+        })
+    }
+
+    pub fn read_message(&self) -> Result<[AkitaField; SAMPLES], MetalError> {
+        if !self.completed.get() {
+            return Err(MetalError::NotExecuted);
+        }
+        let buffer = if self.final_in_a {
+            &self.buffers.partial_a
+        } else {
+            &self.buffers.partial_b
+        };
+        // SAFETY: the completed reduction leaves three fields at the front of
+        // the selected shared buffer.
+        let values = unsafe { slice::from_raw_parts(buffer.contents().cast::<Fp128>(), SAMPLES) };
+        self.context
+            .validate_inputs("registers val second message", values)?;
+        Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn read_dense_state(&self) -> Result<Vec<[AkitaField; 2]>, MetalError> {
+        if !self.completed.get() {
+            return Err(MetalError::NotExecuted);
+        }
+        // SAFETY: the transition writes two fields for every current element.
+        let values = unsafe {
+            slice::from_raw_parts(
+                self.buffers.dense.contents().cast::<Fp128>(),
+                2 * self.current_elements(),
+            )
+        };
+        self.context
+            .validate_inputs("registers val dense state", values)?;
+        Ok(values
+            .chunks_exact(2)
+            .map(|row| [row[0].into_jolt_field(), row[1].into_jolt_field()])
+            .collect())
     }
 }
 

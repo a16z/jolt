@@ -100,7 +100,10 @@ pub use registers_read_write::{
     RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
     RegistersReadWriteSecondMessageInvocation,
 };
-pub use registers_val::{RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation};
+pub use registers_val::{
+    RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
+    RegistersValFirstTransitionInvocation, RegistersValTransitionConfig,
+};
 pub use spartan_outer_uniskip::{
     evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,
     SpartanOuterUniskipRow, SpartanOuterUniskipRows, SPARTAN_OUTER_EXTENDED_NODES,
@@ -415,6 +418,8 @@ pub enum MetalError {
         cycle_bits: usize,
         cycles: usize,
     },
+    #[error("registers value evaluation LT-low table has length {got}, expected {expected}")]
+    RegistersValLtLength { expected: usize, got: usize },
     #[error("registers value evaluation index {0} is outside the 128-register domain")]
     InvalidRegistersValIndex(u8),
     #[error(

@@ -6,7 +6,7 @@ use jolt_kernels::metal::solinas::{
     BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128,
     InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
     RegisterAccessRow, RegistersReadWriteMessageConfig, RegistersValFirstMessageConfig,
-    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+    RegistersValTransitionConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
@@ -114,6 +114,44 @@ fn registers_val_first_message_matches_dense_cpu() {
             expected[sample] += interpolate(inc_pair) * interpolate(wa_pair) * interpolate(lt_pair);
         }
     }
+    let challenge = AkitaField::from_u64(0xfeed_beef_cafe_babe);
+    let bind = |low: AkitaField, high: AkitaField| low + challenge * (high - low);
+    let mid = r_cycle.len() / 2;
+    let (_, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
+    let lt_lo = LtPolynomial::<AkitaField>::evaluations(r_lo);
+    let bound_lt_lo = lt_lo
+        .chunks_exact(2)
+        .map(|pair| bind(pair[0], pair[1]))
+        .collect::<Vec<_>>();
+    let bound_lt = lt
+        .chunks_exact(2)
+        .map(|pair| bind(pair[0], pair[1]))
+        .collect::<Vec<_>>();
+    let expected_dense = (0..cycles / 2)
+        .map(|pair| {
+            let first = 2 * pair;
+            let wa = [rd[first], rd[first + 1]].map(|register| {
+                if register == u8::MAX {
+                    AkitaField::from_u64(0)
+                } else {
+                    eq_address[register as usize]
+                }
+            });
+            [bind(inc[first], inc[first + 1]), bind(wa[0], wa[1])]
+        })
+        .collect::<Vec<_>>();
+    let mut next_expected = [AkitaField::from_u64(0); 3];
+    for pair in 0..expected_dense.len() / 2 {
+        let low = expected_dense[2 * pair];
+        let high = expected_dense[2 * pair + 1];
+        for (sample, t) in [0_u64, 2, 3].into_iter().enumerate() {
+            let t = AkitaField::from_u64(t);
+            let interpolate = |low: AkitaField, high: AkitaField| low + t * (high - low);
+            next_expected[sample] += interpolate(low[0], high[0])
+                * interpolate(low[1], high[1])
+                * interpolate(bound_lt[2 * pair], bound_lt[2 * pair + 1]);
+        }
+    }
 
     for threads_per_threadgroup in [32, 128] {
         let invocation = context
@@ -138,7 +176,182 @@ fn registers_val_first_message_matches_dense_cpu() {
             expected,
             "threads_per_threadgroup={threads_per_threadgroup}"
         );
+        let transition = invocation
+            .into_first_transition(
+                &bound_lt_lo,
+                RegistersValTransitionConfig {
+                    threads_per_threadgroup: Some(threads_per_threadgroup),
+                },
+            )
+            .expect("registers value first transition should prepare");
+        assert_eq!(transition.execute_device_buffer_allocations(), 0);
+        transition
+            .execute(challenge)
+            .expect("registers value first transition should execute");
+        assert_eq!(
+            transition
+                .read_message()
+                .expect("registers value second message should be readable"),
+            next_expected,
+            "threads_per_threadgroup={threads_per_threadgroup}"
+        );
+        assert_eq!(
+            transition
+                .read_dense_state()
+                .expect("registers value dense state should be readable"),
+            expected_dense,
+            "threads_per_threadgroup={threads_per_threadgroup}"
+        );
     }
+}
+
+#[test]
+fn registers_val_transition_handles_odd_even_splits_and_edge_challenges() {
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let modulus_minus_one = AkitaField::from_u128(u128::MAX - AKITA_OFFSET_FFFFA7F7 as u128);
+    for (log_cycles, challenge) in [
+        (2, AkitaField::from_u64(0)),
+        (3, modulus_minus_one),
+        (4, AkitaField::from_u64(0)),
+        (4, AkitaField::from_u64(1)),
+        (5, modulus_minus_one),
+        (9, AkitaField::from_u64(0x0123_4567_89ab_cdef)),
+    ] {
+        let cycles = 1_usize << log_cycles;
+        let inc = (0..cycles)
+            .map(|index| match index % 4 {
+                0 => AkitaField::from_u64(0),
+                1 => AkitaField::from_u64(1),
+                2 => modulus_minus_one,
+                _ => AkitaField::from_u64(index as u64),
+            })
+            .collect::<Vec<_>>();
+        let rd = (0..cycles)
+            .map(|index| match index % 4 {
+                0 => u8::MAX,
+                1 => 0,
+                2 => 127,
+                _ => ((31 * index + 7) & 127) as u8,
+            })
+            .collect::<Vec<_>>();
+        let r_address = (0..7)
+            .map(|index| match index % 3 {
+                0 => AkitaField::from_u64(0),
+                1 => AkitaField::from_u64(1),
+                _ => modulus_minus_one,
+            })
+            .collect::<Vec<_>>();
+        let r_cycle = (0..log_cycles)
+            .map(|index| match index % 3 {
+                0 => AkitaField::from_u64(0),
+                1 => AkitaField::from_u64(1),
+                _ => modulus_minus_one,
+            })
+            .collect::<Vec<_>>();
+        let eq_address = EqPolynomial::<AkitaField>::evals(&r_address, None);
+        let wa = rd
+            .iter()
+            .map(|&register| {
+                if register == u8::MAX {
+                    AkitaField::from_u64(0)
+                } else {
+                    eq_address[register as usize]
+                }
+            })
+            .collect::<Vec<_>>();
+        let lt = LtPolynomial::<AkitaField>::evaluations(&r_cycle);
+        let first_expected = registers_val_dense_message(&inc, &wa, &lt);
+
+        for threads_per_threadgroup in [32, 64] {
+            let invocation = context
+                .prepare_registers_val_first_message(
+                    &inc,
+                    &rd,
+                    &r_address,
+                    &r_cycle,
+                    RegistersValFirstMessageConfig {
+                        threads_per_threadgroup: Some(threads_per_threadgroup),
+                    },
+                )
+                .expect("registers value edge case should prepare");
+            invocation
+                .execute()
+                .expect("registers value edge case should execute");
+            assert_eq!(
+                invocation
+                    .read_message()
+                    .expect("registers value edge message should be readable"),
+                first_expected,
+                "log={log_cycles}, tg={threads_per_threadgroup}"
+            );
+            if log_cycles < 4 {
+                continue;
+            }
+
+            let bind = |values: &[AkitaField]| {
+                values
+                    .chunks_exact(2)
+                    .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+                    .collect::<Vec<_>>()
+            };
+            let dense_inc = bind(&inc);
+            let dense_wa = bind(&wa);
+            let dense_lt = bind(&lt);
+            let mid = r_cycle.len() / 2;
+            let (_, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
+            let bound_lt_lo = bind(&LtPolynomial::<AkitaField>::evaluations(r_lo));
+            let next_expected = registers_val_dense_message(&dense_inc, &dense_wa, &dense_lt);
+            let transition = invocation
+                .into_first_transition(
+                    &bound_lt_lo,
+                    RegistersValTransitionConfig {
+                        threads_per_threadgroup: Some(threads_per_threadgroup),
+                    },
+                )
+                .expect("registers value edge transition should prepare");
+            transition
+                .execute(challenge)
+                .expect("registers value edge transition should execute");
+            assert_eq!(
+                transition
+                    .read_message()
+                    .expect("registers value edge second message should be readable"),
+                next_expected,
+                "log={log_cycles}, tg={threads_per_threadgroup}"
+            );
+            let expected_state = dense_inc
+                .iter()
+                .copied()
+                .zip(dense_wa.iter().copied())
+                .map(|(inc, wa)| [inc, wa])
+                .collect::<Vec<_>>();
+            assert_eq!(
+                transition
+                    .read_dense_state()
+                    .expect("registers value edge dense state should be readable"),
+                expected_state,
+                "log={log_cycles}, tg={threads_per_threadgroup}"
+            );
+        }
+    }
+}
+
+fn registers_val_dense_message(
+    inc: &[AkitaField],
+    wa: &[AkitaField],
+    lt: &[AkitaField],
+) -> [AkitaField; 3] {
+    let mut message = [AkitaField::from_u64(0); 3];
+    for pair in 0..inc.len() / 2 {
+        for (sample, t) in [0_u64, 2, 3].into_iter().enumerate() {
+            let t = AkitaField::from_u64(t);
+            let interpolate = |values: &[AkitaField]| {
+                values[2 * pair] + t * (values[2 * pair + 1] - values[2 * pair])
+            };
+            message[sample] += interpolate(inc) * interpolate(wa) * interpolate(lt);
+        }
+    }
+    message
 }
 
 #[test]
