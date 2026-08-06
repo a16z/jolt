@@ -1,0 +1,135 @@
+{
+  "schema": "metal_spartan_shift_first_use_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-06",
+  "evidence_stage": "rejected",
+  "candidate": {
+    "git_revision": "6f4f3845477e24b9b0c7c8ff6bfb06c666eb78be",
+    "binary_path": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "ae908e8395a876677d9d639aa74a823d488305924f8e9a0d2984eca5b2270f77",
+    "plan_and_oracle_sha256": "b9a23b13064e7707774771575cbd213fbf12d41174df1f82cf5d0eadd332a1b8",
+    "runtime_sha256": "f0761c82bbf516b8c8b90b62c15873e1e5c16f77c867882e34369e39e224f022",
+    "shader_sha256": "0b5b3068d939b0f95829de6992652dc49573fe823037516ad703aaa1bc676032",
+    "benchmark_sha256": "b1a529870699205f1b9c8a2b0b81c7f6b77ec80639c43c3310c04c7a68762c1e"
+  },
+  "contract": {
+    "command": "JOLT_SOLINAS_BENCH_FAMILY=spartan-shift JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_METAL_SPARTAN_SHIFT_OBSERVE_ONLY=1 JOLT_METAL_SPARTAN_SHIFT_RETAINED_ONLY=1 target/release/deps/metal_solinas-9c8279d8148405e7 --noplot",
+    "elements": 67108864,
+    "device": "Apple M4 Max",
+    "field_offset": 4294944759,
+    "strategy": "mixed",
+    "build_threads_per_threadgroup": 64,
+    "high_tile_elements": 128,
+    "fold_threads_per_threadgroup": 32,
+    "resident_source_bytes": 1098907648,
+    "mixed_private_bytes": 35127376,
+    "fold_private_bytes": 786432,
+    "readback_bytes": 1179648,
+    "execute_device_buffer_allocations": 0,
+    "cpu_reference": "frozen optimized SpartanShift complete member",
+    "cpu_reference_ms": 131.051624,
+    "five_x_wall_cap_ms": 26.210324,
+    "eight_x_wall_cap_ms": 16.381453,
+    "prepared_hybrid_includes": [
+      "first prefix command",
+      "prefix host ladder",
+      "first fold command",
+      "suffix host ladder",
+      "both command joins"
+    ],
+    "resident_member_additionally_includes": [
+      "challenge-dependent high and low weight preparation",
+      "scratch allocation",
+      "pipeline lookup"
+    ],
+    "excluded": [
+      "native row generation",
+      "1098907648-byte host upload or production",
+      "generated batch-driver and transcript integration"
+    ]
+  },
+  "fresh_process_samples": [
+    {
+      "setup_ms": 23.451,
+      "first_use_hybrid_ms": 79.592083,
+      "resident_member_ms": 103.043083,
+      "prefix_wall_ms": 62.682125,
+      "prefix_gpu_active_ms": 14.42625,
+      "fold_wall_ms": 14.236333,
+      "fold_gpu_active_ms": 6.127
+    },
+    {
+      "setup_ms": 1.206375,
+      "first_use_hybrid_ms": 54.964333,
+      "resident_member_ms": 56.170708,
+      "prefix_wall_ms": 34.804958,
+      "prefix_gpu_active_ms": 16.07325,
+      "fold_wall_ms": 18.797417,
+      "fold_gpu_active_ms": 5.2935
+    },
+    {
+      "setup_ms": 67.257,
+      "first_use_hybrid_ms": 80.555333,
+      "resident_member_ms": 147.812333,
+      "prefix_wall_ms": 40.39925,
+      "prefix_gpu_active_ms": 14.770792,
+      "fold_wall_ms": 38.787542,
+      "fold_gpu_active_ms": 5.5855
+    },
+    {
+      "setup_ms": 55.179667,
+      "first_use_hybrid_ms": 114.735625,
+      "resident_member_ms": 169.915292,
+      "prefix_wall_ms": 70.436917,
+      "prefix_gpu_active_ms": 16.029167,
+      "fold_wall_ms": 42.211334,
+      "fold_gpu_active_ms": 5.21575
+    },
+    {
+      "setup_ms": 31.079042,
+      "first_use_hybrid_ms": 57.678916,
+      "resident_member_ms": 88.757958,
+      "prefix_wall_ms": 49.483666,
+      "prefix_gpu_active_ms": 14.306167,
+      "fold_wall_ms": 6.777917,
+      "fold_gpu_active_ms": 5.549083
+    }
+  ],
+  "summary": {
+    "first_use_hybrid_median_ms": 79.592083,
+    "first_use_hybrid_speedup_at_median": 1.646541,
+    "resident_member_median_ms": 103.043083,
+    "resident_member_speedup_at_median": 1.271814,
+    "samples_below_five_x_cap": 0,
+    "sample_count": 5,
+    "prefix_gpu_active_median_ms": 14.770792,
+    "fold_gpu_active_median_ms": 5.549083,
+    "combined_gpu_active_median_ms": 20.319875
+  },
+  "controls": {
+    "previous_warmed_residency_control_median_ms": 22.636833,
+    "previous_warmed_residency_control_speedup": 5.789309,
+    "interpretation": "The warmed result is retained only as a residency control; it is not a one-pass PIOP measurement.",
+    "bounded_pipeline_primer": {
+      "rows": 16384,
+      "primer_wall_ms": 10.202917,
+      "following_target_prefix_gpu_active_ms": 16.697458,
+      "verdict": "rejected_no_target_improvement"
+    }
+  },
+  "guards": {
+    "focused_spartan_shift_tests_passed": 16,
+    "mixed_and_expanded_prefix_match_independent_oracle": true,
+    "native_fold_matches_independent_oracle": true,
+    "submit_join_owns_resources_until_completion": true,
+    "same_device_exact_length_producer_attachment_checked": true,
+    "resident_allocation_identity_reused": true,
+    "benchmark_clippy_with_warnings_denied_passed": true,
+    "execute_allocates_no_device_buffers": true
+  },
+  "verdict": {
+    "status": "host_written_first_use_rejected",
+    "reason": "No first-use sample clears the 26.210324-ms cap. Median GPU-active work is 20.319875 ms, but host-written first consumption and command completion expand median service to 79.592083 ms. A small pipeline primer does not remove the penalty.",
+    "next_test": "Have the stage-1 Metal witness producer write and retain the exact current-cycle planes, attach those buffers without a copy, charge its incremental production and visibility wall, and measure one SpartanShift pass before deciding whether this member remains on CPU."
+  }
+}

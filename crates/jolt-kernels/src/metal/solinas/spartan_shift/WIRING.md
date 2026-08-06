@@ -443,6 +443,12 @@ dispatch of the retained entry points did not improve the following target
 command: the prefix remained `16.697458 ms` active. Pipeline cold start is
 therefore rejected as the explanation.
 
+A revision-matched repeat later in the sustained machine session was worse:
+the first-use service median rose to `79.592083 ms` while median prefix and
+fold active times remained `14.770792 ms` and `5.549083 ms`. The additional
+wall is queue/completion delay, but it is still part of latency and reinforces
+the rejection rather than changing it.
+
 The gap instead appears when the GPU first consumes the 1.099-GB host-written
 source. This is consistent with, but does not prove, a first-touch or
 host-to-device visibility cost. The production hypothesis is narrower: a
