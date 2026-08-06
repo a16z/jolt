@@ -35,6 +35,7 @@ const LIBRARY_SOURCE_FRAGMENTS: &[&str] = &[
     SPARTAN_OUTER_UNISKIP_SOURCE,
     INSTRUCTION_INPUT_SOURCE,
     ADDRESS_CYCLE_SOURCE,
+    OUTER_REMAINDER_SOURCE,
 ];
 
 pub(super) fn library_source(offset: u32) -> String {
@@ -42,9 +43,12 @@ pub(super) fn library_source(offset: u32) -> String {
 }
 
 pub(super) fn library_source_with_outer(offset: u32, outer_source: &str) -> String {
+    let Some((_, frozen_fragments)) = LIBRARY_SOURCE_FRAGMENTS.split_last() else {
+        return format!("#define SOLINAS_OFFSET {offset}u\n{outer_source}");
+    };
     format!(
         "#define SOLINAS_OFFSET {offset}u\n{}\n{outer_source}",
-        LIBRARY_SOURCE_FRAGMENTS.join("\n")
+        frozen_fragments.join("\n")
     )
 }
 
