@@ -360,6 +360,10 @@ impl DeviceAddressPhase {
         self.raf_checkpoints.to_host()
     }
 
+    pub const fn rows(&self) -> &DeviceRows {
+        &self.rows
+    }
+
     pub fn v_tables(&self) -> &[DeviceFrVec] {
         &self.v_tables
     }

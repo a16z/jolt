@@ -193,7 +193,7 @@ pub struct InstructionReadRafKernel<F: Field> {
     /// eq(phase-p challenges, x)`, MSB-first).
     pub(crate) v_tables: Vec<Vec<F>>,
     phase_challenges: Vec<F>,
-    cycle_challenges: Vec<F>,
+    pub(crate) cycle_challenges: Vec<F>,
     pub(crate) cycle_tables: Option<CycleTables<F>>,
     pub(crate) rounds_bound: usize,
 }

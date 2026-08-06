@@ -7,6 +7,7 @@ use jolt_field::{Field, Fr};
 
 use super::context::CudaKernelContext;
 use super::dense_product::DeviceDenseProduct;
+use super::device::DeviceFrVec;
 use super::error::CudaError;
 
 pub struct DeviceCycleRounds {
@@ -32,6 +33,22 @@ impl DeviceCycleRounds {
             product,
             ra_count: ra.len(),
         })
+    }
+
+    pub fn from_device(
+        eq_reduction: DeviceFrVec,
+        combined_val: DeviceFrVec,
+        ra: Vec<DeviceFrVec>,
+        rounds: usize,
+    ) -> Result<Self, CudaError> {
+        let ra_count = ra.len();
+        let mut factors = Vec::with_capacity(ra_count + 2);
+        factors.push(eq_reduction);
+        factors.push(combined_val);
+        factors.extend(ra);
+        let degree = ra_count + 2;
+        let product = DeviceDenseProduct::from_device(factors, rounds, degree)?;
+        Ok(Self { product, ra_count })
     }
 
     pub fn round_message<F: Field>(

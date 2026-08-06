@@ -62,6 +62,18 @@ impl DeviceRows {
     pub const fn cycles(&self) -> usize {
         self.cycles
     }
+
+    pub(super) const fn lookup_index(&self) -> &CudaSlice<u64> {
+        &self.lookup_index
+    }
+
+    pub(super) const fn table_index(&self) -> &CudaSlice<u32> {
+        &self.table_index
+    }
+
+    pub(super) const fn raf_flag(&self) -> &CudaSlice<u8> {
+        &self.raf_flag
+    }
 }
 
 pub struct RafBuckets {

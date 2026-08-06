@@ -475,3 +475,58 @@ extern "C" __global__ void ap_round_message_kernel(
         __syncthreads();
     }
 }
+
+extern "C" __global__ void ap_combined_val_kernel(
+    const unsigned int *__restrict__ table_index,
+    const unsigned char *__restrict__ raf_flags,
+    const u64 *__restrict__ table_values,
+    const u64 *__restrict__ raf_interleaved,
+    const u64 *__restrict__ raf_identity,
+    unsigned int table_count,
+    u64 *__restrict__ out,
+    unsigned int n) {
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= n) return;
+
+    u64 value[LIMBS] = {0, 0, 0, 0};
+    unsigned int table = table_index[j];
+    if (table != AP_NO_TABLE && table < table_count) {
+        load4(table_values + (unsigned long long)table * LIMBS, value);
+    }
+
+    u64 raf[LIMBS];
+    if (raf_flags[j] != 0u) {
+        load4(raf_identity, raf);
+    } else {
+        load4(raf_interleaved, raf);
+    }
+
+    u64 sum[LIMBS];
+    fr_add(value, raf, sum);
+    store4(out + (unsigned long long)j * LIMBS, sum);
+}
+
+extern "C" __global__ void ap_ra_kernel(const unsigned long long *__restrict__ lookup_index,
+                                       const u64 *const *__restrict__ v_tables,
+                                       unsigned int phase_offset,
+                                       unsigned int phases_per_ra,
+                                       unsigned int total_phases,
+                                       u64 *__restrict__ out,
+                                       unsigned int n) {
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= n) return;
+
+    u128 index = ap_index(lookup_index, j);
+    u64 acc[LIMBS];
+    load4(FR_ONE, acc);
+    for (unsigned int q = 0; q < phases_per_ra; q++) {
+        unsigned int phase = phase_offset + q;
+        unsigned int suffix_len = (total_phases - 1u - phase) * AP_CHUNK_LEN;
+        unsigned int chunk = ap_chunk(index, suffix_len);
+        u64 value[LIMBS], product[LIMBS];
+        load4(v_tables[phase] + (unsigned long long)chunk * LIMBS, value);
+        fr_mul(acc, value, product);
+        store4(acc, product);
+    }
+    store4(out + (unsigned long long)j * LIMBS, acc);
+}

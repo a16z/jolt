@@ -95,6 +95,36 @@ impl DeviceDenseProduct {
         })
     }
 
+    pub fn from_device(
+        factors: Vec<DeviceFrVec>,
+        rounds: usize,
+        degree: usize,
+    ) -> Result<Self, CudaError> {
+        let expected = 1usize << rounds;
+        for table in &factors {
+            if table.len() != expected {
+                return Err(CudaError::LengthMismatch {
+                    expected,
+                    got: table.len(),
+                });
+            }
+        }
+        if factors.is_empty() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a dense product needs at least one factor",
+            });
+        }
+        Ok(Self {
+            weight: None,
+            factors,
+            one_hot: None,
+            lt: None,
+            degree,
+            rounds,
+            rounds_bound: 0,
+        })
+    }
+
     fn combine_weights<F: Field>(
         context: &CudaKernelContext,
         weights: &[(F, Vec<F>)],
