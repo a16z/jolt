@@ -1,0 +1,123 @@
+{
+  "schema": "metal_ram_val_check_observation_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-06",
+  "evidence_stage": "observed",
+  "candidate": {
+    "git_revision": "64c27189594f1e5548ccd90983cd75e976fca7b8",
+    "analysis_revision": "a18834ed6",
+    "binary_path": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "e9b7372427b1c00a2b6bd7f7379dfbf8984537661c05d650c2a7cda95cfb6ddf",
+    "rust_source_sha256": "dae5c94da9454ddc64d7c67509d0d1b94156e9c6360eabcc42aed7c3628a95c0",
+    "shader_source_sha256": "c54a62b58c5bae18299af2a33b50f928c7145a03697361e54362d4447cd5b0bc",
+    "benchmark_source_sha256": "b72fb067e688c3ce0e74e212caef15fba1fde5ae82855d0f08fb387ae234164c"
+  },
+  "contract": {
+    "retained_command": "JOLT_SOLINAS_BENCH_FAMILY=ram-val-check JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_METAL_RAM_VAL_CHECK_WARMUP_MS=500 JOLT_METAL_RAM_VAL_CHECK_MEASUREMENT_MS=2000 cargo bench -p jolt-kernels --bench metal_solinas --features metal,test-utils -- metal_wall_hybrid_no_fs",
+    "elements": 67108864,
+    "address_elements": 8192,
+    "lt_low_elements": 8192,
+    "lt_high_elements": 8192,
+    "gpu_bind_rounds": 10,
+    "gpu_message_rounds": 11,
+    "cpu_tail_elements": 65536,
+    "threads_per_threadgroup": {
+      "first_message": 32,
+      "native_transition": 32,
+      "dense_transition": 32
+    },
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "field_offset": 4294944759,
+    "resident_bytes": 2685665280,
+    "tail_handoff_bytes": 2097152,
+    "round_device_buffer_allocations": 0,
+    "useful_prefix_multiplications": 537083904,
+    "cpu_reference": "frozen optimized RamValCheck complete member",
+    "cpu_reference_ms": 234.656875,
+    "five_x_wall_cap_ms": 46.931375,
+    "pre_registered_active_bars_ms": {
+      "first_message": 13.907,
+      "native_transition": 11.590,
+      "dense_ladder": 11.594,
+      "prefix_sum": 37.091
+    }
+  },
+  "retained_observation": {
+    "excluded_native_row_upload_ms": 113.846958,
+    "separate_sequence_setup_ms": 0.9335,
+    "warm_prefix_wall_ms": 26.679625,
+    "warm_prefix_active_ms": 24.313125,
+    "cpu_tail_wall_ms": 4.507584,
+    "hybrid_no_fiat_shamir_wall_ms": 31.187209,
+    "hybrid_no_fiat_shamir_criterion_interval_ms": [30.890, 31.106, 31.232],
+    "hybrid_no_fiat_shamir_speedup_at_median": 7.54378,
+    "warm_phase_active_ms": [
+      7.918792,
+      7.425,
+      3.835833,
+      1.98175,
+      1.065,
+      0.630875,
+      0.40425,
+      0.280875,
+      0.263,
+      0.255917,
+      0.251833
+    ],
+    "useful_prefix_multiplications_per_second": 22261100000
+  },
+  "cutoff_screen": [
+    {
+      "gpu_bind_rounds": 9,
+      "one_shot_hybrid_no_fiat_shamir_ms": 32.425125,
+      "speedup": 7.236884
+    },
+    {
+      "gpu_bind_rounds": 10,
+      "one_shot_hybrid_no_fiat_shamir_ms": 31.223,
+      "speedup": 7.515513,
+      "criterion_median_ms": 31.106
+    },
+    {
+      "gpu_bind_rounds": 11,
+      "one_shot_hybrid_no_fiat_shamir_ms": 30.426501,
+      "speedup": 7.712253,
+      "criterion_median_ms": 31.901
+    },
+    {
+      "gpu_bind_rounds": 12,
+      "one_shot_hybrid_no_fiat_shamir_ms": 31.527916,
+      "speedup": 7.442829
+    }
+  ],
+  "rejected_adjustments": [
+    {
+      "adjustment": "14-bit LT low half",
+      "reason": "warm prefix active time rose to 25.155917 ms and the two largest phases slowed"
+    },
+    {
+      "adjustment": "11 GPU binds",
+      "reason": "focused Criterion median regressed 3.67 percent versus the retained 10-bind schedule"
+    },
+    {
+      "adjustment": "threadgroup widths above 32",
+      "reason": "64, 128, and 512 threads did not improve the complete prefix"
+    }
+  ],
+  "guards": {
+    "independent_oracle_matches_metal_at_every_boundary": true,
+    "signed_u64_magnitude_and_field_edges_covered": true,
+    "zero_one_minus_one_and_random_challenges_covered": true,
+    "resident_row_allocation_identity_checked": true,
+    "cpu_tail_final_bind_checked_against_full_dense_evaluation": true,
+    "all_244_jolt_kernel_tests_passed": true,
+    "clippy_all_targets_passed": true,
+    "source_assembly_tests_passed": true
+  },
+  "verdict": {
+    "status": "resident_hybrid_pass_integration_pending",
+    "reason": "The retained resident Metal prefix plus an exact CPU continuation clears the 5x floor with a 7.54x Criterion median and exact low-level parity. The separately uploaded 1-GiB native row buffer costs over 100 ms, and the benchmark does not yet include proof-stage host Fiat-Shamir, so this is not a complete-member promotion.",
+    "next_test": "Have the shared RAM witness producer fill RamValCheckRows directly, wire the SumcheckKernel adapter to the optimized CPU tail, then run paired complete stage-4 CPU and Metal-hybrid proofs including host Fiat-Shamir and output-claim validation."
+  }
+}
