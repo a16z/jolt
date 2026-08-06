@@ -1,13 +1,22 @@
 //! Checked geometry, schedule, storage, and roofline accounting.
 
+use core::mem::size_of;
+
 pub const FROZEN_EVALUATOR: &str = "benchmark-runs/metal-piop-eval/20260806-133709-697013";
 pub const FROZEN_REVISION: &str = "5f520c21e338632aa0bf5936ceb02be6c22fa40f";
 pub const FROZEN_COMPLETE_CPU_NS: u64 = 337_038_126;
 pub const TARGET_FIVE_X_NS: u64 = FROZEN_COMPLETE_CPU_NS / 5;
 pub const TARGET_EIGHT_X_NS: u64 = FROZEN_COMPLETE_CPU_NS / 8;
 pub const TARGET_LOG_T: usize = 26;
+pub const FROZEN_CPU_TAIL_2_16_NS: u64 = 3_808_875;
 
 pub const FIELD_BYTES: u128 = 16;
+pub const INDEX_BYTES: u128 = 1;
+pub const HOST_OPTION_INDEX_BYTES: u128 = 2;
+pub const RESIDENT_INPUT_BYTES_PER_ROW: u128 = FIELD_BYTES + INDEX_BYTES;
+pub const STAGE4_SOURCE_BYTES_PER_ROW: u128 = FIELD_BYTES + HOST_OPTION_INDEX_BYTES;
+pub const STAGE4_PUBLISH_BYTES_PER_ROW: u128 =
+    STAGE4_SOURCE_BYTES_PER_ROW + RESIDENT_INPUT_BYTES_PER_ROW;
 pub const REGISTER_ADDRESS_DOMAIN: usize = 128;
 pub const DEFAULT_TRACE_CUTOFF_ELEMENTS: usize = 1 << 20;
 pub const DEFAULT_CPU_TAIL_ELEMENTS: usize = 1 << 16;
@@ -15,6 +24,8 @@ pub const DEFAULT_CPU_TAIL_ELEMENTS: usize = 1 << 16;
 pub const M4_MAX_COPY_BYTES_PER_SECOND: u64 = 451_701_710_520;
 pub const M4_MAX_SIX_ACCUMULATOR_PRODUCTS_PER_SECOND: u64 = 18_100_000_000;
 pub const M4_MAX_DIRECT_PRODUCTS_PER_SECOND: u64 = 32_330_000_000;
+
+const _: () = assert!(size_of::<Option<u8>>() == HOST_OPTION_INDEX_BYTES as usize);
 
 pub const fn five_x_accepts(metal_ns: u64) -> bool {
     (metal_ns as u128) * 5 <= FROZEN_COMPLETE_CPU_NS as u128
@@ -388,6 +399,96 @@ impl RegistersValPlan {
             })
             .collect()
     }
+
+    /// Baseline producer: stage 4 copies the already-materialized canonical
+    /// increment and `rd` index tables into two proof-session-owned buffers.
+    /// A future native Metal producer may replace this only with allocation-
+    /// identity evidence.
+    pub fn producer_projection(
+        &self,
+        controls: RegistersValRoofControls,
+    ) -> Result<ProducerProjection, RegistersValPlanError> {
+        controls.validate()?;
+        if self.execution != RegistersValExecution::MetalHybrid {
+            return Ok(ProducerProjection {
+                source_read_bytes: 0,
+                published_bytes: 0,
+                logical_bytes: 0,
+                traffic_floor_ns: 0,
+                admitted_ns: 0,
+            });
+        }
+        let rows = self.shape.elements as u128;
+        let source_read_bytes = STAGE4_SOURCE_BYTES_PER_ROW
+            .checked_mul(rows)
+            .ok_or(RegistersValPlanError::SizeOverflow)?;
+        let published_bytes = RESIDENT_INPUT_BYTES_PER_ROW
+            .checked_mul(rows)
+            .ok_or(RegistersValPlanError::SizeOverflow)?;
+        let logical_bytes = STAGE4_PUBLISH_BYTES_PER_ROW
+            .checked_mul(rows)
+            .ok_or(RegistersValPlanError::SizeOverflow)?;
+        let traffic_floor_ns = rate_time_ns(logical_bytes, controls.copy_bytes_per_second)?;
+        let admitted_ns = ceil_div(
+            traffic_floor_ns
+                .checked_mul(100)
+                .ok_or(RegistersValPlanError::SizeOverflow)?,
+            controls.admitted_percent as u128,
+        );
+        Ok(ProducerProjection {
+            source_read_bytes,
+            published_bytes,
+            logical_bytes,
+            traffic_floor_ns,
+            admitted_ns,
+        })
+    }
+
+    pub fn fixed_boundary_projection(
+        &self,
+        variant: KernelVariant,
+        controls: RegistersValRoofControls,
+    ) -> Result<FixedBoundaryProjection, RegistersValPlanError> {
+        if self.execution != RegistersValExecution::MetalHybrid {
+            return Err(RegistersValPlanError::NoMetalProjection);
+        }
+        if self.effective_cpu_tail_elements != DEFAULT_CPU_TAIL_ELEMENTS {
+            return Err(RegistersValPlanError::UnmodeledCpuTail {
+                got: self.effective_cpu_tail_elements,
+            });
+        }
+        let metal_prefix_admitted_ns =
+            self.project(variant, controls)?
+                .iter()
+                .try_fold(0u128, |sum, phase| {
+                    sum.checked_add(phase.admitted_ns)
+                        .ok_or(RegistersValPlanError::SizeOverflow)
+                })?;
+        let producer_admitted_ns = self.producer_projection(controls)?.admitted_ns;
+        let readback_bytes = 2u128
+            .checked_mul(self.effective_cpu_tail_elements as u128)
+            .and_then(|value| value.checked_mul(FIELD_BYTES))
+            .ok_or(RegistersValPlanError::SizeOverflow)?;
+        let readback_floor_ns = rate_time_ns(readback_bytes, controls.copy_bytes_per_second)?;
+        let readback_admitted_ns = ceil_div(
+            readback_floor_ns
+                .checked_mul(100)
+                .ok_or(RegistersValPlanError::SizeOverflow)?,
+            controls.admitted_percent as u128,
+        );
+        let accounted_ns = metal_prefix_admitted_ns
+            .checked_add(producer_admitted_ns)
+            .and_then(|value| value.checked_add(readback_admitted_ns))
+            .and_then(|value| value.checked_add(FROZEN_CPU_TAIL_2_16_NS as u128))
+            .ok_or(RegistersValPlanError::SizeOverflow)?;
+        Ok(FixedBoundaryProjection {
+            metal_prefix_admitted_ns,
+            producer_admitted_ns,
+            readback_admitted_ns,
+            cpu_tail_ns: FROZEN_CPU_TAIL_2_16_NS as u128,
+            accounted_ns,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -466,6 +567,30 @@ pub struct ResidentBytes {
     pub largest_buffer: u128,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProducerProjection {
+    pub source_read_bytes: u128,
+    pub published_bytes: u128,
+    pub logical_bytes: u128,
+    pub traffic_floor_ns: u128,
+    pub admitted_ns: u128,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FixedBoundaryProjection {
+    pub metal_prefix_admitted_ns: u128,
+    pub producer_admitted_ns: u128,
+    pub readback_admitted_ns: u128,
+    pub cpu_tail_ns: u128,
+    pub accounted_ns: u128,
+}
+
+impl FixedBoundaryProjection {
+    pub const fn headroom_ns(self, target_ns: u64) -> Option<u128> {
+        (target_ns as u128).checked_sub(self.accounted_ns)
+    }
+}
+
 fn checked_pow2(bits: usize) -> Result<usize, RegistersValPlanError> {
     1usize
         .checked_shl(u32::try_from(bits).map_err(|_| RegistersValPlanError::SizeOverflow)?)
@@ -491,6 +616,8 @@ pub enum RegistersValPlanError {
     DeviceWindowOutsideRelation { messages: usize, rounds: usize },
     ZeroRoofControl,
     InvalidRoofPercent { got: u8 },
+    NoMetalProjection,
+    UnmodeledCpuTail { got: usize },
     SizeOverflow,
 }
 
@@ -525,6 +652,35 @@ mod tests {
         assert_eq!(resident.peak, 2_752_645_120);
         assert_eq!(resident.cpu_readback, 2_097_152);
         assert_eq!(resident.largest_buffer, 1_073_741_824);
+
+        let controls = RegistersValRoofControls::default();
+        let producer = plan.producer_projection(controls).unwrap();
+        assert_eq!(producer.source_read_bytes, 1_207_959_552);
+        assert_eq!(producer.published_bytes, 1_140_850_688);
+        assert_eq!(producer.logical_bytes, 2_348_810_240);
+        assert_eq!(producer.traffic_floor_ns, 5_199_915);
+        assert_eq!(producer.admitted_ns, 6_499_894);
+
+        let factorized_phases = plan
+            .project(KernelVariant::FactorizedSixAccumulator, controls)
+            .unwrap();
+        assert_eq!(factorized_phases[2].arithmetic_floor_ns, 9_275_517);
+        assert_eq!(factorized_phases[2].admitted_ns, 11_594_397);
+
+        let factorized = plan
+            .fixed_boundary_projection(KernelVariant::FactorizedSixAccumulator, controls)
+            .unwrap();
+        assert_eq!(factorized.metal_prefix_admitted_ns, 37_091_432);
+        assert_eq!(factorized.readback_admitted_ns, 5_804);
+        assert_eq!(factorized.accounted_ns, 47_406_005);
+        assert_eq!(factorized.headroom_ns(TARGET_FIVE_X_NS), Some(20_001_620));
+
+        let direct = plan
+            .fixed_boundary_projection(KernelVariant::DirectLtThreeAccumulator, controls)
+            .unwrap();
+        assert_eq!(direct.metal_prefix_admitted_ns, 29_005_520);
+        assert_eq!(direct.accounted_ns, 39_320_093);
+        assert_eq!(direct.headroom_ns(TARGET_EIGHT_X_NS), Some(2_809_672));
     }
 
     #[test]

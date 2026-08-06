@@ -39,6 +39,28 @@ pub struct RegistersValOracle<F> {
 }
 
 impl<F: Field> RegistersValOracle<F> {
+    pub fn from_points(
+        inc: Vec<F>,
+        rd: &[u8],
+        r_address: &[F],
+        r_cycle: &[F],
+    ) -> Result<Self, RegistersValOracleError> {
+        if r_address.len() != 7 {
+            return Err(RegistersValOracleError::AddressPointLength {
+                got: r_address.len(),
+            });
+        }
+        if point_rows(r_cycle.len())? != inc.len() {
+            return Err(RegistersValOracleError::CyclePointLength {
+                got: r_cycle.len(),
+                rows: inc.len(),
+            });
+        }
+        let eq_address = eq_evaluations(r_address)?;
+        let lt = lt_evaluations(r_cycle)?;
+        Self::from_indices(inc, rd, &eq_address, lt)
+    }
+
     pub fn from_indices(
         inc: Vec<F>,
         rd: &[u8],
@@ -198,6 +220,64 @@ impl<F: Field> RegistersValOracle<F> {
     }
 }
 
+/// Big-endian Boolean-hypercube evaluations, written independently of the
+/// production split-table implementation.
+pub fn eq_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RegistersValOracleError> {
+    let rows = point_rows(point.len())?;
+    Ok((0..rows)
+        .map(|index| {
+            point
+                .iter()
+                .enumerate()
+                .map(|(position, value)| {
+                    let bit = (index >> (point.len() - 1 - position)) & 1;
+                    if bit == 0 {
+                        F::one() - *value
+                    } else {
+                        *value
+                    }
+                })
+                .product()
+        })
+        .collect())
+}
+
+/// Dense `LT(index, point)` evaluations from the defining prefix formula.
+pub fn lt_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RegistersValOracleError> {
+    let rows = point_rows(point.len())?;
+    Ok((0..rows)
+        .map(|index| {
+            let mut lt = F::zero();
+            let mut eq_prefix = F::one();
+            for (position, value) in point.iter().enumerate() {
+                let bit = (index >> (point.len() - 1 - position)) & 1;
+                if bit == 0 {
+                    lt += *value * eq_prefix;
+                    eq_prefix *= F::one() - *value;
+                } else {
+                    eq_prefix *= *value;
+                }
+            }
+            lt
+        })
+        .collect())
+}
+
+pub fn output_point<F: Field>(r_address: &[F], bind_challenges: &[F]) -> Vec<F> {
+    r_address
+        .iter()
+        .copied()
+        .chain(bind_challenges.iter().rev().copied())
+        .collect()
+}
+
+fn point_rows(bits: usize) -> Result<usize, RegistersValOracleError> {
+    let shift = u32::try_from(bits).map_err(|_| RegistersValOracleError::PointTooLong)?;
+    1usize
+        .checked_shl(shift)
+        .ok_or(RegistersValOracleError::PointTooLong)
+}
+
 fn samples<F: Field>(low: F, high: F) -> [F; 4] {
     let delta = high - low;
     let at_2 = high + delta;
@@ -226,6 +306,14 @@ pub enum RegistersValOracleError {
     AddressTableLength {
         got: usize,
     },
+    AddressPointLength {
+        got: usize,
+    },
+    CyclePointLength {
+        got: usize,
+        rows: usize,
+    },
+    PointTooLong,
     RegisterOutsideDomain {
         got: u8,
     },
@@ -348,6 +436,34 @@ mod tests {
             )
             .unwrap_err(),
             RegistersValOracleError::RegisterOutsideDomain { got: 128 }
+        );
+    }
+
+    #[test]
+    fn point_constructor_uses_big_endian_eq_and_lt_tables() {
+        let zero = AkitaField::zero();
+        let one = AkitaField::one();
+        let r_address = vec![zero, zero, zero, zero, zero, zero, one];
+        let r_cycle = vec![one, zero];
+        let oracle = RegistersValOracle::from_points(
+            vec![field(2), field(3), field(5), field(7)],
+            &[1, u8::MAX, 1, 1],
+            &r_address,
+            &r_cycle,
+        )
+        .unwrap();
+        let (_, wa, lt) = oracle.tables();
+        assert_eq!(wa, &[one, zero, one, one]);
+        assert_eq!(lt, &[one, one, zero, zero]);
+
+        let challenges = [field(11), field(13)];
+        assert_eq!(
+            output_point(&r_address, &challenges),
+            r_address
+                .iter()
+                .copied()
+                .chain([field(13), field(11)])
+                .collect::<Vec<_>>()
         );
     }
 }

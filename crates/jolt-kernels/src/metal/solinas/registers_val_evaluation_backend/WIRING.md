@@ -1,10 +1,11 @@
 # Registers value-evaluation Metal backend contract
 
 This directory is an isolated continuation design for the high-level
-`RegistersValEvaluation` member. It does not register a backend, source
-fragment, benchmark, or test. The existing low-level implementation in
-`solinas/registers_val/` is a read-only input to this design and already owns
-the four required entry points:
+`RegistersValEvaluation` member. It does not register a backend or shader
+source fragment and has no benchmark, GPU test, or production integration
+test. Its Rust-only ABI, model, and oracle have unit tests. The existing
+low-level implementation in `solinas/registers_val/` is a read-only input to
+this design and already owns the four factorized entry points:
 
 ```text
 solinas_registers_val_first_message_factorized
@@ -13,9 +14,11 @@ solinas_registers_val_dense_transition
 solinas_registers_val_reduce
 ```
 
-No duplicate shader is added here. The checked plan and dense scalar oracle
-make the integration boundary and the one analytically justified alternative
-explicit without consuming GPU test time.
+The isolated `shader.metal` adds only
+`solinas_registers_val_direct_first_message`, the decisive first slice of the
+three-accumulator stretch candidate. It is intentionally unregistered and
+uncompiled. The checked ABI, model, and dense scalar oracle freeze the
+integration boundary without consuming GPU test time.
 
 The production relation was traced through:
 
@@ -106,6 +109,14 @@ The observable output order is exactly:
 rd_inc, rd_wa.
 ```
 
+`oracle.rs` constructs both address equality and cycle LT tables directly
+from their big-endian defining formulas, then runs a fully dense three-table
+sumcheck. It does not call the optimized split-LT or sparse-WA code. It also
+constructs the output point as
+`r_address || reverse(bind_challenges)`. This is the intended parity oracle
+for native, direct, dense, handoff, and terminal comparisons. No GPU or
+production integration test compares a kernel against it yet.
+
 The kernel's fully bound LT scalar must equal
 
 ```text
@@ -190,9 +201,10 @@ member speedup.
 The first implementation should reuse the factorized low-level sequence
 without changing a message byte:
 
-1. Borrow resident `rd_inc` and `rd_index` planes. Build only the 128-entry
-   address equality table and the three split-LT tables on the host. Allocate
-   both dense arenas and reduction scratch once.
+1. Take the typed stage-4 owner and borrow its `rd_inc` and `rd_index`
+   planes. Build only the 128-entry address equality table and the three
+   split-LT tables on the host. Allocate both dense arenas and reduction
+   scratch once.
 2. Submit the first-message command during `prepare`. It has no pending
    challenge, so it can run during the member's 128 inactive batch rounds.
    The first active `prove_round` joins it and returns `[s(0), s(2), s(3)]`.
@@ -224,32 +236,52 @@ that challenge is incorrect.
 
 ## Producer ownership and fair attribution
 
-The optimized CPU lifecycle supplies the two native inputs asymmetrically:
-
-- stage-4 `RegistersReadWriteChecking` parks the `rd` indices in
-  `SharedRdIndices`; and
-- stage 5 materializes `RdInc` from `OwnedRows` on its first active round.
-
-A Metal producer should mirror that lifetime with a typed session owner over
-two cycle-ordered planes:
+There is an exact producer at the stage-4 boundary; no future grouped or
+device-native row source is assumed. `OptimizedRegistersReadWrite::prepare`
+already materializes the canonical `inc_table` and collects `rd_indices`
+before moving them into its CPU kernel. The first implementation copies those
+two already-required arrays once into a typed proof-session owner:
 
 | Plane | ABI | Log-26 bytes |
 | --- | ---: | ---: |
 | `rd_inc` | canonical `Fp128`, 16-byte stride | 1,073,741,824 |
 | `rd_index` | `u8`, `0xff` means no write | 67,108,864 |
 
-The owner records row count, byte lengths, device-registry ID, allocation
-identities, cycle order, field canonicality, sentinel convention, and the
-fact that every non-sentinel index is below 128. The member borrows those
-planes through the native transition. They may be released or returned to
-the session only after that command completes.
+The stage-4 source is 16-byte canonical fields plus Rust's two-byte
+`Option<u8>` index representation. Publishing reads `18N` bytes and writes
+the `17N`-byte SoA owner, or `35N = 2,348,810,240` logical bytes at log 26.
+At 451,701,710,520 B/s its copy floor is 5.199915 ms and its 80%-roof cap is
+6.499894 ms. Allocation, first touch, field conversion, and
+option-to-sentinel conversion remain timed; the roof is not a promise that
+they are free.
+
+`RegistersValResidentInputAbi` records row count, exact byte lengths,
+device-registry ID, two distinct allocation identities, a nonzero proof
+generation, stage 4 as producer, cycle order, and field canonicality. The
+member holds the owner through the native transition because both message
+zero and message one read it. It releases the owner only after that command
+completes.
+
+Publication fills the final shared Metal allocations directly. A temporary
+`Vec<Fp128>` or second sentinel-index vector is rejected: either would add an
+uncharged whole-plane copy. The carry raises the existing stage-4 peak by
+exactly 1,140,850,688 buffer bytes at log 26, then survives the stage boundary
+until message one's command completes. Admission reserves that delta before
+either allocation and also checks the later 2,752,645,120-byte stage-5 set;
+failure leaves the CPU sources untouched and selects CPU.
+
+The CPU fallback keeps `SharedRdIndices`; publishing the Metal owner does not
+consume the only fallback source. A wrong device, stale generation, invalid
+index, failed capacity check, or publication failure selects CPU before the
+first device command. Once a device command succeeds, later errors abort the
+proof rather than retrying from mutated state.
 
 Starting the timer with free populated inputs is not a valid complete-member
-comparison. Either the Metal service interval includes the incremental
-production of both planes, or the evaluator applies one fixed producer
-attribution to both implementations and checks whole-PIOP wall as the final
-arbiter. Asynchronous production and first-message overlap may improve PIOP
-wall, but their full lifecycle remains visible in service accounting.
+comparison. The local Metal service interval includes the incremental stage-4
+publication above. Whole-PIOP wall additionally captures any overlap with
+other stage-5 members. A later Metal registers read/write backend may hand off
+the same planes at zero incremental copy only when allocation identities prove
+that it produced them; the baseline never credits that unavailable path.
 
 The existing `prepare_registers_val_first_message` converts an
 `AkitaField` slice, builds tables, allocates, and copies into private invocation
@@ -273,11 +305,11 @@ The current sequence-owned storage at log 26 is:
 | `2^16` CPU-tail export | 2,097,152 |
 
 This excludes command objects and tiny parameter buffers. The largest
-individual allocation is 1 GiB. At log 27 it is 2 GiB; at log 28 it is 4 GiB
-and exceeds the retained machine's 2-GiB maximum-buffer control. Log-28
-support therefore requires sharded input and dense arenas with explicit
-dispatch offsets. It must fall back rather than relying on aggregate working
-set alone.
+individual allocation is 1 GiB. At log 27 it is 2 GiB and at log 28 it is
+4 GiB, below the retained M4 Max `maxBufferLength` of about 80.64 GiB. The
+single buffers are API-legal at log 28; admission still checks the aggregate
+working set and falls back before partial allocation if unified-memory
+pressure is unsafe.
 
 ## Factorized work and roof
 
@@ -315,14 +347,15 @@ traffic floors to each phase gives:
 | --- | ---: | ---: |
 | First message | 11.125732 ms arithmetic | 13.907165 ms |
 | Native transition | 9.271896 ms arithmetic | 11.589870 ms |
-| Dense ladder | 9.275516 ms arithmetic | 11.594396 ms |
-| Device prefix | 29.673144 ms | 37.091430 ms |
+| Dense ladder | 9.275517 ms arithmetic | 11.594397 ms |
+| Device prefix | 29.673145 ms | 37.091432 ms |
 
-This leaves `30.316195 ms` below the hard 5x cap for the charged producer,
-host table work, 11 submission/wait boundaries, state export, CPU tail,
-output checks, and transcript work. That is enough analytical headroom to
-integrate the existing primitives before changing their algebra. It is not a
-speedup claim.
+Adding the exact stage-4 publication cap (6.499894 ms), the measured `2^16`
+CPU suffix (3.808875 ms), and the 2-MiB export cap (0.005804 ms) gives a
+47.406005-ms accounted boundary. It leaves 20.001620 ms below the hard 5x cap
+for host table work, 11 submission/wait boundaries, output checks, and
+transcript work. That is enough analytical headroom to integrate the existing
+primitives before changing their algebra. It is not a speedup claim.
 
 ## One justified stretch alternative
 
@@ -347,20 +380,69 @@ product per sample. Its work is:
 | Dense ladder | `3.25(N - 2C)` | `48(N - 2C)` |
 
 Using the unmatched `32.33-Gproduct/s` best relevant low-pressure control,
-the target's projected 80%-roof caps are `11.676071`, `8.432718`, and
-`8.896729 ms`, or `29.005517 ms` total. Direct LT is projected to beat the
+the target's projected 80%-roof caps are `11.676072`, `8.432719`, and
+`8.896729 ms`, or `29.005520 ms` total. Direct LT is projected to beat the
 factorized form only if the actual low-pressure/high-pressure rate ratio is
 greater than `1.5` for the first message and `1.3` for transitions. The
 retained controls satisfy those inequalities, but this exact shader has not
 been measured.
 
-Therefore the direct-LT primitive is the only shader experiment justified by
-this analysis. Implement it after the resident factorized path establishes a
-complete baseline, or earlier only if an Instruments capture confirms
-register-limited residency or spills. It loses immediately if the measured
-rate ratio misses those thresholds, if extra factor loads defeat the cache
-model, or if complete wall does not improve. Do not add variants that merely
-duplicate the existing factorization.
+With the same producer, CPU suffix, and export charges, direct LT accounts for
+39.320093 ms before commands and host work. The 8x cap is 42.129765 ms, so the
+stretch path has only 2.809672 ms for every remaining boundary. Eight times is
+plausible, not established; the first slice below decides whether the rest is
+worth writing.
+
+Therefore direct LT is the only shader experiment justified by this analysis.
+It loses immediately if the measured rate ratio misses those thresholds, if
+extra factor loads defeat the cache model, or if complete wall does not
+improve. Do not add variants that merely duplicate the existing
+factorization.
+
+### First kernel slice
+
+`shader.metal` contains only
+`solinas_registers_val_direct_first_message`. It consumes the exact resident
+SoA and writes sample-major partials for `t = 0, 2, 3`:
+
+The eventual source order is `fp128.metal`, `simd_reduce.metal`, then this
+file. No other experimental fragment is required.
+
+| Buffer | Contents |
+| ---: | --- |
+| 0 | canonical `rd_inc[T]` |
+| 1 | `rd_index[T]`, `0xff` absent |
+| 2 | `eq_address[128]` |
+| 3 | `lt_lo[2^13]` |
+| 4 | `lt_hi[2^13]` |
+| 5 | `eq_hi[2^13]` |
+| 6 | partials `[3][threadgroups]` |
+| 7 | 32-byte `RegistersValDirectFirstParams` |
+| 8 | two atomic audit counters |
+
+The initial dispatch is 8,192 groups by 128 threads. Its checked launch takes
+the compiled pipeline execution width and maximum threadgroup width as
+inputs. It derives the exact 1,048,576-thread grid, 393,216-byte partial
+buffer, and 192-byte dynamic threadgroup allocation with checked arithmetic;
+it checks the partial buffer and static plus dynamic threadgroup memory
+against the corresponding device limits. The parameter block records both
+requested dispatch dimensions. The shader compares them with
+`threadgroups_per_grid` and
+`threads_per_threadgroup` before reading a row, and uses a 64-bit grid stride
+after the host has proved the product fits `u32`.
+
+The 33,554,432 cycle pairs divide evenly over the grid, so every lane
+evaluates exactly 32 pairs. Each lane owns three field accumulators; four
+SIMD-group results are reduced in threadgroup memory. The kernel issues
+exactly 301,989,888 useful full products, reads `17T` compulsory native bytes,
+writes 393,216 partial bytes, and performs no valid-path atomics.
+
+The existing reduction kernel finishes the three sums. Exact parity against
+the independent dense oracle and zero audit counters are mandatory before
+timing. Retain the slice only if it has no spills, clears its 11.676072-ms
+active cap, and beats the matched factorized first-message active time in both
+orders. Otherwise delete the slice and integrate only the factorized path;
+native and dense direct-LT kernels are not authorized by a failed first test.
 
 ## Crossover
 
@@ -411,10 +493,18 @@ wall improves in both benchmark orders. A phase below 80% of its matched roof
 requires an occupancy, dependency, or bandwidth explanation before more
 algebra variants are tried.
 
+The direct first slice has a separate, stronger lane gate: the fixed log-26
+shape gives every one of its 1,048,576 lanes exactly 32 pairs. A capture that
+shows masked arithmetic, fewer than the requested 8,192 groups, spills, or a
+compiled maximum below 128 threads falsifies the proposed geometry rather
+than licensing a nominal-occupancy claim.
+
 ## Integration steps
 
-1. Add a typed resident input owner and a low-level constructor that borrows
-   its buffers. Validate identity, shape, device, ABI, and allocation limits.
+1. In stage 4, publish the already-materialized `inc_table` and collected
+   `rd_indices` into the typed owner, while retaining the CPU fallback carry.
+   Add a low-level constructor that borrows those buffers and validates
+   identity, generation, shape, device, ABI, and allocation limits.
 2. `RegistersValSequence::read_current_dense_state_into` now fills
    preallocated host storage and validates the exact row count. The production
    adapter must report its `32C`-byte readback boundary.
@@ -458,8 +548,8 @@ Correctness must cover:
 10. the exact `[address || reverse(challenges)]` output point;
 11. canonical stage-5 output absorption order and downstream Akita consumers;
 12. clear proof bytes, verifier result, and final transcript state; and
-13. CPU fallback for wrong device, stale shape, failed allocation admission,
-    and log-28 unsharded buffers.
+13. CPU fallback for wrong device, stale generation or shape, and failed
+    aggregate allocation admission, including log 28.
 
 The design is falsified for promotion by any parity mismatch, transcript
 movement into the device, an uncharged producer/upload, a round allocation,
