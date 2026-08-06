@@ -6,17 +6,26 @@
 
 use std::{any::Any, cell::RefCell, collections::BTreeMap, sync::Arc};
 
-use jolt_field::Field;
+use jolt_field::{Field, FromPrimitiveInt};
 use jolt_transcript::Transcript;
 use jolt_verifier::fs_audit::{self, FsScope};
 
 /// The transcript API used to derive a challenge.
+///
+/// Multi-value APIs are recorded at draw granularity, mirroring the
+/// production trait defaults: `challenge_vector(len)` is `len` independent
+/// squeezes (one [`ChallengeKind::VectorElement`] record each), and
+/// `challenge_scalar_powers(len)` squeezes only its base scalar (one
+/// [`ChallengeKind::PowersBase`] record) with the powers derived locally.
+/// A verifier refactor that drops or short-consumes an element therefore
+/// registers as a per-element tape divergence instead of hiding inside one
+/// atomic `Vec` record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChallengeKind {
     Challenge,
     Scalar,
-    Vector(usize),
-    ScalarPowers(usize),
+    VectorElement { len: usize, index: usize },
+    PowersBase { len: usize },
 }
 
 /// A challenge's verifier scope and ordinal within that scope.
@@ -41,12 +50,28 @@ pub struct ChallengeTape<F> {
 }
 
 impl<F: PartialEq> ChallengeTape<F> {
+    /// First record where the tapes diverge in schedule (id sequence or
+    /// length) or value. A dropped or inserted draw shifts every later
+    /// squeeze without necessarily changing any shared-prefix value, so a
+    /// pure `zip` would truncate to the shorter tape and miss it; the
+    /// trailing check surfaces the first unmatched record instead.
     pub fn first_value_divergence(&self, other: &Self) -> Option<ChallengeId> {
         self.records
             .iter()
             .zip(&other.records)
             .find_map(|(left, right)| {
                 (left.id != right.id || left.values != right.values).then_some(left.id)
+            })
+            .or_else(|| {
+                self.records
+                    .get(other.records.len())
+                    .map(|record| record.id)
+            })
+            .or_else(|| {
+                other
+                    .records
+                    .get(self.records.len())
+                    .map(|record| record.id)
             })
     }
 }
@@ -168,16 +193,28 @@ where
         })[0]
     }
 
+    // WARNING: both bodies must mirror the `Transcript` trait defaults
+    // (`legacy.rs`), which no production transcript overrides — the audit
+    // records at the same granularity the sponge is actually squeezed.
     fn challenge_vector(&mut self, len: usize) -> Vec<Self::Challenge> {
-        draw(ChallengeKind::Vector(len), || {
-            self.inner.challenge_vector(len)
-        })
+        (0..len)
+            .map(|index| {
+                draw(ChallengeKind::VectorElement { len, index }, || {
+                    vec![self.inner.challenge()]
+                })[0]
+            })
+            .collect()
     }
 
     fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge> {
-        draw(ChallengeKind::ScalarPowers(len), || {
-            self.inner.challenge_scalar_powers(len)
-        })
+        let base = draw(ChallengeKind::PowersBase { len }, || {
+            vec![self.inner.challenge_scalar()]
+        })[0];
+        let mut powers = vec![Self::Challenge::from_u64(1); len];
+        for index in 1..len {
+            powers[index] = powers[index - 1] * base;
+        }
+        powers
     }
 
     fn state(&self) -> [u8; 32] {

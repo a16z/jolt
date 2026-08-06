@@ -17,7 +17,7 @@ use serde_json::Value;
 use syn::{
     visit::{self, Visit},
     Attribute, ExprCall, ExprMethodCall, ImplItemFn, ItemEnum, ItemFn, ItemImpl, ItemMod,
-    ItemStruct, Macro, TraitItemFn,
+    ItemStruct, ItemTrait, Macro, TraitItemFn,
 };
 
 const ABSORB_INVENTORY: &str = "tests/fs_inventory/absorb-sites.inventory";
@@ -243,7 +243,12 @@ fn check_inventory(path: &Path, label: &str, actual: &BTreeSet<String>) {
 struct InventoryVisitor {
     file_id: String,
     context: Vec<String>,
-    call_ordinals: BTreeMap<(String, String), usize>,
+    /// One counter per context, shared by absorb and challenge records, so
+    /// an identity encodes its position in the combined absorb/challenge
+    /// sequence. Reordering an absorb against a squeeze — the canonical
+    /// weak-FS bug — renumbers both sites and trips the inventory even when
+    /// each per-kind subsequence is unchanged.
+    call_ordinals: BTreeMap<String, usize>,
     absorb_sites: BTreeSet<String>,
     challenge_sites: BTreeSet<String>,
     scope_sites: BTreeSet<String>,
@@ -271,8 +276,7 @@ impl InventoryVisitor {
 
     fn record_absorb(&mut self, kind: &str, expression: &impl ToTokens) {
         let context = self.context();
-        let key = (context.clone(), format!("absorb:{kind}"));
-        let ordinal = self.call_ordinals.entry(key).or_default();
+        let ordinal = self.call_ordinals.entry(context.clone()).or_default();
         let expression = expression.to_token_stream().to_string().replace(' ', "");
         let _ = self.absorb_sites.insert(format!(
             "{}::{}::{}#{}::{expression}",
@@ -283,8 +287,7 @@ impl InventoryVisitor {
 
     fn record_challenge(&mut self, kind: &str) {
         let context = self.context();
-        let key = (context.clone(), kind.to_owned());
-        let ordinal = self.call_ordinals.entry(key).or_default();
+        let ordinal = self.call_ordinals.entry(context.clone()).or_default();
         let _ = self.challenge_sites.insert(format!(
             "{}::{}::{}#{}",
             self.file_id, context, kind, *ordinal
@@ -401,6 +404,15 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
         });
     }
 
+    fn visit_item_trait(&mut self, item: &'ast ItemTrait) {
+        if cfg_test(&item.attrs) {
+            return;
+        }
+        self.with_context(item.ident.to_string(), |visitor| {
+            visit::visit_item_trait(visitor, item);
+        });
+    }
+
     fn visit_expr_method_call(&mut self, expression: &'ast ExprMethodCall) {
         let method = expression.method.to_string();
         if is_challenge_call(&method) {
@@ -419,10 +431,20 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
         let receives_transcript = arguments.to_ascii_lowercase().contains("transcript");
         let is_named_absorb =
             method.starts_with("absorb") || (method.starts_with("bind_") && receives_transcript);
+        // A bare `self.append(...)` is a transcript absorb only when `self`
+        // is a transcript: inside the `jolt-transcript` package or inside a
+        // `*Transcript*` impl/trait scope. Without the scope requirement,
+        // unrelated builder methods (e.g. `BlindFoldStatement::build`'s
+        // `self.append(builder, ...)`) enroll as false positives.
+        let self_is_transcript = self.file_id.starts_with("jolt-transcript::")
+            || self
+                .context
+                .iter()
+                .any(|scope| scope.contains("Transcript"));
         let is_transcript_method = is_absorb_method(&method)
             && (method == "append_to_transcript"
                 || receiver.to_ascii_lowercase().contains("transcript")
-                || receiver == "self");
+                || (receiver == "self" && self_is_transcript));
         if is_named_absorb || is_transcript_method {
             self.record_absorb(&method, expression);
         }

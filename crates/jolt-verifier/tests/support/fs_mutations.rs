@@ -27,17 +27,16 @@ pub fn cancel_dory_final_opening_commitments<PCS, VC, ZkProof>(
     PCS::Output: HomomorphicCommitment<PCS::Field>,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let gamma_powers = tape
+    let gamma_base = tape
         .records
         .iter()
         .find(|record| {
             record.id.scope == FsScope::Stage8
-                && matches!(record.id.kind, ChallengeKind::ScalarPowers(_))
+                && matches!(record.id.kind, ChallengeKind::PowersBase { len } if len >= 2)
         })
         .expect("stage-8 final-opening batching challenge is missing");
-    assert!(gamma_powers.values.len() >= 2);
-    let gamma_0 = gamma_powers.values[0];
-    let gamma_1 = gamma_powers.values[1];
+    let gamma_0 = PCS::Field::one();
+    let gamma_1 = gamma_base.values[0];
     let direction = proof
         .commitments
         .instruction_ra
@@ -70,7 +69,10 @@ pub fn equivocate_stage1_clear<PCS, VC, ZkProof>(
         .filter(|record| record.id.scope == FsScope::Stage1);
 
     let tau = stage1.next().expect("stage 1 tau challenge is missing");
-    assert!(matches!(tau.id.kind, ChallengeKind::Vector(_)));
+    assert!(matches!(
+        tau.id.kind,
+        ChallengeKind::VectorElement { index: 0, .. }
+    ));
 
     let uniskip_challenge = stage1
         .find(|record| record.id.kind == ChallengeKind::Challenge)
