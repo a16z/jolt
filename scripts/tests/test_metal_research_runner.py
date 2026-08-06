@@ -1380,12 +1380,22 @@ class ResultAdapterTests(unittest.TestCase):
 
     def successor_v2_arm(self, gpu_ns: int) -> dict[str, object]:
         setup_ns = 10
+        materialize_ns = gpu_ns // 2
+        first_bind_ns = gpu_ns // 4
+        dense_ns = gpu_ns // 8
+        openings_ns = gpu_ns - materialize_ns - first_bind_ns - dense_ns
         return {
             "gpu_active_ns": gpu_ns,
             "wall_ns": gpu_ns + 5,
             "resource_gpu_active_ns": gpu_ns + setup_ns,
             "setup_gpu_active_ns": setup_ns,
             "setup_wall_ns": setup_ns + 5,
+            "phase_gpu_active_ns": {
+                "materialize": materialize_ns,
+                "first_bind": first_bind_ns,
+                "dense_rounds": dense_ns,
+                "openings": openings_ns,
+            },
             "tail_elements": 1 << 16,
             "initialized_bytes": 4096,
             "storage_owned_bytes": 4096,
@@ -1577,6 +1587,44 @@ class ResultAdapterTests(unittest.TestCase):
             charge["gpu_active_charge_seconds"],
             output["resources"]["gpu_active_total_ns"] / 1e9,
         )
+        self.assertEqual(
+            result["telemetry"]["candidate_phase_gpu_active_ns"],
+            {
+                "materialize": 50.0,
+                "first_bind": 25.0,
+                "dense_rounds": 12.0,
+                "openings": 13.0,
+            },
+        )
+        self.assertEqual(
+            result["telemetry"]["parent_phase_gpu_active_ns"]["materialize"],
+            125.0,
+        )
+
+        warmup_changed = self.successor_v2_output()
+        warmup_changed["excluded_warmup"]["candidate"] = self.successor_v2_arm(
+            1_000_000
+        )
+        warmup_changed["excluded_warmup"]["parent"] = self.successor_v2_arm(
+            1_000_000
+        )
+        total_ns = sum(
+            arm["resource_gpu_active_ns"]
+            for record in [
+                warmup_changed["excluded_warmup"],
+                *warmup_changed["samples"],
+            ]
+            for arm in (record["parent"], record["candidate"])
+        )
+        warmup_changed["resources"] = {
+            "gpu_active_total_ns": total_ns,
+            "gpu_seconds": total_ns / 1e9,
+        }
+        changed_result, _ = adapt_result(tier, warmup_changed, "outer_remainder")
+        self.assertEqual(
+            changed_result["telemetry"]["candidate_phase_gpu_active_ns"],
+            result["telemetry"]["candidate_phase_gpu_active_ns"],
+        )
 
     def test_outer_successor_v2_rejects_compile_telemetry_drift(self) -> None:
         tier = self.successor_v2_tier()
@@ -1616,6 +1664,15 @@ class ResultAdapterTests(unittest.TestCase):
             "dispatch": lambda value: value["samples"][0]["parent"][
                 "dispatch_counts"
             ].__setitem__("dense_transitions", 8),
+            "phase sum": lambda value: value["samples"][0]["parent"][
+                "phase_gpu_active_ns"
+            ].__setitem__("materialize", 49),
+            "phase bool": lambda value: value["samples"][0]["parent"][
+                "phase_gpu_active_ns"
+            ].__setitem__("materialize", True),
+            "zero materialize": lambda value: value["samples"][0]["parent"][
+                "phase_gpu_active_ns"
+            ].__setitem__("materialize", 0),
             "guard": lambda value: value["guards"].__setitem__(
                 "gpu_timestamps_exact", False
             ),
@@ -2100,7 +2157,11 @@ class RunnerIntegrationTests(unittest.TestCase):
         binary_artifacts.seal_sealed_binary_store(run_dir)
         state["status"] = "initializing"
         runner.write_state(run_dir, state)
-        return runner._continue_initialization(root, run_dir, state)
+        initialized = runner._continue_initialization(root, run_dir, state)
+        initialized["proxy"]["status"] = "enabled"
+        initialized["proxy"]["reason"] = "test sentinel calibration"
+        runner.write_state(run_dir, initialized)
+        return initialized
 
     def outer_output(self) -> dict[str, object]:
         from scripts.tests.test_metal_autoresearch import MetalAutoresearchTests
@@ -2761,7 +2822,7 @@ class RunnerIntegrationTests(unittest.TestCase):
                 )
 
             with mock.patch.object(runner, "execute_tier", side_effect=execute):
-                decision, _ = runner.trial(
+                decision, state = runner.trial(
                     ROOT, run_dir, [], "retry the noisy cheap screen"
                 )
 
@@ -2873,18 +2934,23 @@ class RunnerIntegrationTests(unittest.TestCase):
                 _run_dir: Path,
                 _state: dict[str, object],
                 tier: dict[str, object],
-                _params: dict[str, str],
-                _evaluation_id: str,
+                params: dict[str, str],
+                evaluation_id: str,
                 **_kwargs: object,
             ) -> tuple[dict[str, object], dict[str, object]]:
                 result = neutral if tier["role"] == "proxy" else improved
-                return ({"attempt": {"error": None, "outcome": "success"}}, result)
+                return self.seal_tier_evaluation(
+                    run_dir, tier, params, evaluation_id, result
+                )
 
             with mock.patch.object(runner, "execute_tier", side_effect=execute):
                 decision, normal = runner.trial(
                     ROOT, run_dir, [], "candidate clears representative"
                 )
 
+            pre_trial["phase_checkpoint"] = copy.deepcopy(
+                normal["phase_checkpoint"]
+            )
             recovered, _ = runner._recover_committed_candidate(
                 ROOT,
                 run_dir,
@@ -3027,8 +3093,6 @@ class RunnerIntegrationTests(unittest.TestCase):
                 / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
                 run_dir,
             )
-            state["template"]["runtime_artifact"] = {"tier_id": "screen"}
-            runner.write_state(run_dir, state)
             runner.write_inflight(
                 run_dir,
                 {
@@ -3805,9 +3869,7 @@ class RunnerIntegrationTests(unittest.TestCase):
             screen_output = ResultAdapterTests().successor_v2_output()
             for sample in screen_output["samples"]:
                 parent = sample["parent"]
-                parent["gpu_active_ns"] = 90
-                parent["wall_ns"] = 95
-                parent["resource_gpu_active_ns"] = 100
+                parent.update(ResultAdapterTests().successor_v2_arm(90))
             screen_output["metrics"] = {
                 "successor_speedup": 0.9,
                 "paired_speedups": [0.9] * 4,
@@ -3839,20 +3901,408 @@ class RunnerIntegrationTests(unittest.TestCase):
                 **kwargs: object,
             ) -> tuple[dict[str, object], dict[str, object]]:
                 launches.append(str(tier["id"]))
-                return (
-                    {"attempt": {"error": None, "outcome": "success"}},
+                return self.seal_tier_evaluation(
+                    run_dir,
+                    tier,
+                    params,
+                    evaluation_id,
                     screen_result,
                 )
 
             with mock.patch.object(
                 runner, "_validate_live_state"
             ), mock.patch.object(runner, "execute_tier", side_effect=execute):
-                decision, _ = runner.trial(
+                decision, state = runner.trial(
                     ROOT, run_dir, [], "candidate rejected by the proxy"
                 )
 
             self.assertEqual(launches, ["screen"])
             self.assertEqual(decision["verdict"], "discard")
+            self.assertTrue(decision["phase_checkpoint"]["passed"])
+
+    def test_checkpoint_miss_ends_the_mechanism_phase(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            screen = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier["id"] == "screen"
+            )
+            state["accepted_parent"]["tiers"]["screen"]["relative_mad"] = 0.0
+            runner.write_state(run_dir, state)
+            screen_result, _ = adapt_result(
+                screen,
+                ResultAdapterTests().uniform_successor_v2_output(
+                    100_000_000, 100_000_000
+                ),
+                "outer_remainder",
+            )
+            launches: list[str] = []
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                params: dict[str, str],
+                evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                launches.append(str(tier["id"]))
+                return self.seal_tier_evaluation(
+                    run_dir,
+                    tier,
+                    params,
+                    evaluation_id,
+                    screen_result,
+                )
+
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(runner, "execute_tier", side_effect=execute):
+                decision, state = runner.trial(
+                    ROOT, run_dir, [], "candidate misses the phase checkpoint"
+                )
+
+            self.assertEqual(launches, ["screen"])
+            self.assertFalse(decision["phase_checkpoint"]["passed"])
+            self.assertEqual(state["status"], "phase_exhausted")
+            with mock.patch.object(runner, "_validate_live_state"):
+                with self.assertRaisesRegex(ValueError, "not active"):
+                    runner.trial(ROOT, run_dir, [], "phase is terminal")
+
+    def test_direct_lane_bypasses_ranking_after_the_required_checkpoint(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier["role"] == "representative"
+            )
+            screen = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier["role"] == "proxy"
+            )
+            screen_result, _ = adapt_result(
+                screen,
+                ResultAdapterTests().uniform_successor_v2_output(100, 100),
+                "outer_remainder",
+            )
+            launches: list[str] = []
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                params: dict[str, str],
+                evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                launches.append(str(tier["id"]))
+                result = (
+                    screen_result
+                    if tier["role"] == "proxy"
+                    else self.tier_result(representative, speedup=5.0)
+                )
+                return self.seal_tier_evaluation(
+                    run_dir, tier, params, evaluation_id, result
+                )
+
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(
+                runner, "execute_tier", side_effect=execute
+            ), mock.patch.object(
+                runner, "_promotion_pass", return_value=(True, "promoted")
+            ), mock.patch.object(
+                runner, "_phase_success", return_value=(True, "phase passed")
+            ):
+                decision, state = runner.trial(
+                    ROOT,
+                    run_dir,
+                    [],
+                    "architectural candidate",
+                    direct_to_representative=True,
+                    direct_reason="the proxy cannot model this ownership change",
+                )
+
+            self.assertEqual(launches, ["screen", "representative"])
+            self.assertEqual(decision["verdict"], "keep")
+            self.assertEqual(decision["lane"]["effective"], "representative_direct")
+            self.assertEqual(
+                decision["lane"]["reason"],
+                "the proxy cannot model this ownership change",
+            )
+            self.assertTrue(decision["phase_checkpoint"]["passed"])
+            self.assertTrue(decision["lane"]["checkpoint_probe"])
+            self.assertEqual(
+                state["accepted_parent"]["lane"], decision["lane"]
+            )
+            self.assertEqual(state["proxy"]["status"], "disabled")
+            self.assertEqual(
+                runner.load_state(run_dir)["proxy"]["status"], "disabled"
+            )
+            launches.clear()
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(
+                runner, "execute_tier", side_effect=execute
+            ), mock.patch.object(
+                runner, "_promotion_pass", return_value=(True, "promoted")
+            ), mock.patch.object(
+                runner, "_phase_success", return_value=(True, "phase passed")
+            ):
+                second, _ = runner.trial(
+                    ROOT,
+                    run_dir,
+                    [],
+                    "follow-up after proxy disable",
+                )
+
+            self.assertEqual(launches, ["representative"])
+            self.assertFalse(second["lane"]["requested"])
+            self.assertEqual(
+                second["lane"]["effective"], "representative_direct"
+            )
+            self.assertFalse(second["lane"]["checkpoint_probe"])
+            self.assertEqual(
+                second["phase_checkpoint"], decision["phase_checkpoint"]
+            )
+
+    def test_fixed_sentinel_calibration_enables_proxy_ranking(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            state["proxy"]["status"] = "pending_calibration"
+            state["proxy"]["reason"] = "test pending calibration"
+            runner.write_state(run_dir, state)
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), self.assertRaisesRegex(ValueError, "not calibrated"):
+                runner.trial(ROOT, run_dir, [], "must calibrate first")
+            sentinels = state["template"]["search_policy"]["proxy_calibration"][
+                "sentinels"
+            ]
+            sentinel_rank = {
+                sentinel["id"]: index for index, sentinel in enumerate(sentinels)
+            }
+            launches: list[str] = []
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                _params: dict[str, str],
+                evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                sentinel_id = next(
+                    sentinel_id
+                    for sentinel_id in sentinel_rank
+                    if f"-{sentinel_id}-" in evaluation_id
+                )
+                rank = sentinel_rank[sentinel_id]
+                score = 1.0 + rank * 0.1
+                if tier["role"] == "representative":
+                    score = 4.0 + rank * 0.4
+                launches.append(evaluation_id)
+                return (
+                    {"attempt": {"error": None, "outcome": "success"}},
+                    self.tier_result(tier, speedup=score),
+                )
+
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(runner, "execute_tier", side_effect=execute):
+                event, state = runner.calibrate_proxy(ROOT, run_dir)
+
+            self.assertEqual(len(launches), 2 * len(sentinels))
+            self.assertEqual(event["event"], "proxy_calibrated")
+            self.assertEqual(state["proxy"]["status"], "enabled")
+            self.assertEqual(
+                state["proxy"]["calibration"]["kendall_tau_b"], 1.0
+            )
+
+    def test_proxy_calibration_terminal_event_recovers_without_rerunning(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            state["proxy"]["status"] = "pending_calibration"
+            state["proxy"]["reason"] = "test pending calibration"
+            state["proxy"]["calibration"] = None
+            state["search_started_at"] = "2026-08-06T00:00:00Z"
+            runner.write_state(run_dir, state)
+            sentinels = state["template"]["search_policy"][
+                "proxy_calibration"
+            ]["sentinels"]
+            records = [
+                {
+                    "id": sentinel["id"],
+                    "proxy_score": 1.0 + index * 0.1,
+                    "representative_score": 4.0 + index * 0.4,
+                }
+                for index, sentinel in enumerate(sentinels)
+            ]
+            calibration = runner._proxy_calibration_decision(
+                state["template"]["search_policy"]["proxy_calibration"],
+                records,
+            )
+            evaluation_ids = [
+                f"sealed-{index}"
+                for index in range(2 * len(sentinels))
+            ]
+            with mock.patch.object(
+                runner,
+                "write_state",
+                side_effect=RuntimeError("simulated post-ledger crash"),
+            ), self.assertRaisesRegex(RuntimeError, "post-ledger crash"):
+                runner._finish_proxy_calibration(
+                    run_dir, state, calibration, evaluation_ids
+                )
+
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(runner, "_assert_frozen"):
+                event, recovered = runner.calibrate_proxy(ROOT, run_dir)
+
+            self.assertEqual(event["event"], "proxy_calibrated")
+            self.assertEqual(recovered["proxy"]["status"], "enabled")
+            self.assertEqual(
+                recovered["search_started_at"], "2026-08-06T00:00:00Z"
+            )
+            terminals = [
+                item
+                for item in runner._events(run_dir / "proxy-events.jsonl")
+                if item.get("event") == "proxy_calibrated"
+            ]
+            self.assertEqual(len(terminals), 1)
+
+    def test_proxy_false_negative_audit_disables_screening(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            runner.append_event(
+                run_dir / "candidate-events.jsonl",
+                {
+                    "event": "candidate_admitted",
+                    "candidate_id": "candidate-001",
+                },
+            )
+            screen = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier["role"] == "proxy"
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier["role"] == "representative"
+            )
+            screen_result, _ = adapt_result(
+                screen,
+                ResultAdapterTests().uniform_successor_v2_output(100, 100),
+                "outer_remainder",
+            )
+            launches: list[str] = []
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                params: dict[str, str],
+                evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                launches.append(str(tier["id"]))
+                result = (
+                    screen_result
+                    if tier["role"] == "proxy"
+                    else self.tier_result(representative, speedup=5.0)
+                )
+                return self.seal_tier_evaluation(
+                    run_dir,
+                    tier,
+                    params,
+                    evaluation_id,
+                    result,
+                )
+
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(
+                runner, "execute_tier", side_effect=execute
+            ), mock.patch.object(
+                runner,
+                "_successor_screen_disposition",
+                return_value=("discard", "proxy clear loss"),
+            ), mock.patch.object(
+                runner, "_promotion_pass", return_value=(True, "promoted")
+            ), mock.patch.object(
+                runner, "_phase_success", return_value=(True, "phase passed")
+            ):
+                decision, state = runner.trial(
+                    ROOT, run_dir, [], "proxy false-negative sentinel"
+                )
+
+            self.assertEqual(launches, ["screen", "representative"])
+            self.assertFalse(decision["proxy_audit"]["ranking_ok"])
+            self.assertEqual(state["proxy"]["status"], "disabled")
 
     def test_production_runs_revalidation_holdout_transfer_once(self) -> None:
         output = self.outer_output()
@@ -4050,7 +4500,7 @@ class RunnerIntegrationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "not active"):
                     runner.trial(ROOT, run_dir, [], "must not tune on holdout")
 
-    def test_state_digest_is_committed_inside_the_atomic_state_file(self) -> None:
+    def test_run_contract_is_immutable_and_state_is_self_digested(self) -> None:
         output = self.outer_output()
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             runner,
@@ -4064,13 +4514,83 @@ class RunnerIntegrationTests(unittest.TestCase):
                 / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
                 run_dir,
             )
-            raw = json.loads((run_dir / "run.json").read_text())
+            run_before = (run_dir / "run.json").read_bytes()
+            contract = json.loads(run_before)
+            self.assertEqual(
+                contract["record_kind"], "metal_autoresearch_run_contract_v1"
+            )
+            self.assertIn("run_sha256", contract)
+            raw = json.loads((run_dir / "state.json").read_text())
             self.assertIn("state_sha256", raw)
             self.assertFalse((run_dir / "run.sha256").exists())
+            state = runner.load_state(run_dir)
+            state["status"] = "active"
+            runner.write_state(run_dir, state)
+            self.assertEqual((run_dir / "run.json").read_bytes(), run_before)
+            raw = json.loads((run_dir / "state.json").read_text())
             raw["status"] = "forged"
-            (run_dir / "run.json").write_text(json.dumps(raw))
+            (run_dir / "state.json").write_text(json.dumps(raw))
             with self.assertRaisesRegex(ValueError, "state digest"):
                 runner.load_state(run_dir)
+
+    def test_fresh_run_publication_is_atomic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            run_dir = parent / "run"
+            with mock.patch.object(
+                runner,
+                "_write_run_contract",
+                side_effect=RuntimeError("simulated publication crash"),
+            ), self.assertRaisesRegex(RuntimeError, "publication crash"):
+                runner.init_run(
+                    ROOT,
+                    ROOT
+                    / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                    run_dir,
+                )
+
+            self.assertFalse(run_dir.exists())
+            self.assertEqual(list(parent.glob(".run.initializing-*")), [])
+
+    def test_candidate_admission_has_a_recoverable_transaction(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            append = runner.append_event
+
+            def interrupt(path: Path, event: dict[str, object]) -> None:
+                if path.name == "candidate-events.jsonl":
+                    raise RuntimeError("simulated admission crash")
+                append(path, event)
+
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(
+                runner, "append_event", side_effect=interrupt
+            ), self.assertRaisesRegex(RuntimeError, "admission crash"):
+                runner.trial(ROOT, run_dir, [], "interrupted admission")
+
+            inflight = runner.read_json(run_dir / "inflight.json")
+            self.assertEqual(inflight["kind"], "candidate_pending")
+            state = runner.load_state(run_dir)
+            with mock.patch.object(
+                runner, "_restore_with_quarantine", return_value=None
+            ):
+                recovered = runner._recover_pending_candidate(
+                    ROOT, run_dir, state, inflight
+                )
+            self.assertEqual(recovered["status"], "active")
+            self.assertFalse((run_dir / "inflight.json").exists())
 
     def test_recovered_kept_candidate_returns_to_unvalidated_active_state(self) -> None:
         output = self.outer_output()
@@ -4086,24 +4606,56 @@ class RunnerIntegrationTests(unittest.TestCase):
                 / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
                 run_dir,
             )
+            screen = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier["role"] == "proxy"
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier["role"] == "representative"
+            )
+            screen_result, _ = adapt_result(
+                screen,
+                ResultAdapterTests().uniform_successor_v2_output(100, 100),
+                "outer_remainder",
+            )
+            representative_result = self.tier_result(
+                representative,
+                speedup=float(state["accepted_parent"]["metric"]) * 2.0,
+            )
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                params: dict[str, str],
+                evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                result = (
+                    screen_result
+                    if tier["role"] == "proxy"
+                    else representative_result
+                )
+                return self.seal_tier_evaluation(
+                    run_dir, tier, params, evaluation_id, result
+                )
+
+            with mock.patch.object(
+                runner, "execute_tier", side_effect=execute
+            ):
+                decision, state = runner.trial(
+                    ROOT, run_dir, [], "candidate committed before interruption"
+                )
+            self.assertEqual(decision["verdict"], "keep")
             state["status"] = "kernel_transferred"
-            runner.write_state(run_dir, state)
-            candidate_id = "candidate-001"
-            editable_digest = metal_autoresearch.path_digest(
-                ROOT, state["template"]["scope"]["editable"]
-            )
-            runner.append_event(
-                run_dir / "decision-events.jsonl",
-                {
-                    "event": "candidate_decided",
-                    "candidate_id": candidate_id,
-                    "verdict": "keep",
-                    "params": state["accepted_parent"]["params"],
-                    "primary": {"value": 5.1},
-                    "paired_summary": state["accepted_parent"]["paired_summary"],
-                    "tier_results": state["accepted_parent"]["tiers"],
-                },
-            )
+            candidate_id = decision["candidate_id"]
+            editable_digest = state["accepted_parent"][
+                "editable_paths_sha256"
+            ]
             recovered, _ = runner._recover_committed_candidate(
                 ROOT,
                 run_dir,
@@ -4118,8 +4670,227 @@ class RunnerIntegrationTests(unittest.TestCase):
             self.assertEqual(state["accepted_parent"]["id"], candidate_id)
             self.assertEqual(state["status"], "active")
 
+    def test_recovery_preserves_a_terminal_phase_checkpoint(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            screen = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier["role"] == "proxy"
+            )
+            screen_result, _ = adapt_result(
+                screen,
+                ResultAdapterTests().uniform_successor_v2_output(
+                    100_000_000, 100_000_000
+                ),
+                "outer_remainder",
+            )
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                params: dict[str, str],
+                evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                return self.seal_tier_evaluation(
+                    run_dir, tier, params, evaluation_id, screen_result
+                )
+
+            with mock.patch.object(
+                runner, "_validate_live_state"
+            ), mock.patch.object(runner, "execute_tier", side_effect=execute):
+                decision, state = runner.trial(
+                    ROOT, run_dir, [], "candidate misses checkpoint before crash"
+                )
+            candidate_id = decision["candidate_id"]
+            state["status"] = "active"
+
+            recovered, _ = runner._recover_committed_candidate(
+                ROOT,
+                run_dir,
+                state,
+                {
+                    "candidate_id": candidate_id,
+                    "editable_paths_sha256": state["accepted_parent"][
+                        "editable_paths_sha256"
+                    ],
+                },
+            )
+
+            self.assertFalse(recovered)
+            self.assertEqual(state["status"], "phase_exhausted")
+
 
 class DispatchAndGoalTests(unittest.TestCase):
+    def test_proxy_rank_calibration_enables_or_disables_screening(self) -> None:
+        policy = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )["search_policy"]["proxy_calibration"]
+        monotone = [
+            {"id": "a", "proxy_score": 1.0, "representative_score": 4.0},
+            {"id": "b", "proxy_score": 1.1, "representative_score": 4.4},
+            {"id": "c", "proxy_score": 1.2, "representative_score": 4.8},
+        ]
+        admitted = runner._proxy_calibration_decision(policy, monotone)
+        self.assertEqual(admitted["status"], "enabled")
+        self.assertEqual(admitted["kendall_tau_b"], 1.0)
+        self.assertEqual(admitted["material_inversions"], 0)
+
+        inverted = copy.deepcopy(monotone)
+        inverted[2]["representative_score"] = 3.0
+        rejected = runner._proxy_calibration_decision(policy, inverted)
+        self.assertEqual(rejected["status"], "disabled")
+        self.assertGreater(rejected["material_inversions"], 0)
+
+    def test_both_cli_surfaces_accept_the_direct_lane(self) -> None:
+        argv = [
+            "trial",
+            "run-dir",
+            "--summary",
+            "architectural candidate",
+            "--direct-to-representative",
+            "--direct-reason",
+            "proxy cannot model ownership",
+        ]
+        for parser in (runner.parser(), metal_autoresearch.parser()):
+            with self.subTest(parser=parser.prog):
+                args = parser.parse_args(argv)
+                self.assertTrue(args.direct_to_representative)
+                self.assertEqual(args.direct_reason, "proxy cannot model ownership")
+
+    def test_calendar_queue_preserves_validation_reserves(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        state = {
+            "created_at": runner.utc_now(),
+            "template": template,
+            "usage": {
+                "calendar_seconds": 14_400.0,
+                "reserve_invocations": {},
+            },
+        }
+        with mock.patch.object(
+            runner, "_calendar_seconds", return_value=14_400.0
+        ):
+            queue = runner._queue_budget_for_timeout(
+                state, 1_800.0, "representative_revalidation"
+            )
+
+        self.assertEqual(queue, 28_800.0)
+
+    def test_phase_checkpoint_uses_validated_candidate_gpu_phases(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        tier = next(
+            tier
+            for tier in template["evaluation"]["tiers"]
+            if tier["id"] == "screen"
+        )
+        result, _ = adapt_result(
+            tier,
+            ResultAdapterTests().uniform_successor_v2_output(100, 100),
+            "outer_remainder",
+        )
+        state = {
+            "template": template,
+            "usage": {"candidates_admitted": 1},
+        }
+
+        checkpoint = runner._phase_checkpoint(state, result)
+        self.assertTrue(checkpoint["due"])
+        self.assertTrue(checkpoint["passed"])
+        observed = {
+            metric["name"]: metric["observed_ms"]
+            for metric in checkpoint["metrics"]
+        }
+        self.assertEqual(observed["materialize_gpu_active_ms"], 0.00005)
+
+        next(
+            metric
+            for metric in template["mechanism_phase"]["checkpoint"]["metrics"]
+            if metric["name"] == "materialize_gpu_active_ms"
+        )["threshold"] = 0.000049
+        failed = runner._phase_checkpoint(state, result)
+        self.assertFalse(failed["passed"])
+
+    def test_phase_success_requires_gain_and_latency_ceiling(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        state = {"template": template}
+        parent = {"metric": 4.0}
+        result = {
+            "primary": {"value": 4.2},
+            "replication": {
+                "pairs": [
+                    {"arms": {"treatment": {"primary_ns": 210_000_000}}}
+                    for _ in range(5)
+                ]
+            },
+        }
+        passed, _ = runner._phase_success(state, result, parent)
+        self.assertTrue(passed)
+
+        for pair in result["replication"]["pairs"]:
+            pair["arms"]["treatment"]["primary_ns"] = 213_000_000
+        passed, reason = runner._phase_success(state, result, parent)
+        self.assertFalse(passed)
+        self.assertIn("latency", reason)
+
+    def test_search_phase_timebox_is_stricter_than_the_run_budget(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        state = {
+            "created_at": runner.utc_now(),
+            "template": template,
+            "usage": {
+                "calendar_seconds": 0.0,
+                "candidates_admitted": 2,
+            },
+        }
+        with self.assertRaisesRegex(runner.BudgetExhausted, "phase candidate"):
+            runner._require_search_phase_budget(state)
+
+        state["usage"]["candidates_admitted"] = 1
+        with mock.patch.object(
+            runner,
+            "_phase_calendar_seconds",
+            return_value=14401.0,
+        ), self.assertRaisesRegex(runner.BudgetExhausted, "phase calendar"):
+            runner._require_search_phase_budget(state)
+
     def test_v2_init_rejects_an_edit_racing_the_baseline_snapshot(self) -> None:
         legacy = mock.Mock()
         legacy.path_digest.side_effect = ["snapshot", "live", "frozen"]

@@ -6,6 +6,7 @@ import json
 import math
 import os
 import secrets
+import shutil
 import statistics
 import subprocess
 import sys
@@ -94,10 +95,59 @@ def write_state(run_dir: Path, state: dict[str, Any]) -> None:
     payload.pop("state_sha256", None)
     payload["state_sha256"] = sha256(canonical_json(payload))
     encoded = canonical_json(payload)
-    temporary = run_dir / ".run.json.tmp"
+    state_path = run_dir / "state.json"
+    legacy_path = run_dir / "run.json"
+    if not state_path.exists():
+        if not legacy_path.is_file():
+            state_path = legacy_path
+        else:
+            legacy = read_json(legacy_path)
+            if legacy.get("record_kind") != "metal_autoresearch_run_contract_v1":
+                state_path = legacy_path
+    temporary = state_path.with_name(f".{state_path.name}.tmp")
     temporary.write_bytes(encoded)
-    temporary.replace(run_dir / "run.json")
+    temporary.replace(state_path)
     state["state_sha256"] = payload["state_sha256"]
+
+
+_RUN_CONTRACT_FIELDS = (
+    "created_at",
+    "template_path",
+    "template_sha256",
+    "template",
+    "goal",
+    "registry_binding",
+    "base_revision",
+    "fingerprint",
+)
+
+
+def _write_run_contract(run_dir: Path, state: dict[str, Any]) -> None:
+    path = run_dir / "run.json"
+    if path.exists():
+        raise ValueError("immutable run contract already exists")
+    contract = {
+        "schema_version": RUN_SCHEMA_VERSION,
+        "record_kind": "metal_autoresearch_run_contract_v1",
+        **{field: state[field] for field in _RUN_CONTRACT_FIELDS},
+    }
+    contract["run_sha256"] = sha256(canonical_json(contract))
+    path.write_bytes(canonical_json(contract))
+
+
+def _load_run_contract(run_dir: Path) -> dict[str, Any]:
+    contract = read_json(run_dir / "run.json")
+    claimed = contract.get("run_sha256")
+    payload = dict(contract)
+    payload.pop("run_sha256", None)
+    if (
+        contract.get("schema_version") != RUN_SCHEMA_VERSION
+        or contract.get("record_kind") != "metal_autoresearch_run_contract_v1"
+        or not isinstance(claimed, str)
+        or claimed != sha256(canonical_json(payload))
+    ):
+        raise ValueError("immutable run contract digest does not match")
+    return contract
 
 
 def write_inflight(run_dir: Path, inflight: dict[str, Any]) -> None:
@@ -109,7 +159,9 @@ def write_inflight(run_dir: Path, inflight: dict[str, Any]) -> None:
 def load_state(
     run_dir: Path, *, verify_sealed_binaries: bool = True
 ) -> dict[str, Any]:
-    encoded = (run_dir / "run.json").read_bytes()
+    state_path = run_dir / "state.json"
+    contract = _load_run_contract(run_dir) if state_path.is_file() else None
+    encoded = (state_path if state_path.is_file() else run_dir / "run.json").read_bytes()
     state = json.loads(encoded)
     if not isinstance(state, dict) or state.get("schema_version") != RUN_SCHEMA_VERSION:
         raise ValueError("unsupported run state schema")
@@ -125,6 +177,11 @@ def load_state(
         payload.pop("state_sha256")
         if claimed != sha256(canonical_json(payload)):
             raise ValueError("run state digest does not match")
+    if contract is not None and any(
+        canonical_json(state.get(field)) != canonical_json(contract.get(field))
+        for field in _RUN_CONTRACT_FIELDS
+    ):
+        raise ValueError("mutable state disagrees with the immutable run contract")
     state["usage"] = _derived_usage(run_dir)
     parent = state.get("accepted_parent")
     if parent is not None:
@@ -283,11 +340,45 @@ def _refresh_calendar(state: dict[str, Any]) -> None:
     state["usage"]["calendar_seconds"] = _calendar_seconds(state)
 
 
+def _phase_calendar_seconds(state: dict[str, Any]) -> float:
+    value = state.get("search_started_at", state["created_at"])
+    if value is None:
+        return 0.0
+    started = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+
+
 def _require_calendar_budget(state: dict[str, Any]) -> None:
     _refresh_calendar(state)
     maximum = float(state["template"]["budget"]["total"]["max_calendar_seconds"])
     if float(state["usage"]["calendar_seconds"]) > maximum:
         raise BudgetExhausted("calendar budget is exhausted")
+
+
+def _require_search_phase_budget(state: dict[str, Any]) -> None:
+    _require_calendar_budget(state)
+    timebox = state["template"]["mechanism_phase"]["timebox"]
+    if int(state["usage"]["candidates_admitted"]) >= int(
+        timebox["max_candidates_admitted"]
+    ):
+        raise BudgetExhausted("phase candidate budget is exhausted")
+    if _phase_calendar_seconds(state) > float(timebox["max_search_calendar_seconds"]):
+        raise BudgetExhausted("phase calendar budget is exhausted")
+
+
+def _search_phase_queue_budget(
+    state: dict[str, Any], evaluator_timeout: float
+) -> float:
+    total_queue_budget = _queue_budget_for_timeout(state, evaluator_timeout)
+    phase_maximum = float(
+        state["template"]["mechanism_phase"]["timebox"][
+            "max_search_calendar_seconds"
+        ]
+    )
+    phase_remaining = phase_maximum - _phase_calendar_seconds(state)
+    if evaluator_timeout > phase_remaining:
+        raise BudgetExhausted("phase calendar budget cannot contain this evaluator")
+    return min(total_queue_budget, phase_remaining - evaluator_timeout)
 
 
 def _queue_budget(state: dict[str, Any], tier: dict[str, Any]) -> float:
@@ -297,14 +388,55 @@ def _queue_budget(state: dict[str, Any], tier: dict[str, Any]) -> float:
 
 
 def _queue_budget_for_timeout(
-    state: dict[str, Any], evaluator_timeout: float
+    state: dict[str, Any],
+    evaluator_timeout: float,
+    active_reserve: Optional[str] = None,
 ) -> float:
     _require_calendar_budget(state)
     maximum = float(state["template"]["budget"]["total"]["max_calendar_seconds"])
-    remaining = maximum - float(state["usage"]["calendar_seconds"])
+    remaining = (
+        maximum
+        - float(state["usage"]["calendar_seconds"])
+        - _protected_calendar_seconds(state, active_reserve)
+    )
     if evaluator_timeout > remaining:
-        raise BudgetExhausted("calendar budget cannot contain this evaluator")
+        raise BudgetExhausted(
+            "calendar budget is reserved for production validation"
+        )
     return remaining - evaluator_timeout
+
+
+_VALIDATION_RESERVE_ROLES = {
+    "representative_revalidation": "representative",
+    "piop_holdout": "holdout",
+    "piop_transfer": "transfer",
+}
+
+
+def _protected_calendar_seconds(
+    state: dict[str, Any], active_reserve: Optional[str]
+) -> float:
+    template = state["template"]
+    consumed = state["usage"].get("reserve_invocations", {})
+    if not isinstance(consumed, dict):
+        raise ValueError("reserve invocation accounting is invalid")
+    protected = 0.0
+    for reserve in template["budget"]["reserves"]:
+        reserve_id = reserve["id"]
+        role = _VALIDATION_RESERVE_ROLES.get(reserve_id)
+        if role is None:
+            continue
+        used = consumed.get(reserve_id, 0)
+        if type(used) is not int or used < 0:
+            raise ValueError("reserve invocation accounting is invalid")
+        remaining = max(0, int(reserve["invocations"]) - used)
+        if reserve_id == active_reserve:
+            remaining = max(0, remaining - 1)
+        timeout = float(
+            _tier_by_role(template, role)["evaluator"]["timeout_seconds"]
+        )
+        protected += remaining * timeout
+    return protected
 
 
 def _scope_fingerprint(root: Path, template: dict[str, Any]) -> dict[str, str]:
@@ -379,6 +511,279 @@ def _tier_record(result: dict[str, Any]) -> dict[str, Any]:
         "relative_mad": float(summary["mad"]) / float(summary["median"]),
         "paired_summary": summary,
         "treatment_median_ns": treatment_ns,
+    }
+
+
+_PHASE_CHECKPOINT_FIELDS = {
+    "materialize_gpu_active_ms": "materialize",
+    "first_bind_gpu_active_ms": "first_bind",
+    "dense_rounds_gpu_active_ms": "dense_rounds",
+    "openings_gpu_active_ms": "openings",
+}
+
+
+def _phase_checkpoint(
+    state: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any]:
+    phase = state["template"]["mechanism_phase"]
+    checkpoint = phase["checkpoint"]
+    due = int(state["usage"]["candidates_admitted"]) >= int(
+        checkpoint["after_candidates"]
+    )
+    record: dict[str, Any] = {
+        "phase_id": phase["id"],
+        "after_candidates": checkpoint["after_candidates"],
+        "due": due,
+        "passed": None,
+        "metrics": [],
+    }
+    if not due:
+        return record
+    if result.get("fingerprint", {}).get("log_n") != checkpoint["scale_log_n"]:
+        raise ValueError("phase checkpoint result used the wrong trace scale")
+    timings = result.get("telemetry", {}).get("candidate_phase_gpu_active_ns")
+    if not isinstance(timings, dict):
+        raise ValueError("phase checkpoint telemetry is missing")
+    passed = True
+    metrics = []
+    for contract in checkpoint["metrics"]:
+        field = _PHASE_CHECKPOINT_FIELDS.get(contract["name"])
+        value = timings.get(field) if field is not None else None
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise ValueError("phase checkpoint telemetry is invalid")
+        observed_ms = float(value) / 1_000_000.0
+        threshold = float(contract["threshold"])
+        metric_passed = (
+            observed_ms <= threshold
+            if contract["comparison"] == "lte"
+            else observed_ms >= threshold
+        )
+        metrics.append(
+            {
+                "name": contract["name"],
+                "comparison": contract["comparison"],
+                "threshold": threshold,
+                "observed_ms": observed_ms,
+                "passed": metric_passed,
+            }
+        )
+        passed = passed and metric_passed
+    record["passed"] = passed
+    record["metrics"] = metrics
+    return record
+
+
+def _phase_checkpoint_state(state: dict[str, Any]) -> dict[str, Any]:
+    phase_id = state["template"]["mechanism_phase"]["id"]
+    checkpoint = state.get("phase_checkpoint")
+    if checkpoint is None:
+        checkpoint = {
+            "phase_id": phase_id,
+            "status": "pending",
+            "candidate_id": None,
+            "evaluation_id": None,
+            "tier_result_sha256": None,
+            "record": None,
+        }
+        state["phase_checkpoint"] = checkpoint
+    expected = {
+        "phase_id",
+        "status",
+        "candidate_id",
+        "evaluation_id",
+        "tier_result_sha256",
+        "record",
+    }
+    if (
+        not isinstance(checkpoint, dict)
+        or set(checkpoint) != expected
+        or checkpoint["phase_id"] != phase_id
+        or checkpoint["status"] not in {"pending", "passed", "failed"}
+    ):
+        raise ValueError("mechanism-phase checkpoint state is invalid")
+    terminal_values = (
+        checkpoint["candidate_id"],
+        checkpoint["evaluation_id"],
+        checkpoint["tier_result_sha256"],
+        checkpoint["record"],
+    )
+    if checkpoint["status"] == "pending":
+        if any(value is not None for value in terminal_values):
+            raise ValueError("pending mechanism-phase checkpoint is not empty")
+    elif (
+        any(value is None for value in terminal_values)
+        or not isinstance(checkpoint["record"], dict)
+        or checkpoint["record"].get("passed")
+        is not (checkpoint["status"] == "passed")
+    ):
+        raise ValueError("terminal mechanism-phase checkpoint is incomplete")
+    return checkpoint
+
+
+def _seal_phase_checkpoint(
+    state: dict[str, Any],
+    record: dict[str, Any],
+    candidate_id: str,
+    evaluation_id: str,
+    tier_result_sha256: Any,
+) -> None:
+    checkpoint = _phase_checkpoint_state(state)
+    if checkpoint["status"] != "pending":
+        raise ValueError("mechanism-phase checkpoint is already terminal")
+    digest = tier_result_sha256
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        or record.get("due") is not True
+        or type(record.get("passed")) is not bool
+    ):
+        raise ValueError("mechanism-phase checkpoint cannot be sealed")
+    checkpoint.update(
+        {
+            "status": "passed" if record["passed"] else "failed",
+            "candidate_id": candidate_id,
+            "evaluation_id": evaluation_id,
+            "tier_result_sha256": digest,
+            "record": record,
+        }
+    )
+
+
+def _verify_sealed_phase_checkpoint(
+    run_dir: Path, state: dict[str, Any]
+) -> dict[str, Any]:
+    checkpoint = _phase_checkpoint_state(state)
+    if checkpoint["status"] == "pending":
+        raise ValueError("mechanism-phase checkpoint is not terminal")
+    events = [
+        event
+        for event in _events(run_dir / "tier-events.jsonl")
+        if event.get("evaluation_id") == checkpoint["evaluation_id"]
+    ]
+    path = (
+        run_dir
+        / "evaluations"
+        / checkpoint["evaluation_id"]
+        / "tier-result.json"
+    )
+    if (
+        len(events) != 1
+        or events[0].get("tier_id")
+        != _tier_by_role(state["template"], "proxy")["id"]
+        or events[0].get("attempt", {}).get("tier_result_sha256")
+        != checkpoint["tier_result_sha256"]
+        or not path.is_file()
+    ):
+        raise ValueError("mechanism-phase checkpoint result is not sealed")
+    payload = path.read_bytes()
+    if sha256(payload) != checkpoint["tier_result_sha256"]:
+        raise ValueError("mechanism-phase checkpoint result digest does not match")
+    result = json.loads(payload)
+    replay_state = dict(state)
+    replay_state["usage"] = dict(state["usage"])
+    replay_state["usage"]["candidates_admitted"] = max(
+        int(state["usage"]["candidates_admitted"]),
+        int(checkpoint["record"]["after_candidates"]),
+    )
+    if canonical_json(_phase_checkpoint(replay_state, result)) != canonical_json(
+        checkpoint["record"]
+    ):
+        raise ValueError("mechanism-phase checkpoint cannot be reproduced")
+    return checkpoint
+
+
+def _phase_success(
+    state: dict[str, Any], result: dict[str, Any], parent: dict[str, Any]
+) -> tuple[bool, str]:
+    success = state["template"]["mechanism_phase"]["success"]
+    latency_ms = _treatment_median_ms(result)
+    if latency_ms > float(success["maximum_member_ms"]):
+        return False, "candidate exceeds the mechanism-phase latency ceiling"
+    required = float(parent["metric"]) * (
+        1.0 + float(success["minimum_relative_improvement"])
+    )
+    if float(result["primary"]["value"]) < required:
+        return False, "candidate misses the mechanism-phase improvement gate"
+    return True, "candidate clears the mechanism-phase success gate"
+
+
+def _proxy_calibration_decision(
+    policy: dict[str, Any], records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    if len(records) < 3:
+        raise ValueError("proxy calibration requires at least three sentinels")
+    ids: set[str] = set()
+    values = []
+    for record in records:
+        if not isinstance(record, dict) or set(record) != {
+            "id",
+            "proxy_score",
+            "representative_score",
+        }:
+            raise ValueError("proxy calibration record is invalid")
+        if not isinstance(record["id"], str) or record["id"] in ids:
+            raise ValueError("proxy calibration sentinel id is invalid")
+        ids.add(record["id"])
+        proxy_score = record["proxy_score"]
+        representative_score = record["representative_score"]
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            for value in (proxy_score, representative_score)
+        ):
+            raise ValueError("proxy calibration score is invalid")
+        values.append((float(proxy_score), float(representative_score)))
+
+    concordant = 0
+    discordant = 0
+    proxy_ties = 0
+    representative_ties = 0
+    material_inversions = 0
+    material_threshold = float(policy["material_effect_threshold"])
+    for left in range(len(values)):
+        for right in range(left + 1, len(values)):
+            proxy_delta = values[left][0] - values[right][0]
+            representative_delta = values[left][1] - values[right][1]
+            if proxy_delta == 0:
+                proxy_ties += 1
+            if representative_delta == 0:
+                representative_ties += 1
+            if proxy_delta * representative_delta > 0:
+                concordant += 1
+            elif proxy_delta * representative_delta < 0:
+                discordant += 1
+                low = min(values[left][1], values[right][1])
+                high = max(values[left][1], values[right][1])
+                if high / low - 1.0 >= material_threshold:
+                    material_inversions += 1
+    denominator = math.sqrt(
+        (concordant + discordant + proxy_ties)
+        * (concordant + discordant + representative_ties)
+    )
+    tau_b = (
+        (concordant - discordant) / denominator if denominator > 0 else 0.0
+    )
+    enabled = (
+        tau_b >= float(policy["minimum_rank_agreement"])
+        and material_inversions <= int(policy["maximum_material_inversions"])
+    )
+    return {
+        "status": "enabled" if enabled else "disabled",
+        "kendall_tau_b": tau_b,
+        "concordant_pairs": concordant,
+        "discordant_pairs": discordant,
+        "proxy_ties": proxy_ties,
+        "representative_ties": representative_ties,
+        "material_inversions": material_inversions,
+        "sentinels": records,
     }
 
 
@@ -1295,9 +1700,21 @@ def execute_tier(
     *,
     expected_editable_digest: Optional[str] = None,
     budget_reserve: Optional[str] = None,
+    search_phase: bool = False,
+    retain_inflight_on_budget_exhausted: bool = False,
 ) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
     try:
-        queue_budget = _queue_budget(state, tier)
+        queue_budget = (
+            _search_phase_queue_budget(
+                state, float(tier["evaluator"]["timeout_seconds"])
+            )
+            if search_phase
+            else _queue_budget_for_timeout(
+                state,
+                float(tier["evaluator"]["timeout_seconds"]),
+                budget_reserve,
+            )
+        )
         admit_tier(
             state["template"]["budget"],
             state["usage"],
@@ -1306,7 +1723,7 @@ def execute_tier(
         )
     except BudgetExhausted:
         inflight_path = run_dir / "inflight.json"
-        if inflight_path.is_file():
+        if inflight_path.is_file() and not retain_inflight_on_budget_exhausted:
             inflight = read_json(inflight_path)
             if inflight.get("evaluation_id") == evaluation_id:
                 inflight_path.unlink()
@@ -1454,6 +1871,7 @@ def _initialize_run_files(run_dir: Path) -> None:
         "tier-events.jsonl",
         "decision-events.jsonl",
         "kernel-validations.jsonl",
+        "proxy-events.jsonl",
     ):
         (run_dir / name).touch()
 
@@ -1625,34 +2043,73 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
     if not binding["fresh_init_eligible"]:
         raise ValueError("template is existing-run-only and cannot initialize a fresh run")
 
-    _initialize_run_files(run_dir)
+    if run_dir.exists():
+        raise FileExistsError(run_dir)
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = run_dir.parent / (
+        f".{run_dir.name}.initializing-{secrets.token_hex(8)}"
+    )
+    _initialize_run_files(staging)
     legacy = _legacy()
-    baseline_snapshot = run_dir / "snapshots" / "baseline"
-    legacy.snapshot_paths(
-        root, template["scope"]["editable"], baseline_snapshot
-    )
-    snapshot_sha256 = legacy.path_digest(
-        baseline_snapshot, template["scope"]["editable"]
-    )
-    fingerprint = _scope_fingerprint(root, template)
-    if snapshot_sha256 != fingerprint["editable_paths_sha256"]:
-        raise ValueError("baseline snapshot changed during initialization")
-    state = {
-        "schema_version": RUN_SCHEMA_VERSION,
-        "status": "sealing_binaries",
-        "created_at": utc_now(),
-        "template_path": _relative(root, template_path),
-        "template_sha256": sha256(canonical_json(template)),
-        "template": template,
-        "goal": read_json(root / template["portfolio_contract"]),
-        "registry_binding": binding,
-        "base_revision": legacy.git_head(root),
-        "fingerprint": fingerprint,
-        "usage": empty_usage(),
-        "accepted_parent": None,
-        "sealed_binaries": {},
-    }
-    write_state(run_dir, state)
+    try:
+        baseline_snapshot = staging / "snapshots" / "baseline"
+        legacy.snapshot_paths(
+            root, template["scope"]["editable"], baseline_snapshot
+        )
+        snapshot_sha256 = legacy.path_digest(
+            baseline_snapshot, template["scope"]["editable"]
+        )
+        fingerprint = _scope_fingerprint(root, template)
+        if snapshot_sha256 != fingerprint["editable_paths_sha256"]:
+            raise ValueError("baseline snapshot changed during initialization")
+        state = {
+            "schema_version": RUN_SCHEMA_VERSION,
+            "status": "sealing_binaries",
+            "created_at": utc_now(),
+            "template_path": _relative(root, template_path),
+            "template_sha256": sha256(canonical_json(template)),
+            "template": template,
+            "goal": read_json(root / template["portfolio_contract"]),
+            "registry_binding": binding,
+            "base_revision": legacy.git_head(root),
+            "fingerprint": fingerprint,
+            "usage": empty_usage(),
+            "accepted_parent": None,
+            "sealed_binaries": {},
+            "search_started_at": None,
+            "phase_checkpoint": {
+                "phase_id": template["mechanism_phase"]["id"],
+                "status": "pending",
+                "candidate_id": None,
+                "evaluation_id": None,
+                "tier_result_sha256": None,
+                "record": None,
+            },
+            "proxy": {
+                "phase_id": template["mechanism_phase"]["id"],
+                "status": "pending_calibration",
+                "reason": "fixed sentinels have not been calibrated",
+                "calibration": None,
+                "audits_completed": 0,
+            },
+        }
+        _write_run_contract(staging, state)
+        write_state(staging, state)
+        append_event(
+            staging / "proxy-events.jsonl",
+            {
+                "schema_version": EVENT_SCHEMA_VERSION,
+                "event": "proxy_pending_calibration",
+                "phase_id": template["mechanism_phase"]["id"],
+                "reason": state["proxy"]["reason"],
+                "recorded_at": utc_now(),
+            },
+        )
+        staging.rename(run_dir)
+    except BaseException:
+        if staging.is_dir():
+            shutil.rmtree(staging)
+        raise
     return _continue_binary_sealing(root, run_dir, state)
 
 
@@ -2023,11 +2480,238 @@ def _conservative_result_speedup(result: dict[str, Any]) -> float:
     )
 
 
+def _proxy_calibration_evaluation_id(
+    run_dir: Path, sentinel_id: str, tier_id: str
+) -> str:
+    prefix = f"proxy-calibration-{sentinel_id}-{tier_id}"
+    prior = list((run_dir / "evaluations").glob(f"{prefix}*"))
+    return prefix if not prior else f"{prefix}-retry-{len(prior) + 1:03d}"
+
+
+def _finish_proxy_calibration(
+    run_dir: Path,
+    state: dict[str, Any],
+    calibration: dict[str, Any],
+    evaluation_ids: list[str],
+) -> dict[str, Any]:
+    reason = (
+        "fixed sentinels preserve representative ranking"
+        if calibration["status"] == "enabled"
+        else "fixed sentinels materially misrank representative performance"
+    )
+    event = {
+        "schema_version": EVENT_SCHEMA_VERSION,
+        "event": (
+            "proxy_calibrated"
+            if calibration["status"] == "enabled"
+            else "proxy_disabled"
+        ),
+        "phase_id": state["template"]["mechanism_phase"]["id"],
+        "status": calibration["status"],
+        "reason": reason,
+        "evaluation_ids": evaluation_ids,
+        "calibration": calibration,
+        "recorded_at": utc_now(),
+    }
+    append_event(run_dir / "proxy-events.jsonl", event)
+    _apply_proxy_calibration_event(state, event)
+    write_state(run_dir, state)
+    return event
+
+
+def _apply_proxy_calibration_event(
+    state: dict[str, Any], event: dict[str, Any]
+) -> None:
+    phase_id = state["template"]["mechanism_phase"]["id"]
+    calibration = event.get("calibration")
+    policy = state["template"]["search_policy"]["proxy_calibration"]
+    if not isinstance(calibration, dict):
+        raise ValueError("proxy calibration event has no calibration evidence")
+    expected = _proxy_calibration_decision(policy, calibration.get("sentinels", []))
+    status = expected["status"]
+    expected_event = "proxy_calibrated" if status == "enabled" else "proxy_disabled"
+    expected_reason = (
+        "fixed sentinels preserve representative ranking"
+        if status == "enabled"
+        else "fixed sentinels materially misrank representative performance"
+    )
+    evaluation_ids = event.get("evaluation_ids")
+    if (
+        event.get("event") != expected_event
+        or event.get("phase_id") != phase_id
+        or event.get("status") != status
+        or event.get("reason") != expected_reason
+        or canonical_json(calibration) != canonical_json(expected)
+        or not isinstance(evaluation_ids, list)
+        or len(evaluation_ids) != 2 * len(policy["sentinels"])
+        or len(set(evaluation_ids)) != len(evaluation_ids)
+        or not isinstance(event.get("recorded_at"), str)
+    ):
+        raise ValueError("proxy calibration terminal event is invalid")
+    state["proxy"]["status"] = status
+    state["proxy"]["reason"] = expected_reason
+    state["proxy"]["calibration"] = calibration
+    if state.get("search_started_at") is None:
+        state["search_started_at"] = event["recorded_at"]
+
+
+def _sealed_proxy_calibration_result(
+    run_dir: Path,
+    sentinel_id: str,
+    tier: dict[str, Any],
+    params: dict[str, str],
+) -> Optional[tuple[str, dict[str, Any]]]:
+    prefix = f"proxy-calibration-{sentinel_id}-{tier['id']}"
+    matches = []
+    for event in _events(run_dir / "tier-events.jsonl"):
+        evaluation_id = event.get("evaluation_id")
+        attempt = event.get("attempt")
+        if (
+            event.get("event") != "tier_evaluated"
+            or not isinstance(evaluation_id, str)
+            or not (
+                evaluation_id == prefix
+                or evaluation_id.startswith(f"{prefix}-retry-")
+            )
+            or event.get("tier_id") != tier["id"]
+            or event.get("params") != params
+            or not isinstance(attempt, dict)
+            or attempt.get("outcome") != "success"
+        ):
+            continue
+        path = run_dir / "evaluations" / evaluation_id / "tier-result.json"
+        if not path.is_file():
+            raise ValueError("proxy calibration result file is missing")
+        payload = path.read_bytes()
+        if attempt.get("tier_result_sha256") != sha256(payload):
+            raise ValueError("proxy calibration result digest does not match")
+        result = json.loads(payload)
+        validate_tier_result(result, tier)
+        matches.append((evaluation_id, result))
+    if not matches:
+        return None
+    digests = {sha256(canonical_json(result)) for _, result in matches}
+    if len(digests) != 1:
+        raise ValueError("proxy calibration has conflicting sealed retries")
+    return matches[0]
+
+
+def calibrate_proxy(
+    root: Path, run_dir: Path
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    root = root.resolve()
+    state = load_state(run_dir)
+    _validate_live_state(root, state)
+    _assert_frozen(root, state)
+    if state["status"] != "active":
+        raise ValueError("proxy calibration requires an active run")
+    if (run_dir / "inflight.json").exists():
+        raise ValueError("an interrupted evaluation must be recovered first")
+    proxy = state.get("proxy")
+    if not isinstance(proxy, dict) or proxy.get("phase_id") != state["template"][
+        "mechanism_phase"
+    ]["id"]:
+        raise ValueError("proxy state does not match the mechanism phase")
+    prior = [
+        event
+        for event in _events(run_dir / "proxy-events.jsonl")
+        if event.get("event") in {"proxy_calibrated", "proxy_disabled"}
+        and event.get("phase_id") == state["template"]["mechanism_phase"]["id"]
+        and "calibration" in event
+    ]
+    if len(prior) > 1:
+        raise ValueError("proxy calibration ledger has duplicate terminal events")
+    if prior:
+        _apply_proxy_calibration_event(state, prior[0])
+        write_state(run_dir, state)
+        return prior[0], state
+    if proxy.get("calibration") is not None:
+        raise ValueError("proxy calibration state has no terminal ledger event")
+    if proxy.get("status") != "pending_calibration":
+        raise ValueError("proxy calibration cannot repair a disabled live phase")
+
+    template = state["template"]
+    policy = template["search_policy"]["proxy_calibration"]
+    proxy_tier = _tier_by_role(template, "proxy")
+    representative = _tier_by_role(template, "representative")
+    editable_digest = state["fingerprint"]["editable_paths_sha256"]
+    records = []
+    evaluation_ids = []
+    for sentinel in policy["sentinels"]:
+        params = _validate_params(template, dict(sentinel["params"]))
+        scores = {}
+        for tier, score_name in (
+            (proxy_tier, "proxy_score"),
+            (representative, "representative_score"),
+        ):
+            sealed = _sealed_proxy_calibration_result(
+                run_dir, sentinel["id"], tier, params
+            )
+            if sealed is not None:
+                evaluation_id, result = sealed
+                passed, reason = _required_guards(state, tier, result)
+                if not passed:
+                    raise ValueError(
+                        f"proxy sentinel {sentinel['id']} is invalid: {reason}"
+                    )
+                evaluation_ids.append(evaluation_id)
+                scores[score_name] = float(result["primary"]["value"])
+                continue
+            evaluation_id = _proxy_calibration_evaluation_id(
+                run_dir, sentinel["id"], tier["id"]
+            )
+            inflight = {
+                "schema_version": EVENT_SCHEMA_VERSION,
+                "kind": "proxy_calibration",
+                "phase_id": template["mechanism_phase"]["id"],
+                "sentinel_id": sentinel["id"],
+                "evaluation_id": evaluation_id,
+                "tier_id": tier["id"],
+                "params": params,
+                "editable_paths_sha256": editable_digest,
+                "started_at": utc_now(),
+            }
+            write_inflight(run_dir, inflight)
+            event, result = execute_tier(
+                root,
+                run_dir,
+                state,
+                tier,
+                params,
+                evaluation_id,
+                expected_editable_digest=editable_digest,
+            )
+            evaluation_ids.append(evaluation_id)
+            write_state(run_dir, state)
+            (run_dir / "inflight.json").unlink(missing_ok=True)
+            if result is None:
+                raise ValueError(
+                    f"proxy sentinel {sentinel['id']} failed: "
+                    f"{event['attempt']['error']}"
+                )
+            passed, reason = _required_guards(state, tier, result)
+            if not passed:
+                raise ValueError(
+                    f"proxy sentinel {sentinel['id']} is invalid: {reason}"
+                )
+            scores[score_name] = float(result["primary"]["value"])
+        records.append({"id": sentinel["id"], **scores})
+
+    calibration = _proxy_calibration_decision(policy, records)
+    event = _finish_proxy_calibration(
+        run_dir, state, calibration, evaluation_ids
+    )
+    return event, state
+
+
 def trial(
     root: Path,
     run_dir: Path,
     overrides: list[str],
     summary: str,
+    *,
+    direct_to_representative: bool = False,
+    direct_reason: Optional[str] = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     root = root.resolve()
     state = load_state(run_dir)
@@ -2037,10 +2721,51 @@ def trial(
     if (run_dir / "inflight.json").exists():
         raise ValueError("an interrupted evaluation must be recovered first")
     _assert_frozen(root, state)
-    _require_calendar_budget(state)
-    maximum = state["template"]["budget"]["total"]["max_candidates_admitted"]
-    if int(state["usage"]["candidates_admitted"]) >= int(maximum):
-        raise BudgetExhausted("candidate budget is exhausted")
+    requested_direct = direct_to_representative
+    if requested_direct != bool(direct_reason and direct_reason.strip()):
+        raise ValueError(
+            "the direct representative lane requires both its flag and a reason"
+        )
+    if (
+        requested_direct
+        and state["template"]["search_policy"]["direct_to_representative_lane"]
+        is not True
+    ):
+        raise ValueError("the run contract does not admit a direct representative lane")
+    proxy = state.get("proxy", {"status": "enabled", "reason": "legacy run"})
+    if not isinstance(proxy, dict) or proxy.get("status") not in {
+        "pending_calibration",
+        "enabled",
+        "disabled",
+    }:
+        raise ValueError("proxy state is invalid")
+    if not requested_direct and proxy["status"] == "pending_calibration":
+        raise ValueError(
+            "proxy ranking is not calibrated; calibrate it or use the direct lane"
+        )
+    if not requested_direct and proxy["status"] == "disabled":
+        direct_to_representative = True
+        direct_reason = str(proxy["reason"])
+    checkpoint_state = _phase_checkpoint_state(state)
+    checkpoint_contract = state["template"]["mechanism_phase"]["checkpoint"]
+    checkpoint_probe = (
+        checkpoint_state["status"] == "pending"
+        and int(state["usage"]["candidates_admitted"]) + 1
+        >= int(checkpoint_contract["after_candidates"])
+    )
+    lane = {
+        "requested": requested_direct,
+        "effective": (
+            "representative_direct" if direct_to_representative else "proxy_first"
+        ),
+        "reason": direct_reason if direct_to_representative else None,
+        "checkpoint_probe": checkpoint_probe,
+    }
+    audit_every = int(
+        state["template"]["search_policy"]["proxy_calibration"][
+            "audit_every_candidates"
+        ]
+    )
     params = dict(state["accepted_parent"]["params"])
     for override in overrides:
         if "=" not in override:
@@ -2048,6 +2773,10 @@ def trial(
         name, value = override.split("=", 1)
         params[name] = value
     params = _validate_params(state["template"], params)
+    if state.get("search_started_at") is None:
+        state["search_started_at"] = utc_now()
+        write_state(run_dir, state)
+    _require_search_phase_budget(state)
     candidate_id = _candidate_id(state)
     editable_digest = _legacy().path_digest(
         root, state["template"]["scope"]["editable"]
@@ -2055,12 +2784,33 @@ def trial(
     state["usage"]["candidates_admitted"] = int(
         state["usage"]["candidates_admitted"]
     ) + 1
+    proxy_audit_due = (
+        not direct_to_representative
+        and proxy["status"] == "enabled"
+        and int(state["usage"]["candidates_admitted"]) % audit_every == 0
+    )
+    write_inflight(
+        run_dir,
+        {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "kind": "candidate_pending",
+            "candidate_id": candidate_id,
+            "phase_id": state["template"]["mechanism_phase"]["id"],
+            "lane": lane,
+            "evaluation_id": candidate_id,
+            "params": params,
+            "editable_paths_sha256": editable_digest,
+            "started_at": utc_now(),
+        },
+    )
     append_event(
         run_dir / "candidate-events.jsonl",
         {
             "schema_version": EVENT_SCHEMA_VERSION,
             "event": "candidate_admitted",
             "candidate_id": candidate_id,
+            "phase_id": state["template"]["mechanism_phase"]["id"],
+            "lane": lane,
             "summary": summary,
             "params": params,
             "editable_paths_sha256": editable_digest,
@@ -2075,7 +2825,22 @@ def trial(
     evaluation_ids: list[str] = []
     screen_attempts: list[dict[str, Any]] = []
     representative_result = None
-    for tier in _search_tiers(state["template"]):
+    phase_checkpoint = None
+    phase_exhausted = False
+    screen_rejected = False
+    proxy_audit = None
+    proxy_misranked = False
+    search_tiers = _search_tiers(state["template"])
+    if direct_to_representative:
+        trial_tiers = []
+        if checkpoint_probe:
+            trial_tiers.append(_tier_by_role(state["template"], "proxy"))
+        trial_tiers.append(_tier_by_role(state["template"], "representative"))
+    else:
+        trial_tiers = search_tiers
+    if checkpoint_state["status"] != "pending":
+        phase_checkpoint = checkpoint_state["record"]
+    for tier in trial_tiers:
         attempt_index = 0
         while True:
             base_evaluation_id = f"{candidate_id}-{tier['id']}"
@@ -2088,6 +2853,8 @@ def trial(
                 "schema_version": EVENT_SCHEMA_VERSION,
                 "kind": "candidate",
                 "candidate_id": candidate_id,
+                "phase_id": state["template"]["mechanism_phase"]["id"],
+                "lane": lane,
                 "evaluation_id": evaluation_id,
                 "tier_id": tier["id"],
                 "params": params,
@@ -2104,9 +2871,10 @@ def trial(
                     params,
                     evaluation_id,
                     expected_editable_digest=editable_digest,
+                    search_phase=True,
+                    retain_inflight_on_budget_exhausted=True,
                 )
             except BudgetExhausted as error:
-                (run_dir / "inflight.json").unlink(missing_ok=True)
                 verdict = "invalid"
                 reason = str(error)
                 break
@@ -2126,6 +2894,30 @@ def trial(
             record = _tier_record(result)
             tier_results[tier["id"]] = record
             if tier["promotion"]["kind"] == "successor_screen":
+                live_checkpoint = _phase_checkpoint_state(state)
+                if live_checkpoint["status"] == "pending":
+                    phase_checkpoint = _phase_checkpoint(state, result)
+                    if phase_checkpoint["due"]:
+                        _seal_phase_checkpoint(
+                            state,
+                            phase_checkpoint,
+                            candidate_id,
+                            evaluation_id,
+                            event["attempt"].get("tier_result_sha256"),
+                        )
+                        write_state(run_dir, state)
+                else:
+                    phase_checkpoint = live_checkpoint["record"]
+                if phase_checkpoint["due"] and not phase_checkpoint["passed"]:
+                    verdict = "discard"
+                    reason = "candidate missed the mechanism-phase checkpoint"
+                    phase_exhausted = True
+                    state["status"] = "phase_exhausted"
+                    write_state(run_dir, state)
+                    break
+                if direct_to_representative:
+                    reason = "checkpoint probe passed; proxy ranking was bypassed"
+                    break
                 retry_limit = int(
                     tier["promotion"]["inconclusive_retry_limit"]
                 )
@@ -2152,11 +2944,32 @@ def trial(
                     attempt_index += 1
                     continue
                 if disposition == "discard":
-                    verdict = "discard"
+                    if proxy_audit_due:
+                        screen_rejected = True
+                        reason = "proxy rejection advanced to its scheduled representative audit"
+                    else:
+                        verdict = "discard"
             else:
                 promoted, reason = _promotion_pass(
                     tier, result, parent["tiers"][tier["id"]]
                 )
+                if promoted and tier["role"] == "representative":
+                    promoted, reason = _phase_success(state, result, parent)
+                if (
+                    tier["role"] == "representative"
+                    and proxy_audit_due
+                    and screen_rejected
+                ):
+                    proxy_misranked = promoted
+                    proxy_audit = {
+                        "candidate_id": candidate_id,
+                        "proxy_disposition": "discard",
+                        "representative_promoted": promoted,
+                        "ranking_ok": not promoted,
+                    }
+                    proxy["audits_completed"] = int(
+                        proxy.get("audits_completed", 0)
+                    ) + 1
                 if not promoted:
                     verdict = "discard"
                 elif tier["role"] == "representative":
@@ -2167,7 +2980,8 @@ def trial(
 
     decision_tier_results = dict(tier_results)
     if verdict == "keep" and representative_result is not None:
-        for tier in _search_tiers(state["template"]):
+        decision_tier_results = {**parent["tiers"], **tier_results}
+        for tier in search_tiers:
             if tier["promotion"]["kind"] == "successor_screen":
                 decision_tier_results[tier["id"]] = parent["tiers"][tier["id"]]
 
@@ -2175,6 +2989,8 @@ def trial(
         "schema_version": EVENT_SCHEMA_VERSION,
         "event": "candidate_decided",
         "candidate_id": candidate_id,
+        "phase_id": state["template"]["mechanism_phase"]["id"],
+        "lane": lane,
         "evaluation_ids": evaluation_ids,
         "parent_id": parent["id"],
         "summary": summary,
@@ -2193,9 +3009,22 @@ def trial(
         ),
         "tier_results": decision_tier_results,
         "screen_attempts": screen_attempts,
+        "phase_checkpoint": phase_checkpoint,
+        "proxy_audit": proxy_audit,
         "recorded_at": utc_now(),
     }
     append_event(run_dir / "decision-events.jsonl", decision)
+    if proxy_audit is not None:
+        append_event(
+            run_dir / "proxy-events.jsonl",
+            {
+                "schema_version": EVENT_SCHEMA_VERSION,
+                "event": "proxy_audited",
+                "phase_id": state["template"]["mechanism_phase"]["id"],
+                **proxy_audit,
+                "recorded_at": utc_now(),
+            },
+        )
     if verdict == "keep" and representative_result is not None:
         snapshot = run_dir / "snapshots" / candidate_id
         _legacy().snapshot_paths(
@@ -2209,6 +3038,7 @@ def trial(
         paired = representative_result["replication"]["summary"]
         state["accepted_parent"] = {
             "id": candidate_id,
+            "lane": lane,
             "params": params,
             "metric": float(representative_result["primary"]["value"]),
             "relative_mad": float(paired["mad"]) / float(paired["median"]),
@@ -2218,6 +3048,27 @@ def trial(
             "editable_paths_sha256": editable_digest,
             "snapshot_sha256": snapshot_digest,
         }
+        if (
+            (direct_to_representative or proxy_misranked)
+            and proxy.get("status") in {"enabled", "pending_calibration"}
+        ):
+            proxy["status"] = "disabled"
+            proxy["reason"] = (
+                "a representative audit found a material proxy false negative"
+                if proxy_misranked
+                else "an accepted direct candidate invalidated proxy ranking"
+            )
+            append_event(
+                run_dir / "proxy-events.jsonl",
+                {
+                    "schema_version": EVENT_SCHEMA_VERSION,
+                    "event": "proxy_disabled",
+                    "phase_id": state["template"]["mechanism_phase"]["id"],
+                    "candidate_id": candidate_id,
+                    "reason": proxy["reason"],
+                    "recorded_at": utc_now(),
+                },
+            )
         state["status"] = "active"
     else:
         _legacy().restore_snapshot(
@@ -2225,6 +3076,8 @@ def trial(
             state["template"]["scope"]["editable"],
             run_dir / "snapshots" / parent["snapshot"],
         )
+        if phase_exhausted:
+            state["status"] = "phase_exhausted"
     _refresh_calendar(state)
     write_state(run_dir, state)
     (run_dir / "inflight.json").unlink(missing_ok=True)
@@ -2606,10 +3459,38 @@ def _recover_committed_candidate(
     ]
     if len(decisions) > 1:
         raise ValueError("candidate ledger contains duplicate final decisions")
-    if not decisions or decisions[0].get("verdict") != "keep":
+    if not decisions:
         return False, _restore_with_quarantine(root, run_dir, state)
 
     decision = decisions[0]
+    if decision.get("verdict") != "keep":
+        checkpoint = _phase_checkpoint_state(state)
+        if checkpoint["status"] == "failed":
+            checkpoint = _verify_sealed_phase_checkpoint(run_dir, state)
+            if canonical_json(decision.get("phase_checkpoint")) != canonical_json(
+                checkpoint["record"]
+            ):
+                raise ValueError("candidate decision checkpoint is not sealed by state")
+            state["status"] = "phase_exhausted"
+        return False, _restore_with_quarantine(root, run_dir, state)
+
+    current_parent = state["accepted_parent"]
+    if current_parent.get("id") == candidate_id:
+        if (
+            decision.get("params") != current_parent.get("params")
+            or decision.get("tier_results") != current_parent.get("tiers")
+            or inflight.get("editable_paths_sha256")
+            != current_parent.get("editable_paths_sha256")
+        ):
+            raise ValueError("committed candidate decision disagrees with live state")
+        _legacy().restore_snapshot(
+            root,
+            state["template"]["scope"]["editable"],
+            run_dir / "snapshots" / current_parent["snapshot"],
+        )
+        state["status"] = "active"
+        return True, None
+
     accepted_tiers = decision.get("tier_results")
     expected_tier_ids = {
         tier["id"] for tier in _search_tiers(state["template"])
@@ -2624,6 +3505,71 @@ def _recover_committed_candidate(
             accepted_tiers[tier["id"]]
         ) != canonical_json(state["accepted_parent"]["tiers"][tier["id"]]):
             return False, _restore_with_quarantine(root, run_dir, state)
+    checkpoint = _verify_sealed_phase_checkpoint(run_dir, state)
+    if (
+        checkpoint["status"] != "passed"
+        or canonical_json(decision.get("phase_checkpoint"))
+        != canonical_json(checkpoint["record"])
+    ):
+        raise ValueError("kept candidate has no sealed phase checkpoint")
+
+    evaluation_ids = decision.get("evaluation_ids")
+    if (
+        not isinstance(evaluation_ids, list)
+        or len(evaluation_ids) != len(set(evaluation_ids))
+    ):
+        raise ValueError("candidate decision evaluation ids are invalid")
+    representative = _tier_by_role(state["template"], "representative")
+    representative_events = [
+        event
+        for event in _events(run_dir / "tier-events.jsonl")
+        if event.get("evaluation_id") in evaluation_ids
+        and event.get("tier_id") == representative["id"]
+    ]
+    if len(representative_events) != 1:
+        raise ValueError("candidate decision has no unique representative result")
+    representative_event = representative_events[0]
+    representative_id = representative_event["evaluation_id"]
+    result_path = (
+        run_dir / "evaluations" / representative_id / "tier-result.json"
+    )
+    attempt = representative_event.get("attempt")
+    if (
+        representative_event.get("event") != "tier_evaluated"
+        or representative_event.get("params") != decision.get("params")
+        or not isinstance(attempt, dict)
+        or attempt.get("outcome") != "success"
+        or not result_path.is_file()
+    ):
+        raise ValueError("candidate representative event is invalid")
+    result_payload = result_path.read_bytes()
+    if attempt.get("tier_result_sha256") != sha256(result_payload):
+        raise ValueError("candidate representative result digest does not match")
+    representative_result = json.loads(result_payload)
+    validate_tier_result(representative_result, representative)
+    guards_passed, _ = _required_guards(
+        state, representative, representative_result
+    )
+    promoted, _ = _promotion_pass(
+        representative,
+        representative_result,
+        current_parent["tiers"][representative["id"]],
+    )
+    phase_passed, _ = _phase_success(
+        state, representative_result, current_parent
+    )
+    if (
+        not guards_passed
+        or not promoted
+        or not phase_passed
+        or canonical_json(decision.get("primary"))
+        != canonical_json(representative_result["primary"])
+        or canonical_json(decision.get("paired_summary"))
+        != canonical_json(representative_result["replication"]["summary"])
+        or canonical_json(accepted_tiers[representative["id"]])
+        != canonical_json(_tier_record(representative_result))
+    ):
+        raise ValueError("candidate decision is not supported by representative evidence")
     editable = state["template"]["scope"]["editable"]
     expected = inflight.get("editable_paths_sha256")
     snapshot = run_dir / "snapshots" / str(candidate_id)
@@ -2634,11 +3580,12 @@ def _recover_committed_candidate(
     observed = _legacy().path_digest(snapshot, editable)
     if not isinstance(expected, str) or observed != expected:
         return False, _restore_with_quarantine(root, run_dir, state)
-    paired = decision["paired_summary"]
+    paired = representative_result["replication"]["summary"]
     state["accepted_parent"] = {
         "id": candidate_id,
+        "lane": decision.get("lane"),
         "params": decision["params"],
-        "metric": float(decision["primary"]["value"]),
+        "metric": float(representative_result["primary"]["value"]),
         "relative_mad": float(paired["mad"]) / float(paired["median"]),
         "paired_summary": paired,
         "tiers": accepted_tiers,
@@ -2646,6 +3593,19 @@ def _recover_committed_candidate(
         "editable_paths_sha256": expected,
         "snapshot_sha256": observed,
     }
+    lane = decision.get("lane")
+    audit = decision.get("proxy_audit")
+    proxy = state.get("proxy")
+    if (
+        isinstance(proxy, dict)
+        and proxy.get("status") in {"enabled", "pending_calibration"}
+        and (
+            (isinstance(lane, dict) and lane.get("effective") == "representative_direct")
+            or (isinstance(audit, dict) and audit.get("ranking_ok") is False)
+        )
+    ):
+        proxy["status"] = "disabled"
+        proxy["reason"] = "recovered candidate invalidated proxy ranking"
     state["status"] = "active"
     _legacy().restore_snapshot(root, editable, snapshot)
     return True, None
@@ -2917,6 +3877,44 @@ def _recover_binary_build(
     return state
 
 
+def _recover_pending_candidate(
+    root: Path,
+    run_dir: Path,
+    state: dict[str, Any],
+    inflight: dict[str, Any],
+) -> dict[str, Any]:
+    candidate_id = inflight.get("candidate_id")
+    phase_id = state["template"]["mechanism_phase"]["id"]
+    if (
+        not isinstance(candidate_id, str)
+        or inflight.get("evaluation_id") != candidate_id
+        or inflight.get("phase_id") != phase_id
+        or not isinstance(inflight.get("params"), dict)
+        or not isinstance(inflight.get("editable_paths_sha256"), str)
+    ):
+        raise ValueError("pending candidate transaction is invalid")
+    quarantine = _restore_with_quarantine(root, run_dir, state)
+    checkpoint = _phase_checkpoint_state(state)
+    state["status"] = (
+        "phase_exhausted" if checkpoint["status"] == "failed" else "active"
+    )
+    append_event(
+        run_dir / "decision-events.jsonl",
+        {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event": "pending_candidate_recovered",
+            "candidate_id": candidate_id,
+            "phase_id": phase_id,
+            "quarantine": str(quarantine) if quarantine is not None else None,
+            "recorded_at": utc_now(),
+        },
+    )
+    _refresh_calendar(state)
+    write_state(run_dir, state)
+    (run_dir / "inflight.json").unlink()
+    return state
+
+
 def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
     state = load_state(run_dir, verify_sealed_binaries=False)
     inflight_path = run_dir / "inflight.json"
@@ -2925,6 +3923,8 @@ def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
     inflight = read_json(inflight_path)
     if inflight.get("kind") == "sealed_binary_build":
         return _recover_binary_build(root, run_dir, state, inflight)
+    if inflight.get("kind") == "candidate_pending":
+        return _recover_pending_candidate(root, run_dir, state, inflight)
     evaluation_dir = run_dir / "evaluations" / inflight["evaluation_id"]
     attempt_path = evaluation_dir / "attempt.json"
     inflight_context = inflight.get("execution_context")
@@ -3327,10 +4327,14 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("template")
     resume = commands.add_parser("resume-init")
     resume.add_argument("run_dir")
+    calibrate = commands.add_parser("calibrate-proxy")
+    calibrate.add_argument("run_dir")
     trial_parser = commands.add_parser("trial")
     trial_parser.add_argument("run_dir")
     trial_parser.add_argument("--param", action="append", default=[])
     trial_parser.add_argument("--summary", required=True)
+    trial_parser.add_argument("--direct-to-representative", action="store_true")
+    trial_parser.add_argument("--direct-reason")
     context = commands.add_parser("candidate-context")
     context.add_argument("run_dir")
     state = commands.add_parser("status")
@@ -3363,12 +4367,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             value = validate_template_file(root, Path(args.template))
         elif args.command == "resume-init":
             value = resume_initialization(root, Path(args.run_dir).resolve())
+        elif args.command == "calibrate-proxy":
+            value, _ = calibrate_proxy(root, Path(args.run_dir).resolve())
         elif args.command == "trial":
             value, _ = trial(
                 root,
                 Path(args.run_dir).resolve(),
                 args.param,
                 args.summary,
+                direct_to_representative=args.direct_to_representative,
+                direct_reason=args.direct_reason,
             )
         elif args.command == "candidate-context":
             value = candidate_context(Path(args.run_dir).resolve())

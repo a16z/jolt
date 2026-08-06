@@ -7359,6 +7359,9 @@ def parser() -> argparse.ArgumentParser:
     resume = commands.add_parser("resume-init")
     resume.add_argument("run_dir")
     resume.set_defaults(handler=command_resume_init)
+    calibrate = commands.add_parser("calibrate-proxy")
+    calibrate.add_argument("run_dir")
+    calibrate.set_defaults(handler=command_resume_init)
     context = commands.add_parser("candidate-context")
     context.add_argument("run_dir")
     context.set_defaults(handler=command_candidate_context)
@@ -7367,6 +7370,8 @@ def parser() -> argparse.ArgumentParser:
     trial.add_argument("--candidate-manifest")
     trial.add_argument("--param", action="append", default=[])
     trial.add_argument("--summary")
+    trial.add_argument("--direct-to-representative", action="store_true")
+    trial.add_argument("--direct-reason")
     trial.set_defaults(handler=command_trial)
     status = commands.add_parser("status")
     status.add_argument("run_dir")
@@ -7420,6 +7425,7 @@ def command_uses_v2(args: argparse.Namespace) -> bool:
             "validate-production",
             "recover",
             "resume-init",
+            "calibrate-proxy",
         }:
             path = Path(args.run_dir) / "run.json"
         elif args.command in {"goal-prompt", "goal-decision"}:
