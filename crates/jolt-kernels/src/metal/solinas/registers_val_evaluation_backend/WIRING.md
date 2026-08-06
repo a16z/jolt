@@ -1,18 +1,20 @@
 # Registers value-evaluation Metal backend contract
 
 This directory contains the design record for the high-level
-`RegistersValEvaluation` member. The retained factorized path is now installed
+`RegistersValEvaluation` member. The retained factorized path is executable
 through `metal/registers_val_evaluation.rs`: it runs a Metal prefix, reads one
-dense state back, and finishes with the actual optimized CPU kernel. Its first
-integration test matches every round polynomial, running claim, derived LT
-scalar, and output claim. Complete log-26 member timing is still pending, so
-this is not yet a speedup result.
+dense state back, and finishes with the actual optimized CPU kernel. It is
+withheld from `with_metal_compute` until the resident-input and performance
+gates pass. Its integration test matches every round polynomial, running
+claim, derived LT scalar, and output claim at odd and even trace logs. Complete
+log-26 member timing is still pending, so this is not yet a speedup result.
 
 The current integration eagerly materializes the increment table during
 stage-5 preparation, reclaims the stage-4 `rd` index carry when available,
 and copies both into sequence-owned Metal buffers. It does not yet implement
-the target stage-4 resident owner or asynchronous first-message overlap
-described below. A test-only direct first-message candidate was measured at
+the target stage-4 resident owner. The first message is submitted during
+`prepare` and joined on the member's first active round, so its execution can
+overlap the inactive batch prefix. A test-only direct first-message candidate was measured at
 log 26, rejected, and removed; the exact screening artifact is
 `autoresearch/evidence/registers_val_direct_log26_rejected_85c57314d.json`.
 The existing low-level implementation in `solinas/registers_val/` owns the
@@ -25,7 +27,8 @@ solinas_registers_val_dense_transition
 solinas_registers_val_reduce
 ```
 
-Nothing in this directory is registered with the production Metal backend.
+The module and config compile in the Metal backend, but the production selector
+does not install this member.
 The removed candidate and the retained factorized control both matched the
 dense scalar oracle with zero shader audit counters before timing. The direct
 candidate cleared its absolute active-time cap, but was 37.05% slower in wall
@@ -220,10 +223,10 @@ without changing a message byte:
    planes. Build only the 128-entry address equality table and the three
    split-LT tables on the host. Allocate both dense arenas and reduction
    scratch once.
-2. The current adapter submits and joins the first-message command in the
-   first active `prove_round`, returning `[s(0), s(2), s(3)]`. A later owner
-   can submit it during `prepare` and overlap the member's 128 inactive batch
-   rounds without changing protocol state.
+2. The current adapter submits the first-message command during `prepare` and
+   joins it in the first active `prove_round`, returning `[s(0), s(2), s(3)]`.
+   This overlaps the member's 128 inactive batch rounds without changing
+   protocol state.
 3. After host challenge `c_0`, run the native transition. It binds raw
    `rd_inc` and sparse `rd_index`/address equality into a resident
    32-byte `{inc, wa}` row and computes message one from those register
@@ -254,7 +257,7 @@ that challenge is incorrect.
 
 There is an exact producer at the stage-4 boundary; no future grouped or
 device-native row source is assumed. `OptimizedRegistersReadWrite::prepare`
-already collects `rd_indices` and parks them for this member. The installed
+already collects `rd_indices` and parks them for this member. The executable
 adapter reclaims that carry, eagerly obtains the canonical `inc_table`, and
 copies both through the low-level sequence constructor. The target follow-up
 is a typed proof-session owner with these planes:
@@ -275,7 +278,7 @@ they are free.
 The design-only `RegistersValResidentInputAbi` records row count, exact byte lengths,
 device-registry ID, two distinct allocation identities, a nonzero proof
 generation, stage 4 as producer, cycle order, and field canonicality. The
-installed adapter does not yet construct or admit this owner. Its low-level
+executable adapter does not yet construct or admit this owner. Its low-level
 invocation retains the copied buffers through the native transition because
 both message zero and message one read them.
 
@@ -283,12 +286,13 @@ The target publication fills the final shared Metal allocations directly. The
 current constructor instead creates a temporary canonical `Fp128` vector and
 a sentinel-index vector before allocating the shared buffers; those costs are
 inside `prepare` and must remain charged to the Metal member. Aggregate
-working-set admission covers the complete 2,752,645,120-byte log-26 device set
-before the first Metal allocation. Capacity failure selects the ready
+working-set admission covers the 2,752,645,120-byte log-26 device set plus 48
+bytes of reduction parameter buffers before the first Metal allocation.
+Capacity failure selects the ready
 optimized CPU kernel before any command; a later device failure aborts the
 proof.
 
-The installed adapter consumes `SharedRdIndices`, but retains its owned host
+The executable adapter consumes `SharedRdIndices`, but retains its owned host
 vectors until low-level preparation succeeds. A failed capacity check can
 therefore construct the optimized CPU state without walking the witness
 again. Once a device command succeeds, later errors abort the proof rather
@@ -518,9 +522,10 @@ preregistered screen; thread-width tuning of the deleted design is not enough.
 2. **Done:** `RegistersValSequence::read_current_dense_state_into` fills
    preallocated host storage and validates the exact row count. The production
    adapter reports its `32C`-byte readback boundary.
-3. **Partial:** the high-level `PrepareKernel` adapter has explicit first,
-   native, dense, and CPU-tail states. First-message submission remains
-   synchronous until the resident owner exists.
+3. **Done:** the high-level `PrepareKernel` adapter has explicit submitted,
+   first-joined, native, dense, CPU-tail, finished, and failed states. It
+   validates round and bind order before mutation, submits the first message
+   during `prepare`, and joins it on round zero.
 4. **Done:** the optimized CPU shell keeps the host split-LT mirror. Handoff
    restores the exact dense state and applies the pending challenge once on
    the first CPU call.

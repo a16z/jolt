@@ -172,7 +172,6 @@ where
         self.spartan_outer_remainder = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
-        self.registers_val_evaluation = Box::new(metal.clone());
         self.booleanity_address = Box::new(metal.clone());
         self.bytecode_read_raf_cycle = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());

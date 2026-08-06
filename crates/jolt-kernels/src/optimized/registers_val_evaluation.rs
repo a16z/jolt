@@ -332,6 +332,7 @@ impl<F: Field> ValEvaluationKernel<F> {
                 message: "registers value CPU-tail length overflow".to_owned(),
             })?;
         if rows.len() != expected
+            || self.lt.current_len() != expected
             || !matches!(&self.inc, IncSource::Offloaded)
             || !matches!(&self.wa, WaState::Offloaded)
         {

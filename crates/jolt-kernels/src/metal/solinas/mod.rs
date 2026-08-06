@@ -166,6 +166,7 @@ pub use registers_read_write::{
     RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
     RegistersReadWriteSecondMessageInvocation,
 };
+pub(crate) use registers_val::{PendingRegistersValFirstMessage, RegistersValFirstMessageStats};
 pub use registers_val::{
     RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
     RegistersValFirstTransitionInvocation, RegistersValSequence, RegistersValTransitionConfig,
@@ -492,6 +493,8 @@ pub enum MetalError {
         "registers value evaluation cannot continue split-LT binding from length {0}; hand off to the dense tail"
     )]
     RegistersValSplitLtExhausted(usize),
+    #[error("invalid registers value-evaluation state: {0}")]
+    InvalidRegistersValState(&'static str),
     #[error("registers value evaluation index {0} is outside the 128-register domain")]
     InvalidRegistersValIndex(u8),
     #[error(

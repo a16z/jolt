@@ -2,13 +2,13 @@ use std::{
     cell::Cell,
     mem::{size_of, size_of_val},
     slice,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use jolt_field::AkitaField;
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
+    objc::rc::autoreleasepool, Buffer, CommandBuffer, ComputePipelineState, MTLCommandBufferStatus,
     MTLResourceOptions, MTLSize,
 };
 
@@ -118,6 +118,68 @@ pub struct RegistersValFirstMessageInvocation {
     threads_per_threadgroup: usize,
     final_in_a: bool,
     completed: Cell<bool>,
+}
+
+struct RegistersValFirstMessageCommand {
+    command_buffer: CommandBuffer,
+    submitted_at: Instant,
+    submit_wall: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RegistersValFirstMessageStats {
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
+    pub lifecycle_wall: Duration,
+    pub gpu_active: Duration,
+}
+
+#[must_use = "a submitted registers-value message must be joined before use"]
+pub(crate) struct PendingRegistersValFirstMessage {
+    invocation: Option<RegistersValFirstMessageInvocation>,
+    command: Option<RegistersValFirstMessageCommand>,
+}
+
+impl Drop for PendingRegistersValFirstMessage {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl PendingRegistersValFirstMessage {
+    pub(crate) fn cycles(&self) -> Option<usize> {
+        self.invocation
+            .as_ref()
+            .map(RegistersValFirstMessageInvocation::cycles)
+    }
+
+    pub(crate) fn join(
+        mut self,
+    ) -> Result<
+        (
+            RegistersValFirstMessageInvocation,
+            RegistersValFirstMessageStats,
+        ),
+        MetalError,
+    > {
+        let invocation = self
+            .invocation
+            .take()
+            .ok_or(MetalError::InvalidRegistersValState(
+                "submitted first message lost its invocation",
+            ))?;
+        let command = self
+            .command
+            .take()
+            .ok_or(MetalError::InvalidRegistersValState(
+                "submitted first message lost its command",
+            ))?;
+        let stats = invocation.complete_first_message(command)?;
+        Ok((invocation, stats))
+    }
 }
 
 struct TransitionBuffers {
@@ -270,26 +332,38 @@ impl SolinasMetal {
 
         let threadgroups = lt_hi.len();
         let partial_count = threadgroups;
-        let dense_bytes = inc
-            .len()
-            .checked_add(inc.len() / 2)
-            .and_then(|elements| elements.checked_mul(size_of::<Fp128>()))
-            .ok_or(MetalError::InputTooLong(inc.len()))?;
-        let partial_bytes = 2usize
-            .checked_mul(SAMPLES)
-            .and_then(|factor| factor.checked_mul(partial_count))
-            .and_then(|elements| elements.checked_mul(size_of::<Fp128>()))
+        let partial_elements = SAMPLES
+            .checked_mul(partial_count)
             .ok_or(MetalError::InputTooLong(partial_count))?;
-        let input_bytes = size_of_val(inc.as_slice())
-            .checked_add(size_of_val(rd))
-            .and_then(|bytes| bytes.checked_add(size_of_val(eq_address.as_slice())))
-            .and_then(|bytes| bytes.checked_add(size_of_val(lt_lo.as_slice())))
-            .and_then(|bytes| bytes.checked_add(size_of_val(lt_hi.as_slice())))
-            .and_then(|bytes| bytes.checked_add(size_of_val(eq_hi.as_slice())))
-            .ok_or(MetalError::InputTooLong(inc.len()))?;
-        let additional_bytes = input_bytes
-            .checked_add(dense_bytes)
-            .and_then(|bytes| bytes.checked_add(partial_bytes))
+        let field_bytes = |elements: usize| {
+            elements
+                .checked_mul(size_of::<Fp128>())
+                .ok_or(MetalError::InputTooLong(elements))
+        };
+        let buffer_bytes = [
+            size_of_val(inc.as_slice()),
+            size_of_val(rd),
+            size_of_val(eq_address.as_slice()),
+            size_of_val(lt_lo.as_slice()),
+            size_of_val(lt_hi.as_slice()),
+            size_of_val(eq_hi.as_slice()),
+            field_bytes(inc.len())?,
+            field_bytes(inc.len() / 2)?,
+            field_bytes(partial_elements)?,
+            field_bytes(partial_elements)?,
+        ];
+        for &bytes in &buffer_bytes {
+            self.validate_buffer_length(
+                u64::try_from(bytes).map_err(|_| MetalError::InputTooLong(inc.len()))?,
+            )?;
+        }
+        self.validate_buffer_length(size_of::<ReductionParams>() as u64)?;
+        let reduction_param_bytes = reduction_step_count(partial_count)
+            .checked_mul(size_of::<ReductionParams>())
+            .ok_or(MetalError::InputTooLong(partial_count))?;
+        let additional_bytes = buffer_bytes
+            .into_iter()
+            .try_fold(reduction_param_bytes, usize::checked_add)
             .and_then(|bytes| u64::try_from(bytes).ok())
             .ok_or(MetalError::InputTooLong(inc.len()))?;
         self.validate_additional_working_set(additional_bytes)?;
@@ -301,9 +375,6 @@ impl SolinasMetal {
                 .map_err(|_| MetalError::InputTooLong(lt_lo.len()))?,
             _reserved: 0,
         };
-        let partial_elements = SAMPLES
-            .checked_mul(partial_count)
-            .ok_or(MetalError::InputTooLong(partial_count))?;
         let partial_a = self.new_registers_val_buffer(partial_elements)?;
         let partial_b = self.new_registers_val_buffer(partial_elements)?;
         let dense_a = self.new_registers_val_buffer(inc.len())?;
@@ -487,9 +558,24 @@ impl RegistersValFirstMessageInvocation {
     }
 
     pub fn execute_timed(&self) -> Result<Duration, MetalError> {
+        let command = self.submit_first_message();
+        self.complete_first_message(command)
+            .map(|stats| stats.gpu_active)
+    }
+
+    pub(crate) fn submit(self) -> PendingRegistersValFirstMessage {
+        let command = self.submit_first_message();
+        PendingRegistersValFirstMessage {
+            invocation: Some(self),
+            command: Some(command),
+        }
+    }
+
+    fn submit_first_message(&self) -> RegistersValFirstMessageCommand {
         self.completed.set(false);
+        let submitted_at = Instant::now();
+        let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
-            let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.message_pipeline);
             encoder.set_buffer(0, Some(&self.buffers.inc), 0);
@@ -524,18 +610,39 @@ impl RegistersValFirstMessageInvocation {
             );
             encoder.end_encoding();
             command_buffer.commit();
-            command_buffer.wait_until_completed();
-            let status = command_buffer.status();
-            if status != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(status));
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
-            self.completed.set(true);
-            Ok(Duration::from_secs_f64(end - start))
+        });
+        RegistersValFirstMessageCommand {
+            command_buffer,
+            submitted_at,
+            submit_wall: submitted_at.elapsed(),
+        }
+    }
+
+    fn complete_first_message(
+        &self,
+        command: RegistersValFirstMessageCommand,
+    ) -> Result<RegistersValFirstMessageStats, MetalError> {
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(command.submitted_at)
+            .saturating_sub(command.submit_wall);
+        command.command_buffer.wait_until_completed();
+        let status = command.command_buffer.status();
+        if status != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(status));
+        }
+        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        self.completed.set(true);
+        Ok(RegistersValFirstMessageStats {
+            submit_wall: command.submit_wall,
+            overlap_wall,
+            join_wall: join_started.elapsed(),
+            lifecycle_wall: command.submitted_at.elapsed(),
+            gpu_active: Duration::from_secs_f64(end - start),
         })
     }
 
@@ -979,6 +1086,15 @@ impl RegistersValSequence {
             &self.buffers.dense_a
         }
     }
+}
+
+fn reduction_step_count(mut input_count: usize) -> usize {
+    let mut steps = 0;
+    while input_count > 1 {
+        input_count = input_count.div_ceil(SIMD_WIDTH);
+        steps += 1;
+    }
+    steps
 }
 
 fn encode_reductions(
