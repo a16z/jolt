@@ -23,8 +23,8 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::backend::{MetalBackend, MetalConfig};
 use super::instruction_input::PreparedInstructionInput;
-use super::instruction_read_raf::{MetalBackend, MetalConfig};
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
     instruction_ra_weight_capacities, outer_remainder_sequence_max_buffer_bytes_with_config,

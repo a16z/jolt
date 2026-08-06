@@ -5,8 +5,8 @@ use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
+use super::backend::MetalBackend;
 use super::booleanity::booleanity_address_can_fallback;
-use super::instruction_read_raf::MetalBackend;
 use super::solinas::BooleanityAddressPushforwardConfig;
 use super::solinas::{BooleanityRow, BooleanityRows};
 use crate::optimized::hamming_weight_claim_reduction::{

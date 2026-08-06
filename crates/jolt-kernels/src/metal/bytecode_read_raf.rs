@@ -12,7 +12,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::MetalBackend;
+use super::backend::MetalBackend;
 use super::solinas::{
     BooleanityRows, BytecodeCycleRowInputs, BytecodeCycleRowSequence, BytecodeCycleSequenceConfig,
     BytecodeCycleTablesMut, MetalError,

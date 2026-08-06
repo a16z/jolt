@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::JoltWitnessPlane;
 
-use super::instruction_read_raf::MetalBackend;
+use super::backend::MetalBackend;
 use super::solinas::{
     instruction_input_weight_capacities, InstructionInputRows, InstructionInputSequence,
     InstructionInputSequenceConfig, InstructionInputSequenceStorage,

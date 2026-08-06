@@ -7,7 +7,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-use super::instruction_read_raf::MetalBackend;
+use super::backend::MetalBackend;
 use super::solinas::{
     InstructionRaSequence, InstructionRaSequenceConfig, InstructionRaSequenceStorage,
     ResidentLookupIndexPlane,

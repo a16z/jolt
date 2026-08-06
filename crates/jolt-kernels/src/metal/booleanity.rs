@@ -9,7 +9,7 @@ use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_witness::JoltWitnessPlane;
 
-use super::instruction_read_raf::MetalBackend;
+use super::backend::MetalBackend;
 use super::solinas::{
     BooleanityAddressPushforwardConfig, BooleanityRows, BooleanitySequence,
     BooleanitySequenceConfig, MetalError,
