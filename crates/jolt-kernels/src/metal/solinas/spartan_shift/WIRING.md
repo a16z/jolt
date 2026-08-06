@@ -6,10 +6,10 @@ microbenchmark for the stage-3 `SpartanShift` member. It does not yet select a
 PIOP backend or change the protocol.
 
 The current result is a provisional resident-service kernel, not an accepted
-PIOP result. Exact GPU parity passes and the retained prepared-path median
-clears 5x, but command-service variance has a long tail and the production
-resident producer, reusable workspace, asynchronous schedule, and fairly
-attributed complete-member evaluator are still missing.
+PIOP result. Exact GPU parity passes and a warmed residency control clears 5x,
+but the corrected first-use host-written path does not. The production resident
+producer, reusable cross-proof workspace, and fairly attributed complete-member
+evaluator are still missing.
 
 ## Decision
 
@@ -399,39 +399,59 @@ instead of stopping at 5x.
 
 ## Observed standalone result
 
-The registered runtime now owns three shared resident source buffers and
-preallocates all command-private buffers. `execute` performs no device-buffer
-allocation. A target sweep selected mixed `(build_threads = 64,
-high_tile = 128)` and native fold `(fold_threads = 32)`. The expanded build and
-a column-parallel fold were both measured and rejected. The latter regressed a
-focused parity run to seconds rather than milliseconds.
+The registered runtime can either upload the three diagnostic host planes or
+attach exact-size buffers from a producer on the same Metal device. It
+preallocates all command-private buffers, and `execute` performs no
+device-buffer allocation. Consuming `submit`/`join` handles keep every source
+and output alive, prevent concurrent scratch reuse, and report submit, overlap,
+join, and GPU-active time independently.
+
+A target sweep selected mixed `(build_threads = 64, high_tile = 128)` and
+native fold `(fold_threads = 32)`. The expanded build and a column-parallel
+fold were both measured and rejected. The latter regressed a focused parity
+run to seconds rather than milliseconds.
 
 The focused suite runs 16 Spartan-shift tests, including element-for-element
 Metal parity for both prefix strategies and the native fold against an
 independent host oracle. The runtime also proves that both commands retain the
 same source allocation identities.
 
-Five fresh-process, retained-only observations at `T = 2^26` produced prepared
-hybrid service walls of:
+The original retained-only harness ran one standalone prefix and fold before
+measuring the hybrid. Five fresh-process observations at `T = 2^26` then
+produced prepared service walls of:
 
 ```text
 22.636833 ms, 15.750583 ms, 24.399833 ms, 13.224375 ms, 45.228959 ms
 ```
 
-The median is `22.636833 ms`, or `5.789309x` against the frozen CPU member, and
-four of five samples clear the `26.210324-ms` cap. Median command-active time
-was `9.274125 ms` for the mixed prefix and `5.016500 ms` for the fold. The slow
-sample spent only `15.131375 ms` active on the GPU; its `45.228959-ms` service
-wall came from command scheduling plus host-visible completion latency. That
-tail is real and prevents promotion based on the median alone.
+The `22.636833-ms` median is `5.789309x`, with four of five samples below the
+cap. This remains a useful GPU-residency control, but it is not the one-pass
+PIOP boundary.
 
-These numbers begin after challenge-dependent high/low weight preparation,
-scratch allocation, and pipeline lookup, and they exclude the 1.099-GB source
-upload. They therefore establish a useful kernel-service result, not a fair
-complete-member speedup. The next runtime step is a reusable workspace with
-buffer updates plus submit/join APIs. The paired PIOP evaluator must charge the
-incremental resident producer, workspace updates, both commands, both host
-ladders, and all joins before this member can pass.
+The corrected harness measures the hybrid before any control dispatch. Five
+fresh-process first-use service walls were:
+
+```text
+42.074375 ms, 39.641667 ms, 72.069666 ms, 53.753750 ms, 39.713084 ms
+```
+
+The median is `42.074375 ms`, only `3.114761x`; no sample clears 5x. Median
+prefix and fold active times were `16.318208 ms` and `5.280417 ms`. Adding the
+current challenge-dependent preparation gives a `58.775876-ms` median resident
+member, or `2.229684x`, still excluding the source producer. A bounded `2^14`
+dispatch of the retained entry points did not improve the following target
+command: the prefix remained `16.697458 ms` active. Pipeline cold start is
+therefore rejected as the explanation.
+
+The gap instead appears when the GPU first consumes the 1.099-GB host-written
+source. This is consistent with, but does not prove, a first-touch or
+host-to-device visibility cost. The production hypothesis is narrower: a
+stage-1 GPU producer writes these exact buffers, later stages retain them, and
+Spartan shift consumes them without a CPU-sized upload. The warmed control is
+evidence that such residency can matter, not permission to omit producer cost.
+The next decisive experiment must use the typed producer attachment and charge
+its incremental write/visibility wall. If that one-pass resident boundary does
+not clear `26.210324 ms`, redesign or keep this member on CPU.
 
 ## Occupancy and tuning
 
@@ -511,8 +531,8 @@ Before PIOP promotion:
 1. add a typed resident-plane owner to the shared stage-1 producer;
 2. change that producer to 32-row chunk ownership and add the current `IsNoop`
    source without changing witness semantics;
-3. replace per-invocation scratch allocation with a reusable workspace and add
-   submit/join APIs for both commands;
+3. replace per-invocation scratch allocation with a reusable workspace and
+   explicit challenge-weight updates;
 4. add a Metal backend slot that borrows the owner, runs the two commands, and
    delegates both ladders to a small serial host state;
 5. add generated-driver and proof-level CPU/Metal parity in both clear and ZK

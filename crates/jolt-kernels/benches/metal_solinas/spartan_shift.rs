@@ -66,7 +66,6 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     }
 
     let setup_start = Instant::now();
-    let host_factors = SpartanShiftHostFactors::new(&r_outer, &r_product);
     let mixed = context
         .prepare_spartan_shift_prefix(
             &resident,
@@ -106,64 +105,95 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     assert_eq!(mixed.execute_device_buffer_allocations(), 0);
     assert_eq!(fold.execute_device_buffer_allocations(), 0);
 
-    let mixed_cold_start = Instant::now();
-    let mixed_cold = mixed
-        .execute()
-        .expect("mixed Spartan shift prefix should execute");
-    let mixed_cold_wall = mixed_cold_start.elapsed();
-    let expanded_cold = expanded.as_ref().map(|expanded| {
-        let started = Instant::now();
-        let observation = expanded
-            .execute()
-            .expect("expanded Spartan shift prefix should execute");
-        assert_eq!(mixed_cold.q, observation.q);
-        (started.elapsed(), observation.gpu_active)
-    });
-    let fold_cold_start = Instant::now();
-    let fold_cold = fold
-        .execute()
-        .expect("Spartan shift native fold should execute");
-    let fold_cold_wall = fold_cold_start.elapsed();
-
     let hybrid_start = Instant::now();
-    let mixed_warm_start = Instant::now();
-    let mixed_warm = mixed
-        .execute()
-        .expect("mixed Spartan shift prefix should execute");
-    let mixed_warm_wall = mixed_warm_start.elapsed();
+    let mixed_first_start = Instant::now();
+    let mixed_pending = mixed
+        .submit()
+        .expect("mixed Spartan shift prefix should submit");
+    let host_factors_start = Instant::now();
+    let host_factors = SpartanShiftHostFactors::new(&r_outer, &r_product);
+    let host_factors_wall = host_factors_start.elapsed();
+    let (mixed, mixed_first) = mixed_pending
+        .join()
+        .expect("mixed Spartan shift prefix should join");
+    let mixed_first_wall = mixed_first_start.elapsed();
     let prefix_host_start = Instant::now();
     let (prefix_host, bound_prefix) =
-        run_prefix_host(mixed_warm.q, &host_factors, &prefix_challenges);
+        run_prefix_host(mixed_first.q, &host_factors, &prefix_challenges);
     let prefix_host_wall = prefix_host_start.elapsed();
-    let fold_warm_start = Instant::now();
-    let folded = fold
-        .execute()
-        .expect("Spartan shift native fold should execute");
-    let fold_warm_wall = fold_warm_start.elapsed();
-    let fold_warm_active = folded.gpu_active;
+    let fold_first_start = Instant::now();
+    let fold_pending = fold
+        .submit()
+        .expect("Spartan shift native fold should submit");
+    let suffix_factors_start = Instant::now();
+    let suffix_factors = host_factors.bind_suffix(bound_prefix);
+    let suffix_factors_wall = suffix_factors_start.elapsed();
+    let (fold, folded) = fold_pending
+        .join()
+        .expect("Spartan shift native fold should join");
+    let fold_first_wall = fold_first_start.elapsed();
+    let fold_first_active = folded.gpu_active;
     let suffix_host_start = Instant::now();
     let outputs = run_suffix_host(
         geometry,
         folded.outputs,
-        &host_factors,
-        bound_prefix,
+        suffix_factors,
         &suffix_challenges,
         gamma,
     );
     let suffix_host_wall = suffix_host_start.elapsed();
     let hybrid_wall = hybrid_start.elapsed();
+    let resident_member_wall = setup_wall + hybrid_wall;
     let _ = black_box((prefix_host, outputs));
-    let ratio = if rows == 1 << 26 {
+    let prepared_ratio = if rows == 1 << 26 {
         SPARTAN_SHIFT_CPU_MEDIAN_NS as f64 / hybrid_wall.as_nanos() as f64
     } else {
         f64::NAN
     };
+    let resident_member_ratio = if rows == 1 << 26 {
+        SPARTAN_SHIFT_CPU_MEDIAN_NS as f64 / resident_member_wall.as_nanos() as f64
+    } else {
+        f64::NAN
+    };
+
+    let expanded_control = expanded.as_ref().map(|expanded| {
+        let mixed_started = Instant::now();
+        let mixed_observation = mixed
+            .execute()
+            .expect("mixed Spartan shift control should execute");
+        let mixed_wall = mixed_started.elapsed();
+        let expanded_started = Instant::now();
+        let expanded_observation = expanded
+            .execute()
+            .expect("expanded Spartan shift control should execute");
+        let expanded_wall = expanded_started.elapsed();
+        assert_eq!(mixed_observation.q, expanded_observation.q);
+        (
+            (mixed_wall, mixed_observation.gpu_active),
+            (expanded_wall, expanded_observation.gpu_active),
+        )
+    });
+    let fold_control = (!retained_only).then(|| {
+        let started = Instant::now();
+        let observation = fold
+            .execute()
+            .expect("Spartan shift fold control should execute");
+        (started.elapsed(), observation.gpu_active)
+    });
 
     eprintln!(
-        "spartan-shift rows={rows} generation={generation_wall:?} upload={upload_wall:?} setup={setup_wall:?} mixed-cold-wall={mixed_cold_wall:?} mixed-cold-active={:?} expanded-cold={expanded_cold:?} fold-cold-wall={fold_cold_wall:?} fold-cold-active={:?} mixed-warm-wall={mixed_warm_wall:?} mixed-warm-active={:?} prefix-host={prefix_host_wall:?} fold-warm-wall={fold_warm_wall:?} fold-warm-active={fold_warm_active:?} suffix-host={suffix_host_wall:?} hybrid-warm-wall={hybrid_wall:?} target-cpu-ms={:.6} five-x-cap-ms={:.6} target-ratio={ratio:.6} resident-bytes={} mixed-private-bytes={} expanded-private-bytes={:?} fold-private-bytes={} build-threads={} high-tile={} fold-threads={}",
-        mixed_cold.gpu_active,
-        fold_cold.gpu_active,
-        mixed_warm.gpu_active,
+        "spartan-shift rows={rows} generation={generation_wall:?} upload={upload_wall:?} setup={setup_wall:?} host-factors={host_factors_wall:?} mixed-first-wall={mixed_first_wall:?} mixed-command-wall={:?} mixed-submit={:?} mixed-overlap={:?} mixed-join={:?} mixed-completed-before-join={} mixed-first-active={:?} prefix-host={prefix_host_wall:?} suffix-factors={suffix_factors_wall:?} fold-first-wall={fold_first_wall:?} fold-command-wall={:?} fold-submit={:?} fold-overlap={:?} fold-join={:?} fold-completed-before-join={} fold-first-active={fold_first_active:?} suffix-host={suffix_host_wall:?} prepared-hybrid-wall={hybrid_wall:?} resident-member-wall={resident_member_wall:?} target-cpu-ms={:.6} five-x-cap-ms={:.6} prepared-ratio={prepared_ratio:.6} resident-member-ratio={resident_member_ratio:.6} expanded-control={expanded_control:?} fold-control={fold_control:?} resident-bytes={} mixed-private-bytes={} expanded-private-bytes={:?} fold-private-bytes={} build-threads={} high-tile={} fold-threads={}",
+        mixed_first.wall,
+        mixed_first.submit_wall,
+        mixed_first.overlap_wall,
+        mixed_first.join_wall,
+        mixed_first.completed_before_join,
+        mixed_first.gpu_active,
+        folded.wall,
+        folded.submit_wall,
+        folded.overlap_wall,
+        folded.join_wall,
+        folded.completed_before_join,
         SPARTAN_SHIFT_CPU_MEDIAN_NS as f64 / 1e6,
         SPARTAN_SHIFT_FIVE_X_CAP_NS as f64 / 1e6,
         resident.resident_bytes(),
@@ -222,18 +252,18 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         });
     }
     let _ = group.bench_function(
-        BenchmarkId::new("resident_hybrid_mixed_wall", &suffix),
+        BenchmarkId::new("prepared_hybrid_mixed_wall", &suffix),
         |bench| {
             bench.iter(|| {
                 let prefix = mixed.execute().expect("prefix should execute");
                 let (prefix_host, bound_prefix) =
                     run_prefix_host(prefix.q, &host_factors, &prefix_challenges);
+                let suffix_factors = host_factors.bind_suffix(bound_prefix);
                 let folded = fold.execute().expect("fold should execute");
                 let suffix_host = run_suffix_host(
                     geometry,
                     folded.outputs,
-                    &host_factors,
-                    bound_prefix,
+                    suffix_factors,
                     &suffix_challenges,
                     gamma,
                 );
@@ -268,6 +298,18 @@ impl SpartanShiftHostFactors {
             ],
         }
     }
+
+    fn bind_suffix(&self, bound_prefix: [AkitaField; 4]) -> [Vec<AkitaField>; 2] {
+        std::array::from_fn(|pair| {
+            let first = 2 * pair;
+            let second = first + 1;
+            self.suffix[first]
+                .iter()
+                .zip(&self.suffix[second])
+                .map(|(&s0, &s1)| bound_prefix[first] * s0 + bound_prefix[second] * s1)
+                .collect()
+        })
+    }
 }
 
 fn run_prefix_host(
@@ -291,21 +333,14 @@ fn run_prefix_host(
 fn run_suffix_host(
     geometry: SpartanShiftGeometry,
     outputs: SpartanShiftOutputs<Vec<AkitaField>>,
-    factors: &SpartanShiftHostFactors,
-    bound_prefix: [AkitaField; 4],
+    suffix_factors: [Vec<AkitaField>; 2],
     suffix_challenges: &[AkitaField],
     gamma: AkitaField,
 ) -> SpartanShiftOutputs<AkitaField> {
-    let combine = |first: usize, second: usize| {
-        factors.suffix[first]
-            .iter()
-            .zip(&factors.suffix[second])
-            .map(|(&s0, &s1)| bound_prefix[first] * s0 + bound_prefix[second] * s1)
-            .collect()
-    };
+    let [eq_plus_one_outer, eq_plus_one_product] = suffix_factors;
     let mut state = SpartanShiftDenseState {
-        eq_plus_one_outer: combine(0, 1),
-        eq_plus_one_product: combine(2, 3),
+        eq_plus_one_outer,
+        eq_plus_one_product,
         unexpanded_pc: outputs.unexpanded_pc,
         pc: outputs.pc,
         is_virtual: outputs.is_virtual,
