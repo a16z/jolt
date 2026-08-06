@@ -23,7 +23,20 @@ fn bench(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.measurement_time(std::time::Duration::from_secs(120));
     group.throughput(Throughput::Elements(setup.trace_len as u64));
-    group.bench_function("reference", |b| b.iter(|| objective.run_reference(&setup)));
+    // Assert the row count rather than discard it: `Throughput::Elements` is
+    // fixed at `setup.trace_len`, so a backend id in this group that produced a
+    // different number of rows would report MHz against the wrong denominator.
+    // Row equality is AC5's job; this only keeps the units honest.
+    group.bench_function("reference", |b| {
+        b.iter(|| assert_eq!(objective.run_reference(&setup), setup.trace_len))
+    });
+    // Same group and throughput so the pair decomposes the seam: `reference`
+    // is raw tracing plus the Cycle to TraceRow conversion, `reference_raw` is
+    // raw tracing alone. A backend emitting TraceRow directly skips the
+    // difference, so AC8/AC9 ratios need both to be attributable.
+    group.bench_function("reference_raw", |b| {
+        b.iter(|| assert_eq!(objective.run_reference_raw(&setup), setup.trace_len))
+    });
     group.finish();
 }
 
