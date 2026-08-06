@@ -95,9 +95,15 @@ def _envelope(
 def _adapt_outer(
     tier: dict[str, Any], output: dict[str, Any], kernel: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    adapter = tier["evaluator"]["result_adapter"]
+    contracts = {
+        "outer_remainder_v3": ("outer_remainder_v3", 3),
+        "outer_remainder_screen_v1": ("outer_remainder_screen_v1", 1),
+    }
+    expected_schema, expected_version = contracts[adapter]
     if (
-        output.get("schema") != "outer_remainder_v3"
-        or output.get("schema_version") != 3
+        output.get("schema") != expected_schema
+        or output.get("schema_version") != expected_version
         or output.get("kernel") != "OuterRemainder"
     ):
         raise ValueError("OuterRemainder evaluator returned the wrong contract")
@@ -125,9 +131,7 @@ def _adapt_outer(
         if tier["replication"]["excluded_warmup_pairs"] == 1
         else []
     )
-    result = _envelope(
-        tier, kernel, "outer_remainder_v3", output, pairs, warmups
-    )
+    result = _envelope(tier, kernel, expected_schema, output, pairs, warmups)
     reported = output.get("metrics", {}).get("hybrid_speedup")
     if isinstance(reported, bool) or not isinstance(reported, (int, float)):
         raise ValueError("OuterRemainder primary metric is invalid")
@@ -264,7 +268,7 @@ def adapt_result(
     tier: dict[str, Any], output: dict[str, Any], kernel: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     adapter = tier["evaluator"]["result_adapter"]
-    if adapter == "outer_remainder_v3":
+    if adapter in {"outer_remainder_v3", "outer_remainder_screen_v1"}:
         return _adapt_outer(tier, output, kernel)
     if adapter == "metal_piop_v7":
         return _adapt_piop(tier, output, kernel)

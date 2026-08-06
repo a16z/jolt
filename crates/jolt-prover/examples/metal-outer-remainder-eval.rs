@@ -84,7 +84,10 @@ struct Fixture<W> {
 
 fn main() {
     let cli = Cli::parse();
-    assert_eq!(cli.log_n, 26, "the frozen evaluator targets log_n=26");
+    assert!(
+        matches!(cli.log_n, 25 | 26),
+        "the evaluators target log_n=25 or log_n=26"
+    );
     assert!(
         (1..=5).contains(&cli.pairs),
         "the runner supports one to five timed pairs"

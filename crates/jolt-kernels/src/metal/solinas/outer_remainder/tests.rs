@@ -88,6 +88,21 @@ fn log_26_storage_has_two_two_gib_state_buffers() {
 }
 
 #[test]
+fn log_25_screen_retains_the_saturated_threadgroup_cap() {
+    let config = OuterRemainderSequenceConfig::default();
+    let geometry = storage_geometry(1 << 25, config).unwrap();
+
+    assert_eq!(geometry.current_elements, 1 << 26);
+    assert_eq!(geometry.weight_capacity, 1 << 13);
+    assert_eq!(geometry.max_threadgroups, 8192);
+    assert_eq!(geometry.owned_bytes, 2_152_596_208);
+    assert_eq!(
+        outer_remainder_sequence_max_buffer_bytes_with_config(1 << 25, config).unwrap(),
+        1 << 30,
+    );
+}
+
+#[test]
 fn phase_names_are_stable_diagnostics() {
     assert_eq!(
         OuterRemainderPhase::BeforeMaterialize.name(),

@@ -6,10 +6,11 @@ optimized-CPU member took 905.872 ms and the then-CPU member in the Metal proces
 took 912.167 ms, or 12.39% of the 7.363-s Metal PIOP. That portfolio profile
 predates the current Outer integration and cannot rank the current HEAD.
 
-The closed isolated evaluator for the integrated implementation measured 881.996
-ms on optimized CPU and 219.487 ms on Metal, or 4.01495x. It is exact, but it is
-below the v2 5x floor and has no log-27 transfer result. The next evidence must
-come from a fresh v2 run; no schema-1 snapshot is a resumable parent.
+The first fresh v2 baseline at revision `878c83e20` measured an exact 4.03127x
+median: 880.991 ms on optimized CPU and 222.318 ms on Metal. Its CPU-first and
+Metal-first strata were 4.03127x and 3.98379x. This agrees with the historical
+4.01495x result, remains below the 5x floor, and is not log-27 transfer evidence.
+No schema-1 snapshot is a resumable parent.
 
 The member is a better next target than the slightly larger registers read/write
 member because its input rows already exist on the device. Stage 1's Metal uni-skip
@@ -205,6 +206,14 @@ also the per-core shared pool, no more than two groups can reside; that conclusi
 remains conditional until Instruments or ISA evidence reports active SIMD groups,
 register pressure, and spills.
 
+The fresh v2 phase medians are 86.054 ms materialization GPU-active, 25.924 ms
+first-bind GPU-active, 15.070 ms dense-prefix GPU-active, and 64.143 ms opening
+GPU-active. Their 191.171-ms sum is 71.4% efficient against the calibrated floor;
+the complete member is 61.4% efficient. One retained sample suffered host-side
+contention: dense dispatch wall rose to 137.2 ms while dense GPU-active time stayed
+at 15.8 ms. Promotion therefore keeps the paired wall result authoritative while
+phase decisions use GPU-active medians to distinguish shader work from scheduling.
+
 The sequence owns 4 GiB of ping-pong state beyond the existing 10-GiB row plane;
 the opening partials add 4.375 MiB. Its largest allocation is 2 GiB, below this
 machine's measured 80.64-GiB per-buffer limit. Admission uses the live whole-proof
@@ -236,12 +245,21 @@ scratch-preparation wall and a conservative `member + scratch preparation` cold
 diagnostic; neither replaces the resident PIOP metric.
 
 One excluded warmup precedes five alternating CPU/Metal pairs with Rayon fixed at
-16 threads. A candidate can become a search parent only by improving beyond the
-fixed noise threshold. Production promotion additionally requires at least 5x in
-both order strata, no more than 170.5 ms at `2^26`, exact component reconciliation,
-and equality of every round polynomial, host challenge, running claim, final claim,
-all 35 openings, derived value, and transcript digest. Resource guards cover row
-and scratch identities, full initialization outside the member, zero member
+16 threads. A candidate first passes an exact three-pair log-25 screen. That scale
+retains the same 8,192-threadgroup cap, fixed cutoffs, shader, proof oracle, and
+lifecycle checks while halving the domain; log 24 does not retain the launch
+geometry. Its 1% relative gate is only a permissive filter. A pass always reaches
+the unchanged log-26 evaluator, and the screen cannot accept a candidate or
+satisfy the 5x floor. The estimated first-candidate cost is about 398 seconds
+instead of the fresh log-26 baseline's 728 seconds; actual controller accounting
+supersedes that estimate.
+
+A candidate can become a search parent only by improving beyond the fixed log-26
+noise threshold. Production promotion additionally requires at least 5x in both
+order strata, no more than 170.5 ms at `2^26`, exact component reconciliation, and
+equality of every round polynomial, host challenge, running claim, final claim, all
+35 openings, derived value, and transcript digest. Resource guards cover row and
+scratch identities, full initialization outside the member, zero member
 allocations/uploads, command and dispatch counts, per-round table lengths, one
 prefix-to-tail transition, and one 35-field readback. Evaluator schema
 `outer_remainder_v3` additionally verifies active post-attach scratch identities
@@ -255,13 +273,15 @@ search parent until fresh revalidation, holdout, and transfer all pass.
 
 ## Fresh v2 experiment order
 
-The shader cannot change until the fresh v2 baseline confirms the historical
-phase attribution and either preserves or revises the calibrated floor. The first
-candidate retains both `A` and `B` stream state: materialization writes `A` into
-the otherwise unused second ping-pong allocation, and the stream bind reads and
-overwrites it in place. This adds no allocation and removes the second full `A`
-fold. Its failure mode is turning compute-bound materialization into a bandwidth
-bottleneck without enough first-bind savings.
+The first candidate retains both `A` and `B` stream state: materialization writes
+`A` into the otherwise unused second ping-pong allocation, and the stream bind
+reads and overwrites it in place. This adds no allocation and removes the second
+full `A` fold. It requires both `shader.metal` and `sequence.rs`; the initial
+shader-only v2 scope was therefore superseded after its baseline and must not be
+used for candidate work. Pre-register at most 17.83 ms for first-bind GPU time,
+at most 88 ms for materialization, and about 212--216 ms for the uncontended
+member. Reject it if first bind stays above 20 ms or materialization absorbs the
+gain.
 
 If retained `A` loses, materialization emits a packed flag plane. That changes the
 later 48-byte-stride compact-row walk into an 8-byte coalesced read and removes

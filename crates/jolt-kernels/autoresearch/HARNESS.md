@@ -45,13 +45,17 @@ Each search uses ordered tiers:
 5. The log-27 transfer tier checks that the accepted kernel survives the next
    trace scale before the run is marked kernel-transferred.
 
-The current OuterRemainder template deliberately disables its proxy tier. The
-next Outer phase should first test whether a cheaper scale preserves candidate
-ordering; until that evidence exists, at most a small analytically selected set
-should reach log 26. A failed transfer resumes from the accepted holdout; it
-does not rerun representative or holdout evidence. Continuing the portfolio
-opens a linked successor run with a freshly sealed holdout; a terminal run is
-never reopened for tuning.
+The OuterRemainder successor uses an exact log-25 proxy with one excluded warmup
+and three alternating pairs. Log 25 is the smallest cheaper scale that retains
+the log-26 cap of 8,192 threadgroups; log 24 changes the launch geometry. Its 1%
+screen is deliberately more permissive than the representative noise gate, and
+every passing candidate immediately runs the unchanged five-pair log-26 tier.
+It cannot accept a candidate or satisfy the 5x floor. A scale-dependent layout,
+cutoff, or occupancy change invalidates the proxy and requires a successor
+contract. A failed transfer resumes from the accepted holdout; it does not rerun
+representative or holdout evidence. Continuing the portfolio opens a linked
+successor run with a freshly sealed holdout; a terminal run is never reopened
+for tuning.
 
 ## Time and resource accounting
 
@@ -95,6 +99,10 @@ Candidate analysis should contain:
 - one falsifiable change, its predicted gain, and its likely failure mode.
 
 This lets the root agent reject low-ceiling ideas before a target-scale build.
+Before initialization, the editable scope must also contain every production and
+test file needed by the first pre-registered dataflow candidate and the next
+ranked phase candidates. Discovering a missing implementation file after the
+baseline supersedes the run; frozen scope is never widened in place.
 
 ## Durable records
 

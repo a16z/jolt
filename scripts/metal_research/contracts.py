@@ -17,7 +17,11 @@ from .versions import (
 
 _ID = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
 _ROLES = {"correctness", "proxy", "representative", "holdout", "transfer"}
-_RESULT_ADAPTERS = {"outer_remainder_v3", "metal_piop_v7"}
+_RESULT_ADAPTERS = {
+    "outer_remainder_screen_v1",
+    "outer_remainder_v3",
+    "metal_piop_v7",
+}
 
 
 def _relative_file(root: Path, value: Any, description: str) -> Path:

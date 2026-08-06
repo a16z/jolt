@@ -45,14 +45,14 @@ def fake_lease(
     telemetry["exclusive_lease_seconds"] = 11.0
 
 
-def descriptor(warmups: int = 0) -> dict[str, object]:
+def descriptor(warmups: int = 0, pairs: int = 5) -> dict[str, object]:
     return {
         "mode": "internal_paired",
-        "included_pairs": 5,
+        "included_pairs": pairs,
         "excluded_warmup_pairs": warmups,
         "order_policy": "alternating",
         "first_order": ["control", "treatment"],
-        "minimum_pairs_per_order_stratum": 2,
+        "minimum_pairs_per_order_stratum": 2 if pairs >= 5 else 1,
         "input_policy": {
             "within_pair": "identical",
             "across_pairs": "same_fixture",
@@ -415,6 +415,50 @@ class AttemptTests(unittest.TestCase):
 
 
 class ResultAdapterTests(unittest.TestCase):
+    def test_outer_screen_adapter_recomputes_three_raw_pairs(self) -> None:
+        orders = [
+            ["optimized", "metal"],
+            ["metal", "optimized"],
+            ["optimized", "metal"],
+        ]
+        samples = [
+            {
+                "pair": index,
+                "order": order,
+                "optimized": {"member_ns": 400},
+                "metal": {"member_ns": 100},
+            }
+            for index, order in enumerate(orders)
+        ]
+        output = {
+            "schema": "outer_remainder_screen_v1",
+            "schema_version": 1,
+            "kernel": "OuterRemainder",
+            "fingerprint": {
+                "fixture": "fixed",
+                "log_n": 25,
+                "pairs": 3,
+            },
+            "metrics": {"hybrid_speedup": 4.0},
+            "samples": samples,
+            "excluded_warmup": {},
+            "guards": {"all_exact": True},
+            "all_exact": True,
+            "resources": {"gpu_seconds": 0.25},
+        }
+        tier = {
+            "id": "screen",
+            "role": "proxy",
+            "replication": descriptor(pairs=3, warmups=1),
+            "evaluator": {"result_adapter": "outer_remainder_screen_v1"},
+        }
+
+        result, charge = adapt_result(tier, output, "outer_remainder")
+        validate_tier_result(result, tier)
+
+        self.assertEqual(result["primary"]["value"], 4.0)
+        self.assertEqual(charge["gpu_active_charge_seconds"], 0.25)
+
     def test_outer_remainder_adapter_recomputes_raw_pairs(self) -> None:
         orders = [
             ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
@@ -577,12 +621,117 @@ class ResultAdapterTests(unittest.TestCase):
         self.assertIn("outer_remainder_readback_exact", gate["required_guards"])
         self.assertEqual(validate.call_args.args[1:], (output, "revision", params, True))
 
+    def test_outer_screen_closure_binds_scale_pairs_and_parameters(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        tier = next(
+            item
+            for item in template["evaluation"]["tiers"]
+            if item.get("role") == "proxy"
+        )
+        params = {name: str(value) for name, value in template["baseline_params"].items()}
+        output = {
+            "schema": "outer_remainder_screen_v1",
+            "schema_version": 1,
+            "kernel": "OuterRemainder",
+            "all_exact": True,
+            "fingerprint": {
+                "fixture": "real-fibonacci-akita-proof",
+                "log_n": 25,
+                "trace_elements": 1 << 25,
+                "trace_rows": (1 << 25) - 1,
+                "pairs": 3,
+                "excluded_warmup_pairs": 1,
+                "orders": [
+                    ["optimized", "metal"],
+                    ["metal", "optimized"],
+                    ["optimized", "metal"],
+                ],
+                "rayon_threads": 16,
+                "materialize_threads": 256,
+                "transition_threads": 128,
+                "output_threads": 256,
+                "cutoff_log2": 16,
+                "trace_cutoff_log2": 18,
+                "storage_initialization": "full",
+                "member_span": "OuterRemainder::complete_member",
+                "rounds": 26,
+                "output_claims": 35,
+                "source_sha256": "a" * 64,
+                "binary_sha256": "b" * 64,
+            },
+        }
+
+        runner._validate_closed_result(ROOT, tier, output, params)
+
+        for field, bad_value in (
+            ("log_n", 26),
+            ("pairs", 5),
+            ("rounds", 27),
+            ("materialize_threads", 128),
+            ("source_sha256", "not-a-digest"),
+        ):
+            with self.subTest(field=field):
+                invalid = copy.deepcopy(output)
+                invalid["fingerprint"][field] = bad_value
+                with self.assertRaisesRegex(ValueError, "screen result is not closed"):
+                    runner._validate_closed_result(ROOT, tier, invalid, params)
+
 
 class RunnerIntegrationTests(unittest.TestCase):
     def outer_output(self) -> dict[str, object]:
         from scripts.tests.test_metal_autoresearch import MetalAutoresearchTests
 
         return MetalAutoresearchTests().outer_remainder_local_contract_fixture()[2]
+
+    def screen_output(
+        self, output: dict[str, object], params: dict[str, str]
+    ) -> dict[str, object]:
+        result = copy.deepcopy(output)
+        result["schema"] = "outer_remainder_screen_v1"
+        result["schema_version"] = 1
+        result["samples"] = result["samples"][:3]
+        fingerprint = result["fingerprint"]
+        fingerprint.update(
+            {
+                "log_n": 25,
+                "trace_elements": 1 << 25,
+                "trace_rows": (1 << 25) - 100,
+                "pairs": 3,
+                "orders": [sample["order"] for sample in result["samples"]],
+                "rounds": 26,
+                "materialize_threads": int(
+                    params["JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS"]
+                ),
+                "transition_threads": int(
+                    params["JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS"]
+                ),
+                "output_threads": int(
+                    params["JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS"]
+                ),
+                "cutoff_log2": int(
+                    params["JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2"]
+                ),
+                "trace_cutoff_log2": int(
+                    params["JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2"]
+                ),
+            }
+        )
+        resources = result["resources"]
+        resources["resident_row_bytes"] = (1 << 25) * 160
+        resources["outer_remainder_storage_bytes"] = 2_152_596_208
+        resources["maximum_storage_buffer_bytes"] = 1 << 30
+        resources["metal_full_prove_ns_samples"] = resources[
+            "metal_full_prove_ns_samples"
+        ][:4]
+        resources["gpu_seconds"] = (
+            sum(resources["metal_full_prove_ns_samples"]) / 1e9
+        )
+        return result
 
     def successful_attempt(
         self, output: dict[str, object], launches: list[str]
@@ -597,6 +746,11 @@ class RunnerIntegrationTests(unittest.TestCase):
         ) -> tuple[dict[str, object], dict[str, object]]:
             evaluation_dir.mkdir(parents=True, exist_ok=False)
             launches.append(tier_id)
+            tier_output = (
+                self.screen_output(output, _params)
+                if tier_id == "screen"
+                else output
+            )
             return (
                 {
                     "schema_version": 1,
@@ -617,7 +771,7 @@ class RunnerIntegrationTests(unittest.TestCase):
                     },
                     "result_sha256": "a" * 64,
                 },
-                output,
+                tier_output,
             )
 
         return attempt
@@ -645,7 +799,7 @@ class RunnerIntegrationTests(unittest.TestCase):
                 "effect": speedup,
                 "guards": {"exact": True},
             }
-            for index in range(5)
+            for index in range(replication["included_pairs"])
         ]
         summary = paired_summary(raw_pairs, replication)
         required = tier["promotion"].get("required_guards", ["all_exact"])
@@ -877,17 +1031,17 @@ class RunnerIntegrationTests(unittest.TestCase):
             state["usage"] = runner.empty_usage()
             runner.write_state(run_dir, state)
             reconstructed = runner.load_state(run_dir)
-            self.assertEqual(reconstructed["usage"]["active_evaluator_seconds"], 1.0)
+            self.assertEqual(reconstructed["usage"]["active_evaluator_seconds"], 2.0)
             decision, state = runner.trial(
                 ROOT, run_dir, [], "repeat the baseline candidate"
             )
 
-            self.assertEqual(launches, ["representative", "representative"])
+            self.assertEqual(launches, ["screen", "representative", "screen"])
             self.assertEqual(state["accepted_parent"]["id"], "baseline")
             self.assertEqual(decision["verdict"], "discard")
             self.assertEqual(state["usage"]["candidates_admitted"], 1)
             self.assertEqual(
-                len((run_dir / "tier-events.jsonl").read_text().splitlines()), 2
+                len((run_dir / "tier-events.jsonl").read_text().splitlines()), 3
             )
 
     def test_recovery_conservatively_charges_an_unsealed_attempt(self) -> None:
@@ -1159,7 +1313,7 @@ class RunnerIntegrationTests(unittest.TestCase):
             self.assertEqual(recovered["status"], "initialization_retryable")
             resumed = runner.resume_initialization(ROOT, run_dir)
             self.assertEqual(resumed["status"], "active")
-            self.assertEqual(launches, ["representative"])
+            self.assertEqual(launches, ["screen", "representative"])
 
     def test_resume_initialization_relaunches_unaccepted_tier_with_new_id(self) -> None:
         output = self.outer_output()
@@ -1203,7 +1357,11 @@ class RunnerIntegrationTests(unittest.TestCase):
 
             self.assertEqual(resumed["status"], "active")
             self.assertEqual(
-                relaunched, ["baseline-representative-retry-002"]
+                relaunched,
+                [
+                    "baseline-screen-retry-002",
+                    "baseline-representative-retry-002",
+                ],
             )
 
     def test_resume_initialization_rejects_unsealed_completed_tier(self) -> None:
@@ -1609,20 +1767,18 @@ class RunnerIntegrationTests(unittest.TestCase):
                 / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
                 run_dir,
             )
-            representative = next(
+            screen = next(
                 tier
                 for tier in state["template"]["evaluation"]["tiers"]
-                if tier.get("id") == "representative"
+                if tier.get("id") == "screen"
             )
-            screen = copy.deepcopy(representative)
-            screen["id"] = "screen"
-            screen["role"] = "proxy"
-            state["template"]["evaluation"]["tiers"][0] = screen
-            state["accepted_parent"]["tiers"]["screen"] = copy.deepcopy(
-                state["accepted_parent"]["tiers"]["representative"]
+            screen_output = self.screen_output(
+                output,
+                state["accepted_parent"]["params"],
             )
-            runner.write_state(run_dir, state)
-            screen_result, _ = adapt_result(screen, output, "outer_remainder")
+            screen_result, _ = adapt_result(
+                screen, screen_output, "outer_remainder"
+            )
             launches: list[str] = []
 
             def execute(

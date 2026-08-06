@@ -621,7 +621,7 @@ def parse_outer_remainder_result(
 
     runner_samples = runner.get("samples")
     if not isinstance(runner_samples, list) or len(runner_samples) != PAIRS:
-        raise ValueError("runner output must contain five timed pairs")
+        raise ValueError(f"runner output must contain {PAIRS} timed pairs")
     warmup = runner.get("warmup")
     if not isinstance(warmup, dict) or warmup.get("excluded_warmup") is not True:
         raise ValueError("runner output must contain one excluded warmup pair")
@@ -660,7 +660,7 @@ def parse_outer_remainder_result(
     spans = parse_spans(events)
     arms = [span for span in spans if span.name == ARM]
     if len(arms) != 2 * (PAIRS + 1):
-        raise ValueError("trace must contain one warmup pair and five timed pairs")
+        raise ValueError(f"trace must contain one warmup pair and {PAIRS} timed pairs")
     keyed: dict[tuple[int, str], Span] = {}
     for arm in arms:
         key = arm_key(arm)
@@ -1083,7 +1083,7 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     if args.log_n != LOG_N or args.pairs != PAIRS:
-        raise ValueError("outer_remainder_v3 is frozen at log_n=26 and five pairs")
+        raise ValueError("evaluator invocation differs from its configured scale")
     root = Path(__file__).resolve().parents[1]
     artifact_dir = resolve_artifact_dir(root, args.artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=False)

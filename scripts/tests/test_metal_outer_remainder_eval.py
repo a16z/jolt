@@ -272,12 +272,14 @@ def arm_events(
     events.append(
         complete(EVAL.METAL_FIRST_BIND, first_start + 2, first_duration * 0.70, gpu_args())
     )
-    for round_index in range(2, 12):
+    gpu_last_round = EVAL.ROUNDS - 16
+    for round_index in range(2, gpu_last_round + 1):
         start, duration = round_spans[round_index]
         events.append(
             complete(EVAL.METAL_DENSE_ROUND, start + 2, duration * 0.70, gpu_args())
         )
-    readback_start, readback_round_duration = round_spans[12]
+    readback_round = gpu_last_round + 1
+    readback_start, readback_round_duration = round_spans[readback_round]
     events.append(
         complete(
             EVAL.METAL_READBACK,
@@ -290,12 +292,12 @@ def arm_events(
             },
         )
     )
-    for round_index in range(12, EVAL.ROUNDS):
+    for round_index in range(readback_round, EVAL.ROUNDS):
         start, duration = round_spans[round_index]
         events.append(
             complete(
                 EVAL.METAL_CPU_TAIL,
-                start + (duration * 0.10 if round_index == 12 else 2),
+                start + (duration * 0.10 if round_index == readback_round else 2),
                 duration * 0.70,
             )
         )
@@ -451,6 +453,31 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
             result["resources"]["metal_full_prove_ns_samples"], [1] * 6
         )
         self.assertEqual(result["resources"]["gpu_seconds"], 6e-9)
+
+    def test_log_25_three_pair_screen_uses_the_same_exact_parser(self) -> None:
+        with mock.patch.multiple(
+            EVAL,
+            SCHEMA="outer_remainder_screen_v1",
+            SCHEMA_VERSION=1,
+            LOG_N=25,
+            PAIRS=3,
+            ROUNDS=26,
+            STORAGE_BYTES=2_152_596_208,
+            DENSE_STORAGE_BYTES=2 * (1 << 30),
+            REMAINING_SEQUENCE_STORAGE_BYTES=5_112_560,
+            MAXIMUM_STORAGE_BUFFER_BYTES=1 << 30,
+        ):
+            result = self.parse(*fixture())
+
+        self.assertEqual(result["schema"], "outer_remainder_screen_v1")
+        self.assertEqual(result["fingerprint"]["log_n"], 25)
+        self.assertEqual(result["fingerprint"]["pairs"], 3)
+        self.assertEqual(len(result["samples"]), 3)
+        self.assertTrue(result["all_exact"])
+        self.assertEqual(
+            result["resources"]["outer_remainder_storage_bytes"],
+            2_152_596_208,
+        )
 
     def test_gpu_accounting_includes_warmup_and_all_timed_metal_arms(self) -> None:
         events, runner = fixture()

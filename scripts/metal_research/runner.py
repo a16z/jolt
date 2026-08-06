@@ -347,6 +347,88 @@ def _validate_closed_result(
             legacy.git_worktree_clean(root),
         )
         return
+    if adapter == "outer_remainder_screen_v1":
+        fingerprint = output.get("fingerprint", {})
+        if not isinstance(fingerprint, dict):
+            raise ValueError("OuterRemainder screen result is not closed")
+        fingerprint_fields = {
+            "fixture",
+            "log_n",
+            "trace_elements",
+            "trace_rows",
+            "pairs",
+            "excluded_warmup_pairs",
+            "orders",
+            "rayon_threads",
+            "materialize_threads",
+            "transition_threads",
+            "output_threads",
+            "cutoff_log2",
+            "trace_cutoff_log2",
+            "storage_initialization",
+            "member_span",
+            "rounds",
+            "output_claims",
+            "source_sha256",
+            "binary_sha256",
+        }
+        parameter_fields = {
+            "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": "cutoff_log2",
+            "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": (
+                "materialize_threads"
+            ),
+            "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": "output_threads",
+            "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": (
+                "trace_cutoff_log2"
+            ),
+            "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": (
+                "transition_threads"
+            ),
+        }
+        digests = (
+            fingerprint.get("source_sha256"),
+            fingerprint.get("binary_sha256"),
+        )
+        log_n = tier["promotion"]["log_n"]
+        pairs = tier["replication"]["included_pairs"]
+        orders = [
+            ["optimized", "metal"] if pair % 2 == 0 else ["metal", "optimized"]
+            for pair in range(pairs)
+        ]
+        if (
+            output.get("schema") != "outer_remainder_screen_v1"
+            or output.get("schema_version") != 1
+            or output.get("kernel") != "OuterRemainder"
+            or output.get("all_exact") is not True
+            or set(fingerprint) != fingerprint_fields
+            or fingerprint.get("fixture") != "real-fibonacci-akita-proof"
+            or fingerprint.get("log_n") != log_n
+            or fingerprint.get("trace_elements") != 1 << log_n
+            or type(fingerprint.get("trace_rows")) is not int
+            or not 0 < fingerprint["trace_rows"] <= 1 << log_n
+            or fingerprint.get("pairs") != pairs
+            or fingerprint.get("excluded_warmup_pairs")
+            != tier["replication"]["excluded_warmup_pairs"]
+            or fingerprint.get("orders") != orders
+            or fingerprint.get("rayon_threads") != 16
+            or fingerprint.get("storage_initialization") != "full"
+            or fingerprint.get("member_span")
+            != "OuterRemainder::complete_member"
+            or fingerprint.get("rounds") != log_n + 1
+            or fingerprint.get("output_claims") != 35
+            or any(
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+                for digest in digests
+            )
+            or any(
+                str(fingerprint.get(field)) != params[name]
+                for name, field in parameter_fields.items()
+            )
+        ):
+            raise ValueError("OuterRemainder screen result is not closed")
+        return
     if adapter != "outer_remainder_v3":
         return
     legacy_template = read_json(

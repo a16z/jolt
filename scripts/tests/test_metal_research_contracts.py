@@ -367,6 +367,46 @@ class VersionedContractTests(unittest.TestCase):
             341.1,
         )
 
+    def test_outer_template_can_edit_the_pre_registered_kernel_dataflow(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        editable = set(template["scope"]["editable"])
+
+        self.assertTrue(
+            {
+                "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
+                "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
+                "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+                "crates/jolt-kernels/src/metal/solinas/outer_remainder/tests.rs",
+            }
+            <= editable
+        )
+
+    def test_outer_template_stages_a_log_25_exact_screen(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        screen = next(
+            tier
+            for tier in template["evaluation"]["tiers"]
+            if tier["role"] == "proxy"
+        )
+
+        self.assertTrue(screen["applicable"])
+        self.assertEqual(
+            screen["evaluator"]["result_adapter"],
+            "outer_remainder_screen_v1",
+        )
+        self.assertEqual(screen["promotion"]["log_n"], 25)
+        self.assertEqual(screen["replication"]["included_pairs"], 3)
+
     def test_schema_one_goal_and_template_remain_readable_by_legacy_controller(self) -> None:
         import scripts.metal_autoresearch as legacy
 

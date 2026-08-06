@@ -56,9 +56,57 @@
     "tier_result_schema": "metal_autoresearch_tier_result_v1",
     "tiers": [
       {
-        "applicable": false,
+        "applicable": true,
+        "cost_limit": {
+          "active_evaluator_seconds": 900,
+          "exclusive_machine_seconds": 900,
+          "gpu_active_seconds": 600
+        },
+        "evaluator": {
+          "command": [
+            "python3",
+            "scripts/metal_outer_remainder_screen.py"
+          ],
+          "env": {
+            "JOLT_METAL_EVAL_LOG_N": "25",
+            "JOLT_METAL_EVAL_REPEATS": "3",
+            "RAYON_NUM_THREADS": "16"
+          },
+          "result_adapter": "outer_remainder_screen_v1",
+          "timeout_seconds": 900
+        },
         "id": "screen",
-        "reason": "no cheaper OuterRemainder scale has been calibrated against the fixed log-26 evaluator",
+        "promotion": {
+          "comparison": "accepted_parent",
+          "kind": "relative_improvement",
+          "log_n": 25,
+          "minimum_relative_improvement": 0.01,
+          "noise_multiplier": 1.0,
+          "required_guards": [
+            "all_exact",
+            "correctness_exact",
+            "target_scale",
+            "resident_row_lifecycle_exact",
+            "metal_phase_schedule_exact"
+          ]
+        },
+        "replication": {
+          "aggregate": "median_of_pair_effects",
+          "effect": "control_over_treatment",
+          "excluded_warmup_pairs": 1,
+          "first_order": [
+            "control",
+            "treatment"
+          ],
+          "included_pairs": 3,
+          "input_policy": {
+            "across_pairs": "same_fixture",
+            "within_pair": "identical"
+          },
+          "minimum_pairs_per_order_stratum": 1,
+          "mode": "internal_paired",
+          "order_policy": "alternating"
+        },
         "role": "proxy"
       },
       {
@@ -314,7 +362,14 @@
   "schema_version": 2,
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/api.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/storage.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/tests.rs"
     ],
     "frozen": [
       "crates/jolt-field/src/akita.rs",
@@ -327,13 +382,6 @@
       "crates/jolt-kernels/src/metal/spartan_outer.rs",
       "crates/jolt-kernels/src/metal/solinas/fp128.metal",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/api.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/storage.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/tests.rs",
       "crates/jolt-kernels/src/metal/solinas/runtime.rs",
       "crates/jolt-kernels/src/metal/solinas/source.rs",
       "crates/jolt-kernels/src/optimized/spartan_outer.rs",
@@ -341,6 +389,7 @@
       "crates/jolt-prover/examples/modular_benchmark.rs",
       "crates/jolt-prover/src/stages/stage1.rs",
       "scripts/metal_outer_remainder_eval.py",
+      "scripts/metal_outer_remainder_screen.py",
       "scripts/metal_piop_eval.py",
       "scripts/metal_autoresearch.py",
       "scripts/metal_kernel_registry.py",
