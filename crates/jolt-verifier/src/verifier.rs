@@ -1033,6 +1033,8 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryConfig};
@@ -1051,6 +1053,8 @@ mod tests {
     };
     use jolt_transcript::Transcript;
     use num_traits::Zero;
+
+    use crate::preprocessing::ProgramPreprocessing;
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
@@ -1641,12 +1645,12 @@ mod tests {
             heap_size: 8,
         });
         JoltVerifierPreprocessing::new(
-            crate::preprocessing::ProgramPreprocessing::Full(JoltProgramPreprocessing {
+            ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::default(),
                 ram: RAMPreprocessing::default(),
                 memory_layout,
                 max_padded_trace_length: 16,
-            }),
+            })),
             [7; 32],
             (),
             None,

@@ -5,8 +5,8 @@
     reason = "the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
 )]
 
-use dory::backends::arkworks::{ArkworksProverSetup, G1Routines, G2Routines};
-use dory::mode::Transparent;
+use dory::backends::arkworks::ArkworksProverSetup;
+use dory::mode::{Transparent, ZK};
 use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
@@ -19,6 +19,7 @@ use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
 use rayon::prelude::*;
 
+use crate::routines::{JoltG1Routines, JoltG2Routines};
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
@@ -110,6 +111,12 @@ impl DoryScheme {
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
+        // Deliberately NOT priming dory's global prepared-point cache (the
+        // legacy prover does): the cache only grows and its consumers
+        // prefix-match blindly, so any process touching two setup sizes —
+        // the URS seeds generators on the exact size — silently pairs
+        // against the wrong generators. The saving is ~0.2 s wall of G2
+        // Miller preprocessing per 2^20 proof; not worth the footgun.
         DoryProverSetup(setup)
     }
 
@@ -214,7 +221,7 @@ impl CommitmentScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, _blind) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, Transparent>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, Transparent>(
                 &adapter,
                 &ark_point,
                 row_commitments,
@@ -252,7 +259,7 @@ impl CommitmentScheme for DoryScheme {
             return Err(OpeningsError::VerificationFailed);
         }
 
-        dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             ark_eval,
             &ark_point,
@@ -350,7 +357,7 @@ impl ZkOpeningScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, y_blinding) =
-            dory::prove::<ArkFr, InnerBN254, G1Routines, G2Routines, _, _, dory::mode::ZK>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, ZK>(
                 &adapter,
                 &ark_point,
                 row_commitments,
@@ -393,7 +400,7 @@ impl ZkOpeningScheme for DoryScheme {
             .map(ark_to_jolt_g1)
             .ok_or(OpeningsError::VerificationFailed)?;
 
-        dory::verify::<ArkFr, InnerBN254, G1Routines, G2Routines, _>(
+        dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             dummy_eval,
             &ark_point,
@@ -422,7 +429,7 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
     rows.par_iter()
         .map(|row| {
             let scalars: Vec<ArkFr> = row.iter().map(jolt_fr_to_ark).collect();
-            G1Routines::msm(&g1_bases[..scalars.len()], &scalars)
+            JoltG1Routines::msm(&g1_bases[..scalars.len()], &scalars)
         })
         .collect()
 }

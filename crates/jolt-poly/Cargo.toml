@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 jolt-field = { workspace = true }
+jolt-utils = { workspace = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
 rayon = { workspace = true, optional = true }

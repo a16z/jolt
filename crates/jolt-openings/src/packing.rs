@@ -102,11 +102,9 @@ use std::{
 };
 
 use jolt_field::{Field, FromPrimitiveInt, MulPow2};
-use jolt_poly::{
-    boolean_bits_msb, eq_index_msb, math::Math, thread::unsafe_allocate_zero_vec, EqPolynomial,
-    MultilinearPoly, Polynomial,
-};
+use jolt_poly::{boolean_bits_msb, eq_index_msb, EqPolynomial, MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_utils::{unsafe_allocate_zero_vec, Math};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
