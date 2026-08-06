@@ -311,6 +311,88 @@ class VersionedContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "evaluator is invalid"):
             validate_template(tampered, ROOT)
 
+    def test_fresh_template_freezes_phase_and_iteration_throughput(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        validate_template(template, ROOT)
+
+        phase = template["mechanism_phase"]
+        self.assertEqual(phase["id"], "b_fold_straight_line_v1")
+        self.assertLess(
+            phase["analytical_ceiling"]["best_case_member_ms"],
+            phase["analytical_ceiling"]["parent_member_ms"],
+        )
+        self.assertEqual(phase["timebox"]["max_candidates_admitted"], 2)
+        self.assertEqual(phase["checkpoint"]["after_candidates"], 1)
+
+        iteration = template["iteration_profile"]
+        self.assertGreaterEqual(
+            iteration["minimum_valid_proxy_cycles_per_hour"], 1200.0
+        )
+        self.assertLessEqual(
+            iteration["maximum_controller_overhead_fraction"], 0.01
+        )
+        self.assertEqual(len(iteration["evidence_sha256"]), 64)
+
+        tampered = copy.deepcopy(template)
+        tampered["mechanism_phase"]["timebox"]["max_candidates_admitted"] = 0
+        with self.assertRaisesRegex(ValueError, "phase timebox"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["mechanism_phase"]["checkpoint"]["metrics"][0][
+            "name"
+        ] = "unavailable_gpu_metric_ms"
+        with self.assertRaisesRegex(ValueError, "checkpoint metric"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["mechanism_phase"]["checkpoint"]["metrics"].append(
+            copy.deepcopy(
+                tampered["mechanism_phase"]["checkpoint"]["metrics"][0]
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "checkpoint metric"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["mechanism_phase"]["checkpoint"]["scale_log_n"] = 24
+        with self.assertRaisesRegex(ValueError, "checkpoint scale"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["budget"]["total"]["max_calendar_seconds"] = 60_000
+        with self.assertRaisesRegex(ValueError, "calendar"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["iteration_profile"]["evidence_sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "evidence digest"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["iteration_profile"][
+            "minimum_valid_proxy_cycles_per_hour"
+        ] = 10_000.0
+        with self.assertRaisesRegex(ValueError, "throughput target"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["iteration_profile"][
+            "maximum_controller_overhead_fraction"
+        ] = 0.0001
+        with self.assertRaisesRegex(ValueError, "overhead exceeds"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["iteration_profile"]["profile_base_revision"] = "0" * 40
+        with self.assertRaisesRegex(ValueError, "evidence contract"):
+            validate_template(tampered, ROOT)
+
     def test_runtime_artifact_contract_closes_source_plan_and_env(self) -> None:
         template = json.loads(
             (

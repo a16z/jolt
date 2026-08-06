@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import (
+    canonical_json,
     runtime_artifact_controller_paths,
     runtime_artifact_result_adapter,
     runtime_artifact_result_adapters,
+    sha256,
     validate_runtime_artifact_contract,
 )
 from .attempt import unsafe_environment_name
@@ -476,6 +478,682 @@ def _validate_sealed_binaries(
         raise ValueError("every successor v2 tier must consume one sealed binary")
 
 
+def _validate_mechanism_phase(
+    phase: Any, budget: dict[str, Any]
+) -> None:
+    required = {
+        "id",
+        "hypothesis",
+        "analytical_ceiling",
+        "timebox",
+        "checkpoint",
+        "success",
+        "kill_or_redesign",
+    }
+    if not isinstance(phase, dict) or set(phase) != required:
+        raise ValueError("mechanism phase fields are incomplete")
+    if not isinstance(phase["id"], str) or _ID.fullmatch(phase["id"]) is None:
+        raise ValueError("mechanism phase id is invalid")
+    for field in ("hypothesis", "kill_or_redesign"):
+        if not isinstance(phase[field], str) or not phase[field].strip():
+            raise ValueError(f"mechanism phase {field} is invalid")
+
+    ceiling = phase["analytical_ceiling"]
+    if not isinstance(ceiling, dict) or set(ceiling) != {
+        "control_ms",
+        "parent_member_ms",
+        "best_case_member_ms",
+        "best_case_speedup",
+        "basis",
+    }:
+        raise ValueError("mechanism phase analytical ceiling is invalid")
+    control_ms = _positive(ceiling["control_ms"], "phase control latency")
+    parent_ms = _positive(ceiling["parent_member_ms"], "phase parent latency")
+    best_ms = _positive(ceiling["best_case_member_ms"], "phase best-case latency")
+    best_speedup = _speedup(ceiling["best_case_speedup"], "phase best-case speedup")
+    if (
+        best_ms >= parent_ms
+        or not isinstance(ceiling["basis"], str)
+        or not ceiling["basis"].strip()
+        or not math.isclose(best_speedup, control_ms / best_ms, rel_tol=1e-6)
+    ):
+        raise ValueError("mechanism phase analytical ceiling is inconsistent")
+
+    timebox = phase["timebox"]
+    if not isinstance(timebox, dict) or set(timebox) != {
+        "max_search_calendar_seconds",
+        "max_candidates_admitted",
+    }:
+        raise ValueError("phase timebox is invalid")
+    max_candidates = timebox["max_candidates_admitted"]
+    max_seconds = timebox["max_search_calendar_seconds"]
+    total = budget["total"]
+    if (
+        type(max_candidates) is not int
+        or max_candidates <= 0
+        or max_candidates > total["max_candidates_admitted"]
+        or isinstance(max_seconds, bool)
+        or not isinstance(max_seconds, (int, float))
+        or not math.isfinite(max_seconds)
+        or max_seconds <= 0
+        or max_seconds > total["max_calendar_seconds"]
+    ):
+        raise ValueError("phase timebox is invalid")
+
+    checkpoint = phase["checkpoint"]
+    if not isinstance(checkpoint, dict) or set(checkpoint) != {
+        "after_candidates",
+        "scale_log_n",
+        "metrics",
+    }:
+        raise ValueError("mechanism phase checkpoint is invalid")
+    if (
+        type(checkpoint["after_candidates"]) is not int
+        or not 1 <= checkpoint["after_candidates"] <= max_candidates
+        or type(checkpoint["scale_log_n"]) is not int
+        or not 4 <= checkpoint["scale_log_n"] <= 30
+        or not isinstance(checkpoint["metrics"], list)
+        or not checkpoint["metrics"]
+    ):
+        raise ValueError("mechanism phase checkpoint is invalid")
+    supported_metrics = {
+        "materialize_gpu_active_ms",
+        "first_bind_gpu_active_ms",
+        "dense_rounds_gpu_active_ms",
+        "openings_gpu_active_ms",
+    }
+    metric_names: set[str] = set()
+    for metric in checkpoint["metrics"]:
+        if (
+            not isinstance(metric, dict)
+            or set(metric) != {"name", "comparison", "threshold"}
+            or not isinstance(metric["name"], str)
+            or metric["name"] not in supported_metrics
+            or metric["name"] in metric_names
+            or metric["comparison"] not in {"lte", "gte"}
+        ):
+            raise ValueError("mechanism phase checkpoint metric is invalid")
+        _positive(metric["threshold"], "phase checkpoint threshold")
+        metric_names.add(metric["name"])
+
+    success = phase["success"]
+    if not isinstance(success, dict) or set(success) != {
+        "maximum_member_ms",
+        "minimum_relative_improvement",
+    }:
+        raise ValueError("mechanism phase success gate is invalid")
+    maximum_member_ms = _positive(
+        success["maximum_member_ms"], "phase success latency"
+    )
+    relative = success["minimum_relative_improvement"]
+    if (
+        maximum_member_ms >= parent_ms
+        or isinstance(relative, bool)
+        or not isinstance(relative, (int, float))
+        or not math.isfinite(relative)
+        or not 0 < relative < 1
+    ):
+        raise ValueError("mechanism phase success gate is invalid")
+
+
+def _hex_digest(value: Any, description: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{description} is invalid")
+    return value
+
+
+def _profile_compile_context(
+    context: Any, closure: dict[str, Any], role: str
+) -> int:
+    fields = {
+        "source_assembly_ns",
+        "library_compile_ns",
+        "source_bytes",
+        "assembled_source_sha256",
+        "pipeline_set_ns",
+        "pipeline_set_total_ns",
+    }
+    if not isinstance(context, dict) or set(context) != fields:
+        raise ValueError("iteration compilation context is incomplete")
+    integer_fields = ("source_assembly_ns", "library_compile_ns", "source_bytes")
+    if any(type(context[field]) is not int or context[field] <= 0 for field in integer_fields):
+        raise ValueError("iteration compilation context is invalid")
+    _hex_digest(context["assembled_source_sha256"], "assembled source digest")
+    pipeline = context["pipeline_set_ns"]
+    if (
+        not isinstance(pipeline, list)
+        or len(pipeline) != 5
+        or any(type(value) is not int or value <= 0 for value in pipeline)
+        or type(context["pipeline_set_total_ns"]) is not int
+        or context["pipeline_set_total_ns"] != sum(pipeline)
+        or context["source_bytes"] != closure[f"{role}_assembled_source_bytes"]
+        or context["assembled_source_sha256"]
+        != closure[f"{role}_assembled_source_sha256"]
+    ):
+        raise ValueError("iteration compilation context does not match the closure")
+    return int(context["library_compile_ns"])
+
+
+def _validate_profile_cycle(
+    name: str,
+    cycle: Any,
+    closure: dict[str, Any],
+    maximum_overhead: float,
+    root: Path,
+    frozen: set[str],
+    proxy: dict[str, Any],
+) -> tuple[int, dict[str, Any]]:
+    fields = {
+        "controller_wall_ns",
+        "subprocess_wall_ns",
+        "parse_validate_checkpoint_ns",
+        "controller_overhead_ns",
+        "raw_result_path",
+        "raw_result_sha256",
+        "result_bytes",
+        "successor_speedup",
+        "gpu_active_total_ns",
+        "output_sha256",
+        "candidate_phase_gpu_active_ns",
+        "compilation",
+        "guards",
+        "checkpoint",
+    }
+    if not isinstance(cycle, dict) or set(cycle) != fields:
+        raise ValueError(f"iteration {name} fields are incomplete")
+    positive_integers = (
+        "controller_wall_ns",
+        "subprocess_wall_ns",
+        "parse_validate_checkpoint_ns",
+        "controller_overhead_ns",
+        "result_bytes",
+        "gpu_active_total_ns",
+    )
+    if any(type(cycle[field]) is not int or cycle[field] <= 0 for field in positive_integers):
+        raise ValueError(f"iteration {name} timing is invalid")
+    if (
+        cycle["controller_wall_ns"]
+        != cycle["subprocess_wall_ns"] + cycle["controller_overhead_ns"]
+        or cycle["parse_validate_checkpoint_ns"] > cycle["controller_overhead_ns"]
+        or cycle["controller_overhead_ns"] / cycle["controller_wall_ns"]
+        > maximum_overhead
+    ):
+        raise ValueError(f"iteration {name} overhead exceeds its measured contract")
+    raw_path = cycle["raw_result_path"]
+    path = _relative_file(root, raw_path, "raw iteration result")
+    if raw_path not in frozen:
+        raise ValueError("raw iteration result must be frozen")
+    raw_payload = path.read_bytes()
+    if (
+        len(raw_payload) != cycle["result_bytes"]
+        or sha256(raw_payload)
+        != _hex_digest(cycle["raw_result_sha256"], "raw iteration result digest")
+    ):
+        raise ValueError(f"iteration {name} raw result digest does not match")
+    try:
+        raw_result = json.loads(raw_payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"iteration {name} raw result is invalid JSON") from error
+    from .results import adapt_result, validate_tier_result
+
+    normalized, _ = adapt_result(proxy, raw_result, "OuterRemainder")
+    validate_tier_result(normalized, proxy)
+    _hex_digest(cycle["output_sha256"], "iteration output digest")
+    speedup = cycle["successor_speedup"]
+    if (
+        isinstance(speedup, bool)
+        or not isinstance(speedup, (int, float))
+        or not math.isfinite(speedup)
+        or not 0.95 <= float(speedup) <= 1.05
+    ):
+        raise ValueError(f"iteration {name} inert successor is not equivalent")
+
+    guards = cycle["guards"]
+    expected_guards = {
+        "all_exact",
+        "correctness_exact",
+        "gpu_timestamps_exact",
+        "metal_phase_schedule_exact",
+        "resident_row_handle_lifecycle_exact",
+        "runtime_artifacts_exact",
+        "target_scale",
+    }
+    if (
+        not isinstance(guards, dict)
+        or set(guards) != expected_guards
+        or any(value is not True for value in guards.values())
+    ):
+        raise ValueError(f"iteration {name} exact guards are invalid")
+    if raw_result.get("guards") != guards:
+        raise ValueError(f"iteration {name} guards do not match the raw result")
+
+    phases = cycle["candidate_phase_gpu_active_ns"]
+    phase_fields = {"materialize", "first_bind", "dense_rounds", "openings"}
+    if (
+        not isinstance(phases, dict)
+        or set(phases) != phase_fields
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            for value in phases.values()
+        )
+    ):
+        raise ValueError(f"iteration {name} phase evidence is invalid")
+    if normalized.get("telemetry", {}).get("candidate_phase_gpu_active_ns") != phases:
+        raise ValueError(f"iteration {name} phases do not match the raw result")
+    checkpoint = cycle["checkpoint"]
+    if (
+        not isinstance(checkpoint, dict)
+        or set(checkpoint)
+        != {"phase_id", "after_candidates", "due", "passed", "metrics"}
+        or checkpoint["due"] is not True
+        or checkpoint["passed"] is not False
+        or not isinstance(checkpoint["metrics"], list)
+        or len(checkpoint["metrics"]) != 1
+    ):
+        raise ValueError(f"iteration {name} checkpoint evidence is invalid")
+    metric = checkpoint["metrics"][0]
+    if (
+        not isinstance(metric, dict)
+        or set(metric)
+        != {"name", "comparison", "threshold", "observed_ms", "passed"}
+        or metric["name"] != "materialize_gpu_active_ms"
+        or metric["comparison"] != "lte"
+        or metric["passed"] is not False
+        or not math.isclose(
+            float(metric["observed_ms"]),
+            float(phases["materialize"]) / 1_000_000.0,
+            rel_tol=1e-12,
+        )
+    ):
+        raise ValueError(f"iteration {name} checkpoint is not derived from phase evidence")
+
+    compilation = cycle["compilation"]
+    if (
+        not isinstance(compilation, dict)
+        or set(compilation) != {"context_order", "parent", "candidate"}
+        or compilation["context_order"] != ["parent", "candidate"]
+    ):
+        raise ValueError(f"iteration {name} compilation evidence is invalid")
+    if raw_result.get("telemetry", {}).get("compilation") != compilation:
+        raise ValueError(f"iteration {name} compilation does not match the raw result")
+    if (
+        not math.isclose(
+            float(normalized["primary"]["value"]),
+            float(speedup),
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+        or raw_result.get("resources", {}).get("gpu_active_total_ns")
+        != cycle["gpu_active_total_ns"]
+        or raw_result.get("samples", [{}])[0]
+        .get("candidate", {})
+        .get("output_sha256")
+        != cycle["output_sha256"]
+    ):
+        raise ValueError(f"iteration {name} summary does not match the raw result")
+    _profile_compile_context(compilation["parent"], closure, "parent")
+    return (
+        _profile_compile_context(compilation["candidate"], closure, "candidate"),
+        raw_result,
+    )
+
+
+def _validate_iteration_profile(
+    profile: Any,
+    root: Path,
+    frozen: set[str],
+    proxy: dict[str, Any],
+) -> None:
+    required = {
+        "profile_base_revision",
+        "evidence_path",
+        "evidence_sha256",
+        "minimum_valid_proxy_cycles_per_hour",
+        "maximum_controller_overhead_fraction",
+    }
+    if not isinstance(profile, dict) or set(profile) != required:
+        raise ValueError("iteration profile fields are incomplete")
+    revision = profile["profile_base_revision"]
+    if (
+        not isinstance(revision, str)
+        or len(revision) != 40
+        or any(character not in "0123456789abcdef" for character in revision)
+    ):
+        raise ValueError("iteration profile revision is invalid")
+    evidence_path = profile["evidence_path"]
+    path = _relative_file(root, evidence_path, "iteration profile evidence")
+    if evidence_path not in frozen:
+        raise ValueError("iteration profile evidence must be frozen")
+    encoded = path.read_bytes()
+    if sha256(encoded) != _hex_digest(
+        profile["evidence_sha256"], "iteration evidence digest"
+    ):
+        raise ValueError("iteration profile evidence digest does not match")
+    try:
+        evidence = json.loads(encoded)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("iteration profile evidence is invalid JSON") from error
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence)
+        != {
+            "schema",
+            "schema_version",
+            "created_at",
+            "profile_base_revision",
+            "machine",
+            "evaluator",
+            "minimal_closure",
+            "cold_cycle",
+            "warm_cycle",
+        }
+        or evidence["schema"] != "outer_remainder_iteration_profile_v2"
+        or evidence["schema_version"] != 2
+        or evidence["profile_base_revision"] != revision
+        or not isinstance(evidence["created_at"], str)
+        or not evidence["created_at"]
+    ):
+        raise ValueError("iteration profile evidence contract is invalid")
+
+    machine = evidence["machine"]
+    machine_fields = {
+        "device_name",
+        "os_product_version",
+        "os_build_version",
+        "macos_sdk_version",
+        "rustc_release",
+        "rustc_commit_hash",
+        "rustc_host",
+        "llvm_version",
+        "cargo_release",
+    }
+    if (
+        not isinstance(machine, dict)
+        or set(machine) != machine_fields
+        or any(not isinstance(value, str) or not value for value in machine.values())
+        or machine["device_name"] != "Apple M4 Max"
+        or machine["rustc_host"] != "aarch64-apple-darwin"
+    ):
+        raise ValueError("iteration profile machine is invalid")
+
+    evaluator = evidence["evaluator"]
+    evaluator_fields = {
+        "result_adapter",
+        "runner_binary_sha256",
+        "log_n",
+        "pairs",
+        "excluded_warmup_pairs",
+        "rayon_threads",
+        "binding_plan",
+        "cpu_tail_elements",
+        "trace_cutoff_elements",
+        "parent_artifact_sha256",
+        "candidate_artifact_sha256",
+        "parent_outer_source_sha256",
+        "candidate_outer_source_sha256",
+    }
+    if not isinstance(evaluator, dict) or set(evaluator) != evaluator_fields:
+        raise ValueError("iteration profile evaluator is incomplete")
+    _hex_digest(evaluator["runner_binary_sha256"], "iteration runner digest")
+    _hex_digest(evaluator["parent_artifact_sha256"], "parent artifact digest")
+    _hex_digest(evaluator["candidate_artifact_sha256"], "candidate artifact digest")
+    _hex_digest(evaluator["parent_outer_source_sha256"], "parent source digest")
+    _hex_digest(evaluator["candidate_outer_source_sha256"], "candidate source digest")
+    env = proxy["evaluator"]["env"]
+    if (
+        evaluator["result_adapter"] != proxy["evaluator"]["result_adapter"]
+        or evaluator["log_n"] != proxy["promotion"]["log_n"]
+        or evaluator["pairs"] != proxy["replication"]["included_pairs"]
+        or evaluator["excluded_warmup_pairs"]
+        != proxy["replication"]["excluded_warmup_pairs"]
+        or evaluator["rayon_threads"] != int(env["RAYON_NUM_THREADS"])
+        or evaluator["binding_plan"] != "b_only_v1"
+        or evaluator["cpu_tail_elements"] <= 0
+        or evaluator["trace_cutoff_elements"] <= 0
+    ):
+        raise ValueError("iteration profile does not match the proxy tier")
+
+    closure = evidence["minimal_closure"]
+    closure_fields = {
+        "dependency_model",
+        "source_fragments",
+        "parent_assembled_source_bytes",
+        "parent_assembled_source_sha256",
+        "candidate_assembled_source_bytes",
+        "candidate_assembled_source_sha256",
+        "candidate_source_suffix",
+    }
+    if (
+        not isinstance(closure, dict)
+        or set(closure) != closure_fields
+        or closure["dependency_model"] != "outer_only_shader_closure_v1"
+    ):
+        raise ValueError("minimal closure evidence is invalid")
+    expected_paths = [
+        "crates/jolt-kernels/src/metal/solinas/fp128.metal",
+        "crates/jolt-kernels/src/metal/solinas/simd_reduce.metal",
+        "crates/jolt-kernels/src/metal/solinas/spartan_outer_common.metal",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+    ]
+    fragments = closure["source_fragments"]
+    if not isinstance(fragments, list) or [item.get("path") for item in fragments] != expected_paths:
+        raise ValueError("minimal closure source fragments are invalid")
+    fragment_payloads: dict[str, bytes] = {}
+    for fragment in fragments:
+        if not isinstance(fragment, dict) or set(fragment) != {"path", "bytes", "sha256"}:
+            raise ValueError("minimal closure source fragment is invalid")
+        source = _relative_file(root, fragment["path"], "minimal closure source")
+        payload = source.read_bytes()
+        fragment_payloads[fragment["path"]] = payload
+        if (
+            type(fragment["bytes"]) is not int
+            or fragment["bytes"] != len(payload)
+            or _hex_digest(fragment["sha256"], "minimal closure source digest")
+            != sha256(payload)
+        ):
+            raise ValueError("minimal closure source changed since profiling")
+    suffix = closure["candidate_source_suffix"]
+    candidate_source = fragment_payloads[expected_paths[-1]] + (
+        suffix.encode() if isinstance(suffix, str) else b""
+    )
+    if (
+        not isinstance(suffix, str)
+        or not suffix.startswith("\n// iteration profile ")
+        or evaluator["parent_outer_source_sha256"]
+        != sha256(fragment_payloads[expected_paths[-1]])
+        or evaluator["candidate_outer_source_sha256"] != sha256(candidate_source)
+    ):
+        raise ValueError("minimal closure candidate nonce is invalid")
+    for field in ("parent_assembled_source_bytes", "candidate_assembled_source_bytes"):
+        if type(closure[field]) is not int or closure[field] <= 0:
+            raise ValueError("minimal closure assembled source size is invalid")
+    for field in ("parent_assembled_source_sha256", "candidate_assembled_source_sha256"):
+        _hex_digest(closure[field], "minimal closure assembled source digest")
+
+    maximum_overhead = profile["maximum_controller_overhead_fraction"]
+    if (
+        isinstance(maximum_overhead, bool)
+        or not isinstance(maximum_overhead, (int, float))
+        or not math.isfinite(maximum_overhead)
+        or not 0 < maximum_overhead <= 0.01
+    ):
+        raise ValueError("iteration overhead threshold is invalid")
+    cold_compile, cold_raw = _validate_profile_cycle(
+        "cold cycle",
+        evidence["cold_cycle"],
+        closure,
+        float(maximum_overhead),
+        root,
+        frozen,
+        proxy,
+    )
+    warm_compile, warm_raw = _validate_profile_cycle(
+        "warm cycle",
+        evidence["warm_cycle"],
+        closure,
+        float(maximum_overhead),
+        root,
+        frozen,
+        proxy,
+    )
+    fingerprints = [cold_raw.get("fingerprint"), warm_raw.get("fingerprint")]
+    telemetry = [cold_raw.get("telemetry"), warm_raw.get("telemetry")]
+    if (
+        evidence["cold_cycle"]["output_sha256"]
+        != evidence["warm_cycle"]["output_sha256"]
+        or cold_compile <= 10 * warm_compile
+        or not all(isinstance(value, dict) for value in fingerprints + telemetry)
+        or fingerprints[0] != fingerprints[1]
+        or fingerprints[0].get("fixture") != "resident-outer-remainder-v2"
+        or fingerprints[0].get("log_n") != evaluator["log_n"]
+        or fingerprints[0].get("pairs") != evaluator["pairs"]
+        or fingerprints[0].get("excluded_warmup_pairs")
+        != evaluator["excluded_warmup_pairs"]
+        or fingerprints[0].get("runner_binary_sha256")
+        != evaluator["runner_binary_sha256"]
+        or fingerprints[0].get("parent_artifact_sha256")
+        != evaluator["parent_artifact_sha256"]
+        or fingerprints[0].get("candidate_artifact_sha256")
+        != evaluator["candidate_artifact_sha256"]
+        or any(record.get("device_name") != machine["device_name"] for record in telemetry)
+        or any(record.get("parent_binding_plan") != evaluator["binding_plan"] for record in telemetry)
+        or any(record.get("candidate_binding_plan") != evaluator["binding_plan"] for record in telemetry)
+        or any(
+            record.get("parent_source_sha256")
+            != evaluator["parent_outer_source_sha256"]
+            for record in telemetry
+        )
+        or any(
+            record.get("candidate_source_sha256")
+            != evaluator["candidate_outer_source_sha256"]
+            for record in telemetry
+        )
+    ):
+        raise ValueError("iteration cold and warm classifications are invalid")
+    throughput = _positive(
+        profile["minimum_valid_proxy_cycles_per_hour"],
+        "valid proxy cycles per hour target",
+    )
+    measured_cold = 3_600_000_000_000.0 / float(
+        evidence["cold_cycle"]["controller_wall_ns"]
+    )
+    if throughput > measured_cold:
+        raise ValueError("iteration throughput target exceeds cold evidence")
+
+
+def _validate_search_policy(
+    policy: Any,
+    collaboration: dict[str, Any],
+    search_space: dict[str, Any],
+    baseline: dict[str, Any],
+) -> None:
+    required = {
+        "regime",
+        "proposal_batch_size",
+        "proposal_queue_capacity",
+        "selection_order",
+        "duplicate_key",
+        "diversity_key",
+        "exploration_reserve_candidates",
+        "direct_to_representative_lane",
+        "proxy_calibration",
+    }
+    if not isinstance(policy, dict) or set(policy) != required:
+        raise ValueError("search policy fields are incomplete")
+    if policy["regime"] != "hill_climb":
+        raise ValueError("fresh kernel phases use a hill-climb search parent")
+    if (
+        type(policy["proposal_batch_size"]) is not int
+        or policy["proposal_batch_size"] != collaboration["proposal_agents"]
+        or type(policy["proposal_queue_capacity"]) is not int
+        or policy["proposal_queue_capacity"] < policy["proposal_batch_size"]
+        or type(policy["exploration_reserve_candidates"]) is not int
+        or policy["exploration_reserve_candidates"] < 0
+        or policy["direct_to_representative_lane"] is not True
+    ):
+        raise ValueError("search policy capacity is invalid")
+    if policy["selection_order"] != [
+        "guard_feasibility",
+        "expected_information_per_cost",
+        "predicted_member_latency",
+        "complexity",
+    ]:
+        raise ValueError("search policy ordering is invalid")
+    for field in ("duplicate_key", "diversity_key"):
+        if not isinstance(policy[field], str) or not policy[field]:
+            raise ValueError(f"search policy {field} is invalid")
+
+    calibration = policy["proxy_calibration"]
+    if not isinstance(calibration, dict) or set(calibration) != {
+        "sentinels",
+        "rank_metric",
+        "minimum_rank_agreement",
+        "material_effect_threshold",
+        "maximum_material_inversions",
+        "audit_every_candidates",
+        "on_material_misranking",
+    }:
+        raise ValueError("proxy calibration policy is incomplete")
+    if (
+        calibration["rank_metric"] != "kendall_tau_b"
+        or calibration["on_material_misranking"]
+        != "disable_and_require_phase_change"
+        or type(calibration["maximum_material_inversions"]) is not int
+        or calibration["maximum_material_inversions"] < 0
+        or type(calibration["audit_every_candidates"]) is not int
+        or calibration["audit_every_candidates"] < 1
+    ):
+        raise ValueError("proxy calibration policy is invalid")
+    agreement = calibration["minimum_rank_agreement"]
+    material = calibration["material_effect_threshold"]
+    if (
+        isinstance(agreement, bool)
+        or not isinstance(agreement, (int, float))
+        or not math.isfinite(agreement)
+        or not -1 <= agreement <= 1
+        or isinstance(material, bool)
+        or not isinstance(material, (int, float))
+        or not math.isfinite(material)
+        or not 0 < material < 1
+    ):
+        raise ValueError("proxy calibration thresholds are invalid")
+    sentinels = calibration["sentinels"]
+    if not isinstance(sentinels, list) or len(sentinels) < 3:
+        raise ValueError("proxy calibration requires three fixed sentinels")
+    ids: set[str] = set()
+    parameter_sets: set[bytes] = set()
+    baseline_key = canonical_json({name: str(value) for name, value in baseline.items()})
+    for sentinel in sentinels:
+        if (
+            not isinstance(sentinel, dict)
+            or set(sentinel) != {"id", "params"}
+            or not isinstance(sentinel["id"], str)
+            or _ID.fullmatch(sentinel["id"]) is None
+            or sentinel["id"] in ids
+            or not isinstance(sentinel["params"], dict)
+            or set(sentinel["params"]) != set(search_space)
+        ):
+            raise ValueError("proxy calibration sentinel is invalid")
+        ids.add(sentinel["id"])
+        params = {name: str(value) for name, value in sentinel["params"].items()}
+        if any(
+            params[name] not in {str(value) for value in search_space[name]}
+            for name in search_space
+        ):
+            raise ValueError("proxy calibration sentinel leaves the search space")
+        key = canonical_json(params)
+        if key == baseline_key or key in parameter_sets:
+            raise ValueError("proxy calibration sentinels must be unique and nonbaseline")
+        parameter_sets.add(key)
+
+
 def validate_template(template: dict[str, Any], root: Path) -> None:
     required = {
         "schema_version",
@@ -492,6 +1170,9 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         "budget",
         "evaluation",
         "collaboration",
+        "mechanism_phase",
+        "iteration_profile",
+        "search_policy",
     }
     optional = {"runtime_artifact", "sealed_binaries"}
     if (
@@ -548,6 +1229,15 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
     if template["registry_contract"] not in frozen:
         raise ValueError("the kernel registry must be frozen")
 
+    validate_budget(template["budget"])
+    _validate_mechanism_phase(template["mechanism_phase"], template["budget"])
+    _validate_search_policy(
+        template["search_policy"],
+        template["collaboration"],
+        search_space,
+        baseline,
+    )
+
     runtime_artifact = template.get("runtime_artifact")
     runtime_artifact_adapter = None
     if runtime_artifact is not None:
@@ -560,7 +1250,6 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         if not set(runtime_artifact_controller_paths(runtime_artifact)) <= frozen:
             raise ValueError("runtime artifact controller must be frozen")
 
-    validate_budget(template["budget"])
     evaluation = template["evaluation"]
     if (
         not isinstance(evaluation, dict)
@@ -635,6 +1324,16 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
     executable = {
         tier["role"]: tier for tier in tiers if tier.get("applicable") is True
     }
+    proxy = executable.get("proxy")
+    if (
+        proxy is None
+        or proxy["promotion"].get("log_n")
+        != template["mechanism_phase"]["checkpoint"]["scale_log_n"]
+    ):
+        raise ValueError("phase checkpoint scale must match the proxy tier")
+    _validate_iteration_profile(
+        template["iteration_profile"], root, frozen, proxy
+    )
     holdout = executable["holdout"]
     portfolio = goal["portfolio_acceptance"]
     if (
@@ -668,9 +1367,13 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         "piop_holdout": holdout,
         "piop_transfer": transfer,
     }
+    protected_calendar = 0.0
     for reserve_id, tier in validation_tiers.items():
         reserve = reserves[reserve_id]
         invocations = reserve["invocations"]
+        protected_calendar += invocations * float(
+            tier["evaluator"]["timeout_seconds"]
+        )
         if invocations < 2:
             raise ValueError(f"{reserve_id} must protect one retry")
         for resource, cost_limit in tier["cost_limit"].items():
@@ -678,6 +1381,16 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
                 invocations * float(cost_limit)
             ):
                 raise ValueError(f"{reserve_id} retry resources are not protected")
+    if (
+        float(
+            template["mechanism_phase"]["timebox"][
+                "max_search_calendar_seconds"
+            ]
+        )
+        + protected_calendar
+        > float(template["budget"]["total"]["max_calendar_seconds"])
+    ):
+        raise ValueError("phase and production calendar reserves are overcommitted")
     collaboration = template["collaboration"]
     if collaboration != {
         "proposal_agents": 3,

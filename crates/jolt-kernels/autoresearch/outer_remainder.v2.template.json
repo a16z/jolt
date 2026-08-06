@@ -358,7 +358,45 @@
   },
   "goal": "reach at least 5x exact OuterRemainder complete-member throughput at log 26, then pursue any materially higher measured ceiling",
   "hypothesis": "resident rows and sequence storage make one internally paired evaluator invocation sufficient; nested controller repeats add cost without independent evidence",
+  "iteration_profile": {
+    "evidence_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.json",
+    "evidence_sha256": "1577cafad0c48472af9e7c1d4291d3c4aeacaddf8c6fda114684cc5f61ad0f70",
+    "maximum_controller_overhead_fraction": 0.01,
+    "minimum_valid_proxy_cycles_per_hour": 1200.0,
+    "profile_base_revision": "8df5f87f0181172e2e06dd6c48893267e300617b"
+  },
   "kernel": "outer_remainder",
+  "mechanism_phase": {
+    "analytical_ceiling": {
+      "basis": "straight-line B-row folds can remove dynamic row switches and repeated common-load extraction without adding global traffic; the remaining risk is register pressure and instruction footprint",
+      "best_case_member_ms": 206.0,
+      "best_case_speedup": 4.276655339806,
+      "control_ms": 880.991,
+      "parent_member_ms": 222.318
+    },
+    "checkpoint": {
+      "after_candidates": 1,
+      "scale_log_n": 25,
+      "metrics": [
+        {
+          "comparison": "lte",
+          "name": "materialize_gpu_active_ms",
+          "threshold": 38.0
+        }
+      ]
+    },
+    "hypothesis": "specialize the B-row fold into straight-line stream-local code so common flags and row words stay live once per cycle instead of passing through dynamic row dispatch",
+    "id": "b_fold_straight_line_v1",
+    "kill_or_redesign": "end the phase if materialization misses the first exact checkpoint; retain the negative result and move to opening work ownership",
+    "success": {
+      "maximum_member_ms": 212.0,
+      "minimum_relative_improvement": 0.03
+    },
+    "timebox": {
+      "max_candidates_admitted": 2,
+      "max_search_calendar_seconds": 14400
+    }
+  },
   "metric": {
     "direction": "max",
     "name": "hybrid_speedup",
@@ -404,6 +442,7 @@
       "source_paths": [
         "Cargo.lock",
         "Cargo.toml",
+        "rust-toolchain.toml",
         "crates/jolt-field/Cargo.toml",
         "crates/jolt-field/src/akita.rs",
         "crates/jolt-field/src/lib.rs",
@@ -458,11 +497,15 @@
     "frozen": [
       "Cargo.lock",
       "Cargo.toml",
+      "rust-toolchain.toml",
       "crates/jolt-field/Cargo.toml",
       "crates/jolt-field/src/akita.rs",
       "crates/jolt-field/src/lib.rs",
       "crates/jolt-kernels/Cargo.toml",
       "crates/jolt-kernels/autoresearch/HARNESS.md",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.cold.raw.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.warm.raw.json",
       "crates/jolt-kernels/autoresearch/outer_remainder.template.json",
       "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
       "crates/jolt-kernels/autoresearch/piop_goal.v2.json",
@@ -553,6 +596,64 @@
       64,
       128,
       256
+    ]
+  },
+  "search_policy": {
+    "direct_to_representative_lane": true,
+    "diversity_key": "mechanism_family",
+    "duplicate_key": "source_and_params_sha256",
+    "exploration_reserve_candidates": 1,
+    "proposal_batch_size": 3,
+    "proposal_queue_capacity": 6,
+    "proxy_calibration": {
+      "audit_every_candidates": 2,
+      "material_effect_threshold": 0.03,
+      "maximum_material_inversions": 0,
+      "minimum_rank_agreement": 0.8,
+      "on_material_misranking": "disable_and_require_phase_change",
+      "rank_metric": "kendall_tau_b",
+      "sentinels": [
+        {
+          "id": "small_threadgroups",
+          "params": {
+            "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": "b_only_v1",
+            "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": "16",
+            "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": "128",
+            "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": "128",
+            "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": "18",
+            "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": "64"
+          }
+        },
+        {
+          "id": "wide_materialize",
+          "params": {
+            "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": "b_only_v1",
+            "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": "16",
+            "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": "512",
+            "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": "256",
+            "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": "18",
+            "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": "128"
+          }
+        },
+        {
+          "id": "wide_output_transition",
+          "params": {
+            "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": "b_only_v1",
+            "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": "16",
+            "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": "256",
+            "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": "512",
+            "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": "18",
+            "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": "256"
+          }
+        }
+      ]
+    },
+    "regime": "hill_climb",
+    "selection_order": [
+      "guard_feasibility",
+      "expected_information_per_cost",
+      "predicted_member_latency",
+      "complexity"
     ]
   },
   "slot_id": "spartan_outer_remainder"

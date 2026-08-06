@@ -1,4 +1,5 @@
-// Candidate source. Concatenate after spartan_outer_uniskip.metal.
+// Candidate source. Concatenate after fp128.metal, simd_reduce.metal, and
+// spartan_outer_common.metal.
 
 #define OUTER_REMAINDER_COLUMNS 35u
 #define OUTER_REMAINDER_STREAM_ROWS 10u
