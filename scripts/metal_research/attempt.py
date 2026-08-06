@@ -220,7 +220,7 @@ def _recorded_process_owns_lease(identity: dict[str, Any]) -> bool:
 
 def _recorded_process_command(pid: int) -> Optional[str]:
     observed = subprocess.run(
-        ["ps", "-o", "command=", "-p", str(pid)],
+        ["ps", "-ww", "-o", "command=", "-p", str(pid)],
         check=False,
         capture_output=True,
         text=True,
@@ -341,6 +341,8 @@ def run_attempt(
         with evaluator_lease(lease_owner, queue_timeout_seconds) as lease:
             started = time.monotonic()
             try:
+                if tracking is not None and "lock_fd" not in lease:
+                    raise OSError("tracked evaluator did not inherit the scheduler lease")
                 process = subprocess.Popen(
                     launch_command,
                     cwd=root,

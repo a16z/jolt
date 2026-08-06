@@ -85,6 +85,7 @@
         "promotion": {
           "comparison": "accepted_parent",
           "kind": "relative_improvement",
+          "maximum_treatment_ms": 170.5,
           "minimum_accepted_speedup": 5.0,
           "minimum_relative_improvement": 0.03,
           "noise_multiplier": 3.0
@@ -157,10 +158,11 @@
         },
         "id": "piop_holdout",
         "promotion": {
-          "kind": "portfolio_acceptance",
+          "kind": "kernel_piop_holdout",
           "log_n": 26,
           "local_kernel": "OuterRemainder",
           "local_metric": "outer_remainder_speedup",
+          "maximum_local_treatment_ms": 170.5,
           "minimum_portfolio_speedup": 2.5,
           "minimum_local_speedup": 5.0,
           "required_guards": [
@@ -251,10 +253,11 @@
         },
         "id": "piop_transfer",
         "promotion": {
-          "kind": "transfer_acceptance",
+          "kind": "kernel_transfer",
           "local_kernel": "OuterRemainder",
           "local_metric": "outer_remainder_speedup",
           "log_n": 27,
+          "maximum_local_treatment_ms": 341.1,
           "minimum_portfolio_speedup": 2.5,
           "minimum_local_speedup": 5.0,
           "required_guards": [

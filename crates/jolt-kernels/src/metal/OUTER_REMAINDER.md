@@ -1,11 +1,15 @@
 # Spartan outer remainder on Metal
 
-`OuterRemainder` is the next Metal phase after Hamming-weight claim reduction. In
-the five-pair `2^26` Fibonacci production run at revision `55c909600`, the
-optimized-CPU member took 905.872 ms and the unchanged member in the Metal process
-took 912.167 ms. The latter is 12.39% of the 7.363-s Metal PIOP. Reaching the 4x
-portfolio target still requires removing roughly 2.57 s, so this port is necessary
-but cannot finish the portfolio by itself.
+`OuterRemainder` is the Metal phase after Hamming-weight claim reduction. In the
+five-pair `2^26` Fibonacci production run at revision `55c909600`, the
+optimized-CPU member took 905.872 ms and the then-CPU member in the Metal process
+took 912.167 ms, or 12.39% of the 7.363-s Metal PIOP. That portfolio profile
+predates the current Outer integration and cannot rank the current HEAD.
+
+The closed isolated evaluator for the integrated implementation measured 881.996
+ms on optimized CPU and 219.487 ms on Metal, or 4.01495x. It is exact, but it is
+below the v2 5x floor and has no log-27 transfer result. The next evidence must
+come from a fresh v2 run; no schema-1 snapshot is a resumable parent.
 
 The member is a better next target than the slightly larger registers read/write
 member because its input rows already exist on the device. Stage 1's Metal uni-skip
@@ -29,11 +33,11 @@ The optimized member currently has three material components:
 | Round sequence | 176.538 ms |
 | 35 output openings | 200.190 ms |
 
-The complete optimized-CPU denominator gives a 226.5-ms budget for 4x and a
-181.2-ms target for 5x. Keeping the 200.2-ms opening walk on the CPU would cap an
-otherwise free implementation at about 4.5x. The first Metal design therefore owns
-preparation, the large round prefix, and all 35 output openings. Four times is the
-falsification bar, not the stopping point.
+The fixed evaluator's 881.996-ms optimized-CPU denominator gives a 176.399-ms
+budget for 5x. Keeping the roughly 200-ms opening walk on the CPU would make that
+floor unreachable. The Metal design therefore owns preparation, the large round
+prefix, and all 35 output openings. Five times is the minimum; the calibrated
+80%-efficiency bar below is tighter at 170.5 ms.
 
 The first target-scale resident candidate produced the same proof and verified in
 both arms. Its single timed pair measured 889.474 ms on optimized CPU and 217.138 ms
@@ -42,10 +46,8 @@ on Metal, or 4.096x. Full initialization of its 4,300,079,856-byte scratch set t
 diagnostic. This pair validates the mechanism but is not promotion evidence; the
 five-pair fixed evaluator remains authoritative.
 
-The closed five-pair evaluator measured a 4.01495x median paired speedup. Optimized
-CPU and Metal member medians were 881.996 and 219.487 ms. The CPU-first and
-Metal-first strata measured 4.01495x and 4.10172x, so the resident implementation
-clears the 4x local floor with every exactness and lifecycle guard satisfied. Its
+The CPU-first and Metal-first strata measured 4.01495x and 4.10172x. Every
+exactness and lifecycle guard passed, but neither stratum clears the v2 floor. The
 76.601-ms median scratch preparation remains outside the primary member; charging
 it produces a 298.111-ms median cold-inclusive Metal diagnostic and a 2.94269x
 median paired speedup.
@@ -114,9 +116,11 @@ message endpoints from the bound pairs before they leave registers. This avoids 
 separate message scan. The two fixed 2-GiB allocations ping-pong; obsolete initial
 `Bz` storage becomes the next output buffer.
 
-The baseline uses Metal while the current table is larger than `2^18` cells. Nine
-fused transitions take the initial `2^27` cells to that cutoff. The shared buffer is
-then synchronized once and the optimized host arithmetic finishes the small tail.
+The checked-in v2 baseline uses Metal while the current table is larger than
+`2^16` cells. The specialized stream transition reduces the initial `2^27`
+relation cells to `2^26` cycle cells; ten dense transitions reach the cutoff. The
+shared buffer is then synchronized once and optimized host arithmetic finishes the
+tail.
 The cutoff is a measured parameter, not a protocol constant; neighboring powers of
 two must be tested. Host split-equality state advances with every challenge and is
 the source for both the device prefix and CPU tail.
@@ -142,10 +146,13 @@ canonical fields. Output IDs, the common reversed cycle point, derived-weight
 validation, final relation checks, and transcript absorption use the existing host
 path.
 
-## Traffic and capacity model
+## Traffic, arithmetic, and occupancy ceilings
 
-The model counts shader-visible values. It is an optimistic roof, not a hardware
-counter claim.
+The traffic model counts shader-visible values at the checked-in `2^16` cutoff.
+It is not a hardware-counter measurement. In particular, the first stream bind
+requests only the 8-byte flag word from each 48-byte compact row, but its stride
+can charge the entire cache-line span. The current-layout range is therefore 4.5
+GiB of logical flag/state payload to 7 GiB of conservative row-span traffic.
 
 | Item at `T = 2^26` | Bytes | GiB |
 |---|---:|---:|
@@ -154,34 +161,54 @@ counter claim.
 | Initial `(Bz(0), Bz(1))` state | 2,147,483,648 | 2.000 |
 | Second ping-pong allocation | 2,147,483,648 | 2.000 |
 | Materialization traffic | 12,884,901,888 | 12.000 |
-| Stream bind and fused cycle prefix to `2^18` | 11,249,123,328 | 10.477 |
-| Opening scan plus partial write/read | 10,746,593,280 | 10.009 |
-| Total modeled member traffic | 34,880,618,496 | 32.485 |
+| First stream bind, conservative 112 B/cycle | 7,516,192,768 | 7.000 |
+| Dense prefix to `2^16` | 6,436,159,488 | 5.994 |
+| Opening scan and minimum partial traffic | about 10,746,593,280 | about 10.009 |
+| Current-layout member total | about 37,583,847,424 | about 35.0 |
 
-At the retained 420.68-GiB/s copy control, the three phases have traffic floors of
-28.52, 24.91, and 23.79 ms, or 77.22 ms total. Equality tables and reduction
-partials are small relative to the row and state planes but remain charged by the
-measured implementation.
+A packed or coalesced flag plane reduces first-bind payload to 4.5 GiB and makes
+the transition traffic floor 24.95 ms at the retained 420.68-GiB/s copy control.
+The conservative current layout instead puts that phase near a 30.9-ms traffic
+floor. Hardware counters are required before calling either figure measured DRAM
+traffic.
+
+The useful optimized product counts exclude removable small-scalar `A` products:
+
+| Phase | `2^26` products | `2^27` products |
+|---|---:|---:|
+| Materialize | 1,543,503,872 | 3,087,007,744 |
+| Transitions | 536,608,768 | 1,073,479,680 |
+| Openings | 1,141,137,408 | 2,281,988,096 |
+
+The checked-in shader still executes additional data-dependent full products in
+the `A` fold. These are optimized-useful counts, not current instruction counts.
+
+At the measured 24.08-Gproduct/s control, combined with attainable coalesced flag
+traffic, the provisional calibrated floors are:
+
+| Scale | Materialize | Prefix | Opening | Total floor | 80%-efficient latency |
+|---|---:|---:|---:|---:|---:|
+| `2^26` | 64.10 ms | 24.95 ms | 47.39 ms | 136.43 ms | 170.54 ms |
+| `2^27` | 128.20 ms | 49.91 ms | 94.77 ms | 272.87 ms | 341.09 ms |
+
+The v2 gate is pre-registered as exact, at least 5x, and at most 170.5 ms at
+`2^26`. At `2^27` it is exact and at most `min(341.1 ms, fresh CPU median / 5)`.
+These are calibrated ceilings, not hardware-theoretical limits; fresh phase
+controls or ISA/Instruments evidence may revise them before candidate testing.
+
+Against those floors, the historical implementation reached about 74.1% in
+materialization, 61.2% in the prefix, 75.1% in openings, 71.7% for GPU-active
+work, and 62.2% for the complete member. Occupancy is not yet established. The
+opening dispatch requests 15,184 bytes of threadgroup memory, including 3,920
+bytes of unused shard scratch. If the observed 32-KiB per-threadgroup limit is
+also the per-core shared pool, no more than two groups can reside; that conclusion
+remains conditional until Instruments or ISA evidence reports active SIMD groups,
+register pressure, and spills.
 
 The sequence owns 4 GiB of ping-pong state beyond the existing 10-GiB row plane;
 the opening partials add 4.375 MiB. Its largest allocation is 2 GiB, below this
-machine's measured 80.64-GiB per-buffer limit.
-Admission uses the live whole-proof allocation count, not these local sizes alone,
-because InstructionInput and Instruction-RA storage can already be resident.
-Because remainder storage now overlaps the temporary uni-skip invocation, aggregate
-admission sums those footprints rather than taking their maximum.
-
-The arithmetic roof is less certain than the traffic floor. Preparation performs
-about `23T = 1.544` billion signed wide or full field products plus cheap guard
-weight additions. The specialized stream bind and fused GPU prefix perform about
-469 million field products. The opening scan performs `17T = 1.141` billion
-field-by-word products; its 18 boolean columns need no multiplication. At the
-measured 16.42-Gproduct/s compute control these phases sum to roughly 192 ms before
-command and reduction overhead, while the faster 24.08-Gproduct/s fused-transition
-rate gives a 131-ms arithmetic projection. The deferred-`u64` result shows that this
-generic-product model overstates the opening's reducible arithmetic share. Treating
-all three phases as pointwise multiplication is therefore a conservative roof, not
-a measured decomposition.
+machine's measured 80.64-GiB per-buffer limit. Admission uses the live whole-proof
+allocation count because other Metal stages may already be resident.
 
 ## Fixed evaluator
 
@@ -209,38 +236,50 @@ scratch-preparation wall and a conservative `member + scratch preparation` cold
 diagnostic; neither replaces the resident PIOP metric.
 
 One excluded warmup precedes five alternating CPU/Metal pairs with Rayon fixed at
-16 threads. Promotion requires at least 4x in both order strata, a gain above the
-fixed noise threshold, exact component reconciliation, and equality of every round
-polynomial, host challenge, running claim, final claim, all 35 openings, derived
-value, and transcript digest. Resource guards cover row and scratch identities,
-full initialization outside the member, zero member allocations/uploads, command
-and dispatch counts, per-round table lengths, one prefix-to-tail transition, and
-one 35-field readback. Evaluator schema `outer_remainder_v3` additionally verifies
-the active post-attach scratch identities and logical ownership released after the
-opening. It does not claim that Metal immediately returns cached allocations to the
-operating system.
+16 threads. A candidate can become a search parent only by improving beyond the
+fixed noise threshold. Production promotion additionally requires at least 5x in
+both order strata, no more than 170.5 ms at `2^26`, exact component reconciliation,
+and equality of every round polynomial, host challenge, running claim, final claim,
+all 35 openings, derived value, and transcript digest. Resource guards cover row
+and scratch identities, full initialization outside the member, zero member
+allocations/uploads, command and dispatch counts, per-round table lengths, one
+prefix-to-tail transition, and one 35-field readback. Evaluator schema
+`outer_remainder_v3` additionally verifies active post-attach scratch identities
+and logical ownership released after the opening.
 
-The production holdout remains five fresh alternating full-PIOP pairs at Fibonacci
-`2^26`, with both proofs verified and the same lifecycle topology. A local winner is
-only an accepted search parent until that gate passes.
+The production holdout is five fresh alternating full-PIOP pairs at Fibonacci
+`2^26`, with both proofs verified and the same lifecycle topology. It cannot be
+used for tuning. Transfer repeats five pairs at `2^27`; its local latency must be
+at most `min(341.1 ms, fresh CPU median / 5)`. A local winner is only an accepted
+search parent until fresh revalidation, holdout, and transfer all pass.
 
-## Initial experiment
+## Fresh v2 experiment order
 
-The first implementation holds the algorithm fixed and varies only:
+The shader cannot change until the fresh v2 baseline confirms the historical
+phase attribution and either preserves or revises the calibrated floor. The first
+candidate retains both `A` and `B` stream state: materialization writes `A` into
+the otherwise unused second ping-pong allocation, and the stream bind reads and
+overwrites it in place. This adds no allocation and removes the second full `A`
+fold. Its failure mode is turning compute-bound materialization into a bandwidth
+bottleneck without enough first-bind savings.
 
-- materialization, transition, and opening threadgroup widths;
-- the capped transition/partial grid size;
-- the power-of-two CPU-tail cutoff.
+If retained `A` loses, materialization emits a packed flag plane. That changes the
+later 48-byte-stride compact-row walk into an 8-byte coalesced read and removes
+roughly 2 GiB of conservative traffic at `2^26`. Next, opening ownership removes
+the unused 3,920-byte shard scratch and tests direct or cached weight access, with
+47.39 ms as the phase target. Only then should materialization transpose or unroll
+the 19 `B` folds to reuse extraction and common subexpressions. Cutoff and launch
+geometry are last because late underfilled rounds offer less headroom.
 
-The baseline target is at most 200 ms (about 4.5x against the current optimized
-control), with 226 ms as the 4x floor and 181 ms as the 5x stretch target. If a
-correct run misses 4x because the opening scan or materialization cannot reach its
-modeled roof, the phase records that result and revisits the dataflow rather than
-tuning protocol-visible behavior.
+Before promotion, Instruments or ISA evidence must report threadgroup memory,
+register pressure, spills, active SIMD groups, achieved occupancy, and dispatch
+utilization. Row-release deferral is admissible only when an adjacent production
+consumer proves direct ownership reuse; moving work outside this member is not an
+optimization.
 
-The resident remap is now below the 4x floor but above the original 200-ms working
-target. Its dominant GPU-active phases are the 84.6-ms first message, 25.0-ms first
-bind, and 62.1-ms opening scan. Two analytical candidates were rejected on exact
+The historical resident remap is below the v2 5x floor. Its dominant GPU-active
+phases are the 86.5-ms first message, 25.5-ms first bind, 15.2-ms dense prefix, and
+63.1-ms opening scan. Two analytical candidates were rejected on exact
 `2^26` pairs. Rewriting the flag-only `Az` fold as affine additions produced a
 218.015-ms member versus the retained 217.138-ms parent; its 85.367-ms first message
 also missed the parent's 84.641 ms. Reducing the opening accumulator array from nine

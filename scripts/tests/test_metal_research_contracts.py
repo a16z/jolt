@@ -230,6 +230,15 @@ class BudgetContractTests(unittest.TestCase):
 
 
 class VersionedContractTests(unittest.TestCase):
+    def test_piop_evaluator_uses_the_v2_kernel_floors(self) -> None:
+        from scripts import metal_piop_eval
+
+        self.assertEqual(metal_piop_eval.BYTECODE_MIN_SPEEDUP, 5.0)
+        self.assertEqual(metal_piop_eval.INSTRUCTION_INPUT_MIN_SPEEDUP, 5.0)
+        self.assertEqual(metal_piop_eval.BOOLEANITY_ADDRESS_MIN_SPEEDUP, 5.0)
+        self.assertEqual(metal_piop_eval.HAMMING_WEIGHT_MIN_SPEEDUP, 5.0)
+        self.assertEqual(metal_piop_eval.OUTER_REMAINDER_MIN_SPEEDUP, 5.0)
+
     def test_repository_goal_uses_a_five_x_floor_everywhere(self) -> None:
         goal = json.loads(
             (
@@ -331,6 +340,32 @@ class VersionedContractTests(unittest.TestCase):
             promotion = tier["promotion"]
             self.assertGreaterEqual(promotion["minimum_local_speedup"], 5.0)
             self.assertLess(promotion["minimum_portfolio_speedup"], 5.0)
+
+    def test_outer_template_enforces_the_calibrated_latency_bar(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        tiers = {
+            tier["role"]: tier
+            for tier in template["evaluation"]["tiers"]
+            if tier.get("applicable") is True
+        }
+
+        self.assertEqual(
+            tiers["representative"]["promotion"]["maximum_treatment_ms"],
+            170.5,
+        )
+        self.assertEqual(
+            tiers["holdout"]["promotion"]["maximum_local_treatment_ms"],
+            170.5,
+        )
+        self.assertEqual(
+            tiers["transfer"]["promotion"]["maximum_local_treatment_ms"],
+            341.1,
+        )
 
     def test_schema_one_goal_and_template_remain_readable_by_legacy_controller(self) -> None:
         import scripts.metal_autoresearch as legacy

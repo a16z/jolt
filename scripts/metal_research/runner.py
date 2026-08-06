@@ -6,6 +6,7 @@ import json
 import math
 import os
 import secrets
+import statistics
 import subprocess
 import sys
 import time
@@ -283,10 +284,15 @@ def _required_guards(
 
 def _tier_record(result: dict[str, Any]) -> dict[str, Any]:
     summary = result["replication"]["summary"]
+    treatment_ns = statistics.median(
+        float(pair["arms"]["treatment"]["primary_ns"])
+        for pair in result["replication"]["pairs"]
+    )
     return {
         "metric": float(result["primary"]["value"]),
         "relative_mad": float(summary["mad"]) / float(summary["median"]),
         "paired_summary": summary,
+        "treatment_median_ns": treatment_ns,
     }
 
 
@@ -480,9 +486,30 @@ def _initialize_run_files(run_dir: Path) -> None:
         "candidate-events.jsonl",
         "tier-events.jsonl",
         "decision-events.jsonl",
-        "portfolio-validations.jsonl",
+        "kernel-validations.jsonl",
     ):
         (run_dir / name).touch()
+
+
+def validate_template_file(root: Path, template_path: Path) -> dict[str, Any]:
+    root = root.resolve()
+    template_path = template_path.resolve()
+    template = read_json(template_path)
+    validate_template(template, root)
+    registry_path = root / template["registry_contract"]
+    registry = _registry().read_registry(registry_path)
+    _registry().validate_registry(root, registry)
+    binding = _registry().resolve_template_binding(root, registry, template_path)
+    if binding["slot_id"] != template["slot_id"]:
+        raise ValueError("template registry slot does not match its registered binding")
+    return {
+        "schema_version": RUN_SCHEMA_VERSION,
+        "template": _relative(root, template_path),
+        "slot_id": template["slot_id"],
+        "kernel": template["kernel"],
+        "binding": binding,
+        "valid": True,
+    }
 
 
 def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
@@ -518,13 +545,77 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
         "accepted_parent": None,
     }
     write_state(run_dir, state)
+    return _continue_initialization(root, run_dir, state)
+
+
+def _accepted_baseline_records(run_dir: Path) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    tier_events = {
+        event["evaluation_id"]: event
+        for event in _events(run_dir / "tier-events.jsonl")
+    }
+    for event in _events(run_dir / "baseline-events.jsonl"):
+        if event.get("event") != "baseline_accepted":
+            continue
+        tier_id = event.get("tier_id")
+        if not isinstance(tier_id, str) or tier_id in records:
+            raise ValueError("baseline ledger contains duplicate accepted tiers")
+        evaluation_id = event.get("evaluation_id")
+        tier_event = tier_events.get(evaluation_id, {})
+        digest = event.get("tier_result_sha256")
+        result_path = run_dir / "evaluations" / str(evaluation_id) / "tier-result.json"
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or tier_event.get("attempt", {}).get("outcome") != "success"
+            or tier_event.get("attempt", {}).get("tier_result_sha256") != digest
+            or not result_path.is_file()
+            or sha256(result_path.read_bytes()) != digest
+        ):
+            raise ValueError("accepted baseline tier has no matching sealed result")
+        sealed = read_json(result_path)
+        record = _tier_record(sealed)
+        observed_treatment = event.get("treatment_median_ns")
+        if (
+            tier_event.get("tier_id") != tier_id
+            or canonical_json(event.get("primary"))
+            != canonical_json(sealed["primary"])
+            or canonical_json(event.get("paired_summary"))
+            != canonical_json(record["paired_summary"])
+            or isinstance(observed_treatment, bool)
+            or not isinstance(observed_treatment, (int, float))
+            or float(observed_treatment)
+            != record["treatment_median_ns"]
+        ):
+            raise ValueError("accepted baseline tier disagrees with its sealed result")
+        records[tier_id] = record
+    return records
+
+
+def _baseline_evaluation_id(run_dir: Path, tier_id: str) -> str:
+    prefix = f"baseline-{tier_id}"
+    prior = list((run_dir / "evaluations").glob(f"{prefix}*"))
+    if not prior:
+        return prefix
+    return f"{prefix}-retry-{len(prior) + 1:03d}"
+
+
+def _continue_initialization(
+    root: Path, run_dir: Path, state: dict[str, Any]
+) -> dict[str, Any]:
+    template = state["template"]
+    fingerprint = state["fingerprint"]
+    legacy = _legacy()
     params = _params(template, [])
-    tier_records = {}
+    tier_records = _accepted_baseline_records(run_dir)
     for tier in _search_tiers(template):
+        if tier["id"] in tier_records:
+            continue
+        evaluation_id = _baseline_evaluation_id(run_dir, tier["id"])
         inflight = {
             "schema_version": EVENT_SCHEMA_VERSION,
             "kind": "baseline",
-            "evaluation_id": f"baseline-{tier['id']}",
+            "evaluation_id": evaluation_id,
             "tier_id": tier["id"],
             "params": params,
             "started_at": utc_now(),
@@ -541,7 +632,7 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
         )
         write_state(run_dir, state)
         if result is None:
-            state["status"] = "initialization_failed"
+            state["status"] = "initialization_retryable"
             write_state(run_dir, state)
             (run_dir / "inflight.json").unlink()
             raise ValueError(
@@ -549,7 +640,7 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
             )
         passed, reason = _required_guards(state, tier, result)
         if not passed:
-            state["status"] = "initialization_failed"
+            state["status"] = "initialization_retryable"
             write_state(run_dir, state)
             (run_dir / "inflight.json").unlink()
             raise ValueError(f"{tier['id']} baseline evaluator is invalid: {reason}")
@@ -564,6 +655,8 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
                 "tier_id": tier["id"],
                 "primary": result["primary"],
                 "paired_summary": record["paired_summary"],
+                "treatment_median_ns": record["treatment_median_ns"],
+                "tier_result_sha256": event["attempt"]["tier_result_sha256"],
                 "recorded_at": utc_now(),
             },
         )
@@ -590,8 +683,29 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
     state["status"] = "active"
     _refresh_calendar(state)
     write_state(run_dir, state)
-    (run_dir / "inflight.json").unlink()
+    (run_dir / "inflight.json").unlink(missing_ok=True)
     return state
+
+
+def resume_initialization(root: Path, run_dir: Path) -> dict[str, Any]:
+    root = root.resolve()
+    state = load_state(run_dir)
+    _validate_live_state(root, state)
+    if state["status"] != "initialization_retryable":
+        raise ValueError("run initialization is not retryable")
+    if state["accepted_parent"] is not None:
+        raise ValueError("retryable initialization already has an accepted parent")
+    if (run_dir / "inflight.json").exists():
+        raise ValueError("an interrupted evaluation must be recovered first")
+    _assert_frozen(root, state)
+    if (
+        _legacy().path_digest(root, state["template"]["scope"]["editable"])
+        != state["fingerprint"]["editable_paths_sha256"]
+    ):
+        raise ValueError("editable source changed during interrupted initialization")
+    state["status"] = "initializing"
+    write_state(run_dir, state)
+    return _continue_initialization(root, run_dir, state)
 
 
 def _candidate_id(state: dict[str, Any]) -> str:
@@ -607,13 +721,14 @@ def _validation_id(run_dir: Path) -> str:
 
 def _accepted_validation(
     run_dir: Path,
+    state: dict[str, Any],
     role: str,
     parent_id: str,
     revision: str,
 ) -> dict[str, Any]:
     matches = [
         event
-        for event in _events(run_dir / "portfolio-validations.jsonl")
+        for event in _events(run_dir / "kernel-validations.jsonl")
         if event.get("role") == role
         and event.get("accepted_parent") == parent_id
         and event.get("revision") == revision
@@ -621,7 +736,130 @@ def _accepted_validation(
     ]
     if not matches:
         raise ValueError(f"run status has no accepted {role} evidence")
-    return matches[-1]
+    if len(matches) > 1:
+        raise ValueError(f"run has duplicate accepted {role} evidence")
+    record = matches[0]
+    _sealed_validation_result(run_dir, state, record)
+    return record
+
+
+def _validation_for_evaluation(
+    run_dir: Path, evaluation_id: str
+) -> Optional[dict[str, Any]]:
+    matches = [
+        event
+        for event in _events(run_dir / "kernel-validations.jsonl")
+        if event.get("event") == "kernel_validated"
+        and event.get("evaluation_id") == evaluation_id
+    ]
+    if len(matches) > 1:
+        raise ValueError("validation ledger contains duplicate evaluation records")
+    return matches[0] if matches else None
+
+
+def _sealed_validation_result(
+    run_dir: Path,
+    state: dict[str, Any],
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    evaluation_id = record.get("evaluation_id")
+    tier_id = record.get("tier_id")
+    digest = record.get("tier_result_sha256")
+    tier_events = [
+        event
+        for event in _events(run_dir / "tier-events.jsonl")
+        if event.get("evaluation_id") == evaluation_id
+    ]
+    tiers = [
+        tier
+        for tier in state["template"]["evaluation"]["tiers"]
+        if tier.get("id") == tier_id
+    ]
+    role = record.get("role")
+    expected_tier_role = (
+        "representative" if role == "representative_revalidation" else role
+    )
+    parent = state.get("accepted_parent")
+    result_path = run_dir / "evaluations" / str(evaluation_id) / "tier-result.json"
+    try:
+        if (
+            record.get("schema_version") != EVENT_SCHEMA_VERSION
+            or record.get("event") != "kernel_validated"
+            or record.get("status") not in {"accepted", "rejected"}
+            or not isinstance(evaluation_id, str)
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            or len(tier_events) != 1
+            or len(tiers) != 1
+            or not isinstance(parent, dict)
+            or record.get("accepted_parent") != parent.get("id")
+            or canonical_json(tier_events[0].get("params"))
+            != canonical_json(parent.get("params"))
+            or tiers[0].get("role") != expected_tier_role
+            or tier_events[0].get("event") != "tier_evaluated"
+            or tier_events[0].get("tier_id") != tier_id
+            or tier_events[0].get("attempt", {}).get("outcome") != "success"
+            or tier_events[0].get("attempt", {}).get("tier_result_sha256")
+            != digest
+            or not result_path.is_file()
+        ):
+            raise ValueError
+        result_bytes = result_path.read_bytes()
+        if sha256(result_bytes) != digest:
+            raise ValueError
+        result = read_json(result_path)
+        validate_tier_result(result, tiers[0])
+        if (
+            canonical_json(record.get("primary"))
+            != canonical_json(result.get("primary"))
+            or canonical_json(record.get("paired_summary"))
+            != canonical_json(result.get("replication", {}).get("summary"))
+            or canonical_json(record.get("local"))
+            != canonical_json(result.get("local"))
+            or canonical_json(tier_events[0].get("primary"))
+            != canonical_json(result.get("primary"))
+            or canonical_json(tier_events[0].get("paired_summary"))
+            != canonical_json(result.get("replication", {}).get("summary"))
+        ):
+            raise ValueError
+        if role in {"holdout", "transfer"}:
+            accepted, _ = _acceptance_result(state, tiers[0], result, None)
+            if (record.get("status") == "accepted") is not accepted:
+                raise ValueError
+        elif role == "representative_revalidation":
+            accepted, _ = _required_guards(state, tiers[0], result)
+            accepted = accepted and _result_clears_floor(
+                result,
+                float(tiers[0]["promotion"]["minimum_accepted_speedup"]),
+            )
+            accepted = accepted and _treatment_median_ms(result) <= float(
+                tiers[0]["promotion"]["maximum_treatment_ms"]
+            )
+            if (record.get("status") == "accepted") is not accepted:
+                raise ValueError
+        if record.get("role") in {"holdout", "transfer"}:
+            expected_floor = _result_clears_floor(
+                result,
+                float(
+                    state["goal"]["primary_metric"]["minimum_accepted_speedup"]
+                ),
+            )
+            if record.get("portfolio_floor_met") is not expected_floor:
+                raise ValueError
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "kernel validation has no matching sealed tier result"
+        ) from error
+    return result
+
+
+def _conservative_result_speedup(result: dict[str, Any]) -> float:
+    summary = result["replication"]["summary"]
+    return min(
+        float(result["primary"]["value"]),
+        float(summary["control_first_median"]),
+        float(summary["treatment_first_median"]),
+    )
 
 
 def trial(
@@ -791,6 +1029,11 @@ def _local_acceptance(state: dict[str, Any], tier: dict[str, Any]) -> None:
         )
     ):
         raise ValueError("accepted parent has not cleared the 5x local gate")
+    latency_ms = (
+        float(parent["tiers"][tier["id"]]["treatment_median_ns"]) / 1_000_000.0
+    )
+    if latency_ms > float(tier["promotion"]["maximum_treatment_ms"]):
+        raise ValueError("accepted parent has not cleared the calibrated latency bar")
 
 
 def _result_clears_floor(result: dict[str, Any], floor: float) -> bool:
@@ -803,6 +1046,14 @@ def _result_clears_floor(result: dict[str, Any], floor: float) -> bool:
             summary["treatment_first_median"],
         )
     )
+
+
+def _treatment_median_ms(result: dict[str, Any], local: bool = False) -> float:
+    source = result["local"] if local else result
+    return statistics.median(
+        float(pair["arms"]["treatment"]["primary_ns"])
+        for pair in source["replication"]["pairs"]
+    ) / 1_000_000.0
 
 
 def _acceptance_result(
@@ -834,6 +1085,10 @@ def _acceptance_result(
         for value in local_values
     ):
         return False, f"PIOP {tier['role']} did not retain the 5x local-kernel gate"
+    if passed and _treatment_median_ms(result, local=True) > float(
+        tier["promotion"]["maximum_local_treatment_ms"]
+    ):
+        return False, f"PIOP {tier['role']} exceeded the calibrated local latency bar"
     return passed, reason
 
 
@@ -848,6 +1103,7 @@ def _run_acceptance_tier(
     reserve_id: str,
     accepted_status: str,
     rejected_status: str,
+    invalid_status: Optional[str] = None,
 ) -> tuple[dict[str, Any], bool, str]:
     evaluation_id = f"{validation_id}-{tier['role']}"
     inflight = {
@@ -876,23 +1132,38 @@ def _run_acceptance_tier(
     )
     record = {
         "schema_version": EVENT_SCHEMA_VERSION,
-        "event": "portfolio_validated",
+        "event": "kernel_validated",
         "evaluation_id": evaluation_id,
         "tier_id": tier["id"],
         "role": tier["role"],
         "accepted_parent": accepted["id"],
         "revision": revision,
-        "status": "accepted" if passed else "rejected",
+        "status": (
+            "accepted" if passed else "invalid" if result is None else "rejected"
+        ),
         "reason": reason,
         "primary": result["primary"] if result is not None else None,
         "paired_summary": (
             result["replication"]["summary"] if result is not None else None
         ),
         "local": result.get("local") if result is not None else None,
+        "tier_result_sha256": event["attempt"].get("tier_result_sha256"),
+        "portfolio_floor_met": (
+            result is not None
+            and _result_clears_floor(
+                result,
+                float(state["goal"]["primary_metric"]["minimum_accepted_speedup"]),
+            )
+        ),
         "recorded_at": utc_now(),
     }
-    append_event(run_dir / "portfolio-validations.jsonl", record)
-    state["status"] = accepted_status if passed else rejected_status
+    append_event(run_dir / "kernel-validations.jsonl", record)
+    if passed:
+        state["status"] = accepted_status
+    elif result is None and invalid_status is not None:
+        state["status"] = invalid_status
+    else:
+        state["status"] = rejected_status
     _refresh_calendar(state)
     write_state(run_dir, state)
     return record, passed, reason
@@ -904,7 +1175,12 @@ def validate_production(
     root = root.resolve()
     state = load_state(run_dir)
     _validate_live_state(root, state)
-    if state["status"] not in {"active", "kernel_accepted", "transferred"}:
+    if state["status"] not in {
+        "active",
+        "holdout_retryable",
+        "kernel_accepted",
+        "kernel_transferred",
+    }:
         raise ValueError("run is not active")
     if (run_dir / "inflight.json").exists():
         raise ValueError("an interrupted evaluation must be recovered first")
@@ -928,10 +1204,10 @@ def validate_production(
         root, state["template"]["scope"]["editable"]
     ) != accepted["editable_paths_sha256"]:
         raise ValueError("live source does not match the accepted parent")
-    if state["status"] == "transferred":
+    if state["status"] == "kernel_transferred":
         return (
             _accepted_validation(
-                run_dir, "transfer", accepted["id"], live_revision
+                run_dir, state, "transfer", accepted["id"], live_revision
             ),
             state,
         )
@@ -977,10 +1253,17 @@ def validate_production(
                 revalidation_reason = (
                     "fresh representative result did not clear the 5x local gate"
                 )
+            if revalidation_passed and _treatment_median_ms(
+                revalidation
+            ) > float(representative["promotion"]["maximum_treatment_ms"]):
+                revalidation_passed = False
+                revalidation_reason = (
+                    "fresh representative result exceeded the calibrated latency bar"
+                )
         if not revalidation_passed:
             record = {
                 "schema_version": EVENT_SCHEMA_VERSION,
-                "event": "portfolio_validated",
+                "event": "kernel_validated",
                 "evaluation_id": revalidation_id,
                 "tier_id": representative["id"],
                 "role": "representative_revalidation",
@@ -999,17 +1282,17 @@ def validate_production(
                 "local": None,
                 "recorded_at": utc_now(),
             }
-            append_event(run_dir / "portfolio-validations.jsonl", record)
+            append_event(run_dir / "kernel-validations.jsonl", record)
             _refresh_calendar(state)
             write_state(run_dir, state)
             (run_dir / "inflight.json").unlink()
             raise ValueError(revalidation_reason)
 
         append_event(
-            run_dir / "portfolio-validations.jsonl",
+            run_dir / "kernel-validations.jsonl",
             {
                 "schema_version": EVENT_SCHEMA_VERSION,
-                "event": "portfolio_validated",
+                "event": "kernel_validated",
                 "evaluation_id": revalidation_id,
                 "tier_id": representative["id"],
                 "role": "representative_revalidation",
@@ -1020,10 +1303,22 @@ def validate_production(
                 "primary": revalidation["primary"],
                 "paired_summary": revalidation["replication"]["summary"],
                 "local": None,
+                "tier_result_sha256": revalidation_event["attempt"].get(
+                    "tier_result_sha256"
+                ),
                 "recorded_at": utc_now(),
             },
         )
+    elif state["status"] == "holdout_retryable":
+        _accepted_validation(
+            run_dir,
+            state,
+            "representative_revalidation",
+            accepted["id"],
+            live_revision,
+        )
 
+    if state["status"] in {"active", "holdout_retryable"}:
         _, passed, reason = _run_acceptance_tier(
             root,
             run_dir,
@@ -1035,12 +1330,15 @@ def validate_production(
             "piop_holdout",
             "kernel_accepted",
             "holdout_rejected",
+            "holdout_retryable",
         )
         if not passed:
             (run_dir / "inflight.json").unlink()
             raise ValueError(reason)
     else:
-        _accepted_validation(run_dir, "holdout", accepted["id"], live_revision)
+        _accepted_validation(
+            run_dir, state, "holdout", accepted["id"], live_revision
+        )
     transfer_record, transferred, transfer_reason = _run_acceptance_tier(
         root,
         run_dir,
@@ -1050,7 +1348,7 @@ def validate_production(
         live_revision,
         validation_id,
         "piop_transfer",
-        "transferred",
+        "kernel_transferred",
         "kernel_accepted",
     )
     (run_dir / "inflight.json").unlink()
@@ -1269,8 +1567,57 @@ def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
         )
     elif state["accepted_parent"] is not None:
         quarantine = _restore_with_quarantine(root, run_dir, state)
+        kind = inflight["kind"]
+        if kind == "revalidation":
+            validation = _validation_for_evaluation(
+                run_dir, inflight["evaluation_id"]
+            )
+            if validation is not None and validation.get("role") != (
+                "representative_revalidation"
+            ):
+                raise ValueError(
+                    "validation ledger role does not match interrupted evaluation"
+                )
+            validation_status = (
+                validation.get("status") if validation is not None else None
+            )
+            if validation_status == "accepted":
+                _sealed_validation_result(run_dir, state, validation)
+                state["status"] = "holdout_retryable"
+            elif validation_status in {None, "invalid", "rejected"}:
+                state["status"] = "active"
+            else:
+                raise ValueError("validation ledger has an invalid terminal status")
+        elif kind in {"holdout", "transfer"}:
+            validation = _validation_for_evaluation(
+                run_dir, inflight["evaluation_id"]
+            )
+            if validation is not None and validation.get("role") != kind:
+                raise ValueError(
+                    "validation ledger role does not match interrupted evaluation"
+                )
+            validation_status = (
+                validation.get("status") if validation is not None else None
+            )
+            if validation_status in {"accepted", "rejected"}:
+                _sealed_validation_result(run_dir, state, validation)
+            elif validation_status not in {None, "invalid"}:
+                raise ValueError("validation ledger has an invalid terminal status")
+            if kind == "holdout":
+                state["status"] = {
+                    "accepted": "kernel_accepted",
+                    "rejected": "holdout_rejected",
+                    "invalid": "holdout_retryable",
+                    None: "holdout_retryable",
+                }[validation_status]
+            else:
+                state["status"] = (
+                    "kernel_transferred"
+                    if validation_status == "accepted"
+                    else "kernel_accepted"
+                )
     elif inflight["kind"] == "baseline":
-        state["status"] = "initialization_failed"
+        state["status"] = "initialization_retryable"
     append_event(
         run_dir / "decision-events.jsonl",
         {
@@ -1417,6 +1764,91 @@ def goal_decision(
     }
 
 
+def record_goal_decision(
+    root: Path,
+    run_dir: Path,
+    candidates: list[dict[str, Any]],
+    shares_disjoint: bool,
+) -> dict[str, Any]:
+    root = root.resolve()
+    state = load_state(run_dir)
+    _validate_live_state(root, state)
+    _assert_frozen(root, state)
+    if state["status"] != "kernel_transferred":
+        raise ValueError("goal decisions require a transferred kernel run")
+    if (run_dir / "inflight.json").exists():
+        raise ValueError("an interrupted evaluation must be recovered first")
+    if candidates and not shares_disjoint:
+        raise ValueError("portfolio candidates require disjoint share attestation")
+    accepted = state["accepted_parent"]
+    revision = _legacy().git_head(root)
+    holdout = _accepted_validation(
+        run_dir, state, "holdout", accepted["id"], revision
+    )
+    transfer = _accepted_validation(
+        run_dir, state, "transfer", accepted["id"], revision
+    )
+    holdout_result = _sealed_validation_result(run_dir, state, holdout)
+    transfer_result = _sealed_validation_result(run_dir, state, transfer)
+    current_speedup = min(
+        _conservative_result_speedup(holdout_result),
+        _conservative_result_speedup(transfer_result),
+    )
+    decision = goal_decision(state["goal"], current_speedup, candidates)
+    evidence = {
+        "accepted_parent": accepted["id"],
+        "snapshot_sha256": accepted["snapshot_sha256"],
+        "revision": revision,
+        "goal_sha256": sha256(canonical_json(state["goal"])),
+        "template_sha256": state["template_sha256"],
+        "holdout_evaluation_id": holdout["evaluation_id"],
+        "holdout_result_sha256": holdout.get("tier_result_sha256"),
+        "transfer_evaluation_id": transfer["evaluation_id"],
+        "transfer_result_sha256": transfer.get("tier_result_sha256"),
+    }
+    decision_key = sha256(
+        canonical_json(
+            {
+                "evidence": evidence,
+                "shares_disjoint": shares_disjoint,
+                "candidates": candidates,
+            }
+        )
+    )
+    prior = [
+        event
+        for event in _events(run_dir / "decision-events.jsonl")
+        if event.get("event") == "portfolio_goal_decided"
+    ]
+    for event in prior:
+        if event.get("decision_key") == decision_key:
+            return event["decision"]
+    decision_id = f"goal-decision-{len(prior) + 1:03d}"
+    event = {
+        "schema_version": EVENT_SCHEMA_VERSION,
+        "event": "portfolio_goal_decided",
+        "decision_id": decision_id,
+        "supersedes": prior[-1]["decision_id"] if prior else None,
+        "decision_key": decision_key,
+        "evidence": evidence,
+        "shares_disjoint": shares_disjoint,
+        "candidates": candidates,
+        "decision": decision,
+        "successor": {
+            "required": decision["continue"],
+            "kernel": decision["next_kernel"],
+            "run_id": (
+                f"successor-{decision_id}-{decision_key[:12]}"
+                if decision["continue"]
+                else None
+            ),
+        },
+        "recorded_at": utc_now(),
+    }
+    append_event(run_dir / "decision-events.jsonl", event)
+    return decision
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Run versioned Metal kernel research")
     result.add_argument("--root", default=Path(__file__).resolve().parents[2])
@@ -1424,6 +1856,10 @@ def parser() -> argparse.ArgumentParser:
     init = commands.add_parser("init")
     init.add_argument("template")
     init.add_argument("run_dir")
+    validate = commands.add_parser("validate-template")
+    validate.add_argument("template")
+    resume = commands.add_parser("resume-init")
+    resume.add_argument("run_dir")
     trial_parser = commands.add_parser("trial")
     trial_parser.add_argument("run_dir")
     trial_parser.add_argument("--param", action="append", default=[])
@@ -1440,7 +1876,7 @@ def parser() -> argparse.ArgumentParser:
     goal_prompt.add_argument("contract")
     goal = commands.add_parser("goal-decision")
     goal.add_argument("contract")
-    goal.add_argument("--current-speedup", required=True, type=float)
+    goal.add_argument("--run-dir", required=True)
     goal.add_argument("--candidate", action="append", default=[])
     goal.add_argument("--shares-disjoint", action="store_true")
     return result
@@ -1451,7 +1887,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     root = Path(args.root).resolve()
     try:
         if args.command == "init":
+            if not _legacy().git_worktree_clean(root):
+                raise ValueError(
+                    "v2 initialization requires a clean worktree"
+                )
             value = init_run(root, Path(args.template), Path(args.run_dir).resolve())
+        elif args.command == "validate-template":
+            value = validate_template_file(root, Path(args.template))
+        elif args.command == "resume-init":
+            value = resume_initialization(root, Path(args.run_dir).resolve())
         elif args.command == "trial":
             value, _ = trial(
                 root,
@@ -1474,12 +1918,26 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
         else:
             contract = read_json(Path(args.contract))
+            state = load_state(Path(args.run_dir).resolve())
+            if canonical_json(contract) != canonical_json(state["goal"]):
+                raise ValueError("goal decision contract does not match the sealed run")
             candidates = [parse_goal_candidate(value) for value in args.candidate]
             if candidates and not args.shares_disjoint:
                 raise ValueError("portfolio candidates require --shares-disjoint")
-            value = goal_decision(contract, args.current_speedup, candidates)
+            value = record_goal_decision(
+                root,
+                Path(args.run_dir).resolve(),
+                candidates,
+                args.shares_disjoint,
+            )
         print(json.dumps(value, indent=2, sort_keys=True))
         return 0
-    except (BudgetExhausted, OSError, ValueError, subprocess.SubprocessError) as error:
+    except (
+        BudgetExhausted,
+        OSError,
+        RuntimeError,
+        ValueError,
+        subprocess.SubprocessError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

@@ -43,6 +43,17 @@ def _speedup(value: Any, description: str) -> float:
     return float(value)
 
 
+def _positive(value: Any, description: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(f"{description} must be finite and positive")
+    return float(value)
+
+
 def validate_goal_contract(contract: dict[str, Any]) -> None:
     required = {
         "schema_version",
@@ -106,7 +117,15 @@ def validate_goal_contract(contract: dict[str, Any]) -> None:
     transfer = contract["transfer_validation"]
     if (
         27 not in transfer.get("required_log_trace_sizes", [])
-        or _speedup(transfer.get("minimum_speedup"), "transfer floor") < floor
+        or _speedup(
+            transfer.get("kernel_minimum_speedup"), "kernel transfer floor"
+        )
+        < floor
+        or _speedup(
+            transfer.get("portfolio_minimum_speedup"),
+            "portfolio transfer floor",
+        )
+        < floor
     ):
         raise ValueError("transfer validation must retain the log-27 5x floor")
     continuation = contract["continuation"]
@@ -204,8 +223,8 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
     ):
         raise ValueError(f"tier {tier_id} relative promotion is invalid")
     acceptance_kind = {
-        "holdout": "portfolio_acceptance",
-        "transfer": "transfer_acceptance",
+        "holdout": "kernel_piop_holdout",
+        "transfer": "kernel_transfer",
     }
     if role in acceptance_kind and kind != acceptance_kind[role]:
         raise ValueError(f"tier {tier_id} acceptance promotion is invalid")
@@ -224,6 +243,11 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         promotion.get("minimum_accepted_speedup"), "tier acceptance floor"
     ) < goal_floor:
         raise ValueError(f"tier {tier_id} must retain the 5x acceptance floor")
+    if role == "representative":
+        _positive(
+            promotion.get("maximum_treatment_ms"),
+            "representative latency bar",
+        )
     if role in acceptance_kind:
         portfolio_floor = _speedup(
             promotion.get("minimum_portfolio_speedup"),
@@ -233,6 +257,10 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
             raise ValueError(
                 f"tier {tier_id} conflates kernel validation with portfolio acceptance"
             )
+        _positive(
+            promotion.get("maximum_local_treatment_ms"),
+            "kernel-validation latency bar",
+        )
     if role in acceptance_kind and (
         type(promotion.get("log_n")) is not int or promotion["log_n"] < 26
     ):
@@ -352,7 +380,7 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         or transfer["replication"]["included_pairs"]
         != transfer_contract["pairs"]
         or float(transfer["promotion"]["minimum_local_speedup"])
-        < float(transfer_contract["minimum_speedup"])
+        < float(transfer_contract["kernel_minimum_speedup"])
     ):
         raise ValueError("transfer tier does not match transfer acceptance")
     reserves = {

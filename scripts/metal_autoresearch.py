@@ -6647,6 +6647,19 @@ def command_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_validate_template(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    template = read_json(Path(args.template))
+    validate_template(template, root)
+    validate_new_run_template(template)
+    print(json.dumps({"schema_version": SCHEMA_VERSION, "valid": True}, sort_keys=True))
+    return 0
+
+
+def command_resume_init(_args: argparse.Namespace) -> int:
+    raise ValueError("resume-init requires a schema-2 run")
+
+
 def command_candidate_context(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).resolve()
     config, events = load_run(run_dir)
@@ -7326,6 +7339,12 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("template")
     init.add_argument("run_dir")
     init.set_defaults(handler=command_init)
+    validate = commands.add_parser("validate-template")
+    validate.add_argument("template")
+    validate.set_defaults(handler=command_validate_template)
+    resume = commands.add_parser("resume-init")
+    resume.add_argument("run_dir")
+    resume.set_defaults(handler=command_resume_init)
     context = commands.add_parser("candidate-context")
     context.add_argument("run_dir")
     context.set_defaults(handler=command_candidate_context)
@@ -7346,7 +7365,8 @@ def parser() -> argparse.ArgumentParser:
     recover.set_defaults(handler=command_recover)
     goal = commands.add_parser("goal-decision")
     goal.add_argument("contract")
-    goal.add_argument("--current-speedup", type=float, required=True)
+    goal.add_argument("--run-dir")
+    goal.add_argument("--current-speedup", type=float)
     goal.add_argument("--candidate", action="append", default=[])
     goal.add_argument("--shares-disjoint", action="store_true")
     goal.set_defaults(handler=command_goal_decision)
@@ -7370,14 +7390,14 @@ def main() -> int:
             with evaluator_lock({"controller_command": args.command}):
                 return args.handler(args)
         return args.handler(args)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 
 
 def command_uses_v2(args: argparse.Namespace) -> bool:
     try:
-        if args.command == "init":
+        if args.command in {"init", "validate-template"}:
             path = Path(args.template)
         elif args.command in {
             "trial",
@@ -7385,6 +7405,7 @@ def command_uses_v2(args: argparse.Namespace) -> bool:
             "status",
             "validate-production",
             "recover",
+            "resume-init",
         }:
             path = Path(args.run_dir) / "run.json"
         elif args.command in {"goal-prompt", "goal-decision"}:

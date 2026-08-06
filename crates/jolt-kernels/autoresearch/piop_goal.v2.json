@@ -10,7 +10,7 @@
     "stop_at_minimum": false
   },
   "goal": "reach and then maximize exact Akita Metal-hybrid PIOP throughput while preserving the optimized CPU protocol",
-  "goal_prompt": "Maximize exact Akita Metal-hybrid PIOP speedup over optimized CPU at trace sizes 2^26 and above. Reach at least 5x on five alternating log-26 pairs, with every completed standalone or fused kernel also clearing 5x; Instruction RA retains its 7x floor. Treat 5x as a floor, never a cap. If first-principles analysis or measurements show materially higher throughput, pursue it. For each measured PIOP bottleneck: derive the arithmetic, traffic, occupancy, and launch ceiling; freeze the cheapest calibrated exact evaluator; search with internal paired replication and protected representative/holdout reserves; implement resident or direct-handoff Metal with a measured CPU cutoff; validate exact proofs; checkpoint; then reprofile the PIOP. Keep host Fiat-Shamir. Exclude trace/witness construction and PCS commit/opening from the primary metric. Use parallel agents for independent analysis and isolated candidate proposals, while the root agent alone edits, builds, and serializes CPU/GPU evaluation. Validate transfer at log 27 before claiming the result for sizes above 2^26.",
+  "goal_prompt": "Maximize exact Akita Metal-hybrid PIOP speedup over optimized CPU for trace sizes at least 2^26. Require at least 5x on five alternating log-26 pairs for the full hybrid PIOP and every completed standalone or fused kernel; keep Instruction RA at least 7x. Treat these as floors, not caps, and pursue clearly available headroom. For each measured bottleneck, derive its arithmetic, traffic, occupancy, and launch ceilings; freeze the cheapest calibrated exact evaluator; use one owner for paired replication; pass fresh representative revalidation, an untuned holdout, and five-pair log-27 transfer with protected validation and retry capacity; implement resident or direct-handoff Metal with measured CPU cutoffs; validate exact proofs; checkpoint; and reprofile. Keep Fiat-Shamir on the host and exclude trace/witness construction plus PCS commit/opening from the primary metric. Parallel agents may analyze and propose in isolation; the root alone edits, builds, and serializes CPU/GPU evaluation. Start a fresh v2 run and never resume pre-migration Outer snapshots.",
   "kernel_overrides": {
     "instruction_ra_virtualization": {
       "minimum_hybrid_speedup": 7.0
@@ -79,9 +79,10 @@
     ]
   },
   "transfer_validation": {
-    "evidence_stage": "transferred",
-    "minimum_speedup": 5.0,
+    "evidence_stage": "kernel_transferred_with_portfolio_observation",
+    "kernel_minimum_speedup": 5.0,
     "pairs": 5,
+    "portfolio_minimum_speedup": 5.0,
     "required_log_trace_sizes": [
       27
     ]
