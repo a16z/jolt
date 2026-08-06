@@ -1,0 +1,121 @@
+{
+  "schema": "outer_remainder_phase_rejection_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-06T11:41:49Z",
+  "kernel": "outer_remainder",
+  "phase": {
+    "id": "opening_row_owner_v1",
+    "hypothesis": "Assigning each SIMD group a staged row and scanning columns from that row would amortize common-value decoding and weight loads without changing global traffic or the 35 output claims.",
+    "checkpoint": {
+      "scale_log_n": 25,
+      "metric": "openings_gpu_active_ms",
+      "comparison": "lte",
+      "threshold": 28.0,
+      "observed": 34.726542,
+      "passed": false
+    },
+    "terminal_status": "phase_exhausted",
+    "reason": "The first exact candidate missed the one-shot opening checkpoint. The pre-registered kill rule therefore ended the shader-only row-owner phase before representative evaluation or a second candidate."
+  },
+  "run": {
+    "id": "outer-remainder-v2-opening-ad94ba076",
+    "base_revision": "ad94ba076d1fa11b7f534bd01dc56bc45ce14775",
+    "template_path": "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+    "template_sha256": "e2a77c2aa87cc7b3147b1859cf93a441bde0a3d2a4ef12adbd7bc469df36775c",
+    "run_record_sha256": "408733ded45686191fbca784228303cdaba2f501ee2c715b035838f1573403af",
+    "run_file_sha256": "578df9b5003f52a8d9c0012b60e8fffa309aad54b7b3dd4979e5a09cb8d50793",
+    "state_record_sha256": "99f310480d4fe4b6d859654ccd9b6b25210caf1a45b396c0adfdb4b4f8d86ecd",
+    "state_file_sha256": "8e29b863b26800e03ce231c02f2ba96167e53c4b1f00896012d21249a5e3885f",
+    "candidates_admitted": 1,
+    "failed_attempts": 1
+  },
+  "accepted_parent": {
+    "scale_log_n": 26,
+    "pairs": 5,
+    "exact": true,
+    "control_ns": [898073750, 907196041, 1079123750, 900272458, 878570167],
+    "treatment_ns": [215534958, 216660750, 216264917, 216469958, 226179417],
+    "paired_speedups": [
+      4.166719674309167,
+      4.187172992800957,
+      4.989823430307006,
+      4.1588794413680255,
+      3.884394869582673
+    ],
+    "control_median_ns": 900272458,
+    "treatment_median_ns": 216469958,
+    "paired_speedup_median": 4.166719674309167,
+    "control_first_median": 4.166719674309167,
+    "treatment_first_median": 4.173026217084491,
+    "relative_mad": 0.004908733989929673,
+    "metal_phase_gpu_active_median_ns": {
+      "materialize": 84220125,
+      "first_bind": 25019625,
+      "dense_rounds": 14981499,
+      "openings": 61957792
+    },
+    "raw_result_sha256": "4dfb982b16221e40fa54a614ed2c39d78ba2dae05c90c0c28bf84f6cf7ca7eef",
+    "tier_result_sha256": "5640d89e69683a65860efa56bfe8503e238b9bc66e15e4973dc9a6a76de957eb"
+  },
+  "proxy_calibration": {
+    "status": "disabled",
+    "kendall_tau_b": 0.3333333333333333,
+    "minimum_kendall_tau_b": 0.8,
+    "material_inversions": 0,
+    "reason": "The inherited proxy remained below the rank-correlation floor. The candidate therefore used the direct lane, with log 25 retained only as the exact phase-checkpoint probe."
+  },
+  "candidate": {
+    "id": "candidate-001",
+    "summary": "Row-first opening ownership reuses common staged row values and weights across each SIMD group's columns while preserving runtime width, ABI, barriers, reductions, and exact claims.",
+    "editable_paths_sha256": "3a078d3847a0f3fa371ffd88544dd99f43f7c9a7fe4d4e7cfed7ba191a6fb7ee",
+    "outer_source_sha256": "4d6a0c8767930dba4089b5352a49c027689e1cd3cf1f8169eebe686d6b1d695d",
+    "outer_source_bytes": 30960,
+    "artifact_sha256": "3fd03aeb47cb55ab3ddebce401e370ecc2f921c376ab7a1d0d6744045435e68d",
+    "artifact_manifest_sha256": "2460307fa1fde9e5adb60ebbac03c8c11a187bc052e931099872eeb5ce876de1",
+    "params": {
+      "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": "b_only_v1",
+      "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": "16",
+      "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": "256",
+      "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": "256",
+      "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": "18",
+      "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": "128"
+    }
+  },
+  "screen_result": {
+    "scale_log_n": 25,
+    "pairs": 4,
+    "all_exact": true,
+    "control_ns": [109298291, 109430583, 109439625, 109876501],
+    "treatment_ns": [113148457, 111950000, 112003208, 112151749],
+    "paired_speedups": [
+      0.9659724391999442,
+      0.9774951585529255,
+      0.9771115216628438,
+      0.9797127729144911
+    ],
+    "successor_speedup": 0.9773033401078846,
+    "control_first_median": 0.9715419804313941,
+    "treatment_first_median": 0.9786039657337082,
+    "relative_mad": 0.001330831045435852,
+    "candidate_phase_gpu_active_ns": {
+      "materialize": 49554125.0,
+      "first_bind": 20246291.5,
+      "dense_rounds": 7564061.0,
+      "openings": 34726542.0
+    },
+    "parent_phase_gpu_active_ns": {
+      "materialize": 49848437.5,
+      "first_bind": 20253854.0,
+      "dense_rounds": 7549812.5,
+      "openings": 31721708.5
+    },
+    "raw_result_sha256": "fe4c88f4ff64cb90e4a42a467e40e2d632a9349547023f79071988f1fc929bdc",
+    "tier_result_sha256": "e7739dc06f201fb4ad4721060a87998dc0fc79f8b7f06dd61a21630810cb2e67",
+    "attempt_sha256": "19072b89ab4764130baf70711e3f2c4bd5c3e2d38d451bec279f974876c47654"
+  },
+  "restoration": {
+    "restored_outer_source_sha256": "39cc30443fb69992f353016a568f29da4002a3250931651d98e90e2fc6242996",
+    "restored_editable_paths_sha256": "13cd013fd8bf243b1bd327c6ad0199a26561dccd463d26c8870a50d7d39b248d",
+    "next_phase": "opening_padded_56_v1"
+  }
+}
