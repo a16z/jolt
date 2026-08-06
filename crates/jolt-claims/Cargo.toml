@@ -16,6 +16,10 @@ allocative = ["dep:allocative"]
 field-inline = []
 test-utils = []
 
+[[test]]
+name = "claim_graph_akita"
+required-features = ["akita"]
+
 [dependencies]
 allocative = { workspace = true, optional = true }
 blake2.workspace = true

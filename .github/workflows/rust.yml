@@ -464,7 +464,7 @@ jobs:
         run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
-        run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
+        run: cargo nextest run -p jolt-verifier -p jolt-claims --features akita --no-tests=pass --cargo-quiet
       - name: Test crates with field-inline
         if: matrix.shard == 1
         shell: bash

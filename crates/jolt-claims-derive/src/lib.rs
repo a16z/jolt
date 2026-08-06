@@ -371,6 +371,37 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
     }
 }
 
+/// `ClaimAdjacency` impl for a claim struct: one representative edge per leaf
+/// field, generated from the same plans as the resolution code so the graph
+/// metadata cannot drift from the struct's semantics. Indexed families are
+/// represented by their index-0 id.
+fn adjacency_impl(name: &Ident, plans: &[FieldPlan]) -> TokenStream2 {
+    let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
+    let edges = plans.iter().map(|plan| {
+        let index = plan.is_many.then(|| quote!(0usize));
+        let id = id_expr(&plan.kind, &plan.relation, index);
+        let arity = if plan.is_many {
+            quote!(Family)
+        } else if plan.is_option {
+            quote!(Optional)
+        } else {
+            quote!(Scalar)
+        };
+        quote! {
+            ::jolt_claims::ClaimEdge {
+                id: #id,
+                arity: ::jolt_claims::ClaimArity::#arity,
+            },
+        }
+    });
+    quote! {
+        impl<C> ::jolt_claims::ClaimAdjacency for #name<C> {
+            type Id = #id_ty;
+            const EDGES: &'static [::jolt_claims::ClaimEdge<#id_ty>] = &[#(#edges)*];
+        }
+    }
+}
+
 fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     ensure_single_cell_generic(&input.generics)?;
@@ -460,8 +491,11 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     let point_accessors = plans.iter().map(point_accessor);
+    let adjacency = adjacency_impl(name, &plans);
 
     Ok(quote! {
+        #adjacency
+
         // The value resolver lives on the value cell (`C = F`): each field is read
         // as `F` (or `Vec<F>` / `Option<F>`) directly.
         impl<F: ::jolt_field::Field> ::jolt_claims::OutputClaims<F> for #name<F> {
@@ -579,8 +613,11 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     let point_accessors = plans.iter().map(point_accessor);
+    let adjacency = adjacency_impl(name, &plans);
 
     Ok(quote! {
+        #adjacency
+
         impl<F: ::jolt_field::Field> ::jolt_claims::InputClaims<F> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
