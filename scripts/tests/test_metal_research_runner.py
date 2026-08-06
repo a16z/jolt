@@ -13,6 +13,7 @@ from unittest import mock
 
 from scripts.metal_research.attempt import EvaluatorLeaseTimeout, run_attempt
 from scripts.metal_research import attempt as attempt_runtime
+from scripts.metal_research import binaries as binary_artifacts
 from scripts.metal_research import process_wrapper
 from scripts.metal_research.paired import paired_summary
 from scripts.metal_research.results import adapt_result, validate_tier_result
@@ -381,6 +382,8 @@ class AttemptTests(unittest.TestCase):
             output = {
                 "schema_version": 1,
                 "ambient": environment.get("JOLT_METAL_AMBIENT"),
+                "dyld": environment.get("DYLD_INSERT_LIBRARIES"),
+                "python": environment.get("PYTHONPATH"),
                 "declared": environment.get("JOLT_METAL_DECLARED"),
                 "parameter": environment.get("JOLT_METAL_PARAMETER"),
             }
@@ -391,7 +394,13 @@ class AttemptTests(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
-            "os.environ", {"JOLT_METAL_AMBIENT": "forged"}, clear=False
+            "os.environ",
+            {
+                "JOLT_METAL_AMBIENT": "forged",
+                "DYLD_INSERT_LIBRARIES": "/forged.dylib",
+                "PYTHONPATH": "/forged/python",
+            },
+            clear=False,
         ), mock.patch(
             "scripts.metal_research.attempt.evaluator_lease", fake_lease
         ), mock.patch(
@@ -410,8 +419,21 @@ class AttemptTests(unittest.TestCase):
 
         self.assertEqual(attempt["outcome"], "success")
         self.assertIsNone(output["ambient"])
+        self.assertIsNone(output["dyld"])
+        self.assertIsNone(output["python"])
         self.assertEqual(output["declared"], "yes")
         self.assertEqual(output["parameter"], "candidate")
+
+    def test_attempt_rejects_declared_loader_and_python_injection(self) -> None:
+        declared = evaluator()
+        declared["env"] = {"DYLD_INSERT_LIBRARIES": "/forged.dylib"}
+        with self.assertRaisesRegex(ValueError, "unsafe state"):
+            attempt_runtime._environment(declared, {}, Path("artifacts"))
+
+        with self.assertRaisesRegex(ValueError, "unsafe state"):
+            attempt_runtime._environment(
+                evaluator(), {"PYTHONPATH": "/forged/python"}, Path("artifacts")
+            )
 
     def test_attempt_passes_only_explicit_controller_artifacts(self) -> None:
         def process(*_args: object, **kwargs: object) -> SimpleNamespace:
@@ -486,6 +508,36 @@ class AttemptTests(unittest.TestCase):
         self.assertEqual(attempt["outcome"], "launch_error")
         self.assertIsNone(output)
         popen.assert_not_called()
+
+    def test_non_result_build_attempt_and_prelaunch_check(self) -> None:
+        process = SimpleNamespace(
+            returncode=0,
+            pid=123,
+            communicate=mock.Mock(return_value=("cargo output", "")),
+        )
+        checked = mock.Mock()
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "scripts.metal_research.attempt.evaluator_lease", fake_lease
+        ), mock.patch(
+            "scripts.metal_research.attempt.subprocess.Popen", return_value=process
+        ) as popen, mock.patch(
+            "scripts.metal_research.attempt.time.monotonic",
+            side_effect=[10.0, 11.0],
+        ):
+            attempt, output = run_attempt(
+                Path(directory),
+                evaluator(),
+                {},
+                Path(directory) / "evaluation",
+                "sealed_binary:runner",
+                parse_result=False,
+                prelaunch_check=checked,
+            )
+
+        checked.assert_called_once_with()
+        popen.assert_called_once()
+        self.assertEqual(attempt["outcome"], "success")
+        self.assertIsNone(output)
 
     def test_attempt_rejects_a_partial_controller_context(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch(
@@ -707,6 +759,443 @@ class ArtifactContextTests(unittest.TestCase):
         self.assertEqual(error, "attempt and inflight artifact contexts differ")
 
 
+class SealedBinaryContextTests(unittest.TestCase):
+    BINARY_ID = "outer_remainder_eval"
+    SOURCE = "runner-source.rs"
+    BUILD_COMMAND = ["cargo", "build", "--release"]
+
+    def materialize(
+        self, root: Path, run_dir: Path
+    ) -> dict[str, object]:
+        (root / self.SOURCE).write_text("fn main() {}\n")
+        binary = b"sealed evaluator"
+        manifest = {
+            "schema": binary_artifacts.SEALED_BINARY_SCHEMA,
+            "schema_version": binary_artifacts.SEALED_BINARY_SCHEMA_VERSION,
+            "id": self.BINARY_ID,
+            "binary_file": binary_artifacts.SEALED_BINARY_FILE,
+            "binary_bytes": len(binary),
+            "binary_sha256": binary_artifacts.sha256(binary),
+            "source_sha256": binary_artifacts.declared_source_sha256(
+                root, [self.SOURCE]
+            ),
+            "build_command_sha256": binary_artifacts.sha256(
+                binary_artifacts.canonical_json(self.BUILD_COMMAND)
+            ),
+            "build_environment_sha256": "c" * 64,
+        }
+        prepared = {
+            "artifact_sha256": binary_artifacts.sha256(
+                binary_artifacts.canonical_json(manifest) + b"\0" + binary
+            ),
+            "manifest": manifest,
+            "binary": binary,
+        }
+        return binary_artifacts.materialize_sealed_binary(run_dir, prepared)
+
+    def state(self, record: dict[str, object]) -> dict[str, object]:
+        return {
+            "template": {
+                "budget": {
+                    "total": {
+                        "max_candidates_admitted": 1,
+                        "max_calendar_seconds": 300,
+                        "max_active_evaluator_seconds": 300,
+                        "max_exclusive_machine_seconds": 300,
+                        "max_gpu_active_seconds": 0,
+                        "max_tokens": 0,
+                        "max_monetary_usd": 0,
+                    },
+                    "reserves": [],
+                },
+                "sealed_binaries": {
+                    self.BINARY_ID: {
+                        "build": {
+                            "command": self.BUILD_COMMAND,
+                            "output_path": "target/runner",
+                            "timeout_seconds": 30,
+                        },
+                        "source_paths": [self.SOURCE],
+                        "consumer_tiers": ["screen"],
+                        "result_fingerprint": [
+                            "fingerprint",
+                            "runner_binary_sha256",
+                        ],
+                    }
+                }
+            },
+            "sealed_binaries": {self.BINARY_ID: record},
+        }
+
+    def tier(self) -> dict[str, object]:
+        return {
+            "id": "screen",
+            "applicable": True,
+            "evaluator": {
+                "command": [
+                    binary_artifacts.sealed_binary_token(self.BINARY_ID)
+                ]
+            },
+        }
+
+    def test_resolves_only_the_whole_token_and_publishes_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            (run_dir / "binaries").mkdir()
+            record = self.materialize(run_dir, run_dir)
+
+            evaluator, environment, context = runner._sealed_binary_context(
+                run_dir, run_dir, self.state(record), self.tier()
+            )
+
+            self.assertEqual(
+                Path(evaluator["command"][0]).read_bytes(), b"sealed evaluator"
+            )
+            self.assertEqual(
+                environment["JOLT_AUTORESEARCH_RUNNER_SHA256"],
+                record["manifest"]["binary_sha256"],
+            )
+            self.assertEqual(context, {self.BINARY_ID: record})
+
+    def test_post_launch_mutation_invalidates_the_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            (run_dir / "binaries").mkdir()
+            record = self.materialize(run_dir, run_dir)
+            state = self.state(record)
+            context = {self.BINARY_ID: record}
+            artifact = run_dir / record["artifact_path"]
+            executable = artifact / "runner"
+            artifact.chmod(0o755)
+            executable.chmod(0o755)
+            executable.write_bytes(b"mutated evaluator")
+            executable.chmod(0o555)
+            artifact.chmod(0o555)
+            attempt = {"outcome": "success", "error": None}
+
+            valid = runner._seal_attempt_binaries(
+                run_dir, state, self.tier(), context, attempt
+            )
+
+            self.assertFalse(valid)
+            self.assertEqual(attempt["outcome"], "binary_changed")
+            self.assertEqual(attempt["evaluator_outcome"], "success")
+
+    def test_result_fingerprint_must_match_the_sealed_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            (run_dir / "binaries").mkdir()
+            record = self.materialize(run_dir, run_dir)
+            state = self.state(record)
+            context = {self.BINARY_ID: record}
+            output = {
+                "fingerprint": {
+                    "runner_binary_sha256": record["manifest"][
+                        "binary_sha256"
+                    ]
+                }
+            }
+
+            runner._validate_sealed_binary_fingerprint(
+                output, state, self.tier(), context
+            )
+            output["fingerprint"]["runner_binary_sha256"] = "c" * 64
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                runner._validate_sealed_binary_fingerprint(
+                    output, state, self.tier(), context
+                )
+
+    def test_recovery_requires_matching_published_context(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            (run_dir / "binaries").mkdir()
+            record = self.materialize(run_dir, run_dir)
+            state = self.state(record)
+            state["template"]["evaluation"] = {"tiers": [self.tier()]}
+            context = {self.BINARY_ID: record}
+            error = runner._recovery_sealed_binary_context_error(
+                run_dir,
+                state,
+                {"tier_id": "screen", "sealed_binary_context": context},
+                {"sealed_binary_context": None},
+            )
+
+            self.assertEqual(
+                error, "attempt and inflight sealed binary contexts differ"
+            )
+
+    def durable_state(self, root: Path) -> dict[str, object]:
+        return {
+            "schema_version": 2,
+            "status": "sealing_binaries",
+            "template": {
+                "budget": {
+                    "total": {
+                        "max_candidates_admitted": 1,
+                        "max_calendar_seconds": 300,
+                        "max_active_evaluator_seconds": 300,
+                        "max_exclusive_machine_seconds": 300,
+                        "max_gpu_active_seconds": 0,
+                        "max_tokens": 0,
+                        "max_monetary_usd": 0,
+                    },
+                    "reserves": [],
+                },
+                "sealed_binaries": {
+                    self.BINARY_ID: {
+                        "build": {
+                            "command": ["build-runner"],
+                            "output_path": "target/runner",
+                            "timeout_seconds": 30,
+                        },
+                        "source_paths": [self.SOURCE],
+                        "consumer_tiers": ["screen"],
+                        "result_fingerprint": [
+                            "fingerprint",
+                            "runner_binary_sha256",
+                        ],
+                    }
+                },
+                "scope": {"editable": [], "frozen": []},
+            },
+            "sealed_binaries": {},
+            "usage": runner.empty_usage(),
+            "accepted_parent": None,
+            "created_at": runner.utc_now(),
+            "root": str(root),
+        }
+
+    def test_binary_build_is_durable_before_baseline_initialization(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            run_dir = Path(directory) / "run"
+            root.mkdir()
+            runner._initialize_run_files(run_dir)
+            (root / self.SOURCE).write_text("fn main() {}\n")
+            output = root / "target/runner"
+            output.parent.mkdir()
+            output.write_bytes(b"durable evaluator")
+            output.chmod(0o755)
+            state = self.durable_state(root)
+            runner.write_state(run_dir, state)
+
+            def build_attempt(
+                _root: Path,
+                _evaluator: dict[str, object],
+                _params: dict[str, str],
+                evaluation_dir: Path,
+                tier_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], None]:
+                evaluation_dir.mkdir(parents=True)
+                return (
+                    {
+                        "schema_version": 1,
+                        "tier_id": tier_id,
+                        "outcome": "success",
+                        "error": None,
+                        "command": ["build-runner"],
+                        "started_at": runner.utc_now(),
+                        "controller": {
+                            "queue_wait_seconds": 0.0,
+                            "exclusive_lease_seconds": 1.0,
+                            "subprocess_wall_seconds": 1.0,
+                        },
+                        "resources": {
+                            "gpu_active_seconds": None,
+                            "gpu_active_charge_seconds": 1.0,
+                            "gpu_active_charge_kind": "conservative_wall_upper_bound",
+                        },
+                        "result_sha256": None,
+                    },
+                    None,
+                )
+
+            with mock.patch.object(
+                runner, "run_attempt", side_effect=build_attempt
+            ), mock.patch.object(
+                runner, "_continue_initialization", side_effect=lambda *_: state
+            ):
+                result = runner._continue_binary_sealing(root, run_dir, state)
+
+            record = result["sealed_binaries"][self.BINARY_ID]
+            binary_artifacts.verify_sealed_binary_contract(
+                root,
+                run_dir,
+                self.BINARY_ID,
+                state["template"]["sealed_binaries"][self.BINARY_ID],
+                record,
+            )
+            self.assertFalse((run_dir / "inflight.json").exists())
+            self.assertFalse((run_dir / "binaries").stat().st_mode & 0o222)
+            self.assertEqual(
+                len((run_dir / "binary-events.jsonl").read_text().splitlines()),
+                1,
+            )
+            self.assertEqual(result["usage"]["active_evaluator_seconds"], 1.0)
+            self.assertEqual(result["usage"]["exclusive_machine_seconds"], 1.0)
+            self.assertEqual(result["usage"]["gpu_active_seconds"], 0.0)
+
+    def test_failed_binary_build_is_recoverably_sealed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            run_dir = Path(directory) / "run"
+            root.mkdir()
+            runner._initialize_run_files(run_dir)
+            (root / self.SOURCE).write_text("fn main() {}\n")
+            state = self.durable_state(root)
+            runner.write_state(run_dir, state)
+
+            def failed_attempt(
+                _root: Path,
+                _evaluator: dict[str, object],
+                _params: dict[str, str],
+                evaluation_dir: Path,
+                tier_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], None]:
+                evaluation_dir.mkdir(parents=True)
+                return (
+                    {
+                        "schema_version": 1,
+                        "tier_id": tier_id,
+                        "outcome": "timeout",
+                        "error": "build timed out",
+                        "command": ["build-runner"],
+                        "started_at": runner.utc_now(),
+                        "controller": {
+                            "queue_wait_seconds": 0.0,
+                            "exclusive_lease_seconds": 30.0,
+                            "subprocess_wall_seconds": 30.0,
+                        },
+                        "resources": {
+                            "gpu_active_seconds": None,
+                            "gpu_active_charge_seconds": 30.0,
+                            "gpu_active_charge_kind": "conservative_wall_upper_bound",
+                        },
+                        "result_sha256": None,
+                    },
+                    None,
+                )
+
+            with mock.patch.object(
+                runner, "run_attempt", side_effect=failed_attempt
+            ), self.assertRaisesRegex(ValueError, "build timed out"):
+                runner._continue_binary_sealing(root, run_dir, state)
+
+            recovered = runner.load_state(run_dir)
+            self.assertEqual(recovered["status"], "sealing_binaries_retryable")
+            self.assertFalse((run_dir / "inflight.json").exists())
+            self.assertEqual(recovered["sealed_binaries"], {})
+            self.assertEqual(recovered["usage"]["active_evaluator_seconds"], 30.0)
+            self.assertEqual(recovered["usage"]["exclusive_machine_seconds"], 30.0)
+            self.assertEqual(recovered["usage"]["gpu_active_seconds"], 0.0)
+
+    def test_binary_build_is_admitted_against_all_non_gpu_budgets(self) -> None:
+        cases = (
+            ("max_active_evaluator_seconds", "active_evaluator_seconds"),
+            ("max_exclusive_machine_seconds", "exclusive_machine_seconds"),
+            ("max_calendar_seconds", "calendar"),
+        )
+        for cap, message in cases:
+            with self.subTest(cap=cap), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "root"
+                run_dir = Path(directory) / "run"
+                root.mkdir()
+                runner._initialize_run_files(run_dir)
+                state = self.durable_state(root)
+                state["template"]["budget"]["total"][cap] = 29
+                runner.write_state(run_dir, state)
+
+                with mock.patch.object(runner, "run_attempt") as run, self.assertRaisesRegex(
+                    runner.BudgetExhausted, message
+                ):
+                    runner._continue_binary_sealing(root, run_dir, state)
+
+                run.assert_not_called()
+                self.assertFalse((run_dir / "inflight.json").exists())
+                self.assertEqual(
+                    (run_dir / "binary-events.jsonl").read_text(), ""
+                )
+
+    def test_binary_build_terminal_event_is_recovered_exactly_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            run_dir = Path(directory) / "run"
+            root.mkdir()
+            runner._initialize_run_files(run_dir)
+            (root / self.SOURCE).write_text("fn main() {}\n")
+            output = root / "target/runner"
+            output.parent.mkdir()
+            output.write_bytes(b"durable evaluator")
+            output.chmod(0o755)
+            state = self.durable_state(root)
+            runner.write_state(run_dir, state)
+
+            def build_attempt(
+                _root: Path,
+                _evaluator: dict[str, object],
+                _params: dict[str, str],
+                evaluation_dir: Path,
+                tier_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], None]:
+                evaluation_dir.mkdir(parents=True)
+                return (
+                    {
+                        "schema_version": 1,
+                        "tier_id": tier_id,
+                        "outcome": "success",
+                        "error": None,
+                        "command": ["build-runner"],
+                        "started_at": runner.utc_now(),
+                        "controller": {
+                            "queue_wait_seconds": 0.0,
+                            "exclusive_lease_seconds": 1.0,
+                            "subprocess_wall_seconds": 1.0,
+                        },
+                        "resources": {
+                            "gpu_active_seconds": None,
+                            "gpu_active_charge_seconds": 1.0,
+                            "gpu_active_charge_kind": (
+                                "conservative_wall_upper_bound"
+                            ),
+                        },
+                        "result_sha256": None,
+                    },
+                    None,
+                )
+
+            with mock.patch.object(
+                runner, "run_attempt", side_effect=build_attempt
+            ), mock.patch.object(
+                runner, "charge_attempt", side_effect=RuntimeError("crash")
+            ), self.assertRaisesRegex(RuntimeError, "crash"):
+                runner._continue_binary_sealing(root, run_dir, state)
+
+            self.assertTrue((run_dir / "inflight.json").is_file())
+            self.assertEqual(
+                len((run_dir / "binary-events.jsonl").read_text().splitlines()),
+                1,
+            )
+            recovered_state = runner.load_state(
+                run_dir, verify_sealed_binaries=False
+            )
+            inflight = runner.read_json(run_dir / "inflight.json")
+            recovered = runner._recover_binary_build(
+                root, run_dir, recovered_state, inflight
+            )
+
+            self.assertEqual(
+                len((run_dir / "binary-events.jsonl").read_text().splitlines()),
+                1,
+            )
+            self.assertIn(self.BINARY_ID, recovered["sealed_binaries"])
+            self.assertEqual(recovered["usage"]["active_evaluator_seconds"], 1.0)
+            self.assertEqual(recovered["usage"]["gpu_active_seconds"], 0.0)
+            self.assertFalse((run_dir / "inflight.json").exists())
+
+
 class ResultAdapterTests(unittest.TestCase):
     def successor_tier(self) -> dict[str, object]:
         return {
@@ -819,6 +1308,155 @@ class ResultAdapterTests(unittest.TestCase):
                 tampered["fingerprint"][field] = value
                 with self.assertRaisesRegex(ValueError, "not closed"):
                     runner._validate_closed_result(ROOT, tier, tampered, {})
+
+    def successor_v2_tier(self) -> dict[str, object]:
+        tier = self.successor_tier()
+        tier["evaluator"][
+            "result_adapter"
+        ] = "outer_remainder_successor_v2"
+        return tier
+
+    def successor_v2_arm(self, gpu_ns: int) -> dict[str, object]:
+        setup_ns = 10
+        return {
+            "gpu_active_ns": gpu_ns,
+            "wall_ns": gpu_ns + 5,
+            "resource_gpu_active_ns": gpu_ns + setup_ns,
+            "setup_gpu_active_ns": setup_ns,
+            "setup_wall_ns": setup_ns + 5,
+            "tail_elements": 1 << 16,
+            "initialized_bytes": 4096,
+            "storage_owned_bytes": 4096,
+            "round_device_buffer_allocations": 0,
+            "output_sha256": "d" * 64,
+            "dispatch_counts": {
+                "materializations": 1,
+                "stream_transitions": 1,
+                "dense_transitions": 9,
+                "cpu_tail_exports": 1,
+                "opening_scans": 1,
+                "command_buffers": 12,
+            },
+        }
+
+    def successor_v2_output(self) -> dict[str, object]:
+        orders = [
+            ["parent", "candidate"]
+            if index % 2 == 0
+            else ["candidate", "parent"]
+            for index in range(4)
+        ]
+        parent_times = [100, 200, 300, 10_000]
+        candidate_times = [100] * 4
+        samples = [
+            {
+                "pair": index,
+                "order": orders[index],
+                "parent": self.successor_v2_arm(parent_times[index]),
+                "candidate": self.successor_v2_arm(candidate_times[index]),
+            }
+            for index in range(4)
+        ]
+        warmup = {
+            "order": ["parent", "candidate"],
+            "parent": self.successor_v2_arm(100),
+            "candidate": self.successor_v2_arm(100),
+        }
+        total_ns = sum(
+            arm["resource_gpu_active_ns"]
+            for record in [warmup, *samples]
+            for arm in (record["parent"], record["candidate"])
+        )
+        guards = {
+            "all_exact": True,
+            "correctness_exact": True,
+            "target_scale": True,
+            "runtime_artifacts_exact": True,
+            "resident_row_handle_lifecycle_exact": True,
+            "metal_phase_schedule_exact": True,
+            "gpu_timestamps_exact": True,
+        }
+        return {
+            "schema": "outer_remainder_successor_v2",
+            "schema_version": 2,
+            "kernel": "OuterRemainder",
+            "fingerprint": {
+                "fixture": "resident-outer-remainder-v2",
+                "log_n": 25,
+                "pairs": 4,
+                "excluded_warmup_pairs": 1,
+                "orders": orders,
+                "parent_artifact_sha256": "a" * 64,
+                "candidate_artifact_sha256": "b" * 64,
+                "runner_binary_sha256": "c" * 64,
+            },
+            "metrics": {
+                "successor_speedup": 2.5,
+                "paired_speedups": [1.0, 2.0, 3.0, 100.0],
+            },
+            "excluded_warmup": warmup,
+            "samples": samples,
+            "guards": guards,
+            "all_exact": True,
+            "resources": {
+                "gpu_active_total_ns": total_ns,
+                "gpu_seconds": total_ns / 1e9,
+            },
+            "telemetry": {
+                "device_name": "test-metal",
+                "device_registry_shared": True,
+                "cycles": 1 << 25,
+                "parent_binding_plan": "b_only_v1",
+                "candidate_binding_plan": "b_only_v1",
+                "parent_source_sha256": "e" * 64,
+                "candidate_source_sha256": "f" * 64,
+                "production_last_owner_release_deferred": True,
+            },
+        }
+
+    def test_outer_successor_v2_uses_midpoint_and_full_gpu_charge(self) -> None:
+        tier = self.successor_v2_tier()
+        output = self.successor_v2_output()
+
+        result, charge = adapt_result(tier, output, "outer_remainder")
+        validate_tier_result(result, tier)
+        runner._validate_closed_result(ROOT, tier, output, {})
+
+        self.assertEqual(result["primary"]["value"], 2.5)
+        self.assertEqual(
+            charge["gpu_active_charge_seconds"],
+            output["resources"]["gpu_active_total_ns"] / 1e9,
+        )
+
+    def test_outer_successor_v2_rejects_raw_evidence_drift(self) -> None:
+        mutations = {
+            "arm charge": lambda value: value["samples"][0]["parent"].__setitem__(
+                "resource_gpu_active_ns", 111
+            ),
+            "resource total": lambda value: value["resources"].__setitem__(
+                "gpu_active_total_ns", 1
+            ),
+            "paired metrics": lambda value: value["metrics"][
+                "paired_speedups"
+            ].__setitem__(1, 2.1),
+            "output digest": lambda value: value["samples"][0][
+                "parent"
+            ].__setitem__("output_sha256", "0" * 64),
+            "dispatch": lambda value: value["samples"][0]["parent"][
+                "dispatch_counts"
+            ].__setitem__("dense_transitions", 8),
+            "guard": lambda value: value["guards"].__setitem__(
+                "gpu_timestamps_exact", False
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                output = self.successor_v2_output()
+                mutate(output)
+                with self.assertRaises(ValueError):
+                    adapt_result(
+                        self.successor_v2_tier(), output, "outer_remainder"
+                    )
 
     def test_successor_promotion_uses_one_as_its_neutral_point(self) -> None:
         tier = self.successor_tier()
@@ -1058,6 +1696,10 @@ class ResultAdapterTests(unittest.TestCase):
             for item in template["evaluation"]["tiers"]
             if item.get("role") == "proxy"
         )
+        tier = copy.deepcopy(tier)
+        tier["evaluator"]["result_adapter"] = "outer_remainder_screen_v1"
+        tier["replication"]["included_pairs"] = 3
+        tier["replication"]["minimum_pairs_per_order_stratum"] = 1
         params = {name: str(value) for name, value in template["baseline_params"].items()}
         output = {
             "schema": "outer_remainder_screen_v1",
@@ -1108,53 +1750,91 @@ class ResultAdapterTests(unittest.TestCase):
 
 
 class RunnerIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sealing_patch = mock.patch.object(
+            runner,
+            "_continue_binary_sealing",
+            side_effect=self.fake_binary_sealing,
+        )
+        self.sealing_patch.start()
+        self.addCleanup(self.sealing_patch.stop)
+
+    def fake_binary_sealing(
+        self, root: Path, run_dir: Path, state: dict[str, object]
+    ) -> dict[str, object]:
+        records = {}
+        for binary_id, contract in state["template"][
+            "sealed_binaries"
+        ].items():
+            binary = b"test sealed evaluator"
+            manifest = {
+                "schema": binary_artifacts.SEALED_BINARY_SCHEMA,
+                "schema_version": binary_artifacts.SEALED_BINARY_SCHEMA_VERSION,
+                "id": binary_id,
+                "binary_file": binary_artifacts.SEALED_BINARY_FILE,
+                "binary_bytes": len(binary),
+                "binary_sha256": binary_artifacts.sha256(binary),
+                "source_sha256": binary_artifacts.declared_source_sha256(
+                    root, contract["source_paths"]
+                ),
+                "build_command_sha256": binary_artifacts.sha256(
+                    binary_artifacts.canonical_json(contract["build"]["command"])
+                ),
+                "build_environment_sha256": "0" * 64,
+            }
+            prepared = {
+                "artifact_sha256": binary_artifacts.sha256(
+                    binary_artifacts.canonical_json(manifest) + b"\0" + binary
+                ),
+                "manifest": manifest,
+                "binary": binary,
+            }
+            records[binary_id] = binary_artifacts.materialize_sealed_binary(
+                run_dir, prepared
+            )
+        state["sealed_binaries"] = records
+        binary_artifacts.seal_sealed_binary_store(run_dir)
+        state["status"] = "initializing"
+        runner.write_state(run_dir, state)
+        return runner._continue_initialization(root, run_dir, state)
+
     def outer_output(self) -> dict[str, object]:
         from scripts.tests.test_metal_autoresearch import MetalAutoresearchTests
 
         return MetalAutoresearchTests().outer_remainder_local_contract_fixture()[2]
 
     def screen_output(
-        self, output: dict[str, object], params: dict[str, str]
+        self,
+        output: dict[str, object],
+        params: dict[str, str],
+        execution_context: dict[str, object],
+        sealed_binary_context: dict[str, object],
     ) -> dict[str, object]:
-        result = copy.deepcopy(output)
-        result["schema"] = "outer_remainder_screen_v1"
-        result["schema_version"] = 1
-        result["samples"] = result["samples"][:3]
-        fingerprint = result["fingerprint"]
-        fingerprint.update(
+        del output, params
+        result = ResultAdapterTests().successor_v2_output()
+        parent = execution_context["parent"]
+        candidate = execution_context["candidate"]
+        runner_record = sealed_binary_context["outer_remainder_eval"]
+        result["fingerprint"].update(
             {
-                "log_n": 25,
-                "trace_elements": 1 << 25,
-                "trace_rows": (1 << 25) - 100,
-                "pairs": 3,
-                "orders": [sample["order"] for sample in result["samples"]],
-                "rounds": 26,
-                "materialize_threads": int(
-                    params["JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS"]
-                ),
-                "transition_threads": int(
-                    params["JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS"]
-                ),
-                "output_threads": int(
-                    params["JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS"]
-                ),
-                "cutoff_log2": int(
-                    params["JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2"]
-                ),
-                "trace_cutoff_log2": int(
-                    params["JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2"]
-                ),
+                "parent_artifact_sha256": parent["artifact_sha256"],
+                "candidate_artifact_sha256": candidate["artifact_sha256"],
+                "runner_binary_sha256": runner_record["manifest"][
+                    "binary_sha256"
+                ],
             }
         )
-        resources = result["resources"]
-        resources["resident_row_bytes"] = (1 << 25) * 160
-        resources["outer_remainder_storage_bytes"] = 2_152_596_208
-        resources["maximum_storage_buffer_bytes"] = 1 << 30
-        resources["metal_full_prove_ns_samples"] = resources[
-            "metal_full_prove_ns_samples"
-        ][:4]
-        resources["gpu_seconds"] = (
-            sum(resources["metal_full_prove_ns_samples"]) / 1e9
+        result["telemetry"].update(
+            {
+                "parent_binding_plan": parent["manifest"]["binding_plan"],
+                "candidate_binding_plan": candidate["manifest"]["binding_plan"],
+                "parent_source_sha256": parent["manifest"][
+                    "outer_source_sha256"
+                ],
+                "candidate_source_sha256": candidate["manifest"][
+                    "outer_source_sha256"
+                ],
+            }
         )
         return result
 
@@ -1172,7 +1852,12 @@ class RunnerIntegrationTests(unittest.TestCase):
             evaluation_dir.mkdir(parents=True, exist_ok=False)
             launches.append(tier_id)
             tier_output = (
-                self.screen_output(output, _params)
+                self.screen_output(
+                    output,
+                    _params,
+                    _kwargs["context_record"],
+                    _kwargs["sealed_binary_context"],
+                )
                 if tier_id == "screen"
                 else output
             )
@@ -1195,6 +1880,10 @@ class RunnerIntegrationTests(unittest.TestCase):
                         "gpu_active_charge_kind": "conservative_wall_upper_bound",
                     },
                     "result_sha256": "a" * 64,
+                    "execution_context": _kwargs.get("context_record"),
+                    "sealed_binary_context": _kwargs.get(
+                        "sealed_binary_context"
+                    ),
                 },
                 tier_output,
             )
@@ -1461,12 +2150,15 @@ class RunnerIntegrationTests(unittest.TestCase):
                 ROOT, run_dir, [], "repeat the baseline candidate"
             )
 
-            self.assertEqual(launches, ["screen", "representative", "screen"])
+            self.assertEqual(
+                launches,
+                ["screen", "representative", "screen", "representative"],
+            )
             self.assertEqual(state["accepted_parent"]["id"], "baseline")
             self.assertEqual(decision["verdict"], "discard")
             self.assertEqual(state["usage"]["candidates_admitted"], 1)
             self.assertEqual(
-                len((run_dir / "tier-events.jsonl").read_text().splitlines()), 3
+                len((run_dir / "tier-events.jsonl").read_text().splitlines()), 4
             )
 
     def test_recovery_conservatively_charges_an_unsealed_attempt(self) -> None:
@@ -1887,6 +2579,57 @@ class RunnerIntegrationTests(unittest.TestCase):
                     _params,
                     evaluation_dir,
                     tier_id,
+                    **_kwargs,
+                )
+
+            with mock.patch.object(runner, "run_attempt", side_effect=attempt):
+                resumed = runner.resume_initialization(ROOT, run_dir)
+
+            self.assertEqual(resumed["status"], "active")
+            self.assertEqual(
+                relaunched,
+                [
+                    "baseline-screen-retry-002",
+                    "baseline-representative-retry-002",
+                ],
+            )
+
+    def test_resume_initialization_recovers_before_first_inflight_record(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            state["status"] = "initializing"
+            state["accepted_parent"] = None
+            runner.write_state(run_dir, state)
+            (run_dir / "baseline-events.jsonl").write_text("")
+            relaunched: list[str] = []
+
+            def attempt(
+                _root: Path,
+                _evaluator: dict[str, object],
+                _params: dict[str, str],
+                evaluation_dir: Path,
+                tier_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                relaunched.append(evaluation_dir.name)
+                return self.successful_attempt(output, [])(
+                    _root,
+                    _evaluator,
+                    _params,
+                    evaluation_dir,
+                    tier_id,
+                    **_kwargs,
                 )
 
             with mock.patch.object(runner, "run_attempt", side_effect=attempt):
@@ -2309,10 +3052,30 @@ class RunnerIntegrationTests(unittest.TestCase):
                 for tier in state["template"]["evaluation"]["tiers"]
                 if tier.get("id") == "screen"
             )
-            screen_output = self.screen_output(
-                output,
-                state["accepted_parent"]["params"],
+            state["accepted_parent"]["tiers"]["screen"]["relative_mad"] = 0.0
+            runner.write_state(run_dir, state)
+            screen_output = ResultAdapterTests().successor_v2_output()
+            for sample in screen_output["samples"]:
+                parent = sample["parent"]
+                parent["gpu_active_ns"] = 90
+                parent["wall_ns"] = 95
+                parent["resource_gpu_active_ns"] = 100
+            screen_output["metrics"] = {
+                "successor_speedup": 0.9,
+                "paired_speedups": [0.9] * 4,
+            }
+            total_ns = sum(
+                arm["resource_gpu_active_ns"]
+                for record in [
+                    screen_output["excluded_warmup"],
+                    *screen_output["samples"],
+                ]
+                for arm in (record["parent"], record["candidate"])
             )
+            screen_output["resources"] = {
+                "gpu_active_total_ns": total_ns,
+                "gpu_seconds": total_ns / 1e9,
+            }
             screen_result, _ = adapt_result(
                 screen, screen_output, "outer_remainder"
             )

@@ -290,7 +290,7 @@ class VersionedContractTests(unittest.TestCase):
             ).read_text()
         )
         plan_parameter = "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
-        plans = ["b_only_v1", "split_ab_v1"]
+        plans = ["b_only_v1"]
         template["search_space"][plan_parameter] = plans
         template["baseline_params"][plan_parameter] = "b_only_v1"
         template["runtime_artifact"] = {
@@ -314,18 +314,6 @@ class VersionedContractTests(unittest.TestCase):
             for tier in template["evaluation"]["tiers"]
             if tier["id"] == "screen"
         )
-        screen["evaluator"][
-            "result_adapter"
-        ] = "outer_remainder_successor_v1"
-        screen["promotion"].update(
-            {
-                "kind": "successor_screen",
-                "clear_loss_ratio": 0.98,
-                "minimum_uncertainty": 0.01,
-                "maximum_calibration_relative_mad": 0.02,
-            }
-        )
-
         validate_template(template, ROOT)
 
         tampered = copy.deepcopy(template)
@@ -334,7 +322,9 @@ class VersionedContractTests(unittest.TestCase):
             validate_template(tampered, ROOT)
 
         tampered = copy.deepcopy(template)
-        host_path = sorted(host_paths)[0]
+        host_path = (
+            "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs"
+        )
         tampered["scope"]["editable"].append(host_path)
         tampered["scope"]["frozen"].remove(host_path)
         with self.assertRaisesRegex(ValueError, "source or plans"):
@@ -359,6 +349,24 @@ class VersionedContractTests(unittest.TestCase):
             validate_template(tampered, ROOT)
 
         tampered = copy.deepcopy(template)
+        screen = next(
+            tier
+            for tier in tampered["evaluation"]["tiers"]
+            if tier["id"] == "screen"
+        )
+        screen["evaluator"]["env"][
+            "DYLD_INSERT_LIBRARIES"
+        ] = "/forged.dylib"
+        with self.assertRaisesRegex(ValueError, "evaluator is invalid"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["search_space"]["PYTHONPATH"] = ["/forged/python"]
+        tampered["baseline_params"]["PYTHONPATH"] = "/forged/python"
+        with self.assertRaisesRegex(ValueError, "baseline parameters"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
         transfer = next(
             tier
             for tier in tampered["evaluation"]["tiers"]
@@ -366,6 +374,75 @@ class VersionedContractTests(unittest.TestCase):
         )
         transfer["promotion"]["log_n"] = 26
         with self.assertRaisesRegex(ValueError, "transfer acceptance"):
+            validate_template(tampered, ROOT)
+
+    def test_sealed_binary_contract_closes_tokens_sources_and_consumers(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        token = "{sealed_binary:outer_remainder_eval}"
+        screen = next(
+            tier
+            for tier in template["evaluation"]["tiers"]
+            if tier["id"] == "screen"
+        )
+        screen["evaluator"]["command"] = [token]
+        template["sealed_binaries"] = {
+            "outer_remainder_eval": {
+                "build": {
+                    "command": ["cargo", "build", "--release"],
+                    "output_path": "target/release/outer-remainder-eval",
+                    "timeout_seconds": 1800,
+                },
+                "source_paths": ["scripts/metal_outer_remainder_screen.py"],
+                "consumer_tiers": ["screen"],
+                "result_fingerprint": [
+                    "fingerprint",
+                    "runner_binary_sha256",
+                ],
+            }
+        }
+
+        validate_template(template, ROOT)
+
+        tampered = copy.deepcopy(template)
+        screen = next(
+            tier
+            for tier in tampered["evaluation"]["tiers"]
+            if tier["id"] == "screen"
+        )
+        screen["evaluator"]["command"] = [f"--runner={token}"]
+        with self.assertRaisesRegex(ValueError, "direct v2"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        representative = next(
+            tier
+            for tier in tampered["evaluation"]["tiers"]
+            if tier["id"] == "representative"
+        )
+        representative["evaluator"]["command"].append(token)
+        with self.assertRaisesRegex(ValueError, "nonconsumer"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        screen = next(
+            tier
+            for tier in tampered["evaluation"]["tiers"]
+            if tier["id"] == "screen"
+        )
+        screen["evaluator"]["env"]["RUNNER"] = token
+        with self.assertRaisesRegex(ValueError, "whole command"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["sealed_binaries"]["outer_remainder_eval"][
+            "source_paths"
+        ] = ["scripts/tests/test_metal_research_contracts.py"]
+        with self.assertRaisesRegex(ValueError, "frozen closure"):
             validate_template(tampered, ROOT)
 
         tampered = copy.deepcopy(template)
@@ -449,7 +526,7 @@ class VersionedContractTests(unittest.TestCase):
             341.1,
         )
 
-    def test_outer_template_can_edit_the_pre_registered_kernel_dataflow(self) -> None:
+    def test_outer_template_exposes_only_the_runtime_shader(self) -> None:
         template = json.loads(
             (
                 ROOT
@@ -458,14 +535,15 @@ class VersionedContractTests(unittest.TestCase):
         )
         editable = set(template["scope"]["editable"])
 
-        self.assertTrue(
+        self.assertEqual(
+            editable,
             {
-                "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
-                "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
-                "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
-                "crates/jolt-kernels/src/metal/solinas/outer_remainder/tests.rs",
-            }
-            <= editable
+                "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
+            },
+        )
+        self.assertIn(
+            "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
+            template["scope"]["frozen"],
         )
 
     def test_outer_template_stages_a_log_25_exact_screen(self) -> None:
@@ -484,10 +562,14 @@ class VersionedContractTests(unittest.TestCase):
         self.assertTrue(screen["applicable"])
         self.assertEqual(
             screen["evaluator"]["result_adapter"],
-            "outer_remainder_screen_v1",
+            "outer_remainder_successor_v2",
         )
         self.assertEqual(screen["promotion"]["log_n"], 25)
-        self.assertEqual(screen["replication"]["included_pairs"], 3)
+        self.assertEqual(screen["replication"]["included_pairs"], 4)
+        self.assertEqual(
+            screen["evaluator"]["command"],
+            ["{sealed_binary:outer_remainder_eval}"],
+        )
 
     def test_schema_one_goal_and_template_remain_readable_by_legacy_controller(self) -> None:
         import scripts.metal_autoresearch as legacy

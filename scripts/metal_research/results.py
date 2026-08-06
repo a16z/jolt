@@ -80,7 +80,10 @@ def _envelope(
                 else (
                     "successor_speedup"
                     if tier["evaluator"]["result_adapter"]
-                    == "outer_remainder_successor_v1"
+                    in {
+                        "outer_remainder_successor_v1",
+                        "outer_remainder_successor_v2",
+                    }
                     else "hybrid_speedup"
                 )
             ),
@@ -257,6 +260,261 @@ def _adapt_outer_successor(
     }
 
 
+def _positive_integer(value: Any, description: str) -> int:
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"{description} is invalid")
+    return value
+
+
+def _successor_v2_arm(
+    arm: Any, log_n: int
+) -> tuple[int, int, str, int]:
+    fields = {
+        "gpu_active_ns",
+        "wall_ns",
+        "resource_gpu_active_ns",
+        "setup_gpu_active_ns",
+        "setup_wall_ns",
+        "tail_elements",
+        "initialized_bytes",
+        "storage_owned_bytes",
+        "round_device_buffer_allocations",
+        "output_sha256",
+        "dispatch_counts",
+    }
+    if not isinstance(arm, dict) or set(arm) != fields:
+        raise ValueError("OuterRemainder successor arm fields are invalid")
+    gpu_ns = _positive_integer(arm["gpu_active_ns"], "member GPU time")
+    wall_ns = _positive_integer(arm["wall_ns"], "member wall time")
+    setup_gpu_ns = _positive_integer(
+        arm["setup_gpu_active_ns"], "setup GPU time"
+    )
+    setup_wall_ns = _positive_integer(
+        arm["setup_wall_ns"], "setup wall time"
+    )
+    resource_ns = _positive_integer(
+        arm["resource_gpu_active_ns"], "arm GPU charge"
+    )
+    if (
+        gpu_ns > wall_ns
+        or setup_gpu_ns > setup_wall_ns
+        or resource_ns != gpu_ns + setup_gpu_ns
+    ):
+        raise ValueError("OuterRemainder successor timestamps are inconsistent")
+    tail = _positive_integer(arm["tail_elements"], "CPU tail")
+    if tail & (tail - 1) or tail > 1 << log_n:
+        raise ValueError("OuterRemainder successor CPU tail is invalid")
+    initialized = _positive_integer(
+        arm["initialized_bytes"], "initialized storage bytes"
+    )
+    owned = _positive_integer(
+        arm["storage_owned_bytes"], "owned storage bytes"
+    )
+    if (
+        initialized != owned
+        or type(arm["round_device_buffer_allocations"]) is not int
+        or arm["round_device_buffer_allocations"] != 0
+    ):
+        raise ValueError("OuterRemainder successor storage lifecycle is invalid")
+    output_sha256 = arm["output_sha256"]
+    if (
+        not isinstance(output_sha256, str)
+        or len(output_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in output_sha256)
+    ):
+        raise ValueError("OuterRemainder successor output digest is invalid")
+
+    counts = arm["dispatch_counts"]
+    count_fields = {
+        "materializations",
+        "stream_transitions",
+        "dense_transitions",
+        "cpu_tail_exports",
+        "opening_scans",
+        "command_buffers",
+    }
+    if not isinstance(counts, dict) or set(counts) != count_fields:
+        raise ValueError("OuterRemainder successor dispatch counts are invalid")
+    if any(type(counts[field]) is not int for field in count_fields):
+        raise ValueError("OuterRemainder successor dispatch counts are invalid")
+    dense = log_n - (tail.bit_length() - 1)
+    if (
+        counts["materializations"] != 1
+        or counts["stream_transitions"] != 1
+        or counts["dense_transitions"] != dense
+        or counts["cpu_tail_exports"] != 1
+        or counts["opening_scans"] != 1
+        or counts["command_buffers"] != dense + 3
+    ):
+        raise ValueError("OuterRemainder successor phase schedule is invalid")
+    return gpu_ns, resource_ns, output_sha256, tail
+
+
+def _adapt_outer_successor_v2(
+    tier: dict[str, Any], output: dict[str, Any], kernel: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if (
+        output.get("schema") != "outer_remainder_successor_v2"
+        or output.get("schema_version") != 2
+        or output.get("kernel") != "OuterRemainder"
+        or output.get("all_exact") is not True
+    ):
+        raise ValueError("OuterRemainder successor v2 returned the wrong contract")
+    expected_guards = {
+        "all_exact",
+        "correctness_exact",
+        "target_scale",
+        "runtime_artifacts_exact",
+        "resident_row_handle_lifecycle_exact",
+        "metal_phase_schedule_exact",
+        "gpu_timestamps_exact",
+    }
+    guards = output.get("guards")
+    if (
+        not isinstance(guards, dict)
+        or set(guards) != expected_guards
+        or any(value is not True for value in guards.values())
+    ):
+        raise ValueError("OuterRemainder successor v2 guards are invalid")
+    fingerprint = output.get("fingerprint")
+    if not isinstance(fingerprint, dict) or type(fingerprint.get("log_n")) is not int:
+        raise ValueError("OuterRemainder successor v2 fingerprint is invalid")
+    log_n = fingerprint["log_n"]
+    samples = output.get("samples")
+    pair_count = tier["replication"]["included_pairs"]
+    if not isinstance(samples, list) or len(samples) != pair_count:
+        raise ValueError("OuterRemainder successor v2 samples are incomplete")
+    input_id = _input_id(fingerprint.get("fixture"))
+    pairs = []
+    resource_total_ns = 0
+    output_digests: set[str] = set()
+    tails: set[int] = set()
+    raw_effects = []
+    for index, sample in enumerate(samples):
+        if not isinstance(sample, dict) or set(sample) != {
+            "pair",
+            "order",
+            "parent",
+            "candidate",
+        } or sample["pair"] != index:
+            raise ValueError("OuterRemainder successor v2 sample is invalid")
+        parent_ns, parent_resource, parent_digest, parent_tail = _successor_v2_arm(
+            sample["parent"], log_n
+        )
+        candidate_ns, candidate_resource, candidate_digest, candidate_tail = (
+            _successor_v2_arm(sample["candidate"], log_n)
+        )
+        pair = _pair(
+            index,
+            input_id,
+            sample["order"],
+            parent_ns,
+            candidate_ns,
+            True,
+            "parent",
+            "candidate",
+        )
+        pairs.append(pair)
+        raw_effects.append(pair["effect"])
+        resource_total_ns += parent_resource + candidate_resource
+        output_digests.update((parent_digest, candidate_digest))
+        tails.update((parent_tail, candidate_tail))
+
+    warmup = output.get("excluded_warmup")
+    if not isinstance(warmup, dict) or set(warmup) != {
+        "order",
+        "parent",
+        "candidate",
+    }:
+        raise ValueError("OuterRemainder successor v2 warmup is invalid")
+    warmup_parent = _successor_v2_arm(warmup["parent"], log_n)
+    warmup_candidate = _successor_v2_arm(warmup["candidate"], log_n)
+    _pair(
+        -1,
+        input_id,
+        warmup["order"],
+        warmup_parent[0],
+        warmup_candidate[0],
+        True,
+        "parent",
+        "candidate",
+    )
+    resource_total_ns += warmup_parent[1] + warmup_candidate[1]
+    output_digests.update((warmup_parent[2], warmup_candidate[2]))
+    tails.update((warmup_parent[3], warmup_candidate[3]))
+    if len(output_digests) != 1 or len(tails) != 1:
+        raise ValueError("OuterRemainder successor v2 arms are not equivalent")
+
+    result = _envelope(
+        tier,
+        kernel,
+        "outer_remainder_successor_v2",
+        output,
+        pairs,
+        [{"payload": warmup}],
+    )
+    metrics = output.get("metrics")
+    sorted_effects = sorted(raw_effects)
+    if not isinstance(metrics, dict) or set(metrics) != {
+        "successor_speedup",
+        "paired_speedups",
+    }:
+        raise ValueError("OuterRemainder successor v2 metrics are invalid")
+    reported_effects = metrics["paired_speedups"]
+    if (
+        not isinstance(reported_effects, list)
+        or len(reported_effects) != len(sorted_effects)
+        or any(
+            isinstance(observed, bool)
+            or not isinstance(observed, (int, float))
+            or not math.isclose(
+                float(observed), expected, rel_tol=1e-12, abs_tol=1e-12
+            )
+            for observed, expected in zip(reported_effects, sorted_effects)
+        )
+    ):
+        raise ValueError("OuterRemainder successor v2 paired metrics disagree")
+    reported = metrics["successor_speedup"]
+    if (
+        isinstance(reported, bool)
+        or not isinstance(reported, (int, float))
+        or not math.isclose(
+            float(reported),
+            result["primary"]["value"],
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+    ):
+        raise ValueError("OuterRemainder successor v2 metric disagrees")
+    resources = output.get("resources")
+    if not isinstance(resources, dict) or set(resources) != {
+        "gpu_active_total_ns",
+        "gpu_seconds",
+    }:
+        raise ValueError("OuterRemainder successor v2 resources are invalid")
+    reported_total = resources["gpu_active_total_ns"]
+    reported_seconds = resources["gpu_seconds"]
+    if (
+        type(reported_total) is not int
+        or reported_total != resource_total_ns
+        or isinstance(reported_seconds, bool)
+        or not isinstance(reported_seconds, (int, float))
+        or not math.isclose(
+            float(reported_seconds) * 1e9,
+            resource_total_ns,
+            rel_tol=1e-12,
+            abs_tol=0.500001,
+        )
+    ):
+        raise ValueError("OuterRemainder successor v2 resource charge disagrees")
+    charge = resource_total_ns / 1e9
+    return result, {
+        "gpu_active_seconds": charge,
+        "gpu_active_charge_seconds": charge,
+        "gpu_active_charge_kind": "validated",
+    }
+
+
 def _adapt_piop(
     tier: dict[str, Any], output: dict[str, Any], kernel: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -384,6 +642,8 @@ def adapt_result(
     adapter = tier["evaluator"]["result_adapter"]
     if adapter == "outer_remainder_successor_v1":
         return _adapt_outer_successor(tier, output, kernel)
+    if adapter == "outer_remainder_successor_v2":
+        return _adapt_outer_successor_v2(tier, output, kernel)
     if adapter in {"outer_remainder_v3", "outer_remainder_screen_v1"}:
         return _adapt_outer(tier, output, kernel)
     if adapter == "metal_piop_v7":

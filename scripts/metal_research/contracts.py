@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .attempt import unsafe_environment_name
 from .budget import RESOURCE_DIMENSIONS, validate_budget
 from .paired import validate_replication
 from .versions import (
@@ -20,6 +21,7 @@ _ROLES = {"correctness", "proxy", "representative", "holdout", "transfer"}
 _RESULT_ADAPTERS = {
     "outer_remainder_screen_v1",
     "outer_remainder_successor_v1",
+    "outer_remainder_successor_v2",
     "outer_remainder_v3",
     "metal_piop_v7",
 }
@@ -35,6 +37,15 @@ def _relative_file(root: Path, value: Any, description: str) -> Path:
     if not path.is_file():
         raise ValueError(f"{description} path does not exist: {value}")
     return path
+
+
+def _relative_path(value: Any, description: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{description} path must be a nonempty string")
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"{description} path must stay within the repository")
+    return relative
 
 
 def _speedup(value: Any, description: str) -> float:
@@ -202,6 +213,7 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
             isinstance(name, str)
             and name
             and not name.startswith("JOLT_AUTORESEARCH_")
+            and not unsafe_environment_name(name)
             and isinstance(value, str)
             for name, value in evaluator_env.items()
         )
@@ -223,9 +235,10 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         raise ValueError(f"tier {tier_id} cost limit is invalid")
     promotion = tier["promotion"]
     kind = promotion.get("kind")
-    successor_screen = (
-        evaluator["result_adapter"] == "outer_remainder_successor_v1"
-    )
+    successor_screen = evaluator["result_adapter"] in {
+        "outer_remainder_successor_v1",
+        "outer_remainder_successor_v2",
+    }
     if role == "correctness" and kind != "all_guards":
         raise ValueError(f"tier {tier_id} correctness promotion is invalid")
     minimum_relative = promotion.get("minimum_relative_improvement")
@@ -304,6 +317,140 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         raise ValueError(f"tier {tier_id} target scale is invalid")
 
 
+def _validate_sealed_binaries(
+    template: dict[str, Any],
+    root: Path,
+    tiers: list[dict[str, Any]],
+    frozen_paths: set[str],
+) -> None:
+    contracts = template.get("sealed_binaries", {})
+    if not isinstance(contracts, dict):
+        raise ValueError("sealed binary contracts must be an object")
+    applicable = {
+        tier["id"]: tier for tier in tiers if tier.get("applicable") is True
+    }
+    consumers: set[str] = set()
+    tokens = {
+        binary_id: f"{{sealed_binary:{binary_id}}}" for binary_id in contracts
+    }
+    if any(_ID.fullmatch(binary_id) is None for binary_id in contracts):
+        raise ValueError("sealed binary id is invalid")
+
+    for binary_id, contract in contracts.items():
+        fields = {
+            "build",
+            "source_paths",
+            "consumer_tiers",
+            "result_fingerprint",
+        }
+        if not isinstance(contract, dict) or set(contract) != fields:
+            raise ValueError(f"sealed binary {binary_id} contract is invalid")
+        build = contract["build"]
+        if not isinstance(build, dict) or set(build) != {
+            "command",
+            "output_path",
+            "timeout_seconds",
+        }:
+            raise ValueError(f"sealed binary {binary_id} build is invalid")
+        command = build["command"]
+        timeout = build["timeout_seconds"]
+        if (
+            not isinstance(command, list)
+            or not command
+            or not all(isinstance(argument, str) and argument for argument in command)
+            or any("{sealed_binary:" in argument for argument in command)
+            or isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError(f"sealed binary {binary_id} build is invalid")
+        _relative_path(build["output_path"], f"sealed binary {binary_id} output")
+
+        source_paths = contract["source_paths"]
+        if (
+            not isinstance(source_paths, list)
+            or not source_paths
+            or not all(isinstance(path, str) and path for path in source_paths)
+            or len(source_paths) != len(set(source_paths))
+        ):
+            raise ValueError(f"sealed binary {binary_id} sources are invalid")
+        for source_path in source_paths:
+            _relative_file(root, source_path, f"sealed binary {binary_id} source")
+            if source_path not in frozen_paths:
+                raise ValueError(
+                    f"sealed binary {binary_id} source is outside the frozen closure"
+                )
+
+        consumer_tiers = contract["consumer_tiers"]
+        if (
+            not isinstance(consumer_tiers, list)
+            or not consumer_tiers
+            or not all(
+                isinstance(tier_id, str) and tier_id
+                for tier_id in consumer_tiers
+            )
+            or len(consumer_tiers) != len(set(consumer_tiers))
+            or any(tier_id not in applicable for tier_id in consumer_tiers)
+            or consumers.intersection(consumer_tiers)
+        ):
+            raise ValueError(f"sealed binary {binary_id} consumers are invalid")
+        consumers.update(consumer_tiers)
+        if contract["result_fingerprint"] != [
+            "fingerprint",
+            "runner_binary_sha256",
+        ]:
+            raise ValueError(f"sealed binary {binary_id} fingerprint is invalid")
+
+        token = tokens[binary_id]
+        for tier_id, tier in applicable.items():
+            tier_command = tier["evaluator"]["command"]
+            occurrences = tier_command.count(token)
+            if tier_id in consumer_tiers and (
+                occurrences != 1
+                or tier_command[0] != token
+                or tier["evaluator"]["result_adapter"]
+                != "outer_remainder_successor_v2"
+            ):
+                raise ValueError(
+                    f"sealed binary {binary_id} consumer is not a direct v2 evaluator"
+                )
+            if tier_id not in consumer_tiers and occurrences:
+                raise ValueError(
+                    f"sealed binary {binary_id} token appears in a nonconsumer tier"
+                )
+
+    allowed_tokens = set(tokens.values())
+    for tier in applicable.values():
+        evaluator = tier["evaluator"]
+        for argument in evaluator["command"]:
+            if "{sealed_binary:" in argument and argument not in allowed_tokens:
+                raise ValueError("sealed binary command token is invalid")
+        reserved_values = list(evaluator.get("env", {}).items())
+        reserved_values.extend(
+            (binding.get("parameter"), binding.get("flag"))
+            for binding in evaluator.get("parameter_bindings", [])
+            if isinstance(binding, dict)
+        )
+        if any(
+            "{sealed_binary:" in value
+            for pair in reserved_values
+            for value in pair
+            if isinstance(value, str)
+        ):
+            raise ValueError(
+                "sealed binary tokens are restricted to whole command arguments"
+            )
+    v2_tiers = {
+        tier_id
+        for tier_id, tier in applicable.items()
+        if tier["evaluator"]["result_adapter"]
+        == "outer_remainder_successor_v2"
+    }
+    if v2_tiers != consumers:
+        raise ValueError("every successor v2 tier must consume one sealed binary")
+
+
 def validate_template(template: dict[str, Any], root: Path) -> None:
     required = {
         "schema_version",
@@ -321,7 +468,7 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         "evaluation",
         "collaboration",
     }
-    optional = {"runtime_artifact"}
+    optional = {"runtime_artifact", "sealed_binaries"}
     if (
         not isinstance(template, dict)
         or not required <= set(template)
@@ -353,6 +500,7 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
             not isinstance(name, str)
             or not name
             or name.startswith("JOLT_AUTORESEARCH_")
+            or unsafe_environment_name(name)
             for name in search_space
         )
     ):
@@ -396,7 +544,7 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
             editable != {source_path}
             or not isinstance(plan_parameter, str)
             or plan_parameter not in search_space
-            or plans != ["b_only_v1", "split_ab_v1"]
+            or plans != ["b_only_v1"]
             or search_space[plan_parameter] != plans
             or baseline[plan_parameter] not in plans
         ):
@@ -429,7 +577,7 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         for tier in tiers
         if tier.get("applicable") is True
         and tier["evaluator"]["result_adapter"]
-        == "outer_remainder_successor_v1"
+        in {"outer_remainder_successor_v1", "outer_remainder_successor_v2"}
     ]
     if runtime_artifact is not None:
         artifact_tiers = [
@@ -443,13 +591,14 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
             raise ValueError("runtime artifact must bind one executable proxy tier")
         if (
             artifact_tiers[0]["evaluator"]["result_adapter"]
-            != "outer_remainder_successor_v1"
+            not in {"outer_remainder_successor_v1", "outer_remainder_successor_v2"}
         ):
             raise ValueError("runtime artifact proxy must use its sealed adapter")
         if successor_tiers != artifact_tiers:
             raise ValueError("successor adapter is not bound to runtime artifacts")
     elif successor_tiers:
         raise ValueError("successor adapter requires runtime artifacts")
+    _validate_sealed_binaries(template, root, tiers, frozen)
     if not {"representative", "holdout", "transfer"} <= roles:
         raise ValueError("evaluation requires representative, holdout, and transfer tiers")
     rank = {

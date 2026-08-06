@@ -75,7 +75,13 @@ fn main() -> EvalResult<()> {
         candidate_config,
         true,
     )?;
-    require_exact(&mut oracle, &warmup_parent, &warmup_candidate)?;
+    require_exact(
+        &mut oracle,
+        &warmup_parent,
+        &warmup_candidate,
+        cycles,
+        parent_config.cpu_tail_elements,
+    )?;
     let mut resource_gpu_active = arm_resource_gpu_active(&warmup_parent)?
         .checked_add(arm_resource_gpu_active(&warmup_candidate)?)
         .ok_or_else(|| failure("warmup GPU charge overflowed"))?;
@@ -93,7 +99,13 @@ fn main() -> EvalResult<()> {
             candidate_config,
             parent_first,
         )?;
-        require_exact(&mut oracle, &parent, &candidate)?;
+        require_exact(
+            &mut oracle,
+            &parent,
+            &candidate,
+            cycles,
+            parent_config.cpu_tail_elements,
+        )?;
         resource_gpu_active = resource_gpu_active
             .checked_add(arm_resource_gpu_active(&parent)?)
             .and_then(|total| total.checked_add(arm_resource_gpu_active(&candidate).ok()?))
@@ -203,6 +215,8 @@ fn require_exact(
     oracle: &mut Option<OuterRemainderEvalResult>,
     parent: &OuterRemainderEvalSample,
     candidate: &OuterRemainderEvalSample,
+    cycles: usize,
+    expected_tail: usize,
 ) -> EvalResult<()> {
     if parent.result != candidate.result {
         return Err(failure("candidate result differs from the accepted parent"));
@@ -214,14 +228,20 @@ fn require_exact(
     } else {
         *oracle = Some(parent.result.clone());
     }
-    validate_lifecycle(parent)?;
-    validate_lifecycle(candidate)
+    validate_lifecycle(parent, cycles, expected_tail)?;
+    validate_lifecycle(candidate, cycles, expected_tail)
 }
 
-fn validate_lifecycle(sample: &OuterRemainderEvalSample) -> EvalResult<()> {
+fn validate_lifecycle(
+    sample: &OuterRemainderEvalSample,
+    cycles: usize,
+    expected_tail: usize,
+) -> EvalResult<()> {
     let counts = sample.dispatch_counts;
+    let dense_transitions = (cycles / expected_tail).ilog2() as usize;
     if counts.materializations != 1
         || counts.stream_transitions != 1
+        || counts.dense_transitions != dense_transitions
         || counts.cpu_tail_exports != 1
         || counts.opening_scans != 1
         || counts.command_buffers
@@ -242,10 +262,11 @@ fn validate_lifecycle(sample: &OuterRemainderEvalSample) -> EvalResult<()> {
         || sample.result.member_claims.len() != 1
         || sample.result.expected_final_claim != sample.result.final_claim
         || sample.result.output_claims.len() != 35
-        || sample.tail_elements == 0
-        || !sample.tail_elements.is_power_of_two()
+        || sample.tail_elements != expected_tail
+        || !expected_tail.is_power_of_two()
+        || !cycles.is_multiple_of(expected_tail)
         || sample.initialized_bytes == 0
-        || sample.storage_owned_bytes == 0
+        || sample.initialized_bytes != sample.storage_owned_bytes
         || sample.round_device_buffer_allocations != 0
     {
         return Err(failure("OuterRemainder lifecycle contract is invalid"));
@@ -287,6 +308,9 @@ fn arm_record(sample: &OuterRemainderEvalSample) -> EvalResult<Value> {
         "setup_gpu_active_ns": setup_gpu_active_ns,
         "setup_wall_ns": setup_wall_ns,
         "tail_elements": sample.tail_elements,
+        "initialized_bytes": sample.initialized_bytes,
+        "storage_owned_bytes": sample.storage_owned_bytes,
+        "round_device_buffer_allocations": sample.round_device_buffer_allocations,
         "output_sha256": output_digest(&sample.result),
         "dispatch_counts": dispatch_counts(sample.dispatch_counts),
     }))

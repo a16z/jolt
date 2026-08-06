@@ -1,5 +1,6 @@
 {
   "baseline_params": {
+    "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": "b_only_v1",
     "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": 16,
     "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": 256,
     "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": 256,
@@ -64,30 +65,32 @@
         },
         "evaluator": {
           "command": [
-            "python3",
-            "scripts/metal_outer_remainder_screen.py"
+            "{sealed_binary:outer_remainder_eval}"
           ],
           "env": {
             "JOLT_METAL_EVAL_LOG_N": "25",
-            "JOLT_METAL_EVAL_REPEATS": "3",
+            "JOLT_METAL_EVAL_REPEATS": "4",
             "RAYON_NUM_THREADS": "16"
           },
-          "result_adapter": "outer_remainder_screen_v1",
+          "result_adapter": "outer_remainder_successor_v2",
           "timeout_seconds": 900
         },
         "id": "screen",
         "promotion": {
           "comparison": "accepted_parent",
-          "kind": "relative_improvement",
+          "clear_loss_ratio": 0.98,
+          "kind": "successor_screen",
           "log_n": 25,
-          "minimum_relative_improvement": 0.01,
-          "noise_multiplier": 1.0,
+          "maximum_calibration_relative_mad": 0.02,
+          "minimum_uncertainty": 0.01,
           "required_guards": [
             "all_exact",
             "correctness_exact",
             "target_scale",
-            "resident_row_lifecycle_exact",
-            "metal_phase_schedule_exact"
+            "runtime_artifacts_exact",
+            "resident_row_handle_lifecycle_exact",
+            "metal_phase_schedule_exact",
+            "gpu_timestamps_exact"
           ]
         },
         "replication": {
@@ -98,12 +101,12 @@
             "control",
             "treatment"
           ],
-          "included_pairs": 3,
+          "included_pairs": 4,
           "input_policy": {
             "across_pairs": "same_fixture",
             "within_pair": "identical"
           },
-          "minimum_pairs_per_order_stratum": 1,
+          "minimum_pairs_per_order_stratum": 2,
           "mode": "internal_paired",
           "order_policy": "alternating"
         },
@@ -360,30 +363,106 @@
   "portfolio_contract": "crates/jolt-kernels/autoresearch/piop_goal.v2.json",
   "registry_contract": "crates/jolt-kernels/src/metal/kernel_registry.json",
   "schema_version": 2,
+  "runtime_artifact": {
+    "kind": "outer_msl_v1",
+    "plan_parameter": "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN",
+    "plans": [
+      "b_only_v1"
+    ],
+    "source_path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+    "tier_id": "screen"
+  },
+  "sealed_binaries": {
+    "outer_remainder_eval": {
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "-q",
+          "-p",
+          "jolt-kernels",
+          "--example",
+          "metal-outer-remainder-successor-eval",
+          "--features",
+          "metal,parallel,test-utils"
+        ],
+        "output_path": "target/release/examples/metal-outer-remainder-successor-eval",
+        "timeout_seconds": 1800
+      },
+      "consumer_tiers": [
+        "screen"
+      ],
+      "result_fingerprint": [
+        "fingerprint",
+        "runner_binary_sha256"
+      ],
+      "source_paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "crates/jolt-field/Cargo.toml",
+        "crates/jolt-field/src/akita.rs",
+        "crates/jolt-field/src/lib.rs",
+        "crates/jolt-kernels/Cargo.toml",
+        "crates/jolt-kernels/examples/metal-outer-remainder-successor-eval.rs",
+        "crates/jolt-kernels/src/lib.rs",
+        "crates/jolt-kernels/src/metal/mod.rs",
+        "crates/jolt-kernels/src/metal/spartan_outer.rs",
+        "crates/jolt-kernels/src/metal/spartan_outer/evaluation.rs",
+        "crates/jolt-kernels/src/metal/solinas/fp128.metal",
+        "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
+        "crates/jolt-kernels/src/metal/solinas/mod.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/api.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/artifact.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/sealed.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/storage.rs",
+        "crates/jolt-kernels/src/metal/solinas/runtime.rs",
+        "crates/jolt-kernels/src/metal/solinas/source.rs",
+        "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.rs"
+      ]
+    }
+  },
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/api.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/storage.rs",
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/tests.rs"
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
     ],
     "frozen": [
+      "Cargo.lock",
+      "Cargo.toml",
+      "crates/jolt-field/Cargo.toml",
       "crates/jolt-field/src/akita.rs",
+      "crates/jolt-field/src/lib.rs",
+      "crates/jolt-kernels/Cargo.toml",
       "crates/jolt-kernels/autoresearch/HARNESS.md",
       "crates/jolt-kernels/autoresearch/outer_remainder.template.json",
       "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
       "crates/jolt-kernels/autoresearch/piop_goal.v2.json",
       "crates/jolt-kernels/src/metal/OUTER_REMAINDER.md",
+      "crates/jolt-kernels/examples/metal-outer-remainder-successor-eval.rs",
       "crates/jolt-kernels/src/metal/kernel_registry.json",
+      "crates/jolt-kernels/src/lib.rs",
+      "crates/jolt-kernels/src/metal/mod.rs",
       "crates/jolt-kernels/src/metal/spartan_outer.rs",
+      "crates/jolt-kernels/src/metal/spartan_outer/evaluation.rs",
       "crates/jolt-kernels/src/metal/solinas/fp128.metal",
+      "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/api.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/artifact.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/sealed.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/storage.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/tests.rs",
       "crates/jolt-kernels/src/metal/solinas/runtime.rs",
       "crates/jolt-kernels/src/metal/solinas/source.rs",
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.rs",
       "crates/jolt-kernels/src/optimized/spartan_outer.rs",
       "crates/jolt-prover/examples/metal-outer-remainder-eval.rs",
       "crates/jolt-prover/examples/modular_benchmark.rs",
@@ -394,6 +473,7 @@
       "scripts/metal_autoresearch.py",
       "scripts/metal_kernel_registry.py",
       "scripts/metal_research/attempt.py",
+      "scripts/metal_research/binaries.py",
       "scripts/metal_research/budget.py",
       "scripts/metal_research/contracts.py",
       "scripts/metal_research/paired.py",
@@ -404,12 +484,11 @@
     ]
   },
   "search_space": {
+    "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": [
+      "b_only_v1"
+    ],
     "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": [
-      14,
-      15,
-      16,
-      17,
-      18
+      16
     ],
     "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": [
       128,

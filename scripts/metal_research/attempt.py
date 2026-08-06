@@ -12,12 +12,17 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 
 EVALUATOR_LOCK_PATH = Path("/private/tmp/jolt-metal-autoresearch-evaluator.lock")
 EVALUATOR_LOCK_HELD_ENV = "JOLT_METAL_EVAL_LOCK_HELD"
 LOCK_POLL_SECONDS = 0.1
+_UNSAFE_ENV_PREFIXES = ("DYLD_", "LD_", "PYTHON")
+
+
+def unsafe_environment_name(name: str) -> bool:
+    return name.startswith(_UNSAFE_ENV_PREFIXES)
 
 
 class EvaluatorLeaseTimeout(TimeoutError):
@@ -32,6 +37,16 @@ def _utc_now() -> str:
 
 def _encoded(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def sanitized_parent_environment() -> dict[str, str]:
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("JOLT_METAL_")
+        and not name.startswith("JOLT_AUTORESEARCH_")
+        and not unsafe_environment_name(name)
+    }
 
 
 def _read_lock_record() -> dict[str, Any]:
@@ -149,31 +164,48 @@ def _environment(
     artifact_dir: Path,
     context_env: Optional[dict[str, str]] = None,
 ) -> dict[str, str]:
-    result = {
-        name: value
-        for name, value in os.environ.items()
-        if not name.startswith("JOLT_METAL_")
-        and not name.startswith("JOLT_AUTORESEARCH_")
-    }
+    result = sanitized_parent_environment()
     token = os.environ.get(EVALUATOR_LOCK_HELD_ENV)
     if token is not None:
         result[EVALUATOR_LOCK_HELD_ENV] = token
     declared = {
         str(name): str(value) for name, value in evaluator.get("env", {}).items()
     }
-    if any(name.startswith("JOLT_AUTORESEARCH_") for name in declared):
-        raise ValueError("evaluator env cannot set controller-owned state")
+    if any(
+        name.startswith("JOLT_AUTORESEARCH_")
+        or unsafe_environment_name(name)
+        for name in declared
+    ):
+        raise ValueError("evaluator env cannot set controller-owned or unsafe state")
     result.update(declared)
-    if any(name.startswith("JOLT_AUTORESEARCH_") for name in params):
-        raise ValueError("search parameters cannot set controller-owned state")
+    if any(
+        name.startswith("JOLT_AUTORESEARCH_")
+        or unsafe_environment_name(name)
+        for name in params
+    ):
+        raise ValueError(
+            "search parameters cannot set controller-owned or unsafe state"
+        )
     result.update(params)
     context_env = context_env or {}
     allowed_context = {
         "JOLT_AUTORESEARCH_PARENT_ARTIFACT",
         "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT",
+        "JOLT_AUTORESEARCH_RUNNER_SHA256",
     }
-    if (context_env and set(context_env) != allowed_context) or any(
-        not isinstance(value, str) or not value for value in context_env.values()
+    artifact_context = {
+        "JOLT_AUTORESEARCH_PARENT_ARTIFACT",
+        "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT",
+    }
+    context_names = set(context_env)
+    if (
+        not context_names <= allowed_context
+        or bool(context_names & artifact_context)
+        != (artifact_context <= context_names)
+        or any(
+            not isinstance(value, str) or not value
+            for value in context_env.values()
+        )
     ):
         raise ValueError("controller evaluator context is invalid")
     result.update(context_env)
@@ -311,6 +343,7 @@ def _tracked_command(
     wrapper = root / "scripts/metal_research/process_wrapper.py"
     tracked = [
         sys.executable,
+        "-I",
         str(wrapper),
         "--identity-path",
         str(identity_path),
@@ -334,6 +367,9 @@ def run_attempt(
     process_tracking: Optional[dict[str, str]] = None,
     context_env: Optional[dict[str, str]] = None,
     context_record: Optional[dict[str, Any]] = None,
+    sealed_binary_context: Optional[dict[str, Any]] = None,
+    parse_result: bool = True,
+    prelaunch_check: Optional[Callable[[], None]] = None,
 ) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
     evaluation_dir.mkdir(parents=True, exist_ok=False)
     artifact_dir = evaluation_dir / "artifacts"
@@ -365,6 +401,8 @@ def run_attempt(
             try:
                 if tracking is not None and "lock_fd" not in lease:
                     raise OSError("tracked evaluator did not inherit the scheduler lease")
+                if prelaunch_check is not None:
+                    prelaunch_check()
                 process = subprocess.Popen(
                     launch_command,
                     cwd=root,
@@ -397,11 +435,14 @@ def run_attempt(
                             f"evaluator exited with status {process.returncode}"
                         )
                     else:
-                        try:
-                            output = _parse_unique_result(stdout)
-                        except ValueError as error:
-                            outcome = "invalid_result"
-                            error_message = str(error)
+                        if parse_result:
+                            try:
+                                output = _parse_unique_result(stdout)
+                            except ValueError as error:
+                                outcome = "invalid_result"
+                                error_message = str(error)
+                            else:
+                                outcome = "success"
                         else:
                             outcome = "success"
             except (OSError, ValueError) as error:
@@ -440,6 +481,7 @@ def run_attempt(
         "result_sha256": result_sha256,
         "process_tracking": tracking,
         "execution_context": context_record,
+        "sealed_binary_context": sealed_binary_context,
     }
     (evaluation_dir / "attempt.json").write_bytes(_encoded(attempt))
     return attempt, output

@@ -18,6 +18,7 @@ from .attempt import (
     EvaluatorLeaseTimeout,
     evaluator_lease,
     run_attempt,
+    sanitized_parent_environment,
     stop_recorded_process_group,
 )
 from .artifacts import (
@@ -25,6 +26,16 @@ from .artifacts import (
     outer_dispatch_from_params,
     verify_artifact_store,
     verify_outer_artifact,
+)
+from .binaries import (
+    declared_source_sha256,
+    materialize_sealed_binary,
+    prepare_sealed_binary_from_output,
+    seal_sealed_binary_store,
+    sealed_binary_token,
+    verify_sealed_binary_contract,
+    verify_sealed_binary_record,
+    verify_sealed_binary_store,
 )
 from .budget import BudgetExhausted, admit_tier, charge_attempt, empty_usage
 from .contracts import validate_goal_contract, validate_template
@@ -95,7 +106,9 @@ def write_inflight(run_dir: Path, inflight: dict[str, Any]) -> None:
     temporary.replace(run_dir / "inflight.json")
 
 
-def load_state(run_dir: Path) -> dict[str, Any]:
+def load_state(
+    run_dir: Path, *, verify_sealed_binaries: bool = True
+) -> dict[str, Any]:
     encoded = (run_dir / "run.json").read_bytes()
     state = json.loads(encoded)
     if not isinstance(state, dict) or state.get("schema_version") != RUN_SCHEMA_VERSION:
@@ -121,21 +134,70 @@ def load_state(run_dir: Path) -> dict[str, Any]:
         )
         if observed != parent.get("snapshot_sha256"):
             raise ValueError("accepted parent snapshot digest does not match")
+    if verify_sealed_binaries:
+        _verify_state_sealed_binaries(run_dir, state)
     return state
+
+
+def _verify_state_sealed_binaries(
+    run_dir: Path, state: dict[str, Any]
+) -> None:
+    contracts = state.get("template", {}).get("sealed_binaries", {})
+    records = state.get("sealed_binaries", {})
+    if not isinstance(contracts, dict) or not isinstance(records, dict):
+        raise ValueError("sealed binary run state is invalid")
+    if state.get("status") == "sealed_binary_invalid":
+        if not set(records) <= set(contracts):
+            raise ValueError("sealed binary run state does not match the template")
+        return
+    sealing = state.get("status") in {
+        "sealing_binaries",
+        "sealing_binaries_retryable",
+    }
+    if (sealing and not set(records) <= set(contracts)) or (
+        not sealing and set(records) != set(contracts)
+    ):
+        raise ValueError("sealed binary run state does not match the template")
+    if not contracts:
+        return
+    verify_sealed_binary_store(
+        run_dir, require_nonwritable=not sealing
+    )
+    for binary_id, record in records.items():
+        verify_sealed_binary_record(run_dir, binary_id, record)
 
 
 def _derived_usage(run_dir: Path) -> dict[str, float | int]:
     usage = empty_usage()
     seen_evaluations: set[str] = set()
-    for event in _events(run_dir / "tier-events.jsonl"):
-        evaluation_id = event.get("evaluation_id")
-        attempt = event.get("attempt")
-        if not isinstance(evaluation_id, str) or not isinstance(attempt, dict):
-            raise ValueError("tier ledger contains an invalid attempt record")
-        if evaluation_id in seen_evaluations:
-            raise ValueError("tier ledger contains a duplicate evaluation")
-        seen_evaluations.add(evaluation_id)
-        charge_attempt(usage, attempt)
+    ledgers = (
+        (
+            "binary",
+            run_dir / "binary-events.jsonl",
+            {"sealed_binary_built", "sealed_binary_build_recovered"},
+        ),
+        (
+            "tier",
+            run_dir / "tier-events.jsonl",
+            {"tier_evaluated", "tier_recovered"},
+        ),
+    )
+    for ledger_name, path, allowed_events in ledgers:
+        for event in _events(path):
+            evaluation_id = event.get("evaluation_id")
+            attempt = event.get("attempt")
+            if (
+                event.get("event") not in allowed_events
+                or not isinstance(evaluation_id, str)
+                or not isinstance(attempt, dict)
+            ):
+                raise ValueError(
+                    f"{ledger_name} ledger contains an invalid attempt record"
+                )
+            if evaluation_id in seen_evaluations:
+                raise ValueError("attempt ledgers contain a duplicate evaluation")
+            seen_evaluations.add(evaluation_id)
+            charge_attempt(usage, attempt)
     admitted = {
         event.get("candidate_id")
         for event in _events(run_dir / "candidate-events.jsonl")
@@ -162,6 +224,17 @@ def _tier_by_role(template: dict[str, Any], role: str) -> dict[str, Any]:
     ]
     if len(matches) != 1:
         raise ValueError(f"exactly one executable {role} tier is required")
+    return matches[0]
+
+
+def _tier_by_id(template: dict[str, Any], tier_id: str) -> dict[str, Any]:
+    matches = [
+        tier
+        for tier in template["evaluation"]["tiers"]
+        if tier["id"] == tier_id and tier.get("applicable") is True
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"exactly one executable {tier_id} tier is required")
     return matches[0]
 
 
@@ -218,10 +291,17 @@ def _require_calendar_budget(state: dict[str, Any]) -> None:
 
 
 def _queue_budget(state: dict[str, Any], tier: dict[str, Any]) -> float:
+    return _queue_budget_for_timeout(
+        state, float(tier["evaluator"]["timeout_seconds"])
+    )
+
+
+def _queue_budget_for_timeout(
+    state: dict[str, Any], evaluator_timeout: float
+) -> float:
     _require_calendar_budget(state)
     maximum = float(state["template"]["budget"]["total"]["max_calendar_seconds"])
     remaining = maximum - float(state["usage"]["calendar_seconds"])
-    evaluator_timeout = float(tier["evaluator"]["timeout_seconds"])
     if evaluator_timeout > remaining:
         raise BudgetExhausted("calendar budget cannot contain this evaluator")
     return remaining - evaluator_timeout
@@ -432,6 +512,110 @@ def _validate_closed_result(
         ):
             raise ValueError("OuterRemainder successor result is not closed")
         return
+    if adapter == "outer_remainder_successor_v2":
+        fingerprint = output.get("fingerprint")
+        pairs = tier["replication"]["included_pairs"]
+        first_order = tier["replication"]["first_order"]
+        raw_first = (
+            ["parent", "candidate"]
+            if first_order == ["control", "treatment"]
+            else ["candidate", "parent"]
+        )
+        orders = [
+            raw_first if pair % 2 == 0 else list(reversed(raw_first))
+            for pair in range(pairs)
+        ]
+        fingerprint_fields = {
+            "fixture",
+            "log_n",
+            "pairs",
+            "excluded_warmup_pairs",
+            "orders",
+            "parent_artifact_sha256",
+            "candidate_artifact_sha256",
+            "runner_binary_sha256",
+        }
+        guard_fields = {
+            "all_exact",
+            "correctness_exact",
+            "target_scale",
+            "runtime_artifacts_exact",
+            "resident_row_handle_lifecycle_exact",
+            "metal_phase_schedule_exact",
+            "gpu_timestamps_exact",
+        }
+        telemetry_fields = {
+            "device_name",
+            "device_registry_shared",
+            "cycles",
+            "parent_binding_plan",
+            "candidate_binding_plan",
+            "parent_source_sha256",
+            "candidate_source_sha256",
+            "production_last_owner_release_deferred",
+        }
+        digests = (
+            fingerprint.get("parent_artifact_sha256")
+            if isinstance(fingerprint, dict)
+            else None,
+            fingerprint.get("candidate_artifact_sha256")
+            if isinstance(fingerprint, dict)
+            else None,
+            fingerprint.get("runner_binary_sha256")
+            if isinstance(fingerprint, dict)
+            else None,
+        )
+        guards = output.get("guards")
+        telemetry = output.get("telemetry")
+        if (
+            set(output)
+            != {
+                "schema",
+                "schema_version",
+                "kernel",
+                "fingerprint",
+                "metrics",
+                "excluded_warmup",
+                "samples",
+                "guards",
+                "all_exact",
+                "resources",
+                "telemetry",
+            }
+            or output.get("schema") != "outer_remainder_successor_v2"
+            or output.get("schema_version") != 2
+            or output.get("kernel") != "OuterRemainder"
+            or output.get("all_exact") is not True
+            or not isinstance(fingerprint, dict)
+            or set(fingerprint) != fingerprint_fields
+            or fingerprint.get("fixture") != "resident-outer-remainder-v2"
+            or fingerprint.get("log_n") != tier["promotion"].get("log_n")
+            or fingerprint.get("pairs") != pairs
+            or fingerprint.get("excluded_warmup_pairs")
+            != tier["replication"]["excluded_warmup_pairs"]
+            or fingerprint.get("orders") != orders
+            or any(
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in digest
+                )
+                for digest in digests
+            )
+            or not isinstance(guards, dict)
+            or set(guards) != guard_fields
+            or any(value is not True for value in guards.values())
+            or not isinstance(telemetry, dict)
+            or set(telemetry) != telemetry_fields
+            or not isinstance(telemetry.get("device_name"), str)
+            or not telemetry["device_name"]
+            or telemetry.get("device_registry_shared") is not True
+            or telemetry.get("cycles") != 1 << fingerprint["log_n"]
+            or telemetry.get("production_last_owner_release_deferred") is not True
+        ):
+            raise ValueError("OuterRemainder successor v2 result is not closed")
+        return
     if adapter == "metal_piop_v7":
         if tier["promotion"].get("local_kernel") != "OuterRemainder":
             raise ValueError("schema-2 PIOP closure is not implemented for this kernel")
@@ -639,15 +823,73 @@ def _runtime_artifact_context(
     )
 
 
-def _publish_execution_context(
-    run_dir: Path, evaluation_id: str, context: Optional[dict[str, Any]]
+def _sealed_binary_ids_for_tier(
+    template: dict[str, Any], tier_id: str
+) -> list[str]:
+    return [
+        binary_id
+        for binary_id, contract in template.get("sealed_binaries", {}).items()
+        if tier_id in contract["consumer_tiers"]
+    ]
+
+
+def _sealed_binary_context(
+    root: Path,
+    run_dir: Path,
+    state: dict[str, Any],
+    tier: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, str], Optional[dict[str, Any]]]:
+    evaluator = tier["evaluator"]
+    binary_ids = _sealed_binary_ids_for_tier(state["template"], tier["id"])
+    if not binary_ids:
+        return evaluator, {}, None
+    if len(binary_ids) != 1:
+        raise ValueError("a tier must consume exactly one sealed binary")
+    binary_id = binary_ids[0]
+    record = state.get("sealed_binaries", {}).get(binary_id)
+    if record is None:
+        raise ValueError(f"sealed binary {binary_id} is missing from run state")
+    runner_path = verify_sealed_binary_contract(
+        root,
+        run_dir,
+        binary_id,
+        state["template"]["sealed_binaries"][binary_id],
+        record,
+    )
+    token = sealed_binary_token(binary_id)
+    command = [
+        str(runner_path.resolve()) if argument == token else argument
+        for argument in evaluator["command"]
+    ]
+    if command == evaluator["command"] or token in command:
+        raise ValueError(f"sealed binary {binary_id} command token is unresolved")
+    context = {binary_id: record}
+    return (
+        {**evaluator, "command": command},
+        {
+            "JOLT_AUTORESEARCH_RUNNER_SHA256": record["manifest"][
+                "binary_sha256"
+            ]
+        },
+        context,
+    )
+
+
+def _publish_evaluation_contexts(
+    run_dir: Path,
+    evaluation_id: str,
+    execution_context: Optional[dict[str, Any]],
+    sealed_binary_context: Optional[dict[str, Any]],
 ) -> None:
-    if context is None:
+    if execution_context is None and sealed_binary_context is None:
         return
     inflight = read_json(run_dir / "inflight.json")
     if inflight.get("evaluation_id") != evaluation_id:
-        raise ValueError("inflight evaluation does not match its artifacts")
-    inflight["execution_context"] = context
+        raise ValueError("inflight evaluation does not match its execution contexts")
+    if execution_context is not None:
+        inflight["execution_context"] = execution_context
+    if sealed_binary_context is not None:
+        inflight["sealed_binary_context"] = sealed_binary_context
     write_inflight(run_dir, inflight)
 
 
@@ -696,6 +938,83 @@ def _validate_execution_fingerprint(
     }
     if any(fingerprint.get(name) != value for name, value in expected.items()):
         raise ValueError("runtime artifact fingerprint does not match the controller")
+    if output.get("schema") == "outer_remainder_successor_v2":
+        parent_manifest = context["parent"]["manifest"]
+        candidate_manifest = context["candidate"]["manifest"]
+        telemetry = output.get("telemetry", {})
+        if (
+            parent_manifest["dispatch"]["cpu_tail_elements"]
+            != candidate_manifest["dispatch"]["cpu_tail_elements"]
+            or parent_manifest["dispatch"]["trace_cutoff_elements"]
+            != candidate_manifest["dispatch"]["trace_cutoff_elements"]
+            or telemetry.get("parent_binding_plan")
+            != parent_manifest["binding_plan"]
+            or telemetry.get("candidate_binding_plan")
+            != candidate_manifest["binding_plan"]
+            or telemetry.get("parent_source_sha256")
+            != parent_manifest["outer_source_sha256"]
+            or telemetry.get("candidate_source_sha256")
+            != candidate_manifest["outer_source_sha256"]
+        ):
+            raise ValueError("runtime artifact telemetry does not match the controller")
+        expected_tail = parent_manifest["dispatch"]["cpu_tail_elements"]
+        warmup = output.get("excluded_warmup")
+        samples = output.get("samples")
+        if not isinstance(warmup, dict) or not isinstance(samples, list):
+            raise ValueError("runtime artifact arm evidence is missing")
+        records = [warmup] + samples
+        if any(
+            not isinstance(record, dict)
+            or not isinstance(record.get(role), dict)
+            or record[role].get("tail_elements") != expected_tail
+            for record in records
+            for role in ("parent", "candidate")
+        ):
+            raise ValueError("runtime artifact CPU tail does not match the controller")
+
+
+def _verify_sealed_binary_context(
+    run_dir: Path,
+    state: dict[str, Any],
+    tier: dict[str, Any],
+    context: Optional[dict[str, Any]],
+) -> None:
+    expected_ids = set(_sealed_binary_ids_for_tier(state["template"], tier["id"]))
+    if context is None:
+        if expected_ids:
+            raise ValueError("required sealed binary context is missing")
+        return
+    if not isinstance(context, dict) or set(context) != expected_ids:
+        raise ValueError("sealed binary context does not match its consumer tier")
+    for binary_id, record in context.items():
+        if canonical_json(record) != canonical_json(
+            state.get("sealed_binaries", {}).get(binary_id)
+        ):
+            raise ValueError(f"sealed binary {binary_id} context changed")
+        verify_sealed_binary_record(run_dir, binary_id, record)
+
+
+def _validate_sealed_binary_fingerprint(
+    output: dict[str, Any],
+    state: dict[str, Any],
+    tier: dict[str, Any],
+    context: Optional[dict[str, Any]],
+) -> None:
+    if context is None:
+        return
+    for binary_id, record in context.items():
+        path = state["template"]["sealed_binaries"][binary_id][
+            "result_fingerprint"
+        ]
+        observed: Any = output
+        for field in path:
+            if not isinstance(observed, dict) or field not in observed:
+                raise ValueError("sealed binary result fingerprint is missing")
+            observed = observed[field]
+        if observed != record["manifest"]["binary_sha256"]:
+            raise ValueError(
+                "sealed binary result fingerprint does not match the controller"
+            )
 
 
 def _seal_attempt_artifacts(
@@ -715,17 +1034,36 @@ def _seal_attempt_artifacts(
     return True
 
 
+def _seal_attempt_binaries(
+    run_dir: Path,
+    state: dict[str, Any],
+    tier: dict[str, Any],
+    context: Optional[dict[str, Any]],
+    attempt: dict[str, Any],
+) -> bool:
+    try:
+        _verify_sealed_binary_context(run_dir, state, tier, context)
+    except (OSError, ValueError) as error:
+        attempt["evaluator_outcome"] = attempt["outcome"]
+        attempt["outcome"] = "binary_changed"
+        attempt["error"] = str(error)
+        return False
+    return True
+
+
 def _artifact_rejected_attempt(
     tier: dict[str, Any],
     error: Exception,
     context: Optional[dict[str, Any]],
+    sealed_binary_context: Optional[dict[str, Any]],
+    command: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "tier_id": tier["id"],
         "outcome": "artifact_rejected",
         "error": str(error),
-        "command": list(tier["evaluator"]["command"]),
+        "command": command or list(tier["evaluator"]["command"]),
         "started_at": utc_now(),
         "controller": {
             "queue_wait_seconds": 0.0,
@@ -740,6 +1078,7 @@ def _artifact_rejected_attempt(
         "result_sha256": None,
         "process_tracking": None,
         "execution_context": context,
+        "sealed_binary_context": sealed_binary_context,
     }
 
 
@@ -763,20 +1102,48 @@ def execute_tier(
     )
     evaluation_dir = run_dir / "evaluations" / evaluation_id
     context_record = None
+    sealed_binary_context = None
+    resolved_evaluator = tier["evaluator"]
+    contexts_admitted = False
     try:
         context_env, context_record = _runtime_artifact_context(
             root, run_dir, state, tier, params
         )
-        _publish_execution_context(run_dir, evaluation_id, context_record)
+        (
+            resolved_evaluator,
+            binary_env,
+            sealed_binary_context,
+        ) = _sealed_binary_context(root, run_dir, state, tier)
+        context_env.update(binary_env)
+        _publish_evaluation_contexts(
+            run_dir,
+            evaluation_id,
+            context_record,
+            sealed_binary_context,
+        )
+        contexts_admitted = True
     except (OSError, ValueError) as error:
         evaluation_dir.mkdir(parents=True, exist_ok=False)
-        attempt = _artifact_rejected_attempt(tier, error, context_record)
+        attempt = _artifact_rejected_attempt(
+            tier,
+            error,
+            context_record,
+            sealed_binary_context,
+            list(resolved_evaluator["command"]),
+        )
         output = None
     else:
         process_tracking = _arm_process_tracking(run_dir, evaluation_id)
+
+        def verify_admitted_contexts() -> None:
+            _verify_execution_context(run_dir, context_record)
+            _verify_sealed_binary_context(
+                run_dir, state, tier, sealed_binary_context
+            )
+
         attempt, output = run_attempt(
             root,
-            tier["evaluator"],
+            resolved_evaluator,
             params,
             evaluation_dir,
             tier["id"],
@@ -784,13 +1151,25 @@ def execute_tier(
             process_tracking=process_tracking,
             context_env=context_env,
             context_record=context_record,
+            sealed_binary_context=sealed_binary_context,
+            prelaunch_check=verify_admitted_contexts,
         )
-    if not _seal_attempt_artifacts(run_dir, context_record, attempt):
-        output = None
+    if contexts_admitted:
+        if not _seal_attempt_artifacts(run_dir, context_record, attempt):
+            output = None
+        if not _seal_attempt_binaries(
+            run_dir, state, tier, sealed_binary_context, attempt
+        ):
+            state["status"] = "sealed_binary_invalid"
+            write_state(run_dir, state)
+            output = None
     result = None
     if attempt["outcome"] == "success" and output is not None:
         try:
             _validate_execution_fingerprint(output, context_record)
+            _validate_sealed_binary_fingerprint(
+                output, state, tier, sealed_binary_context
+            )
             _validate_closed_result(root, tier, output, params)
             result, resource_charge = adapt_result(
                 tier, output, state["template"]["kernel"]
@@ -844,14 +1223,146 @@ def _initialize_run_files(run_dir: Path) -> None:
     (run_dir / "evaluations").mkdir()
     (run_dir / "snapshots").mkdir()
     (run_dir / "artifacts").mkdir()
+    (run_dir / "binaries").mkdir()
     for name in (
         "baseline-events.jsonl",
+        "binary-events.jsonl",
         "candidate-events.jsonl",
         "tier-events.jsonl",
         "decision-events.jsonl",
         "kernel-validations.jsonl",
     ):
         (run_dir / name).touch()
+
+
+def _binary_build_evaluation_id(run_dir: Path, binary_id: str) -> str:
+    prefix = f"binary-build-{binary_id}"
+    prior = list((run_dir / "evaluations").glob(f"{prefix}*"))
+    if not prior:
+        return prefix
+    return f"{prefix}-retry-{len(prior) + 1:03d}"
+
+
+def _binary_build_cost_limit(contract: dict[str, Any]) -> dict[str, float]:
+    timeout = float(contract["build"]["timeout_seconds"])
+    return {
+        "active_evaluator_seconds": timeout,
+        "exclusive_machine_seconds": timeout,
+        "gpu_active_seconds": 0.0,
+    }
+
+
+def _record_binary_build_gpu_usage(attempt: dict[str, Any]) -> None:
+    attempt["resources"] = {
+        "gpu_active_seconds": 0.0,
+        "gpu_active_charge_seconds": 0.0,
+        "gpu_active_charge_kind": "sealed_binary_build_no_gpu",
+    }
+
+
+def _continue_binary_sealing(
+    root: Path, run_dir: Path, state: dict[str, Any]
+) -> dict[str, Any]:
+    contracts = state["template"].get("sealed_binaries", {})
+    records = state["sealed_binaries"]
+    for binary_id in sorted(contracts):
+        if binary_id in records:
+            verify_sealed_binary_contract(
+                root, run_dir, binary_id, contracts[binary_id], records[binary_id]
+            )
+            continue
+        contract = contracts[binary_id]
+        cost_limit = _binary_build_cost_limit(contract)
+        admit_tier(state["template"]["budget"], state["usage"], cost_limit)
+        queue_budget = _queue_budget_for_timeout(
+            state, float(contract["build"]["timeout_seconds"])
+        )
+        source_sha256 = declared_source_sha256(root, contract["source_paths"])
+        build_environment_sha256 = sha256(
+            canonical_json(sanitized_parent_environment())
+        )
+        evaluation_id = _binary_build_evaluation_id(run_dir, binary_id)
+        inflight = {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "kind": "sealed_binary_build",
+            "evaluation_id": evaluation_id,
+            "binary_id": binary_id,
+            "source_sha256": source_sha256,
+            "build_environment_sha256": build_environment_sha256,
+            "started_at": utc_now(),
+        }
+        write_inflight(run_dir, inflight)
+        tracking = _arm_process_tracking(run_dir, evaluation_id)
+        build = contract["build"]
+
+        def source_unchanged() -> None:
+            if declared_source_sha256(root, contract["source_paths"]) != source_sha256:
+                raise ValueError("sealed binary sources changed before build launch")
+
+        attempt, _ = run_attempt(
+            root,
+            {
+                "command": build["command"],
+                "env": {},
+                "timeout_seconds": build["timeout_seconds"],
+            },
+            {},
+            run_dir / "evaluations" / evaluation_id,
+            f"sealed_binary:{binary_id}",
+            process_tracking=tracking,
+            parse_result=False,
+            prelaunch_check=source_unchanged,
+            queue_timeout_seconds=queue_budget,
+        )
+        _record_binary_build_gpu_usage(attempt)
+        record = None
+        if attempt["outcome"] == "success":
+            try:
+                prepared = prepare_sealed_binary_from_output(
+                    root,
+                    binary_id,
+                    contract,
+                    source_sha256,
+                    build_environment_sha256,
+                )
+                record = materialize_sealed_binary(run_dir, prepared)
+                verify_sealed_binary_contract(
+                    root, run_dir, binary_id, contract, record
+                )
+            except (OSError, ValueError) as error:
+                attempt["outcome"] = "invalid_binary_output"
+                attempt["error"] = str(error)
+        attempt["sealed_binary"] = record
+        attempt_path = run_dir / "evaluations" / evaluation_id / "attempt.json"
+        attempt_path.write_bytes(canonical_json(attempt))
+        append_event(
+            run_dir / "binary-events.jsonl",
+            {
+                "schema_version": EVENT_SCHEMA_VERSION,
+                "event": "sealed_binary_built",
+                "evaluation_id": evaluation_id,
+                "binary_id": binary_id,
+                "attempt": attempt,
+                "recorded_at": utc_now(),
+            },
+        )
+        charge_attempt(state["usage"], attempt)
+        _refresh_calendar(state)
+        if record is None:
+            state["status"] = "sealing_binaries_retryable"
+            write_state(run_dir, state)
+            (run_dir / "inflight.json").unlink()
+            raise ValueError(
+                f"sealed binary {binary_id} build failed: {attempt['error']}"
+            )
+        records[binary_id] = record
+        write_state(run_dir, state)
+        (run_dir / "inflight.json").unlink()
+
+    seal_sealed_binary_store(run_dir)
+    state["status"] = "initializing"
+    write_state(run_dir, state)
+    return _continue_initialization(root, run_dir, state)
 
 
 def validate_template_file(root: Path, template_path: Path) -> dict[str, Any]:
@@ -895,7 +1406,7 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
     fingerprint = _scope_fingerprint(root, template)
     state = {
         "schema_version": RUN_SCHEMA_VERSION,
-        "status": "initializing",
+        "status": "sealing_binaries",
         "created_at": utc_now(),
         "template_path": _relative(root, template_path),
         "template_sha256": sha256(canonical_json(template)),
@@ -906,9 +1417,10 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
         "fingerprint": fingerprint,
         "usage": empty_usage(),
         "accepted_parent": None,
+        "sealed_binaries": {},
     }
     write_state(run_dir, state)
-    return _continue_initialization(root, run_dir, state)
+    return _continue_binary_sealing(root, run_dir, state)
 
 
 def _accepted_baseline_records(run_dir: Path) -> dict[str, dict[str, Any]]:
@@ -995,7 +1507,8 @@ def _continue_initialization(
         )
         write_state(run_dir, state)
         if result is None:
-            state["status"] = "initialization_retryable"
+            if state["status"] != "sealed_binary_invalid":
+                state["status"] = "initialization_retryable"
             write_state(run_dir, state)
             (run_dir / "inflight.json").unlink()
             raise ValueError(
@@ -1054,7 +1567,12 @@ def resume_initialization(root: Path, run_dir: Path) -> dict[str, Any]:
     root = root.resolve()
     state = load_state(run_dir)
     _validate_live_state(root, state)
-    if state["status"] != "initialization_retryable":
+    if state["status"] not in {
+        "sealing_binaries",
+        "sealing_binaries_retryable",
+        "initializing",
+        "initialization_retryable",
+    }:
         raise ValueError("run initialization is not retryable")
     if state["accepted_parent"] is not None:
         raise ValueError("retryable initialization already has an accepted parent")
@@ -1066,8 +1584,16 @@ def resume_initialization(root: Path, run_dir: Path) -> dict[str, Any]:
         != state["fingerprint"]["editable_paths_sha256"]
     ):
         raise ValueError("editable source changed during interrupted initialization")
-    state["status"] = "initializing"
-    write_state(run_dir, state)
+    if state["status"] in {
+        "sealing_binaries",
+        "sealing_binaries_retryable",
+    }:
+        state["status"] = "sealing_binaries"
+        write_state(run_dir, state)
+        return _continue_binary_sealing(root, run_dir, state)
+    if state["status"] != "initializing":
+        state["status"] = "initializing"
+        write_state(run_dir, state)
     return _continue_initialization(root, run_dir, state)
 
 
@@ -1883,17 +2409,192 @@ def _recovery_execution_context_error(
     return None
 
 
+def _recovery_sealed_binary_context_error(
+    run_dir: Path,
+    state: dict[str, Any],
+    inflight: dict[str, Any],
+    attempt: Optional[dict[str, Any]],
+) -> Optional[str]:
+    tier = _tier_by_id(state["template"], inflight["tier_id"])
+    context = inflight.get("sealed_binary_context")
+    expected_ids = _sealed_binary_ids_for_tier(state["template"], tier["id"])
+    if context is None and expected_ids and inflight.get("process_tracking") is None:
+        try:
+            for binary_id in expected_ids:
+                verify_sealed_binary_record(
+                    run_dir, binary_id, state["sealed_binaries"][binary_id]
+                )
+        except (KeyError, OSError, ValueError) as error:
+            return str(error)
+        return None
+    try:
+        _verify_sealed_binary_context(run_dir, state, tier, context)
+    except (OSError, ValueError) as error:
+        return str(error)
+    if attempt is not None and canonical_json(
+        attempt.get("sealed_binary_context")
+    ) != canonical_json(context):
+        return "attempt and inflight sealed binary contexts differ"
+    return None
+
+
+def _recover_binary_build(
+    root: Path,
+    run_dir: Path,
+    state: dict[str, Any],
+    inflight: dict[str, Any],
+) -> dict[str, Any]:
+    binary_id = inflight.get("binary_id")
+    contracts = state["template"].get("sealed_binaries", {})
+    if not isinstance(binary_id, str) or binary_id not in contracts:
+        raise ValueError("interrupted sealed binary build is invalid")
+    evaluation_id = inflight["evaluation_id"]
+    evaluation_dir = run_dir / "evaluations" / inflight["evaluation_id"]
+    attempt_path = evaluation_dir / "attempt.json"
+
+    terminal_events = [
+        event
+        for event in _events(run_dir / "binary-events.jsonl")
+        if event.get("evaluation_id") == evaluation_id
+    ]
+    if len(terminal_events) > 1:
+        raise ValueError("binary ledger contains a duplicate evaluation")
+    if terminal_events:
+        terminal = terminal_events[0]
+        if (
+            terminal.get("event")
+            not in {"sealed_binary_built", "sealed_binary_build_recovered"}
+            or terminal.get("binary_id") != binary_id
+            or not isinstance(terminal.get("attempt"), dict)
+            or not attempt_path.is_file()
+            or canonical_json(read_json(attempt_path))
+            != canonical_json(terminal["attempt"])
+        ):
+            raise ValueError("sealed binary terminal event is invalid")
+        attempt = terminal["attempt"]
+        record = attempt.get("sealed_binary")
+        integrity_error = None
+        if (attempt.get("outcome") == "success") != (record is not None):
+            integrity_error = "sealed binary outcome and record disagree"
+        elif record is not None:
+            try:
+                verify_sealed_binary_contract(
+                    root, run_dir, binary_id, contracts[binary_id], record
+                )
+                prior = state.get("sealed_binaries", {}).get(binary_id)
+                if prior is not None and canonical_json(prior) != canonical_json(record):
+                    raise ValueError("sealed binary state and terminal event disagree")
+            except (OSError, ValueError) as error:
+                integrity_error = str(error)
+        if integrity_error is None and record is not None:
+            state["sealed_binaries"][binary_id] = record
+        state["status"] = (
+            "sealed_binary_invalid"
+            if integrity_error is not None
+            else "sealing_binaries_retryable"
+        )
+        write_state(run_dir, state)
+        (run_dir / "inflight.json").unlink()
+        return state
+
+    if attempt_path.is_file():
+        attempt = read_json(attempt_path)
+        if "sealed_binary" not in attempt:
+            attempt["evaluator_outcome"] = attempt.get("outcome")
+            attempt["outcome"] = "interrupted"
+            attempt["error"] = (
+                "controller interrupted before sealing the binary build"
+            )
+            attempt["sealed_binary"] = None
+    else:
+        started = datetime.fromisoformat(
+            inflight["started_at"].replace("Z", "+00:00")
+        )
+        elapsed = max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+        attempt = {
+            "schema_version": 1,
+            "tier_id": f"sealed_binary:{binary_id}",
+            "outcome": "interrupted",
+            "error": "sealed binary build was interrupted before an attempt was sealed",
+            "command": contracts[binary_id]["build"]["command"],
+            "started_at": inflight["started_at"],
+            "controller": {
+                "queue_wait_seconds": 0.0,
+                "exclusive_lease_seconds": elapsed,
+                "subprocess_wall_seconds": elapsed,
+            },
+            "result_sha256": None,
+            "process_tracking": inflight.get("process_tracking"),
+            "sealed_binary": None,
+        }
+        evaluation_dir.mkdir(parents=True, exist_ok=True)
+    _record_binary_build_gpu_usage(attempt)
+    record = attempt.get("sealed_binary")
+    integrity_error = None
+    if record is not None:
+        try:
+            verify_sealed_binary_contract(
+                root, run_dir, binary_id, contracts[binary_id], record
+            )
+            prior = state.get("sealed_binaries", {}).get(binary_id)
+            if prior is not None and canonical_json(prior) != canonical_json(record):
+                raise ValueError("sealed binary state and recovered attempt disagree")
+        except (OSError, ValueError) as error:
+            integrity_error = str(error)
+            message = attempt.get("error")
+            attempt["error"] = (
+                f"{message}; {integrity_error}" if message else integrity_error
+            )
+    if integrity_error is None and record is not None:
+        if attempt.get("outcome") != "success":
+            integrity_error = "sealed binary outcome and recovered record disagree"
+        else:
+            state["sealed_binaries"][binary_id] = record
+    elif record is None and attempt.get("outcome") == "success":
+        attempt["evaluator_outcome"] = "success"
+        attempt["outcome"] = "interrupted"
+        attempt["error"] = "controller interrupted before sealing the binary output"
+    attempt_path.write_bytes(canonical_json(attempt))
+    append_event(
+        run_dir / "binary-events.jsonl",
+        {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event": "sealed_binary_build_recovered",
+            "evaluation_id": inflight["evaluation_id"],
+            "binary_id": binary_id,
+            "attempt": attempt,
+            "recorded_at": utc_now(),
+        },
+    )
+    charge_attempt(state["usage"], attempt)
+    _refresh_calendar(state)
+    state["status"] = (
+        "sealed_binary_invalid"
+        if integrity_error is not None
+        else "sealing_binaries_retryable"
+    )
+    write_state(run_dir, state)
+    (run_dir / "inflight.json").unlink()
+    return state
+
+
 def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
-    state = load_state(run_dir)
+    state = load_state(run_dir, verify_sealed_binaries=False)
     inflight_path = run_dir / "inflight.json"
     if not inflight_path.is_file():
         raise ValueError("there is no interrupted evaluation")
     inflight = read_json(inflight_path)
+    if inflight.get("kind") == "sealed_binary_build":
+        return _recover_binary_build(root, run_dir, state, inflight)
     evaluation_dir = run_dir / "evaluations" / inflight["evaluation_id"]
     attempt_path = evaluation_dir / "attempt.json"
     inflight_context = inflight.get("execution_context")
+    inflight_binary_context = inflight.get("sealed_binary_context")
     sealed_attempt = read_json(attempt_path) if attempt_path.is_file() else None
     context_error = _recovery_execution_context_error(
+        run_dir, state, inflight, sealed_attempt
+    )
+    binary_context_error = _recovery_sealed_binary_context_error(
         run_dir, state, inflight, sealed_attempt
     )
     if sealed_attempt is not None:
@@ -1904,10 +2605,15 @@ def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
         }
         if (
             inflight["evaluation_id"] in charged_ids
-            and context_error is not None
+            and (context_error is not None or binary_context_error is not None)
         ):
+            errors = "; ".join(
+                error
+                for error in (context_error, binary_context_error)
+                if error is not None
+            )
             raise ValueError(
-                f"sealed evaluation artifact context is invalid: {context_error}"
+                f"sealed evaluation context is invalid: {errors}"
             )
         if inflight["evaluation_id"] not in charged_ids:
             attempt["evaluator_outcome"] = attempt.get("outcome")
@@ -1915,8 +2621,12 @@ def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
             attempt["error"] = "controller interrupted before sealing the tier ledger"
             attempt["execution_context"] = inflight_context
             attempt["artifact_context_valid"] = context_error is None
+            attempt["sealed_binary_context"] = inflight_binary_context
+            attempt["binary_context_valid"] = binary_context_error is None
             if context_error is not None:
                 attempt["error"] += f"; {context_error}"
+            if binary_context_error is not None:
+                attempt["error"] += f"; {binary_context_error}"
             attempt["budget_reserve"] = inflight.get("budget_reserve")
             charge_attempt(state["usage"], attempt)
             append_event(
@@ -1955,10 +2665,14 @@ def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
             "result_sha256": None,
             "execution_context": inflight_context,
             "artifact_context_valid": context_error is None,
+            "sealed_binary_context": inflight_binary_context,
+            "binary_context_valid": binary_context_error is None,
             "budget_reserve": inflight.get("budget_reserve"),
         }
         if context_error is not None:
             attempt["error"] += f"; {context_error}"
+        if binary_context_error is not None:
+            attempt["error"] += f"; {binary_context_error}"
         charge_attempt(state["usage"], attempt)
         append_event(
             run_dir / "tier-events.jsonl",
@@ -2030,6 +2744,8 @@ def _recover_under_lease(root: Path, run_dir: Path) -> dict[str, Any]:
                 )
     elif inflight["kind"] == "baseline":
         state["status"] = "initialization_retryable"
+    if binary_context_error is not None:
+        state["status"] = "sealed_binary_invalid"
     append_event(
         run_dir / "decision-events.jsonl",
         {
