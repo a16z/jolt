@@ -1,27 +1,29 @@
 # InstructionInput Metal successor
 
-Status: executable experimental split phases. The module and MSL fragment are
-registered with the Solinas source assembler. With `test-utils` (or unit
-tests), sequence preparation compiles both successor pipelines. The
-materializer's asynchronous primer dispatches that same entry point on a
-64-row prefix. The diagnostic paths borrow the production
-`InstructionInputRows` allocation, existing dense A, equality-weight, and
-reduction buffers. The checked GPU test compares all eight tables and the
-three dense-message descriptors with independent scalar oracles and attests
-the allocation identities. Phase wall time charges command and encoder
-creation, submission, completion, and timestamps; the dense phase also charges
-weight writes and its three-field output validation. The target materializer
-timer intentionally omits full-table readback, which is covered by the small
-validation fixture. Row production, data-buffer allocation, and pipeline setup
-remain outside.
+Status: executable experimental first transition. The module and MSL fragment
+are registered with the Solinas source assembler. With `test-utils` (or unit
+tests), sequence preparation compiles both successor pipelines and primes the
+materializer, dense-message entry point, and reduction on a 64-row prefix.
+The fused experiment consumes the challenge after the production first
+message, records one command buffer and one wait, and advances the actual
+sequence from `Native` to `Dense`. It borrows the production
+`InstructionInputRows` allocation and existing dense, equality-weight, and
+reduction buffers.
 
-This is not a production transition yet. Both diagnostics run only in
-`BeforeMessage`, do not advance sequence state, and use separate command
-buffers and waits. They cannot yet consume the Fiat-Shamir challenge that
-follows the production first message. The current backend still dispatches
-the old fused native transition. All complete-service times below remain
-analytical targets. The duplicate row type in this directory freezes bytes
-only; runtime dispatch uses the actual production allocation.
+The checked GPU test compares all eight tables and all three descriptors with
+independent scalar oracles, checks allocation identity, and confirms that the
+production first message remains first. The fused timer charges weight writes,
+command and encoder creation, both dispatches, recursive reduction, submission,
+completion, timestamps, and three-field validation. It excludes the preceding
+native message, row production, data-buffer allocation, pipeline setup, and
+full-table readback. The isolated diagnostics remain available in
+`BeforeMessage` and do not advance sequence state.
+
+This is not the selected production transition yet. The normal backend still
+dispatches the old native-transition entry point, and complete-service parity
+has not run with the successor selected. The duplicate row type in this
+directory freezes bytes only; runtime dispatch uses the actual production
+allocation.
 
 ## Exact relation and orientation
 
@@ -151,13 +153,13 @@ An encoder boundary or explicit buffer barrier may implement the dependency;
 a command-buffer completion may not. The full sequence retains 11 protocol
 command buffers and 11 round waits.
 
-The charged asynchronous primer currently exercises the materializer on a
-fixed 64-row prefix in the same command as the existing zero-weight native
-message primer and leaves protocol state unchanged. It may overwrite that
-dense prefix because the real materializer overwrites the complete active
-range before the message reads it. Before production integration, the same
-primer must exercise the now-executable dense-message pipeline with zero
-weights and check a zero descriptor.
+The charged asynchronous primer exercises the materializer on a fixed 64-row
+prefix in the same command as the existing zero-weight native message primer.
+A second encoder in that command consumes the 32 materialized rows with zero
+weights, runs the dense-message entry point and reduction, and checks a zero
+descriptor without changing protocol state. It may overwrite that dense
+prefix because the real materializer overwrites the complete active range
+before the message reads it.
 
 `shader.metal` is appended after the production InstructionInput fragment
 because it deliberately reuses `InstructionInputRow`, native conversions,
@@ -227,6 +229,17 @@ floor and first-message floors of 9.508 ms traffic, 16.685 ms at the register
 control, or 18.392 ms at the conservative control. Fail the mechanism before
 width tuning if materialization exceeds 20.800 ms, dense message exceeds
 20.856 ms at the register target or spills, or combined round 1 exceeds 45 ms.
+
+The executable fused transition clears that falsifier on the retained M4 Max.
+At `N = 2^26`, it performs `13N/2 + 3E_out = 436,232,192` benchmark-counted
+useful products. A fresh run measured 26.659 ms first wall, 26.874 ms warm
+wall, and an outer-call Criterion wall interval of 26.950--27.384 ms with a
+27.241 ms median (16.014 Gproduct/s). The paired current native-transition
+benchmark in the same binary measured a 31.350 ms wall median; the successor
+is 1.151x faster for this phase. The paired optimized CPU transition measured
+457.48 ms, so this isolated successor phase is 16.79x faster than CPU. These are
+development measurements, not complete-service promotion evidence; unrelated
+uncommitted static design modules were present in the benchmark build.
 
 ## Frozen CPU denominator and gates
 
@@ -320,7 +333,6 @@ Open integration choices are explicit:
 
 The runtime already derives live `E_in`/`E_out` lengths and validates
 `2 * E_in * E_out == table_elements`; it never hardcodes the log-26 split.
-Remaining integration must fuse the two dispatches without a host wait, prime
-the dense-message entry point on the same overwritten prefix, transition the
-real sequence from `Native` to `Dense`, run full optimized-backend proof parity,
-and then evaluate the complete service gates.
+Remaining integration must select the fused transition in the normal backend,
+run full optimized-backend proof parity, capture occupancy/spill evidence, and
+then evaluate the complete-service and order-stratified gates.
