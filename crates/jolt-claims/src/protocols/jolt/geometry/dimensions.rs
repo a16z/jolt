@@ -1,4 +1,5 @@
 use jolt_field::Field;
+use jolt_utils::log2_power_of_two;
 use serde::{Deserialize, Serialize};
 
 pub use super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
@@ -292,14 +293,6 @@ impl CommitmentMatrixShape {
         let len = words.next_power_of_two().max(1);
         Self::balanced(log2_power_of_two(len))
     }
-}
-
-pub(crate) fn log2_power_of_two(value: usize) -> usize {
-    assert!(
-        value.is_power_of_two(),
-        "expected a power-of-two dimension, got {value}"
-    );
-    value.trailing_zeros() as usize
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

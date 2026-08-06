@@ -124,7 +124,8 @@ pub type ChunkVisitor<'a> =
     dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
 /// Sequential row access for the pass: trace-backed today, segment-backed
-/// later. Random access is deliberately inexpressible.
+/// later. Slice-backed sources may also expose their rows for
+/// order-insensitive whole-range collection.
 pub trait RowSource {
     /// Visits the half-open cycle `range` in order as buffers of at most
     /// `chunk_size` rows; `[0, T)` today, segments later.
@@ -134,6 +135,11 @@ pub trait RowSource {
         chunk_size: usize,
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
+
+    /// The full physical row sequence, when borrowing it is supported.
+    fn rows(&self) -> Option<&[TraceRow]> {
+        None
+    }
 }
 
 /// The fused pass: walk `range` once and deliver each chunk to every

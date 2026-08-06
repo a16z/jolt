@@ -8,7 +8,7 @@
 //! at scale (the committed instruction RA family alone is `8 × T`). But an
 //! unbound selector column is a point mass — `ra_i(·, j)` is
 //! `eq(r_chunk_i, chunk_i(j))`, one scale-table lookup per cycle — and the
-//! first cycle binds preserve that structure: after `b < 3` binds the bound
+//! first cycle binds preserve that structure: after `b < 4` binds the bound
 //! value at index `j` is the gather
 //!
 //! ```text
@@ -20,9 +20,9 @@
 //! Pre-scaling keeps the round-loop gathers multiplication-free — one table
 //! lookup and one addition per branch — because the eq weights are folded
 //! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
-//! instead of multiplied per cycle. Only the third bind materializes dense
-//! vectors, at `T/8` length, and drops the index source. Peak memory falls
-//! from `N·T` field elements to the index source plus `N·T/8`.
+//! instead of multiplied per cycle. Only the fourth bind materializes dense
+//! vectors, at `T/16` length, and drops the index source. Peak memory falls
+//! from `N·T` field elements to the index source plus `N·T/16`.
 //!
 //! Byte parity: every gathered value is the same polynomial of the same
 //! table entries and challenges as the iterated `lo + r·(hi − lo)` dense
@@ -50,24 +50,35 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
     fn index(&self, i: usize, j: usize) -> Option<usize>;
 }
 
-/// `N` address-folded selector columns bound `LowToHigh`, lazily for the
-/// first three binds.
+/// `N` address-folded selector columns bound `LowToHigh`, lazily until the
+/// fourth bind materializes dense.
 pub(crate) enum LazyFoldedRa<F: Field, S> {
-    /// Fewer than three binds: per-polynomial branch scale tables (the base
+    /// Fewer than four binds: per-polynomial branch scale tables (the base
     /// table pre-scaled by each bound-bit pattern's eq weight), flattened
     /// offset-major — `tables[i][offset · stride_i + k]` with
     /// `stride_i = tables[i].len() / width` — plus the compact index source.
     Lazy {
         tables: Vec<Vec<F>>,
-        /// Bound-bit branch count (`2^binds`: 1, 2, or 4).
+        /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
         width: usize,
         source: S,
     },
-    /// Three or more binds: plain dense multilinears (`T/8` at entry).
+    /// Four or more binds: plain dense multilinears (`T/16` at entry).
     Dense(Vec<Polynomial<F>>),
 }
 
 impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
+    #[cfg(feature = "allocative")]
+    pub(crate) fn heap_bytes(&self, source_heap_bytes: impl FnOnce(&S) -> usize) -> usize {
+        use crate::backend::{nested_vec_heap_bytes, polys_heap_bytes};
+        match self {
+            Self::Lazy { tables, source, .. } => {
+                nested_vec_heap_bytes(tables) + source_heap_bytes(source)
+            }
+            Self::Dense(polys) => polys_heap_bytes(polys),
+        }
+    }
+
     /// One scale table per selector polynomial, in polynomial order.
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
         debug_assert_eq!(tables.len(), source.num_polys());
@@ -143,8 +154,8 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// for the first two binds, materialize dense (and drop the source) at
-    /// the third, plain multilinear binds after.
+    /// for the first three binds, materialize dense (and drop the source)
+    /// at the fourth, plain multilinear binds after.
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
@@ -153,14 +164,14 @@ impl<F: Field, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 source,
             } => {
                 let tables = double_branches(tables, challenge);
-                if width < 4 {
+                if width < 8 {
                     Self::Lazy {
                         tables,
                         width: width * 2,
                         source,
                     }
                 } else {
-                    Self::Dense(materialize(&tables, &source))
+                    Self::Dense(materialize(&tables, &source, width * 2))
                 }
             }
             Self::Dense(mut polys) => {
@@ -221,17 +232,22 @@ fn double_branches<F: Field>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
     }
 }
 
-/// The third bind's materialization: gather every polynomial dense at
-/// `cycles / 8` length through the eight pre-scaled branch tables —
-/// lookups and adds only.
-fn materialize<F: Field, S: ChunkIndexSource>(tables: &[Vec<F>], source: &S) -> Vec<Polynomial<F>> {
-    // Materialization runs at the third bind, so the unbound cycle domain
-    // holds at least 2^3 slots.
-    debug_assert!(source.cycles() >= 8);
-    let new_len = source.cycles() / 8;
+/// The switching bind's materialization: gather every polynomial dense at
+/// `cycles / branches` length through the pre-scaled branch tables —
+/// lookups and adds only. The switch depth trades the dense tables'
+/// footprint (`N · T / branches` field elements — the stage-6b peak at
+/// large T) against one more gather round and double the branch tables;
+/// measured on a 64-thread host, T/16 beats the original T/8 on both axes.
+fn materialize<F: Field, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    source: &S,
+    branches: usize,
+) -> Vec<Polynomial<F>> {
+    debug_assert!(source.cycles() >= branches);
+    let new_len = source.cycles() / branches;
     let materialize_poly = |i: usize| -> Polynomial<F> {
         let table = tables[i].as_slice();
-        let eval = |j: usize| gather(table, 8, source, i, j);
+        let eval = |j: usize| gather(table, branches, source, i, j);
         #[cfg(feature = "parallel")]
         let evals: Vec<F> = (0..new_len).into_par_iter().map(eval).collect();
         #[cfg(not(feature = "parallel"))]

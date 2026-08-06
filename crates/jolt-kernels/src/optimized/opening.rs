@@ -41,17 +41,21 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
+#[cfg(feature = "parallel")]
+use std::sync::Mutex;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "parallel")]
+use super::rows::RandomAccessRows;
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
 use crate::opening::JointOpeningPolynomials;
 use crate::reference::commitment::{column_kinds, ColumnKind};
@@ -184,6 +188,12 @@ impl OpeningColumns {
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
+        // Slice-backed sources fill the five columns index-parallel — the
+        // chunked walk serializes on staging buffers and the consume copy.
+        #[cfg(feature = "parallel")]
+        if let Some(access) = RandomAccessRows::new(witness, cycles)? {
+            return Self::collect_par(&access, cycles);
+        }
         let mut consumers = (CollectOpeningColumns {
             columns: Self {
                 rd_inc: Vec::with_capacity(cycles),
@@ -201,6 +211,76 @@ impl OpeningColumns {
             "opening columns must cover the full padded cycle domain"
         );
         Ok(columns)
+    }
+
+    /// Index-parallel column collection over a slice-backed source: workers
+    /// extract straight into the five pre-zeroed columns (values identical
+    /// to the streaming pass — extraction is pure per cycle window, and
+    /// every slot is written).
+    #[cfg(feature = "parallel")]
+    fn collect_par<F: Field>(
+        access: &RandomAccessRows<'_>,
+        cycles: usize,
+    ) -> Result<Self, KernelError<F>> {
+        /// The scatter grain: big enough to amortize rayon dispatch, small
+        /// enough to load-balance skewed extraction.
+        const CHUNK: usize = 1 << 12;
+        let mut rd_inc: Vec<i128> = unsafe_allocate_zero_vec(cycles);
+        let mut ram_inc: Vec<i128> = unsafe_allocate_zero_vec(cycles);
+        let mut lookup_index: Vec<u128> = unsafe_allocate_zero_vec(cycles);
+        let mut bytecode_pc: Vec<u64> = unsafe_allocate_zero_vec(cycles);
+        let mut ram_address: Vec<u64> = unsafe_allocate_zero_vec(cycles);
+        let error = Mutex::new(None);
+        (
+            rd_inc.par_chunks_mut(CHUNK),
+            ram_inc.par_chunks_mut(CHUNK),
+            lookup_index.par_chunks_mut(CHUNK),
+            bytecode_pc.par_chunks_mut(CHUNK),
+            ram_address.par_chunks_mut(CHUNK),
+        )
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(chunk_index, (rd, ram, lookup, pc, address))| {
+                let base = chunk_index * CHUNK;
+                for offset in 0..rd.len() {
+                    match access.window::<CommittedColumnsWitness>(base + offset) {
+                        Ok(row) => {
+                            debug_assert_ne!(
+                                row.bytecode_pc.0.map(|pc| pc as u64),
+                                Some(COLD),
+                                "a live mapped pc collides with the COLD sentinel"
+                            );
+                            debug_assert_ne!(
+                                row.ram_address.0,
+                                Some(COLD),
+                                "a live remapped RAM address collides with the COLD sentinel"
+                            );
+                            rd[offset] = row.rd_inc.0;
+                            ram[offset] = row.ram_inc.0;
+                            lookup[offset] = row.lookup_index.0;
+                            pc[offset] = row.bytecode_pc.0.map_or(COLD, |pc| pc as u64);
+                            address[offset] = row.ram_address.0.unwrap_or(COLD);
+                        }
+                        Err(failure) => {
+                            if let Ok(mut guard) = error.try_lock() {
+                                let _ = guard.get_or_insert(failure);
+                            }
+                            return;
+                        }
+                    }
+                }
+            });
+        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
+        if let Some(failure) = error.into_inner().unwrap() {
+            return Err(failure.into());
+        }
+        Ok(Self {
+            rd_inc,
+            ram_inc,
+            lookup_index,
+            bytecode_pc,
+            ram_address,
+        })
     }
 
     fn cycles(&self) -> usize {

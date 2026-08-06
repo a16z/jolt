@@ -14,6 +14,7 @@ use crate::protocols::jolt::{
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// The produced `ProgramImageInit` opening (intermediate or final).
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

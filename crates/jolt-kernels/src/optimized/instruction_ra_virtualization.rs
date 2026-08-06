@@ -44,18 +44,18 @@ use jolt_claims::protocols::jolt::{InstructionRaVirtualizationPublic, JoltDerive
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
-use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
+use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::accumulate_product;
+use super::support::{
+    accumulate_product_grid, gamma_power_pairs, map_indices, pin_derived_term, GruenRoundMessage,
+    RoundProgress,
+};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -77,7 +77,7 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>>
     {
         let relation = inputs.relation;
         let cycles = 1usize << relation.dimensions().log_t();
-        let rows = shared_instruction_rows(session, witness, cycles)?;
+        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
         Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
             relation.dimensions().log_t(),
             relation.dimensions().num_virtual_ra_polys(),
@@ -116,20 +116,8 @@ impl ChunkIndexSource for LookupIndexChunks {
     }
 }
 
-/// Collect `f(0), …, f(len − 1)`.
-fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..len).into_par_iter().map(f).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..len).map(f).collect()
-    }
-}
-
 pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
-    log_t: usize,
+    progress: RoundProgress,
     num_committed_per_virtual: usize,
     /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
     /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
@@ -139,11 +127,20 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: Field> {
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
     /// batch's first table pre-scaled by `γ^v` so the round loop needs no
     /// batching multiplies — served lazily off the shared rows for the
-    /// first three binds instead of `N × T` dense.
+    /// first four binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
-    rounds_bound: usize,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedInstructionRaVirtualizationKernel, |kernel| {
+    use crate::backend::{arc_vec_heap_bytes, vec_heap_bytes};
+    vec_heap_bytes(&kernel.gamma_powers_inv)
+        + kernel
+            .folded_ra
+            .heap_bytes(|source| arc_vec_heap_bytes(&source.rows))
+        + kernel.gruen.heap_bytes()
+});
 
 impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
@@ -186,19 +183,11 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             });
         }
 
-        let gamma_inv = gamma.inverse().ok_or(KernelError::InvariantViolation {
-            reason: "instruction RA batching gamma must be invertible",
-        })?;
-        let mut gamma_powers = Vec::with_capacity(num_virtual);
-        let mut gamma_powers_inv = Vec::with_capacity(num_virtual);
-        let mut power = F::one();
-        let mut power_inv = F::one();
-        for _ in 0..num_virtual {
-            gamma_powers.push(power);
-            gamma_powers_inv.push(power_inv);
-            power *= gamma;
-            power_inv *= gamma_inv;
-        }
+        let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(
+            gamma,
+            num_virtual,
+            "instruction RA batching gamma must be invertible",
+        )?;
 
         // One eq table per committed chunk point (each `2^w` entries); the
         // point-mass fold stays lazy — one table lookup per gathered cycle —
@@ -226,12 +215,11 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
         );
 
         Ok(Self {
-            log_t,
+            progress: RoundProgress::new(log_t),
             num_committed_per_virtual,
             gamma_powers_inv,
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
-            rounds_bound: 0,
         })
     }
 
@@ -287,14 +275,11 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
                         *eval = pair.1;
                         *step = pair.1 - pair.0;
                     }
-                    accumulate_product(&scratch.evals, &mut scratch.row_lanes[0]);
-                    for lane in 1..n - 1 {
-                        for (eval, step) in scratch.evals.iter_mut().zip(&scratch.steps) {
-                            *eval += *step;
-                        }
-                        accumulate_product(&scratch.evals, &mut scratch.row_lanes[lane]);
-                    }
-                    accumulate_product(&scratch.steps, &mut scratch.row_lanes[n - 1]);
+                    accumulate_product_grid(
+                        &mut scratch.evals,
+                        &scratch.steps,
+                        &mut scratch.row_lanes,
+                    );
                 }
                 for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
                     lane.fmadd(e_in, row_lane.reduce());
@@ -329,7 +314,7 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
-        let q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in(
             || ([F::zero(); 3], vec![(F::zero(), F::zero()); num_committed]),
             |(acc, pairs), row, _x_in, e_in| {
                 folded_ra.lo_hi_all(row, pairs);
@@ -359,34 +344,20 @@ impl<F: Field> OptimizedInstructionRaVirtualizationKernel<F> {
             },
         );
 
-        let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
-        let l_step = l_at_1 - l_at_0;
-        let evals = [
-            l_at_0 * q_evals[0],
-            l_at_1 * q_evals[1],
-            (l_at_1 + l_step) * q_evals[2],
-        ];
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        self.gruen
+            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
         self.folded_ra.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 }
 
 impl<F: Field> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.log_t
+        self.progress.total()
     }
 
     fn prove_round(
@@ -414,11 +385,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
         let mut committed_instruction_ra = self.folded_ra.final_values();
@@ -442,18 +409,15 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKernel<
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        if self.rounds_bound != self.log_t {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.log_t - self.rounds_bound,
-            });
-        }
-        let id = JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle);
-        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        self.progress.require_complete()?;
+        pin_derived_term(
+            relation,
+            JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle),
+            input_points,
+            output_points,
+            challenges,
+            self.gruen.current_scalar(),
+        )
     }
 }
 
@@ -485,7 +449,9 @@ mod tests {
     use crate::reference::views::{address_fold, eq_table};
     use crate::{NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-    use super::super::instruction_read_raf::{InstructionCycleRow, SharedInstructionRows};
+    use super::super::instruction_read_raf::{
+        InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
+    };
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
@@ -665,8 +631,9 @@ mod tests {
                         )
                         .unwrap();
                     assert!(
-                        session.state::<SharedInstructionRows>().is_some(),
-                        "prepare must park the shared rows back for later consumers"
+                        session.state::<SharedInstructionRows>().is_some()
+                            || session.state::<SharedInstructionRowsWeak>().is_some(),
+                        "prepare must park a shared-rows carry back for later consumers"
                     );
                     kernel
                 })
@@ -760,8 +727,9 @@ mod tests {
 
     #[test]
     fn parity_past_lazy_materialization() {
-        // log_t = 6: two lazy binds, the dense materialization at the third,
-        // and three plain multilinear binds after it.
+        // log_t = 6: three lazy binds, the dense materialization at the
+        // fourth (`T/16` = 4 entries), and two plain multilinear binds
+        // after it.
         assert_parity(6, 2, 2, 4, 7, false);
     }
 

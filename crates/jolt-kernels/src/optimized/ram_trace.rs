@@ -9,6 +9,8 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
 use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{JoltWitnessPlane, WitnessBundle};
@@ -36,6 +38,25 @@ pub(crate) struct RamAccessColumns {
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
     pub post_values: Vec<u64>,
+}
+
+#[cfg(feature = "allocative")]
+impl RamAccessColumns {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::backend::vec_heap_bytes;
+        vec_heap_bytes(&self.addresses)
+            + vec_heap_bytes(&self.pre_values)
+            + vec_heap_bytes(&self.post_values)
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl Allocative for RamAccessColumns {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(Key::new("heap"), self.heap_bytes());
+        visitor.exit();
+    }
 }
 
 impl RamAccessColumns {
@@ -80,11 +101,17 @@ impl RamAccessColumns {
                 .state::<Arc<Self>>()
                 .expect("RAM access columns parked above"),
         );
-        debug_assert_eq!(
-            columns.addresses.len(),
-            1usize << log_t,
-            "parked RAM access columns cover a different cycle domain than requested"
-        );
+        // Five kernels across stages 2–6b reclaim these columns by type
+        // alone; a wrong-domain reclaim means OOB indexing or a silently
+        // wrong RA claim from a prefix-covering table, so hard-error like
+        // the `PcRow::shared` twin instead of a release-compiled-out assert.
+        if columns.addresses.len() != 1usize << log_t {
+            return Err(KernelError::TableSizeMismatch {
+                table: "session-shared RAM access columns".to_owned(),
+                expected: 1usize << log_t,
+                got: columns.addresses.len(),
+            });
+        }
         Ok(columns)
     }
 

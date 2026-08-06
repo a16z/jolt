@@ -6,7 +6,7 @@
 )]
 
 use dory::backends::arkworks::ArkworksProverSetup;
-use dory::mode::Transparent;
+use dory::mode::{Transparent, ZK};
 use dory::primitives::arithmetic::{
     DoryRoutines, Field as DoryField, Group as DoryGroup, PairingCurve,
 };
@@ -404,7 +404,7 @@ impl ZkOpeningScheme for DoryScheme {
         let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, y_blinding) =
-            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, dory::mode::ZK>(
+            dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, ZK>(
                 &adapter,
                 &ark_point,
                 row_commitments,

@@ -119,7 +119,10 @@ derive_more.workspace = true
 dory.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
-jolt-profiling = { workspace = true, optional = true }
+# default-features = false: the legacy bin uses only the subscriber stack
+# and stage-memory reporting, so standard `host` builds skip the summary
+# pipeline's schemars/serde_json stack.
+jolt-profiling = { workspace = true, optional = true, default-features = false }
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-akita = { workspace = true, optional = true }
@@ -133,6 +136,7 @@ jolt-openings = { workspace = true, optional = true }
 jolt-poly = { workspace = true, optional = true }
 jolt-sumcheck = { workspace = true, optional = true }
 jolt-transcript = { workspace = true, optional = true }
+jolt-utils = { workspace = true, features = ["parallel"] }
 jolt-verifier = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [

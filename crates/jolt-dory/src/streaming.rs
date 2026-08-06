@@ -1,5 +1,6 @@
 //! Streaming (chunked) commitment for the Dory scheme.
 
+use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use dory::backends::arkworks::ArkG1;
 use dory::primitives::arithmetic::DoryRoutines;
@@ -83,7 +84,7 @@ impl StreamingCommitment for crate::DoryScheme {
     }
 
     type OneHotChunkCommitment = Vec<Bn254G1>;
-    type OneHotStreamContext = Vec<ark_bn254::G1Affine>;
+    type OneHotStreamContext = Vec<G1Affine>;
 
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_feed_zeros")]
     fn feed_zeros(
@@ -124,7 +125,7 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
 
-        let row_commitment = ark_ec::scalar_mul::variable_base::msm_u64::<ark_bn254::G1Projective>(
+        let row_commitment = ark_ec::scalar_mul::variable_base::msm_u64::<G1Projective>(
             scalar_affine_bases(&mut partial.scalar_affine_bases, chunk.len(), setup),
             chunk,
             true,
@@ -148,7 +149,7 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
 
-        let row_commitment = ark_ec::scalar_mul::variable_base::msm_i128::<ark_bn254::G1Projective>(
+        let row_commitment = ark_ec::scalar_mul::variable_base::msm_i128::<G1Projective>(
             scalar_affine_bases(&mut partial.scalar_affine_bases, chunk.len(), setup),
             chunk,
             true,
@@ -159,17 +160,20 @@ impl StreamingCommitment for crate::DoryScheme {
     }
 
     /// The parallel batch counterpart of [`feed_i128`](Self::feed_i128):
-    /// windows commit in parallel (each MSM serial to avoid nested-pool
-    /// oversubscription) and append in window order, so the row-commitment
-    /// sequence is identical to serial feeding.
+    /// windows materialize their own `row_width` values on the worker (a
+    /// transient hundreds of KiB each) and commit in parallel (each MSM
+    /// serial to avoid nested-pool oversubscription), appended in window
+    /// order — the same row-commitment sequence as serial feeding, without
+    /// ever staging the batch.
     #[tracing::instrument(
         skip_all,
-        name = "DoryScheme::stream_feed_i128_rows",
-        fields(rows = rows.len() / row_width.max(1))
+        name = "DoryScheme::stream_feed_i128_rows_with",
+        fields(rows = count / row_width.max(1))
     )]
-    fn feed_i128_rows(
+    fn feed_i128_rows_with(
         partial: &mut Self::PartialCommitment,
-        rows: &[i128],
+        value: impl Fn(usize) -> i128 + Sync,
+        count: usize,
         row_width: usize,
         setup: &Self::ProverSetup,
     ) {
@@ -184,21 +188,19 @@ impl StreamingCommitment for crate::DoryScheme {
             setup.0.g1_vec.len(),
         );
         assert!(
-            rows.len().is_multiple_of(row_width),
-            "streaming: batch length ({}) must be a multiple of the row width ({})",
-            rows.len(),
-            row_width,
+            count.is_multiple_of(row_width),
+            "streaming: batch length ({count}) must be a multiple of the row width ({row_width})",
         );
 
-        // Field-scoped borrows: the cached bases stay borrowed while the
-        // window commitments append to the sibling field.
         let bases = scalar_affine_bases(&mut partial.scalar_affine_bases, row_width, setup);
-        let commitments: Vec<Bn254G1> = rows
-            .par_chunks(row_width)
-            .map(|chunk| {
+        let commitments: Vec<Bn254G1> = (0..count / row_width)
+            .into_par_iter()
+            .map(|window| {
+                let base = window * row_width;
+                let chunk: Vec<i128> = (base..base + row_width).map(&value).collect();
                 ark_to_jolt_g1(ArkG1(ark_ec::scalar_mul::variable_base::msm_i128::<
-                    ark_bn254::G1Projective,
-                >(bases, chunk, true)))
+                    G1Projective,
+                >(bases, &chunk, true)))
             })
             .collect();
         partial.row_commitments.extend(commitments);
@@ -235,19 +237,22 @@ impl StreamingCommitment for crate::DoryScheme {
     }
 
     /// The parallel batch counterpart of
-    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk): windows share
-    /// the cached affine bases read-only and commit in parallel, collected in
-    /// window order — the same chunk-commitment sequence as serial calls.
+    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk): windows
+    /// materialize their own `chunk_width` hot addresses on the worker,
+    /// share the cached affine bases read-only, and commit in parallel,
+    /// collected in window order — the same chunk-commitment sequence as
+    /// serial calls, without ever staging the batch.
     #[tracing::instrument(
         skip_all,
-        name = "DoryScheme::stream_process_one_hot_chunks",
-        fields(chunks = chunks.len() / chunk_width.max(1))
+        name = "DoryScheme::stream_process_one_hot_chunks_with",
+        fields(chunks = count / chunk_width.max(1))
     )]
-    fn process_one_hot_chunks(
+    fn process_one_hot_chunks_with(
         context: &mut Self::OneHotStreamContext,
         setup: &Self::ProverSetup,
         one_hot_k: usize,
-        chunks: &[Option<usize>],
+        hot_address: impl Fn(usize) -> Option<usize> + Sync,
+        count: usize,
         chunk_width: usize,
     ) -> Vec<Self::OneHotChunkCommitment> {
         assert!(
@@ -255,9 +260,14 @@ impl StreamingCommitment for crate::DoryScheme {
             "streaming one-hot: chunk width must be nonzero",
         );
         let context: &Self::OneHotStreamContext = context;
-        chunks
-            .par_chunks(chunk_width)
-            .map(|chunk| one_hot_chunk_commitments(context, setup, one_hot_k, chunk))
+        (0..count.div_ceil(chunk_width))
+            .into_par_iter()
+            .map(|window| {
+                let base = window * chunk_width;
+                let top = (base + chunk_width).min(count);
+                let chunk: Vec<Option<usize>> = (base..top).map(&hot_address).collect();
+                one_hot_chunk_commitments(context, setup, one_hot_k, &chunk)
+            })
             .collect()
     }
 
@@ -349,7 +359,7 @@ fn finish_one_hot_column_major_chunks<M: dory::Mode>(
 /// One column-major one-hot chunk's `one_hot_k` partial row commitments —
 /// the shared body behind the single and batch streaming entry points.
 fn one_hot_chunk_commitments(
-    bases: &[ark_bn254::G1Affine],
+    bases: &[G1Affine],
     setup: &DoryProverSetup,
     one_hot_k: usize,
     chunk: &[Option<usize>],
@@ -416,10 +426,10 @@ fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
 /// cache field (not the whole partial) so callers can hold the bases while
 /// appending to the sibling `row_commitments` field.
 fn scalar_affine_bases<'a>(
-    cache: &'a mut Option<Vec<ark_bn254::G1Affine>>,
+    cache: &'a mut Option<Vec<G1Affine>>,
     row_width: usize,
     setup: &DoryProverSetup,
-) -> &'a [ark_bn254::G1Affine] {
+) -> &'a [G1Affine] {
     let bases = cache.get_or_insert_with(|| {
         setup.0.g1_vec[..row_width]
             .iter()
@@ -804,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn feed_i128_rows_matches_serial_feeds() {
+    fn feed_i128_rows_with_matches_serial_feeds() {
         let num_vars: usize = 6;
         let num_cols = 1usize << num_vars.div_ceil(2);
         let prover_setup = DoryScheme::setup_prover(num_vars);
@@ -826,7 +836,13 @@ mod tests {
         let (serial_commitment, serial_hint) = DoryScheme::finish_with_hint(serial, &prover_setup);
 
         let mut batched = DoryScheme::begin(&prover_setup);
-        DoryScheme::feed_i128_rows(&mut batched, &rows_i128, num_cols, &prover_setup);
+        DoryScheme::feed_i128_rows_with(
+            &mut batched,
+            |index| rows_i128[index],
+            rows_i128.len(),
+            num_cols,
+            &prover_setup,
+        );
         let (batched_commitment, batched_hint) =
             DoryScheme::finish_with_hint(batched, &prover_setup);
 
@@ -835,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn process_one_hot_chunks_matches_serial_calls() {
+    fn process_one_hot_chunks_with_matches_serial_calls() {
         let trace_rows = 16usize;
         let one_hot_k = 4usize;
         let num_vars = (trace_rows * one_hot_k).ilog2() as usize;
@@ -852,11 +868,12 @@ mod tests {
                 DoryScheme::process_one_hot_chunk(&mut context, &prover_setup, one_hot_k, chunk)
             })
             .collect::<Vec<_>>();
-        let batched = DoryScheme::process_one_hot_chunks(
+        let batched = DoryScheme::process_one_hot_chunks_with(
             &mut context,
             &prover_setup,
             one_hot_k,
-            &indices,
+            |index| indices[index],
+            indices.len(),
             chunk_width,
         );
 

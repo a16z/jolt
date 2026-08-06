@@ -36,17 +36,17 @@ use jolt_field::Field;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputClaims, SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::ram_read_write_checking::{
     RamReadWriteChecking, RamReadWriteOutputClaims,
 };
-use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::rw_matrix::{AddressMajorMatrix, CycleMajorEntry, CycleMajorMatrix};
+use super::support::pin_derived_term_if_derived;
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -84,9 +84,25 @@ pub(crate) struct RamReadWriteKernel<F: Field> {
     log_k: usize,
 }
 
-fn phase_error<F: Field>() -> SumcheckError<F> {
-    SumcheckError::MissingEvaluationSource {
-        kind: "RAM read-write phase state",
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(RamReadWriteKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    let phase = kernel.phase.as_ref().map_or(0, |phase| match phase {
+        Phase::Cycle { matrix, gruen } => vec_heap_bytes(&matrix.entries) + gruen.heap_bytes(),
+        Phase::Address { matrix, merged_eq } => {
+            vec_heap_bytes(&matrix.entries) + poly_heap_bytes(merged_eq)
+        }
+        Phase::Done { merged_eq, .. } => poly_heap_bytes(merged_eq),
+    });
+    phase + poly_heap_bytes(&kernel.inc) + poly_heap_bytes(&kernel.val_init)
+});
+
+impl<F: Field> Phase<F> {
+    /// The error for a bind or round message arriving outside its phase.
+    fn error() -> SumcheckError<F> {
+        SumcheckError::MissingEvaluationSource {
+            kind: "RAM read-write phase state",
+        }
     }
 }
 
@@ -96,14 +112,14 @@ impl<F: Field> RamReadWriteKernel<F> {
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
         if round < self.log_t {
             let Some(Phase::Cycle { matrix, gruen }) = &mut self.phase else {
-                return Err(phase_error());
+                return Err(Phase::error());
             };
             matrix.bind(r);
             gruen.bind(r);
             self.inc.bind_with_order(r, BindingOrder::LowToHigh);
             if round == self.log_t - 1 {
                 let Some(Phase::Cycle { matrix, gruen }) = self.phase.take() else {
-                    return Err(phase_error());
+                    return Err(Phase::error());
                 };
                 self.phase = Some(Phase::Address {
                     matrix: matrix.into_address_major(),
@@ -115,7 +131,7 @@ impl<F: Field> RamReadWriteKernel<F> {
             }
         } else {
             let Some(Phase::Address { matrix, .. }) = &mut self.phase else {
-                return Err(phase_error());
+                return Err(Phase::error());
             };
             matrix.bind(r, &mut self.val_init);
             if round == self.log_t + self.log_k - 1 {
@@ -127,7 +143,7 @@ impl<F: Field> RamReadWriteKernel<F> {
 
     fn finalize(&mut self) -> Result<(), SumcheckError<F>> {
         let Some(Phase::Address { matrix, merged_eq }) = self.phase.take() else {
-            return Err(phase_error());
+            return Err(Phase::error());
         };
         let (final_ra, final_val) = matrix.final_values(&self.val_init);
         self.phase = Some(Phase::Done {
@@ -146,7 +162,7 @@ impl<F: Field> RamReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let Some(Phase::Cycle { matrix, gruen }) = &self.phase else {
-            return Err(phase_error());
+            return Err(Phase::error());
         };
         let e_in = gruen.e_in_current();
         let e_out = gruen.e_out_current();
@@ -167,7 +183,7 @@ impl<F: Field> RamReadWriteKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let Some(Phase::Address { matrix, merged_eq }) = &self.phase else {
-            return Err(phase_error());
+            return Err(Phase::error());
         };
         let evals = matrix.address_round_evals(&self.val_init, &self.inc, merged_eq, self.gamma);
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
@@ -239,18 +255,14 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
                 remaining: self.num_rounds(),
             });
         };
-        let id = JoltDerivedId::from(RamReadWritePublic::EqCycle);
-        let expected =
-            match relation.derive_output_term(&id, input_points, output_points, challenges) {
-                Ok(value) => value,
-                Err(VerifierError::MissingStageClaimDerived { .. }) => return Ok(()),
-                Err(error) => return Err(error.into()),
-            };
-        let got = merged_eq.evals()[0];
-        if got != expected {
-            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-        }
-        Ok(())
+        pin_derived_term_if_derived(
+            relation,
+            JoltDerivedId::from(RamReadWritePublic::EqCycle),
+            input_points,
+            output_points,
+            challenges,
+            merged_eq.evals()[0],
+        )
     }
 }
 
@@ -331,6 +343,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,
     };
@@ -351,7 +364,7 @@ mod tests {
         ram_k: usize,
     ) -> Fr {
         let cycles = 1usize << tau_low.len();
-        let eq = jolt_poly::EqPolynomial::new(tau_low.to_vec()).evaluations();
+        let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
         let ra: Vec<Fr> = witness.oracle_table(ram_ra().polynomial_id()).unwrap();
         let val: Vec<Fr> = witness.oracle_table(ram_val().polynomial_id()).unwrap();
         let inc: Vec<Fr> = witness.oracle_table(ram_inc().polynomial_id()).unwrap();

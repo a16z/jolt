@@ -21,6 +21,8 @@
 //!   [`crate::optimized`]).
 
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
+use std::ops::Range;
+
 use jolt_claims::OutputClaims;
 use jolt_field::Field;
 use jolt_poly::{Polynomial, UnivariatePoly};
@@ -34,9 +36,10 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "parallel")]
-use super::support::merge_evals;
-use super::support::{bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals};
+use super::support::{
+    bind_all, collect_rows, eq_table, gamma_powers, pair, par_sum_pair_groups,
+    round_poly_from_skipped_evals, RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -76,66 +79,66 @@ impl FamilySelectors {
             ram: family(counts.2)?,
         })
     }
-}
 
-/// All `N` pushforwards from one bundle walk against the shared cycle-eq
-/// table, in canonical (instruction, bytecode, RAM) order.
-fn pushforwards<F: Field>(
-    rows: &[RaIndexBundle],
-    eq_cycle: &[F],
-    selectors: &FamilySelectors,
-    k_chunk: usize,
-) -> Vec<Vec<F>> {
-    let total = selectors.instruction.len() + selectors.bytecode.len() + selectors.ram.len();
-    let accumulate = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
-        let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
-        for j in range {
-            let row = &rows[j];
-            let eq = eq_cycle[j];
-            let mut slot = 0;
-            for selector in &selectors.instruction {
-                partial[slot][selector.chunk_u128(row.lookup_index.0)] += eq;
-                slot += 1;
-            }
-            for selector in &selectors.bytecode {
-                if let Some(pc) = row.mapped_pc.0 {
-                    partial[slot][selector.chunk_usize(pc)] += eq;
+    /// All `N` pushforwards from one bundle walk against the shared cycle-eq
+    /// table, in canonical (instruction, bytecode, RAM) order.
+    fn pushforwards<F: Field>(
+        &self,
+        rows: &[RaIndexBundle],
+        eq_cycle: &[F],
+        k_chunk: usize,
+    ) -> Vec<Vec<F>> {
+        let total = self.instruction.len() + self.bytecode.len() + self.ram.len();
+        let accumulate = |range: Range<usize>| -> Vec<Vec<F>> {
+            let mut partial: Vec<Vec<F>> = (0..total).map(|_| vec![F::zero(); k_chunk]).collect();
+            for j in range {
+                let row = &rows[j];
+                let eq = eq_cycle[j];
+                let mut slot = 0;
+                for selector in &self.instruction {
+                    partial[slot][selector.chunk_u128(row.lookup_index.0)] += eq;
+                    slot += 1;
                 }
-                slot += 1;
-            }
-            for selector in &selectors.ram {
-                if let Some(address) = row.ram_address.0 {
-                    partial[slot][selector.chunk_usize(address as usize)] += eq;
-                }
-                slot += 1;
-            }
-        }
-        partial
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        let num_threads = rayon::current_num_threads();
-        let chunk = rows.len().div_ceil(num_threads).max(1);
-        (0..rows.len())
-            .into_par_iter()
-            .step_by(chunk)
-            .map(|start| accumulate(start..(start + chunk).min(rows.len())))
-            .reduce(
-                || (0..total).map(|_| vec![F::zero(); k_chunk]).collect(),
-                |mut left, right| {
-                    for (left, right) in left.iter_mut().zip(right) {
-                        for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
-                        }
+                for selector in &self.bytecode {
+                    if let Some(pc) = row.mapped_pc.0 {
+                        partial[slot][selector.chunk_usize(pc)] += eq;
                     }
-                    left
-                },
-            )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        accumulate(0..rows.len())
+                    slot += 1;
+                }
+                for selector in &self.ram {
+                    if let Some(address) = row.ram_address.0 {
+                        partial[slot][selector.chunk_usize(address as usize)] += eq;
+                    }
+                    slot += 1;
+                }
+            }
+            partial
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            let num_threads = rayon::current_num_threads();
+            let chunk = rows.len().div_ceil(num_threads).max(1);
+            (0..rows.len())
+                .into_par_iter()
+                .step_by(chunk)
+                .map(|start| accumulate(start..(start + chunk).min(rows.len())))
+                .reduce(
+                    || (0..total).map(|_| vec![F::zero(); k_chunk]).collect(),
+                    |mut left, right| {
+                        for (left, right) in left.iter_mut().zip(right) {
+                            for (left, right) in left.iter_mut().zip(right) {
+                                *left += right;
+                            }
+                        }
+                        left
+                    },
+                )
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            accumulate(0..rows.len())
+        }
     }
 }
 
@@ -175,17 +178,14 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             (layout.instruction(), layout.bytecode(), layout.ram()),
             dimensions.log_k_chunk,
         )?;
-        let g_tables: Vec<Polynomial<F>> = pushforwards(&rows, &eq_cycle, &selectors, k_chunk)
+        let g_tables: Vec<Polynomial<F>> = selectors
+            .pushforwards(&rows, &eq_cycle, k_chunk)
             .into_iter()
             .map(Polynomial::new)
             .collect();
 
         // W_i(k) = γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k).
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = vec![F::one(); 3 * layout.total()];
-        for i in 1..gamma_powers.len() {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers = gamma_powers(inputs.challenges.gamma, 3 * layout.total());
         let eq_bool = eq_table(r_address);
         let weight_tables: Vec<Polynomial<F>> = virtualization_points
             .iter()
@@ -214,24 +214,30 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             .collect();
 
         Ok(Box::new(HammingWeightKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             g_tables,
             weight_tables,
             output_openings,
-            rounds_bound: 0,
         }))
     }
 }
 
 struct HammingWeightKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
     /// Combined claim weights `W_i`, index-aligned with `g_tables`.
     weight_tables: Vec<Polynomial<F>>,
     output_openings: Vec<JoltOpeningId>,
-    rounds_bound: usize,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(HammingWeightKernel, |kernel| {
+    use crate::backend::{polys_heap_bytes, vec_heap_bytes};
+    polys_heap_bytes(&kernel.g_tables)
+        + polys_heap_bytes(&kernel.weight_tables)
+        + vec_heap_bytes(&kernel.output_openings)
+});
 
 impl<F: Field> HammingWeightKernel<F> {
     fn bind(&mut self, challenge: F) {
@@ -241,7 +247,7 @@ impl<F: Field> HammingWeightKernel<F> {
                 .chain(self.weight_tables.iter_mut()),
             challenge,
         );
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
@@ -260,7 +266,7 @@ impl<F: Field> HammingWeightKernel<F> {
 
 impl<F: Field> ProveRounds<F> for HammingWeightKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -274,25 +280,10 @@ impl<F: Field> ProveRounds<F> for HammingWeightKernel<F> {
         }
         let half = self.weight_tables[0].len() / 2;
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || vec![F::zero(); 2],
-                |mut acc, y| {
-                    let group = self.group_evals(y);
-                    acc[0] += group[0];
-                    acc[1] += group[1];
-                    acc
-                },
-            )
-            .reduce(|| vec![F::zero(); 2], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = (0..half).fold(vec![F::zero(); 2], |mut acc, y| {
+        let evals = par_sum_pair_groups(half, 2, |acc, y| {
             let group = self.group_evals(y);
             acc[0] += group[0];
             acc[1] += group[1];
-            acc
         });
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
@@ -311,11 +302,7 @@ impl<F: Field> SumcheckKernel<F> for HammingWeightKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let g_tables = &self.g_tables;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {
@@ -347,7 +334,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
-    use crate::optimized::harness::{
+    use crate::optimized::parity::{
         probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
     };
     use crate::{ProofSession, ReferenceBackend};

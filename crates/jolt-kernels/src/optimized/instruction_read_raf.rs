@@ -34,8 +34,7 @@
 //!   carries the mapped PC and remapped RAM address alongside the stage-5
 //!   facts at no size cost.
 
-use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
@@ -56,7 +55,11 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::accumulate_product;
+use super::rows::RandomAccessRows;
+use super::support::{
+    accumulate_product_grid, for_each_index_mut, map_indices, map_reduce_chunks, scan_chunk_size,
+    RoundProgress,
+};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -151,19 +154,6 @@ impl StreamConsumer for PackRows {
     }
 }
 
-/// One streaming bundle pass over the cycle domain, packed row by row (the
-/// wide bundle row exists only per chunk).
-pub(crate) fn collect_instruction_cycle_rows<F: Field>(
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
-    let mut consumers = (PackRows {
-        rows: Vec::with_capacity(cycles),
-    },);
-    stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
-    Ok(consumers.0.rows)
-}
-
 /// The collected stage-5 rows, parked in the [`ProofSession`] for the
 /// stage-6b instruction RA virtualization kernel (its committed one-hot
 /// chunks are chunks of the same per-cycle lookup index) and the
@@ -173,20 +163,86 @@ pub(crate) fn collect_instruction_cycle_rows<F: Field>(
 /// carry back for the later stages.
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
 
-/// Reclaim the parked stage-5 rows (the length guard makes a stale carry
-/// impossible to consume) or collect them fresh, and park the carry back
-/// for later consumers.
-pub(crate) fn shared_instruction_rows<F: Field>(
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Arc<Vec<InstructionCycleRow>>, KernelError<F>> {
-    let rows = match session.take::<SharedInstructionRows>() {
-        Some(SharedInstructionRows(rows)) if rows.len() == cycles => rows,
-        _ => Arc::new(collect_instruction_cycle_rows(witness, cycles)?),
-    };
-    session.park(SharedInstructionRows(Arc::clone(&rows)));
-    Ok(rows)
+#[cfg(feature = "allocative")]
+crate::optimized::impl_allocative!(SharedInstructionRows, |rows| {
+    crate::backend::arc_vec_heap_bytes(&rows.0)
+});
+
+/// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
+/// so same-stage co-consumers share one collection but the 48 B × T rows
+/// never outlive their stage — later stages re-derive them index-parallel
+/// instead of carrying them across the prover's peak window.
+pub(crate) struct SharedInstructionRowsWeak(pub(crate) Weak<Vec<InstructionCycleRow>>);
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_allocative!(SharedInstructionRowsWeak, |_rows| { 0 });
+
+impl InstructionCycleRow {
+    /// One streaming bundle pass over the cycle domain, packed row by row (the
+    /// wide bundle row exists only per chunk).
+    pub(crate) fn collect<F: Field>(
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
+        // Slice-backed sources pack index-parallel (the wide bundle row still
+        // never exists beyond a register); re-emulating sources stream.
+        if let Some(access) = RandomAccessRows::new(witness, cycles)? {
+            let rows = super::rows::collect_par_map(&access, cycles, |row: WideInstructionRow| {
+                InstructionCycleRow::new(
+                    row.lookup_index.0,
+                    row.table_index.0,
+                    row.raf_flag.0,
+                    row.mapped_pc.0,
+                    row.remapped_ram_address.0,
+                )
+            })?;
+            return Ok(rows);
+        }
+        let mut consumers = (PackRows {
+            rows: Vec::with_capacity(cycles),
+        },);
+        stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
+        Ok(consumers.0.rows)
+    }
+
+    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
+    /// impossible to consume) or collect them fresh, and park the carry back
+    /// for later consumers.
+    pub(crate) fn shared<F: Field>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Arc<Vec<InstructionCycleRow>>, KernelError<F>> {
+        // A parked strong carry is always honored (re-emulating sources, and
+        // tests that inject rows a witness would not produce).
+        let carried = match session.take::<SharedInstructionRows>() {
+            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
+            _ => None,
+        };
+        if witness.rows().is_some() {
+            // Slice-backed: consumers share within a stage through a weak
+            // handle; once the stage's kernels drop, the rows free, and later
+            // stages re-derive them index-parallel.
+            let upgraded = || {
+                session
+                    .state::<SharedInstructionRowsWeak>()
+                    .and_then(|weak| weak.0.upgrade())
+                    .filter(|rows| rows.len() == cycles)
+            };
+            let rows = match carried.or_else(upgraded) {
+                Some(rows) => rows,
+                None => Arc::new(Self::collect(witness, cycles)?),
+            };
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+            return Ok(rows);
+        }
+        let rows = match carried {
+            Some(rows) => rows,
+            None => Arc::new(Self::collect(witness, cycles)?),
+        };
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        Ok(rows)
+    }
 }
 
 /// Optimized [`PrepareKernel`] implementor for the `instruction_read_raf`
@@ -201,90 +257,27 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
+        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(InstructionCycleRow::collect(
             witness,
             1 << dimensions.log_t(),
         )?);
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        // Slice-backed witnesses park the weak handle (like
+        // `InstructionCycleRow::shared`): the kernel drops its strong copy at the
+        // first cycle bind, and a strong session carry would keep the
+        // 48 B × T rows resident through the stage-5 staging peak — later
+        // stages re-derive index-parallel instead. Re-emulating sources keep
+        // the strong carry (re-deriving means a full re-emulation walk).
+        if witness.rows().is_some() {
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+        } else {
+            session.park(SharedInstructionRows(Arc::clone(&rows)));
+        }
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,
             rows,
             inputs.challenges.gamma,
         )?))
-    }
-}
-
-// --- parallel shims -------------------------------------------------------
-//
-// The kernel's custom scans need chunked map-reduce and indexed maps; the
-// serial fallbacks compute the same field values (sums and products of the
-// same terms), so parity is unaffected by the feature.
-
-/// `merge`-fold of `map` over index chunks of at most `chunk_size`.
-fn map_reduce_chunks<R: Send>(
-    len: usize,
-    chunk_size: usize,
-    map: impl Fn(Range<usize>) -> R + Send + Sync,
-    merge: impl Fn(R, R) -> R + Send + Sync,
-    identity: impl Fn() -> R + Send + Sync,
-) -> R {
-    if len == 0 {
-        return identity();
-    }
-    #[cfg(feature = "parallel")]
-    {
-        let chunks = len.div_ceil(chunk_size);
-        (0..chunks)
-            .into_par_iter()
-            .map(|c| map(c * chunk_size..((c + 1) * chunk_size).min(len)))
-            .reduce(identity, merge)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let _ = (merge, identity, chunk_size);
-        map(0..len)
-    }
-}
-
-/// Collect `f(0), …, f(len − 1)`.
-fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
-    #[cfg(feature = "parallel")]
-    {
-        (0..len).into_par_iter().map(f).collect()
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..len).map(f).collect()
-    }
-}
-
-/// Indexed in-place update of a slice.
-fn for_each_index_mut<T: Send>(items: &mut [T], f: impl Fn(usize, &mut T) + Send + Sync) {
-    #[cfg(feature = "parallel")]
-    {
-        items
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        items
-            .iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-}
-
-fn scan_chunk_size(len: usize) -> usize {
-    #[cfg(feature = "parallel")]
-    {
-        len.div_ceil(rayon::current_num_threads()).max(1024)
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        len.max(1)
     }
 }
 
@@ -297,6 +290,16 @@ struct RafDecomposition<F: Field> {
     q_shift: Polynomial<F>,
     q_value: Polynomial<F>,
     checkpoint: F,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> RafDecomposition<F> {
+    fn heap_bytes(&self) -> usize {
+        use crate::backend::poly_heap_bytes;
+        poly_heap_bytes(&self.prefix)
+            + poly_heap_bytes(&self.q_shift)
+            + poly_heap_bytes(&self.q_value)
+    }
 }
 
 impl<F: Field> RafDecomposition<F> {
@@ -348,13 +351,51 @@ fn extension_pair<F: Field>(evals: &[F], b: usize, half: usize) -> (F, F) {
     (lo, hi + hi - lo)
 }
 
-/// Cycle-round state: the Gruen-split eq factor plus the dense cycle tables.
+/// Cycle-round state: the Gruen-split eq factor plus the cycle tables.
 struct CycleState<F: Field> {
     gruen: GruenSplitEqPolynomial<F>,
-    combined_val: Polynomial<F>,
-    ra: Vec<Polynomial<F>>,
+    tables: CycleTables<F>,
     /// Reused low-to-high binding buffer (swapped through every bind).
     bind_scratch: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> CycleState<F> {
+    fn heap_bytes(&self) -> usize {
+        use crate::backend::{poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
+        let tables = match &self.tables {
+            CycleTables::Pending(pending) => vec_heap_bytes(&pending.table_values),
+            CycleTables::Dense { combined_val, ra } => {
+                poly_heap_bytes(combined_val) + polys_heap_bytes(ra)
+            }
+        };
+        self.gruen.heap_bytes() + tables + vec_heap_bytes(&self.bind_scratch)
+    }
+}
+
+/// The cycle tables' lifecycle. The address/cycle handoff leaves them
+/// *pending*: the first cycle round's message evaluates the bases on the
+/// fly (a packed-byte lookup for the combined value, `v_table` products
+/// for the ra decomposition), and the first cycle bind materializes the
+/// half-domain tables directly under that challenge — the full-T dense
+/// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
+/// exist. Values are identical to materialize-then-bind: the bases are the
+/// same, and `lo + r·(hi − lo)` is the binding formula either way.
+enum CycleTables<F: Field> {
+    Pending(PendingCycleTables<F>),
+    Dense {
+        combined_val: Polynomial<F>,
+        ra: Vec<Polynomial<F>>,
+    },
+}
+
+/// Everything the pending-base evaluations need beyond the kernel's own
+/// rows / claim columns / phase eq tables.
+struct PendingCycleTables<F: Field> {
+    /// Per-table combined value at the bound address point.
+    table_values: Vec<F>,
+    raf_interleaved: F,
+    raf_identity: F,
 }
 
 /// Per-thread RAF scan accumulators over one phase's chunk domain, in
@@ -464,8 +505,42 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
-    rounds_bound: usize,
+    /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
+    /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
+    /// handoff so the full 48 B rows can free — the final flag walk needs
+    /// only this byte per cycle.
+    claim_columns: Vec<u8>,
+    progress: RoundProgress,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedInstructionReadRafKernel, |kernel| {
+    use crate::backend::{
+        arc_vec_heap_bytes, nested_vec_heap_bytes, polys_heap_bytes, vec_heap_bytes,
+    };
+    vec_heap_bytes(&kernel.r_reduction)
+        + arc_vec_heap_bytes(&kernel.rows)
+        + nested_vec_heap_bytes(&kernel.buckets)
+        + vec_heap_bytes(&kernel.u_evals)
+        + vec_heap_bytes(&kernel.prefix_checkpoints)
+        + polys_heap_bytes(&kernel.prefix_tables)
+        + kernel.suffix_tables.capacity()
+            * std::mem::size_of::<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>()
+        + kernel
+            .suffix_tables
+            .iter()
+            .map(|(_, polys)| polys_heap_bytes(polys))
+            .sum::<usize>()
+        + kernel.raf_left.heap_bytes()
+        + kernel.raf_right.heap_bytes()
+        + kernel.raf_identity.heap_bytes()
+        + kernel.raf_upper_all_ones.heap_bytes()
+        + nested_vec_heap_bytes(&kernel.v_tables)
+        + vec_heap_bytes(&kernel.phase_challenges)
+        + vec_heap_bytes(&kernel.cycle_challenges)
+        + kernel.cycle.as_ref().map_or(0, CycleState::heap_bytes)
+        + vec_heap_bytes(&kernel.claim_columns)
+});
 
 impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
@@ -543,7 +618,8 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             phase_challenges: Vec::new(),
             cycle_challenges: Vec::new(),
             cycle: None,
-            rounds_bound: 0,
+            claim_columns: Vec::new(),
+            progress: RoundProgress::new(dimensions.sumcheck_rounds()),
         };
         kernel.init_phase(0);
         Ok(kernel)
@@ -876,7 +952,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             .cycle
             .as_ref()
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
-        let factors = 1 + cycle.ra.len();
+        let factors = 1 + self.dimensions.num_virtual_ra_polys();
 
         struct Scratch<F: Field> {
             /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
@@ -893,33 +969,46 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 steps: vec![F::zero(); factors],
             },
             |scratch, row, _x_in, e_in| {
-                {
-                    let val = cycle.combined_val.evals();
-                    let lo = e_in * val[2 * row];
-                    let hi = e_in * val[2 * row + 1];
-                    scratch.evals[0] = hi;
-                    scratch.steps[0] = hi - lo;
-                }
-                for ((ra, eval), step) in cycle
-                    .ra
-                    .iter()
-                    .zip(scratch.evals[1..].iter_mut())
-                    .zip(scratch.steps[1..].iter_mut())
-                {
-                    let table = ra.evals();
-                    let lo = table[2 * row];
-                    let hi = table[2 * row + 1];
-                    *eval = hi;
-                    *step = hi - lo;
-                }
-                accumulate_product(&scratch.evals, &mut scratch.lanes[0]);
-                for lane in 1..factors - 1 {
-                    for (eval, step) in scratch.evals.iter_mut().zip(&scratch.steps) {
-                        *eval += *step;
+                match &cycle.tables {
+                    CycleTables::Dense { combined_val, ra } => {
+                        {
+                            let val = combined_val.evals();
+                            let lo = e_in * val[2 * row];
+                            let hi = e_in * val[2 * row + 1];
+                            scratch.evals[0] = hi;
+                            scratch.steps[0] = hi - lo;
+                        }
+                        for ((ra, eval), step) in ra
+                            .iter()
+                            .zip(scratch.evals[1..].iter_mut())
+                            .zip(scratch.steps[1..].iter_mut())
+                        {
+                            let table = ra.evals();
+                            let lo = table[2 * row];
+                            let hi = table[2 * row + 1];
+                            *eval = hi;
+                            *step = hi - lo;
+                        }
                     }
-                    accumulate_product(&scratch.evals, &mut scratch.lanes[lane]);
+                    CycleTables::Pending(pending) => {
+                        // First cycle round: same pair math over the bases —
+                        // the values a dense materialization would hold.
+                        {
+                            let lo = e_in * self.pending_combined_base(pending, 2 * row);
+                            let hi = e_in * self.pending_combined_base(pending, 2 * row + 1);
+                            scratch.evals[0] = hi;
+                            scratch.steps[0] = hi - lo;
+                        }
+                        let ra_count = scratch.evals.len() - 1;
+                        for i in 0..ra_count {
+                            let lo = self.pending_ra_base(i, 2 * row);
+                            let hi = self.pending_ra_base(i, 2 * row + 1);
+                            scratch.evals[1 + i] = hi;
+                            scratch.steps[1 + i] = hi - lo;
+                        }
+                    }
                 }
-                accumulate_product(&scratch.steps, &mut scratch.lanes[factors - 1]);
+                accumulate_product_grid(&mut scratch.evals, &scratch.steps, &mut scratch.lanes);
             },
             |_x_out, e_out, scratch| {
                 let mut out = vec![F::Accumulator::default(); factors];
@@ -935,7 +1024,6 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 a
             },
         );
-
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
         Ok(cycle.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
     }
@@ -966,59 +1054,80 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
         }
 
+        // Snap the packed output-claim facts first: past this handoff the
+        // final flag walk reads one byte per cycle, not the 48 B row.
         let rows = self.rows.as_slice();
-        let combined_val: Vec<F> = map_indices(rows.len(), |j| {
+        const {
+            assert!(
+                LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
+                "table indices must fit the packed claim byte"
+            );
+        }
+        self.claim_columns = map_indices(rows.len(), |j| {
             let row = &rows[j];
-            let table_value = row
-                .table_index()
-                .map_or_else(F::zero, |index| table_values[index]);
-            let raf_value = if !row.raf_flag {
-                raf_interleaved
-            } else {
-                raf_identity
-            };
-            table_value + raf_value
+            let table = row.table_index().map_or(0, |index| index as u8 + 1);
+            table | (u8::from(row.raf_flag) << 7)
         });
 
-        let ra_count = self.dimensions.num_virtual_ra_polys();
-        let phases_per_ra = self.phases() / ra_count;
-        let address_bits = self.address_bits();
-        let v_tables = self.v_tables.as_slice();
-        let ra = (0..ra_count)
-            .map(|i| {
-                Polynomial::new(map_indices(rows.len(), |j| {
-                    let index = rows[j].lookup_index;
-                    let mut phase = i * phases_per_ra;
-                    let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
-                    let mut product =
-                        v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-                    for _ in 1..phases_per_ra {
-                        phase += 1;
-                        shift -= CHUNK_LEN;
-                        product *= v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
-                    }
-                    product
-                }))
-            })
-            .collect();
-
+        // The tables stay pending: the first cycle message evaluates these
+        // bases per row, and the first cycle bind materializes half-domain
+        // tables directly (rows and the phase eq tables stay alive until
+        // then).
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
-            combined_val: Polynomial::new(combined_val),
-            ra,
+            tables: CycleTables::Pending(PendingCycleTables {
+                table_values,
+                raf_interleaved,
+                raf_identity,
+            }),
             bind_scratch: Vec::new(),
         });
 
-        // The address-phase state is dead past this point.
+        // The address-phase state is dead past this point — except the
+        // bound-challenge eq tables, which the pending ra bases read until
+        // the first cycle bind materializes the dense tables.
         self.u_evals = Vec::new();
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
-        self.v_tables = Vec::new();
         self.buckets = Vec::new();
     }
 
+    /// The pending combined-value base at cycle `j` (packed-byte lookup).
+    #[inline]
+    fn pending_combined_base(&self, pending: &PendingCycleTables<F>, j: usize) -> F {
+        let packed = self.claim_columns[j];
+        let table_value = match packed & 0x7f {
+            0 => F::zero(),
+            table => pending.table_values[usize::from(table) - 1],
+        };
+        let raf_value = if packed & 0x80 == 0 {
+            pending.raf_interleaved
+        } else {
+            pending.raf_identity
+        };
+        table_value + raf_value
+    }
+
+    /// The pending `ra_i` base at cycle `j` (the phase eq-table product).
+    #[inline]
+    fn pending_ra_base(&self, i: usize, j: usize) -> F {
+        let ra_count = self.dimensions.num_virtual_ra_polys();
+        let phases_per_ra = self.phases() / ra_count;
+        let address_bits = self.address_bits();
+        let index = self.rows[j].lookup_index;
+        let mut phase = i * phases_per_ra;
+        let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
+        let mut product = self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+        for _ in 1..phases_per_ra {
+            phase += 1;
+            shift -= CHUNK_LEN;
+            product *= self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
+        }
+        product
+    }
+
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        if self.rounds_bound < self.address_bits() {
+        if self.progress.bound() < self.address_bits() {
             let bind_dense = |table: &mut Polynomial<F>| {
                 table.bind_with_order(challenge, BindingOrder::HighToLow);
             };
@@ -1047,7 +1156,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             self.phase_challenges.push(challenge);
 
             if self.phase_challenges.len() == CHUNK_LEN {
-                let phase = self.rounds_bound / CHUNK_LEN;
+                let phase = self.progress.bound() / CHUNK_LEN;
                 self.v_tables.push(eq_table(&self.phase_challenges));
                 for (checkpoint, table) in
                     self.prefix_checkpoints.iter_mut().zip(&self.prefix_tables)
@@ -1068,20 +1177,65 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 }
             }
         } else {
-            let cycle = self
-                .cycle
-                .as_mut()
-                .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
-            cycle.gruen.bind(challenge);
-            cycle
-                .combined_val
-                .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
-            for ra in &mut cycle.ra {
-                ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+            let pending = {
+                let cycle = self
+                    .cycle
+                    .as_mut()
+                    .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+                cycle.gruen.bind(challenge);
+                match &mut cycle.tables {
+                    CycleTables::Pending(pending) => Some(core::mem::replace(
+                        pending,
+                        PendingCycleTables {
+                            table_values: Vec::new(),
+                            raf_interleaved: F::zero(),
+                            raf_identity: F::zero(),
+                        },
+                    )),
+                    CycleTables::Dense { combined_val, ra } => {
+                        combined_val
+                            .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+                        for ra in ra {
+                            ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+                        }
+                        None
+                    }
+                }
+            };
+            if let Some(pending) = pending {
+                // First cycle bind: materialize the half-domain tables
+                // straight from the bases under this challenge — the same
+                // values a full-T materialization would bind to, without
+                // the full-T tables ever existing.
+                let half = self.claim_columns.len() / 2;
+                let combined_val: Vec<F> = map_indices(half, |position| {
+                    let lo = self.pending_combined_base(&pending, 2 * position);
+                    let hi = self.pending_combined_base(&pending, 2 * position + 1);
+                    lo + challenge * (hi - lo)
+                });
+                let ra_count = self.dimensions.num_virtual_ra_polys();
+                let ra: Vec<Polynomial<F>> = (0..ra_count)
+                    .map(|i| {
+                        Polynomial::new(map_indices(half, |position| {
+                            let lo = self.pending_ra_base(i, 2 * position);
+                            let hi = self.pending_ra_base(i, 2 * position + 1);
+                            lo + challenge * (hi - lo)
+                        }))
+                    })
+                    .collect();
+                // The rows' and phase eq tables' last read is behind us.
+                self.rows = Arc::new(Vec::new());
+                self.v_tables = Vec::new();
+                if let Some(cycle) = self.cycle.as_mut() {
+                    cycle.tables = CycleTables::Dense {
+                        combined_val: Polynomial::new(combined_val),
+                        ra,
+                    };
+                }
             }
             self.cycle_challenges.push(challenge);
         }
-        self.rounds_bound += 1;
+        self.progress.advance();
         Ok(())
     }
 }
@@ -1100,7 +1254,7 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        if self.rounds_bound < self.address_bits() {
+        if self.progress.bound() < self.address_bits() {
             Ok(self.address_message(previous_claim))
         } else {
             self.cycle_message(round, previous_claim)
@@ -1119,11 +1273,7 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.num_rounds() {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.num_rounds() - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let cycle = self
             .cycle
             .as_ref()
@@ -1138,15 +1288,15 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         let r_cycle: Vec<F> = self.cycle_challenges.iter().rev().copied().collect();
         let eq_cycle = TensorEqTable::<F>::new(&r_cycle);
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
-        let rows = self.rows.as_slice();
+        let claim_columns = self.claim_columns.as_slice();
         let (lookup_table_flags, instruction_raf_flag) = eq_cycle.par_fold_out_in(
             || vec![F::Accumulator::default(); num_tables + 1],
             |accumulators, row_index, _x_in, e_in| {
-                let row = &rows[row_index];
-                if let Some(index) = row.table_index() {
-                    accumulators[index].add(e_in);
+                let packed = claim_columns[row_index];
+                if packed & 0x7f != 0 {
+                    accumulators[usize::from(packed & 0x7f) - 1].add(e_in);
                 }
-                if row.raf_flag {
+                if packed & 0x80 != 0 {
                     accumulators[num_tables].add(e_in);
                 }
             },
@@ -1166,9 +1316,14 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
             },
         );
 
+        let CycleTables::Dense { ra, .. } = &cycle.tables else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "cycle tables still pending after full binding",
+            });
+        };
         Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
-            instruction_ra: cycle.ra.iter().map(|ra| ra.evals()[0]).collect(),
+            instruction_ra: ra.iter().map(|ra| ra.evals()[0]).collect(),
             instruction_raf_flag,
         })
     }

@@ -45,7 +45,10 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::collect_rows;
+use super::support::{
+    bind_pairs, collect_rows, fmadd_u64_split, gamma_powers_array, pin_derived_term,
+    RoundChallenges,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -65,23 +68,6 @@ struct SpartanShiftRow {
     is_first_in_sequence: OpFlag,
     #[opening(InstructionFlags(InstructionFlags::IsNoop))]
     is_noop: InstructionFlag,
-}
-
-/// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
-/// accumulator without overflowing it: the accumulator's headroom is one
-/// extra limb, which ~4 full-magnitude `field × u64` products exhaust, so the
-/// value is split into u32 halves (products ≤ 2^286, headroom ≥ 2^34 terms).
-/// `eq_shifted` must be `eq · 2^32`; the two fused adds sum to exactly
-/// `eq · F(value)`.
-#[inline]
-fn fmadd_u64_split<F: Field>(
-    accumulator: &mut F::SmallScalarAccumulator,
-    eq: F,
-    eq_shifted: F,
-    value: u64,
-) {
-    accumulator.fmadd_u64(eq_shifted, value >> 32);
-    accumulator.fmadd_u64(eq, value & 0xFFFF_FFFF);
 }
 
 pub struct OptimizedSpartanShift;
@@ -110,11 +96,7 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
         let cycles = 1usize << log_t;
         let rows: Vec<SpartanShiftRow> = collect_rows(witness, cycles)?;
 
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = [F::one(); 5];
-        for i in 1..5 {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers: [F; 5] = gamma_powers_array(inputs.challenges.gamma);
 
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);
@@ -197,7 +179,7 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
             r_product: r_product.to_vec(),
             rows,
             phase: Phase::PrefixSuffix { pairs },
-            bound_challenges: Vec::with_capacity(log_t),
+            challenges: RoundChallenges::new(log_t),
         }))
     }
 }
@@ -227,29 +209,53 @@ struct ShiftKernel<F: Field> {
     /// Raw per-cycle values, kept for the phase-2 regeneration.
     rows: Vec<SpartanShiftRow>,
     phase: Phase<F>,
-    bound_challenges: Vec<F>,
+    challenges: RoundChallenges<F>,
 }
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(ShiftKernel, |kernel| {
+    use crate::backend::vec_heap_bytes;
+    let phase = match &kernel.phase {
+        Phase::PrefixSuffix { pairs } => pairs
+            .iter()
+            .flat_map(|(p, q)| [p, q])
+            .map(vec_heap_bytes)
+            .sum::<usize>(),
+        Phase::Dense {
+            eq_plus_one_outer,
+            eq_plus_one_product,
+            unexpanded_pc,
+            pc,
+            is_virtual,
+            is_first_in_sequence,
+            is_noop,
+        } => [
+            eq_plus_one_outer,
+            eq_plus_one_product,
+            unexpanded_pc,
+            pc,
+            is_virtual,
+            is_first_in_sequence,
+            is_noop,
+        ]
+        .into_iter()
+        .map(vec_heap_bytes)
+        .sum::<usize>(),
+    };
+    vec_heap_bytes(&kernel.r_outer)
+        + vec_heap_bytes(&kernel.r_product)
+        + vec_heap_bytes(&kernel.rows)
+        + phase
+        + kernel.challenges.heap_bytes()
+});
+
 impl<F: Field> ShiftKernel<F> {
-    fn rounds_bound(&self) -> usize {
-        self.bound_challenges.len()
-    }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        let remaining = self.log_t - self.rounds_bound();
-        if remaining == 0 {
-            Ok(())
-        } else {
-            Err(SumcheckKernelError::NotFullyBound { remaining })
-        }
-    }
-
     /// Regenerate the dense phase from the raw values: the five columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
     /// table recombined from its suffix pair and bound-prefix evaluations.
     fn transition_to_dense(&mut self) {
-        let bound = self.rounds_bound();
-        let r_prefix: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
+        let bound = self.challenges.bound();
+        let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let eq_prefix = EqPolynomial::<F>::evals(&r_prefix, None);
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
         let chunk = eq_prefix.len();
@@ -315,26 +321,18 @@ impl<F: Field> ShiftKernel<F> {
     }
 
     fn bind(&mut self, r: F) {
-        self.bound_challenges.push(r);
+        self.challenges.push(r);
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q pairs.
         if matches!(&self.phase, Phase::PrefixSuffix { pairs } if pairs[0].0.len() == 2) {
             self.transition_to_dense();
             return;
         }
-        let bind_table = |table: &mut Vec<F>| {
-            let half = table.len() / 2;
-            for y in 0..half {
-                let lo = table[2 * y];
-                table[y] = lo + r * (table[2 * y + 1] - lo);
-            }
-            table.truncate(half);
-        };
         match &mut self.phase {
             Phase::PrefixSuffix { pairs } => {
                 for (p, q) in pairs {
-                    bind_table(p);
-                    bind_table(q);
+                    bind_pairs(p, r);
+                    bind_pairs(q, r);
                 }
             }
             Phase::Dense {
@@ -355,7 +353,7 @@ impl<F: Field> ShiftKernel<F> {
                     is_first_in_sequence,
                     is_noop,
                 ] {
-                    bind_table(table);
+                    bind_pairs(table, r);
                 }
             }
         }
@@ -451,7 +449,7 @@ impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SpartanShiftOutputClaims<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.challenges.require_complete()?;
         let Phase::Dense {
             unexpanded_pc,
             pc,
@@ -483,7 +481,7 @@ impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
+        self.challenges.require_complete()?;
         let Phase::Dense {
             eq_plus_one_outer,
             eq_plus_one_product,
@@ -498,12 +496,14 @@ impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
             (SpartanShiftPublic::EqPlusOneOuter, eq_plus_one_outer[0]),
             (SpartanShiftPublic::EqPlusOneProduct, eq_plus_one_product[0]),
         ] {
-            let id = JoltDerivedId::from(public);
-            let expected =
-                relation.derive_output_term(&id, input_points, output_points, challenges)?;
-            if got != expected {
-                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
-            }
+            pin_derived_term(
+                relation,
+                JoltDerivedId::from(public),
+                input_points,
+                output_points,
+                challenges,
+                got,
+            )?;
         }
         Ok(())
     }
@@ -560,7 +560,7 @@ mod tests {
     /// sequence (exercising the `is_virtual` / `is_first_in_sequence`
     /// columns), an explicit mid-trace no-op, and no-op padding to `2^log_t`
     /// (exercising `is_noop`).
-    fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R) -> R {
+    fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
         let plain_a = instruction(0x8000_0000, None, false);
         let virtual_first = instruction(0x8000_0004, Some(1), true);
         let virtual_last = instruction(0x8000_0004, Some(0), false);
@@ -585,7 +585,8 @@ mod tests {
             })
             .collect();
 
-        let preprocessing = JoltProgramPreprocessing {
+        use std::sync::Arc;
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 bytecode,
                 plain_a.address as u64,
@@ -595,8 +596,8 @@ mod tests {
             ram: RAMPreprocessing::default(),
             memory_layout: Default::default(),
             max_padded_trace_length: 1 << log_t,
-        };
-        let program = JoltProgram::default();
+        });
+        let program = Arc::new(JoltProgram::default());
         let config = JoltVmWitnessConfig::new(
             log_t,
             64,

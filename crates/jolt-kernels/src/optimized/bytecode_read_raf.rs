@@ -34,6 +34,7 @@
 //! by the private [`PcRowsKey`] type — the modular equivalent of legacy's
 //! shared `Arc<Vec<Cycle>>`).
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::bytecode::{
@@ -60,10 +61,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-#[cfg(feature = "parallel")]
-use super::support::merge_evals;
 use super::support::{
-    bind_all, collect_rows, eq_table, pair, round_poly_from_skipped_evals, scaled_eq_table,
+    bind_all, collect_rows, eq_table, gamma_powers_array, pair, par_sum_pair_groups,
+    par_sum_pair_groups_reusing, round_poly_from_skipped_evals, scaled_eq_table, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -84,63 +84,70 @@ pub(crate) struct PcRow {
 /// The session key of the shared per-cycle PC scan.
 struct PcRowsKey(Arc<Vec<PcRow>>);
 
+#[cfg(feature = "allocative")]
+crate::optimized::impl_allocative!(PcRowsKey, |rows| {
+    crate::backend::arc_vec_heap_bytes(&rows.0)
+});
+
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct PcBundle {
     bytecode_pc: BytecodePc,
     mapped_pc: MappedPc,
 }
 
-/// One trace scan per proof, shared by both phases through the session.
-fn pc_rows<F: Field>(
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Arc<Vec<PcRow>>, KernelError<F>> {
-    if session.state::<PcRowsKey>().is_none() {
-        let bundles: Vec<PcBundle> = collect_rows(witness, cycles)?;
-        let pack = |bundle: &PcBundle| {
-            let mapped = match bundle.mapped_pc.0 {
-                Some(pc) if pc as u32 as usize == pc && pc as u32 != COLD => pc as u32,
-                Some(_) => {
+impl PcRow {
+    /// One trace scan per proof, shared by both phases through the session.
+    fn shared<F: Field>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Arc<Vec<PcRow>>, KernelError<F>> {
+        if session.state::<PcRowsKey>().is_none() {
+            let bundles: Vec<PcBundle> = collect_rows(witness, cycles)?;
+            let pack = |bundle: &PcBundle| {
+                let mapped = match bundle.mapped_pc.0 {
+                    Some(pc) if pc as u32 as usize == pc && pc as u32 != COLD => pc as u32,
+                    Some(_) => {
+                        return Err(KernelError::InvariantViolation {
+                            reason: "bytecode PC exceeds the packed u32 range",
+                        })
+                    }
+                    None => COLD,
+                };
+                if bundle.bytecode_pc.0 as u32 as usize != bundle.bytecode_pc.0 {
                     return Err(KernelError::InvariantViolation {
                         reason: "bytecode PC exceeds the packed u32 range",
-                    })
+                    });
                 }
-                None => COLD,
+                Ok(PcRow {
+                    push_pc: bundle.bytecode_pc.0 as u32,
+                    mapped_pc: mapped,
+                })
             };
-            if bundle.bytecode_pc.0 as u32 as usize != bundle.bytecode_pc.0 {
-                return Err(KernelError::InvariantViolation {
-                    reason: "bytecode PC exceeds the packed u32 range",
-                });
-            }
-            Ok(PcRow {
-                push_pc: bundle.bytecode_pc.0 as u32,
-                mapped_pc: mapped,
-            })
-        };
-        #[cfg(feature = "parallel")]
-        let rows = bundles
-            .par_iter()
-            .map(pack)
-            .collect::<Result<Vec<_>, _>>()?;
-        #[cfg(not(feature = "parallel"))]
-        let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
-        session.park(PcRowsKey(Arc::new(rows)));
+            #[cfg(feature = "parallel")]
+            let rows = bundles
+                .par_iter()
+                .map(pack)
+                .collect::<Result<Vec<_>, _>>()?;
+            #[cfg(not(feature = "parallel"))]
+            let rows = bundles.iter().map(pack).collect::<Result<Vec<_>, _>>()?;
+            session.park(PcRowsKey(Arc::new(rows)));
+        }
+        let rows = session
+            .state::<PcRowsKey>()
+            .map(|key| Arc::clone(&key.0))
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode PC rows vanished from the session",
+            })?;
+        if rows.len() != cycles {
+            return Err(KernelError::TableSizeMismatch {
+                table: "bytecode cycle PC rows".to_owned(),
+                expected: cycles,
+                got: rows.len(),
+            });
+        }
+        Ok(rows)
     }
-    let rows = session
-        .state::<PcRowsKey>()
-        .map(|key| Arc::clone(&key.0))
-        .ok_or(KernelError::InvariantViolation {
-            reason: "bytecode PC rows vanished from the session",
-        })?;
-    if rows.len() != cycles {
-        return Err(KernelError::TableSizeMismatch {
-            table: "bytecode cycle PC rows".to_owned(),
-            expected: cycles,
-            got: rows.len(),
-        });
-    }
-    Ok(rows)
 }
 
 /// The five per-stage cycle-eq pushforwards onto the bytecode address domain,
@@ -161,10 +168,17 @@ fn stage_pushforwards<F: Field>(
     let e_hi: [Vec<F>; 5] = std::array::from_fn(|s| eq_table(&stage_cycle_points[s][..hi_bits]));
     let e_lo: [Vec<F>; 5] = std::array::from_fn(|s| eq_table(&stage_cycle_points[s][hi_bits..]));
 
-    let block = |range: std::ops::Range<usize>| -> [Vec<F>; 5] {
+    let block = |range: Range<usize>| -> [Vec<F>; 5] {
         let mut partial: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
         let mut inner: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
         let mut touched: Vec<usize> = Vec::with_capacity(in_len);
+        // Exact membership marker for `touched`: a field-value test
+        // (`inner[0][pc].is_zero()`) is not one — zero eq weights or
+        // cancellation would re-push a PC and double-count it in the fold
+        // below. Epochs make the reset per `j_hi` block free; the counter is
+        // bounded by the block range length (≤ 2^hi_bits), far below u32.
+        let mut seen: Vec<u32> = vec![0; addresses];
+        let mut epoch = 0u32;
         for j_hi in range {
             for &k in &touched {
                 for stage_inner in &mut inner {
@@ -172,10 +186,12 @@ fn stage_pushforwards<F: Field>(
                 }
             }
             touched.clear();
+            epoch += 1;
             let base = j_hi << lo_bits;
             for j_lo in 0..in_len {
                 let pc = rows[base + j_lo].push_pc as usize;
-                if inner[0][pc].is_zero() {
+                if seen[pc] != epoch {
+                    seen[pc] = epoch;
                     touched.push(pc);
                 }
                 for (stage_inner, stage_lo) in inner.iter_mut().zip(&e_lo) {
@@ -267,7 +283,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 });
             }
         }
-        let rows = pc_rows(session, witness, cycles)?;
+        let rows = PcRow::shared(session, witness, cycles)?;
         let entry_bytecode_index = relation.entry_bytecode_index();
         if entry_bytecode_index >= addresses
             || rows.iter().any(|row| row.push_pc as usize >= addresses)
@@ -277,11 +293,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             });
         }
 
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = [F::one(); 8];
-        for i in 1..8 {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers: [F; 8] = gamma_powers_array(inputs.challenges.gamma);
 
         let pushforwards =
             stage_pushforwards(stage_cycle_points, &rows, addresses).map(Polynomial::new);
@@ -296,7 +308,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         };
 
         Ok(Box::new(AddressKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             committed_program: relation.committed_program(),
             stage_weights: std::array::from_fn(|s| gamma_powers[s]),
             entry_weight: gamma_powers[7],
@@ -312,13 +324,12 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             int_table,
             entry_trace: one_hot(rows[0].push_pc as usize),
             entry_expected: one_hot(entry_bytecode_index),
-            rounds_bound: 0,
         }))
     }
 }
 
 struct AddressKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     committed_program: bool,
     stage_weights: [F; 5],
     entry_weight: F,
@@ -332,8 +343,21 @@ struct AddressKernel<F: Field> {
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
-    rounds_bound: usize,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(AddressKernel, |kernel| {
+    use crate::backend::poly_heap_bytes;
+    kernel
+        .pushforwards
+        .iter()
+        .chain(&kernel.values)
+        .map(poly_heap_bytes)
+        .sum::<usize>()
+        + poly_heap_bytes(&kernel.int_table)
+        + poly_heap_bytes(&kernel.entry_trace)
+        + poly_heap_bytes(&kernel.entry_expected)
+});
 
 impl<F: Field> AddressKernel<F> {
     fn bind(&mut self, challenge: F) {
@@ -348,7 +372,7 @@ impl<F: Field> AddressKernel<F> {
                 ]),
             challenge,
         );
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
@@ -377,7 +401,7 @@ impl<F: Field> AddressKernel<F> {
 
 impl<F: Field> ProveRounds<F> for AddressKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -391,25 +415,10 @@ impl<F: Field> ProveRounds<F> for AddressKernel<F> {
         }
         let half = self.entry_trace.len() / 2;
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || vec![F::zero(); 2],
-                |mut acc, y| {
-                    let group = self.group_evals(y);
-                    acc[0] += group[0];
-                    acc[1] += group[1];
-                    acc
-                },
-            )
-            .reduce(|| vec![F::zero(); 2], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = (0..half).fold(vec![F::zero(); 2], |mut acc, y| {
+        let evals = par_sum_pair_groups(half, 2, |acc, y| {
             let group = self.group_evals(y);
             acc[0] += group[0];
             acc[1] += group[1];
-            acc
         });
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
@@ -428,11 +437,7 @@ impl<F: Field> SumcheckKernel<F> for AddressKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let mut intermediate =
             self.entry_weight * self.entry_trace.evals()[0] * self.entry_expected.evals()[0];
         let bound_int = self.int_table.evals()[0];
@@ -477,7 +482,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
                 reason: "bytecode address chunk count disagrees with the committed RA count",
             });
         }
-        let rows = pc_rows(session, witness, cycles)?;
+        let rows = PcRow::shared(session, witness, cycles)?;
         // This is the PC scan's last consumer: remove the session's copy so
         // the rows free at the lazy fold's materialization instead of living
         // to the end of the proof.
@@ -485,7 +490,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
 
         // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
         // one-hot grid, served lazily off the sparse per-cycle indices for
-        // the first three binds instead of `d × T` dense.
+        // the first four binds instead of `d × T` dense.
         let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
         let selectors = (0..num_ra)
             .map(|index| {
@@ -501,11 +506,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
         // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
         // stage-1 cycle point, SpartanShiftRaf the stage-3 one).
         let stage_values = relation.stage_values_at_r_address()?;
-        let gamma = inputs.challenges.gamma;
-        let mut gamma_powers = [F::one(); 8];
-        for i in 1..8 {
-            gamma_powers[i] = gamma_powers[i - 1] * gamma;
-        }
+        let gamma_powers: [F; 8] = gamma_powers_array(inputs.challenges.gamma);
         let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
         let mut stage_weights: [F; 5] = std::array::from_fn(|s| gamma_powers[s] * stage_values[s]);
         stage_weights[0] += gamma_powers[5] * int_at_r_address;
@@ -541,12 +542,11 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
         }
 
         Ok(Box::new(CycleKernel {
-            rounds: relation.rounds(),
+            progress: RoundProgress::new(relation.rounds()),
             degree: relation.degree(),
             ra,
             combined: Polynomial::new(combined),
             output_openings,
-            rounds_bound: 0,
         }))
     }
 }
@@ -578,21 +578,30 @@ impl ChunkIndexSource for BytecodePcChunks {
 }
 
 struct CycleKernel<F: Field> {
-    rounds: usize,
+    progress: RoundProgress,
     degree: usize,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
     combined: Polynomial<F>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
     output_openings: Vec<JoltOpeningId>,
-    rounds_bound: usize,
 }
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(CycleKernel, |kernel| {
+    use crate::backend::{arc_vec_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+    kernel
+        .ra
+        .heap_bytes(|source| arc_vec_heap_bytes(&source.rows) + vec_heap_bytes(&source.selectors))
+        + poly_heap_bytes(&kernel.combined)
+        + vec_heap_bytes(&kernel.output_openings)
+});
 
 impl<F: Field> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all([&mut self.combined], challenge);
         self.ra.bind(challenge);
-        self.rounds_bound += 1;
+        self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
@@ -620,7 +629,7 @@ impl<F: Field> CycleKernel<F> {
 
 impl<F: Field> ProveRounds<F> for CycleKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -636,26 +645,12 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
-        #[cfg(feature = "parallel")]
-        let evals = (0..half)
-            .into_par_iter()
-            .fold(
-                || (vec![F::zero(); slots], vec![(F::zero(), F::zero()); num_ra]),
-                |(mut acc, mut ra_pairs), y| {
-                    self.accumulate_group(y, &mut acc, &mut ra_pairs);
-                    (acc, ra_pairs)
-                },
-            )
-            .map(|(acc, _)| acc)
-            .reduce(|| vec![F::zero(); slots], merge_evals);
-        #[cfg(not(feature = "parallel"))]
-        let evals = {
-            let mut ra_pairs = vec![(F::zero(), F::zero()); num_ra];
-            (0..half).fold(vec![F::zero(); slots], |mut acc, y| {
-                self.accumulate_group(y, &mut acc, &mut ra_pairs);
-                acc
-            })
-        };
+        let evals = par_sum_pair_groups_reusing(
+            half,
+            slots,
+            || vec![(F::zero(), F::zero()); num_ra],
+            |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
+        );
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
     }
@@ -673,11 +668,7 @@ impl<F: Field> SumcheckKernel<F> for CycleKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        if self.rounds_bound != self.rounds {
-            return Err(SumcheckKernelError::NotFullyBound {
-                remaining: self.rounds - self.rounds_bound,
-            });
-        }
+        self.progress.require_complete()?;
         let ra = &self.ra;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {
@@ -718,13 +709,53 @@ mod tests {
     use jolt_witness::{JoltWitnessOracle, ProgramSource};
 
     use super::*;
-    use crate::optimized::harness::{
+    use crate::optimized::parity::{
         probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
     };
     use crate::ReferenceBackend;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
+    }
+
+    /// `stage_pushforwards` membership must not depend on field values: with
+    /// a Boolean low-point coordinate, stage 0's eq weight is exactly zero on
+    /// half the low domain, so a repeated PC whose first visit carried weight
+    /// zero used to be pushed into `touched` twice and double-counted in
+    /// every stage's fold.
+    #[test]
+    fn stage_pushforwards_membership_is_value_independent() {
+        let log_t = 4usize;
+        let addresses = 4usize;
+        // Stage 0's low half becomes [1, r]: eq weights are literally zero
+        // for j_lo ∈ {0, 1}. Stages 1–4 keep generic points.
+        let mut stage_cycle_points: [Vec<Fr>; 5] =
+            std::array::from_fn(|s| synthetic_point(log_t, 101 + s as u64));
+        stage_cycle_points[0][2] = fr(1);
+
+        // Block j_hi = 0 visits PC 2 first at zero stage-0 weight (j_lo = 0),
+        // then again at j_lo = 2; later blocks repeat PCs generically.
+        let pcs: [usize; 16] = [2, 0, 2, 1, 3, 3, 0, 2, 1, 1, 1, 1, 0, 3, 2, 0];
+        let rows: Vec<PcRow> = pcs
+            .iter()
+            .map(|&pc| PcRow {
+                push_pc: pc as u32,
+                mapped_pc: 0,
+            })
+            .collect();
+
+        // The naive pushforward over the full eq tables — the same monomials
+        // the split accumulates, so equality is exact.
+        let expected: [Vec<Fr>; 5] = std::array::from_fn(|s| {
+            let eq: Vec<Fr> = eq_table(&stage_cycle_points[s]);
+            let mut out = vec![fr(0); addresses];
+            for (j, &pc) in pcs.iter().enumerate() {
+                out[pc] += eq[j];
+            }
+            out
+        });
+        let got = stage_pushforwards(&stage_cycle_points, &rows, addresses);
+        assert_eq!(got, expected);
     }
 
     fn run_pair(committed_program: bool) {

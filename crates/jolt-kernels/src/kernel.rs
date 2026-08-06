@@ -62,7 +62,14 @@ pub enum SumcheckKernelError<F: FieldCore> {
 /// [`validate_derived_tables`](Self::validate_derived_tables). A kernel that
 /// does keep a copy (the naive tier clones the driver-supplied instance)
 /// must treat the threaded-in relation as authoritative.
-pub trait SumcheckKernel<F: Field>: ProveRounds<F>
+///
+/// Kernels are [`MaybeAllocative`](crate::MaybeAllocative): under the
+/// `allocative` feature the generated drivers snapshot every live member
+/// into a mid-stage heap flamegraph right after `prepare` — the stage's
+/// retained-memory peak. Implement it with size arithmetic
+/// (`Vec` capacity × element size; see the reference kernels) so `F` stays
+/// unbounded.
+pub trait SumcheckKernel<F: Field>: ProveRounds<F> + crate::backend::MaybeAllocative
 where
     SumcheckInputClaims<F, Self::Relation>: InputClaims<F>,
     SumcheckOutputClaims<F, Self::Relation>: OutputClaims<F>,

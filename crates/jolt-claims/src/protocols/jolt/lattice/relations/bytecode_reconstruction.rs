@@ -23,8 +23,8 @@
 //! multilinears per bound variable, hence degree 2.
 
 use jolt_field::RingCore;
-use jolt_poly::math::Math;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_utils::Math;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
@@ -56,6 +56,7 @@ pub struct BytecodeChunkReconstructionInputClaims<C> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeChunkReconstructionChallenges<F> {
     #[challenge(BytecodeChunkReconstructionChallenge::Gamma)]
     pub gamma: F,

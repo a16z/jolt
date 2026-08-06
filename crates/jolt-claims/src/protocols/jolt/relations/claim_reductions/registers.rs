@@ -18,6 +18,7 @@ use crate::{
 /// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
 /// values reduced to the Spartan point), all sharing the single reduction opening
 /// point. Generic over the cell.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -48,6 +49,7 @@ pub struct RegistersClaimReductionInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the registers claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RegistersClaimReductionChallenges<F> {
     #[challenge(RegistersClaimReductionChallenge::Gamma)]
     pub gamma: F,

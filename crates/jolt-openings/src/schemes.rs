@@ -178,19 +178,25 @@ pub trait StreamingCommitment: CommitmentScheme {
         Self::feed(partial, &values, setup);
     }
 
-    /// Feed a batch of consecutive `row_width`-wide rows at once — equivalent
-    /// to calling [`feed_i128`](Self::feed_i128) on each window of `rows` in
-    /// order. Each row's commitment is independent and only the append order
-    /// is sequenced, so schemes may override this to compute the windows in
-    /// parallel.
-    fn feed_i128_rows(
+    /// Feed a batch of consecutive `row_width`-wide rows, with values
+    /// produced by `value` per flat index (`count` a multiple of
+    /// `row_width`) — equivalent to calling [`feed_i128`](Self::feed_i128)
+    /// on each window in order. Each row's commitment is independent and
+    /// only the append order is sequenced, so schemes may override this to
+    /// compute the windows in parallel; the closure lets callers feed
+    /// straight off a packed source without staging the whole batch.
+    fn feed_i128_rows_with(
         partial: &mut Self::PartialCommitment,
-        rows: &[i128],
+        value: impl Fn(usize) -> i128 + Sync,
+        count: usize,
         row_width: usize,
         setup: &Self::ProverSetup,
     ) {
-        for row in rows.chunks(row_width) {
-            Self::feed_i128(partial, row, setup);
+        let mut row = Vec::with_capacity(row_width);
+        for base in (0..count).step_by(row_width) {
+            row.clear();
+            row.extend((base..base + row_width).map(&value));
+            Self::feed_i128(partial, &row, setup);
         }
     }
 
@@ -206,22 +212,30 @@ pub trait StreamingCommitment: CommitmentScheme {
         chunk: &[Option<usize>],
     ) -> Self::OneHotChunkCommitment;
 
-    /// Process a batch of consecutive `chunk_width`-column one-hot chunks at
-    /// once — equivalent to calling
+    /// Process a batch of consecutive `chunk_width`-column one-hot chunks,
+    /// with hot addresses produced by `hot_address` per flat index —
+    /// equivalent to calling
     /// [`process_one_hot_chunk`](Self::process_one_hot_chunk) on each window
-    /// of `chunks` in order and collecting the results. Chunk commitments are
+    /// in order and collecting the results. Chunk commitments are
     /// independent, so schemes may override this to compute the windows in
-    /// parallel.
-    fn process_one_hot_chunks(
+    /// parallel; the closure lets callers feed straight off a packed source
+    /// without staging the whole batch.
+    fn process_one_hot_chunks_with(
         context: &mut Self::OneHotStreamContext,
         setup: &Self::ProverSetup,
         one_hot_k: usize,
-        chunks: &[Option<usize>],
+        hot_address: impl Fn(usize) -> Option<usize> + Sync,
+        count: usize,
         chunk_width: usize,
     ) -> Vec<Self::OneHotChunkCommitment> {
-        chunks
-            .chunks(chunk_width)
-            .map(|chunk| Self::process_one_hot_chunk(context, setup, one_hot_k, chunk))
+        let mut chunk = Vec::with_capacity(chunk_width);
+        (0..count)
+            .step_by(chunk_width)
+            .map(|base| {
+                chunk.clear();
+                chunk.extend((base..(base + chunk_width).min(count)).map(&hot_address));
+                Self::process_one_hot_chunk(context, setup, one_hot_k, &chunk)
+            })
             .collect()
     }
 
@@ -360,6 +374,18 @@ pub trait BatchOpeningScheme {
         T: Transcript<Challenge = Self::Field>;
 }
 
+/// The prover-side outputs of a hiding batch opening: the native proof, the
+/// hiding commitment binding the joint evaluation, that commitment's blind,
+/// and the joint evaluation itself (`Σ γⁱ · evalᵢ`) — the last two are the
+/// secrets a downstream ZK layer (BlindFold's final-opening binding) opens
+/// the hiding commitment with.
+pub struct ZkBatchOpening<S: ZkBatchOpeningScheme + ?Sized> {
+    pub proof: S::Proof,
+    pub hiding_commitment: S::HidingCommitment,
+    pub blind: S::Blind,
+    pub joint_evaluation: S::Field,
+}
+
 /// ZK same-point batching for schemes with native hiding openings.
 ///
 /// The cleartext evaluations are not part of the public statement — the
@@ -371,10 +397,6 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
     type HidingCommitment;
     type Blind;
 
-    #[expect(
-        clippy::type_complexity,
-        reason = "ZK batch openings return the native proof, hiding commitment, and blind"
-    )]
     fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
@@ -383,7 +405,7 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
         hints: Self::Hints,
         evaluations: Vec<Self::Field>,
         transcript: &mut T,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
+    ) -> Result<ZkBatchOpening<Self>, OpeningsError>
     where
         Self: 'a,
         T: Transcript<Challenge = Self::Field>;
@@ -578,6 +600,11 @@ where
     type HidingCommitment = PCS::HidingCommitment;
     type Blind = PCS::Blind;
 
+    #[tracing::instrument(
+        skip_all,
+        name = "HomomorphicBatch::prove_batch_zk",
+        fields(claims = commitments.len())
+    )]
     fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
@@ -586,7 +613,7 @@ where
         hints: Self::Hints,
         evaluations: Vec<Self::Field>,
         transcript: &mut T,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
+    ) -> Result<ZkBatchOpening<Self>, OpeningsError>
     where
         Self: 'a,
         T: Transcript<Challenge = Self::Field>,
@@ -628,7 +655,12 @@ where
         )?;
         ZkEvaluationClaim::new(point.as_slice(), &hiding_commitment)
             .append_to_transcript(transcript);
-        Ok((proof, hiding_commitment, blind))
+        Ok(ZkBatchOpening {
+            proof,
+            hiding_commitment,
+            blind,
+            joint_evaluation: joint_eval,
+        })
     }
 
     fn verify_batch_zk<T>(
