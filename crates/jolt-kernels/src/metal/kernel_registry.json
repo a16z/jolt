@@ -1085,7 +1085,7 @@
         "path": "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
         "slot_id": "spartan_outer_remainder",
         "contract_schema": 2,
-        "lifecycle": "fresh_init"
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "spartan_outer_uniskip_search",

@@ -91,8 +91,8 @@ class MetalKernelRegistryTests(unittest.TestCase):
         self.assertEqual(binding["artifact_id"], "outer_remainder_search_v2")
         self.assertEqual(binding["slot_id"], "spartan_outer_remainder")
         self.assertEqual(binding["contract_schema"], 2)
-        self.assertEqual(binding["lifecycle"], "fresh_init")
-        self.assertTrue(binding["fresh_init_eligible"])
+        self.assertEqual(binding["lifecycle"], "existing_runs_only")
+        self.assertFalse(binding["fresh_init_eligible"])
         self.assertEqual(len(binding["registry_sha256"]), 64)
         self.assertEqual(
             binding["registry_sha256"],
@@ -115,13 +115,13 @@ class MetalKernelRegistryTests(unittest.TestCase):
 
     def test_slot_has_at_most_one_fresh_template(self) -> None:
         registry = metal_kernel_registry.read_registry(REGISTRY)
-        template = copy.deepcopy(
-            next(
-                artifact
-                for artifact in registry["artifacts"]["templates"]
-                if artifact["id"] == "outer_remainder_search_v2"
-            )
+        original = next(
+            artifact
+            for artifact in registry["artifacts"]["templates"]
+            if artifact["id"] == "outer_remainder_search_v2"
         )
+        original["lifecycle"] = "fresh_init"
+        template = copy.deepcopy(original)
         template["id"] = "outer_remainder_second_fresh"
         registry["artifacts"]["templates"].append(template)
         slot = next(
@@ -134,22 +134,16 @@ class MetalKernelRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at most one fresh-init"):
             metal_kernel_registry.validate_registry(ROOT, registry)
 
-    def test_registry_requires_a_fresh_template(self) -> None:
+    def test_schema_two_template_may_be_retired(self) -> None:
         registry = metal_kernel_registry.read_registry(REGISTRY)
-        registry["artifacts"]["templates"] = [
+        template = next(
             artifact
             for artifact in registry["artifacts"]["templates"]
-            if artifact["id"] != "outer_remainder_search_v2"
-        ]
-        slot = next(
-            slot
-            for slot in registry["slots"]
-            if slot["id"] == "spartan_outer_remainder"
+            if artifact["id"] == "outer_remainder_search_v2"
         )
-        slot["artifacts"]["templates"].remove("outer_remainder_search_v2")
+        template["lifecycle"] = "existing_runs_only"
 
-        with self.assertRaisesRegex(ValueError, "must contain a fresh-init"):
-            metal_kernel_registry.validate_registry(ROOT, registry)
+        metal_kernel_registry.validate_registry(ROOT, registry)
 
     def test_library_source_order_is_bound_to_the_fragment_manifest(self) -> None:
         registry = metal_kernel_registry.read_registry(REGISTRY)

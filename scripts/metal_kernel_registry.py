@@ -328,10 +328,12 @@ def _validate_artifacts(
                     or contract_schema not in {1, 2}
                 ):
                     raise ValueError("template contract schema is unsupported")
-                expected_lifecycle = (
-                    "fresh_init" if contract_schema == 2 else "existing_runs_only"
+                allowed_lifecycles = (
+                    {"existing_runs_only"}
+                    if contract_schema == 1
+                    else {"existing_runs_only", "fresh_init"}
                 )
-                if lifecycle != expected_lifecycle:
+                if lifecycle not in allowed_lifecycles:
                     raise ValueError("template lifecycle does not match its contract schema")
                 template = json.loads(path.read_text())
                 if template.get("schema_version") != contract_schema:
@@ -466,8 +468,6 @@ def _validate_slot_artifacts(
         for artifact in artifacts["templates"].values()
         if artifact["lifecycle"] == "fresh_init"
     ]
-    if not fresh_slots:
-        raise ValueError("the registry must contain a fresh-init template")
     if len(fresh_slots) != len(set(fresh_slots)):
         raise ValueError("a slot may have at most one fresh-init template")
 

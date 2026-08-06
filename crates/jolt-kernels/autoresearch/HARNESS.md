@@ -214,10 +214,12 @@ python3 scripts/metal_autoresearch.py goal-prompt GOAL_CONTRACT
 
 The registry binds every template to one canonical production slot and records its
 contract schema and lifecycle. A slot may expose at most one `fresh_init` template;
-schema-1 entries are `existing_runs_only`. Initialization fails before creating a
-run directory or launching an evaluator if the template path, declared slot,
-lifecycle, registry owner, or registry digest disagree. `validate-template` still
-reports legacy templates as valid but not fresh-init eligible.
+schema-1 entries are always `existing_runs_only`, while schema-2 entries become
+`existing_runs_only` when their phase ends. The registry may have no live template
+between phases. Initialization fails before creating a run directory or launching
+an evaluator if the template path, declared slot, lifecycle, registry owner, or
+registry digest disagree. `validate-template` reports retired templates as valid
+history but not fresh-init eligible.
 
 ## Requirement-to-code map
 

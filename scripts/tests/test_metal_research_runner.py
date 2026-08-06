@@ -20,10 +20,27 @@ from scripts.metal_research.contracts import validate_template
 from scripts.metal_research.paired import paired_summary
 from scripts.metal_research.results import adapt_result, validate_tier_result
 from scripts.metal_research import runner
-from scripts import metal_autoresearch
+from scripts import metal_autoresearch, metal_kernel_registry
 
 
 ROOT = Path(__file__).resolve().parents[2]
+OUTER_V2_TEMPLATE = (
+    ROOT / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+)
+REAL_RESOLVE_TEMPLATE_BINDING = metal_kernel_registry.resolve_template_binding
+
+
+def resolve_test_fresh_outer_binding(
+    root: Path, registry: dict[str, object], template_path: Path
+) -> dict[str, object]:
+    binding = REAL_RESOLVE_TEMPLATE_BINDING(root, registry, template_path)
+    if template_path.resolve() == OUTER_V2_TEMPLATE.resolve():
+        return {
+            **binding,
+            "lifecycle": "fresh_init",
+            "fresh_init_eligible": True,
+        }
+    return binding
 
 
 def evaluator() -> dict[str, object]:
@@ -2160,6 +2177,13 @@ class ResultAdapterTests(unittest.TestCase):
 
 class RunnerIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.binding_patch = mock.patch.object(
+            metal_kernel_registry,
+            "resolve_template_binding",
+            side_effect=resolve_test_fresh_outer_binding,
+        )
+        self.binding_patch.start()
+        self.addCleanup(self.binding_patch.stop)
         self.sealing_patch = mock.patch.object(
             runner,
             "_continue_binary_sealing",
@@ -4979,6 +5003,10 @@ class DispatchAndGoalTests(unittest.TestCase):
         legacy.outside_editable_worktree_digest.return_value = "outside"
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             runner, "_legacy", return_value=legacy
+        ), mock.patch.object(
+            metal_kernel_registry,
+            "resolve_template_binding",
+            side_effect=resolve_test_fresh_outer_binding,
         ), mock.patch.object(runner, "_continue_binary_sealing") as seal:
             with self.assertRaisesRegex(ValueError, "baseline snapshot changed"):
                 runner.init_run(
@@ -5010,7 +5038,7 @@ class DispatchAndGoalTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         initialize.assert_not_called()
 
-    def test_v2_template_can_be_validated_without_initializing_a_run(self) -> None:
+    def test_retired_v2_template_can_be_validated_without_initializing_a_run(self) -> None:
         template = (
             ROOT
             / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
@@ -5020,8 +5048,19 @@ class DispatchAndGoalTests(unittest.TestCase):
 
         self.assertTrue(result["valid"])
         self.assertEqual(result["slot_id"], "spartan_outer_remainder")
-        self.assertEqual(result["lifecycle"], "fresh_init")
-        self.assertTrue(result["fresh_init_eligible"])
+        self.assertEqual(result["lifecycle"], "existing_runs_only")
+        self.assertFalse(result["fresh_init_eligible"])
+
+    def test_retired_v2_template_cannot_initialize_a_run(self) -> None:
+        template = (
+            ROOT
+            / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            with self.assertRaisesRegex(ValueError, "existing-run-only"):
+                runner.init_run(ROOT, template, run_dir)
+            self.assertFalse(run_dir.exists())
 
     def test_schema_one_template_is_readable_but_cannot_start_a_fresh_run(self) -> None:
         template = (
