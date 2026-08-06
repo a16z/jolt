@@ -351,6 +351,28 @@ class VersionedContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "checkpoint metric"):
             validate_template(tampered, ROOT)
 
+        checkpoint_mismatches = []
+        tampered = copy.deepcopy(template)
+        tampered["mechanism_phase"]["id"] = "opening_row_owner_v1"
+        checkpoint_mismatches.append(tampered)
+        tampered = copy.deepcopy(template)
+        tampered["mechanism_phase"]["checkpoint"]["after_candidates"] = 2
+        checkpoint_mismatches.append(tampered)
+        tampered = copy.deepcopy(template)
+        tampered["mechanism_phase"]["checkpoint"]["metrics"][0][
+            "threshold"
+        ] = 37.0
+        checkpoint_mismatches.append(tampered)
+        tampered = copy.deepcopy(template)
+        tampered["mechanism_phase"]["checkpoint"]["metrics"][0][
+            "name"
+        ] = "openings_gpu_active_ms"
+        checkpoint_mismatches.append(tampered)
+        for tampered in checkpoint_mismatches:
+            with self.subTest(tampered=tampered["mechanism_phase"]):
+                with self.assertRaisesRegex(ValueError, "phase evidence"):
+                    validate_template(tampered, ROOT)
+
         tampered = copy.deepcopy(template)
         tampered["mechanism_phase"]["checkpoint"]["metrics"].append(
             copy.deepcopy(

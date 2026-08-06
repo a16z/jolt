@@ -32,6 +32,12 @@ _RESULT_ADAPTERS = {
     "outer_remainder_v3",
     "metal_piop_v7",
 } | runtime_artifact_result_adapters()
+PHASE_CHECKPOINT_FIELDS = {
+    "materialize_gpu_active_ms": "materialize",
+    "first_bind_gpu_active_ms": "first_bind",
+    "dense_rounds_gpu_active_ms": "dense_rounds",
+    "openings_gpu_active_ms": "openings",
+}
 
 
 def _relative_file(root: Path, value: Any, description: str) -> Path:
@@ -75,6 +81,61 @@ def _positive(value: Any, description: str) -> float:
     ):
         raise ValueError(f"{description} must be finite and positive")
     return float(value)
+
+
+def phase_checkpoint_record(
+    phase: dict[str, Any],
+    result: dict[str, Any],
+    candidates_admitted: int,
+) -> dict[str, Any]:
+    checkpoint = phase["checkpoint"]
+    due = candidates_admitted >= int(checkpoint["after_candidates"])
+    record: dict[str, Any] = {
+        "phase_id": phase["id"],
+        "after_candidates": checkpoint["after_candidates"],
+        "due": due,
+        "passed": None,
+        "metrics": [],
+    }
+    if not due:
+        return record
+    if result.get("fingerprint", {}).get("log_n") != checkpoint["scale_log_n"]:
+        raise ValueError("phase checkpoint result used the wrong trace scale")
+    timings = result.get("telemetry", {}).get("candidate_phase_gpu_active_ns")
+    if not isinstance(timings, dict):
+        raise ValueError("phase checkpoint telemetry is missing")
+    passed = True
+    metrics = []
+    for contract in checkpoint["metrics"]:
+        field = PHASE_CHECKPOINT_FIELDS.get(contract["name"])
+        value = timings.get(field) if field is not None else None
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise ValueError("phase checkpoint telemetry is invalid")
+        observed_ms = float(value) / 1_000_000.0
+        threshold = float(contract["threshold"])
+        metric_passed = (
+            observed_ms <= threshold
+            if contract["comparison"] == "lte"
+            else observed_ms >= threshold
+        )
+        metrics.append(
+            {
+                "name": contract["name"],
+                "comparison": contract["comparison"],
+                "threshold": threshold,
+                "observed_ms": observed_ms,
+                "passed": metric_passed,
+            }
+        )
+        passed = passed and metric_passed
+    record["metrics"] = metrics
+    record["passed"] = passed
+    return record
 
 
 def validate_goal_contract(contract: dict[str, Any]) -> None:
@@ -556,19 +617,13 @@ def _validate_mechanism_phase(
         or not checkpoint["metrics"]
     ):
         raise ValueError("mechanism phase checkpoint is invalid")
-    supported_metrics = {
-        "materialize_gpu_active_ms",
-        "first_bind_gpu_active_ms",
-        "dense_rounds_gpu_active_ms",
-        "openings_gpu_active_ms",
-    }
     metric_names: set[str] = set()
     for metric in checkpoint["metrics"]:
         if (
             not isinstance(metric, dict)
             or set(metric) != {"name", "comparison", "threshold"}
             or not isinstance(metric["name"], str)
-            or metric["name"] not in supported_metrics
+            or metric["name"] not in PHASE_CHECKPOINT_FIELDS
             or metric["name"] in metric_names
             or metric["comparison"] not in {"lte", "gte"}
         ):
@@ -646,6 +701,7 @@ def _validate_profile_cycle(
     root: Path,
     frozen: set[str],
     proxy: dict[str, Any],
+    phase: dict[str, Any],
 ) -> tuple[int, dict[str, Any]]:
     fields = {
         "controller_wall_ns",
@@ -747,32 +803,15 @@ def _validate_profile_cycle(
         raise ValueError(f"iteration {name} phase evidence is invalid")
     if normalized.get("telemetry", {}).get("candidate_phase_gpu_active_ns") != phases:
         raise ValueError(f"iteration {name} phases do not match the raw result")
-    checkpoint = cycle["checkpoint"]
-    if (
-        not isinstance(checkpoint, dict)
-        or set(checkpoint)
-        != {"phase_id", "after_candidates", "due", "passed", "metrics"}
-        or checkpoint["due"] is not True
-        or checkpoint["passed"] is not False
-        or not isinstance(checkpoint["metrics"], list)
-        or len(checkpoint["metrics"]) != 1
-    ):
-        raise ValueError(f"iteration {name} checkpoint evidence is invalid")
-    metric = checkpoint["metrics"][0]
-    if (
-        not isinstance(metric, dict)
-        or set(metric)
-        != {"name", "comparison", "threshold", "observed_ms", "passed"}
-        or metric["name"] != "materialize_gpu_active_ms"
-        or metric["comparison"] != "lte"
-        or metric["passed"] is not False
-        or not math.isclose(
-            float(metric["observed_ms"]),
-            float(phases["materialize"]) / 1_000_000.0,
-            rel_tol=1e-12,
+    expected_checkpoint = phase_checkpoint_record(
+        phase,
+        normalized,
+        int(phase["checkpoint"]["after_candidates"]),
+    )
+    if cycle["checkpoint"] != expected_checkpoint:
+        raise ValueError(
+            f"iteration {name} checkpoint is not derived from phase evidence"
         )
-    ):
-        raise ValueError(f"iteration {name} checkpoint is not derived from phase evidence")
 
     compilation = cycle["compilation"]
     if (
@@ -811,6 +850,7 @@ def _validate_iteration_profile(
     editable: set[str],
     frozen: set[str],
     proxy: dict[str, Any],
+    phase: dict[str, Any],
     verify_editable_sources: bool,
 ) -> None:
     required = {
@@ -1004,6 +1044,7 @@ def _validate_iteration_profile(
         root,
         frozen,
         proxy,
+        phase,
     )
     warm_compile, warm_raw = _validate_profile_cycle(
         "warm cycle",
@@ -1013,6 +1054,7 @@ def _validate_iteration_profile(
         root,
         frozen,
         proxy,
+        phase,
     )
     fingerprints = [cold_raw.get("fingerprint"), warm_raw.get("fingerprint")]
     telemetry = [cold_raw.get("telemetry"), warm_raw.get("telemetry")]
@@ -1353,6 +1395,7 @@ def validate_template(
         editable,
         frozen,
         proxy,
+        template["mechanism_phase"],
         verify_editable_profile_sources,
     )
     holdout = executable["holdout"]

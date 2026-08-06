@@ -38,7 +38,11 @@ from .binaries import (
     verify_sealed_binary_store,
 )
 from .budget import BudgetExhausted, admit_tier, charge_attempt, empty_usage
-from .contracts import validate_goal_contract, validate_template
+from .contracts import (
+    phase_checkpoint_record,
+    validate_goal_contract,
+    validate_template,
+)
 from .paired import paired_summary
 from .results import adapt_result, validate_tier_result
 from .versions import EVENT_SCHEMA_VERSION, RUN_SCHEMA_VERSION
@@ -517,68 +521,15 @@ def _tier_record(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-_PHASE_CHECKPOINT_FIELDS = {
-    "materialize_gpu_active_ms": "materialize",
-    "first_bind_gpu_active_ms": "first_bind",
-    "dense_rounds_gpu_active_ms": "dense_rounds",
-    "openings_gpu_active_ms": "openings",
-}
-
-
 def _phase_checkpoint(
     state: dict[str, Any], result: dict[str, Any]
 ) -> dict[str, Any]:
     phase = state["template"]["mechanism_phase"]
-    checkpoint = phase["checkpoint"]
-    due = int(state["usage"]["candidates_admitted"]) >= int(
-        checkpoint["after_candidates"]
+    return phase_checkpoint_record(
+        phase,
+        result,
+        int(state["usage"]["candidates_admitted"]),
     )
-    record: dict[str, Any] = {
-        "phase_id": phase["id"],
-        "after_candidates": checkpoint["after_candidates"],
-        "due": due,
-        "passed": None,
-        "metrics": [],
-    }
-    if not due:
-        return record
-    if result.get("fingerprint", {}).get("log_n") != checkpoint["scale_log_n"]:
-        raise ValueError("phase checkpoint result used the wrong trace scale")
-    timings = result.get("telemetry", {}).get("candidate_phase_gpu_active_ns")
-    if not isinstance(timings, dict):
-        raise ValueError("phase checkpoint telemetry is missing")
-    passed = True
-    metrics = []
-    for contract in checkpoint["metrics"]:
-        field = _PHASE_CHECKPOINT_FIELDS.get(contract["name"])
-        value = timings.get(field) if field is not None else None
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or value <= 0
-        ):
-            raise ValueError("phase checkpoint telemetry is invalid")
-        observed_ms = float(value) / 1_000_000.0
-        threshold = float(contract["threshold"])
-        metric_passed = (
-            observed_ms <= threshold
-            if contract["comparison"] == "lte"
-            else observed_ms >= threshold
-        )
-        metrics.append(
-            {
-                "name": contract["name"],
-                "comparison": contract["comparison"],
-                "threshold": threshold,
-                "observed_ms": observed_ms,
-                "passed": metric_passed,
-            }
-        )
-        passed = passed and metric_passed
-    record["passed"] = passed
-    record["metrics"] = metrics
-    return record
 
 
 def _phase_checkpoint_state(state: dict[str, Any]) -> dict[str, Any]:
