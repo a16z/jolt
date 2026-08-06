@@ -170,11 +170,11 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
             }
             Err(error) => return Err(metal_prepare_error(error)),
         };
+        let pending = invocation.submit();
         drop(inc);
         drop(rd);
         drop(rd_device);
         let cpu = ValEvaluationKernel::new_offloaded(r_cycle);
-        let pending = invocation.submit();
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
             .registers_val_sequences
