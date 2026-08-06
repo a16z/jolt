@@ -8,6 +8,7 @@ use jolt_kernels::metal::solinas::{
     RAM_OUTPUT_CHECK_TARGET_ADDRESSES, RAM_OUTPUT_CHECK_TARGET_CPU_NS,
     RAM_OUTPUT_CHECK_TARGET_MASK_END, RAM_OUTPUT_CHECK_TARGET_MASK_START,
 };
+use jolt_kernels::optimized::ram_output_check::evaluate_deferred_output_check_cpu;
 
 pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     let threads = setting("JOLT_METAL_RAM_OUTPUT_THREADS", 128);
@@ -23,7 +24,16 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     .expect("RAM output-check target plan should be valid");
     let source = native_values(plan.addresses());
     let challenges = challenge_values(plan.zero_rounds());
+    let tail_challenges = challenge_values(plan.log_k());
+    let output_address = output_address_values(plan.log_k());
     let weights = ram_output_check_low_binding_weights(&challenges);
+    let val_final = source
+        .iter()
+        .map(|&value| AkitaField::from_u64(value))
+        .collect::<Vec<_>>();
+    let mut val_io = vec![AkitaField::from_u64(0); plan.addresses()];
+    val_io[plan.mask_start()..plan.mask_end()]
+        .copy_from_slice(&val_final[plan.mask_start()..plan.mask_end()]);
 
     let upload_start = Instant::now();
     let resident = context
@@ -46,6 +56,18 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         ram_output_check_fold_u64_low_prefix::<AkitaField>(resident.as_slice(), &weights)
             .expect("resident CPU prefix fold should execute");
     let cpu_wall = cpu_start.elapsed();
+    let complete_cpu_start = Instant::now();
+    let deferred_output = evaluate_deferred_output_check_cpu(
+        &output_address,
+        plan.mask_start(),
+        plan.mask_end(),
+        &val_io,
+        &val_final,
+        &tail_challenges,
+    )
+    .expect("complete deferred CPU member should execute");
+    let complete_cpu_wall = complete_cpu_start.elapsed();
+    let _ = black_box(deferred_output);
     let cold_start = Instant::now();
     let (cold, cold_active) = fold
         .execute_timed()
@@ -60,7 +82,7 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     assert_eq!(warm, expected);
 
     eprintln!(
-        "ram-output-check addresses={} threads={} upload={upload_wall:?} setup={setup_wall:?} cpu-resident={cpu_wall:?} cold-wall={cold_wall:?} cold-active={cold_active:?} warm-wall={warm_wall:?} warm-active={warm_active:?} borrowed-bytes={} private-bytes={} partial-tew={} partial-max-threads={} partial-static-tgmem={} frozen-cpu-us={:.3} five-x-cap-us={:.3}",
+        "ram-output-check addresses={} threads={} upload={upload_wall:?} setup={setup_wall:?} cpu-resident={cpu_wall:?} cpu-complete-deferred={complete_cpu_wall:?} cold-wall={cold_wall:?} cold-active={cold_active:?} warm-wall={warm_wall:?} warm-active={warm_active:?} borrowed-bytes={} private-bytes={} partial-tew={} partial-max-threads={} partial-static-tgmem={} frozen-cpu-us={:.3} five-x-cap-us={:.3} deferred-speedup={:.3}",
         plan.addresses(),
         plan.threads_per_threadgroup(),
         resident.resident_bytes(),
@@ -70,6 +92,7 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         fold.partial_pipeline_limits().static_threadgroup_memory_length,
         RAM_OUTPUT_CHECK_TARGET_CPU_NS as f64 / 1e3,
         RAM_OUTPUT_CHECK_FIVE_X_CAP_NS as f64 / 1e3,
+        RAM_OUTPUT_CHECK_TARGET_CPU_NS as f64 / complete_cpu_wall.as_nanos() as f64,
     );
 
     if observe_only {
@@ -91,6 +114,24 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
             )
         });
     });
+    let _ = group.bench_function(
+        BenchmarkId::new("cpu_complete_deferred", &suffix),
+        |bench| {
+            bench.iter(|| {
+                black_box(
+                    evaluate_deferred_output_check_cpu(
+                        &output_address,
+                        plan.mask_start(),
+                        plan.mask_end(),
+                        &val_io,
+                        &val_final,
+                        &tail_challenges,
+                    )
+                    .expect("complete deferred CPU member should execute"),
+                )
+            });
+        },
+    );
     let _ = group.bench_function(BenchmarkId::new("metal_wall_resident", &suffix), |bench| {
         bench.iter(|| {
             black_box(
@@ -131,6 +172,14 @@ fn challenge_values(count: usize) -> Vec<AkitaField> {
     (0..count)
         .map(|index| {
             AkitaField::from_u64(splitmix(index as u64 ^ 0x243f_6a88_85a3_08d3) & ((1 << 56) - 1))
+        })
+        .collect()
+}
+
+fn output_address_values(count: usize) -> Vec<AkitaField> {
+    (0..count)
+        .map(|index| {
+            AkitaField::from_u64(splitmix(index as u64 ^ 0x1319_8a2e_0370_7344) & ((1 << 56) - 1))
         })
         .collect()
 }

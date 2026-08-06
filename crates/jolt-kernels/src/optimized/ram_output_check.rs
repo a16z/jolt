@@ -18,18 +18,17 @@
 //!   exact partial bind of the dense eq table, and distributing
 //!   `eq·mask·val_final − eq·mask·val_io` into `eq·mask·(val_final − val_io)`
 //!   is exact field algebra).
+//! - **Deferred zero prefix**: aligned public-I/O blocks make the first address
+//!   rounds identically zero. Their challenges are accumulated and the three
+//!   tables are folded once before the first nonzero round.
 //! - **Direct three-table walk**: the summand runs on the mask/final/io
 //!   tables with inline arithmetic instead of the naive tier's per-point
 //!   expression-tree interpretation.
-//!
-//! The legacy prover's leading zero-address shortcut (constant round
-//! polynomials while the pair fold is provably zero) is intentionally not
-//! replicated: those rounds' true polynomials are zero, this kernel computes
-//! the zeros literally — matching the reference tier — and the engine's
-//! batched-polynomial trim reproduces the wire bytes.
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
+#[cfg(feature = "test-utils")]
+use jolt_field::AkitaField;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -87,15 +86,15 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             })
             .collect();
 
-        Ok(Box::new(OutputCheckKernel {
-            ram_log_k,
-            gruen: GruenSplitEqPolynomial::new(output_address_challenges, BindingOrder::LowToHigh),
-            io_mask: Polynomial::new(io_mask),
-            val_io: Polynomial::new(val_io),
-            val_final: Polynomial::new(dense_view(witness, ram_val_final())?),
-            bind_scratch: Vec::new(),
-            rounds_bound: 0,
-        }))
+        let val_final = dense_view(witness, ram_val_final())?;
+        Ok(Box::new(OutputCheckKernel::new(
+            output_address_challenges,
+            public_memory.io_mask_start,
+            public_memory.io_mask_end,
+            io_mask,
+            val_io,
+            val_final,
+        )))
     }
 }
 
@@ -106,6 +105,8 @@ struct OutputCheckKernel<F: Field> {
     val_io: Polynomial<F>,
     val_final: Polynomial<F>,
     bind_scratch: Vec<F>,
+    deferred_challenges: Vec<F>,
+    zero_rounds: usize,
     rounds_bound: usize,
 }
 
@@ -120,6 +121,10 @@ impl<F: Field> allocative::Allocative for OutputCheckKernel<F> {
             ("val_io", poly_heap_bytes(&self.val_io)),
             ("val_final", poly_heap_bytes(&self.val_final)),
             ("bind_scratch", vec_heap_bytes(&self.bind_scratch)),
+            (
+                "deferred_challenges",
+                vec_heap_bytes(&self.deferred_challenges),
+            ),
         ] {
             visitor.visit_simple(allocative::Key::new(key), bytes);
         }
@@ -128,6 +133,30 @@ impl<F: Field> allocative::Allocative for OutputCheckKernel<F> {
 }
 
 impl<F: Field> OutputCheckKernel<F> {
+    const SERIAL_MESSAGE_ELEMENTS: usize = 1 << 10;
+
+    fn new(
+        output_address_challenges: &[F],
+        mask_start: u128,
+        mask_end: u128,
+        io_mask: Vec<F>,
+        val_io: Vec<F>,
+        val_final: Vec<F>,
+    ) -> Self {
+        let zero_rounds = certified_zero_rounds(mask_start, mask_end, &val_io, &val_final);
+        Self {
+            ram_log_k: output_address_challenges.len(),
+            gruen: GruenSplitEqPolynomial::new(output_address_challenges, BindingOrder::LowToHigh),
+            io_mask: Polynomial::new(io_mask),
+            val_io: Polynomial::new(val_io),
+            val_final: Polynomial::new(val_final),
+            bind_scratch: Vec::new(),
+            deferred_challenges: Vec::with_capacity(zero_rounds),
+            zero_rounds,
+            rounds_bound: 0,
+        }
+    }
+
     fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.rounds_bound == self.ram_log_k {
             Ok(())
@@ -147,39 +176,39 @@ impl<F: Field> OutputCheckKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         const POINTS: usize = 4;
 
-        let q_evals = self.gruen.par_fold_out_in(
-            || [F::zero(); POINTS],
-            |acc, row, _x_in, e_in| {
-                let pair = |table: &Polynomial<F>| {
-                    let evals = table.evals();
-                    (evals[2 * row], evals[2 * row + 1])
-                };
-                let (mask_0, mask_1) = pair(&self.io_mask);
-                let (final_0, final_1) = pair(&self.val_final);
-                let (io_0, io_1) = pair(&self.val_io);
-                let mut mask = mask_0;
-                let mask_step = mask_1 - mask_0;
-                let mut diff = final_0 - io_0;
-                let diff_step = (final_1 - io_1) - diff;
-                for value in acc.iter_mut() {
-                    *value += e_in * mask * diff;
-                    mask += mask_step;
-                    diff += diff_step;
-                }
-            },
-            |_x_out, e_out, mut acc| {
-                for value in &mut acc {
-                    *value *= e_out;
-                }
-                acc
-            },
-            |mut a, b| {
-                for (a, b) in a.iter_mut().zip(&b) {
-                    *a += *b;
-                }
-                a
-            },
-        );
+        if round < self.zero_rounds {
+            if previous_claim != F::zero() {
+                return Err(SumcheckError::RoundCheckFailed {
+                    round,
+                    expected: previous_claim,
+                    actual: F::zero(),
+                });
+            }
+            return Ok(UnivariatePoly::from_evals(&[F::zero(); POINTS]));
+        }
+
+        let q_evals = if self.val_final.len() <= Self::SERIAL_MESSAGE_ELEMENTS {
+            self.serial_q_evals()
+        } else {
+            self.gruen.par_fold_out_in(
+                || [F::zero(); POINTS],
+                |acc, row, _x_in, e_in| {
+                    self.accumulate_q_row(acc, row, e_in);
+                },
+                |_x_out, e_out, mut acc| {
+                    for value in &mut acc {
+                        *value *= e_out;
+                    }
+                    acc
+                },
+                |mut a, b| {
+                    for (a, b) in a.iter_mut().zip(&b) {
+                        *a += *b;
+                    }
+                    a
+                },
+            )
+        };
 
         let (l_at_0, l_at_1) = self.gruen.current_linear_evals();
         let l_step = l_at_1 - l_at_0;
@@ -201,13 +230,177 @@ impl<F: Field> OutputCheckKernel<F> {
         Ok(UnivariatePoly::from_evals(&evals))
     }
 
+    fn serial_q_evals(&self) -> [F; 4] {
+        let mut result = [F::zero(); 4];
+        for (x_out, &e_out) in self.gruen.e_out_current().iter().enumerate() {
+            let mut inner = [F::zero(); 4];
+            for (x_in, &e_in) in self.gruen.e_in_current().iter().enumerate() {
+                let row = self.gruen.group_index(x_out, x_in);
+                self.accumulate_q_row(&mut inner, row, e_in);
+            }
+            for (value, inner) in result.iter_mut().zip(inner) {
+                *value += e_out * inner;
+            }
+        }
+        result
+    }
+
+    fn accumulate_q_row(&self, acc: &mut [F; 4], row: usize, e_in: F) {
+        let pair = |table: &Polynomial<F>| {
+            let evals = table.evals();
+            (evals[2 * row], evals[2 * row + 1])
+        };
+        let (mask_0, mask_1) = pair(&self.io_mask);
+        let (final_0, final_1) = pair(&self.val_final);
+        let (io_0, io_1) = pair(&self.val_io);
+        let mut mask = mask_0;
+        let mask_step = mask_1 - mask_0;
+        let mut diff = final_0 - io_0;
+        let diff_step = (final_1 - io_1) - diff;
+        for value in acc {
+            *value += e_in * mask * diff;
+            mask += mask_step;
+            diff += diff_step;
+        }
+    }
+
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
+        if self.rounds_bound < self.zero_rounds {
+            self.deferred_challenges.push(challenge);
+            self.rounds_bound += 1;
+            if self.rounds_bound == self.zero_rounds {
+                self.fold_deferred_prefix();
+            }
+            return;
+        }
         for table in [&mut self.io_mask, &mut self.val_io, &mut self.val_final] {
             table.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
         }
         self.rounds_bound += 1;
     }
+
+    fn fold_deferred_prefix(&mut self) {
+        let weights = low_binding_weights(&self.deferred_challenges);
+        let block_elements = weights.len();
+        let source_elements = self.val_final.len();
+        debug_assert_eq!(source_elements % block_elements, 0);
+        let output_elements = source_elements / block_elements;
+        let mut io_mask = vec![F::zero(); output_elements];
+        let mut val_io = vec![F::zero(); output_elements];
+        let mut val_final = vec![F::zero(); output_elements];
+        for block in 0..output_elements {
+            let start = block * block_elements;
+            for (offset, &weight) in weights.iter().enumerate() {
+                let index = start + offset;
+                io_mask[block] += self.io_mask.evals()[index] * weight;
+                val_io[block] += self.val_io.evals()[index] * weight;
+                val_final[block] += self.val_final.evals()[index] * weight;
+            }
+        }
+        self.io_mask = Polynomial::new(io_mask);
+        self.val_io = Polynomial::new(val_io);
+        self.val_final = Polynomial::new(val_final);
+        self.deferred_challenges.clear();
+    }
+}
+
+fn certified_zero_rounds<F: Field>(
+    mask_start: u128,
+    mask_end: u128,
+    val_io: &[F],
+    val_final: &[F],
+) -> usize {
+    let addresses = val_final.len();
+    if addresses == 0 || !addresses.is_power_of_two() || val_io.len() != addresses {
+        return 0;
+    }
+    let log_k = addresses.ilog2() as usize;
+    let domain_end = addresses as u128;
+    let start = mask_start.min(domain_end) as usize;
+    let end = mask_end.min(domain_end) as usize;
+    if start >= end {
+        return log_k;
+    }
+    if val_io[start..end] != val_final[start..end] {
+        return 0;
+    }
+    (start.trailing_zeros().min(end.trailing_zeros()) as usize).min(log_k)
+}
+
+fn low_binding_weights<F: Field>(challenges: &[F]) -> Vec<F> {
+    let mut weights = vec![F::one()];
+    for &challenge in challenges {
+        let old_len = weights.len();
+        let mut next = vec![F::zero(); 2 * old_len];
+        for (index, &weight) in weights.iter().enumerate() {
+            let high = weight * challenge;
+            next[index] = weight - high;
+            next[index + old_len] = high;
+        }
+        weights = next;
+    }
+    weights
+}
+
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub fn evaluate_deferred_output_check_cpu(
+    output_address_challenges: &[AkitaField],
+    mask_start: usize,
+    mask_end: usize,
+    val_io: &[AkitaField],
+    val_final: &[AkitaField],
+    round_challenges: &[AkitaField],
+) -> Result<AkitaField, SumcheckError<AkitaField>> {
+    let addresses = val_final.len();
+    if addresses == 0
+        || !addresses.is_power_of_two()
+        || val_io.len() != addresses
+        || output_address_challenges.len() != addresses.ilog2() as usize
+        || round_challenges.len() != output_address_challenges.len()
+        || mask_start >= mask_end
+        || mask_end > addresses
+    {
+        return Err(SumcheckError::ComputeBackend {
+            backend: "optimized",
+            message: "invalid deferred RAM output-check benchmark shape".to_owned(),
+        });
+    }
+    let io_mask = (0..addresses)
+        .map(|index| {
+            if index >= mask_start && index < mask_end {
+                AkitaField::one()
+            } else {
+                AkitaField::zero()
+            }
+        })
+        .collect();
+    let mut kernel = OutputCheckKernel::new(
+        output_address_challenges,
+        mask_start as u128,
+        mask_end as u128,
+        io_mask,
+        val_io.to_vec(),
+        val_final.to_vec(),
+    );
+    let mut claim = AkitaField::zero();
+    let mut bind = None;
+    for (round, &challenge) in round_challenges.iter().enumerate() {
+        let message = kernel.prove_round(bind, round, claim)?;
+        claim = message.evaluate(challenge);
+        bind = Some(challenge);
+    }
+    let final_bind =
+        round_challenges
+            .last()
+            .copied()
+            .ok_or_else(|| SumcheckError::ComputeBackend {
+                backend: "optimized",
+                message: "deferred RAM output check has no final challenge".to_owned(),
+            })?;
+    kernel.finish_rounds(final_bind)?;
+    Ok(kernel.val_final.evals()[0])
 }
 
 impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
@@ -440,5 +633,32 @@ mod tests {
     #[test]
     fn parity_k16_alternate_seed() {
         run_parity(2, 16, 419);
+    }
+
+    #[test]
+    fn parity_k8192_deferred_prefix() {
+        run_parity(4, 1 << 13, 431);
+    }
+
+    #[test]
+    fn zero_prefix_requires_aligned_certified_io_blocks() {
+        let mut val_io = vec![Fr::from_u64(0); 1 << 13];
+        let mut val_final = val_io.clone();
+        assert_eq!(
+            certified_zero_rounds(1 << 10, 1 << 12, &val_io, &val_final),
+            10
+        );
+
+        val_io[1 << 10] = Fr::from_u64(7);
+        assert_eq!(
+            certified_zero_rounds(1 << 10, 1 << 12, &val_io, &val_final),
+            0
+        );
+
+        val_final[1 << 10] = Fr::from_u64(7);
+        assert_eq!(
+            certified_zero_rounds(1 << 13, 1 << 14, &val_io, &val_final),
+            13
+        );
     }
 }

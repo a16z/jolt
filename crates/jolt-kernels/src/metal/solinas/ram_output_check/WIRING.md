@@ -264,6 +264,7 @@ At 128 threads, a focused Criterion run measured:
 | Resident specialized CPU fold | 30.939 us |
 | Resident Metal fold, wall | 830.27 us |
 | Resident Metal fold, GPU active | 52.321 us |
+| Complete optimized CPU deferred member | 276.10 us |
 
 The distributions were noisy, but the decision is not marginal. Metal wall is
 26.84x slower than the resident CPU fold and 2.39x above the entire
@@ -274,8 +275,15 @@ wall, and 31.458 us GPU active, leading to the same decision.
 No threadgroup-width search can satisfy the registered selector: the device
 arithmetic itself does not beat the CPU fold, and changing occupancy cannot
 remove the command wait. The Metal path is retained only as a falsified
-diagnostic and parity guard. The useful implementation target is now the
-deferred-prefix CPU path inside the Metal hybrid backend.
+diagnostic and parity guard.
+
+The optimized CPU kernel now implements the certified deferral and switches
+the eight-element tail to a serial message evaluator. With the frozen
+`RAYON_NUM_THREADS=16` policy, its focused Criterion interval is
+`[274.21, 276.10, 278.49] us`, or 6.28x against the old 1.734583-ms complete
+member. It clears the 346.916-us cap by 70.816 us. A production-domain
+`K=8192` lockstep test matches the reference kernel at every round and output
+claim; the existing smaller fixtures cover the all-deferred case.
 
 ## Rejected schedules and reopen conditions
 
@@ -309,12 +317,13 @@ member's already-paid submission as standalone `RamOutputCheck` speedup.
 
 ## Integration still required
 
-The source registry, both pipelines, typed diagnostic resident owner, exact
-prefix parity test, and CPU-versus-Metal Criterion probe are present. The
-remaining owning change must add the CPU-specialized `SumcheckKernel` adapter,
-certify the public-I/O equality region, and reuse the earlier RAM producer's
-native final-state allocation. Exact tests must compare all 13 round
-polynomials, the final `RamValFinal` value, the reversed opening point, and all
-three derived checks against the optimized CPU member. The paired benchmark
-must cover the complete deferred member rather than promoting the rejected
-Metal fold.
+The source registry, both diagnostic pipelines, typed resident owner, exact
+prefix parity test, CPU-versus-Metal probe, and optimized deferred
+`SumcheckKernel` are present. The kernel certifies the public-I/O equality
+region before deferring; a failed certification falls back to the exact dense
+round path. The Metal hybrid intentionally retains this optimized CPU slot.
+The remaining production gate is a paired proof-stage profile that confirms
+the focused complete-member result and derived-table checks under the retained
+Fibonacci fixture. Reusing the earlier RAM producer's native final-state
+allocation remains an optional preparation saving, not a requirement for the
+measured 5x result.
