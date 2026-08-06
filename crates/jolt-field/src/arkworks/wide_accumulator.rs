@@ -35,9 +35,19 @@ impl Default for WideAccumulator {
 impl AdditiveAccumulator for WideAccumulator {
     type Element = Fr;
 
+    /// Adds `value` in four limb additions instead of a full 4×4 `fmadd` by
+    /// `one()`: the slots hold products of Montgomery forms (each `â·b̂ =
+    /// ab·R²`), so a plain element must enter as `â·R`. Since `2^256 ≡ R
+    /// (mod p)`, placing `â`'s limbs at positions 4..8 contributes
+    /// `â·2^256 ≡ â·R (mod p)` — exactly what `fmadd(value, one())` adds,
+    /// and [`reduce`](AdditiveAccumulator::reduce) folds arbitrary high
+    /// limbs mod `p`, so the reduced element is identical.
     #[inline(always)]
     fn add(&mut self, value: Fr) {
-        self.fmadd(value, <Fr as num_traits::One>::one());
+        let limbs = value.inner_limbs();
+        for (slot, limb) in self.slots[4..].iter_mut().zip(limbs.0) {
+            *slot += limb as u128;
+        }
     }
 
     #[inline(always)]
@@ -88,6 +98,7 @@ impl WideAccumulator {
 mod tests {
     use super::*;
     use crate::{AdditiveAccumulator, FromPrimitiveInt};
+    use num_traits::One;
 
     #[test]
     fn single_fmadd() {
@@ -124,6 +135,50 @@ mod tests {
     fn empty_reduces_to_zero() {
         let acc = WideAccumulator::default();
         assert_eq!(acc.reduce(), Fr::from_u64(0));
+    }
+
+    /// Deterministic full-range field elements (products of large scalars
+    /// wrap the modulus, exercising all limbs).
+    fn spread(seed: u64) -> Fr {
+        let a = Fr::from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let b = Fr::from_u64(seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) | 1);
+        a * b * b + a
+    }
+
+    /// The shifted-limb `add` must agree with `fmadd(value, one())` (the
+    /// definitionally correct form) for arbitrary elements, including when
+    /// mixed with products.
+    #[test]
+    fn add_matches_fmadd_by_one() {
+        for seed in 0..100u64 {
+            let value = spread(seed);
+            let a = spread(seed + 1000);
+            let b = spread(seed + 2000);
+
+            let mut via_add = WideAccumulator::default();
+            via_add.fmadd(a, b);
+            via_add.add(value);
+
+            let mut via_fmadd = WideAccumulator::default();
+            via_fmadd.fmadd(a, b);
+            via_fmadd.fmadd(value, <Fr as One>::one());
+
+            assert_eq!(via_add.reduce(), via_fmadd.reduce());
+            assert_eq!(via_add.reduce(), a * b + value);
+        }
+    }
+
+    /// Many shifted adds stay within slot headroom and reduce exactly.
+    #[test]
+    fn repeated_add_reduces_exactly() {
+        let mut acc = WideAccumulator::default();
+        let mut expected = Fr::from_u64(0);
+        for seed in 0..1000u64 {
+            let value = spread(seed);
+            acc.add(value);
+            expected += value;
+        }
+        assert_eq!(acc.reduce(), expected);
     }
 
     #[test]

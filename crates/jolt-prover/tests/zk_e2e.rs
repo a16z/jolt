@@ -258,7 +258,7 @@ mod support {
     /// stage-8 opening needs.
     pub fn commit_trusted_advice_zk(
         backend: &JoltBackend<Fr, DoryScheme>,
-        witness: &TraceBackend<'_, OwnedTrace>,
+        witness: &TraceBackend<OwnedTrace>,
         memory_layout: &MemoryLayout,
         setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
     ) -> TrustedAdviceCommitment<DoryScheme> {
@@ -306,6 +306,8 @@ mod support {
     reason = "integration tests should fail loudly"
 )]
 mod zk {
+    use std::sync::Arc;
+
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
@@ -322,7 +324,9 @@ mod zk {
 
     use super::support;
 
-    fn prove_muldiv_zk() -> (
+    fn prove_muldiv_zk(
+        backend: JoltBackend<Fr, DoryScheme>,
+    ) -> (
         support::VerifierPreprocessing,
         common::jolt_device::JoltDevice,
         support::Proof,
@@ -347,34 +351,32 @@ mod zk {
             "zk-compiled legacy preprocessing must carry the BlindFold setup",
         );
 
-        let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = io_device.memory_layout.clone();
         let trace_output = support::trace_modular(&jolt_program, &memory_layout, &inputs, &[], &[]);
         let public_io = trace_output.device.clone();
         let program_preprocessing = verifier_preprocessing
             .program
-            .as_full()
-            .expect("full program preprocessing")
-            .clone();
+            .as_full_arc()
+            .expect("full program preprocessing");
         let config = support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-        );
+        ));
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
             pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(&memory_layout, &[])),
             committed_program: None,
         };
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
             &backend,
             &prover_preprocessing,
             &config,
             None,
-            &witness,
+            Arc::clone(&witness),
             &public_io,
         )
         .expect("modular ZK prove");
@@ -384,17 +386,36 @@ mod zk {
     #[test]
     fn zk_muldiv_modular_proof_is_accepted() {
         support::with_zk_stack(|| {
-            let (preprocessing, public_io, proof) = prove_muldiv_zk();
+            let (preprocessing, public_io, proof) =
+                prove_muldiv_zk(JoltBackend::<Fr, DoryScheme>::reference());
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             support::verify_modular(&preprocessing, &public_io, &proof, None)
                 .expect("modular ZK proof must verify");
         });
     }
 
+    /// The optimized backend under the ZK envelope: its commit slot must
+    /// finish through the hiding streamed paths (`ModeStreamingCommitment`
+    /// routes `finish_streamed`/`finish_streamed_one_hot` to the ZK
+    /// finishes), or the witness commitments would leak. Constructing
+    /// `optimized()` here also pins the zk-mode compile of the optimized
+    /// tier, which the reference-only tests never exercise.
+    #[test]
+    fn zk_muldiv_optimized_backend_proof_is_accepted() {
+        support::with_zk_stack(|| {
+            let (preprocessing, public_io, proof) =
+                prove_muldiv_zk(JoltBackend::<Fr, DoryScheme>::optimized());
+            assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
+            support::verify_modular(&preprocessing, &public_io, &proof, None)
+                .expect("optimized-backend ZK proof must verify");
+        });
+    }
+
     #[test]
     fn zk_muldiv_tampered_blindfold_is_rejected() {
         support::with_zk_stack(|| {
-            let (preprocessing, public_io, mut proof) = prove_muldiv_zk();
+            let (preprocessing, public_io, mut proof) =
+                prove_muldiv_zk(JoltBackend::<Fr, DoryScheme>::reference());
             let JoltProofClaims::Zk { blindfold_proof } = &mut proof.claims else {
                 panic!("ZK proof must carry the BlindFold claims variant");
             };
@@ -430,7 +451,7 @@ mod zk {
                 LegacyProverPreprocessing::new(shared);
             let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
 
-            let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+            let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
             let memory_layout = io_device.memory_layout.clone();
             let trace_output = support::trace_modular(
                 &jolt_program,
@@ -442,18 +463,17 @@ mod zk {
             let public_io = trace_output.device.clone();
             let program_preprocessing = verifier_preprocessing
                 .program
-                .as_full()
-                .expect("full program preprocessing")
-                .clone();
+                .as_full_arc()
+                .expect("full program preprocessing");
             let config =
                 support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
             let padded_output = support::pad_trace(trace_output, config.trace_length);
-            let witness = TraceBackend::new(
+            let witness = Arc::new(TraceBackend::new(
                 support::witness_config(&config)
                     .include_trusted_advice(true)
                     .include_untrusted_advice(true),
                 JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-            );
+            ));
 
             let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
                 verifier: verifier_preprocessing,
@@ -474,7 +494,7 @@ mod zk {
                     &prover_preprocessing,
                     &config,
                     Some(&trusted),
-                    &witness,
+                    Arc::clone(&witness),
                     &public_io,
                 )
                 .expect("modular ZK advice prove");
@@ -533,18 +553,18 @@ mod zk {
                 memory_layout: memory_layout.clone(),
                 max_padded_trace_length: support::MAX_PADDED_TRACE_LENGTH,
             };
-            let jolt_program = JoltProgram::from_elf_bytes(guest.elf_contents);
+            let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
             let trace_output =
                 support::trace_modular(&jolt_program, &memory_layout, &inputs, &[], &[]);
             let public_io = trace_output.device.clone();
             let config =
                 support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
             let padded_output = support::pad_trace(trace_output, config.trace_length);
-            let witness_program = full_program.clone();
-            let witness = TraceBackend::new(
+            let witness_program = Arc::new(full_program.clone());
+            let witness = Arc::new(TraceBackend::new(
                 support::witness_config(&config),
                 JoltVmWitnessInputs::new(&jolt_program, &witness_program, padded_output),
-            );
+            ));
 
             // ZK committed-program preprocessing: hiding chunk/image commits
             // replace legacy's (randomized blinds make byte reuse impossible);
@@ -592,7 +612,7 @@ mod zk {
                     &prover_preprocessing,
                     &config,
                     None,
-                    &witness,
+                    Arc::clone(&witness),
                     &public_io,
                 )
                 .expect("modular committed ZK prove");

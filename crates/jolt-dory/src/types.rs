@@ -126,7 +126,7 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DoryHint {
     pub(crate) row_commitments: Vec<Bn254G1>,
     pub(crate) commit_blind: Fr,

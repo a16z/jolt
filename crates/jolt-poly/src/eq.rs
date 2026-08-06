@@ -6,9 +6,9 @@ use jolt_field::Field;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::math::Math;
 use crate::mle::MleError;
-use crate::thread::unsafe_allocate_zero_vec;
+use jolt_utils::unsafe_allocate_zero_vec;
+use jolt_utils::Math;
 
 /// Equality polynomial $\widetilde{eq}(x, r) = \prod_{i=1}^{n}(r_i x_i + (1-r_i)(1-x_i))$.
 ///

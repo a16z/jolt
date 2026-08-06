@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackend<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<T> {
     pub(crate) fn materialize_register_read_write_virtual<F: Field>(
         &self,
         id: JoltVirtualPolynomial,
@@ -21,7 +21,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
 
         let cycles = checked_pow2(self.config.log_t)?;
         let register_count = checked_pow2(REGISTER_ADDRESS_BITS)?;
-        let mut values = vec![F::zero(); register_count * cycles];
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(register_count * cycles);
         let mut trace = self.trace.trace.clone();
 
         if id == JoltVirtualPolynomial::RegistersVal {

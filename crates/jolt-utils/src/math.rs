@@ -3,8 +3,7 @@
 pub trait Math {
     /// Returns `2^self`.
     fn pow2(self) -> usize;
-    /// Returns the number of bits needed to represent `self`.
-    /// Equals `log2(self)` for powers of two, `ceil(log2(self))` otherwise.
+    /// Returns `ceil(log2(self))` — exactly `log2(self)` for powers of two.
     fn log_2(self) -> usize;
 }
 
@@ -24,14 +23,31 @@ impl Math for usize {
     }
 }
 
+/// Returns `log2(value)`, panicking unless `value` is a power of two.
+pub fn log2_power_of_two(value: usize) -> usize {
+    assert!(
+        value.is_power_of_two(),
+        "expected a power-of-two dimension, got {value}"
+    );
+    value.trailing_zeros() as usize
+}
+
 /// Asserts that a point dimension is below the `usize` shift width, so
 /// `1usize << dim` (the eval-table size) cannot overflow the shift.
 #[inline]
-pub(crate) fn assert_shiftable_dim(dim: usize) {
+pub fn assert_shiftable_dim(dim: usize) {
     assert!(
         dim < usize::BITS as usize,
         "point dimension {dim} exceeds usize shift width"
     );
+}
+
+/// Returns `log2(value)` if `value` is a power of two, `None` otherwise
+/// (zero included).
+pub fn checked_log2_power_of_two(value: usize) -> Option<usize> {
+    value
+        .is_power_of_two()
+        .then_some(value.trailing_zeros() as usize)
 }
 
 #[cfg(test)]
@@ -65,5 +81,25 @@ mod tests {
     #[should_panic(expected = "assertion")]
     fn log_2_zero_panics() {
         let _ = 0usize.log_2();
+    }
+
+    #[test]
+    fn log2_power_of_two_values() {
+        assert_eq!(log2_power_of_two(1), 0);
+        assert_eq!(log2_power_of_two(1024), 10);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected a power-of-two dimension")]
+    fn log2_power_of_two_rejects_non_powers() {
+        let _ = log2_power_of_two(6);
+    }
+
+    #[test]
+    fn checked_log2_power_of_two_values() {
+        assert_eq!(checked_log2_power_of_two(0), None);
+        assert_eq!(checked_log2_power_of_two(1), Some(0));
+        assert_eq!(checked_log2_power_of_two(6), None);
+        assert_eq!(checked_log2_power_of_two(1 << 20), Some(20));
     }
 }
