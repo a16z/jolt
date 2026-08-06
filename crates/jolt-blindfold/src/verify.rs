@@ -951,6 +951,31 @@ mod tests {
         assert_eq!(transcript.state(), manual_transcript.state());
     }
 
+    /// Regression: a proof with fewer `folded_eval_outputs` than the layout's
+    /// eval coordinates previously reached `folded_eval_outputs[index]` and
+    /// panicked; both the eager length gate and the per-coordinate lookup
+    /// must surface the same typed length error instead.
+    #[test]
+    fn verify_rejects_truncated_folded_eval_outputs_without_panicking() {
+        let setup = setup();
+        let protocol = protocol_with_eval(&setup);
+        let mut proof = proof_with_valid_eval_opening(&setup, &protocol);
+        let _ = proof.folded_eval_outputs.pop();
+        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+
+        let error = protocol
+            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
+            .expect_err("truncated folded eval outputs are rejected");
+
+        assert!(matches!(
+            error,
+            VerificationError::Relaxed(RelaxedError::LengthMismatch {
+                name: "folded eval outputs",
+                ..
+            })
+        ));
+    }
+
     #[test]
     fn verify_rejects_random_round_count_mismatch() {
         let setup = setup();

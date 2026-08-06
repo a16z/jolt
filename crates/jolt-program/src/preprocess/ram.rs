@@ -37,7 +37,12 @@ impl From<MemoryLayoutError> for RamDomainError {
 }
 
 impl RAMPreprocessing {
-    pub fn preprocess(memory_init: Vec<(u64, u8)>) -> Self {
+    pub fn preprocess(mut memory_init: Vec<(u64, u8)>) -> Self {
+        // `chunk_by` below groups only *consecutive* entries of the same
+        // word; unsorted init data would split a word across chunks and let
+        // a later chunk silently overwrite an earlier one byte-for-byte.
+        // Sorting makes the grouping total regardless of the caller.
+        memory_init.sort_by_key(|(address, _)| *address);
         let min_bytecode_address = memory_init
             .iter()
             .map(|(address, _)| *address)

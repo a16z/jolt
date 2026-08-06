@@ -21,6 +21,14 @@ where
         .proof
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
+    // Eager: the proof-supplied phase split feeds round-count subtractions
+    // (`phase3_cycle_rounds` etc.) before any lazy point-derivation check.
+    register_dimensions
+        .validate_phase_split()
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RegistersReadWriteChecking,
+            reason: error.to_string(),
+        })?;
     let registers_claims = relations::registers::ReadWriteChecking::new(register_dimensions);
     let ram_init = ram_val_check_init(input)?;
     // Supply the `Val_init` decomposition scalars as `Public` values (formerly
