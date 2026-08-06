@@ -18,7 +18,7 @@ akita = ["jolt-claims/akita", "jolt-field/akita", "jolt-verifier/akita"]
 allocative = ["dep:allocative"]
 metal = ["akita", "dep:metal"]
 parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
-test-utils = []
+test-utils = ["dep:sha2"]
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
@@ -37,6 +37,7 @@ jolt-sumcheck.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 

@@ -20,10 +20,7 @@ use super::{
         field_bytes, outer_remainder_sequence_storage_bytes_with_config, storage_geometry,
         validate_opening_threadgroup_memory, SIMD_WIDTH,
     },
-    shader::{
-        MATERIALIZE_PIPELINE, OPENING_PIPELINE, REDUCTION_PIPELINE, STREAM_BIND_PIPELINE,
-        TRANSITION_PIPELINE,
-    },
+    shader::pipeline_names,
 };
 
 pub(super) struct Pipelines {
@@ -155,12 +152,13 @@ impl SolinasMetal {
         let weight_capacity = geometry.weight_capacity;
         let max_threadgroups = geometry.max_threadgroups;
 
+        let names = pipeline_names(config.binding_plan);
         let pipelines = Pipelines {
-            materialize: self.compile_named_pipeline(MATERIALIZE_PIPELINE)?,
-            stream_bind: self.compile_named_pipeline(STREAM_BIND_PIPELINE)?,
-            transition: self.compile_named_pipeline(TRANSITION_PIPELINE)?,
-            opening: self.compile_named_pipeline(OPENING_PIPELINE)?,
-            reduction: self.compile_named_pipeline(REDUCTION_PIPELINE)?,
+            materialize: self.compile_named_pipeline(names.materialize)?,
+            stream_bind: self.compile_named_pipeline(names.stream_bind)?,
+            transition: self.compile_named_pipeline(names.transition)?,
+            opening: self.compile_named_pipeline(names.opening)?,
+            reduction: self.compile_named_pipeline(names.reduction)?,
         };
         let limits = PipelineSetLimits {
             materialize: Self::limits(&pipelines.materialize),
@@ -170,11 +168,11 @@ impl SolinasMetal {
             reduction: Self::limits(&pipelines.reduction),
         };
         for (pipeline, pipeline_limits) in [
-            (MATERIALIZE_PIPELINE, limits.materialize),
-            (STREAM_BIND_PIPELINE, limits.stream_bind),
-            (TRANSITION_PIPELINE, limits.transition),
-            (OPENING_PIPELINE, limits.opening),
-            (REDUCTION_PIPELINE, limits.reduction),
+            (names.materialize, limits.materialize),
+            (names.stream_bind, limits.stream_bind),
+            (names.transition, limits.transition),
+            (names.opening, limits.opening),
+            (names.reduction, limits.reduction),
         ] {
             if pipeline_limits.thread_execution_width != SIMD_WIDTH {
                 return Err(MetalError::UnsupportedOuterRemainderExecutionWidth {

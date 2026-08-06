@@ -1,4 +1,5 @@
 mod api;
+mod artifact;
 mod plan;
 mod sequence;
 mod shader;
@@ -13,6 +14,9 @@ pub use api::{
     OuterRemainderStorageInitialization, OuterRemainderStorageInitializationStats,
     OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
+pub use artifact::OuterBindingPlan;
+#[cfg(feature = "test-utils")]
+pub use artifact::OuterKernelArtifact;
 pub(crate) use plan::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config,

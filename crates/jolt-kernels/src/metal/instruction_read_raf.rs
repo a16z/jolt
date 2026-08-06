@@ -15,6 +15,8 @@ use super::bytecode_read_raf::BytecodeReadRafMetalConfig;
 use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
+#[cfg(feature = "test-utils")]
+use super::solinas::OuterKernelArtifact;
 use super::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows, MetalError, Product5Sequence,
     Product5SequenceConfig, ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
@@ -89,6 +91,27 @@ pub struct MetalBackend {
 impl MetalBackend {
     /// Compiles the Akita field library and validates the hybrid cutoffs.
     pub fn new(config: MetalConfig) -> Result<Self, MetalError> {
+        Self::validate_config(&config)?;
+        Ok(Self::with_context(&config, SolinasMetal::for_akita()?))
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[doc(hidden)]
+    pub fn new_with_outer_artifact(
+        config: MetalConfig,
+        artifact: &OuterKernelArtifact,
+    ) -> Result<Self, MetalError> {
+        if config.spartan_outer_remainder.dispatch.binding_plan != artifact.binding_plan() {
+            return Err(MetalError::OuterArtifactBindingPlanMismatch);
+        }
+        Self::validate_config(&config)?;
+        Ok(Self::with_context(
+            &config,
+            SolinasMetal::for_akita_with_outer_artifact(artifact)?,
+        ))
+    }
+
+    fn validate_config(config: &MetalConfig) -> Result<(), MetalError> {
         let remainder_trace_cutoff = config.spartan_outer_remainder.trace_cutoff_elements;
         if remainder_trace_cutoff < 4 || !remainder_trace_cutoff.is_power_of_two() {
             return Err(MetalError::InvalidHybridCutoff(remainder_trace_cutoff));
@@ -131,14 +154,18 @@ impl MetalBackend {
                 address_cutoff,
             });
         }
-        Ok(Self {
-            context: Arc::new(SolinasMetal::for_akita()?),
-            config,
+        Ok(())
+    }
+
+    fn with_context(config: &MetalConfig, context: SolinasMetal) -> Self {
+        Self {
+            context: Arc::new(context),
+            config: *config,
             #[cfg(any(test, feature = "test-utils"))]
             hamming_dispatches: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
             outer_remainder_sequences: Arc::new(AtomicUsize::new(0)),
-        })
+        }
     }
 
     #[cfg(any(test, feature = "test-utils"))]

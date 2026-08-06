@@ -78,12 +78,14 @@ pub use instruction_ra_sequence::{
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
 };
+#[cfg(feature = "test-utils")]
+pub use outer_remainder::OuterKernelArtifact;
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRemainderSequenceStorage,
 };
 pub use outer_remainder::{
-    OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
+    OuterBindingPlan, OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
     OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
     OuterRemainderStorageInitializationStats, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
@@ -219,6 +221,10 @@ pub enum MetalError {
     DeviceUnavailable,
     #[error("Solinas offset must be nonzero")]
     InvalidOffset,
+    #[error("invalid OuterRemainder runtime artifact source")]
+    InvalidOuterArtifactSource,
+    #[error("OuterRemainder artifact and runtime binding plans differ")]
+    OuterArtifactBindingPlanMismatch,
     #[error("kernel requires Solinas offset {expected:#x}, but the context uses {got:#x}")]
     UnexpectedSolinasOffset { expected: u32, got: u32 },
     #[error("failed to compile the Solinas Metal library: {0}")]

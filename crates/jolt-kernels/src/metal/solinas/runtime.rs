@@ -8,6 +8,10 @@ use metal::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "test-utils")]
+use super::source::library_source_with_outer;
+#[cfg(feature = "test-utils")]
+use super::OuterKernelArtifact;
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,12 +53,26 @@ impl SolinasMetal {
     }
 
     pub fn new(offset: u32) -> Result<Self, MetalError> {
+        Self::new_with_source(offset, library_source(offset))
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[doc(hidden)]
+    pub fn for_akita_with_outer_artifact(
+        artifact: &OuterKernelArtifact,
+    ) -> Result<Self, MetalError> {
+        Self::new_with_source(
+            AKITA_OFFSET_FFFFA7F7,
+            library_source_with_outer(AKITA_OFFSET_FFFFA7F7, artifact.source()),
+        )
+    }
+
+    fn new_with_source(offset: u32, source: String) -> Result<Self, MetalError> {
         if offset == 0 {
             return Err(MetalError::InvalidOffset);
         }
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
         let options = CompileOptions::new();
-        let source = library_source(offset);
         let library = device
             .new_library_with_source(&source, &options)
             .map_err(MetalError::LibraryCompilation)?;

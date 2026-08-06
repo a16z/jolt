@@ -33,14 +33,17 @@ const LIBRARY_SOURCE_FRAGMENTS: &[&str] = &[
     BYTECODE_CYCLE_SOURCE,
     BYTECODE_ROW_SOURCE,
     SPARTAN_OUTER_UNISKIP_SOURCE,
-    OUTER_REMAINDER_SOURCE,
     INSTRUCTION_INPUT_SOURCE,
     ADDRESS_CYCLE_SOURCE,
 ];
 
 pub(super) fn library_source(offset: u32) -> String {
+    library_source_with_outer(offset, OUTER_REMAINDER_SOURCE)
+}
+
+pub(super) fn library_source_with_outer(offset: u32, outer_source: &str) -> String {
     format!(
-        "#define SOLINAS_OFFSET {offset}u\n{}",
+        "#define SOLINAS_OFFSET {offset}u\n{}\n{outer_source}",
         LIBRARY_SOURCE_FRAGMENTS.join("\n")
     )
 }
@@ -49,19 +52,31 @@ pub(super) fn library_source(offset: u32) -> String {
 mod tests {
     use super::*;
 
-    fn legacy_library_source(offset: u32) -> String {
+    fn expected_library_source(offset: u32) -> String {
         format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}\n{OUTER_REMAINDER_SOURCE}"
         )
     }
 
     #[test]
-    fn source_assembly_is_byte_equivalent_to_the_legacy_builder() {
+    fn source_assembly_puts_the_runtime_fragment_last() {
         for offset in [275, 0xffff_a7f7] {
             assert_eq!(
                 library_source(offset).as_bytes(),
-                legacy_library_source(offset).as_bytes()
+                expected_library_source(offset).as_bytes()
             );
         }
+    }
+
+    #[test]
+    fn source_assembly_replaces_only_the_outer_fragment() {
+        let replacement = "kernel void replacement_outer() {}";
+        let source = library_source_with_outer(275, replacement);
+
+        assert!(source.contains(replacement));
+        assert!(!source.contains(OUTER_REMAINDER_SOURCE));
+        assert!(source.contains(FIELD_SOURCE));
+        assert!(source.contains(INSTRUCTION_INPUT_SOURCE));
+        assert!(source.ends_with(replacement));
     }
 }

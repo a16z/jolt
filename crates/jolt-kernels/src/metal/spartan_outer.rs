@@ -1352,7 +1352,9 @@ mod tests {
         MetalOuterRemainderHost, OuterRemainder, ResidentRowPlan, SpartanOuterDimensions,
         OUTER_DOMAIN, OUTER_VARIABLES,
     };
-    use crate::metal::solinas::{MetalError, OuterRemainderSequenceConfig};
+    #[cfg(feature = "test-utils")]
+    use crate::metal::solinas::OuterKernelArtifact;
+    use crate::metal::solinas::{MetalError, OuterBindingPlan, OuterRemainderSequenceConfig};
     use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
     use crate::optimized::harness::run_lockstep;
     use crate::optimized::spartan_outer::{
@@ -1595,7 +1597,12 @@ mod tests {
         assert_eq!(factored, dense);
     }
 
-    fn adapter_parity_case(log_t: usize, cpu_tail_elements: usize) {
+    fn adapter_parity_case(
+        log_t: usize,
+        cpu_tail_elements: usize,
+        binding_plan: OuterBindingPlan,
+        runtime_source: bool,
+    ) {
         let cycles = 1usize << log_t;
         with_sample_backend_at_log_t(log_t, 4, |witness| {
             let tau = (0..log_t + 2)
@@ -1636,17 +1643,31 @@ mod tests {
                 witness,
             )
             .unwrap();
-            let metal = MetalBackend::new(MetalConfig {
+            let config = MetalConfig {
                 spartan_outer_remainder: SpartanOuterRemainderMetalConfig {
                     trace_cutoff_elements: 4,
                     dispatch: OuterRemainderSequenceConfig {
+                        binding_plan,
                         max_threadgroups: 2,
                         cpu_tail_elements,
                         ..Default::default()
                     },
                 },
                 ..Default::default()
-            })
+            };
+            let metal = if runtime_source {
+                #[cfg(feature = "test-utils")]
+                {
+                    MetalBackend::new_with_outer_artifact(
+                        config,
+                        &OuterKernelArtifact::embedded(binding_plan).unwrap(),
+                    )
+                }
+                #[cfg(not(feature = "test-utils"))]
+                panic!("runtime-source parity requires test-utils")
+            } else {
+                MetalBackend::new(config)
+            }
             .unwrap();
             let rows =
                 prepare_metal_spartan_outer_witness_rows(&metal.context, witness, cycles).unwrap();
@@ -1719,12 +1740,29 @@ mod tests {
 
     #[test]
     fn outer_remainder_adapter_matches_optimized_cpu_all_rounds_and_openings() {
-        adapter_parity_case(5, 8);
+        adapter_parity_case(5, 8, OuterBindingPlan::BOnlyV1, false);
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[test]
+    fn split_ab_adapter_matches_optimized_cpu_all_rounds_and_openings() {
+        adapter_parity_case(5, 8, OuterBindingPlan::SplitAbV1, true);
     }
 
     #[test]
     fn outer_remainder_handoff_waits_for_the_stream_bind() {
-        adapter_parity_case(3, 16);
+        adapter_parity_case(3, 16, OuterBindingPlan::BOnlyV1, false);
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[test]
+    fn runtime_artifact_cannot_select_a_different_binding_plan() {
+        let artifact = OuterKernelArtifact::embedded(OuterBindingPlan::SplitAbV1).unwrap();
+
+        assert!(matches!(
+            MetalBackend::new_with_outer_artifact(MetalConfig::default(), &artifact),
+            Err(MetalError::OuterArtifactBindingPlanMismatch)
+        ));
     }
 
     #[test]
