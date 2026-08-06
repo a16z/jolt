@@ -144,6 +144,12 @@ names an analytical ceiling, progress checkpoint, and kill or redesign action.
 Missing that checkpoint seals `phase_exhausted` rather than spending the remaining
 phase budget by default.
 
+The padded-56 phase did miss that checkpoint: its exact four-pair result measured
+36.042 ms of opening GPU time against the frozen 27.73-ms limit and was 3.97%
+slower overall. The terminal record is
+`evidence/outer_remainder_opening_padded_56_v1_rejected.json`; the run must not be
+resumed or retuned under the exhausted phase contract.
+
 If an inherited proxy is already known to misrank the representative evaluator,
 do not spend a new phase recalibrating the unchanged proxy. Record the inherited
 evidence and use the direct lane, retaining the cheap scale only for the one-shot

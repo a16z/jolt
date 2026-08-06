@@ -321,8 +321,8 @@ representative run. Its parent, candidate, screen result, and restored-source
 hashes are retained in
 `autoresearch/evidence/outer_remainder_opening_row_owner_v1_rejected.json`.
 
-The active phase is `opening_padded_56_v1`. It leaves the legacy source byte-for-
-byte unchanged and adds a separately named opening entrypoint. The artifact-v2
+The `opening_padded_56_v1` phase is exhausted. It left the legacy source byte-for-
+byte unchanged and added a separately named opening entrypoint. The artifact-v2
 manifest binds the selected plan to its entrypoints and opening layout, so the
 host allocation and shader ABI cannot drift independently. `b_only_v1` remains
 the default; only a sealed artifact can select `b_only_padded_56_v1`.
@@ -331,29 +331,32 @@ The legacy opening stages 64 rows with 20 words per row and allocates dynamic
 threadgroup buffers of `[10,240, 1,024, 3,920]` bytes. The candidate stages 56
 rows with a 21-word padded stride, removes the unused shard-sum buffer, and uses
 `[9,408, 896, 0]` bytes. This lowers the dynamic footprint from 15,184 to 10,304
-bytes. It may permit three resident groups where the legacy layout permits two,
-but that is a hypothesis until device evidence reports residency, registers, and
-spills.
+bytes. The phase tested whether that reduction could offset the candidate's extra
+masked-lane work; it did not establish a residency gain.
 
 The smaller tile has a structural cost. At `E_in = 8192`, it issues 293 row-vector
 passes for every 256 legacy passes, a 1.1445x masked-lane multiplier. Applying that
 tax gives an optimistic 54.237-ms log-26 opening and a 208.749-ms complete member,
-or 4.313x against the 900.272-ms CPU control. This phase can create a useful parent
-but cannot by itself reach 5x.
+or 4.313x against the 900.272-ms CPU control. Even the analytical best case could
+not by itself reach 5x.
 
-The phase admits exactly one causal candidate: switch the binding plan from
+The phase admitted exactly one causal candidate: switch the binding plan from
 legacy to padded-56 while retaining materialize/output threads 256, transition
 threads 128, and cutoffs 16/18. Log-25 opening GPU-active must be at most 27.73 ms.
-If it passes, the log-26 representative must improve by at least 3% beyond noise
-and take at most 209.976 ms. A miss seals the phase immediately; neighboring tile
-sizes and dispatch tuning belong to a new analytical phase. Final kernel
-acceptance still requires at least 5x and at most 170.5 ms.
+It instead measured 36.042 ms against 31.873 ms for the parent and produced a
+0.9618x complete successor ratio with 0.06% relative MAD. The 1.1308x observed
+opening cost is close to the structural 293/256 = 1.1445x row-pass multiplier, so
+the smaller allocation did not buy enough throughput to offset its extra work.
+The checkpoint stopped the phase before log-26 evaluation. Exact samples, source
+and artifact hashes, and the terminal state are retained in
+`autoresearch/evidence/outer_remainder_opening_padded_56_v1_rejected.json`.
 
-Before promotion, Instruments or ISA evidence must report threadgroup memory,
-register pressure, spills, active SIMD groups, achieved occupancy, and dispatch
-utilization. Row-release deferral is admissible only when an adjacent production
-consumer proves direct ownership reuse; moving work outside this member is not an
-optimization.
+Neighboring tile sizes and dispatch tuning are pruned under this mechanism. The
+next phase must start from a fresh production profile and reduce actual work or
+change ownership; any occupancy claim still requires Instruments or ISA evidence
+covering threadgroup memory, register pressure, spills, active SIMD groups, and
+dispatch utilization. Final kernel acceptance remains at least 5x and at most
+170.5 ms.
 
 The historical resident remap is below the v2 5x floor. Its dominant GPU-active
 phases are the 86.5-ms first message, 25.5-ms first bind, 15.2-ms dense prefix, and
