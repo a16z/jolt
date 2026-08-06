@@ -481,6 +481,8 @@ pub enum MetalError {
     },
     #[error("registers value evaluation LT-low table has length {got}, expected {expected}")]
     RegistersValLtLength { expected: usize, got: usize },
+    #[error("registers value evaluation dense state has {got} rows, expected {expected}")]
+    RegistersValStateLength { expected: usize, got: usize },
     #[error(
         "registers value evaluation cannot continue split-LT binding from length {0}; hand off to the dense tail"
     )]

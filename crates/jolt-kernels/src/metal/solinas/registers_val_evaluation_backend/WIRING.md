@@ -415,10 +415,9 @@ algebra variants are tried.
 
 1. Add a typed resident input owner and a low-level constructor that borrows
    its buffers. Validate identity, shape, device, ABI, and allocation limits.
-2. Add production state export to `RegistersValSequence`; the existing
-   `read_current_dense_state` is test-only and allocates a new vector.
-   Production export must fill preallocated host storage and report exactly
-   `32C` bytes.
+2. `RegistersValSequence::read_current_dense_state_into` now fills
+   preallocated host storage and validates the exact row count. The production
+   adapter must report its `32C`-byte readback boundary.
 3. Implement the high-level `PrepareKernel` adapter with an asynchronous,
    protocol-inert first-message submission. Its state machine must distinguish
    submitted, joined, native, dense, CPU-tail, and finished states.

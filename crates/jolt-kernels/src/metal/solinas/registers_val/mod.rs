@@ -890,20 +890,36 @@ impl RegistersValSequence {
         2 * SAMPLES * (self.threads_per_threadgroup / SIMD_WIDTH) * size_of::<Fp128>()
     }
 
-    #[cfg(feature = "test-utils")]
-    pub fn read_current_dense_state(&self) -> Result<Vec<[AkitaField; 2]>, MetalError> {
+    /// Copies the current resident `(inc, wa)` rows into caller-owned storage.
+    pub fn read_current_dense_state_into(
+        &self,
+        output: &mut [[AkitaField; 2]],
+    ) -> Result<(), MetalError> {
+        if output.len() != self.current_elements {
+            return Err(MetalError::RegistersValStateLength {
+                expected: self.current_elements,
+                got: output.len(),
+            });
+        }
         let elements = 2 * self.current_elements;
         // SAFETY: each dense buffer has capacity for at least `elements`
-        // fields and the preceding command completed before state changes.
+        // fields and every transition waits for completion before advancing.
         let values = unsafe {
             slice::from_raw_parts(self.source_buffer().contents().cast::<Fp128>(), elements)
         };
         self.context
             .validate_inputs("registers val resident dense state", values)?;
-        Ok(values
-            .chunks_exact(2)
-            .map(|row| [row[0].into_jolt_field(), row[1].into_jolt_field()])
-            .collect())
+        for (output, row) in output.iter_mut().zip(values.chunks_exact(2)) {
+            *output = [row[0].into_jolt_field(), row[1].into_jolt_field()];
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn read_current_dense_state(&self) -> Result<Vec<[AkitaField; 2]>, MetalError> {
+        let mut output = vec![[AkitaField::zero(); 2]; self.current_elements];
+        self.read_current_dense_state_into(&mut output)?;
+        Ok(output)
     }
 
     fn source_buffer(&self) -> &Buffer {
@@ -985,3 +1001,102 @@ fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, va
 
 const _: () = assert!(size_of::<MessageParams>() == 16);
 const _: () = assert!(size_of::<ReductionParams>() == 16);
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "Metal parity setup")]
+mod tests {
+    use jolt_poly::{BindingOrder, Polynomial};
+
+    use super::*;
+
+    fn point(len: usize, seed: u64) -> Vec<AkitaField> {
+        (0..len)
+            .map(|index| AkitaField::from_u64(seed + 19 * index as u64))
+            .collect()
+    }
+
+    fn bind(values: Vec<AkitaField>, challenge: AkitaField) -> Vec<AkitaField> {
+        let mut values = Polynomial::new(values);
+        values.bind_with_order(challenge, BindingOrder::LowToHigh);
+        values.evals().to_vec()
+    }
+
+    #[test]
+    fn production_export_matches_two_native_binds() {
+        let context = SolinasMetal::for_akita().unwrap();
+        let cycles = 64usize;
+        let inc = (0..cycles)
+            .map(|index| AkitaField::from_u64(3 + 17 * index as u64))
+            .collect::<Vec<_>>();
+        let rd = (0..cycles)
+            .map(|index| {
+                if index.is_multiple_of(5) {
+                    ABSENT_REGISTER
+                } else {
+                    index as u8
+                }
+            })
+            .collect::<Vec<_>>();
+        let r_address = point(ADDRESS_BITS, 101);
+        let r_cycle = point(cycles.ilog2() as usize, 211);
+        let first = context
+            .prepare_registers_val_first_message(
+                &inc,
+                &rd,
+                &r_address,
+                &r_cycle,
+                RegistersValFirstMessageConfig::default(),
+            )
+            .unwrap();
+        first.execute().unwrap();
+
+        let low_bits = r_cycle.len() / 2;
+        let r_lo = &r_cycle[r_cycle.len() - low_bits..];
+        let challenge_0 = AkitaField::from_u64(307);
+        let challenge_1 = AkitaField::from_u64(401);
+        let lt_lo = bind(LtPolynomial::<AkitaField>::evaluations(r_lo), challenge_0);
+        let transition = first
+            .into_first_transition(&lt_lo, RegistersValTransitionConfig::default())
+            .unwrap();
+        transition.execute(challenge_0).unwrap();
+        let mut sequence = transition
+            .into_sequence(RegistersValDenseConfig::default())
+            .unwrap();
+        let lt_lo = bind(lt_lo, challenge_1);
+        let _ = sequence.bind_and_message(challenge_1, &lt_lo).unwrap();
+
+        let mut exported = vec![[AkitaField::zero(); 2]; sequence.current_elements()];
+        sequence
+            .read_current_dense_state_into(&mut exported)
+            .unwrap();
+
+        let eq_address = EqPolynomial::<AkitaField>::evals(&r_address, None);
+        let wa = rd
+            .iter()
+            .map(|&index| {
+                if index == ABSENT_REGISTER {
+                    AkitaField::zero()
+                } else {
+                    eq_address[index as usize]
+                }
+            })
+            .collect::<Vec<_>>();
+        let expected_inc = bind(bind(inc, challenge_0), challenge_1);
+        let expected_wa = bind(bind(wa, challenge_0), challenge_1);
+        let expected = expected_inc
+            .into_iter()
+            .zip(expected_wa)
+            .map(|(inc, wa)| [inc, wa])
+            .collect::<Vec<_>>();
+        assert_eq!(exported, expected);
+
+        let mut short = vec![[AkitaField::zero(); 2]; exported.len() - 1];
+        assert!(matches!(
+            sequence.read_current_dense_state_into(&mut short),
+            Err(MetalError::RegistersValStateLength {
+                expected: 16,
+                got: 15
+            })
+        ));
+    }
+}
