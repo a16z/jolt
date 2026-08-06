@@ -1,0 +1,117 @@
+{
+  "schema": "metal_instruction_claim_reduction_observation_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-06",
+  "evidence_stage": "observed",
+  "measurement_kind": "same_input_resident_diagnostic",
+  "candidate": {
+    "base_git_revision": "ae168077e1a5b45bc8eaf2e6ba7e2d71051f433d",
+    "binary_path": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "0f73ea3b57bb71125f862e999de40850e8aa9e6f07f84de8f659cd7a5a2a8fa2",
+    "current_runtime_sha256": "8ca2a7bdf9b0ed5e8fb045d7e636327ab6f2020078fff06924512d8cd58e1257",
+    "shader_sha256": "6d851aeb1b227a54932c03e938b13652885d21d52ed120219fcb3d7969dae477",
+    "measured_benchmark_sha256": "af20651c5c0d4faf48ad13184ef07cda0623c00934e3a24d53956d87a7e87eff",
+    "current_benchmark_sha256": "c9a5e9d95a81e8e1a6b6bb46033ff0da1b6ef2f2f8179ae51342c174339ab7ec",
+    "measurement_source_reproducible": false,
+    "measurement_source_gap": "The exact pre-telemetry runtime source embedded in the measured binary was not committed or preserved as a patch. Retain these numbers only as diagnostics; rebuild and remeasure the committed source before any promotion claim.",
+    "post_measurement_source_note": "The immutable release-binary hash identifies the measured artifact. After measurement, runtime.rs changed to accumulate CPU-tail host time in its public telemetry and to reject a stale CPU tail after reset. The benchmark already overwrote wall with full-service elapsed time, and the benchmark default cutoff changed from 2^14 to the retained 2^16 while every recorded target command set 2^16 explicitly. Kernel commands, shader source, successful-run outputs, and recorded timings are unchanged."
+  },
+  "contract": {
+    "candidate_command": "JOLT_SOLINAS_BENCH_FAMILY=instruction-claim-reduction JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_METAL_INSTRUCTION_CLAIM_CUTOFF=65536 cargo bench -q -p jolt-kernels --features metal,test-utils --bench metal_solinas -- --noplot",
+    "paired_command": "JOLT_SOLINAS_BENCH_FAMILY=instruction-claim-reduction JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_METAL_INSTRUCTION_CLAIM_CUTOFF=65536 JOLT_METAL_INSTRUCTION_CLAIM_CONTROL_CUTOFF=2 cargo bench -q -p jolt-kernels --features metal,test-utils --bench metal_solinas -- --noplot",
+    "elements": 67108864,
+    "opening_path": "two-column aliases from ProductRemainder",
+    "candidate_cpu_tail_cutoff": 65536,
+    "control_cpu_tail_cutoff": 2,
+    "materialize_threads_per_threadgroup": 128,
+    "transition_threads_per_threadgroup": 64,
+    "opening_threads_per_threadgroup": 128,
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "field_offset": 4294944759,
+    "resident_bytes": 5370282048,
+    "round_device_buffer_allocations": 0,
+    "cpu_reference_ms": 306.683705,
+    "cpu_reference_artifact": "benchmark-runs/metal-piop-eval/20260806-133709-697013/result.json",
+    "cpu_reference_git_revision": "5f520c21e338632aa0bf5936ceb02be6c22fa40f",
+    "five_x_wall_cap_ms": 61.336741,
+    "eight_x_wall_cap_ms": 38.335463,
+    "analytical_alias_active_cap_ms": 27.418192,
+    "timed_service_includes": [
+      "split-equality writes into reusable shared buffers",
+      "Metal encoding, submission, completion, reduction, and readback",
+      "one GPU-to-CPU state handoff at the selected cutoff",
+      "allocation and execution of the CPU tail",
+      "final host bind",
+      "two-column aliased opening scan"
+    ],
+    "excluded": [
+      "native operand generation",
+      "standalone five-plane upload or shared GPU producer",
+      "actual Fiat-Shamir hashing",
+      "ProductRemainder alias-value handoff",
+      "rebinding or replacing operands for a distinct proof",
+      "generated backend and proof verification"
+    ]
+  },
+  "correctness": {
+    "focused_nextest_passed": 26,
+    "all_round_messages_match_independent_oracle": true,
+    "all_resident_states_match_independent_oracle": true,
+    "odd_and_even_log_orientation_covered": true,
+    "nonzero_gamma_core_recovery_covered": true,
+    "zero_gamma_all_column_scan_covered": true,
+    "aliased_opening_scan_covered": true,
+    "gpu_to_cpu_tail_matches_oracle": true,
+    "signed_and_unsigned_conversion_edges_covered": true,
+    "allocation_identity_reused": true
+  },
+  "retained_cutoff_sweep_log20": [
+    {"cutoff": 4096, "criterion_wall_median_ms": 5.6383, "active_median_ms": 1.9604},
+    {"cutoff": 16384, "criterion_wall_median_ms": 4.4638, "active_median_ms": 1.8071},
+    {"cutoff": 65536, "criterion_wall_median_ms": 3.4915, "active_median_ms": 1.6563},
+    {"cutoff": 131072, "criterion_wall_median_ms": 4.4143, "active_median_ms": 1.5770},
+    {"cutoff": 262144, "criterion_wall_median_ms": 4.9666, "active_median_ms": 1.4786}
+  ],
+  "fresh_process_log26": {
+    "candidate": {
+      "setup_ms": 333.267458,
+      "first_wall_ms": 112.638958,
+      "first_active_ms": 33.923581,
+      "warm_one_shot_wall_ms": 25.179417,
+      "warm_one_shot_active_ms": 22.036126,
+      "criterion_wall_interval_ms": [36.132, 36.823, 37.348],
+      "criterion_active_interval_ms": [29.884, 30.339, 30.763],
+      "criterion_wall_speedup_to_frozen_cpu": 8.32859
+    },
+    "all_metal_control": {
+      "setup_ms": 302.034666,
+      "first_wall_ms": 104.661125,
+      "first_active_ms": 32.379251,
+      "warm_one_shot_wall_ms": 26.511416,
+      "warm_one_shot_active_ms": 22.248457,
+      "criterion_wall_interval_ms": [31.697, 38.206, 47.516],
+      "criterion_active_interval_ms": [22.494, 23.194, 24.213],
+      "criterion_wall_speedup_to_frozen_cpu": 8.02711
+    }
+  },
+  "same_allocation_alternating_pairs": {
+    "order": "candidate first on even pairs, control first on odd pairs",
+    "candidate_wall_ms": [37.728833, 54.478542, 35.68475, 153.446458, 36.605334, 116.796417, 114.847084, 192.383166, 99.502125, 145.8145],
+    "control_wall_ms": [75.935625, 58.911958, 88.886458, 94.026292, 247.180667, 150.839666, 101.333958, 63.7025, 279.200875, 300.211167],
+    "candidate_active_ms": [22.639959, 22.434333, 22.663376, 22.708125, 22.237291, 22.783625, 22.732207, 29.963625, 26.338332, 24.752082],
+    "control_active_ms": [23.343375, 23.076999, 23.167252, 23.070543, 22.959583, 24.307251, 22.80575, 22.898459, 27.185542, 42.537791],
+    "candidate_upper_median_wall_ms": 114.847084,
+    "control_upper_median_wall_ms": 101.333958,
+    "candidate_upper_median_active_ms": 22.732207,
+    "control_upper_median_active_ms": 23.167252,
+    "candidate_active_improvement": 1.01914,
+    "candidate_wall_speedup_to_frozen_cpu_at_upper_median": 2.67037,
+    "system_memory_free_percent_after_run": 95
+  },
+  "verdict": {
+    "status": "observed_kernel_active_within_cap_standalone_wall_unstable",
+    "reason": "Exact kernel execution is within the 27.418192-ms alias active budget in the representative samples and has ample 5x/8x compute headroom. Standalone per-member wall is not stable under sustained target-scale repetitions, the host-written first-use path fails 5x, and neither the GPU producer nor same-run CPU control is present. Repetitions reuse the same resident proof inputs, and the exact source for the measured binary was not preserved. The early 8.33x resident result is retained only as a diagnostic and is not promotion evidence.",
+    "next_test": "Encode all active PIOP members for each round into one stage command buffer, perform one host Fiat-Shamir boundary per batched round, consume ProductRemainder rows plus the 24-byte companion from a GPU-resident producer, and run alternating same-binary optimized-CPU versus Metal-hybrid complete-stage measurements."
+  }
+}

@@ -1,7 +1,7 @@
 use core::mem::{align_of, size_of};
 
 use jolt_field::{AkitaField, FromPrimitiveInt};
-use jolt_poly::UnivariatePoly;
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 
 use crate::optimized::instruction_claim_reduction::InstructionOperandRow;
 
@@ -764,6 +764,247 @@ fn target_scale_work_separates_useful_issued_and_traffic_counts() {
     assert_eq!(core.useful_field_products(), 738_459_642);
     assert_eq!(core.issued_field_product_lanes(), 747_372_384);
     assert_eq!(core.opening.compulsory_bytes, 2_684_354_560);
+}
+
+#[test]
+fn resident_sequence_matches_every_oracle_intermediate() {
+    assert_resident_sequence(AkitaField::from_u64(17), 1 << 9);
+}
+
+#[test]
+fn resident_sequence_gamma_zero_scans_the_signed_column() {
+    assert_resident_sequence(AkitaField::zero(), 1 << 7);
+}
+
+#[test]
+fn stale_cpu_tail_is_rejected_after_reset() {
+    let Ok(context) = super::super::SolinasMetal::for_akita() else {
+        return;
+    };
+    let rows = 1 << 4;
+    let core = (0..rows)
+        .map(|index| InstructionClaimCoreRow::new(index as u64, 2, 3, 4))
+        .collect::<Vec<_>>();
+    let right = (0..rows)
+        .map(|index| InstructionClaimRightInput::new(index as i128 - 8))
+        .collect::<Vec<_>>();
+    let planes = operand_planes(&core, &right);
+    let point = (0..4)
+        .map(|index| AkitaField::from_u64(101 + 2 * index))
+        .collect::<Vec<_>>();
+    let challenges = (0..4)
+        .map(|index| AkitaField::from_u64(401 + 4 * index))
+        .collect::<Vec<_>>();
+    let mut sequence = context
+        .prepare_instruction_claim_sequence(
+            &planes,
+            AkitaField::from_u64(17),
+            InstructionClaimKernelConfig::default(),
+        )
+        .expect("the resident sequence should prepare");
+
+    let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let _ = sequence
+        .message(gruen.e_in_current(), gruen.e_out_current())
+        .unwrap();
+    let mut stale = sequence.handoff_to_cpu().unwrap();
+    for round in 1..4 {
+        gruen.bind(challenges[round - 1]);
+        let _ = stale
+            .bind_and_message(
+                challenges[round - 1],
+                gruen.e_in_current(),
+                gruen.e_out_current(),
+            )
+            .unwrap();
+    }
+    assert_eq!(stale.current_elements(), 2);
+
+    sequence.reset();
+    let gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let _ = sequence
+        .message(gruen.e_in_current(), gruen.e_out_current())
+        .unwrap();
+    let _current = sequence.handoff_to_cpu().unwrap();
+    let error = sequence.finish_cpu_tail(stale, challenges[3]).unwrap_err();
+    assert!(error.to_string().contains("generation"));
+}
+
+fn assert_resident_sequence(gamma: AkitaField, rows: usize) {
+    let Ok(context) = super::super::SolinasMetal::for_akita() else {
+        return;
+    };
+    let core = (0..rows)
+        .map(|index| {
+            InstructionClaimCoreRow::new(
+                (index as u64).wrapping_mul(0x9e37_79b9),
+                (index as u64).rotate_left(17) ^ u64::MAX,
+                ((index as u128) << 79) | ((index as u128).wrapping_mul(0x1_0000_01b3)),
+                (index as u64).wrapping_mul(0xd6e8_feb8_6659_fd93),
+            )
+        })
+        .collect::<Vec<_>>();
+    let right = (0..rows)
+        .map(|index| {
+            let magnitude = ((index as i128) << 61) | (index as i128 + 1);
+            InstructionClaimRightInput::new(if index.is_multiple_of(3) {
+                -magnitude
+            } else {
+                magnitude
+            })
+        })
+        .collect::<Vec<_>>();
+    let planes = operand_planes(&core, &right);
+    let log_t = rows.trailing_zeros() as usize;
+    let point = (0..log_t)
+        .map(|index| AkitaField::from_u64(101 + 2 * index as u64))
+        .collect::<Vec<_>>();
+    let challenges = (0..log_t)
+        .map(|index| AkitaField::from_u64(401 + 4 * index as u64))
+        .collect::<Vec<_>>();
+    let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let mut sequence = context
+        .prepare_instruction_claim_sequence(&planes, gamma, InstructionClaimKernelConfig::default())
+        .expect("the resident sequence should prepare");
+    let allocations = sequence.allocation_identities();
+
+    let expected =
+        oracle::materialize_message(&planes, gamma, gruen.e_in_current(), gruen.e_out_current())
+            .expect("the first oracle message should evaluate");
+    let actual = sequence
+        .message(gruen.e_in_current(), gruen.e_out_current())
+        .expect("the first Metal message should execute");
+    assert_eq!(actual, expected.q_endpoints);
+    assert_eq!(sequence.read_current_state().unwrap(), expected.state);
+    let mut state = expected.state;
+
+    for round in 1..log_t {
+        let challenge = challenges[round - 1];
+        gruen.bind(challenge);
+        let expected = oracle::bind_and_message(
+            &state,
+            InstructionClaimGeometry::new(rows).unwrap(),
+            round,
+            challenge,
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+        )
+        .expect("the transition oracle should evaluate");
+        let actual = sequence
+            .bind_and_message(challenge, gruen.e_in_current(), gruen.e_out_current())
+            .expect("the transition Metal message should execute");
+        assert_eq!(actual, expected.q_endpoints, "round {round}");
+        assert_eq!(
+            sequence.read_current_state().unwrap(),
+            expected.state,
+            "round {round} resident state"
+        );
+        state = expected.state;
+    }
+
+    let final_claim = sequence
+        .finish(challenges[log_t - 1])
+        .expect("the final pair should bind");
+    assert_eq!(
+        final_claim,
+        finish_bind([state[0], state[1]], challenges[log_t - 1])
+    );
+
+    let reversed = challenges.iter().rev().copied().collect::<Vec<_>>();
+    let split = reversed.len() / 2;
+    let (r_hi, r_lo) = reversed.split_at(split);
+    let e_out = EqPolynomial::<AkitaField>::evals(r_hi, None);
+    let e_in = EqPolynomial::<AkitaField>::evals(r_lo, None);
+    let expected_openings =
+        oracle::all_openings(&planes, &e_in, &e_out).expect("the opening oracle should evaluate");
+    let actual_openings = sequence
+        .openings(&e_in, &e_out)
+        .expect("the opening Metal scan should execute");
+    assert_eq!(actual_openings, expected_openings);
+    assert_eq!(actual_openings.combined(gamma), final_claim);
+
+    let expected_aliases = oracle::aliased_openings(&planes, &e_in, &e_out)
+        .expect("the aliased opening oracle should evaluate");
+    let actual_aliases = sequence
+        .aliased_openings(&e_in, &e_out)
+        .expect("the aliased opening Metal scan should execute");
+    assert_eq!(actual_aliases, expected_aliases);
+    assert_eq!(sequence.allocation_identities(), allocations);
+    assert_eq!(sequence.round_device_buffer_allocations(), 0);
+
+    sequence.reset();
+    assert_eq!(sequence.current_elements(), rows);
+    assert_eq!(sequence.allocation_identities(), allocations);
+
+    let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let expected =
+        oracle::materialize_message(&planes, gamma, gruen.e_in_current(), gruen.e_out_current())
+            .unwrap();
+    assert_eq!(
+        sequence
+            .message(gruen.e_in_current(), gruen.e_out_current())
+            .unwrap(),
+        expected.q_endpoints
+    );
+    let mut state = expected.state;
+    let gpu_rounds = 3.min(log_t);
+    for round in 1..gpu_rounds {
+        gruen.bind(challenges[round - 1]);
+        let expected = oracle::bind_and_message(
+            &state,
+            InstructionClaimGeometry::new(rows).unwrap(),
+            round,
+            challenges[round - 1],
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+        )
+        .unwrap();
+        assert_eq!(
+            sequence
+                .bind_and_message(
+                    challenges[round - 1],
+                    gruen.e_in_current(),
+                    gruen.e_out_current(),
+                )
+                .unwrap(),
+            expected.q_endpoints
+        );
+        state = expected.state;
+    }
+    let mut tail = sequence.handoff_to_cpu().unwrap();
+    assert_eq!(tail.current_elements(), state.len());
+    for round in gpu_rounds..log_t {
+        gruen.bind(challenges[round - 1]);
+        let expected = oracle::bind_and_message(
+            &state,
+            InstructionClaimGeometry::new(rows).unwrap(),
+            round,
+            challenges[round - 1],
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+        )
+        .unwrap();
+        assert_eq!(
+            tail.bind_and_message(
+                challenges[round - 1],
+                gruen.e_in_current(),
+                gruen.e_out_current(),
+            )
+            .unwrap(),
+            expected.q_endpoints,
+            "CPU tail round {round}"
+        );
+        state = expected.state;
+    }
+    assert_eq!(tail.current_elements(), 2);
+    assert_eq!(tail.round_device_buffer_allocations(), 0);
+    assert_eq!(
+        sequence
+            .finish_cpu_tail(tail, challenges[log_t - 1])
+            .unwrap(),
+        finish_bind([state[0], state[1]], challenges[log_t - 1])
+    );
+    assert_eq!(sequence.allocation_identities(), allocations);
 }
 
 #[test]

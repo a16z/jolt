@@ -1,0 +1,1022 @@
+use std::{
+    mem::size_of,
+    slice,
+    time::{Duration, Instant},
+};
+
+use jolt_field::AkitaField;
+use metal::{
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+};
+
+use super::super::{
+    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+};
+use super::{
+    finalize_openings, finish_bind, nontrivial_gamma_powers, InstructionClaimGeometry,
+    InstructionClaimKernelConfig, InstructionClaimOpeningMode, InstructionClaimOpeningParams,
+    InstructionClaimOpenings, InstructionClaimOperandPlanes, InstructionClaimPhaseParams,
+    InstructionClaimReductionParams, InstructionClaimReductionPlan, InstructionClaimStorageLayout,
+    ALIASED_OPENING_PIPELINE, INSTRUCTION_CLAIM_ALIASED_OPENINGS,
+    INSTRUCTION_CLAIM_MESSAGE_COLUMNS, INSTRUCTION_CLAIM_SIMD_WIDTH, MATERIALIZE_PIPELINE,
+    REDUCTION_PIPELINE, TRANSITION_PIPELINE,
+};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InstructionClaimTiming {
+    pub wall: Duration,
+    pub gpu_active: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InstructionClaimPhase {
+    Raw,
+    Materialized,
+    CpuTail,
+    Finished,
+}
+
+struct InstructionClaimPipelines {
+    materialize: ComputePipelineState,
+    transition: ComputePipelineState,
+    opening: ComputePipelineState,
+    aliased_opening: ComputePipelineState,
+    reduction: ComputePipelineState,
+    materialize_limits: PipelineLimits,
+    transition_limits: PipelineLimits,
+    opening_limits: PipelineLimits,
+    aliased_opening_limits: PipelineLimits,
+    reduction_limits: PipelineLimits,
+}
+
+struct InstructionClaimBuffers {
+    lookup_output: Buffer,
+    left_lookup_operand: Buffer,
+    right_lookup_operand: Buffer,
+    left_instruction_input: Buffer,
+    right_instruction_input: Buffer,
+    gamma_powers: Buffer,
+    state_a: Buffer,
+    state_b: Buffer,
+    e_in: Buffer,
+    e_out: Buffer,
+    partial_a: Buffer,
+    partial_b: Buffer,
+}
+
+pub struct InstructionClaimSequence {
+    context: SolinasMetal,
+    pipelines: InstructionClaimPipelines,
+    buffers: InstructionClaimBuffers,
+    geometry: InstructionClaimGeometry,
+    layout: InstructionClaimStorageLayout,
+    config: InstructionClaimKernelConfig,
+    gamma: AkitaField,
+    opening_mode: InstructionClaimOpeningMode,
+    current_elements: usize,
+    rounds_bound: usize,
+    generation: u64,
+    source_in_a: bool,
+    phase: InstructionClaimPhase,
+    combined_claim: Option<AkitaField>,
+    timing: InstructionClaimTiming,
+}
+
+pub struct InstructionClaimCpuTail {
+    geometry: InstructionClaimGeometry,
+    state: Vec<AkitaField>,
+    scratch: Vec<AkitaField>,
+    next_round: usize,
+    sequence_identity: usize,
+    generation: u64,
+    wall: Duration,
+}
+
+impl SolinasMetal {
+    pub fn prepare_instruction_claim_sequence(
+        &self,
+        planes: &InstructionClaimOperandPlanes,
+        gamma: AkitaField,
+        config: InstructionClaimKernelConfig,
+    ) -> Result<InstructionClaimSequence, MetalError> {
+        let config = config.validate()?;
+        let geometry = InstructionClaimGeometry::new(planes.len())?;
+        let opening = geometry.opening();
+        let maximum_buffer = usize::try_from(self.device.max_buffer_length()).unwrap_or(usize::MAX);
+        let layout = InstructionClaimStorageLayout::new(
+            geometry.rows(),
+            opening.e_in_length(),
+            opening.e_out_length(),
+        )?
+        .validate_max_buffer_length(maximum_buffer)?;
+        let resident_bytes = u64::try_from(layout.resident_bytes())
+            .map_err(|_| MetalError::InputTooLong(layout.resident_bytes()))?;
+        self.validate_additional_working_set(resident_bytes)?;
+
+        let opening_mode = InstructionClaimOpeningMode::for_gamma(gamma);
+        let materialize = self.compile_named_pipeline(MATERIALIZE_PIPELINE)?;
+        let transition = self.compile_named_pipeline(TRANSITION_PIPELINE)?;
+        let opening = self.compile_named_pipeline(opening_mode.pipeline())?;
+        let aliased_opening = self.compile_named_pipeline(ALIASED_OPENING_PIPELINE)?;
+        let reduction = self.compile_named_pipeline(REDUCTION_PIPELINE)?;
+        let materialize_limits = Self::limits(&materialize);
+        let transition_limits = Self::limits(&transition);
+        let opening_limits = Self::limits(&opening);
+        let aliased_opening_limits = Self::limits(&aliased_opening);
+        let reduction_limits = Self::limits(&reduction);
+        for (pipeline, limits) in [
+            (MATERIALIZE_PIPELINE, materialize_limits),
+            (TRANSITION_PIPELINE, transition_limits),
+            (opening_mode.pipeline(), opening_limits),
+            (ALIASED_OPENING_PIPELINE, aliased_opening_limits),
+            (REDUCTION_PIPELINE, reduction_limits),
+        ] {
+            if limits.thread_execution_width != INSTRUCTION_CLAIM_SIMD_WIDTH {
+                return Err(MetalError::UnsupportedInstructionClaimExecutionWidth {
+                    pipeline,
+                    expected: INSTRUCTION_CLAIM_SIMD_WIDTH,
+                    got: limits.thread_execution_width,
+                });
+            }
+        }
+        for (phase, requested, limits, dynamic) in [
+            (
+                "materialize",
+                config.materialize_threads_per_threadgroup,
+                materialize_limits,
+                config.materialize_threadgroup_bytes()?,
+            ),
+            (
+                "transition",
+                config.transition_threads_per_threadgroup,
+                transition_limits,
+                config.transition_threadgroup_bytes()?,
+            ),
+            (
+                "opening",
+                config.opening_threads_per_threadgroup,
+                opening_limits,
+                config.opening_threadgroup_bytes(opening_mode.columns())?,
+            ),
+            (
+                "aliased opening",
+                config.opening_threads_per_threadgroup,
+                aliased_opening_limits,
+                config.opening_threadgroup_bytes(INSTRUCTION_CLAIM_ALIASED_OPENINGS)?,
+            ),
+        ] {
+            let resolved = Self::resolve_threadgroup_width(Some(requested), limits)?;
+            if resolved != requested {
+                return Err(MetalError::InvalidInstructionClaimState(
+                    "resolved threadgroup width differs from the checked configuration",
+                ));
+            }
+            let total = u64::try_from(dynamic)
+                .ok()
+                .and_then(|bytes| bytes.checked_add(limits.static_threadgroup_memory_length))
+                .ok_or(MetalError::InputTooLong(dynamic))?;
+            if total > self.device.max_threadgroup_memory_length() {
+                return Err(MetalError::InstructionClaimThreadgroupMemory {
+                    phase,
+                    requested: total,
+                    maximum: self.device.max_threadgroup_memory_length(),
+                });
+            }
+        }
+        let reduction_threads =
+            Self::resolve_threadgroup_width(Some(INSTRUCTION_CLAIM_SIMD_WIDTH), reduction_limits)?;
+        if reduction_threads != INSTRUCTION_CLAIM_SIMD_WIDTH {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "the recursive reduction must use one SIMD group",
+            ));
+        }
+
+        let gamma_powers = nontrivial_gamma_powers(gamma)
+            .iter()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>();
+        self.validate_inputs("instruction claim gamma powers", &gamma_powers)?;
+        let buffers = InstructionClaimBuffers {
+            lookup_output: buffer_from_slice(&self.device, planes.lookup_output()),
+            left_lookup_operand: buffer_from_slice(&self.device, planes.left_lookup_operand()),
+            right_lookup_operand: buffer_from_slice(&self.device, planes.right_lookup_operand()),
+            left_instruction_input: buffer_from_slice(
+                &self.device,
+                planes.left_instruction_input(),
+            ),
+            right_instruction_input: buffer_from_slice(
+                &self.device,
+                planes.right_instruction_input(),
+            ),
+            gamma_powers: buffer_from_slice(&self.device, &gamma_powers),
+            state_a: self.new_instruction_claim_buffer(layout.state_a_fields())?,
+            state_b: self.new_instruction_claim_buffer(layout.state_b_fields())?,
+            e_in: self.new_instruction_claim_buffer(layout.e_in_fields())?,
+            e_out: self.new_instruction_claim_buffer(layout.e_out_fields())?,
+            partial_a: self.new_instruction_claim_buffer(layout.partial_fields())?,
+            partial_b: self.new_instruction_claim_buffer(layout.partial_fields())?,
+        };
+
+        Ok(InstructionClaimSequence {
+            context: self.clone(),
+            pipelines: InstructionClaimPipelines {
+                materialize,
+                transition,
+                opening,
+                aliased_opening,
+                reduction,
+                materialize_limits,
+                transition_limits,
+                opening_limits,
+                aliased_opening_limits,
+                reduction_limits,
+            },
+            buffers,
+            geometry,
+            layout,
+            config,
+            gamma,
+            opening_mode,
+            current_elements: geometry.rows(),
+            rounds_bound: 0,
+            generation: 0,
+            source_in_a: true,
+            phase: InstructionClaimPhase::Raw,
+            combined_claim: None,
+            timing: InstructionClaimTiming::default(),
+        })
+    }
+
+    fn new_instruction_claim_buffer(&self, fields: usize) -> Result<Buffer, MetalError> {
+        let bytes = fields
+            .checked_mul(size_of::<Fp128>())
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(fields))?;
+        self.validate_buffer_length(bytes)?;
+        Ok(self
+            .device
+            .new_buffer(bytes, MTLResourceOptions::StorageModeShared))
+    }
+}
+
+impl InstructionClaimSequence {
+    pub fn message(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<[AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS], MetalError> {
+        self.message_timed(e_in, e_out).map(|(message, _)| message)
+    }
+
+    pub fn message_timed(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<
+        (
+            [AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
+            InstructionClaimTiming,
+        ),
+        MetalError,
+    > {
+        if self.phase != InstructionClaimPhase::Raw {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "the materialization message was already emitted",
+            ));
+        }
+        let started = Instant::now();
+        let params =
+            InstructionClaimPhaseParams::materialize(self.geometry, e_in.len(), e_out.len())?;
+        self.write_weights(e_in, e_out)?;
+        let (message, gpu_active) = autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.pipelines.materialize);
+            encoder.set_buffer(0, Some(&self.buffers.lookup_output), 0);
+            encoder.set_buffer(1, Some(&self.buffers.left_lookup_operand), 0);
+            encoder.set_buffer(2, Some(&self.buffers.right_lookup_operand), 0);
+            encoder.set_buffer(3, Some(&self.buffers.left_instruction_input), 0);
+            encoder.set_buffer(4, Some(&self.buffers.right_instruction_input), 0);
+            encoder.set_buffer(5, Some(&self.buffers.gamma_powers), 0);
+            encoder.set_buffer(6, Some(&self.buffers.e_in), 0);
+            encoder.set_buffer(7, Some(&self.buffers.e_out), 0);
+            encoder.set_buffer(8, Some(&self.buffers.state_a), 0);
+            encoder.set_buffer(9, Some(&self.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 10, &params);
+            encoder.set_threadgroup_memory_length(
+                0,
+                self.config.materialize_threadgroup_bytes()? as u64,
+            );
+            dispatch_blocks(
+                encoder,
+                e_out.len(),
+                self.config.materialize_threads_per_threadgroup,
+            );
+            let final_in_a = encode_reductions(
+                encoder,
+                &self.pipelines.reduction,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
+            )?;
+            encoder.end_encoding();
+            finish_command::<INSTRUCTION_CLAIM_MESSAGE_COLUMNS>(
+                &self.context,
+                command_buffer,
+                if final_in_a {
+                    &self.buffers.partial_a
+                } else {
+                    &self.buffers.partial_b
+                },
+                "instruction claim first message",
+            )
+        })?;
+        let timing = InstructionClaimTiming {
+            wall: started.elapsed(),
+            gpu_active,
+        };
+        self.phase = InstructionClaimPhase::Materialized;
+        self.timing.wall += timing.wall;
+        self.timing.gpu_active += timing.gpu_active;
+        Ok((message, timing))
+    }
+
+    pub fn bind_and_message(
+        &mut self,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<[AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS], MetalError> {
+        self.bind_and_message_timed(challenge, e_in, e_out)
+            .map(|(message, _)| message)
+    }
+
+    pub fn bind_and_message_timed(
+        &mut self,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<
+        (
+            [AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
+            InstructionClaimTiming,
+        ),
+        MetalError,
+    > {
+        if self.phase != InstructionClaimPhase::Materialized || self.current_elements < 4 {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "a transition needs a materialized state of at least four elements",
+            ));
+        }
+        let started = Instant::now();
+        let round = self.rounds_bound + 1;
+        let params =
+            InstructionClaimPhaseParams::transition(self.geometry, round, e_in.len(), e_out.len())?;
+        self.write_weights(e_in, e_out)?;
+        let challenge = Fp128::from_jolt_field(&challenge);
+        self.context
+            .validate_inputs("instruction claim challenge", &[challenge])?;
+        let (message, gpu_active) = autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.pipelines.transition);
+            encoder.set_buffer(0, Some(self.source_buffer()), 0);
+            encoder.set_buffer(1, Some(self.destination_buffer()), 0);
+            encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+            encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+            encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 5, &challenge);
+            set_inline_bytes(encoder, 6, &params);
+            encoder.set_threadgroup_memory_length(
+                0,
+                self.config.transition_threadgroup_bytes()? as u64,
+            );
+            dispatch_blocks(
+                encoder,
+                e_out.len(),
+                self.config.transition_threads_per_threadgroup,
+            );
+            let final_in_a = encode_reductions(
+                encoder,
+                &self.pipelines.reduction,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
+            )?;
+            encoder.end_encoding();
+            finish_command::<INSTRUCTION_CLAIM_MESSAGE_COLUMNS>(
+                &self.context,
+                command_buffer,
+                if final_in_a {
+                    &self.buffers.partial_a
+                } else {
+                    &self.buffers.partial_b
+                },
+                "instruction claim transition message",
+            )
+        })?;
+        self.current_elements /= 2;
+        self.rounds_bound = round;
+        self.source_in_a = !self.source_in_a;
+        let timing = InstructionClaimTiming {
+            wall: started.elapsed(),
+            gpu_active,
+        };
+        self.timing.wall += timing.wall;
+        self.timing.gpu_active += timing.gpu_active;
+        Ok((message, timing))
+    }
+
+    pub fn finish(&mut self, challenge: AkitaField) -> Result<AkitaField, MetalError> {
+        let started = Instant::now();
+        if self.phase != InstructionClaimPhase::Materialized
+            || self.current_elements != 2
+            || self.rounds_bound + 1 != self.geometry.log_t()
+        {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "finish requires every round message and the last challenge",
+            ));
+        }
+        let values = unsafe {
+            // SAFETY: the active shared buffer contains the two final values,
+            // and the preceding transition command completed before returning.
+            slice::from_raw_parts(self.source_buffer().contents().cast::<Fp128>(), 2)
+        };
+        self.context
+            .validate_inputs("instruction claim final state", values)?;
+        let combined = finish_bind(
+            [values[0].into_jolt_field(), values[1].into_jolt_field()],
+            challenge,
+        );
+        self.combined_claim = Some(combined);
+        self.phase = InstructionClaimPhase::Finished;
+        self.timing.wall += started.elapsed();
+        Ok(combined)
+    }
+
+    pub fn handoff_to_cpu(&mut self) -> Result<InstructionClaimCpuTail, MetalError> {
+        let started = Instant::now();
+        if self.phase != InstructionClaimPhase::Materialized {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "a CPU handoff requires a materialized device state",
+            ));
+        }
+        let values = unsafe {
+            // SAFETY: the active shared buffer contains `current_elements`
+            // initialized fields and the previous command completed.
+            slice::from_raw_parts(
+                self.source_buffer().contents().cast::<Fp128>(),
+                self.current_elements,
+            )
+        };
+        self.context
+            .validate_inputs("instruction claim CPU handoff", values)?;
+        let state = values
+            .iter()
+            .copied()
+            .map(Fp128::into_jolt_field)
+            .collect::<Vec<_>>();
+        let scratch = Vec::with_capacity(state.len() / 2);
+        self.phase = InstructionClaimPhase::CpuTail;
+        self.timing.wall += started.elapsed();
+        Ok(InstructionClaimCpuTail {
+            geometry: self.geometry,
+            state,
+            scratch,
+            next_round: self.rounds_bound + 1,
+            sequence_identity: self.buffers.gamma_powers.as_ptr() as usize,
+            generation: self.generation,
+            wall: Duration::ZERO,
+        })
+    }
+
+    pub fn finish_cpu_tail(
+        &mut self,
+        tail: InstructionClaimCpuTail,
+        challenge: AkitaField,
+    ) -> Result<AkitaField, MetalError> {
+        let started = Instant::now();
+        if self.phase != InstructionClaimPhase::CpuTail {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "the sequence has no active CPU tail",
+            ));
+        }
+        if tail.sequence_identity != self.buffers.gamma_powers.as_ptr() as usize
+            || tail.geometry != self.geometry
+            || tail.generation != self.generation
+        {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "the CPU tail belongs to a different resident sequence or generation",
+            ));
+        }
+        if tail.state.len() != 2 || tail.next_round != self.geometry.log_t() {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "the CPU tail has not emitted every remaining round message",
+            ));
+        }
+        let combined = finish_bind([tail.state[0], tail.state[1]], challenge);
+        self.current_elements = 2;
+        self.rounds_bound = self.geometry.log_t() - 1;
+        self.combined_claim = Some(combined);
+        self.phase = InstructionClaimPhase::Finished;
+        self.timing.wall += tail.wall + started.elapsed();
+        Ok(combined)
+    }
+
+    pub fn openings(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<InstructionClaimOpenings<AkitaField>, MetalError> {
+        self.openings_timed(e_in, e_out)
+            .map(|(openings, _)| openings)
+    }
+
+    pub fn openings_timed(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<(InstructionClaimOpenings<AkitaField>, InstructionClaimTiming), MetalError> {
+        let combined_claim =
+            self.combined_claim
+                .ok_or(MetalError::InvalidInstructionClaimState(
+                    "openings require the final combined claim",
+                ))?;
+        let started = Instant::now();
+        let columns = self.opening_mode.columns();
+        let params = InstructionClaimOpeningParams::new(
+            self.geometry,
+            e_in.len(),
+            e_out.len(),
+            self.opening_mode,
+        )?;
+        self.write_weights(e_in, e_out)?;
+        let (values, gpu_active) = self.execute_opening(columns, params)?;
+        let core = [values[0], values[1], values[2], values[3]];
+        let right_input =
+            (self.opening_mode == InstructionClaimOpeningMode::AllColumns).then(|| values[4]);
+        let openings = finalize_openings(
+            self.opening_mode,
+            self.gamma,
+            combined_claim,
+            core,
+            right_input,
+        )?;
+        let timing = InstructionClaimTiming {
+            wall: started.elapsed(),
+            gpu_active,
+        };
+        self.timing.wall += timing.wall;
+        self.timing.gpu_active += timing.gpu_active;
+        Ok((openings, timing))
+    }
+
+    pub fn aliased_openings(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<[AkitaField; INSTRUCTION_CLAIM_ALIASED_OPENINGS], MetalError> {
+        self.aliased_openings_timed(e_in, e_out)
+            .map(|(openings, _)| openings)
+    }
+
+    pub fn aliased_openings_timed(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<
+        (
+            [AkitaField; INSTRUCTION_CLAIM_ALIASED_OPENINGS],
+            InstructionClaimTiming,
+        ),
+        MetalError,
+    > {
+        if self.phase != InstructionClaimPhase::Finished {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "aliased openings require the final combined claim",
+            ));
+        }
+        let started = Instant::now();
+        let params =
+            InstructionClaimOpeningParams::aliased(self.geometry, e_in.len(), e_out.len())?;
+        self.write_weights(e_in, e_out)?;
+        let (values, gpu_active) = autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.pipelines.aliased_opening);
+            encoder.set_buffer(0, Some(&self.buffers.left_lookup_operand), 0);
+            encoder.set_buffer(1, Some(&self.buffers.right_lookup_operand), 0);
+            encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+            encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+            encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 5, &params);
+            encoder.set_threadgroup_memory_length(
+                0,
+                self.config
+                    .opening_threadgroup_bytes(INSTRUCTION_CLAIM_ALIASED_OPENINGS)?
+                    as u64,
+            );
+            dispatch_blocks(
+                encoder,
+                e_out.len(),
+                self.config.opening_threads_per_threadgroup,
+            );
+            let final_in_a = encode_reductions(
+                encoder,
+                &self.pipelines.reduction,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                INSTRUCTION_CLAIM_ALIASED_OPENINGS,
+            )?;
+            encoder.end_encoding();
+            finish_command::<INSTRUCTION_CLAIM_ALIASED_OPENINGS>(
+                &self.context,
+                command_buffer,
+                if final_in_a {
+                    &self.buffers.partial_a
+                } else {
+                    &self.buffers.partial_b
+                },
+                "instruction claim aliased openings",
+            )
+        })?;
+        let timing = InstructionClaimTiming {
+            wall: started.elapsed(),
+            gpu_active,
+        };
+        self.timing.wall += timing.wall;
+        self.timing.gpu_active += timing.gpu_active;
+        Ok((values, timing))
+    }
+
+    fn execute_opening(
+        &self,
+        columns: usize,
+        params: InstructionClaimOpeningParams,
+    ) -> Result<(Vec<AkitaField>, Duration), MetalError> {
+        autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.pipelines.opening);
+            match self.opening_mode {
+                InstructionClaimOpeningMode::CoreAndRecover => {
+                    encoder.set_buffer(0, Some(&self.buffers.lookup_output), 0);
+                    encoder.set_buffer(1, Some(&self.buffers.left_lookup_operand), 0);
+                    encoder.set_buffer(2, Some(&self.buffers.right_lookup_operand), 0);
+                    encoder.set_buffer(3, Some(&self.buffers.left_instruction_input), 0);
+                    encoder.set_buffer(4, Some(&self.buffers.e_in), 0);
+                    encoder.set_buffer(5, Some(&self.buffers.e_out), 0);
+                    encoder.set_buffer(6, Some(&self.buffers.partial_a), 0);
+                    set_inline_bytes(encoder, 7, &params);
+                }
+                InstructionClaimOpeningMode::AllColumns => {
+                    encoder.set_buffer(0, Some(&self.buffers.lookup_output), 0);
+                    encoder.set_buffer(1, Some(&self.buffers.left_lookup_operand), 0);
+                    encoder.set_buffer(2, Some(&self.buffers.right_lookup_operand), 0);
+                    encoder.set_buffer(3, Some(&self.buffers.left_instruction_input), 0);
+                    encoder.set_buffer(4, Some(&self.buffers.right_instruction_input), 0);
+                    encoder.set_buffer(5, Some(&self.buffers.e_in), 0);
+                    encoder.set_buffer(6, Some(&self.buffers.e_out), 0);
+                    encoder.set_buffer(7, Some(&self.buffers.partial_a), 0);
+                    set_inline_bytes(encoder, 8, &params);
+                }
+            }
+            encoder.set_threadgroup_memory_length(
+                0,
+                self.config.opening_threadgroup_bytes(columns)? as u64,
+            );
+            dispatch_blocks(
+                encoder,
+                params.e_out_length as usize,
+                self.config.opening_threads_per_threadgroup,
+            );
+            let final_in_a = encode_reductions(
+                encoder,
+                &self.pipelines.reduction,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                params.e_out_length as usize,
+                columns,
+            )?;
+            encoder.end_encoding();
+            finish_command_vec(
+                &self.context,
+                command_buffer,
+                if final_in_a {
+                    &self.buffers.partial_a
+                } else {
+                    &self.buffers.partial_b
+                },
+                columns,
+                "instruction claim openings",
+            )
+        })
+    }
+
+    pub fn reset(&mut self) {
+        self.current_elements = self.geometry.rows();
+        self.rounds_bound = 0;
+        self.generation = self.generation.wrapping_add(1);
+        self.source_in_a = true;
+        self.phase = InstructionClaimPhase::Raw;
+        self.combined_claim = None;
+        self.timing = InstructionClaimTiming::default();
+    }
+
+    pub const fn current_elements(&self) -> usize {
+        self.current_elements
+    }
+
+    pub const fn storage_layout(&self) -> InstructionClaimStorageLayout {
+        self.layout
+    }
+
+    pub const fn resident_buffer_count(&self) -> usize {
+        12
+    }
+
+    pub const fn round_device_buffer_allocations(&self) -> usize {
+        0
+    }
+
+    pub const fn timing(&self) -> InstructionClaimTiming {
+        self.timing
+    }
+
+    pub fn allocation_identities(&self) -> [usize; 12] {
+        [
+            self.buffers.lookup_output.as_ptr() as usize,
+            self.buffers.left_lookup_operand.as_ptr() as usize,
+            self.buffers.right_lookup_operand.as_ptr() as usize,
+            self.buffers.left_instruction_input.as_ptr() as usize,
+            self.buffers.right_instruction_input.as_ptr() as usize,
+            self.buffers.gamma_powers.as_ptr() as usize,
+            self.buffers.state_a.as_ptr() as usize,
+            self.buffers.state_b.as_ptr() as usize,
+            self.buffers.e_in.as_ptr() as usize,
+            self.buffers.e_out.as_ptr() as usize,
+            self.buffers.partial_a.as_ptr() as usize,
+            self.buffers.partial_b.as_ptr() as usize,
+        ]
+    }
+
+    pub const fn materialize_pipeline_limits(&self) -> PipelineLimits {
+        self.pipelines.materialize_limits
+    }
+
+    pub const fn transition_pipeline_limits(&self) -> PipelineLimits {
+        self.pipelines.transition_limits
+    }
+
+    pub const fn opening_pipeline_limits(&self) -> PipelineLimits {
+        self.pipelines.opening_limits
+    }
+
+    pub const fn aliased_opening_pipeline_limits(&self) -> PipelineLimits {
+        self.pipelines.aliased_opening_limits
+    }
+
+    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
+        self.pipelines.reduction_limits
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn read_current_state(&self) -> Result<Vec<AkitaField>, MetalError> {
+        if self.phase == InstructionClaimPhase::Raw {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "the combined state is not materialized",
+            ));
+        }
+        let values = unsafe {
+            // SAFETY: the active shared buffer contains `current_elements`
+            // initialized fields and all prior commands completed.
+            slice::from_raw_parts(
+                self.source_buffer().contents().cast::<Fp128>(),
+                self.current_elements,
+            )
+        };
+        self.context
+            .validate_inputs("instruction claim resident state", values)?;
+        Ok(values.iter().copied().map(Fp128::into_jolt_field).collect())
+    }
+
+    fn write_weights(&self, e_in: &[AkitaField], e_out: &[AkitaField]) -> Result<(), MetalError> {
+        write_fields(&self.buffers.e_in, self.layout.e_in_fields(), e_in, "e_in")?;
+        write_fields(
+            &self.buffers.e_out,
+            self.layout.e_out_fields(),
+            e_out,
+            "e_out",
+        )
+    }
+
+    fn source_buffer(&self) -> &Buffer {
+        if self.source_in_a {
+            &self.buffers.state_a
+        } else {
+            &self.buffers.state_b
+        }
+    }
+
+    fn destination_buffer(&self) -> &Buffer {
+        if self.source_in_a {
+            &self.buffers.state_b
+        } else {
+            &self.buffers.state_a
+        }
+    }
+}
+
+impl InstructionClaimCpuTail {
+    pub const fn current_elements(&self) -> usize {
+        self.state.len()
+    }
+
+    pub const fn round_device_buffer_allocations(&self) -> usize {
+        0
+    }
+
+    pub fn bind_and_message(
+        &mut self,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<[AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS], MetalError> {
+        let started = Instant::now();
+        let params = InstructionClaimPhaseParams::transition(
+            self.geometry,
+            self.next_round,
+            e_in.len(),
+            e_out.len(),
+        )?;
+        let source_elements = params.source_elements as usize;
+        if self.state.len() != source_elements {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "the CPU tail source length differs from its round geometry",
+            ));
+        }
+        self.scratch.clear();
+        self.scratch.resize(source_elements / 2, AkitaField::zero());
+        let mut endpoints = [AkitaField::zero(); INSTRUCTION_CLAIM_MESSAGE_COLUMNS];
+        for (x_out, &outer_weight) in e_out.iter().enumerate() {
+            let mut inner = [AkitaField::zero(); INSTRUCTION_CLAIM_MESSAGE_COLUMNS];
+            for (x_in, &inner_weight) in e_in.iter().enumerate() {
+                let pair = x_out * e_in.len() + x_in;
+                let source = 4 * pair;
+                let destination = 2 * pair;
+                let low = finish_bind([self.state[source], self.state[source + 1]], challenge);
+                let high = finish_bind([self.state[source + 2], self.state[source + 3]], challenge);
+                self.scratch[destination] = low;
+                self.scratch[destination + 1] = high;
+                inner[0] += inner_weight * low;
+                inner[1] += inner_weight * (high + high - low);
+            }
+            for (endpoint, inner) in endpoints.iter_mut().zip(inner) {
+                *endpoint += outer_weight * inner;
+            }
+        }
+        std::mem::swap(&mut self.state, &mut self.scratch);
+        self.next_round += 1;
+        self.wall += started.elapsed();
+        Ok(endpoints)
+    }
+}
+
+fn dispatch_blocks(
+    encoder: &metal::ComputeCommandEncoderRef,
+    blocks: usize,
+    threads_per_threadgroup: usize,
+) {
+    encoder.dispatch_thread_groups(
+        MTLSize {
+            width: blocks as u64,
+            height: 1,
+            depth: 1,
+        },
+        MTLSize {
+            width: threads_per_threadgroup as u64,
+            height: 1,
+            depth: 1,
+        },
+    );
+}
+
+fn encode_reductions(
+    encoder: &metal::ComputeCommandEncoderRef,
+    pipeline: &ComputePipelineState,
+    partial_a: &Buffer,
+    partial_b: &Buffer,
+    mut input_count: usize,
+    columns: usize,
+) -> Result<bool, MetalError> {
+    let plan = InstructionClaimReductionPlan::new(input_count, columns)?;
+    let mut input_a = true;
+    for pass in plan.passes() {
+        let params = InstructionClaimReductionParams::new(pass.input_count(), columns)?;
+        encoder.set_compute_pipeline_state(pipeline);
+        let (input, output) = if input_a {
+            (partial_a, partial_b)
+        } else {
+            (partial_b, partial_a)
+        };
+        encoder.set_buffer(0, Some(input), 0);
+        encoder.set_buffer(1, Some(output), 0);
+        set_inline_bytes(encoder, 2, &params);
+        encoder.dispatch_thread_groups(
+            MTLSize {
+                width: pass.output_count() as u64,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: INSTRUCTION_CLAIM_SIMD_WIDTH as u64,
+                height: 1,
+                depth: 1,
+            },
+        );
+        input_count = pass.output_count();
+        input_a = !input_a;
+    }
+    debug_assert_eq!(input_count, 1);
+    Ok(input_a)
+}
+
+fn finish_command<const COLUMNS: usize>(
+    context: &SolinasMetal,
+    command_buffer: &metal::CommandBufferRef,
+    output: &Buffer,
+    label: &'static str,
+) -> Result<([AkitaField; COLUMNS], Duration), MetalError> {
+    let (values, duration) = finish_command_vec(context, command_buffer, output, COLUMNS, label)?;
+    let values: [AkitaField; COLUMNS] = values.try_into().map_err(|_| {
+        MetalError::InvalidInstructionClaimState("the reduced output column count changed")
+    })?;
+    Ok((values, duration))
+}
+
+fn finish_command_vec(
+    context: &SolinasMetal,
+    command_buffer: &metal::CommandBufferRef,
+    output: &Buffer,
+    columns: usize,
+    label: &'static str,
+) -> Result<(Vec<AkitaField>, Duration), MetalError> {
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+    let status = command_buffer.status();
+    if status != MTLCommandBufferStatus::Completed {
+        return Err(MetalError::CommandFailed(status));
+    }
+    let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+    let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+    if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+        return Err(MetalError::InvalidGpuTimestamps { start, end });
+    }
+    let values = unsafe {
+        // SAFETY: the completed reduction leaves `columns` fields at the
+        // front of the selected shared output buffer.
+        slice::from_raw_parts(output.contents().cast::<Fp128>(), columns)
+    };
+    context.validate_inputs(label, values)?;
+    Ok((
+        values.iter().copied().map(Fp128::into_jolt_field).collect(),
+        Duration::from_secs_f64(end - start),
+    ))
+}
+
+fn write_fields(
+    buffer: &Buffer,
+    capacity: usize,
+    values: &[AkitaField],
+    name: &'static str,
+) -> Result<(), MetalError> {
+    if values.len() > capacity {
+        return Err(super::InstructionClaimShapeError::StorageLength {
+            name,
+            expected: capacity,
+            got: values.len(),
+        }
+        .into());
+    }
+    let output = unsafe {
+        // SAFETY: the shared buffer holds `capacity` fields and no device
+        // command remains active when the next equality prefix is written.
+        slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), capacity)
+    };
+    for (output, value) in output.iter_mut().zip(values) {
+        *output = Fp128::from_jolt_field(value);
+    }
+    Ok(())
+}
+
+fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
+    encoder.set_bytes(
+        index,
+        size_of::<T>() as u64,
+        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
+    );
+}

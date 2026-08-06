@@ -1,21 +1,22 @@
 # Instruction claim-reduction Metal contract
 
-This directory contains a registered static design whose six Metal entry
-points compile on the target device. It does not yet contain a command runtime,
-select a backend, or run the prover. The implementation is split by
-responsibility:
+This directory contains a registered standalone runtime whose six Metal entry
+points compile and execute on the target device. It is not yet selected by the
+generated backend or supplied by the shared stage-2 producer. The
+implementation is split by responsibility:
 
 - `abi.rs`: native layouts and the host protocol boundary;
 - `oracle.rs`: independent shader-intermediate oracles;
 - `model.rs`: geometry, storage, useful/issued work, traffic, and gates;
 - `shader.metal`: the standalone fused-message kernels;
+- `runtime.rs`: resident buffers, round dispatch, exact reductions, and the
+  typed GPU-to-CPU tail handoff;
 - this file: integration and promotion contract.
 
 The algebra is traced to
 `optimized/instruction_claim_reduction.rs`, the symbolic relation, and the
-stage-2 verifier. All performance numbers below are projections from those
-sources and retained machine controls. Shader compilation is not timing or
-runtime parity evidence.
+stage-2 verifier. Projected numbers below remain distinct from the observed
+standalone evidence recorded later in this document.
 
 ## Frozen comparison
 
@@ -372,19 +373,92 @@ phase-roof, or 5x-wall failure. Record every run and exclusion. Large search
 winners require a clean revalidation binary and held-out transfer; one fast
 sample is not promotion evidence.
 
+## Standalone runtime evidence
+
+The runtime owns five native operand planes, one resident combined state, two
+split-equality buffers, and two reusable reduction buffers. No Metal buffer is
+allocated during a round. `InstructionClaimCpuTail` copies the selected small
+resident state once, preallocates one scratch vector, and then alternates those
+two host vectors without a per-round allocation. The host remains responsible
+for scaling the returned endpoints, transcript absorption, and challenge
+generation.
+
+Focused `nextest` parity covers every message and resident state for odd-log
+and even-log shapes, nonzero-gamma recovery, the gamma-zero five-column path,
+the two-column alias path, signed and unsigned conversion boundaries, final
+binding, buffer identity, stale-tail rejection, and GPU-to-CPU handoff. All 26
+focused tests pass on the Apple M4 Max.
+
+The retained Criterion family is `instruction-claim-reduction`. Its input
+planes and split-equality tables are prepared outside the timed service. Each
+service includes equality-buffer writes, command encoding, completion,
+readback, final binding, the selected CPU tail, and the two-column opening
+scan. Challenges are deterministic inputs; actual transcript hashing is not
+included. Setup and the standalone five-plane upload are reported separately.
+`reset` reuses the same five operand planes, so repeated samples are
+same-input resident diagnostics rather than distinct-proof throughput. A
+production runner needs producer-owned buffers or an explicit rebind path;
+allocating and copying a fresh five-plane sequence outside the timer is not a
+valid substitute.
+
+At `T=2^20`, an all-Metal service paid a completion boundary for every tiny
+late round. The bounded CPU-tail sweep produced these Criterion wall medians:
+
+| CPU-tail cutoff | Wall |
+|---:|---:|
+| `2^12` | 5.6383 ms |
+| `2^14` | 4.4638 ms |
+| `2^16` | 3.4915 ms |
+| `2^17` | 4.4143 ms |
+| `2^18` | 4.9666 ms |
+
+The retained cutoff is therefore `2^16`. At `T=2^26`, the first isolated run
+with that cutoff reported 36.823 ms median wall and 30.339 ms median GPU-active,
+or 8.33x against the historical 306.683705 ms CPU denominator. A warmed
+one-shot in the same process was 25.179417 ms wall and 22.036126 ms active.
+Those numbers establish adequate kernel headroom but are not promotion
+evidence: the first consumption of host-written planes was 112.638958 ms, the
+CPU denominator was not remeasured in the same binary, and the intended GPU
+producer was absent.
+
+A later sustained alternating experiment exposed a second integration issue.
+GPU-active time remained concentrated around 22--25 ms, within the analytical
+27.418192 ms alias budget, while standalone member wall ranged from about
+36 ms to 300 ms. System memory remained 95% free. The `2^16` candidate and
+all-Metal control had active medians of 22.732207 ms and 23.167252 ms in the
+same allocation; the cutoff is useful at smaller sizes but does not explain
+the target-scale wall variance. The observed phase diagnosis is
+`KernelActiveWithinAnalyticalCap / StandaloneWallUnstable /
+ProducerUnmeasured`; it is not a kernel promotion state.
+
+The next wall experiment must run at the stage boundary. All active PIOP
+members for a round need to encode into one command buffer, wait once, build
+the batched polynomial, and perform Fiat--Shamir once on the host. Charging a
+separate submission/completion boundary to every member is neither the target
+architecture nor stable acceptance evidence. That scheduler experiment must
+also consume the ProductRemainder row and 24-byte companion from a GPU-resident
+producer; a warmed host-upload control cannot substitute for it.
+
+The current convenience API cannot be placed inside that scheduler: each
+method privately allocates a command buffer, commits it, waits, timestamps,
+and reads the reduction result. Before backend wiring, split it into an
+encode-only phase over an externally owned command buffer and a completion /
+read phase after the stage wait. That refactor must also define borrowed
+producer-buffer lifetimes and distinct-proof rebinding.
+
 ## Unverified integration seams
 
-- high-level Rust command bindings and state-machine ownership;
 - the ProductRemainder/InstructionClaimReduction co-materializer;
 - allocation ownership and full stage-2 peak memory;
 - alias value handoff without transcript-order changes;
 - parameter offsets, register allocation, and occupancy beyond entry-point
   compilation;
-- shader correctness, reductions, readback, transcript parity, and proof
-  verification;
+- transcript parity, generated-backend selection, and proof verification;
 - direct companion production versus the split-row fallback;
-- CPU/Metal switchover and complete 5x/8x wall results.
+- stage-level command scheduling and complete alternating 5x/8x wall results;
+- encode/read separation and producer-owned operand rebinding.
 
-The registered source passes clippy and 23 focused tests, including target
-Metal compilation for all six entry points. No protocol GPU dispatch,
-benchmark, generated-driver integration, or proof run has occurred.
+The registered source has a standalone command runtime, Criterion family, and
+26 passing focused tests, including target Metal execution for all six entry
+points and both sides of the hybrid handoff. No generated-driver integration,
+shared producer, stage-level transcript run, or proof run has occurred.

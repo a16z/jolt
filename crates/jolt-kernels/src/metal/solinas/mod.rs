@@ -563,6 +563,28 @@ pub enum MetalError {
     )]
     SpartanShiftThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(transparent)]
+    InstructionClaimShape(#[from] instruction_claim_reduction::InstructionClaimShapeError),
+    #[error(transparent)]
+    InstructionClaimOpening(#[from] instruction_claim_reduction::InstructionClaimOpeningError),
+    #[error("invalid resident instruction claim-reduction state: {0}")]
+    InvalidInstructionClaimState(&'static str),
+    #[error(
+        "instruction claim-reduction pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedInstructionClaimExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "instruction claim-reduction {phase} needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
+    )]
+    InstructionClaimThreadgroupMemory {
+        phase: &'static str,
+        requested: u64,
+        maximum: u64,
+    },
+    #[error(transparent)]
     RamValCheckShape(#[from] ram_val_check::RamValCheckShapeError),
     #[error(transparent)]
     RamRaf(#[from] ram_raf_evaluation::RamRafError),
@@ -789,7 +811,12 @@ impl MetalError {
     pub(crate) fn is_capacity_error(&self) -> bool {
         matches!(
             self,
-            Self::InputTooLong(_) | Self::BufferTooLong { .. } | Self::WorkingSetTooLarge { .. }
+            Self::InputTooLong(_)
+                | Self::BufferTooLong { .. }
+                | Self::WorkingSetTooLarge { .. }
+                | Self::InstructionClaimShape(
+                    instruction_claim_reduction::InstructionClaimShapeError::BufferLengthLimit { .. }
+                )
         )
     }
 }

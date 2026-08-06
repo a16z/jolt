@@ -49,6 +49,10 @@ mod instruction_ra_sequence;
 mod instruction_input;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/instruction_claim_reduction.rs"]
+mod instruction_claim_reduction;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/product5.rs"]
 mod product5;
 
@@ -106,8 +110,9 @@ mod macos {
 
     use super::{
         address_raf, address_suffix, booleanity, booleanity_address, bytecode_cycle, cpu, cycle,
-        instruction_input, instruction_ra, instruction_ra_sequence, product5, product_remainder,
-        product_uniskip, ram_output_check, ram_raf_evaluation, ram_val_check,
+        instruction_claim_reduction, instruction_input, instruction_ra, instruction_ra_sequence,
+        product5, product_remainder, product_uniskip, ram_output_check, ram_raf_evaluation,
+        ram_val_check,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         registers_read_write, registers_val, spartan_outer_uniskip, spartan_shift,
     };
@@ -167,6 +172,9 @@ mod macos {
                 }
                 "instruction-input-service" => instruction_input::bench_service(c, &context),
                 "instruction-input" => instruction_input::bench(c, &context),
+                "instruction-claim-reduction" => {
+                    instruction_claim_reduction::bench(c, &context);
+                }
                 "instruction-read-raf-address" => address_raf::bench(c, &context),
                 "instruction-read-raf-address-condensed" => {
                     address_raf::bench_condensed(c, &context);
