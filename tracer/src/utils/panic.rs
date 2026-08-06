@@ -9,6 +9,12 @@ pub struct CallFrame {
     /// Register snapshot; captured only when `JOLT_BACKTRACE=full`, since
     /// that's the only mode that displays it. Keeping capture opt-in avoids a
     /// bulk register copy on every call instruction.
+    ///
+    /// Boxed because the snapshot is 1 KiB (`REGISTER_COUNT` = 128) and
+    /// `[i64; _]` has no niche, so an unboxed `Option` would still cost 1032
+    /// bytes per frame. `Option<Box<_>>` is pointer-sized, keeping `CallFrame`
+    /// at 24 bytes and the `MAX_CALL_STACK_DEPTH`-deep ring buffer — written on
+    /// every call instruction — a few cache lines instead of ~33 KiB.
     pub x: Option<Box<[i64; REGISTER_COUNT as usize]>>,
     /// cycle count at the time of call
     pub cycle_count: usize,

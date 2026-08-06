@@ -223,7 +223,7 @@ pub enum HostIo {
 /// strictly intra-tick, and cloning would share the `Arc<Mutex>` across
 /// threads).
 #[derive(Clone, Debug)]
-pub struct ChunkCpuState {
+pub(crate) struct ChunkCpuState {
     clock: u64,
     privilege_mode: PrivilegeMode,
     wfi: bool,
@@ -631,10 +631,10 @@ impl Cpu {
             self.handle_interrupt(self.pc);
         }
         self.clock = self.clock.wrapping_add(1);
-        // Historical per-tick bookkeeping removed as provably dead state:
-        // mmu.tick() only advanced a clock nobody reads, and CSR_CYCLE (0xc00)
-        // is not in the supported-CSR whitelist, so no guest instruction can
-        // ever observe the `clock * 8` value that used to be stored there.
+        // Historical per-tick bookkeeping removed as provably dead state: the
+        // Mmu's own clock (field and `tick` both deleted) was never read, and
+        // CSR_CYCLE (0xc00) is not in the supported-CSR whitelist, so no guest
+        // instruction can ever observe the `clock * 8` value once stored there.
     }
 
     // @TODO: Rename?
