@@ -79,10 +79,12 @@
         "promotion": {
           "comparison": "accepted_parent",
           "clear_loss_ratio": 0.98,
+          "inconclusive_retry_limit": 1,
           "kind": "successor_screen",
           "log_n": 25,
-          "maximum_calibration_relative_mad": 0.02,
-          "minimum_uncertainty": 0.01,
+          "maximum_calibration_absolute_log_bias": 0.02,
+          "maximum_screen_relative_mad": 0.03,
+          "minimum_uncertainty": 0.02,
           "required_guards": [
             "all_exact",
             "correctness_exact",
@@ -136,6 +138,8 @@
         "promotion": {
           "comparison": "accepted_parent",
           "kind": "relative_improvement",
+          "maximum_order_stratum_log_skew": 0.03,
+          "maximum_relative_mad": 0.03,
           "maximum_treatment_ms": 170.5,
           "minimum_accepted_speedup": 5.0,
           "minimum_relative_improvement": 0.03,

@@ -15,6 +15,7 @@ from scripts.metal_research.attempt import EvaluatorLeaseTimeout, run_attempt
 from scripts.metal_research import attempt as attempt_runtime
 from scripts.metal_research import binaries as binary_artifacts
 from scripts.metal_research import process_wrapper
+from scripts.metal_research.contracts import validate_template
 from scripts.metal_research.paired import paired_summary
 from scripts.metal_research.results import adapt_result, validate_tier_result
 from scripts.metal_research import runner
@@ -1209,8 +1210,10 @@ class ResultAdapterTests(unittest.TestCase):
                 "kind": "successor_screen",
                 "log_n": 25,
                 "clear_loss_ratio": 0.98,
-                "minimum_uncertainty": 0.01,
-                "maximum_calibration_relative_mad": 0.02,
+                "minimum_uncertainty": 0.02,
+                "maximum_calibration_absolute_log_bias": 0.02,
+                "maximum_screen_relative_mad": 0.03,
+                "inconclusive_retry_limit": 1,
             },
         }
 
@@ -1414,6 +1417,75 @@ class ResultAdapterTests(unittest.TestCase):
             },
         }
 
+    def uniform_successor_v2_output(
+        self, parent_ns: int, candidate_ns: int
+    ) -> dict[str, object]:
+        result = self.successor_v2_output()
+        for sample in result["samples"]:
+            sample["parent"] = self.successor_v2_arm(parent_ns)
+            sample["candidate"] = self.successor_v2_arm(candidate_ns)
+        result["excluded_warmup"]["parent"] = self.successor_v2_arm(parent_ns)
+        result["excluded_warmup"]["candidate"] = self.successor_v2_arm(
+            candidate_ns
+        )
+        speedup = parent_ns / candidate_ns
+        result["metrics"] = {
+            "successor_speedup": speedup,
+            "paired_speedups": [speedup] * 4,
+        }
+        total_ns = sum(
+            arm["resource_gpu_active_ns"]
+            for record in [result["excluded_warmup"], *result["samples"]]
+            for arm in (record["parent"], record["candidate"])
+        )
+        result["resources"] = {
+            "gpu_active_total_ns": total_ns,
+            "gpu_seconds": total_ns / 1e9,
+        }
+        return result
+
+    def varying_successor_v2_output(
+        self, parent_times: list[int], candidate_ns: int = 100
+    ) -> dict[str, object]:
+        if len(parent_times) != 4:
+            raise ValueError("the successor fixture requires four parent times")
+        result = self.successor_v2_output()
+        effects = []
+        for sample, parent_ns in zip(result["samples"], parent_times):
+            sample["parent"] = self.successor_v2_arm(parent_ns)
+            sample["candidate"] = self.successor_v2_arm(candidate_ns)
+            effects.append(parent_ns / candidate_ns)
+        sorted_effects = sorted(effects)
+        result["metrics"] = {
+            "successor_speedup": (
+                sorted_effects[1] + sorted_effects[2]
+            )
+            / 2,
+            "paired_speedups": sorted_effects,
+        }
+        total_ns = sum(
+            arm["resource_gpu_active_ns"]
+            for record in [result["excluded_warmup"], *result["samples"]]
+            for arm in (record["parent"], record["candidate"])
+        )
+        result["resources"] = {
+            "gpu_active_total_ns": total_ns,
+            "gpu_seconds": total_ns / 1e9,
+        }
+        return result
+
+    def calibration_v2_output(
+        self, parent_ns: int = 100, candidate_ns: int = 100
+    ) -> dict[str, object]:
+        result = self.uniform_successor_v2_output(parent_ns, candidate_ns)
+        result["fingerprint"]["candidate_artifact_sha256"] = result[
+            "fingerprint"
+        ]["parent_artifact_sha256"]
+        result["telemetry"]["candidate_source_sha256"] = result["telemetry"][
+            "parent_source_sha256"
+        ]
+        return result
+
     def test_outer_successor_v2_uses_midpoint_and_full_gpu_charge(self) -> None:
         tier = self.successor_v2_tier()
         output = self.successor_v2_output()
@@ -1459,13 +1531,24 @@ class ResultAdapterTests(unittest.TestCase):
                     )
 
     def test_successor_promotion_uses_one_as_its_neutral_point(self) -> None:
-        tier = self.successor_tier()
-        parent = {"metric": 1.5, "relative_mad": 0.005}
+        tier = self.successor_v2_tier()
+        calibration, _ = adapt_result(
+            tier, self.calibration_v2_output(), "outer_remainder"
+        )
+        parent = {
+            "metric": 1.0,
+            "relative_mad": 0.0,
+            "calibration": runner._successor_calibration(tier, calibration),
+        }
         improvement, _ = adapt_result(
-            tier, self.successor_output(105, 100), "outer_remainder"
+            tier,
+            self.uniform_successor_v2_output(105, 100),
+            "outer_remainder",
         )
         clear_loss, _ = adapt_result(
-            tier, self.successor_output(95, 100), "outer_remainder"
+            tier,
+            self.uniform_successor_v2_output(95, 100),
+            "outer_remainder",
         )
 
         promoted, _ = runner._promotion_pass(tier, improvement, parent)
@@ -1473,6 +1556,128 @@ class ResultAdapterTests(unittest.TestCase):
 
         self.assertTrue(promoted)
         self.assertFalse(rejected)
+
+    def test_baseline_admission_requires_unbiased_stable_a_a(self) -> None:
+        tier = self.successor_v2_tier()
+        stable, _ = adapt_result(
+            tier, self.calibration_v2_output(), "outer_remainder"
+        )
+        biased, _ = adapt_result(
+            tier, self.calibration_v2_output(106, 100), "outer_remainder"
+        )
+        unstable = copy.deepcopy(stable)
+        unstable["replication"]["summary"]["mad"] = 0.031
+        wrong_artifact, _ = adapt_result(
+            tier,
+            self.uniform_successor_v2_output(100, 100),
+            "outer_remainder",
+        )
+        noisy_wall_output = self.calibration_v2_output()
+        for index, sample in enumerate(noisy_wall_output["samples"]):
+            sample["parent"]["wall_ns"] = 105 if index % 2 == 0 else 205
+        noisy_wall, _ = adapt_result(tier, noisy_wall_output, "outer_remainder")
+        order_biased_output = self.calibration_v2_output()
+        effects = []
+        for index, sample in enumerate(order_biased_output["samples"]):
+            parent_ns = 103 if index % 2 == 0 else 98
+            sample["parent"] = self.successor_v2_arm(parent_ns)
+            sample["candidate"] = self.successor_v2_arm(100)
+            effects.append(parent_ns / 100)
+        order_biased_output["metrics"] = {
+            "successor_speedup": 1.005,
+            "paired_speedups": sorted(effects),
+        }
+        total_ns = sum(
+            arm["resource_gpu_active_ns"]
+            for record in [
+                order_biased_output["excluded_warmup"],
+                *order_biased_output["samples"],
+            ]
+            for arm in (record["parent"], record["candidate"])
+        )
+        order_biased_output["resources"] = {
+            "gpu_active_total_ns": total_ns,
+            "gpu_seconds": total_ns / 1e9,
+        }
+        order_biased, _ = adapt_result(
+            tier, order_biased_output, "outer_remainder"
+        )
+
+        self.assertTrue(runner._baseline_admission(tier, stable)[0])
+        self.assertFalse(runner._baseline_admission(tier, biased)[0])
+        self.assertFalse(runner._baseline_admission(tier, unstable)[0])
+        self.assertFalse(runner._baseline_admission(tier, wrong_artifact)[0])
+        self.assertFalse(runner._baseline_admission(tier, noisy_wall)[0])
+        admitted, _, diagnostics = runner._baseline_admission(
+            tier, order_biased
+        )
+        self.assertFalse(admitted)
+        self.assertGreater(
+            diagnostics["gpu"]["maximum_absolute_log_bias"],
+            diagnostics["limits"]["maximum_absolute_log_bias"],
+        )
+
+    def test_successor_retries_only_noisy_ambiguous_screens(self) -> None:
+        tier = self.successor_v2_tier()
+        calibration, _ = adapt_result(
+            tier, self.calibration_v2_output(), "outer_remainder"
+        )
+        parent = {
+            "metric": 1.0,
+            "relative_mad": 0.0,
+            "calibration": runner._successor_calibration(tier, calibration),
+        }
+        potential_clear_loss, _ = adapt_result(
+            tier,
+            self.varying_successor_v2_output([90, 130, 90, 80]),
+            "outer_remainder",
+        )
+        slight_loss, _ = adapt_result(
+            tier,
+            self.varying_successor_v2_output([95, 110, 99, 85]),
+            "outer_remainder",
+        )
+        strong, _ = adapt_result(
+            tier,
+            self.uniform_successor_v2_output(200, 100),
+            "outer_remainder",
+        )
+        decisive_loss, _ = adapt_result(
+            tier,
+            self.uniform_successor_v2_output(50, 100),
+            "outer_remainder",
+        )
+
+        self.assertEqual(
+            runner._successor_screen_disposition(
+                tier, potential_clear_loss, parent, retry_available=True
+            )[0],
+            "retry",
+        )
+        self.assertEqual(
+            runner._successor_screen_disposition(
+                tier, potential_clear_loss, parent, retry_available=False
+            )[0],
+            "advance",
+        )
+        self.assertEqual(
+            runner._successor_screen_disposition(
+                tier, slight_loss, parent, retry_available=True
+            )[0],
+            "advance",
+        )
+        self.assertEqual(
+            runner._successor_screen_disposition(
+                tier, strong, parent, retry_available=True
+            )[0],
+            "advance",
+        )
+        self.assertEqual(
+            runner._successor_screen_disposition(
+                tier, decisive_loss, parent, retry_available=True
+            )[0],
+            "discard",
+        )
 
     def test_outer_screen_adapter_recomputes_three_raw_pairs(self) -> None:
         orders = [
@@ -1811,9 +2016,16 @@ class RunnerIntegrationTests(unittest.TestCase):
         sealed_binary_context: dict[str, object],
     ) -> dict[str, object]:
         del output, params
-        result = ResultAdapterTests().successor_v2_output()
         parent = execution_context["parent"]
         candidate = execution_context["candidate"]
+        parent_ns = (
+            100
+            if parent["artifact_sha256"] == candidate["artifact_sha256"]
+            else 105
+        )
+        result = ResultAdapterTests().uniform_successor_v2_output(
+            parent_ns, 100
+        )
         runner_record = sealed_binary_context["outer_remainder_eval"]
         result["fingerprint"].update(
             {
@@ -1958,6 +2170,50 @@ class RunnerIntegrationTests(unittest.TestCase):
                 },
             }
         return result
+
+    def order_biased_tier_result(
+        self, tier: dict[str, object]
+    ) -> dict[str, object]:
+        result = self.tier_result(tier, speedup=1.0)
+        effects = [1.0, 2.0, 1.0, 2.0, 1.0]
+        pairs = result["replication"]["pairs"]
+        self.assertEqual(len(pairs), len(effects))
+        for pair, effect in zip(pairs, effects):
+            pair["arms"]["treatment"]["primary_ns"] = 500.0 / effect
+            pair["effect"] = effect
+        summary = paired_summary(pairs, tier["replication"])
+        result["replication"]["summary"] = summary
+        result["primary"]["value"] = summary["median"]
+        return result
+
+    def test_representative_stability_rejects_hidden_order_bias(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        tier = next(
+            item
+            for item in template["evaluation"]["tiers"]
+            if item.get("role") == "representative"
+        )
+        stable = self.tier_result(tier, speedup=1.0)
+        biased = self.order_biased_tier_result(tier)
+
+        admitted, _, diagnostics = runner._baseline_admission(tier, biased)
+        promoted, reason = runner._promotion_pass(
+            tier, biased, runner._tier_record(stable)
+        )
+
+        self.assertEqual(diagnostics["relative_mad"], 0.0)
+        self.assertGreater(
+            diagnostics["order_stratum_log_skew"],
+            diagnostics["limits"]["maximum_order_stratum_log_skew"],
+        )
+        self.assertFalse(admitted)
+        self.assertFalse(promoted)
+        self.assertIn("stability gate", reason)
 
     def sealed_tier_executor(
         self,
@@ -2159,6 +2415,399 @@ class RunnerIntegrationTests(unittest.TestCase):
             self.assertEqual(state["usage"]["candidates_admitted"], 1)
             self.assertEqual(
                 len((run_dir / "tier-events.jsonl").read_text().splitlines()), 4
+            )
+
+    def test_initialization_rejects_biased_a_a_before_representative(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        screen = next(
+            tier
+            for tier in template["evaluation"]["tiers"]
+            if tier.get("role") == "proxy"
+        )
+        biased, _ = adapt_result(
+            screen,
+            ResultAdapterTests().calibration_v2_output(106, 100),
+            "outer_remainder",
+        )
+        launches: list[str] = []
+
+        def execute(
+            _root: Path,
+            _run_dir: Path,
+            _state: dict[str, object],
+            tier: dict[str, object],
+            _params: dict[str, str],
+            _evaluation_id: str,
+            **_kwargs: object,
+        ) -> tuple[dict[str, object], dict[str, object]]:
+            launches.append(str(tier["id"]))
+            return self.seal_tier_evaluation(
+                _run_dir,
+                tier,
+                _params,
+                _evaluation_id,
+                biased,
+            )
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner, "execute_tier", side_effect=execute
+        ):
+            run_dir = Path(directory) / "run"
+            with self.assertRaisesRegex(ValueError, "A/A calibration is biased"):
+                runner.init_run(
+                    ROOT,
+                    ROOT
+                    / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                    run_dir,
+                )
+
+            state = runner.load_state(run_dir)
+            self.assertEqual(state["status"], "initialization_retryable")
+            self.assertEqual(launches, ["screen"])
+            rejection = json.loads(
+                (run_dir / "baseline-events.jsonl").read_text()
+            )
+            self.assertEqual(rejection["event"], "baseline_rejected")
+            self.assertFalse(rejection["admission"]["admitted"])
+            self.assertEqual(state["usage"]["active_evaluator_seconds"], 1.0)
+
+            stable, _ = adapt_result(
+                screen,
+                ResultAdapterTests().calibration_v2_output(),
+                "outer_remainder",
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("role") == "representative"
+            )
+            representative_result = self.tier_result(representative)
+
+            def resume_execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                params: dict[str, str],
+                evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                result = stable if tier["role"] == "proxy" else representative_result
+                return self.seal_tier_evaluation(
+                    _run_dir, tier, params, evaluation_id, result
+                )
+
+            with mock.patch.object(
+                runner, "execute_tier", side_effect=resume_execute
+            ):
+                resumed = runner.resume_initialization(ROOT, run_dir)
+
+            self.assertEqual(resumed["status"], "active")
+            self.assertEqual(
+                [
+                    event["evaluation_id"]
+                    for event in runner._events(run_dir / "tier-events.jsonl")
+                ],
+                [
+                    "baseline-screen",
+                    "baseline-screen-retry-002",
+                    "baseline-representative",
+                ],
+            )
+            self.assertEqual(
+                runner.load_state(run_dir)["usage"]["active_evaluator_seconds"],
+                3.0,
+            )
+
+    def test_initialization_accepts_a_contract_valid_correctness_tier(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        representative = next(
+            tier
+            for tier in template["evaluation"]["tiers"]
+            if tier.get("role") == "representative"
+        )
+        correctness = copy.deepcopy(representative)
+        correctness.update({"id": "correctness", "role": "correctness"})
+        correctness["promotion"] = {
+            "kind": "all_guards",
+            "required_guards": ["all_exact"],
+        }
+        template["evaluation"]["tiers"].insert(0, correctness)
+        validate_template(template, ROOT)
+        original_search_tiers = runner._search_tiers
+
+        def search_tiers(sealed_template: dict[str, object]):
+            return [correctness, *original_search_tiers(sealed_template)]
+
+        launches: list[str] = []
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner, "_search_tiers", side_effect=search_tiers
+        ), mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(self.outer_output(), launches),
+        ):
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                Path(directory) / "run",
+            )
+
+        self.assertEqual(state["status"], "active")
+        self.assertEqual(launches, ["correctness", "screen", "representative"])
+        self.assertIn("correctness", state["accepted_parent"]["tiers"])
+
+    def test_accepted_calibration_is_recomputed_from_its_sealed_result(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            events = list(runner._events(run_dir / "baseline-events.jsonl"))
+            events[0]["admission"]["gpu"]["median"] = 2.0
+            (run_dir / "baseline-events.jsonl").write_bytes(
+                b"\n".join(runner.canonical_json(event) for event in events)
+                + b"\n"
+            )
+
+            with self.assertRaisesRegex(ValueError, "disagrees"):
+                runner._accepted_baseline_records(
+                    run_dir, state["template"]
+                )
+
+    def test_trial_retries_one_unstable_inconclusive_screen(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            screen = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("role") == "proxy"
+            )
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("role") == "representative"
+            )
+            stable, _ = adapt_result(
+                screen,
+                ResultAdapterTests().uniform_successor_v2_output(99, 100),
+                "outer_remainder",
+            )
+            unstable, _ = adapt_result(
+                screen,
+                ResultAdapterTests().varying_successor_v2_output(
+                    [90, 130, 90, 80]
+                ),
+                "outer_remainder",
+            )
+            representative_result = self.tier_result(
+                representative, speedup=state["accepted_parent"]["metric"]
+            )
+            baseline_usage = runner.load_state(run_dir)["usage"]
+            evaluation_ids: list[str] = []
+            screen_runs = 0
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                _params: dict[str, str],
+                evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                nonlocal screen_runs
+                evaluation_ids.append(evaluation_id)
+                if tier["role"] == "proxy":
+                    screen_runs += 1
+                    result = unstable if screen_runs == 1 else stable
+                else:
+                    result = representative_result
+                return self.seal_tier_evaluation(
+                    run_dir,
+                    tier,
+                    _params,
+                    evaluation_id,
+                    result,
+                )
+
+            with mock.patch.object(runner, "execute_tier", side_effect=execute):
+                decision, _ = runner.trial(
+                    ROOT, run_dir, [], "retry the noisy cheap screen"
+                )
+
+            self.assertEqual(
+                evaluation_ids,
+                [
+                    "candidate-001-screen",
+                    "candidate-001-screen-retry-002",
+                    "candidate-001-representative",
+                ],
+            )
+            self.assertEqual(
+                [attempt["disposition"] for attempt in decision["screen_attempts"]],
+                ["retry", "advance"],
+            )
+            self.assertEqual(decision["verdict"], "discard")
+            candidate_screen_events = [
+                event
+                for event in runner._events(run_dir / "tier-events.jsonl")
+                if str(event["evaluation_id"]).startswith(
+                    "candidate-001-screen"
+                )
+            ]
+            reconstructed = runner.load_state(run_dir)
+            self.assertEqual(len(candidate_screen_events), 2)
+            self.assertEqual(
+                reconstructed["usage"]["active_evaluator_seconds"],
+                baseline_usage["active_evaluator_seconds"] + 3.0,
+            )
+            self.assertEqual(
+                reconstructed["usage"]["reserve_invocations"], {}
+            )
+
+    def test_trial_budget_rejection_leaves_no_fake_inflight_attempt(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            tier_event_count = len(
+                (run_dir / "tier-events.jsonl").read_text().splitlines()
+            )
+
+            with mock.patch.object(
+                runner,
+                "execute_tier",
+                side_effect=runner.BudgetExhausted(
+                    "screen budget is reserved for validation"
+                ),
+            ):
+                decision, state = runner.trial(
+                    ROOT, run_dir, [], "budget cannot admit the screen"
+                )
+
+            self.assertEqual(decision["verdict"], "invalid")
+            self.assertEqual(decision["evaluation_ids"], [])
+            self.assertFalse((run_dir / "inflight.json").exists())
+            self.assertEqual(
+                len((run_dir / "tier-events.jsonl").read_text().splitlines()),
+                tier_event_count,
+            )
+            self.assertEqual(state["accepted_parent"]["id"], "baseline")
+
+    def test_recovered_keep_uses_the_same_calibrated_tiers_as_normal_keep(self) -> None:
+        output = self.outer_output()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, []),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            pre_trial = copy.deepcopy(state)
+            representative = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("role") == "representative"
+            )
+            improved = self.tier_result(
+                representative,
+                speedup=float(state["accepted_parent"]["metric"]) * 2.0,
+            )
+            screen = next(
+                tier
+                for tier in state["template"]["evaluation"]["tiers"]
+                if tier.get("role") == "proxy"
+            )
+            neutral, _ = adapt_result(
+                screen,
+                ResultAdapterTests().uniform_successor_v2_output(100, 100),
+                "outer_remainder",
+            )
+
+            def execute(
+                _root: Path,
+                _run_dir: Path,
+                _state: dict[str, object],
+                tier: dict[str, object],
+                _params: dict[str, str],
+                _evaluation_id: str,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], dict[str, object]]:
+                result = neutral if tier["role"] == "proxy" else improved
+                return ({"attempt": {"error": None, "outcome": "success"}}, result)
+
+            with mock.patch.object(runner, "execute_tier", side_effect=execute):
+                decision, normal = runner.trial(
+                    ROOT, run_dir, [], "candidate clears representative"
+                )
+
+            recovered, _ = runner._recover_committed_candidate(
+                ROOT,
+                run_dir,
+                pre_trial,
+                {
+                    "candidate_id": decision["candidate_id"],
+                    "editable_paths_sha256": normal["accepted_parent"][
+                        "editable_paths_sha256"
+                    ],
+                },
+            )
+
+            self.assertTrue(recovered)
+            self.assertEqual(decision["verdict"], "keep")
+            self.assertEqual(
+                pre_trial["accepted_parent"]["tiers"],
+                normal["accepted_parent"]["tiers"],
+            )
+            self.assertTrue(
+                pre_trial["accepted_parent"]["tiers"]["screen"][
+                    "calibration"
+                ]["admitted"]
             )
 
     def test_recovery_conservatively_charges_an_unsealed_attempt(self) -> None:

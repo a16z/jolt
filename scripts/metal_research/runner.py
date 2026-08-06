@@ -39,6 +39,7 @@ from .binaries import (
 )
 from .budget import BudgetExhausted, admit_tier, charge_attempt, empty_usage
 from .contracts import validate_goal_contract, validate_template
+from .paired import paired_summary
 from .results import adapt_result, validate_tier_result
 from .versions import EVENT_SCHEMA_VERSION, RUN_SCHEMA_VERSION
 
@@ -382,6 +383,183 @@ def _tier_record(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _result_relative_mad(result: dict[str, Any]) -> float:
+    summary = result["replication"]["summary"]
+    return float(summary["mad"]) / float(summary["median"])
+
+
+def _relative_stability(
+    tier: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any]:
+    median = float(summary["median"])
+    relative_mad = float(summary["mad"]) / median
+    order_stratum_log_skew = max(
+        abs(math.log(float(summary[field]) / median))
+        for field in ("control_first_median", "treatment_first_median")
+    )
+    maximum_relative_mad = float(tier["promotion"]["maximum_relative_mad"])
+    maximum_order_skew = float(
+        tier["promotion"]["maximum_order_stratum_log_skew"]
+    )
+    return {
+        "kind": "relative_stability_v1",
+        "relative_mad": relative_mad,
+        "order_stratum_log_skew": order_stratum_log_skew,
+        "limits": {
+            "maximum_relative_mad": maximum_relative_mad,
+            "maximum_order_stratum_log_skew": maximum_order_skew,
+        },
+        "admitted": relative_mad <= maximum_relative_mad
+        and order_stratum_log_skew <= maximum_order_skew,
+    }
+
+
+def _successor_wall_summary(
+    tier: dict[str, Any], result: dict[str, Any]
+) -> dict[str, float]:
+    samples = result.get("payload", {}).get("samples", [])
+    gpu_pairs = result["replication"]["pairs"]
+    if not isinstance(samples, list) or len(samples) != len(gpu_pairs):
+        raise ValueError("successor wall evidence is incomplete")
+    wall_pairs = []
+    for gpu_pair, sample in zip(gpu_pairs, samples):
+        parent_wall = sample.get("parent", {}).get("wall_ns")
+        candidate_wall = sample.get("candidate", {}).get("wall_ns")
+        if (
+            isinstance(parent_wall, bool)
+            or not isinstance(parent_wall, (int, float))
+            or parent_wall <= 0
+            or isinstance(candidate_wall, bool)
+            or not isinstance(candidate_wall, (int, float))
+            or candidate_wall <= 0
+        ):
+            raise ValueError("successor wall evidence is invalid")
+        wall_pairs.append(
+            {
+                "index": gpu_pair["index"],
+                "input_id": gpu_pair["input_id"],
+                "order": gpu_pair["order"],
+                "arms": {
+                    "control": {"primary_ns": parent_wall},
+                    "treatment": {"primary_ns": candidate_wall},
+                },
+                "effect": float(parent_wall) / float(candidate_wall),
+                "guards": gpu_pair["guards"],
+            }
+        )
+    return paired_summary(wall_pairs, tier["replication"])
+
+
+def _axis_calibration(summary: dict[str, Any]) -> dict[str, float]:
+    median = float(summary["median"])
+    control_first = float(summary["control_first_median"])
+    treatment_first = float(summary["treatment_first_median"])
+    return {
+        "median": median,
+        "control_first_median": control_first,
+        "treatment_first_median": treatment_first,
+        "relative_mad": float(summary["mad"]) / median,
+        "maximum_absolute_log_bias": max(
+            abs(math.log(median)),
+            abs(math.log(control_first)),
+            abs(math.log(treatment_first)),
+        ),
+    }
+
+
+def _exact_string_identity(left: Any, right: Any) -> bool:
+    return isinstance(left, str) and bool(left) and left == right
+
+
+def _successor_calibration(
+    tier: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any]:
+    promotion = tier["promotion"]
+    payload = result.get("payload", {})
+    fingerprint = result.get("fingerprint", {})
+    telemetry = payload.get("telemetry", {})
+    gpu = _axis_calibration(result["replication"]["summary"])
+    wall = _axis_calibration(_successor_wall_summary(tier, result))
+    maximum_noise = float(promotion["maximum_screen_relative_mad"])
+    maximum_bias = float(
+        promotion["maximum_calibration_absolute_log_bias"]
+    )
+    identities = {
+        "v2_contract": result.get("result_contract")
+        == "outer_remainder_successor_v2",
+        "artifact": _exact_string_identity(
+            fingerprint.get("parent_artifact_sha256"),
+            fingerprint.get("candidate_artifact_sha256"),
+        ),
+        "source": _exact_string_identity(
+            telemetry.get("parent_source_sha256"),
+            telemetry.get("candidate_source_sha256"),
+        ),
+        "binding_plan": _exact_string_identity(
+            telemetry.get("parent_binding_plan"),
+            telemetry.get("candidate_binding_plan"),
+        ),
+    }
+    admitted = (
+        all(identities.values())
+        and all(
+            axis["relative_mad"] <= maximum_noise
+            and axis["maximum_absolute_log_bias"] <= maximum_bias
+            for axis in (gpu, wall)
+        )
+    )
+    return {
+        "kind": "successor_a_a_v1",
+        "identities": identities,
+        "gpu": gpu,
+        "wall": wall,
+        "limits": {
+            "maximum_relative_mad": maximum_noise,
+            "maximum_absolute_log_bias": maximum_bias,
+        },
+        "admitted": admitted,
+    }
+
+
+def _baseline_admission(
+    tier: dict[str, Any], result: dict[str, Any]
+) -> tuple[bool, str, dict[str, Any]]:
+    promotion = tier["promotion"]
+    if promotion["kind"] == "successor_screen":
+        diagnostics = _successor_calibration(tier, result)
+        if not all(diagnostics["identities"].values()):
+            return False, "successor calibration is not exact A/A", diagnostics
+        if any(
+            axis["relative_mad"]
+            > diagnostics["limits"]["maximum_relative_mad"]
+            for axis in (diagnostics["gpu"], diagnostics["wall"])
+        ):
+            return False, "successor A/A calibration is unstable", diagnostics
+        if any(
+            axis["maximum_absolute_log_bias"]
+            > diagnostics["limits"]["maximum_absolute_log_bias"]
+            for axis in (diagnostics["gpu"], diagnostics["wall"])
+        ):
+            return False, "successor A/A calibration is biased", diagnostics
+        return (
+            True,
+            "successor A/A calibration admitted the machine",
+            diagnostics,
+        )
+    if promotion["kind"] == "all_guards":
+        return (
+            True,
+            "correctness baseline guards passed",
+            {"kind": "guard_baseline_v1", "admitted": True},
+        )
+    diagnostics = _relative_stability(
+        tier, result["replication"]["summary"]
+    )
+    if not diagnostics["admitted"]:
+        return False, f"{tier['id']} baseline is unstable", diagnostics
+    return True, "baseline stability gate passed", diagnostics
+
+
 def _promotion_pass(
     tier: dict[str, Any],
     result: dict[str, Any],
@@ -393,8 +571,21 @@ def _promotion_pass(
     if kind == "successor_screen":
         metric = float(result["primary"]["value"])
         summary = result["replication"]["summary"]
-        current_noise = float(summary["mad"]) / metric
-        calibration_noise = float(parent["relative_mad"])
+        wall_summary = _successor_wall_summary(tier, result)
+        current_noise = max(
+            float(summary["mad"]) / metric,
+            float(wall_summary["mad"]) / float(wall_summary["median"]),
+        )
+        calibration = parent.get("calibration")
+        if (
+            not isinstance(calibration, dict)
+            or calibration.get("admitted") is not True
+        ):
+            raise ValueError("successor parent has no admitted A/A calibration")
+        calibration_noise = max(
+            float(calibration["gpu"]["relative_mad"]),
+            float(calibration["wall"]["relative_mad"]),
+        )
         uncertainty = max(
             float(tier["promotion"]["minimum_uncertainty"]),
             calibration_noise,
@@ -402,37 +593,13 @@ def _promotion_pass(
         )
         pairs = result["replication"]["pairs"]
         every_active_pair_loses = all(float(pair["effect"]) < 1.0 for pair in pairs)
-        wall_effects: dict[tuple[str, ...], list[float]] = {
-            ("parent", "candidate"): [],
-            ("candidate", "parent"): [],
-        }
-        for sample in result.get("payload", {}).get("samples", []):
-            order = tuple(sample.get("order", []))
-            parent_wall = sample.get("parent", {}).get("wall_ns")
-            candidate_wall = sample.get("candidate", {}).get("wall_ns")
-            if (
-                order not in wall_effects
-                or isinstance(parent_wall, bool)
-                or not isinstance(parent_wall, (int, float))
-                or parent_wall <= 0
-                or isinstance(candidate_wall, bool)
-                or not isinstance(candidate_wall, (int, float))
-                or candidate_wall <= 0
-            ):
-                wall_effects = {}
-                break
-            wall_effects[order].append(float(parent_wall) / float(candidate_wall))
-        wall_fails_both_orders = bool(wall_effects) and all(
-            effects and statistics.median(effects) <= 1.0
-            for effects in wall_effects.values()
-        )
-        calibrated = calibration_noise <= float(
-            tier["promotion"]["maximum_calibration_relative_mad"]
+        wall_fails_both_orders = all(
+            float(wall_summary[field]) <= 1.0
+            for field in ("control_first_median", "treatment_first_median")
         )
         optimistic = metric * math.exp(uncertainty)
         clear_loss = (
-            calibrated
-            and optimistic <= float(tier["promotion"]["clear_loss_ratio"])
+            optimistic <= float(tier["promotion"]["clear_loss_ratio"])
             and every_active_pair_loses
             and wall_fails_both_orders
         )
@@ -442,15 +609,80 @@ def _promotion_pass(
     if kind != "relative_improvement":
         raise ValueError(f"unsupported search-tier promotion kind: {kind}")
     metric = float(result["primary"]["value"])
-    current_noise = float(result["replication"]["summary"]["mad"]) / metric
+    current_stability = _relative_stability(
+        tier, result["replication"]["summary"]
+    )
+    if not current_stability["admitted"]:
+        return False, "result exceeds the representative stability gate"
+    parent_stability = _relative_stability(tier, parent["paired_summary"])
+    if not parent_stability["admitted"]:
+        raise ValueError("accepted parent no longer passes machine admission")
+    current_noise = max(
+        float(current_stability["relative_mad"]),
+        float(current_stability["order_stratum_log_skew"]),
+    )
+    parent_noise = max(
+        float(parent_stability["relative_mad"]),
+        float(parent_stability["order_stratum_log_skew"]),
+    )
     threshold = max(
         float(tier["promotion"]["minimum_relative_improvement"]),
         float(tier["promotion"]["noise_multiplier"])
-        * max(float(parent["relative_mad"]), current_noise),
+        * max(parent_noise, current_noise),
     )
     if metric >= float(parent["metric"]) * (1.0 + threshold):
         return True, "improves beyond the noise-qualified threshold"
     return False, "does not improve beyond the noise-qualified threshold"
+
+
+def _successor_screen_disposition(
+    tier: dict[str, Any],
+    result: dict[str, Any],
+    parent: dict[str, Any],
+    *,
+    retry_available: bool,
+) -> tuple[str, str]:
+    promoted, reason = _promotion_pass(tier, result, parent)
+    if not promoted:
+        return "discard", reason
+    gpu_summary = result["replication"]["summary"]
+    wall_summary = _successor_wall_summary(tier, result)
+    gpu_noise = _result_relative_mad(result)
+    wall_noise = float(wall_summary["mad"]) / float(wall_summary["median"])
+    noise_limit = float(tier["promotion"]["maximum_screen_relative_mad"])
+    if max(gpu_noise, wall_noise) <= noise_limit:
+        return "advance", reason
+
+    calibration = parent["calibration"]
+    stable_uncertainty = max(
+        float(tier["promotion"]["minimum_uncertainty"]),
+        float(calibration["gpu"]["relative_mad"]),
+        float(calibration["wall"]["relative_mad"]),
+    )
+    potential_clear_loss = (
+        float(gpu_summary["median"]) * math.exp(stable_uncertainty)
+        <= float(tier["promotion"]["clear_loss_ratio"])
+    )
+    stable_contradiction = any(
+        noise <= noise_limit
+        and any(
+            float(summary[field]) >= 1.0
+            for field in (
+                "median",
+                "control_first_median",
+                "treatment_first_median",
+            )
+        )
+        for summary, noise in (
+            (gpu_summary, gpu_noise),
+            (wall_summary, wall_noise),
+        )
+    )
+    if potential_clear_loss and not stable_contradiction and retry_available:
+        return "retry", "successor screen is unstable and inconclusive"
+    if potential_clear_loss and not stable_contradiction:
+        return "advance", "successor remained inconclusive after its bounded retry"
+    return "advance", "successor has no stable clear-loss signal"
 
 
 def _validate_closed_result(
@@ -1093,13 +1325,21 @@ def execute_tier(
     expected_editable_digest: Optional[str] = None,
     budget_reserve: Optional[str] = None,
 ) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
-    queue_budget = _queue_budget(state, tier)
-    admit_tier(
-        state["template"]["budget"],
-        state["usage"],
-        tier["cost_limit"],
-        budget_reserve,
-    )
+    try:
+        queue_budget = _queue_budget(state, tier)
+        admit_tier(
+            state["template"]["budget"],
+            state["usage"],
+            tier["cost_limit"],
+            budget_reserve,
+        )
+    except BudgetExhausted:
+        inflight_path = run_dir / "inflight.json"
+        if inflight_path.is_file():
+            inflight = read_json(inflight_path)
+            if inflight.get("evaluation_id") == evaluation_id:
+                inflight_path.unlink()
+        raise
     evaluation_dir = run_dir / "evaluations" / evaluation_id
     context_record = None
     sealed_binary_context = None
@@ -1423,8 +1663,11 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
     return _continue_binary_sealing(root, run_dir, state)
 
 
-def _accepted_baseline_records(run_dir: Path) -> dict[str, dict[str, Any]]:
+def _accepted_baseline_records(
+    run_dir: Path, template: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
+    tiers = {tier["id"]: tier for tier in _search_tiers(template)}
     tier_events = {
         event["evaluation_id"]: event
         for event in _events(run_dir / "tier-events.jsonl")
@@ -1433,7 +1676,11 @@ def _accepted_baseline_records(run_dir: Path) -> dict[str, dict[str, Any]]:
         if event.get("event") != "baseline_accepted":
             continue
         tier_id = event.get("tier_id")
-        if not isinstance(tier_id, str) or tier_id in records:
+        if (
+            not isinstance(tier_id, str)
+            or tier_id not in tiers
+            or tier_id in records
+        ):
             raise ValueError("baseline ledger contains duplicate accepted tiers")
         evaluation_id = event.get("evaluation_id")
         tier_event = tier_events.get(evaluation_id, {})
@@ -1449,7 +1696,13 @@ def _accepted_baseline_records(run_dir: Path) -> dict[str, dict[str, Any]]:
         ):
             raise ValueError("accepted baseline tier has no matching sealed result")
         sealed = read_json(result_path)
+        validate_tier_result(sealed, tiers[tier_id])
+        admitted, _, admission = _baseline_admission(tiers[tier_id], sealed)
+        if not admitted:
+            raise ValueError("accepted baseline no longer passes machine admission")
         record = _tier_record(sealed)
+        if tiers[tier_id]["promotion"]["kind"] == "successor_screen":
+            record["calibration"] = admission
         observed_treatment = event.get("treatment_median_ns")
         if (
             tier_event.get("tier_id") != tier_id
@@ -1457,6 +1710,8 @@ def _accepted_baseline_records(run_dir: Path) -> dict[str, dict[str, Any]]:
             != canonical_json(sealed["primary"])
             or canonical_json(event.get("paired_summary"))
             != canonical_json(record["paired_summary"])
+            or canonical_json(event.get("admission"))
+            != canonical_json(admission)
             or isinstance(observed_treatment, bool)
             or not isinstance(observed_treatment, (int, float))
             or float(observed_treatment)
@@ -1482,7 +1737,7 @@ def _continue_initialization(
     fingerprint = state["fingerprint"]
     legacy = _legacy()
     params = _params(template, [])
-    tier_records = _accepted_baseline_records(run_dir)
+    tier_records = _accepted_baseline_records(run_dir, template)
     for tier in _search_tiers(template):
         if tier["id"] in tier_records:
             continue
@@ -1520,7 +1775,30 @@ def _continue_initialization(
             write_state(run_dir, state)
             (run_dir / "inflight.json").unlink()
             raise ValueError(f"{tier['id']} baseline evaluator is invalid: {reason}")
+        admitted, reason, admission = _baseline_admission(tier, result)
+        if not admitted:
+            append_event(
+                run_dir / "baseline-events.jsonl",
+                {
+                    "schema_version": EVENT_SCHEMA_VERSION,
+                    "event": "baseline_rejected",
+                    "evaluation_id": inflight["evaluation_id"],
+                    "tier_id": tier["id"],
+                    "reason": reason,
+                    "admission": admission,
+                    "tier_result_sha256": event["attempt"].get(
+                        "tier_result_sha256"
+                    ),
+                    "recorded_at": utc_now(),
+                },
+            )
+            state["status"] = "initialization_retryable"
+            write_state(run_dir, state)
+            (run_dir / "inflight.json").unlink()
+            raise ValueError(f"{tier['id']} baseline was not admitted: {reason}")
         record = _tier_record(result)
+        if tier["promotion"]["kind"] == "successor_screen":
+            record["calibration"] = admission
         tier_records[tier["id"]] = record
         append_event(
             run_dir / "baseline-events.jsonl",
@@ -1532,6 +1810,7 @@ def _continue_initialization(
                 "primary": result["primary"],
                 "paired_summary": record["paired_summary"],
                 "treatment_median_ns": record["treatment_median_ns"],
+                "admission": admission,
                 "tier_result_sha256": event["attempt"]["tier_result_sha256"],
                 "recorded_at": utc_now(),
             },
@@ -1800,51 +2079,104 @@ def trial(
     verdict = "keep"
     reason = "candidate cleared every search tier"
     tier_results: dict[str, dict[str, Any]] = {}
-    evaluation_ids = []
+    evaluation_ids: list[str] = []
+    screen_attempts: list[dict[str, Any]] = []
     representative_result = None
     for tier in _search_tiers(state["template"]):
-        evaluation_id = f"{candidate_id}-{tier['id']}"
-        evaluation_ids.append(evaluation_id)
-        inflight = {
-            "schema_version": EVENT_SCHEMA_VERSION,
-            "kind": "candidate",
-            "candidate_id": candidate_id,
-            "evaluation_id": evaluation_id,
-            "tier_id": tier["id"],
-            "params": params,
-            "editable_paths_sha256": editable_digest,
-            "started_at": utc_now(),
-        }
-        write_inflight(run_dir, inflight)
-        event, result = execute_tier(
-            root,
-            run_dir,
-            state,
-            tier,
-            params,
-            evaluation_id,
-            expected_editable_digest=editable_digest,
-        )
-        write_state(run_dir, state)
-        _assert_frozen(root, state)
-        if result is None:
-            verdict = "invalid"
-            reason = event["attempt"]["error"] or "evaluator result is invalid"
+        attempt_index = 0
+        while True:
+            base_evaluation_id = f"{candidate_id}-{tier['id']}"
+            evaluation_id = (
+                base_evaluation_id
+                if attempt_index == 0
+                else f"{base_evaluation_id}-retry-{attempt_index + 1:03d}"
+            )
+            inflight = {
+                "schema_version": EVENT_SCHEMA_VERSION,
+                "kind": "candidate",
+                "candidate_id": candidate_id,
+                "evaluation_id": evaluation_id,
+                "tier_id": tier["id"],
+                "params": params,
+                "editable_paths_sha256": editable_digest,
+                "started_at": utc_now(),
+            }
+            write_inflight(run_dir, inflight)
+            try:
+                event, result = execute_tier(
+                    root,
+                    run_dir,
+                    state,
+                    tier,
+                    params,
+                    evaluation_id,
+                    expected_editable_digest=editable_digest,
+                )
+            except BudgetExhausted as error:
+                (run_dir / "inflight.json").unlink(missing_ok=True)
+                verdict = "invalid"
+                reason = str(error)
+                break
+            evaluation_ids.append(evaluation_id)
+            write_state(run_dir, state)
+            _assert_frozen(root, state)
+            if result is None:
+                verdict = "invalid"
+                reason = (
+                    event["attempt"]["error"] or "evaluator result is invalid"
+                )
+                break
+            passed, reason = _required_guards(state, tier, result)
+            if not passed:
+                verdict = "invalid"
+                break
+            record = _tier_record(result)
+            tier_results[tier["id"]] = record
+            if tier["promotion"]["kind"] == "successor_screen":
+                retry_limit = int(
+                    tier["promotion"]["inconclusive_retry_limit"]
+                )
+                disposition, reason = _successor_screen_disposition(
+                    tier,
+                    result,
+                    parent["tiers"][tier["id"]],
+                    retry_available=attempt_index < retry_limit,
+                )
+                wall_summary = _successor_wall_summary(tier, result)
+                screen_attempts.append(
+                    {
+                        "evaluation_id": evaluation_id,
+                        "disposition": disposition,
+                        "reason": reason,
+                        "gpu_metric": record["metric"],
+                        "gpu_relative_mad": record["relative_mad"],
+                        "wall_metric": wall_summary["median"],
+                        "wall_relative_mad": float(wall_summary["mad"])
+                        / float(wall_summary["median"]),
+                    }
+                )
+                if disposition == "retry":
+                    attempt_index += 1
+                    continue
+                if disposition == "discard":
+                    verdict = "discard"
+            else:
+                promoted, reason = _promotion_pass(
+                    tier, result, parent["tiers"][tier["id"]]
+                )
+                if not promoted:
+                    verdict = "discard"
+                elif tier["role"] == "representative":
+                    representative_result = result
             break
-        passed, reason = _required_guards(state, tier, result)
-        if not passed:
-            verdict = "invalid"
+        if verdict != "keep":
             break
-        record = _tier_record(result)
-        tier_results[tier["id"]] = record
-        promoted, reason = _promotion_pass(
-            tier, result, parent["tiers"][tier["id"]]
-        )
-        if not promoted:
-            verdict = "discard"
-            break
-        if tier["role"] == "representative":
-            representative_result = result
+
+    decision_tier_results = dict(tier_results)
+    if verdict == "keep" and representative_result is not None:
+        for tier in _search_tiers(state["template"]):
+            if tier["promotion"]["kind"] == "successor_screen":
+                decision_tier_results[tier["id"]] = parent["tiers"][tier["id"]]
 
     decision = {
         "schema_version": EVENT_SCHEMA_VERSION,
@@ -1866,7 +2198,8 @@ def trial(
             if representative_result is not None
             else None
         ),
-        "tier_results": tier_results,
+        "tier_results": decision_tier_results,
+        "screen_attempts": screen_attempts,
         "recorded_at": utc_now(),
     }
     append_event(run_dir / "decision-events.jsonl", decision)
@@ -1881,17 +2214,13 @@ def trial(
         if snapshot_digest != editable_digest:
             raise ValueError("accepted candidate snapshot does not match its source")
         paired = representative_result["replication"]["summary"]
-        accepted_tiers = dict(tier_results)
-        for tier in _search_tiers(state["template"]):
-            if tier["promotion"]["kind"] == "successor_screen":
-                accepted_tiers[tier["id"]] = parent["tiers"][tier["id"]]
         state["accepted_parent"] = {
             "id": candidate_id,
             "params": params,
             "metric": float(representative_result["primary"]["value"]),
             "relative_mad": float(paired["mad"]) / float(paired["median"]),
             "paired_summary": paired,
-            "tiers": accepted_tiers,
+            "tiers": decision["tier_results"],
             "snapshot": candidate_id,
             "editable_paths_sha256": editable_digest,
             "snapshot_sha256": snapshot_digest,
@@ -1905,7 +2234,7 @@ def trial(
         )
     _refresh_calendar(state)
     write_state(run_dir, state)
-    (run_dir / "inflight.json").unlink()
+    (run_dir / "inflight.json").unlink(missing_ok=True)
     return decision, state
 
 
@@ -2288,6 +2617,20 @@ def _recover_committed_candidate(
         return False, _restore_with_quarantine(root, run_dir, state)
 
     decision = decisions[0]
+    accepted_tiers = decision.get("tier_results")
+    expected_tier_ids = {
+        tier["id"] for tier in _search_tiers(state["template"])
+    }
+    if (
+        not isinstance(accepted_tiers, dict)
+        or set(accepted_tiers) != expected_tier_ids
+    ):
+        return False, _restore_with_quarantine(root, run_dir, state)
+    for tier in _search_tiers(state["template"]):
+        if tier["promotion"]["kind"] == "successor_screen" and canonical_json(
+            accepted_tiers[tier["id"]]
+        ) != canonical_json(state["accepted_parent"]["tiers"][tier["id"]]):
+            return False, _restore_with_quarantine(root, run_dir, state)
     editable = state["template"]["scope"]["editable"]
     expected = inflight.get("editable_paths_sha256")
     snapshot = run_dir / "snapshots" / str(candidate_id)
@@ -2305,7 +2648,7 @@ def _recover_committed_candidate(
         "metric": float(decision["primary"]["value"]),
         "relative_mad": float(paired["mad"]) / float(paired["median"]),
         "paired_summary": paired,
-        "tiers": decision["tier_results"],
+        "tiers": accepted_tiers,
         "snapshot": candidate_id,
         "editable_paths_sha256": expected,
         "snapshot_sha256": observed,

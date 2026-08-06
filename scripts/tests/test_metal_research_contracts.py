@@ -486,6 +486,119 @@ class VersionedContractTests(unittest.TestCase):
                     reserve["invocations"] * cost_limit,
                 )
 
+    def test_repository_template_bounds_calibration_and_screen_retries(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        screen = next(
+            tier
+            for tier in template["evaluation"]["tiers"]
+            if tier.get("role") == "proxy"
+        )
+        representative = next(
+            tier
+            for tier in template["evaluation"]["tiers"]
+            if tier.get("role") == "representative"
+        )
+
+        self.assertEqual(screen["promotion"]["inconclusive_retry_limit"], 1)
+        self.assertGreater(
+            representative["promotion"]["maximum_relative_mad"], 0
+        )
+        self.assertGreater(
+            representative["promotion"]["maximum_order_stratum_log_skew"],
+            0,
+        )
+
+        for field, value in (
+            ("inconclusive_retry_limit", 2),
+            ("inconclusive_retry_limit", True),
+            ("maximum_calibration_absolute_log_bias", 0),
+            ("maximum_calibration_absolute_log_bias", 0.03),
+            ("maximum_screen_relative_mad", 0),
+            ("clear_loss_ratio", 0.99),
+        ):
+            with self.subTest(field=field, value=value):
+                tampered = copy.deepcopy(template)
+                tier = next(
+                    item
+                    for item in tampered["evaluation"]["tiers"]
+                    if item.get("role") == "proxy"
+                )
+                tier["promotion"][field] = value
+                with self.assertRaisesRegex(
+                    ValueError, "successor promotion is invalid"
+                ):
+                    validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tier = next(
+            item
+            for item in tampered["evaluation"]["tiers"]
+            if item.get("role") == "proxy"
+        )
+        tier["promotion"].pop("maximum_calibration_absolute_log_bias")
+        with self.assertRaisesRegex(ValueError, "successor promotion is invalid"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tier = next(
+            item
+            for item in tampered["evaluation"]["tiers"]
+            if item.get("role") == "proxy"
+        )
+        tier["evaluator"]["result_adapter"] = "outer_remainder_successor_v1"
+        with self.assertRaisesRegex(ValueError, "promotion is invalid"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered.pop("runtime_artifact")
+        tampered.pop("sealed_binaries")
+        tier = next(
+            item
+            for item in tampered["evaluation"]["tiers"]
+            if item.get("role") == "proxy"
+        )
+        tier["evaluator"]["command"] = ["python3", "legacy-successor.py"]
+        tier["evaluator"]["result_adapter"] = "outer_remainder_successor_v1"
+        tier["promotion"] = {
+            "kind": "relative_improvement",
+            "minimum_relative_improvement": 0.03,
+            "noise_multiplier": 3.0,
+            "maximum_relative_mad": 0.03,
+            "maximum_order_stratum_log_skew": 0.03,
+        }
+        with self.assertRaisesRegex(ValueError, "cannot execute successor v1"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tier = next(
+            item
+            for item in tampered["evaluation"]["tiers"]
+            if item.get("role") == "representative"
+        )
+        for field, value in (
+            ("maximum_relative_mad", 0),
+            ("maximum_order_stratum_log_skew", 0),
+            ("maximum_order_stratum_log_skew", float("inf")),
+            ("maximum_order_stratum_log_skew", True),
+        ):
+            with self.subTest(field=field, value=value):
+                invalid = copy.deepcopy(tampered)
+                invalid_tier = next(
+                    item
+                    for item in invalid["evaluation"]["tiers"]
+                    if item.get("role") == "representative"
+                )
+                invalid_tier["promotion"][field] = value
+                with self.assertRaisesRegex(
+                    ValueError, "relative promotion is invalid"
+                ):
+                    validate_template(invalid, ROOT)
+
     def test_kernel_validation_separates_local_and_portfolio_floors(self) -> None:
         template = json.loads(
             (

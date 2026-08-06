@@ -235,10 +235,9 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         raise ValueError(f"tier {tier_id} cost limit is invalid")
     promotion = tier["promotion"]
     kind = promotion.get("kind")
-    successor_screen = evaluator["result_adapter"] in {
-        "outer_remainder_successor_v1",
-        "outer_remainder_successor_v2",
-    }
+    successor_screen = (
+        evaluator["result_adapter"] == "outer_remainder_successor_v2"
+    )
     if role == "correctness" and kind != "all_guards":
         raise ValueError(f"tier {tier_id} correctness promotion is invalid")
     minimum_relative = promotion.get("minimum_relative_improvement")
@@ -247,12 +246,18 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         values = (
             promotion.get("clear_loss_ratio"),
             promotion.get("minimum_uncertainty"),
-            promotion.get("maximum_calibration_relative_mad"),
+            promotion.get("maximum_calibration_absolute_log_bias"),
+            promotion.get("maximum_screen_relative_mad"),
         )
+        bias = promotion.get("maximum_calibration_absolute_log_bias")
+        uncertainty = promotion.get("minimum_uncertainty")
+        clear_loss_ratio = promotion.get("clear_loss_ratio")
         if (
             role != "proxy"
             or kind != "successor_screen"
             or tier["replication"]["excluded_warmup_pairs"] != 1
+            or type(promotion.get("inconclusive_retry_limit")) is not int
+            or promotion["inconclusive_retry_limit"] not in {0, 1}
             or any(
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
@@ -260,6 +265,8 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
                 or not 0 < float(value) < 1
                 for value in values
             )
+            or float(bias) > float(uncertainty)
+            or float(clear_loss_ratio) * math.exp(float(uncertainty)) >= 1.0
         ):
             raise ValueError(f"tier {tier_id} successor promotion is invalid")
     elif role in {"proxy", "representative"} and (
@@ -270,6 +277,19 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         or isinstance(noise_multiplier, bool)
         or not isinstance(noise_multiplier, (int, float))
         or float(noise_multiplier) < 1
+        or isinstance(promotion.get("maximum_relative_mad"), bool)
+        or not isinstance(
+            promotion.get("maximum_relative_mad"), (int, float)
+        )
+        or not 0 < float(promotion["maximum_relative_mad"]) < 1
+        or isinstance(
+            promotion.get("maximum_order_stratum_log_skew"), bool
+        )
+        or not isinstance(
+            promotion.get("maximum_order_stratum_log_skew"), (int, float)
+        )
+        or not math.isfinite(promotion["maximum_order_stratum_log_skew"])
+        or not 0 < float(promotion["maximum_order_stratum_log_skew"]) < 1
     ):
         raise ValueError(f"tier {tier_id} relative promotion is invalid")
     acceptance_kind = {
@@ -577,8 +597,15 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         for tier in tiers
         if tier.get("applicable") is True
         and tier["evaluator"]["result_adapter"]
-        in {"outer_remainder_successor_v1", "outer_remainder_successor_v2"}
+        == "outer_remainder_successor_v2"
     ]
+    if any(
+        tier.get("applicable") is True
+        and tier["evaluator"]["result_adapter"]
+        == "outer_remainder_successor_v1"
+        for tier in tiers
+    ):
+        raise ValueError("schema-2 templates cannot execute successor v1")
     if runtime_artifact is not None:
         artifact_tiers = [
             tier
@@ -591,7 +618,7 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
             raise ValueError("runtime artifact must bind one executable proxy tier")
         if (
             artifact_tiers[0]["evaluator"]["result_adapter"]
-            not in {"outer_remainder_successor_v1", "outer_remainder_successor_v2"}
+            != "outer_remainder_successor_v2"
         ):
             raise ValueError("runtime artifact proxy must use its sealed adapter")
         if successor_tiers != artifact_tiers:
