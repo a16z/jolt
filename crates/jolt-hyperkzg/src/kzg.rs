@@ -188,6 +188,10 @@ where
     bases.push(wit[2]);
     bases.push(vk.g1);
 
+    // The bases side contributes exactly `com.len()` commitments; a
+    // `challenge_powers` regression returning a different count would
+    // otherwise surface as an MSM length panic instead of a clean mismatch.
+    debug_assert_eq!(q_powers_multiplied.len(), k);
     let mut scalars = Vec::with_capacity(k + 4);
     scalars.extend_from_slice(&q_powers_multiplied);
     scalars.push(u[0]);

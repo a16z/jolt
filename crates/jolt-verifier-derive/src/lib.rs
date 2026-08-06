@@ -123,7 +123,8 @@
     clippy::exit,
     clippy::panic_in_result_fn,
     clippy::let_underscore_must_use,
-    clippy::host_endian_bytes
+    clippy::host_endian_bytes,
+    clippy::indexing_slicing
 )]
 // wildcard_enum_match_arm is omitted: this crate matches foreign syn AST enums,
 // where wildcard fallbacks to Err/None are the correct, version-stable idiom.

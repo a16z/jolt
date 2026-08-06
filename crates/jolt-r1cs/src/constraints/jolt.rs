@@ -143,6 +143,9 @@ pub fn spartan_outer_row_weights<F: Field>(
     stream: F,
 ) -> Result<Vec<F>, CenteredIntegerDomainError> {
     let lagrange_weights = centered_lagrange_evals(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, uniskip)?;
+    // The row-group arrays are typed to the domain size, so only a short
+    // weight vector could make the zips below drop rows silently.
+    debug_assert_eq!(lagrange_weights.len(), SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
     let mut weights = vec![F::zero(); SPARTAN_OUTER_ROW_COUNT];
 
     #[expect(

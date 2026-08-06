@@ -72,15 +72,23 @@ pub(crate) fn ark_to_jolt_gt(ark: &ArkGT) -> Bn254GT {
 
 #[inline]
 pub(crate) fn jolt_g1_vec_to_ark(v: Vec<Bn254G1>) -> Vec<ArkG1> {
-    // SAFETY: Bn254G1 and ArkG1 have identical size/align (repr(transparent)
-    // over G1Projective), so Vec layout is identical.
-    unsafe { std::mem::transmute(v) }
+    let mut v = std::mem::ManuallyDrop::new(v);
+    let (ptr, len, capacity) = (v.as_mut_ptr(), v.len(), v.capacity());
+    // SAFETY: Bn254G1 and ArkG1 are both repr(transparent) over G1Projective
+    // (size/align compile-checked above), so the buffer's elements can be
+    // reinterpreted in place. `Vec`'s internal layout across distinct element
+    // types is unspecified, so the container is rebuilt from raw parts
+    // rather than transmuted whole; ManuallyDrop keeps the original from
+    // freeing the buffer it hands over.
+    unsafe { Vec::from_raw_parts(ptr.cast::<ArkG1>(), len, capacity) }
 }
 
 #[inline]
 pub(crate) fn ark_to_jolt_g1_vec(v: Vec<ArkG1>) -> Vec<Bn254G1> {
-    // SAFETY: same layout as jolt_g1_vec_to_ark.
-    unsafe { std::mem::transmute(v) }
+    let mut v = std::mem::ManuallyDrop::new(v);
+    let (ptr, len, capacity) = (v.as_mut_ptr(), v.len(), v.capacity());
+    // SAFETY: same layout facts as jolt_g1_vec_to_ark.
+    unsafe { Vec::from_raw_parts(ptr.cast::<Bn254G1>(), len, capacity) }
 }
 
 #[inline]

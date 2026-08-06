@@ -443,6 +443,12 @@ where
         for ((evaluation, slot), alpha_i) in self.ordered_claims.iter().zip(alpha) {
             let offset = slot.packed_index(0);
             let evals = EqPolynomial::evals(evaluation.point.as_slice(), Some(*alpha_i));
+            // The zip write would silently truncate an oversized subcube;
+            // keep that structurally impossible case loud.
+            debug_assert!(
+                evals.len() <= table.len().saturating_sub(offset),
+                "slot subcube exceeds the packed selector table"
+            );
             for (cell, eval) in table.iter_mut().skip(offset).zip(evals) {
                 *cell = eval;
             }

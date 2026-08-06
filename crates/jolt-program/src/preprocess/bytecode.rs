@@ -101,8 +101,12 @@ pub struct BytecodePCMapper {
 impl BytecodePCMapper {
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
         let mut last_pc = 0;
-        let mut indices = vec![vec![(0, last_pc)]];
-        indices.resize_with(Self::index_count(bytecode)?, Vec::new);
+        // One allocation at the final size; the no-op sentinel lives in the
+        // first bucket (`index_count` is always >= 1).
+        let mut indices = vec![Vec::new(); Self::index_count(bytecode)?];
+        if let Some(first) = indices.first_mut() {
+            first.push((0, last_pc));
+        }
 
         for instruction in bytecode {
             if instruction.address == 0 {

@@ -3,11 +3,6 @@
 //! [`HyperKZGScheme`] is generic over `P: PairingGroup` — instantiate with
 //! `Bn254` for the concrete BN254 curve.
 
-#![expect(
-    clippy::expect_used,
-    reason = "KZG operations return Result for API symmetry; with a correctly-sized SRS and well-formed inputs these errors are unreachable"
-)]
-
 use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
@@ -86,6 +81,10 @@ where
     ///
     /// The folding relation is:
     /// $P_i[j] = (1 - x_{\ell-i}) \cdot P_{i-1}[2j] + x_{\ell-i} \cdot P_{i-1}[2j+1]$
+    #[expect(
+        clippy::expect_used,
+        reason = "polys is seeded with one element before the fold loop"
+    )]
     fn fold_polynomials(
         evals: &[P::ScalarField],
         point: &[P::ScalarField],
@@ -116,6 +115,10 @@ where
 
     /// Full HyperKZG opening proof.
     #[tracing::instrument(skip_all, name = "HyperKZG::open")]
+    #[expect(
+        clippy::expect_used,
+        reason = "intermediate fold polynomials shrink, so an SRS sized for the input covers every kzg_commit"
+    )]
     pub fn open<T: Transcript<Challenge = P::ScalarField>>(
         setup: &HyperKZGProverSetup<P>,
         evals: &[P::ScalarField],
@@ -245,6 +248,13 @@ where
 /// KZG trapdoor `beta`. Both are sound once `beta` is destroyed, but the two
 /// schemes do not have independent security assumptions.
 impl<P: PairingGroup> DeriveSetup<HyperKZGProverSetup<P>> for PedersenSetup<P::G1> {
+    /// # Panics
+    ///
+    /// Panics when the SRS is smaller than `capacity + 1`. `derive` runs at
+    /// setup time on operator-provided parameters (the infallible
+    /// `DeriveSetup` trait offers no error channel), never on the
+    /// proof-verification path.
+    #[expect(clippy::expect_used, reason = "length checked by the assert above")]
     fn derive(source: &HyperKZGProverSetup<P>, capacity: usize) -> Self {
         assert!(
             source.g1_powers.len() > capacity,
@@ -344,7 +354,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
+    #![expect(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "tests unwrap successful PCS operations"
+    )]
 
     use super::*;
     use jolt_crypto::Bn254;
