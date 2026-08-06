@@ -2577,6 +2577,34 @@ class RunnerIntegrationTests(unittest.TestCase):
                 len((run_dir / "tier-events.jsonl").read_text().splitlines()), 4
             )
 
+    def test_live_state_validation_allows_candidate_shader_to_differ(self) -> None:
+        output = self.outer_output()
+        launches: list[str] = []
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner,
+            "run_attempt",
+            side_effect=self.successful_attempt(output, launches),
+        ):
+            run_dir = Path(directory) / "run"
+            state = runner.init_run(
+                ROOT,
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                run_dir,
+            )
+            source = (
+                ROOT / state["template"]["runtime_artifact"]["source_path"]
+            ).resolve()
+            original_read_bytes = Path.read_bytes
+
+            def changed_candidate(path: Path) -> bytes:
+                payload = original_read_bytes(path)
+                return payload + b"\n// candidate" if path == source else payload
+
+            with mock.patch.object(Path, "read_bytes", changed_candidate):
+                runner._validate_live_state(ROOT, state)
+
     def test_initialization_rejects_biased_a_a_before_representative(self) -> None:
         template = json.loads(
             (

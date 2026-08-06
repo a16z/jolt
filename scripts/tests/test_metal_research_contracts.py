@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts.metal_research.budget import (
     BudgetExhausted,
@@ -392,6 +393,45 @@ class VersionedContractTests(unittest.TestCase):
         tampered["iteration_profile"]["profile_base_revision"] = "0" * 40
         with self.assertRaisesRegex(ValueError, "evidence contract"):
             validate_template(tampered, ROOT)
+
+    def test_live_profile_validation_skips_only_the_editable_fragment(self) -> None:
+        template = json.loads(
+            (
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
+            ).read_text()
+        )
+        editable = ROOT / template["scope"]["editable"][0]
+        frozen = ROOT / "crates/jolt-kernels/src/metal/solinas/fp128.metal"
+        original_read_bytes = Path.read_bytes
+
+        def changed_editable(path: Path) -> bytes:
+            payload = original_read_bytes(path)
+            return payload + b"\n// candidate" if path == editable else payload
+
+        with mock.patch.object(Path, "read_bytes", changed_editable):
+            with self.assertRaisesRegex(ValueError, "changed since profiling"):
+                validate_template(template, ROOT)
+            validate_template(
+                template, ROOT, verify_editable_profile_sources=False
+            )
+
+        def changed_frozen(path: Path) -> bytes:
+            payload = original_read_bytes(path)
+            return payload + b"\n// tampered" if path == frozen else payload
+
+        with mock.patch.object(Path, "read_bytes", changed_frozen):
+            with self.assertRaisesRegex(ValueError, "changed since profiling"):
+                validate_template(
+                    template, ROOT, verify_editable_profile_sources=False
+                )
+
+        tampered = copy.deepcopy(template)
+        tampered["iteration_profile"]["evidence_sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "evidence digest"):
+            validate_template(
+                tampered, ROOT, verify_editable_profile_sources=False
+            )
 
     def test_runtime_artifact_contract_closes_source_plan_and_env(self) -> None:
         template = json.loads(

@@ -808,8 +808,10 @@ def _validate_profile_cycle(
 def _validate_iteration_profile(
     profile: Any,
     root: Path,
+    editable: set[str],
     frozen: set[str],
     proxy: dict[str, Any],
+    verify_editable_sources: bool,
 ) -> None:
     required = {
         "profile_base_revision",
@@ -945,32 +947,41 @@ def _validate_iteration_profile(
     fragments = closure["source_fragments"]
     if not isinstance(fragments, list) or [item.get("path") for item in fragments] != expected_paths:
         raise ValueError("minimal closure source fragments are invalid")
+    if expected_paths[-1] not in editable or any(
+        path not in frozen for path in expected_paths[:-1]
+    ):
+        raise ValueError("minimal closure source scopes are invalid")
     fragment_payloads: dict[str, bytes] = {}
     for fragment in fragments:
         if not isinstance(fragment, dict) or set(fragment) != {"path", "bytes", "sha256"}:
             raise ValueError("minimal closure source fragment is invalid")
         source = _relative_file(root, fragment["path"], "minimal closure source")
+        if type(fragment["bytes"]) is not int or fragment["bytes"] <= 0:
+            raise ValueError("minimal closure source fragment size is invalid")
+        fragment_digest = _hex_digest(
+            fragment["sha256"], "minimal closure source digest"
+        )
+        if fragment["path"] in editable and not verify_editable_sources:
+            continue
         payload = source.read_bytes()
         fragment_payloads[fragment["path"]] = payload
         if (
-            type(fragment["bytes"]) is not int
-            or fragment["bytes"] != len(payload)
-            or _hex_digest(fragment["sha256"], "minimal closure source digest")
-            != sha256(payload)
+            fragment["bytes"] != len(payload)
+            or fragment_digest != sha256(payload)
         ):
             raise ValueError("minimal closure source changed since profiling")
     suffix = closure["candidate_source_suffix"]
-    candidate_source = fragment_payloads[expected_paths[-1]] + (
-        suffix.encode() if isinstance(suffix, str) else b""
-    )
     if (
         not isinstance(suffix, str)
         or not suffix.startswith("\n// iteration profile ")
         or evaluator["parent_outer_source_sha256"]
-        != sha256(fragment_payloads[expected_paths[-1]])
-        or evaluator["candidate_outer_source_sha256"] != sha256(candidate_source)
+        != fragments[-1]["sha256"]
     ):
         raise ValueError("minimal closure candidate nonce is invalid")
+    if expected_paths[-1] in fragment_payloads:
+        candidate_source = fragment_payloads[expected_paths[-1]] + suffix.encode()
+        if evaluator["candidate_outer_source_sha256"] != sha256(candidate_source):
+            raise ValueError("minimal closure candidate nonce is invalid")
     for field in ("parent_assembled_source_bytes", "candidate_assembled_source_bytes"):
         if type(closure[field]) is not int or closure[field] <= 0:
             raise ValueError("minimal closure assembled source size is invalid")
@@ -1154,7 +1165,12 @@ def _validate_search_policy(
         parameter_sets.add(key)
 
 
-def validate_template(template: dict[str, Any], root: Path) -> None:
+def validate_template(
+    template: dict[str, Any],
+    root: Path,
+    *,
+    verify_editable_profile_sources: bool = True,
+) -> None:
     required = {
         "schema_version",
         "slot_id",
@@ -1332,7 +1348,12 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
     ):
         raise ValueError("phase checkpoint scale must match the proxy tier")
     _validate_iteration_profile(
-        template["iteration_profile"], root, frozen, proxy
+        template["iteration_profile"],
+        root,
+        editable,
+        frozen,
+        proxy,
+        verify_editable_profile_sources,
     )
     holdout = executable["holdout"]
     portfolio = goal["portfolio_acceptance"]

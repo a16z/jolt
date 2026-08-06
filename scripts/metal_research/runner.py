@@ -471,7 +471,10 @@ def _validate_live_state(root: Path, state: dict[str, Any]) -> None:
     template = state["template"]
     if sha256(canonical_json(template)) != state["template_sha256"]:
         raise ValueError("sealed template digest does not match the run state")
-    validate_template(template, root)
+    # The live editable source is the candidate; its baseline bytes are sealed in the run.
+    validate_template(
+        template, root, verify_editable_profile_sources=False
+    )
     live_template = read_json(root / state["template_path"])
     if canonical_json(live_template) != canonical_json(template):
         raise ValueError("live template no longer matches the sealed run template")
