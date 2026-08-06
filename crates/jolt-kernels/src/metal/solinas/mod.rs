@@ -35,6 +35,7 @@ mod ram_output_check;
 mod ram_raf_evaluation;
 mod ram_val_check;
 mod registers_read_write;
+mod registers_read_write_dense;
 mod registers_val;
 pub mod registers_val_evaluation_backend;
 mod runtime;
@@ -165,6 +166,10 @@ pub use ram_val_check::{
 pub use registers_read_write::{
     RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
     RegistersReadWriteSecondMessageInvocation,
+};
+pub use registers_read_write_dense::{
+    RegistersRwDenseRoundInvocation, RegistersRwDenseRoundStorage, RegistersRwDenseStateWords,
+    REGISTERS_RW_DENSE_COLUMNS,
 };
 pub(crate) use registers_val::{PendingRegistersValFirstMessage, RegistersValFirstMessageStats};
 pub use registers_val::{
@@ -471,6 +476,14 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
+    #[error(transparent)]
+    RegistersReadWriteDenseAbi(#[from] registers_read_write_dense::RegistersRwDenseAbiError),
+    #[error(
+        "registers read/write needs {requested} bytes of threadgroup memory, device limit is {maximum}"
+    )]
+    RegistersReadWriteThreadgroupMemory { requested: u64, maximum: u64 },
+    #[error("invalid resident registers read/write state: {0}")]
+    InvalidRegistersReadWriteState(&'static str),
     #[error(
         "registers value evaluation needs a power-of-two cycle count of at least four, got {0}"
     )]
