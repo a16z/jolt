@@ -1,0 +1,142 @@
+#define REGISTERS_VAL_SAMPLES 3u
+
+struct RegistersValMessageParams {
+    uint cycles;
+    uint high_blocks;
+    uint lt_lo_length;
+    uint reserved;
+};
+
+struct RegistersValReductionParams {
+    uint input_count;
+    uint output_count;
+    uint2 reserved;
+};
+
+inline SolinasFp128 registers_val_wa(
+    device const uchar* rd,
+    device const SolinasFp128* eq_address,
+    uint index)
+{
+    uchar index_value = rd[index];
+    return index_value == 255u
+        ? solinas_zero()
+        : eq_address[(uint)index_value];
+}
+
+kernel void solinas_registers_val_first_message_factorized(
+    device const SolinasFp128* inc [[buffer(0)]],
+    device const uchar* rd [[buffer(1)]],
+    device const SolinasFp128* eq_address [[buffer(2)]],
+    device const SolinasFp128* lt_lo [[buffer(3)]],
+    device const SolinasFp128* lt_hi [[buffer(4)]],
+    device const SolinasFp128* eq_hi [[buffer(5)]],
+    device SolinasFp128* partials [[buffer(6)]],
+    constant RegistersValMessageParams& params [[buffer(7)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint thread_index [[thread_index_in_threadgroup]],
+    uint high [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    SolinasFp128 a[REGISTERS_VAL_SAMPLES];
+    SolinasFp128 b[REGISTERS_VAL_SAMPLES];
+    for (uint sample = 0u; sample < REGISTERS_VAL_SAMPLES; sample++) {
+        a[sample] = solinas_zero();
+        b[sample] = solinas_zero();
+    }
+
+    uint low_pairs = params.lt_lo_length / 2u;
+    uint high_base = high * params.lt_lo_length;
+    for (uint low_pair = thread_index; low_pair < low_pairs; low_pair += threads) {
+        uint low_0 = 2u * low_pair;
+        uint index_0 = high_base + low_0;
+        uint index_1 = index_0 + 1u;
+        SolinasFp128 inc_0 = inc[index_0];
+        SolinasFp128 inc_delta = solinas_sub(inc[index_1], inc_0);
+        SolinasFp128 wa_0 = registers_val_wa(rd, eq_address, index_0);
+        SolinasFp128 wa_delta = solinas_sub(
+            registers_val_wa(rd, eq_address, index_1),
+            wa_0);
+        SolinasFp128 lt_0 = lt_lo[low_0];
+        SolinasFp128 lt_delta = solinas_sub(lt_lo[low_0 + 1u], lt_0);
+
+        SolinasFp128 inc_2 = solinas_add(inc[index_1], inc_delta);
+        SolinasFp128 wa_2 = solinas_add(
+            solinas_add(wa_0, wa_delta),
+            wa_delta);
+        SolinasFp128 lt_2 = solinas_add(
+            solinas_add(lt_0, lt_delta),
+            lt_delta);
+        SolinasFp128 inc_at[REGISTERS_VAL_SAMPLES] = {
+            inc_0,
+            inc_2,
+            solinas_add(inc_2, inc_delta),
+        };
+        SolinasFp128 wa_at[REGISTERS_VAL_SAMPLES] = {
+            wa_0,
+            wa_2,
+            solinas_add(wa_2, wa_delta),
+        };
+        SolinasFp128 lt_at[REGISTERS_VAL_SAMPLES] = {
+            lt_0,
+            lt_2,
+            solinas_add(lt_2, lt_delta),
+        };
+        for (uint sample = 0u; sample < REGISTERS_VAL_SAMPLES; sample++) {
+            SolinasFp128 product = solinas_mul_wide(inc_at[sample], wa_at[sample]);
+            a[sample] = solinas_add(a[sample], product);
+            b[sample] = solinas_add(
+                b[sample],
+                solinas_mul_wide(product, lt_at[sample]));
+        }
+    }
+
+    uint simdgroups = threads / 32u;
+    for (uint sample = 0u; sample < REGISTERS_VAL_SAMPLES; sample++) {
+        a[sample] = solinas_simd_sum_32(a[sample]);
+        b[sample] = solinas_simd_sum_32(b[sample]);
+        if (lane == 0u) {
+            shared[sample * simdgroups + simdgroup] = a[sample];
+            shared[(REGISTERS_VAL_SAMPLES + sample) * simdgroups + simdgroup] = b[sample];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (simdgroup == 0u) {
+        for (uint sample = 0u; sample < REGISTERS_VAL_SAMPLES; sample++) {
+            SolinasFp128 a_sum = lane < simdgroups
+                ? shared[sample * simdgroups + lane]
+                : solinas_zero();
+            SolinasFp128 b_sum = lane < simdgroups
+                ? shared[(REGISTERS_VAL_SAMPLES + sample) * simdgroups + lane]
+                : solinas_zero();
+            a_sum = solinas_simd_sum_32(a_sum);
+            b_sum = solinas_simd_sum_32(b_sum);
+            if (lane == 0u) {
+                partials[sample * params.high_blocks + high] = solinas_add(
+                    solinas_mul_wide(lt_hi[high], a_sum),
+                    solinas_mul_wide(eq_hi[high], b_sum));
+            }
+        }
+    }
+}
+
+kernel void solinas_registers_val_reduce(
+    device const SolinasFp128* input [[buffer(0)]],
+    device SolinasFp128* output [[buffer(1)]],
+    constant RegistersValReductionParams& params [[buffer(2)]],
+    uint gid [[thread_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]])
+{
+    for (uint sample = 0u; sample < REGISTERS_VAL_SAMPLES; sample++) {
+        SolinasFp128 value = gid < params.input_count
+            ? input[sample * params.input_count + gid]
+            : solinas_zero();
+        value = solinas_simd_sum_32(value);
+        if (lane == 0u) {
+            output[sample * params.output_count + gid / 32u] = value;
+        }
+    }
+}

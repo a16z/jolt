@@ -5,10 +5,10 @@ use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
     BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128,
     InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
-    RegisterAccessRow, RegistersReadWriteMessageConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
-    OFFSET_275,
+    RegisterAccessRow, RegistersReadWriteMessageConfig, RegistersValFirstMessageConfig,
+    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
 mod support;
 
@@ -62,6 +62,82 @@ fn akita_shader_matches_jolt_field() {
             })
             .collect::<Vec<_>>();
         assert_eq!(actual, expected, "{}", probe.name());
+    }
+}
+
+#[test]
+fn registers_val_first_message_matches_dense_cpu() {
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let cycles = 1_usize << 10;
+    let inc = (0..cycles)
+        .map(|index| {
+            AkitaField::from_u64(
+                (index as u64)
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .rotate_left((index % 63) as u32),
+            )
+        })
+        .collect::<Vec<_>>();
+    let rd = (0..cycles)
+        .map(|index| {
+            if index % 11 == 0 {
+                u8::MAX
+            } else {
+                ((37 * index + 19) & 127) as u8
+            }
+        })
+        .collect::<Vec<_>>();
+    let r_address = (0..7)
+        .map(|index| AkitaField::from_u64(0x101 + 17 * index as u64))
+        .collect::<Vec<_>>();
+    let r_cycle = (0..cycles.ilog2() as usize)
+        .map(|index| AkitaField::from_u64(0x1001 + 29 * index as u64))
+        .collect::<Vec<_>>();
+    let eq_address = EqPolynomial::<AkitaField>::evals(&r_address, None);
+    let lt = LtPolynomial::<AkitaField>::evaluations(&r_cycle);
+    let mut expected = [AkitaField::from_u64(0); 3];
+    for pair in 0..cycles / 2 {
+        let indices = [2 * pair, 2 * pair + 1];
+        let inc_pair = [inc[indices[0]], inc[indices[1]]];
+        let wa_pair = indices.map(|index| {
+            let register = rd[index];
+            if register == u8::MAX {
+                AkitaField::from_u64(0)
+            } else {
+                eq_address[register as usize]
+            }
+        });
+        let lt_pair = [lt[indices[0]], lt[indices[1]]];
+        for (sample, t) in [0_u64, 2, 3].into_iter().enumerate() {
+            let t = AkitaField::from_u64(t);
+            let interpolate = |pair: [AkitaField; 2]| pair[0] + t * (pair[1] - pair[0]);
+            expected[sample] += interpolate(inc_pair) * interpolate(wa_pair) * interpolate(lt_pair);
+        }
+    }
+
+    for threads_per_threadgroup in [32, 128] {
+        let invocation = context
+            .prepare_registers_val_first_message(
+                &inc,
+                &rd,
+                &r_address,
+                &r_cycle,
+                RegistersValFirstMessageConfig {
+                    threads_per_threadgroup: Some(threads_per_threadgroup),
+                },
+            )
+            .expect("registers value first message should prepare");
+        assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+        invocation
+            .execute()
+            .expect("registers value first message should execute");
+        assert_eq!(
+            invocation
+                .read_message()
+                .expect("registers value first message should be readable"),
+            expected,
+            "threads_per_threadgroup={threads_per_threadgroup}"
+        );
     }
 }
 

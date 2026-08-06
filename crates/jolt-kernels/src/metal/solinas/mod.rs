@@ -28,6 +28,7 @@ mod instruction_ra_virtualization;
 mod outer_remainder;
 mod product5;
 mod registers_read_write;
+mod registers_val;
 mod runtime;
 mod source;
 mod spartan_outer_uniskip;
@@ -99,6 +100,7 @@ pub use registers_read_write::{
     RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
     RegistersReadWriteSecondMessageInvocation,
 };
+pub use registers_val::{RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation};
 pub use spartan_outer_uniskip::{
     evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,
     SpartanOuterUniskipRow, SpartanOuterUniskipRows, SPARTAN_OUTER_EXTENDED_NODES,
@@ -395,6 +397,30 @@ pub enum MetalError {
         "registers read/write pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
     UnsupportedRegistersReadWriteExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "registers value evaluation needs a power-of-two cycle count of at least four, got {0}"
+    )]
+    InvalidRegistersValCycles(usize),
+    #[error("registers value evaluation has {got} write indices, expected {expected}")]
+    RegistersValIndexLength { expected: usize, got: usize },
+    #[error(
+        "registers value evaluation point shape mismatch: address_bits={address_bits}, cycle_bits={cycle_bits}, cycles={cycles}"
+    )]
+    RegistersValPointShape {
+        address_bits: usize,
+        cycle_bits: usize,
+        cycles: usize,
+    },
+    #[error("registers value evaluation index {0} is outside the 128-register domain")]
+    InvalidRegistersValIndex(u8),
+    #[error(
+        "registers value evaluation pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedRegistersValExecutionWidth {
         pipeline: &'static str,
         expected: usize,
         got: usize,
