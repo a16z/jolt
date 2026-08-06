@@ -1,0 +1,97 @@
+{
+  "schema": "metal_ram_raf_evaluation_observation_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-06",
+  "evidence_stage": "observed",
+  "candidate": {
+    "git_revision": "1ad3acc261d71707b74a2773d3286bcb4e3598e8",
+    "binary_path": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "b2df4e01e045ca6c200b4dd337ef82fe31050702631afa6b6a885398d3d7cf15",
+    "rust_plan_sha256": "8b125ed4b26db52b6d9fd7fd52fb1f386041ad0dbdd0961f9e15daed24c52402",
+    "rust_runtime_sha256": "280f2d15c74096362f7147fc2f6bf01059819dd8af93d1beb6599bb35d4ec2db",
+    "shader_source_sha256": "dd5b2723d7991c3fa75ff605058e0f2a56863495a4b3917706d6c8390f2c3444",
+    "benchmark_source_sha256": "1a31daeda9dd3d027d3a353a12af069ade40b35a318ed00da56516507aab846d"
+  },
+  "contract": {
+    "retained_command": "JOLT_SOLINAS_BENCH_FAMILY=ram-raf JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_METAL_RAM_RAF_THREADS=1024 JOLT_METAL_RAM_RAF_WARMUP_MS=500 JOLT_METAL_RAM_RAF_MEASUREMENT_MS=2000 cargo bench -p jolt-kernels --bench metal_solinas --features metal,test-utils -- metal_wall_hybrid_no_fs",
+    "elements": 67108864,
+    "address_domain": 8192,
+    "inner_length": 32768,
+    "outer_length": 2048,
+    "address_tiles": 6,
+    "tile_addresses": 1376,
+    "threads_per_threadgroup": 1024,
+    "dynamic_threadgroup_bytes": 27520,
+    "pipeline_static_threadgroup_bytes": 0,
+    "thread_execution_width": 32,
+    "pipeline_max_threads_per_threadgroup": 1024,
+    "device": "Apple M4 Max",
+    "field_offset": 4294944759,
+    "borrowed_address_bytes": 268435456,
+    "sequence_owned_bytes": 851968,
+    "readback_bytes": 131072,
+    "round_device_buffer_allocations": 0,
+    "cpu_reference": "frozen optimized RamRafEvaluation complete member",
+    "cpu_reference_ms": 74.870252,
+    "five_x_wall_cap_ms": 14.974050,
+    "pursuit_wall_target_ms": 11.5
+  },
+  "retained_random_observation": {
+    "excluded_standalone_address_upload_ms_range": [33.109, 43.0],
+    "separate_sequence_setup_ms_range": [0.7, 1.4],
+    "warm_fold_finalize_readback_wall_ms": 6.978,
+    "warm_gpu_active_ms": 6.640,
+    "specialized_cpu_tail_no_fiat_shamir_ms": 0.507,
+    "one_shot_hybrid_no_fiat_shamir_ms": 7.485,
+    "hybrid_no_fiat_shamir_criterion_interval_ms": [7.3809, 7.8415, 8.5466],
+    "hybrid_no_fiat_shamir_speedup_at_median": 9.54795,
+    "accessed_rows": 67108864,
+    "nonzero_outer_address_subtotals": 16470998
+  },
+  "topology_controls": [
+    {
+      "topology": "no_access",
+      "warm_gpu_active_ms": 4.860,
+      "hybrid_no_fiat_shamir_ms": 5.252
+    },
+    {
+      "topology": "dense_random",
+      "warm_gpu_active_ms": 7.013,
+      "hybrid_no_fiat_shamir_ms": 7.720
+    },
+    {
+      "topology": "one_hot",
+      "warm_gpu_active_ms": 7.206,
+      "hybrid_no_fiat_shamir_ms": 8.066,
+      "active_time_ratio_to_random": 1.02752
+    }
+  ],
+  "rejected_adjustments": [
+    {
+      "adjustment": "512 threads per threadgroup",
+      "criterion_median_ms": 16.192,
+      "speedup": 4.6239,
+      "reason": "The same dynamic threadgroup allocation admits no second resident group, so halving active lanes missed the 5x floor."
+    },
+    {
+      "adjustment": "standalone host upload charged to this member",
+      "reason": "The 33--43 ms upload of the 256-MiB address plane exceeds the complete-member 5x cap; a shared resident RAM witness producer is mandatory."
+    }
+  ],
+  "guards": {
+    "dense_and_split_independent_oracles_match_metal": true,
+    "no_access_random_hot_and_boundary_rows_covered": true,
+    "invalid_address_and_dispatch_counters_checked": true,
+    "resident_address_allocation_identity_checked": true,
+    "sequence_replay_checked": true,
+    "initial_shader_type_error_reproduced_before_fix": true,
+    "all_245_jolt_kernel_tests_passed": true,
+    "clippy_all_targets_passed": true,
+    "source_assembly_tests_passed": true
+  },
+  "verdict": {
+    "status": "resident_hybrid_pass_integration_pending",
+    "reason": "The retained one-command resident pushforward plus exact affine CPU continuation clears the 5x floor and 11.5-ms pursuit target with a 9.55x Criterion median. The 256-MiB address upload, proof-stage host Fiat-Shamir, and production SumcheckKernel adapter are not part of this low-level result.",
+    "next_test": "Have the shared stage-2 RAM witness producer expose the validated resident address plane, wire the affine host tail through the batch-owned transcript, and compare paired complete CPU and Metal-hybrid RamRafEvaluation proofs on the retained log-26 Fibonacci topology including final RamRa and UnmapAddress claims."
+  }
+}
