@@ -261,13 +261,16 @@ impl INLINE {
         &self,
         cpu: &mut Cpu,
         trace: Option<&mut Vec<Cycle>>,
-        mut sequence: Vec<Instruction>,
+        sequence: &[Instruction],
     ) {
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
         if let Some(mut advice) = (reg.build_advice)(self.operands, cpu) {
+            // Advice values are patched into per-execution copies of the
+            // rows; the (cached) sequence itself is never mutated.
             let mut trace = trace;
-            for instr in sequence.iter_mut() {
-                if let Instruction::VirtualAdvice(va) = instr {
+            for instr in sequence {
+                let mut instr = *instr;
+                if let Instruction::VirtualAdvice(va) = &mut instr {
                     va.advice = match advice.pop_front() {
                         Some(val) => val,
                         None => panic!(
@@ -304,8 +307,9 @@ impl RISCVTrace for INLINE {
     /// occur; this method writes the concrete advice values into those rows
     /// immediately before executing them.
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let sequence = self.inline_sequence(&cpu.vr_allocator);
-        self.trace_sequence(cpu, trace, sequence);
+        cpu.with_cached_inline_sequence(&Instruction::from(*self), |cpu, rows| {
+            self.trace_sequence(cpu, trace, rows);
+        });
     }
 }
 
