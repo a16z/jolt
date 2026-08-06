@@ -10,7 +10,8 @@ The first fresh v2 baseline at revision `878c83e20` measured an exact 4.03127x
 median: 880.991 ms on optimized CPU and 222.318 ms on Metal. Its CPU-first and
 Metal-first strata were 4.03127x and 3.98379x. This agrees with the historical
 4.01495x result, remains below the 5x floor, and is not log-27 transfer evidence.
-No schema-1 snapshot is a resumable parent.
+A schema-1 snapshot may resume only its existing run; it cannot parent a fresh v2
+phase.
 
 The member is a better next target than the slightly larger registers read/write
 member because its input rows already exist on the device. Stage 1's Metal uni-skip
@@ -245,7 +246,7 @@ scratch-preparation wall and a conservative `member + scratch preparation` cold
 diagnostic; neither replaces the resident PIOP metric.
 
 One excluded warmup precedes five alternating CPU/Metal pairs with Rayon fixed at
-16 threads. A candidate first passes an exact three-pair log-25 screen. That scale
+16 threads. A candidate first passes an exact four-pair log-25 screen. That scale
 retains the same 8,192-threadgroup cap, fixed cutoffs, shader, proof oracle, and
 lifecycle checks while halving the domain; log 24 does not retain the launch
 geometry. Its 1% relative gate is only a permissive filter. A pass always reaches

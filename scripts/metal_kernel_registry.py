@@ -42,7 +42,7 @@ def read_registry(path: Path) -> dict[str, Any]:
 
 def resolve_template_binding(
     root: Path, registry: dict[str, Any], template_path: Path
-) -> dict[str, str]:
+) -> dict[str, Any]:
     root = root.resolve()
     template_path = template_path.resolve()
     try:
@@ -68,6 +68,9 @@ def resolve_template_binding(
     return {
         "artifact_id": artifact["id"],
         "slot_id": artifact["slot_id"],
+        "contract_schema": artifact["contract_schema"],
+        "lifecycle": artifact["lifecycle"],
+        "fresh_init_eligible": artifact["lifecycle"] == "fresh_init",
         "registry_sha256": sha256(encoded),
     }
 
@@ -311,7 +314,28 @@ def _validate_artifacts(
         for artifact in records:
             if not isinstance(artifact, dict) or "path" not in artifact:
                 raise ValueError(f"{kind} artifact is missing its path")
-            _relative_file(root, artifact["path"], f"{kind} artifact")
+            path = _relative_file(root, artifact["path"], f"{kind} artifact")
+            if kind == "templates":
+                _exact_keys(
+                    artifact,
+                    {"id", "path", "slot_id", "contract_schema", "lifecycle"},
+                    "template artifact",
+                )
+                contract_schema = artifact["contract_schema"]
+                lifecycle = artifact["lifecycle"]
+                if (
+                    type(contract_schema) is not int
+                    or contract_schema not in {1, 2}
+                ):
+                    raise ValueError("template contract schema is unsupported")
+                expected_lifecycle = (
+                    "fresh_init" if contract_schema == 2 else "existing_runs_only"
+                )
+                if lifecycle != expected_lifecycle:
+                    raise ValueError("template lifecycle does not match its contract schema")
+                template = json.loads(path.read_text())
+                if template.get("schema_version") != contract_schema:
+                    raise ValueError("template contract schema does not match its file")
             driver = artifact.get("driver")
             if driver is not None:
                 _relative_file(root, driver, f"{kind} driver")
@@ -437,11 +461,20 @@ def _validate_slot_artifacts(
     }
     if referenced_templates != artifact_ids["templates"]:
         raise ValueError("template ownership does not cover every registered template")
+    fresh_slots = [
+        artifact["slot_id"]
+        for artifact in artifacts["templates"].values()
+        if artifact["lifecycle"] == "fresh_init"
+    ]
+    if not fresh_slots:
+        raise ValueError("the registry must contain a fresh-init template")
+    if len(fresh_slots) != len(set(fresh_slots)):
+        raise ValueError("a slot may have at most one fresh-init template")
 
 
 def validate_registry(root: Path, registry: dict[str, Any]) -> None:
     _exact_keys(registry, ROOT_KEYS, "registry")
-    if registry["schema_version"] != 3:
+    if registry["schema_version"] != 4:
         raise ValueError("unsupported kernel registry schema")
     source_ids, entry_point_sources = _validate_sources(root, registry)
     component_ids = _validate_components(

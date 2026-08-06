@@ -1604,6 +1604,8 @@ def validate_template_file(root: Path, template_path: Path) -> dict[str, Any]:
         "template": _relative(root, template_path),
         "slot_id": template["slot_id"],
         "kernel": template["kernel"],
+        "lifecycle": binding["lifecycle"],
+        "fresh_init_eligible": binding["fresh_init_eligible"],
         "binding": binding,
         "valid": True,
     }
@@ -1620,13 +1622,21 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
     binding = _registry().resolve_template_binding(root, registry, template_path)
     if binding["slot_id"] != template["slot_id"]:
         raise ValueError("template registry slot does not match its registered binding")
+    if not binding["fresh_init_eligible"]:
+        raise ValueError("template is existing-run-only and cannot initialize a fresh run")
 
     _initialize_run_files(run_dir)
     legacy = _legacy()
+    baseline_snapshot = run_dir / "snapshots" / "baseline"
     legacy.snapshot_paths(
-        root, template["scope"]["editable"], run_dir / "snapshots" / "baseline"
+        root, template["scope"]["editable"], baseline_snapshot
+    )
+    snapshot_sha256 = legacy.path_digest(
+        baseline_snapshot, template["scope"]["editable"]
     )
     fingerprint = _scope_fingerprint(root, template)
+    if snapshot_sha256 != fingerprint["editable_paths_sha256"]:
+        raise ValueError("baseline snapshot changed during initialization")
     state = {
         "schema_version": RUN_SCHEMA_VERSION,
         "status": "sealing_binaries",

@@ -4120,6 +4120,23 @@ class RunnerIntegrationTests(unittest.TestCase):
 
 
 class DispatchAndGoalTests(unittest.TestCase):
+    def test_v2_init_rejects_an_edit_racing_the_baseline_snapshot(self) -> None:
+        legacy = mock.Mock()
+        legacy.path_digest.side_effect = ["snapshot", "live", "frozen"]
+        legacy.outside_editable_worktree_digest.return_value = "outside"
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            runner, "_legacy", return_value=legacy
+        ), mock.patch.object(runner, "_continue_binary_sealing") as seal:
+            with self.assertRaisesRegex(ValueError, "baseline snapshot changed"):
+                runner.init_run(
+                    ROOT,
+                    ROOT
+                    / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
+                    Path(directory) / "run",
+                )
+
+        seal.assert_not_called()
+
     def test_v2_cli_init_rejects_a_dirty_worktree(self) -> None:
         args = SimpleNamespace(
             command="init",
@@ -4150,6 +4167,51 @@ class DispatchAndGoalTests(unittest.TestCase):
 
         self.assertTrue(result["valid"])
         self.assertEqual(result["slot_id"], "spartan_outer_remainder")
+        self.assertEqual(result["lifecycle"], "fresh_init")
+        self.assertTrue(result["fresh_init_eligible"])
+
+    def test_schema_one_template_is_readable_but_cannot_start_a_fresh_run(self) -> None:
+        template = (
+            ROOT
+            / "crates/jolt-kernels/autoresearch/outer_remainder.template.json"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            with self.assertRaisesRegex(ValueError, "existing-run-only"):
+                metal_autoresearch.command_init(
+                    SimpleNamespace(root=ROOT, template=template, run_dir=run_dir)
+                )
+            self.assertFalse(run_dir.exists())
+
+        with mock.patch("builtins.print") as emit:
+            exit_code = metal_autoresearch.command_validate_template(
+                SimpleNamespace(root=ROOT, template=template)
+            )
+        result = json.loads(emit.call_args.args[0])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["lifecycle"], "existing_runs_only")
+        self.assertFalse(result["fresh_init_eligible"])
+
+    def test_schema_one_cli_init_rejects_without_acquiring_the_evaluator(self) -> None:
+        args = SimpleNamespace(
+            command="init",
+            root=ROOT,
+            template=(
+                ROOT
+                / "crates/jolt-kernels/autoresearch/outer_remainder.template.json"
+            ),
+            run_dir=ROOT / "unused-schema-one-run",
+            handler=metal_autoresearch.command_init,
+        )
+        parser = mock.Mock()
+        parser.parse_args.return_value = args
+        with mock.patch.object(
+            metal_autoresearch, "parser", return_value=parser
+        ), mock.patch.object(metal_autoresearch, "evaluator_lock") as lock:
+            exit_code = metal_autoresearch.main()
+
+        self.assertEqual(exit_code, 2)
+        lock.assert_not_called()
 
     def test_canonical_controller_dispatches_only_schema_two_contracts(self) -> None:
         self.assertTrue(

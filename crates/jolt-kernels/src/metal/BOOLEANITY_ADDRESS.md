@@ -21,9 +21,9 @@ The clean five-pair `2^26` Fibonacci production holdout at revision
 | Paired PIOP speedup | 2.513x |
 | PIOP plus backend witness preparation | 2.400x |
 
-All five CPU proofs and all five Metal proofs verified. Both execution-order
-strata cleared 4x: the median was 7.340x when Metal ran first and 8.581x when
-the optimized CPU ran first. The raw service denominator includes CPU row
+All five CPU proofs and all five Metal proofs verified. Both execution-order strata
+cleared the historical schema-1 4x floor: the median was 7.340x when Metal ran first
+and 8.581x when the optimized CPU ran first. The raw service denominator includes CPU row
 materialization; the equal-input metric subtracts only its attributed row-source
 span. PIOP timing is never adjusted. Ratios of independently reported medians
 need not equal medians of paired ratios.
@@ -246,8 +246,8 @@ For the equal-input diagnostic, a required nested
 `OptimizedBooleanityAddress::row_source` span wraps only
 `shared_instruction_rows`; its duration is subtracted from the CPU member. The
 Metal arm must contain no such span. Full PIOP and raw service timings are never
-adjusted. The standalone equal-input result remains the authoritative 4x search
-gate because subtraction is an attribution control, not a third resident-CPU
+adjusted. The standalone equal-input result remains the authoritative schema-1 4x
+search gate because subtraction is an attribution control, not a third resident-CPU
 measurement arm.
 
 Promotion requires:
@@ -274,6 +274,10 @@ pairs, or below 4x remains a valid search result. The separate
 `promotion.local_eligible` field combines `all_exact` with those three
 performance gates.
 
+This fixed evaluator is an existing-run schema-1 contract. Its measured ratios may
+exceed 5x numerically, but they are not v2 acceptance evidence. A fresh successor
+must clear the 5x floor under sealed v2 holdout and log-27 transfer contracts.
+
 The oracle has explicit limits. The Rust pushforward is independent of the
 Metal shader and is the primary exactness check. Both arms call the same local
 host-round implementation, so agreement of round evaluations, challenges, and
@@ -286,8 +290,9 @@ and the PIOP holdout provide those integration checks.
 The production member is now 1.46% of the 7.630-s Metal PIOP. Even removing it
 entirely could save only that share, so more local tuning is not a useful route to
 the portfolio target. The holdout moved from the 2.203x pre-integration checkpoint
-to 2.513x. Reaching 4x at the current 19.282-s CPU denominator requires reducing
-Metal PIOP to at most 4.820 s, a further 2.810-s saving from the remaining kernels.
+to 2.513x. Under the historical schema-1 portfolio contract, reaching 4x at the
+19.282-s CPU denominator required reducing Metal PIOP to at most 4.820 s, a further
+2.810-s saving from the remaining kernels.
 
 ## Criterion microbenchmark
 

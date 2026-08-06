@@ -275,6 +275,10 @@ class VersionedContractTests(unittest.TestCase):
             "scripts/metal_research/artifacts.py",
             template["scope"]["frozen"],
         )
+        self.assertNotIn(
+            "scripts/metal_outer_remainder_screen.py",
+            template["scope"]["frozen"],
+        )
 
         tampered = copy.deepcopy(template)
         tampered["scope"]["frozen"].remove(
@@ -413,7 +417,9 @@ class VersionedContractTests(unittest.TestCase):
                     "output_path": "target/release/outer-remainder-eval",
                     "timeout_seconds": 1800,
                 },
-                "source_paths": ["scripts/metal_outer_remainder_screen.py"],
+                "source_paths": [
+                    "crates/jolt-kernels/examples/metal-outer-remainder-successor-eval.rs"
+                ],
                 "consumer_tiers": ["screen"],
                 "result_fingerprint": [
                     "fingerprint",

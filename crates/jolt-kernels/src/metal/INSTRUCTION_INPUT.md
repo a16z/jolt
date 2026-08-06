@@ -12,10 +12,10 @@ tail.
 
 The clean schema-6 `2^26` production holdout at `c750b0544` measured a 727.037 ms
 optimized CPU service median and a 193.721 ms Metal service median, or 3.7469x. Both
-proofs and every exactness/resource guard passed, but both the overall 4x gate and
-the optimized-first order stratum failed. The compact phase therefore retains that
-revision only as infrastructure and freezes a new row-layout experiment before any
-shader search.
+proofs and every exactness/resource guard passed, but both the historical schema-1
+4x gate and the optimized-first order stratum failed. The compact phase therefore
+retains that revision only as infrastructure and freezes a new row-layout experiment
+before any shader search.
 
 The implementation must satisfy these requirements:
 
@@ -34,8 +34,8 @@ The implementation must satisfy these requirements:
 - The standalone complete-member search metric includes command waits, host
   Fiat-Shamir, one dense-table readback, and the CPU tail. Shader candidates are
   ranked by complete-member Metal throughput; actual CPU speedup is decided only by
-  the production PIOP gate. The minimum remains 4x, the working target is 5x, and a
-  measured 6-8x path remains in scope.
+  the production PIOP gate. Fresh promotion requires 5x, and a measured 6-8x path
+  remains in scope.
 - Missing resident state, unsupported geometry, or a trace below the configured
   cutoff selects the optimized CPU slot before any transcript message is absorbed.
 
@@ -204,13 +204,17 @@ The a2 width sweep rejected native-message 128 and native-transition 64. Dense 6
 sub-percent change did not clear the corrected 3% gate, so the v4 source phase resets
 to production defaults `256/128/128`. The Rust allocation and telemetry wrapper is
 frozen; an algebra or evaluator change starts another run. The normalized search
-score has no absolute speedup threshold. A locally accepted parent proceeds to five
-alternating production PIOP pairs with both proofs verified, where 4x is enforced on
+score has no absolute speedup threshold. Under this existing schema-1 contract, a
+locally accepted parent proceeds to five alternating production PIOP pairs with both
+proofs verified, where 4x is enforced on
 the actual contemporaneous CPU/Metal measurements. Production reports kernel-service
 spans separately; those spans omit shared sumcheck-driver Fiat-Shamir, so their metric
 is explicitly named `instruction_input_kernel_service_speedup`. The PIOP span remains
 the end-to-end arbiter. If the production control cannot clear 4x, the Metal slot is
 removed while the negative result remains in the ledger.
+
+That contract is resume-only. A fresh v2 successor must enforce the current 5x floor
+and complete its sealed holdout and log-27 transfer before promotion.
 
 ## Implementation map
 
@@ -237,4 +241,4 @@ histograms; its conservative ceiling is limited by threadgroup atomic traffic.
 `OuterRemainder` has clean dense rounds, but its 2.55-billion field/scalar first
 materialization and 188 ms CPU opening walk require a larger all-or-nothing port.
 Instruction input has no terminal opening walk and provides the strongest current
-case for a conservative speedup above the 4x promotion floor.
+case for a conservative speedup above the 5x promotion floor.

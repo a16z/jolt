@@ -2984,56 +2984,24 @@ class MetalAutoresearchTests(unittest.TestCase):
             _, events = metal_autoresearch.load_run(run_dir)
             self.assertEqual(events, [event])
 
-    def test_init_rejects_an_edit_racing_the_baseline_snapshot(self) -> None:
+    def test_schema_one_init_rejects_before_creating_a_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
             root = temporary / "root"
             root.mkdir()
-            source = root / "editable.txt"
-            source.write_text("baseline")
             run_dir = temporary / "run"
-            template = {
-                "scope": {"editable": ["editable.txt"], "frozen": []},
-                "evaluator": {"frozen_paths": []},
-                "portfolio_contract": "portfolio.json",
-                "baseline_params": {},
-                "search_space": {},
-                "baseline_repeats": 3,
-                "budget": {"max_seconds": 30, "max_gpu_seconds": 30},
-                "metric": {"name": "score", "minimum_relative_improvement": 0.01},
-                "guards": {"required_true": []},
-            }
-            original_snapshot = metal_autoresearch.snapshot_paths
-
-            def racing_snapshot(
-                snapshot_root: Path, paths: list[str], destination: Path
-            ) -> None:
-                original_snapshot(snapshot_root, paths, destination)
-                if destination.name == "baseline":
-                    source.write_text("raced")
-
+            template = {"schema_version": 1}
             with mock.patch.object(
                 metal_autoresearch,
                 "read_json",
-                side_effect=[template, {}],
+                return_value=template,
             ), mock.patch.object(
                 metal_autoresearch, "validate_template"
             ), mock.patch.object(
-                metal_autoresearch, "validate_goal_contract"
-            ), mock.patch.object(
-                metal_autoresearch,
-                "outside_editable_worktree_digest",
-                return_value="outside",
-            ), mock.patch.object(
                 metal_autoresearch,
                 "snapshot_paths",
-                side_effect=racing_snapshot,
-            ), mock.patch.object(
-                metal_autoresearch,
-                "run_evaluator",
-                side_effect=AssertionError("baseline evaluator launched"),
-            ) as evaluator:
-                with self.assertRaisesRegex(ValueError, "baseline snapshot changed"):
+            ) as snapshot:
+                with self.assertRaisesRegex(ValueError, "existing-run-only"):
                     metal_autoresearch.command_init(
                         SimpleNamespace(
                             root=root,
@@ -3041,7 +3009,8 @@ class MetalAutoresearchTests(unittest.TestCase):
                             run_dir=run_dir,
                         )
                     )
-                evaluator.assert_not_called()
+                snapshot.assert_not_called()
+                self.assertFalse(run_dir.exists())
 
     def test_trial_rejects_an_edit_racing_the_kept_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

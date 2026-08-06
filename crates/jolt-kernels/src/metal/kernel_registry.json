@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "library": {
     "backend_path": "crates/jolt-kernels/src/metal/backend.rs",
     "facade_path": "crates/jolt-kernels/src/metal/solinas/mod.rs",
@@ -1001,52 +1001,72 @@
       {
         "id": "booleanity_address_search",
         "path": "crates/jolt-kernels/autoresearch/booleanity_address.template.json",
-        "slot_id": "booleanity_address"
+        "slot_id": "booleanity_address",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "booleanity_cycle_search",
         "path": "crates/jolt-kernels/autoresearch/booleanity_cycle.template.json",
-        "slot_id": "booleanity_cycle"
+        "slot_id": "booleanity_cycle",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "bytecode_read_raf_search",
         "path": "crates/jolt-kernels/autoresearch/bytecode_read_raf_cycle.template.json",
-        "slot_id": "bytecode_read_raf_cycle"
+        "slot_id": "bytecode_read_raf_cycle",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "hamming_weight_search",
         "path": "crates/jolt-kernels/autoresearch/hamming_weight_claim_reduction.template.json",
-        "slot_id": "hamming_weight_claim_reduction"
+        "slot_id": "hamming_weight_claim_reduction",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "instruction_input_search",
         "path": "crates/jolt-kernels/autoresearch/instruction_input.template.json",
-        "slot_id": "instruction_input"
+        "slot_id": "instruction_input",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "instruction_ra_search",
         "path": "crates/jolt-kernels/autoresearch/instruction_ra_virtualization.template.json",
-        "slot_id": "instruction_ra_virtualization"
+        "slot_id": "instruction_ra_virtualization",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "instruction_read_raf_cycle_search",
         "path": "crates/jolt-kernels/autoresearch/instruction_read_raf_cycle.template.json",
-        "slot_id": "instruction_read_raf"
+        "slot_id": "instruction_read_raf",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "outer_remainder_search",
         "path": "crates/jolt-kernels/autoresearch/outer_remainder.template.json",
-        "slot_id": "spartan_outer_remainder"
+        "slot_id": "spartan_outer_remainder",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       },
       {
         "id": "outer_remainder_search_v2",
         "path": "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
-        "slot_id": "spartan_outer_remainder"
+        "slot_id": "spartan_outer_remainder",
+        "contract_schema": 2,
+        "lifecycle": "fresh_init"
       },
       {
         "id": "spartan_outer_uniskip_search",
         "path": "crates/jolt-kernels/autoresearch/spartan_outer_uniskip.template.json",
-        "slot_id": "spartan_outer_uniskip"
+        "slot_id": "spartan_outer_uniskip",
+        "contract_schema": 1,
+        "lifecycle": "existing_runs_only"
       }
     ],
     "documents": [

@@ -1,8 +1,9 @@
 # Metal kernel research harness
 
-The schema-2 harness is the default for new Metal kernel searches. Schema-1
-templates, runs, and evidence remain readable by `scripts/metal_autoresearch.py`;
-they are not reinterpreted as schema 2.
+Schema 2 is the only contract allowed to initialize a new Metal kernel search.
+Schema-1 templates, runs, and evidence remain readable by
+`scripts/metal_autoresearch.py` for existing-run inspection, recovery, trials, and
+production validation; they are never fresh parents or reinterpreted as schema 2.
 
 ## Acceptance policy
 
@@ -46,7 +47,7 @@ Each search uses ordered tiers:
    trace scale before the run is marked kernel-transferred.
 
 The OuterRemainder successor uses an exact log-25 proxy with one excluded warmup
-and three alternating pairs. Log 25 is the smallest cheaper scale that retains
+and four alternating pairs. Log 25 is the smallest cheaper scale that retains
 the log-26 cap of 8,192 threadgroups; log 24 changes the launch geometry. Its 1%
 screen is deliberately more permissive than the representative noise gate, and
 every passing candidate immediately runs the unchanged five-pair log-26 tier.
@@ -145,9 +146,12 @@ python3 scripts/metal_autoresearch.py goal-decision GOAL_CONTRACT --run-dir RUN_
 python3 scripts/metal_autoresearch.py goal-prompt GOAL_CONTRACT
 ```
 
-The registry binds every template to one canonical production slot. Initialization
-fails before evaluation if the template path, declared slot, registry owner, or
-registry digest disagree.
+The registry binds every template to one canonical production slot and records its
+contract schema and lifecycle. A slot may expose at most one `fresh_init` template;
+schema-1 entries are `existing_runs_only`. Initialization fails before creating a
+run directory or launching an evaluator if the template path, declared slot,
+lifecycle, registry owner, or registry digest disagree. `validate-template` still
+reports legacy templates as valid but not fresh-init eligible.
 
 ## Requirement-to-code map
 

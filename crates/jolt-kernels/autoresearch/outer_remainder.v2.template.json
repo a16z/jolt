@@ -514,7 +514,6 @@
       "crates/jolt-prover/examples/modular_benchmark.rs",
       "crates/jolt-prover/src/stages/stage1.rs",
       "scripts/metal_outer_remainder_eval.py",
-      "scripts/metal_outer_remainder_screen.py",
       "scripts/metal_piop_eval.py",
       "scripts/metal_autoresearch.py",
       "scripts/metal_kernel_registry.py",

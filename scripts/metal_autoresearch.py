@@ -6542,6 +6542,10 @@ def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     template = read_json(Path(args.template))
     validate_template(template, root)
+    if template["schema_version"] == 1:
+        raise ValueError(
+            "schema-1 templates are existing-run-only and cannot initialize a fresh run"
+        )
     validate_new_run_template(template)
     goal_contract = read_json(root / template["portfolio_contract"])
     validate_goal_contract(goal_contract)
@@ -6651,8 +6655,18 @@ def command_validate_template(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     template = read_json(Path(args.template))
     validate_template(template, root)
-    validate_new_run_template(template)
-    print(json.dumps({"schema_version": SCHEMA_VERSION, "valid": True}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "contract_schema": template["schema_version"],
+                "lifecycle": "existing_runs_only",
+                "fresh_init_eligible": False,
+                "valid": True,
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -7386,7 +7400,7 @@ def main() -> int:
                 from scripts.metal_research.runner import main as v2_main
 
             return v2_main()
-        if args.command in {"init", "trial", "recover", "validate-production"}:
+        if args.command in {"trial", "recover", "validate-production"}:
             with evaluator_lock({"controller_command": args.command}):
                 return args.handler(args)
         return args.handler(args)

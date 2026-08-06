@@ -125,12 +125,14 @@ S_piop = optimized CPU jolt_prover::piop wall time
          / Metal hybrid jolt_prover::piop wall time.
 ```
 
-The minimum accepted result is `S_piop >= 4` at a padded `2^26` trace. Four is a
-floor, not an optimization cap. After reaching it, the goal loop continues whenever
-the remaining independently attributed kernel shares and conservative local
-speedups predict at least another 5% PIOP improvement. With current-Metal PIOP shares
-`f_i` and conservative speedups `s_i` over the currently selected paths, the
-projection is
+The minimum accepted result is `S_piop >= 5` over five alternating pairs at both
+padded `2^26` and `2^27` traces. The overall median and both execution-order strata
+must clear the floor. Every completed standalone or fused kernel must also clear 5x;
+Instruction RA retains its 7x floor. These are floors, not optimization caps. The
+goal loop continues whenever independently attributed kernel shares and conservative
+local speedups predict at least another 5% PIOP improvement or measurement exposes
+clear local headroom. With current-Metal PIOP shares `f_i` and conservative speedups
+`s_i` over the currently selected paths, the projection is
 
 ```text
 S_projected = S_current / (1 - sum_i f_i * (1 - 1 / s_i)).
@@ -142,17 +144,11 @@ kernel exists, measured complete-hybrid speedup replaces that estimate. This kee
 the stretch policy uncapped without treating an unsupported peak-ALU number as
 attainable throughput.
 
-The local bars are promotion minimums, not targets:
-
-| CPU PIOP share before the port | Promotion minimum | Working target |
-|---:|---:|---:|
-| at least 5% | 4x complete-hybrid speedup | 5x or the measured ceiling |
-| 1-5% | 3x | 4x or the measured ceiling |
-| below 1% | 2x, or reuse already-resident state | 3x; otherwise retain CPU |
-
-Before shader work, the conservative analytical ceiling must exceed the promotion
-minimum by 25%. A kernel that misses its bar stays on CPU unless it removes a handoff
-or supplies residency reused by a later hot kernel.
+Before shader work, a 4x conservative analytical estimate is enough to investigate,
+but it is never an acceptance threshold. The analysis must include a credible path
+past the 5x promotion floor with margin for host work and measurement uncertainty.
+A kernel that misses its bar stays on CPU unless it remains an unmeasured residency
+primitive inside a later fused kernel whose complete boundary clears the floor.
 
 ## Port ledger
 
@@ -221,12 +217,12 @@ have been recorded.
 
 ### Goal-mode controller
 
-`autoresearch/piop_goal.json` freezes the PIOP boundary, 4x floor, uncapped stretch
-policy, local promotion bars, and phase budget. Goal mode uses the repository as its
-memory: recover any interrupted kernel transaction, finish its fixed phase, validate
-the retained candidate, integrate it, emit a fresh `2^26` PIOP profile, then select
-the largest remaining conservative time saving. Reaching 4x alone is not a stopping
-condition.
+`autoresearch/piop_goal.v2.json` freezes the PIOP boundary, 5x portfolio and kernel
+floors, 7x Instruction RA floor, uncapped stretch policy, and phase budget. Goal mode
+uses the repository as its memory: recover any interrupted v2 transaction, finish
+its fixed phase, validate the retained candidate, integrate it, emit fresh `2^26`
+and `2^27` evidence, then select the largest remaining conservative time saving.
+The schema-1 `piop_goal.json` and templates remain only for existing-run history.
 
 The portfolio evaluator runs identical Akita workloads with the optimized and Metal
 backends in alternating order. Both runs must verify, and each trace must contain one
@@ -247,15 +243,15 @@ After profiling residual kernels, the deterministic continuation check is:
 
 ```bash
 python3 scripts/metal_autoresearch.py goal-decision \
-  crates/jolt-kernels/autoresearch/piop_goal.json \
-  --current-speedup <S> \
+  crates/jolt-kernels/autoresearch/piop_goal.v2.json \
+  --run-dir <run-dir> \
   --shares-disjoint \
   --candidate '<kernel>:<current-PIOP-share>:<conservative-local-speedup>'
 ```
 
-Below 4x it always returns `continue: true`. At or above 4x, it still returns true
+Below 5x it always returns `continue: true`. At or above 5x, it still returns true
 when the conservative aggregate projection clears the 5% continuation threshold or
-any active kernel has a conservative local estimate strictly above 4x.
+a measured kernel has clear additional headroom.
 Each kernel phase retains its own immutable evaluator, snapshots, and JSONL lineage;
 changing the kernel, algorithm, or evaluator starts a new phase rather than mutating
 the previous run.
@@ -323,13 +319,13 @@ After integrating all 16 resident address phases, a fresh exact `2^26` pair at
 1.059x. `InstructionReadRaf` fell from 3.697 s to 2.181 s (1.69x), and stage 5 fell
 from 4.089 s to 2.561 s. Both proofs verified. This is a retained correctness and
 directional-performance checkpoint, not a completed port: the complete kernel still
-misses its 4x promotion floor.
+missed its then-current schema-1 4x promotion floor.
 
-Applying the working targets (5x for shares above 5%, 4x for 1-5%, 3x below 1%) to
-the target profile gives an Amdahl projection of about 4.19x from the current path.
-That calculation is not a forecast: it shows that the 4x portfolio floor requires
-broad coverage and cannot be obtained from the cycle tail alone. Exact hybrid
-measurements replace each local target as ports land.
+Applying the original schema-1 working targets (5x for shares above 5%, 4x for 1-5%,
+3x below 1%) to that target profile gave an Amdahl projection of about 4.19x. That
+historical calculation was not a forecast: it showed that even the then-current 4x
+portfolio floor required broad coverage and could not be obtained from the cycle
+tail alone. Exact hybrid measurements replace each local target as ports land.
 
 After the Booleanity cycle port, the exact CPU-first `2^26` pair in
 `benchmark-runs/metal-piop-eval/20260804-105011` measured 21.308 s optimized CPU and
@@ -360,9 +356,10 @@ portfolio candidates:
 | `HammingWeightClaimReduction` | 599.385 ms | 7.58% |
 | `ProductRemainder` | 439.812 ms | 5.56% |
 
-The current CPU denominator permits at most 4.820 s of Metal PIOP for the 4x floor,
-so the remaining portfolio must save at least 2.810 s from the 7.630-s median. The
-next port is selected by conservative recoverable wall time, not by span rank alone.
+Under that historical schema-1 contract, the CPU denominator permitted at most
+4.820 s of Metal PIOP for 4x, so the remaining portfolio needed to save at least
+2.810 s from the 7.630-s median. The next port is selected by conservative
+recoverable wall time, not by span rank alone.
 
 ### Instruction-read address worksheet
 
@@ -548,8 +545,8 @@ The compact-row reads plus the one required half-domain write are below that com
 floor at the measured copy roof. Direct parallel population of shared Metal buffers
 must then reduce the 718-ms preparation cost; a 0.20-s preparation budget, the
 measured 0.30-s address work, and a 0.18-s cycle seam put a roughly 5x complete-slot
-result within the empirical roofs. Because this is clearly above the 4x floor, the
-goal controller keeps the slot open.
+result within the empirical roofs. Because this gives a credible path to the current
+5x floor, the goal controller keeps the slot open.
 
 The compact-row seam and preparation iterations were retained through `9167000c7`.
 Against the 3.697-s optimized-CPU `InstructionReadRaf` control at `2^26`, the current
@@ -557,8 +554,8 @@ Metal slot measures 821.0 ms: 314.6 ms of preparation and 506.4 ms of proving, o
 4.50x. The 16 slow address-phase calls account for 280.6 ms; resident first-message,
 handoff, dense rounds, and readback spans account for another 190.8 ms. The same
 single-profile pair measures 20.642 s CPU versus 17.490 s Metal for the full PIOP,
-or 1.18x. These are bottleneck and direction measurements, not the final three-pair
-promotion result.
+or 1.18x. These are bottleneck and direction measurements, not fixed-contract
+promotion evidence.
 
 A cache-reuse candidate fused each RAF tile with its suffix tile and reused the same
 30 KiB threadgroup allocation sequentially. At synthetic `2^22`, a 16K tile improved
@@ -878,9 +875,9 @@ messages, sparse binds, and the dense tail total about `19.5T + 3T/W` full produ
 plus `(1.5 + log2(W))T` small-scalar products. Pricing even the scalar work at the
 calibrated 26.7-Gproduct/s sequence rate gives a 61--63 ms arithmetic floor.
 
-The acceptance floor is at least 4x against the 1,003.465-ms Q10 control, or at most
-250.866 ms at this member boundary. The stretch targets are 100 ms and then 80 ms;
-4x is not a stopping rule when the measured ceiling supports more. The 100-ms model
+The acceptance floor is 5x against the 1,003.465-ms Q10 control, or at most
+200.693 ms at this member boundary. The stretch targets are 100 ms and then 80 ms;
+5x is not a stopping rule when the measured ceiling supports more. The 100-ms model
 decomposes into 45 ms for `C,D` generation plus the first message, 30 ms for sparse
 and materialization work, and 15 ms for the dense tail plus handoff. A slower result
 triggers an architecture review only when measured attribution and the roof model
@@ -973,7 +970,7 @@ or measured; its arithmetic is small, but it may add another command floor. This
 a ceiling model, not a measured complete sequence: A0 does not pay for row-derived
 factor construction, the CPU tail, or production host control. It supports the
 100-ms A1 stretch budget, but A1 must include those costs and reproduce the optimized
-CPU member before any 4x promotion claim.
+CPU member before any 5x promotion claim.
 
 The `2^22` control command is:
 
@@ -1217,8 +1214,9 @@ At `2^26`, the B-only schedule owns two 2-GiB buffers and models 32.485 GiB of t
 traffic: 12 GiB for materialization, 10.477 GiB for the stream bind and GPU prefix
 to `2^18`, and 10.009 GiB for output openings. The 420.68-GiB/s copy control gives a
 77.2-ms traffic floor. The measured 16.42- and 24.08-Gproduct/s controls bracket the
-arithmetic projection at roughly 192 and 131 ms before overhead. The working target
-is 200 ms, the promotion floor is 226 ms (4x), and 181 ms is the 5x stretch target.
+arithmetic projection at roughly 192 and 131 ms before overhead. The promotion floor
+and working target are 181 ms (5x); a lower stretch target remains in scope when the
+measured ceiling supports it.
 
 The exact lifecycle, arithmetic schedule, capacity calculation, evaluator boundary,
 and correctness hazards are frozen in [`OUTER_REMAINDER.md`](OUTER_REMAINDER.md).

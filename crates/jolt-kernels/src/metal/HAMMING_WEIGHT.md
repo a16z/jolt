@@ -88,11 +88,11 @@ The promoted primitive measured 111.635 ms in the full proof working set. Hammin
 adds bucket-zero recentering, `W_i` construction, and about 0.8 ms of host rounds.
 Before measurement, 120--150 ms is the planning range and 115--130 ms is the stretch
 target; retained-row lifetime and stage-7 thermal state can move it. The latest raw
-optimized CPU member median is about 594.2 ms, giving a provisional 148.5-ms 4x
-budget and a 118.8-ms 5x target. Promotion uses the measured equal-input CPU
-denominator. Expected PIOP recovery is 0.40--0.48 s.
+optimized CPU member median is about 594.2 ms, giving a provisional 118.8-ms 5x
+budget. Promotion uses the measured equal-input CPU denominator. Expected PIOP
+recovery is 0.40--0.48 s.
 
-## Fixed evaluator and promotion
+## Existing schema-1 evaluator and promotion
 
 The standalone local scalar is the median paired wall-time ratio between a
 production-shaped shared-row CPU mirror and the complete Metal member at `2^26`;
@@ -116,7 +116,10 @@ Promotion requires:
 - at least five alternating `2^26` pairs and at least 4x local paired speedup;
 - a separate five-pair production PIOP validation with all proofs verified.
 
-Four times is a floor. Tuning continues when the complete member remains more than
-10% above its measured traffic/host floor or a tested configuration shows a clear
-gain beyond the noise threshold. The initial foreground budget is 12 trials or 30
-minutes. A clean result below 4x keeps this slot on CPU and records the failure.
+Four times is this existing-run contract's floor. Tuning continues when the complete
+member remains more than 10% above its measured traffic/host floor or a tested
+configuration shows a clear gain beyond the noise threshold. The initial foreground
+budget is 12 trials or 30 minutes. A clean result below 4x keeps this slot on CPU and
+records the failure.
+Any fresh v2 successor must instead require at least 5x local speedup and the v2
+holdout and transfer evidence; it cannot promote from this schema-1 run.
