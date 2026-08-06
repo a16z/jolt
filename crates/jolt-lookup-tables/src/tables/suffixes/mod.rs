@@ -28,7 +28,10 @@ mod lt;
 mod one;
 mod or;
 mod overflow_bits_zero;
+mod pext;
+mod pext_helper;
 mod pow2;
+mod pow2_offset_w;
 mod pow2_w;
 mod rev8w;
 mod right_is_zero;
@@ -44,6 +47,8 @@ mod sign_extension_right_operand;
 mod sign_extension_upper_half;
 mod two_lsb;
 mod upper_word;
+mod window_sign;
+mod window_sign_pow2;
 mod xor;
 mod xor_rot;
 mod xor_rotw;
@@ -66,7 +71,10 @@ use lt::LessThanSuffix;
 use one::OneSuffix;
 use or::OrSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
+use pext::PextSuffix;
+use pext_helper::PextHelperSuffix;
 use pow2::Pow2Suffix;
+use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8WSuffix;
 use right_is_zero::RightOperandIsZeroSuffix;
@@ -82,6 +90,8 @@ use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+use window_sign::WindowSignSuffix;
+use window_sign_pow2::WindowSignPow2Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
@@ -148,6 +158,11 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    Pow2OffsetW,
+    Pext,
+    PextHelper,
+    WindowSign,
+    WindowSignPow2,
 }
 
 /// Total number of suffix variants.
@@ -174,6 +189,7 @@ impl Suffixes {
                 | Suffixes::OverflowBitsZero
                 | Suffixes::ChangeDivisor
                 | Suffixes::ChangeDivisorW
+                | Suffixes::WindowSign
         )
     }
 
@@ -223,6 +239,11 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::Pow2OffsetW => Pow2OffsetWSuffix::suffix_mle(b),
+            Suffixes::Pext => PextSuffix::suffix_mle(b),
+            Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
+            Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
+            Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
         }
     }
 

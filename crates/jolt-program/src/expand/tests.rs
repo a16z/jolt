@@ -452,6 +452,10 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // its offset through `format_i_imm`: exactly the `imm = -8` cases for LH/LHU/
     // LW/LWU/SH/SW, the accesses that emit an alignment assert. Byte accesses
     // (no assert) and non-negative offsets (wrap is the identity) are unchanged.
+    //
+    // 18 hashes were re-baselined when LW moved to the fused
+    // VirtualWindowMaskW + VirtualPextSigned extraction: all LW cases, plus
+    // LRW/SCW, which recursively embed the word-load expansion.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
 
