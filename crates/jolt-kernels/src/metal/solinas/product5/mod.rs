@@ -273,9 +273,10 @@ impl SolinasMetal {
             .map(|elements| {
                 let bytes = buffer_bytes(elements)?;
                 self.validate_buffer_length(bytes)?;
-                Ok(self
-                    .device
-                    .new_buffer(bytes, MTLResourceOptions::StorageModeShared))
+                Ok::<Buffer, MetalError>(
+                    self.device
+                        .new_buffer(bytes, MTLResourceOptions::StorageModeShared),
+                )
             })
             .transpose()?;
         let partial_elements = PRODUCT5_FACTORS

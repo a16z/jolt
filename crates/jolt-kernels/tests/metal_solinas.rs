@@ -2,12 +2,13 @@
 #![expect(clippy::expect_used, reason = "integration test")]
 
 use jolt_field::{AkitaField, FromPrimitiveInt};
+use jolt_kernels::metal::solinas::product_remainder_reference;
 use jolt_kernels::metal::solinas::{
     BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128,
     InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
-    RegisterAccessRow, RegistersReadWriteMessageConfig, RegistersValDenseConfig,
-    RegistersValFirstMessageConfig, RegistersValTransitionConfig, SolinasMetal,
-    AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+    ProductRemainderRow, ProductRemainderSequenceConfig, RegisterAccessRow,
+    RegistersReadWriteMessageConfig, RegistersValDenseConfig, RegistersValFirstMessageConfig,
+    RegistersValTransitionConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
@@ -64,6 +65,173 @@ fn akita_shader_matches_jolt_field() {
             .collect::<Vec<_>>();
         assert_eq!(actual, expected, "{}", probe.name());
     }
+}
+
+#[test]
+fn product_remainder_sequence_matches_cpu_at_every_boundary() {
+    for rows in [1 << 8, 1 << 9] {
+        assert_product_remainder_sequence(rows);
+    }
+}
+
+fn assert_product_remainder_sequence(row_count: usize) {
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let modulus_minus_one = AkitaField::from_u128(u128::MAX - AKITA_OFFSET_FFFFA7F7 as u128);
+    let rows = (0..row_count)
+        .map(|index| {
+            let right_input = match index % 5 {
+                0 => i128::MIN,
+                1 => i128::MAX,
+                2 => -1,
+                3 => 0,
+                _ => index as i128 * 0x1_0000_0001 - 0x1234_5678,
+            };
+            ProductRemainderRow::new(
+                (index as u64)
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .rotate_left((index % 63) as u32),
+                right_input,
+                index & 1 != 0,
+                index % 3 == 0,
+                (!(index as u64)).wrapping_mul(0xbf58_476d_1ce4_e5b9),
+                index % 5 == 0,
+                index % 7 == 0,
+                index % 11 == 0,
+            )
+        })
+        .collect::<Vec<_>>();
+    let lagrange = [
+        AkitaField::from_u64(0),
+        AkitaField::from_u64(0x0123_4567_89ab_cdef),
+        modulus_minus_one,
+    ];
+    let weights = |length: usize, salt: usize| {
+        (0..length)
+            .map(|index| match (index + salt) % 4 {
+                0 => AkitaField::from_u64(0),
+                1 => AkitaField::from_u64(1),
+                2 => modulus_minus_one,
+                _ => AkitaField::from_u64(
+                    (index as u64)
+                        .wrapping_mul(0x94d0_49bb_1331_11eb)
+                        .wrapping_add(salt as u64),
+                ),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut sequence = context
+        .prepare_product_remainder_sequence(
+            &rows,
+            lagrange,
+            32,
+            16,
+            ProductRemainderSequenceConfig::default(),
+        )
+        .expect("product remainder sequence should prepare");
+    assert_eq!(sequence.resident_buffer_count(), 8);
+    assert_eq!(sequence.round_device_buffer_allocations(), 0);
+
+    let materialize_e_in = weights(16, 1);
+    let materialize_e_out = weights(row_count / 32, 2);
+    let mut expected = product_remainder_reference::materialize_message(
+        &rows,
+        lagrange,
+        &materialize_e_in,
+        &materialize_e_out,
+    )
+    .expect("CPU materialization should be well-shaped");
+    assert_eq!(
+        sequence
+            .message(&materialize_e_in, &materialize_e_out)
+            .expect("product remainder first message should execute"),
+        expected.endpoints
+    );
+    assert_eq!(
+        sequence
+            .replay_materialize_message_timed(&materialize_e_in, &materialize_e_out)
+            .expect("product remainder first message should replay")
+            .0,
+        expected.endpoints
+    );
+    let (actual_left, actual_right) = sequence
+        .read_current_state()
+        .expect("materialized state should read");
+    assert_eq!([actual_left, actual_right].concat(), expected.state);
+
+    let challenges = [
+        AkitaField::from_u64(0),
+        AkitaField::from_u64(1),
+        modulus_minus_one,
+        AkitaField::from_u64(0xfeed_beef_cafe_babe),
+        AkitaField::from_u64(0x0123_4567_89ab_cdef),
+        AkitaField::from_u64(2),
+        AkitaField::from_u64(0xdead_beef),
+        AkitaField::from_u64(0x0ddc_0ffe_e15e_cafe),
+    ];
+    for (round, challenge) in challenges
+        .into_iter()
+        .take(row_count.ilog2() as usize - 1)
+        .enumerate()
+    {
+        let source_elements = sequence.current_elements();
+        let weighted_pairs = source_elements / 4;
+        let e_in_length = 1 << (weighted_pairs.ilog2() as usize / 2);
+        let e_out_length = weighted_pairs / e_in_length;
+        let e_in = weights(e_in_length, 3 + 2 * round);
+        let e_out = weights(e_out_length, 4 + 2 * round);
+        let next = product_remainder_reference::bind_and_message(
+            &expected.state,
+            source_elements,
+            challenge,
+            &e_in,
+            &e_out,
+        )
+        .expect("CPU transition should be well-shaped");
+        let replay = sequence
+            .replay_current_bind_and_message_timed(challenge, &e_in, &e_out)
+            .expect("product remainder transition should replay")
+            .0;
+        assert_eq!(replay, next.endpoints, "replay round {round}");
+        assert_eq!(
+            sequence
+                .bind_and_message(challenge, &e_in, &e_out)
+                .expect("product remainder transition should execute"),
+            replay,
+            "round {round}"
+        );
+        let (actual_left, actual_right) = sequence
+            .read_current_state()
+            .expect("bound state should read");
+        assert_eq!(
+            [actual_left, actual_right].concat(),
+            next.state,
+            "round {round}"
+        );
+        expected.state = next.state;
+    }
+    assert_eq!(sequence.current_elements(), 2);
+
+    let opening_e_in = weights(row_count / 16, 19);
+    let opening_e_out = weights(16, 20);
+    let expected_openings =
+        product_remainder_reference::openings(&rows, &opening_e_in, &opening_e_out)
+            .expect("CPU openings should be well-shaped");
+    assert_eq!(
+        sequence
+            .openings(&opening_e_in, &opening_e_out)
+            .expect("product remainder openings should execute"),
+        expected_openings
+    );
+    assert_eq!(
+        sequence
+            .restart_message_timed(&materialize_e_in, &materialize_e_out)
+            .expect("product remainder sequence should restart")
+            .0,
+        expected.endpoints
+    );
+    assert_eq!(sequence.current_elements(), row_count);
+    assert_eq!(sequence.round_device_buffer_allocations(), 0);
 }
 
 #[test]

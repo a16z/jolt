@@ -53,6 +53,10 @@ mod instruction_input;
 mod product5;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/product_remainder.rs"]
+mod product_remainder;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/registers_read_write.rs"]
 mod registers_read_write;
 
@@ -82,7 +86,7 @@ mod macos {
 
     use super::{
         address_raf, address_suffix, booleanity, booleanity_address, bytecode_cycle, cpu, cycle,
-        instruction_input, instruction_ra, instruction_ra_sequence, product5,
+        instruction_input, instruction_ra, instruction_ra_sequence, product5, product_remainder,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         registers_read_write, registers_val, spartan_outer_uniskip,
     };
@@ -124,6 +128,7 @@ mod macos {
                 "product5-message" => product5::bench_message(c, &context),
                 "product5-transition" => product5::bench_transition(c, &context),
                 "product5-threadgroups" => product5::bench_threadgroups(c, &context),
+                "product-remainder" => product_remainder::bench(c, &context),
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
                 "instruction-ra-first-message" => instruction_ra::bench(c, &context),
                 "instruction-ra-sequence" => instruction_ra_sequence::bench(c, &context),
@@ -183,6 +188,7 @@ mod macos {
         bench_raw_integer(c, &context, &validation_lhs, &validation_rhs);
         product5::bench_message(c, &context);
         product5::bench_transition(c, &context);
+        product_remainder::bench(c, &context);
         booleanity::bench_message(c, &context);
         bytecode_cycle::bench(c, &context);
     }
