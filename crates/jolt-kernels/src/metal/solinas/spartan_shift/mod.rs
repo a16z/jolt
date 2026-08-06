@@ -9,8 +9,9 @@ use thiserror::Error;
 mod runtime;
 
 pub use runtime::{
-    SpartanShiftFoldInvocation, SpartanShiftFoldObservation, SpartanShiftPrefixInvocation,
-    SpartanShiftPrefixObservation, SpartanShiftResidentRows,
+    PendingSpartanShiftFold, PendingSpartanShiftPrefix, SpartanShiftFoldInvocation,
+    SpartanShiftFoldObservation, SpartanShiftPrefixInvocation, SpartanShiftPrefixObservation,
+    SpartanShiftResidentRows,
 };
 
 pub const SOURCE: &str = include_str!("shader.metal");
@@ -1708,9 +1709,27 @@ mod tests {
                 source_allocations
             );
             assert_eq!(invocation.execute_device_buffer_allocations(), 0);
-            let observation = invocation.execute().unwrap();
+            let observation = match strategy {
+                SpartanShiftPrefixStrategy::Mixed => {
+                    let pending = invocation.submit().unwrap();
+                    let (invocation, observation) = pending.join().unwrap();
+                    assert_eq!(
+                        invocation.source_allocation_identities(),
+                        source_allocations
+                    );
+                    observation
+                }
+                SpartanShiftPrefixStrategy::ExpandedHalfWidth => invocation.execute().unwrap(),
+            };
             assert_eq!(observation.q, expected_prefix.q, "strategy {strategy:?}");
             assert!(!observation.gpu_active.is_zero());
+            assert!(observation.submit_wall <= observation.wall);
+            assert!(observation.overlap_wall <= observation.wall);
+            assert!(observation.join_wall <= observation.wall);
+            assert!(
+                observation.submit_wall + observation.overlap_wall + observation.join_wall
+                    <= observation.wall
+            );
         }
 
         let prefix_challenges = point(geometry.prefix_vars, 0xD44F_2004);
@@ -1724,8 +1743,17 @@ mod tests {
             .unwrap();
         assert_eq!(fold.source_allocation_identities(), source_allocations);
         assert_eq!(fold.execute_device_buffer_allocations(), 0);
-        let observation = fold.execute().unwrap();
+        let pending = fold.submit().unwrap();
+        let (fold, observation) = pending.join().unwrap();
+        assert_eq!(fold.source_allocation_identities(), source_allocations);
         assert_eq!(observation.outputs, expected_fold);
         assert!(!observation.gpu_active.is_zero());
+        assert!(observation.submit_wall <= observation.wall);
+        assert!(observation.overlap_wall <= observation.wall);
+        assert!(observation.join_wall <= observation.wall);
+        assert!(
+            observation.submit_wall + observation.overlap_wall + observation.join_wall
+                <= observation.wall
+        );
     }
 }

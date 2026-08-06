@@ -1,9 +1,9 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{mem::size_of, slice, time::Duration, time::Instant};
 
 use jolt_field::AkitaField;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 
 use super::super::{
@@ -98,7 +98,12 @@ pub struct SpartanShiftPrefixInvocation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpartanShiftPrefixObservation {
     pub q: [Vec<AkitaField>; SPARTAN_SHIFT_PREFIX_PAIRS],
+    pub wall: Duration,
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
     pub gpu_active: Duration,
+    pub completed_before_join: bool,
 }
 
 struct SpartanShiftFoldBuffers {
@@ -119,7 +124,90 @@ pub struct SpartanShiftFoldInvocation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpartanShiftFoldObservation {
     pub outputs: SpartanShiftOutputs<Vec<AkitaField>>,
+    pub wall: Duration,
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
     pub gpu_active: Duration,
+    pub completed_before_join: bool,
+}
+
+struct SpartanShiftSubmittedCommand {
+    command_buffer: CommandBuffer,
+    submitted_at: Instant,
+    submit_wall: Duration,
+    source_allocation_identities: [usize; 3],
+    output_allocation_identity: usize,
+}
+
+#[must_use = "a submitted Spartan shift prefix command must be joined"]
+pub struct PendingSpartanShiftPrefix {
+    invocation: Option<SpartanShiftPrefixInvocation>,
+    command: Option<SpartanShiftSubmittedCommand>,
+}
+
+#[must_use = "a submitted Spartan shift fold command must be joined"]
+pub struct PendingSpartanShiftFold {
+    invocation: Option<SpartanShiftFoldInvocation>,
+    command: Option<SpartanShiftSubmittedCommand>,
+}
+
+impl Drop for PendingSpartanShiftPrefix {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl Drop for PendingSpartanShiftFold {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl PendingSpartanShiftPrefix {
+    pub fn join(
+        mut self,
+    ) -> Result<(SpartanShiftPrefixInvocation, SpartanShiftPrefixObservation), MetalError> {
+        let invocation = self
+            .invocation
+            .take()
+            .ok_or(MetalError::InvalidSpartanShiftState(
+                "submitted prefix lost its invocation",
+            ))?;
+        let command = self
+            .command
+            .take()
+            .ok_or(MetalError::InvalidSpartanShiftState(
+                "submitted prefix lost its command",
+            ))?;
+        let observation = invocation.complete(command)?;
+        Ok((invocation, observation))
+    }
+}
+
+impl PendingSpartanShiftFold {
+    pub fn join(
+        mut self,
+    ) -> Result<(SpartanShiftFoldInvocation, SpartanShiftFoldObservation), MetalError> {
+        let invocation = self
+            .invocation
+            .take()
+            .ok_or(MetalError::InvalidSpartanShiftState(
+                "submitted fold lost its invocation",
+            ))?;
+        let command = self
+            .command
+            .take()
+            .ok_or(MetalError::InvalidSpartanShiftState(
+                "submitted fold lost its command",
+            ))?;
+        let observation = invocation.complete(command)?;
+        Ok((invocation, observation))
+    }
 }
 
 impl SolinasMetal {
@@ -164,6 +252,57 @@ impl SolinasMetal {
         let unexpanded_pc = buffer_from_slice(&self.device, unexpanded_pc);
         let pc = buffer_from_slice(&self.device, pc);
         let flags = buffer_from_slice(&self.device, flags);
+        self.attach_spartan_shift_rows(
+            unexpanded_pc,
+            pc,
+            flags,
+            geometry.rows(),
+            exact_current_flags,
+        )
+    }
+
+    pub fn attach_spartan_shift_rows(
+        &self,
+        unexpanded_pc: Buffer,
+        pc: Buffer,
+        flags: Buffer,
+        rows: usize,
+        exact_current_flags: bool,
+    ) -> Result<SpartanShiftResidentRows, MetalError> {
+        let geometry = SpartanShiftGeometry::new(rows)?;
+        let value_bytes = rows
+            .checked_mul(size_of::<u64>())
+            .ok_or(MetalError::InputTooLong(rows))?;
+        let flag_bytes = geometry
+            .flag_words()
+            .checked_mul(size_of::<SpartanShiftFlagWord>())
+            .ok_or(MetalError::InputTooLong(rows))?;
+        let expected_device = self.device_registry_id();
+        for (name, buffer, expected_bytes) in [
+            ("unexpanded PC", &unexpanded_pc, value_bytes),
+            ("PC", &pc, value_bytes),
+            ("flags", &flags, flag_bytes),
+        ] {
+            let got_device = buffer.device().registry_id();
+            if got_device != expected_device {
+                return Err(MetalError::SpartanShiftBufferDevice {
+                    name,
+                    expected: expected_device,
+                    got: got_device,
+                });
+            }
+            self.validate_buffer_length(buffer.length())?;
+            let expected_length = u64::try_from(expected_bytes)
+                .map_err(|_| MetalError::InputTooLong(expected_bytes))?;
+            if buffer.length() != expected_length {
+                return Err(super::SpartanShiftPlanError::WrongLength {
+                    name,
+                    expected: expected_bytes,
+                    actual: usize::try_from(buffer.length()).unwrap_or(usize::MAX),
+                }
+                .into());
+            }
+        }
         let metadata = ResidentSpartanShiftMetadata {
             rows: geometry.rows(),
             unexpanded_pc: ResidentSpartanShiftBufferMetadata {
@@ -365,8 +504,23 @@ impl SolinasMetal {
 
 impl SpartanShiftPrefixInvocation {
     pub fn execute(&self) -> Result<SpartanShiftPrefixObservation, MetalError> {
-        autoreleasepool(|| {
-            let command_buffer = self.context.queue.new_command_buffer();
+        let command = self.submit_command()?;
+        self.complete(command)
+    }
+
+    pub fn submit(self) -> Result<PendingSpartanShiftPrefix, MetalError> {
+        let command = self.submit_command()?;
+        Ok(PendingSpartanShiftPrefix {
+            invocation: Some(self),
+            command: Some(command),
+        })
+    }
+
+    fn submit_command(&self) -> Result<SpartanShiftSubmittedCommand, MetalError> {
+        self.rows.validate_for(&self.context, &self.plan)?;
+        let submitted_at = Instant::now();
+        let command_buffer = self.context.queue.new_command_buffer().to_owned();
+        autoreleasepool(|| -> Result<(), MetalError> {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.build_pipeline);
             encoder.set_buffer(0, Some(&self.rows.unexpanded_pc), 0);
@@ -422,19 +576,53 @@ impl SpartanShiftPrefixInvocation {
                 },
             );
             encoder.end_encoding();
-
             command_buffer.commit();
-            command_buffer.wait_until_completed();
-            validate_command_buffer(command_buffer)?;
-            Ok(SpartanShiftPrefixObservation {
-                q: read_field_columns(
-                    &self.context,
-                    &self.buffers.q,
-                    self.plan.geometry.prefix_elements(),
-                    "Spartan shift prefix Q",
-                )?,
-                gpu_active: gpu_duration(command_buffer)?,
-            })
+            Ok(())
+        })?;
+        Ok(SpartanShiftSubmittedCommand {
+            command_buffer,
+            submitted_at,
+            submit_wall: submitted_at.elapsed(),
+            source_allocation_identities: self.rows.allocation_identities(),
+            output_allocation_identity: self.buffers.q.as_ptr() as usize,
+        })
+    }
+
+    fn complete(
+        &self,
+        command: SpartanShiftSubmittedCommand,
+    ) -> Result<SpartanShiftPrefixObservation, MetalError> {
+        validate_command_resources(
+            &self.rows,
+            &self.buffers.q,
+            &command,
+            "prefix resources changed before completion",
+        )?;
+        let completed_before_join =
+            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(command.submitted_at)
+            .saturating_sub(command.submit_wall);
+        command.command_buffer.wait_until_completed();
+        validate_command_buffer(&command.command_buffer)?;
+        let gpu_active = gpu_duration(&command.command_buffer)?;
+        let q = read_field_columns(
+            &self.context,
+            &self.buffers.q,
+            self.plan.geometry.prefix_elements(),
+            "Spartan shift prefix Q",
+        )?;
+        let join_wall = join_started.elapsed();
+        let wall = command.submitted_at.elapsed();
+        Ok(SpartanShiftPrefixObservation {
+            q,
+            wall,
+            submit_wall: command.submit_wall,
+            overlap_wall,
+            join_wall,
+            gpu_active,
+            completed_before_join,
         })
     }
 
@@ -461,8 +649,23 @@ impl SpartanShiftPrefixInvocation {
 
 impl SpartanShiftFoldInvocation {
     pub fn execute(&self) -> Result<SpartanShiftFoldObservation, MetalError> {
+        let command = self.submit_command()?;
+        self.complete(command)
+    }
+
+    pub fn submit(self) -> Result<PendingSpartanShiftFold, MetalError> {
+        let command = self.submit_command()?;
+        Ok(PendingSpartanShiftFold {
+            invocation: Some(self),
+            command: Some(command),
+        })
+    }
+
+    fn submit_command(&self) -> Result<SpartanShiftSubmittedCommand, MetalError> {
+        self.rows.validate_for(&self.context, &self.plan)?;
+        let submitted_at = Instant::now();
+        let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
-            let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipeline);
             encoder.set_buffer(0, Some(&self.rows.unexpanded_pc), 0);
@@ -485,27 +688,59 @@ impl SpartanShiftFoldInvocation {
                 },
             );
             encoder.end_encoding();
-
             command_buffer.commit();
-            command_buffer.wait_until_completed();
-            validate_command_buffer(command_buffer)?;
-            let columns: [Vec<AkitaField>; SPARTAN_SHIFT_OUTPUT_COLUMNS] = read_field_columns(
-                &self.context,
-                &self.buffers.dense_outputs,
-                self.plan.geometry.suffix_elements(),
-                "Spartan shift dense outputs",
-            )?;
-            let [unexpanded_pc, pc, is_virtual, is_first_in_sequence, is_noop] = columns;
-            Ok(SpartanShiftFoldObservation {
-                outputs: SpartanShiftOutputs {
-                    unexpanded_pc,
-                    pc,
-                    is_virtual,
-                    is_first_in_sequence,
-                    is_noop,
-                },
-                gpu_active: gpu_duration(command_buffer)?,
-            })
+        });
+        Ok(SpartanShiftSubmittedCommand {
+            command_buffer,
+            submitted_at,
+            submit_wall: submitted_at.elapsed(),
+            source_allocation_identities: self.rows.allocation_identities(),
+            output_allocation_identity: self.buffers.dense_outputs.as_ptr() as usize,
+        })
+    }
+
+    fn complete(
+        &self,
+        command: SpartanShiftSubmittedCommand,
+    ) -> Result<SpartanShiftFoldObservation, MetalError> {
+        validate_command_resources(
+            &self.rows,
+            &self.buffers.dense_outputs,
+            &command,
+            "fold resources changed before completion",
+        )?;
+        let completed_before_join =
+            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(command.submitted_at)
+            .saturating_sub(command.submit_wall);
+        command.command_buffer.wait_until_completed();
+        validate_command_buffer(&command.command_buffer)?;
+        let gpu_active = gpu_duration(&command.command_buffer)?;
+        let columns: [Vec<AkitaField>; SPARTAN_SHIFT_OUTPUT_COLUMNS] = read_field_columns(
+            &self.context,
+            &self.buffers.dense_outputs,
+            self.plan.geometry.suffix_elements(),
+            "Spartan shift dense outputs",
+        )?;
+        let [unexpanded_pc, pc, is_virtual, is_first_in_sequence, is_noop] = columns;
+        let join_wall = join_started.elapsed();
+        let wall = command.submitted_at.elapsed();
+        Ok(SpartanShiftFoldObservation {
+            outputs: SpartanShiftOutputs {
+                unexpanded_pc,
+                pc,
+                is_virtual,
+                is_first_in_sequence,
+                is_noop,
+            },
+            wall,
+            submit_wall: command.submit_wall,
+            overlap_wall,
+            join_wall,
+            gpu_active,
+            completed_before_join,
         })
     }
 
@@ -560,6 +795,20 @@ fn validate_execution_width(
             expected: SPARTAN_SHIFT_SIMD_WIDTH,
             got: limits.thread_execution_width,
         });
+    }
+    Ok(())
+}
+
+fn validate_command_resources(
+    rows: &SpartanShiftResidentRows,
+    output: &Buffer,
+    command: &SpartanShiftSubmittedCommand,
+    error: &'static str,
+) -> Result<(), MetalError> {
+    if rows.allocation_identities() != command.source_allocation_identities
+        || output.as_ptr() as usize != command.output_allocation_identity
+    {
+        return Err(MetalError::InvalidSpartanShiftState(error));
     }
     Ok(())
 }

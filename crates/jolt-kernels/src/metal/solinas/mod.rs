@@ -543,6 +543,12 @@ pub enum MetalError {
     SpartanShiftOracle(#[from] spartan_shift::SpartanShiftOracleError),
     #[error("invalid resident Spartan shift state: {0}")]
     InvalidSpartanShiftState(&'static str),
+    #[error("Spartan shift {name} buffer is on device {got}, expected {expected}")]
+    SpartanShiftBufferDevice {
+        name: &'static str,
+        expected: u64,
+        got: u64,
+    },
     #[error(
         "Spartan shift pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
