@@ -142,9 +142,13 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
             .ok_or_else(|| {
                 public_input_failed("instruction RA virtualization produced no openings")
             })?;
-        let r_cycle = point.get(point.len() - log_t..).ok_or_else(|| {
-            public_input_failed("instruction RA opening point shorter than log_t")
-        })?;
+        let r_cycle = point
+            .len()
+            .checked_sub(log_t)
+            .and_then(|start| point.get(start..))
+            .ok_or_else(|| {
+                public_input_failed("instruction RA opening point shorter than log_t")
+            })?;
         try_eq_mle(&self.instruction_read_raf_cycle, r_cycle).map_err(public_input_failed)
     }
 }

@@ -94,14 +94,20 @@ where
         let mut polys = Vec::with_capacity(ell);
         polys.push(evals.to_vec());
 
-        for i in 0..ell - 1 {
-            let prev = &polys[i];
-            let half = prev.len() / 2;
-            let xi = point[ell - i - 1];
-            let mut pi = vec![P::ScalarField::zero(); half];
-            pi.par_iter_mut().enumerate().for_each(|(j, pj)| {
-                *pj = prev[2 * j] + xi * (prev[2 * j + 1] - prev[2 * j]);
-            });
+        // Fold i uses x_{ell-i}, i.e. point[1..] visited back-to-front.
+        for &xi in point.iter().skip(1).rev() {
+            let prev = polys.last().expect("polys starts with one element");
+            let pi: Vec<P::ScalarField> = prev
+                .par_chunks_exact(2)
+                .map(|pair| {
+                    #[expect(
+                        clippy::indexing_slicing,
+                        reason = "par_chunks_exact(2) yields exactly-2-element slices"
+                    )]
+                    let (even, odd) = (pair[0], pair[1]);
+                    even + xi * (odd - even)
+                })
+                .collect();
             polys.push(pi);
         }
 
@@ -126,11 +132,12 @@ where
         // Phase 1: fold
         let polys = Self::fold_polynomials(evals, point);
         assert_eq!(polys.len(), ell);
-        assert_eq!(polys[ell - 1].len(), 2);
+        assert_eq!(polys.last().map(Vec::len), Some(2));
 
         // Commit to intermediate polynomials (skip polys[0] — already committed)
-        let com: Vec<P::G1> = polys[1..]
+        let com: Vec<P::G1> = polys
             .par_iter()
+            .skip(1)
             .map(|p| kzg::kzg_commit::<P>(p, setup).expect("SRS large enough for intermediate"))
             .collect();
 
@@ -205,13 +212,21 @@ where
         // This implies:
         //   2*r * P_{i+1}(r^2) = r * (1 - x_{ell-i-1}) * (P_i(r) + P_i(-r))
         //                       + x_{ell-i-1} * (P_i(r) - P_i(-r))
+        // All four iterators have exactly `ell` elements: the widths were
+        // validated above and `y_sq` carries the extra `claimed_eval` entry.
         let two = P::ScalarField::from_u64(2);
-        for i in 0..ell {
-            let lhs = two * r * y_sq[i + 1];
-            let rhs = r * (P::ScalarField::one() - point[ell - i - 1]) * (ypos[i] + yneg[i])
-                + point[ell - i - 1] * (ypos[i] - yneg[i]);
+        for (level, (((&y_next, &y_pos), &y_neg), &x)) in y_sq
+            .iter()
+            .skip(1)
+            .zip(ypos.iter())
+            .zip(yneg.iter())
+            .zip(point.iter().rev())
+            .enumerate()
+        {
+            let lhs = two * r * y_next;
+            let rhs = r * (P::ScalarField::one() - x) * (y_pos + y_neg) + x * (y_pos - y_neg);
             if lhs != rhs {
-                return Err(HyperKZGError::FoldingConsistencyFailed { level: i });
+                return Err(HyperKZGError::FoldingConsistencyFailed { level });
             }
         }
 
@@ -237,9 +252,9 @@ impl<P: PairingGroup> DeriveSetup<HyperKZGProverSetup<P>> for PedersenSetup<P::G
             source.g1_powers.len(),
             capacity + 1,
         );
-        let message_generators = source.g1_powers[..capacity].to_vec();
-        let blinding_generator = source.g1_powers[capacity];
-        PedersenSetup::new(message_generators, blinding_generator)
+        let (message_generators, rest) = source.g1_powers.split_at(capacity);
+        let blinding_generator = *rest.first().expect("length checked by the assert above");
+        PedersenSetup::new(message_generators.to_vec(), blinding_generator)
     }
 }
 

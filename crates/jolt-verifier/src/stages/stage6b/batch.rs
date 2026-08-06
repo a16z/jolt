@@ -192,7 +192,7 @@ impl<F: Field> Stage6bSumchecks<F> {
 
         Self::build_from_parts(Stage6bBuildParts {
             formula_dimensions,
-            ram_log_k: checked.ram_K.ilog2() as usize,
+            ram_log_k: crate::num::ilog2(checked.ram_K),
             committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
             precommitted: &checked.precommitted,
             entry_bytecode_index,
@@ -264,17 +264,29 @@ impl<F: Field> Stage6bSumchecks<F> {
             stage4_points,
             stage5_points,
         )?;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "bytecode_stage_points validated both register points against REGISTER_ADDRESS_BITS via stage6_checked_split"
+        )]
         let register_read_write_address =
             &stage_points.register_read_write_point[..REGISTER_ADDRESS_BITS];
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "bytecode_stage_points validated both register points against REGISTER_ADDRESS_BITS via stage6_checked_split"
+        )]
         let register_val_evaluation_address =
             &stage_points.register_val_evaluation_point[..REGISTER_ADDRESS_BITS];
         let ram_reduced = stage5_points.ram_reduced_opening_point();
-        if ram_reduced.len() != log_k + log_t {
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "log_k and log_t are ilog2 results (< 64); the sum cannot overflow usize"
+        )]
+        let ram_reduced_len = log_k + log_t;
+        if ram_reduced.len() != ram_reduced_len {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamRaVirtualization,
                 reason: format!(
-                    "Stage 6 RAM RA reduction opening point length mismatch: expected {}, got {}",
-                    log_k + log_t,
+                    "Stage 6 RAM RA reduction opening point length mismatch: expected {ram_reduced_len}, got {}",
                     ram_reduced.len()
                 ),
             });

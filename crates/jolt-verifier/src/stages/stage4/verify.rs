@@ -85,8 +85,8 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
-    let log_k = checked.ram_K.ilog2() as usize;
+    let log_t = crate::num::ilog2(checked.trace_length);
+    let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);
     let register_dimensions = proof
         .rw_config
@@ -94,12 +94,16 @@ where
 
     let ram_read_write_opening_point = stage2.batch_output_points().ram_read_write_point();
     let ram_output_check_opening_point = stage2.batch_output_points().ram_output_check_point();
-    if ram_read_write_opening_point.len() != log_k + log_t {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "log_k and log_t are ilog2 results (< 64); the sum cannot overflow usize"
+    )]
+    let ram_read_write_len = log_k + log_t;
+    if ram_read_write_opening_point.len() != ram_read_write_len {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamValCheck,
             reason: format!(
-                "RAM read-write opening point length mismatch: expected {}, got {}",
-                log_k + log_t,
+                "RAM read-write opening point length mismatch: expected {ram_read_write_len}, got {}",
                 ram_read_write_opening_point.len()
             ),
         });
@@ -229,13 +233,17 @@ where
         reason: error.to_string(),
     })?;
     for segment in &public_initial_ram.segments {
-        let end = segment.start_index + segment.words.len() as u128;
-        if end > checked.ram_K as u128 {
+        let words_len = u128::from(crate::num::u64_from_usize(segment.words.len()));
+        let in_domain = segment
+            .start_index
+            .checked_add(words_len)
+            .is_some_and(|end| end <= u128::from(crate::num::u64_from_usize(checked.ram_K)));
+        if !in_domain {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamValCheck,
                 reason: format!(
-                    "public initial RAM segment [{}, {}) exceeds RAM domain {}",
-                    segment.start_index, end, checked.ram_K
+                    "public initial RAM segment [{}, ..+{words_len}) exceeds RAM domain {}",
+                    segment.start_index, checked.ram_K
                 ),
             });
         }

@@ -57,13 +57,28 @@ impl RAMPreprocessing {
         for chunk in
             memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 8 == address_b / 8)
         {
+            let Some(&(chunk_address, _)) = chunk.first() else {
+                continue;
+            };
             let mut word = [0u8; 8];
             for (address, byte) in chunk {
-                word[(address % 8) as usize] = *byte;
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "address % 8 < 8 indexes an 8-byte array"
+                )]
+                {
+                    word[(address % 8) as usize] = *byte;
+                }
             }
             let word = u64::from_le_bytes(word);
-            let remapped_index = (chunk[0].0 / 8 - min_bytecode_address / 8) as usize;
-            bytecode_words[remapped_index] = word;
+            let remapped_index = (chunk_address / 8 - min_bytecode_address / 8) as usize;
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "num_words covers every word between the min and max init addresses, so remapped_index < bytecode_words.len()"
+            )]
+            {
+                bytecode_words[remapped_index] = word;
+            }
         }
 
         Self {
@@ -150,6 +165,7 @@ impl PublicInitialRam {
 }
 
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::{compute_max_ram_k, compute_min_ram_k, PublicInitialRam, RAMPreprocessing};
     use common::jolt_device::{JoltDevice, MemoryConfig};

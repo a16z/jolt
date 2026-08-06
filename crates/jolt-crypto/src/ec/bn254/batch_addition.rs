@@ -9,6 +9,7 @@ use super::Bn254G1;
 
 /// Performs batch addition of G1 affine points using Montgomery's inversion trick.
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 fn batch_g1_additions_affine(bases: &[G1Affine], indices: &[usize]) -> G1Affine {
     if indices.is_empty() {
         return G1Affine::identity();
@@ -79,13 +80,7 @@ pub fn batch_g1_additions_multi(bases: &[Bn254G1], indices_sets: &[Vec<usize>]) 
         return vec![];
     }
 
-    // SAFETY: Bn254G1 is #[repr(transparent)] over G1Projective — identical layout.
-    let projective: &[ark_bn254::G1Projective] = unsafe {
-        std::slice::from_raw_parts(
-            bases.as_ptr().cast::<ark_bn254::G1Projective>(),
-            bases.len(),
-        )
-    };
+    let projective: &[ark_bn254::G1Projective] = Bn254G1::as_inner_slice(bases);
     let affines = ark_bn254::G1Projective::normalize_batch(projective);
 
     batch_g1_additions_multi_affine_inner(&affines, indices_sets)
@@ -122,6 +117,10 @@ fn batch_g1_additions_multi_affine_inner(
         return vec![];
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "in-bounds indices are a documented precondition of the public API"
+    )]
     let mut working_sets: Vec<Vec<G1Affine>> = indices_sets
         .par_iter()
         .map(|indices| {
@@ -145,6 +144,10 @@ fn batch_g1_additions_multi_affine_inner(
         let mut all_denominators = Vec::with_capacity(total_pairs);
         let mut pair_info = Vec::with_capacity(total_pairs);
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "pair_idx < set.len() / 2, so both pair indices are in bounds"
+        )]
         for (set_idx, set) in working_sets.iter().enumerate() {
             let pairs_in_set = set.len() / 2;
             for pair_idx in 0..pairs_in_set {
@@ -167,6 +170,11 @@ fn batch_g1_additions_multi_affine_inner(
             .map(|set| Vec::with_capacity(set.len().div_ceil(2)))
             .collect();
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "pair_info entries were enumerated from these same sets, and \
+                      new_working_sets has one entry per working set"
+        )]
         for ((set_idx, pair_idx), inv) in pair_info.iter().zip(inverses.iter()) {
             let set = &working_sets[*set_idx];
             let p1 = set[*pair_idx * 2];
@@ -177,6 +185,11 @@ fn batch_g1_additions_multi_affine_inner(
             new_working_sets[*set_idx].push(G1Affine::new_unchecked(x3, y3));
         }
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "odd length makes the last element valid, and new_working_sets \
+                      has one entry per working set"
+        )]
         for (set_idx, set) in working_sets.iter().enumerate() {
             if set.len() % 2 == 1 {
                 new_working_sets[set_idx].push(set[set.len() - 1]);
@@ -186,10 +199,16 @@ fn batch_g1_additions_multi_affine_inner(
         working_sets = new_working_sets;
     }
 
-    working_sets.into_iter().map(|set| set[0]).collect()
+    // Every working set is non-empty by construction (empty index sets become
+    // `[identity]`), and the identity is the correct sum of an empty set anyway.
+    working_sets
+        .into_iter()
+        .map(|set| set.first().copied().unwrap_or_else(G1Affine::identity))
+        .collect()
 }
 
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use ark_ec::AffineRepr;

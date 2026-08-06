@@ -132,7 +132,9 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
             .first()
             .ok_or_else(|| public_input_failed("RAM RA virtualization produced no openings"))?;
         let r_cycle = point
-            .get(point.len() - log_t..)
+            .len()
+            .checked_sub(log_t)
+            .and_then(|start| point.get(start..))
             .ok_or_else(|| public_input_failed("RAM RA opening point shorter than log_t"))?;
         try_eq_mle(&self.ram_reduced_cycle, r_cycle).map_err(public_input_failed)
     }

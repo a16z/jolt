@@ -286,6 +286,7 @@ where
             proof.folded_eval_blinding_openings.len(),
         )?;
 
+        let binding_count = coordinates.len();
         let mut output_openings = proof.folded_eval_output_openings.iter();
         let mut blinding_openings = proof.folded_eval_blinding_openings.iter();
         for (index, coordinates) in coordinates.iter().enumerate() {
@@ -296,7 +297,16 @@ where
                     actual: proof.folded_eval_output_openings.len(),
                 })?;
                 let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
-                if opened != proof.folded_eval_outputs[index] {
+                let expected_output =
+                    proof
+                        .folded_eval_outputs
+                        .get(index)
+                        .ok_or(RelaxedError::LengthMismatch {
+                            name: "folded eval outputs",
+                            expected: binding_count,
+                            actual: proof.folded_eval_outputs.len(),
+                        })?;
+                if opened != *expected_output {
                     return Err(VerificationError::EvalWitnessMismatch {
                         kind: "output",
                         index,
@@ -320,7 +330,16 @@ where
                         actual: proof.folded_eval_blinding_openings.len(),
                     })?;
                 let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
-                if opened != proof.folded_eval_blindings[index] {
+                let expected_blinding =
+                    proof
+                        .folded_eval_blindings
+                        .get(index)
+                        .ok_or(RelaxedError::LengthMismatch {
+                            name: "folded eval blindings",
+                            expected: binding_count,
+                            actual: proof.folded_eval_blindings.len(),
+                        })?;
+                if opened != *expected_blinding {
                     return Err(VerificationError::EvalWitnessMismatch {
                         kind: "blinding",
                         index,
@@ -588,6 +607,7 @@ fn ensure_len(name: &'static str, expected: usize, actual: usize) -> Result<(), 
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests should fail loudly")]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use crate::{

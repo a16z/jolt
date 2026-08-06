@@ -126,6 +126,10 @@ pub struct HyperKZGVerifierSetup<P: PairingGroup> {
 }
 
 impl<P: PairingGroup> From<&HyperKZGProverSetup<P>> for HyperKZGVerifierSetup<P> {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "SRS generation always produces at least one G1 power and exactly two G2 powers"
+    )]
     fn from(prover: &HyperKZGProverSetup<P>) -> Self {
         Self {
             g1: prover.g1_powers[0],

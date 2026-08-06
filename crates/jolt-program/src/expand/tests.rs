@@ -1,3 +1,9 @@
+#![expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions inside Result-returning tests"
+)]
+#![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;

@@ -248,10 +248,12 @@ fn bytecode_final_openings<F: Field>(
         .map(|chunk_idx| PrecommittedFinalOpening {
             polynomial: JoltCommittedPolynomial::BytecodeChunk(chunk_idx),
             point: source.point.to_vec(),
+            // In range whenever the claims are present: the count was checked
+            // against `layout.chunk_count()` above.
             opening_claim: source
                 .opening_claim
                 .as_ref()
-                .map(|chunk_claims| chunk_claims[chunk_idx]),
+                .and_then(|chunk_claims| chunk_claims.get(chunk_idx).copied()),
         })
         .collect())
 }

@@ -36,7 +36,10 @@ impl core::fmt::Display for MemoryLayoutError {
     }
 }
 
-#[allow(clippy::too_long_first_doc_paragraph)]
+#[expect(
+    clippy::too_long_first_doc_paragraph,
+    reason = "pre-existing doc paragraph exceeds the pedantic limit"
+)]
 /// Represented as a "peripheral device" in the RISC-V emulator, this captures
 /// all reads from the reserved memory address space for program inputs and all writes
 /// to the reserved memory address space for program outputs.
@@ -74,32 +77,22 @@ impl JoltDevice {
             0 // Termination bit should never be loaded after it is set
         } else if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
-            if self.inputs.len() <= internal_address {
-                0
-            } else {
-                self.inputs[internal_address]
-            }
+            self.inputs.get(internal_address).copied().unwrap_or(0)
         } else if self.is_trusted_advice(address) {
             let internal_address = self.convert_trusted_advice_read_address(address);
-            if self.trusted_advice.len() <= internal_address {
-                0
-            } else {
-                self.trusted_advice[internal_address]
-            }
+            self.trusted_advice
+                .get(internal_address)
+                .copied()
+                .unwrap_or(0)
         } else if self.is_untrusted_advice(address) {
             let internal_address = self.convert_untrusted_advice_read_address(address);
-            if self.untrusted_advice.len() <= internal_address {
-                0
-            } else {
-                self.untrusted_advice[internal_address]
-            }
+            self.untrusted_advice
+                .get(internal_address)
+                .copied()
+                .unwrap_or(0)
         } else if self.is_output(address) {
             let internal_address = self.convert_write_address(address);
-            if self.outputs.len() <= internal_address {
-                0
-            } else {
-                self.outputs[internal_address]
-            }
+            self.outputs.get(internal_address).copied().unwrap_or(0)
         } else {
             assert!(address <= RAM_START_ADDRESS - 8);
             0 // zero-padding
@@ -126,7 +119,13 @@ impl JoltDevice {
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
         }
-        self.outputs[internal_address] = value;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "the resize above guarantees internal_address < outputs.len()"
+        )]
+        {
+            self.outputs[internal_address] = value;
+        }
     }
 
     pub fn size(&self) -> usize {
@@ -293,6 +292,11 @@ impl core::fmt::Debug for MemoryLayout {
 }
 
 impl MemoryLayout {
+    #[expect(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        reason = "layout construction panics on pathological config sizes; fallible construction is tracked as a follow-up in specs/verifier-closure-lints.md"
+    )]
     pub fn new(config: &MemoryConfig) -> Self {
         assert!(
             config.program_size.is_some(),
@@ -415,13 +419,13 @@ impl MemoryLayout {
         Self {
             program_size,
             max_trusted_advice_size,
-            max_untrusted_advice_size,
-            max_input_size,
-            max_output_size,
             trusted_advice_start,
             trusted_advice_end,
+            max_untrusted_advice_size,
             untrusted_advice_start,
             untrusted_advice_end,
+            max_input_size,
+            max_output_size,
             input_start,
             input_end,
             output_start,

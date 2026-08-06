@@ -181,6 +181,10 @@ mod tests {
     /// verifier's `derive_output_term` resolves against; equality with the factored
     /// form is the invariant the clear stage-1 path relies on.
     #[test]
+    #[expect(
+        clippy::unreachable,
+        reason = "test Spartan outer dimensions are statically valid"
+    )]
     fn output_expression_matches_factored_quadratic_form() {
         let dimensions = match SpartanOuterDimensions::new(
             8,

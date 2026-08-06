@@ -72,6 +72,23 @@
 //! value) and `from_transcript_values` (consume one drawn scalar per field in
 //! declaration order, erroring if the stream runs dry).
 
+// In the jolt-verifier runtime closure: stricter panic and unsafe discipline
+// than the workspace lints (specs/verifier-closure-lints.md).
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::unreachable,
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes
+)]
+// wildcard_enum_match_arm is omitted: this crate matches foreign syn AST enums,
+// where wildcard fallbacks to Err/None are the correct, version-stable idiom.
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -347,7 +364,15 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
                 // A payload-carrying variant is always scalar; the `Vec`+payload
                 // combination is rejected in `plan_field`.
                 (Some(_), Some(_)) => {
-                    unreachable!("Vec fields with payload annotations are rejected in plan_field")
+                    #[expect(
+                        clippy::unreachable,
+                        reason = "plan_field rejects Vec fields with payload annotations before id_expr runs"
+                    )]
+                    {
+                        unreachable!(
+                            "Vec fields with payload annotations are rejected in plan_field"
+                        )
+                    }
                 }
                 // Indexed family over a `usize` payload: `Variant(i)`.
                 (Some(index), None) => quote!(#jolt::JoltVirtualPolynomial::#variant(#index)),
