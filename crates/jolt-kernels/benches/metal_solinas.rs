@@ -172,6 +172,10 @@ mod macos {
                 }
                 "instruction-input-service" => instruction_input::bench_service(c, &context),
                 #[cfg(feature = "test-utils")]
+                "instruction-input-service-first-transition-compare" => {
+                    instruction_input::compare_service_first_transitions(&context);
+                }
+                #[cfg(feature = "test-utils")]
                 "instruction-input-successor-materializer" => {
                     instruction_input::bench_successor_materializer(c, &context);
                 }

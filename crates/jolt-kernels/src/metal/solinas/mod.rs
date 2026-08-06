@@ -76,8 +76,8 @@ pub(crate) use instruction_input::{
     INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
 };
 pub use instruction_input::{
-    InstructionInputPrimerStats, InstructionInputRow, InstructionInputRows,
-    InstructionInputSequence, InstructionInputSequenceConfig,
+    InstructionInputFirstTransition, InstructionInputPrimerStats, InstructionInputRow,
+    InstructionInputRows, InstructionInputSequence, InstructionInputSequenceConfig,
     InstructionInputStorageInitialization, InstructionInputStorageInitializationStats,
     InstructionInputSuccessorDenseMessageStats, InstructionInputSuccessorMaterializeStats,
     InstructionInputSuccessorTransitionStats, INSTRUCTION_INPUT_COEFFICIENTS,

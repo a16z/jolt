@@ -9,7 +9,7 @@ use jolt_field::{
     AkitaField, AkitaSignedProductAccumulator, FromPrimitiveInt, SignedProductAccumulator as _,
 };
 use jolt_kernels::metal::solinas::{
-    InstructionInputSequence, InstructionInputSequenceConfig,
+    InstructionInputFirstTransition, InstructionInputSequence, InstructionInputSequenceConfig,
     InstructionInputStorageInitialization, SolinasMetal, SpartanOuterUniskipRow,
     INSTRUCTION_INPUT_TABLES,
 };
@@ -58,6 +58,7 @@ impl SequenceDispatch {
             native_message_threads_per_threadgroup: Some(self.native_message),
             native_transition_threads_per_threadgroup: Some(self.native_transition),
             dense_transition_threads_per_threadgroup: Some(self.dense_transition),
+            first_transition: InstructionInputFirstTransition::Compact,
             storage_initialization,
         }
     }
@@ -208,6 +209,21 @@ impl Workload {
         dispatch: SequenceDispatch,
         storage_initialization: InstructionInputStorageInitialization,
     ) -> EvalResult<InstructionInputSequence> {
+        self.prepare_sequence_with_first_transition(
+            context,
+            dispatch,
+            storage_initialization,
+            InstructionInputFirstTransition::Compact,
+        )
+    }
+
+    pub fn prepare_sequence_with_first_transition(
+        &mut self,
+        context: &SolinasMetal,
+        dispatch: SequenceDispatch,
+        storage_initialization: InstructionInputStorageInitialization,
+        first_transition: InstructionInputFirstTransition,
+    ) -> EvalResult<InstructionInputSequence> {
         let seed = self
             .resident_seed
             .take()
@@ -220,7 +236,10 @@ impl Workload {
             .collect::<Vec<_>>();
         let sequence = context.prepare_instruction_input_sequence(
             &rows,
-            dispatch.config_with_storage_initialization(storage_initialization),
+            InstructionInputSequenceConfig {
+                first_transition,
+                ..dispatch.config_with_storage_initialization(storage_initialization)
+            },
         )?;
         drop(rows);
         Ok(sequence)
@@ -592,11 +611,14 @@ fn finish_trace(
 }
 
 pub fn run_actual_optimized(workload: &Workload) -> EvalResult<ActualOptimizedTrace> {
-    let mut kernel = OptimizedInstructionInputKernel::new(
-        &workload.point,
-        workload.cpu_rows.as_ref().clone(),
-        workload.gamma,
-    )?;
+    run_actual_optimized_with_rows(workload, workload.cpu_rows.as_ref().clone())
+}
+
+pub fn run_actual_optimized_with_rows(
+    workload: &Workload,
+    rows: Vec<CpuInstructionInputRow>,
+) -> EvalResult<ActualOptimizedTrace> {
+    let mut kernel = OptimizedInstructionInputKernel::new(&workload.point, rows, workload.gamma)?;
     let mut transcript = transcript(workload.initial_claim);
     let mut claim = workload.initial_claim;
     let mut round_polys = Vec::with_capacity(workload.log_n);

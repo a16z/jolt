@@ -1,12 +1,14 @@
 # InstructionInput Metal successor
 
-Status: executable experimental first transition. The module and MSL fragment
-are registered with the Solinas source assembler. With `test-utils` (or unit
-tests), sequence preparation compiles both successor pipelines and primes the
-materializer, dense-message entry point, and reduction on a 64-row prefix.
-The fused experiment consumes the challenge after the production first
-message, records one command buffer and one wait, and advances the actual
-sequence from `Native` to `Dense`. It borrows the production
+Status: executable but rejected experimental first transition. The module and
+MSL fragment are registered with the Solinas source assembler. Sequence
+configuration retains `Compact` and `Successor` as explicit A/B controls, with
+`Compact` selected by default. Compact preparation neither compiles nor primes
+the successor pipelines. Explicit successor preparation compiles them and
+primes the materializer, dense-message entry point, and reduction on a 64-row
+prefix. The fused experiment consumes the challenge after the first message,
+records one command buffer and one wait, and advances the actual sequence from
+`Native` to `Dense`. It borrows the production
 `InstructionInputRows` allocation and existing dense, equality-weight, and
 reduction buffers.
 
@@ -19,11 +21,12 @@ native message, row production, data-buffer allocation, pipeline setup, and
 full-table readback. The isolated diagnostics remain available in
 `BeforeMessage` and do not advance sequence state.
 
-This is not the selected production transition yet. The normal backend still
-dispatches the old native-transition entry point, and complete-service parity
-has not run with the successor selected. The duplicate row type in this
-directory freezes bytes only; runtime dispatch uses the actual production
-allocation.
+The normal backend selects the compact native-transition entry point. Five
+alternating target-size service pairs produced identical full member traces
+between configurations but consistently favored compact, so the successor is
+not a promotion candidate in its current form. Full integrated proof-byte and
+verifier parity remain unmeasured. The duplicate row type in this directory
+freezes bytes only; runtime dispatch uses the actual production allocation.
 
 ## Exact relation and orientation
 
@@ -65,9 +68,10 @@ q(3) = 3*q(1) - 2*q(0) + 6*q_quadratic,
 ```
 
 then multiplies these four values by the current linear Gruen factor. Fiat-
-Shamir remains on the host. `finish_rounds`, all eight outputs, derived
-`EqProduct`, the three stage-3 aliases, curated output absorption, proof bytes,
-and verifier success are unchanged.
+Shamir remains on the host. The selector does not intentionally change
+`finish_rounds`, the eight outputs, derived `EqProduct`, the three stage-3
+aliases, curated output absorption, proof bytes, or verification. Full
+proof-byte and verifier parity remain promotion requirements.
 
 ## Producer/consumer ABI and lifetime
 
@@ -236,10 +240,29 @@ useful products. A fresh run measured 26.659 ms first wall, 26.874 ms warm
 wall, and an outer-call Criterion wall interval of 26.950--27.384 ms with a
 27.241 ms median (16.014 Gproduct/s). The paired current native-transition
 benchmark in the same binary measured a 31.350 ms wall median; the successor
-is 1.151x faster for this phase. The paired optimized CPU transition measured
-457.48 ms, so this isolated successor phase is 16.79x faster than CPU. These are
-development measurements, not complete-service promotion evidence; unrelated
-uncommitted static design modules were present in the benchmark build.
+is 1.151x faster for this phase. The paired preallocated scalar-mirror
+transition measured 457.48 ms, so this isolated successor phase is 16.79x
+faster than that control. These are development measurements, not
+complete-service promotion evidence; unrelated uncommitted static design
+modules were present in the benchmark build.
+
+Resident-member A/B reverses that isolated result. A five-pair log-26 run used
+one prepared and primed resident sequence, identical protocol tape within each
+pair, alternating `Successor -> Compact` and `Compact -> Successor`, and exact
+trace equality. Every pair favored compact. Successor wall median was 77.621 ms
+versus 74.750 ms compact; GPU-active medians were 68.455 and 65.303 ms. The
+paired `compact/successor` wall ratios were 0.963557, 0.965193, 0.968997,
+0.963988, and 0.951520. These are uncommitted screening observations rather
+than an auditable promotion artifact; they suffice to reject the slower split,
+not to promote either arm.
+
+A separate CPU-first Criterion run measured 875.44 ms for the scalar control
+mirror and 84.330 ms for the compact Metal hybrid, or 10.38x, including all GPU
+rounds, the 8 MiB readback, and CPU tail. This does not establish a 10.38x
+speedup over `OptimizedInstructionInputKernel`; that denominator remains the
+frozen service measurement below until a fresh production-CPU holdout runs.
+The Criterion service route now invokes `OptimizedInstructionInputKernel`
+directly and clones its consumed row vector before starting each timed sample.
 
 ## Frozen CPU denominator and gates
 
@@ -333,6 +356,7 @@ Open integration choices are explicit:
 
 The runtime already derives live `E_in`/`E_out` lengths and validates
 `2 * E_in * E_out == table_elements`; it never hardcodes the log-26 split.
-Remaining integration must select the fused transition in the normal backend,
-run full optimized-backend proof parity, capture occupancy/spill evidence, and
-then evaluate the complete-service and order-stratified gates.
+The compact path remains selected. Re-engage the successor only if a new
+mechanism removes its measured complete-service loss; any such candidate must
+repeat full proof parity, occupancy/spill capture, and the order-stratified
+holdout rather than relying on the isolated transition microbenchmark.

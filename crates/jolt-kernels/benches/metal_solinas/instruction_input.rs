@@ -12,8 +12,8 @@ use jolt_kernels::metal::solinas::instruction_input_successor::{
     InstructionInputSuccessorRow, InstructionInputSuccessorSelectors,
 };
 use jolt_kernels::metal::solinas::{
-    InstructionInputSequence, InstructionInputStorageInitialization, SolinasMetal,
-    INSTRUCTION_INPUT_TABLES,
+    InstructionInputFirstTransition, InstructionInputSequence,
+    InstructionInputStorageInitialization, SolinasMetal, INSTRUCTION_INPUT_TABLES,
 };
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
@@ -26,8 +26,8 @@ mod support;
 
 use support::{
     cpu_native_bind_and_message_preallocated, cpu_native_q_evals, descriptor_grid,
-    run_actual_optimized, run_cpu, run_hybrid, run_hybrid_with_readback, Capture, SequenceDispatch,
-    Workload,
+    run_actual_optimized, run_actual_optimized_with_rows, run_cpu, run_hybrid,
+    run_hybrid_with_readback, Capture, SequenceDispatch, TimedTrace, Workload,
 };
 
 const DEFAULT_ELEMENTS: [usize; 3] = [1 << 16, 1 << 20, 1 << 22];
@@ -57,13 +57,136 @@ pub fn bench_service(c: &mut Criterion, context: &SolinasMetal) {
 }
 
 #[cfg(feature = "test-utils")]
+pub fn compare_service_first_transitions(context: &SolinasMetal) {
+    validate_successor_pipeline(context);
+    let dispatch = dispatch();
+    let cutoff_log2 = env_usize(
+        "JOLT_METAL_INSTRUCTION_INPUT_CUTOFF_LOG2",
+        DEFAULT_CUTOFF_LOG2,
+    );
+    for rows in cases() {
+        let cutoff = 1usize << cutoff_log2.min(rows.ilog2() as usize - 1);
+        let (workload, mut sequence) = prepare_case_with_first_transition(
+            context,
+            rows,
+            dispatch,
+            0xa54f_f53a,
+            InstructionInputFirstTransition::Successor,
+        );
+        let trials = (0..5)
+            .map(|trial| workload.retarget(0x510e_527f ^ trial as u64))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("InstructionInput comparison workloads should retarget");
+        let run_arm = |sequence: &mut InstructionInputSequence,
+                       trial: &Workload,
+                       first_transition: InstructionInputFirstTransition|
+         -> TimedTrace {
+            sequence
+                .reset_with_first_transition(first_transition)
+                .expect("InstructionInput comparison selector should be available");
+            black_box(
+                run_hybrid(sequence, trial, cutoff, Capture::TARGET)
+                    .expect("InstructionInput comparison arm should run"),
+            )
+        };
+
+        let successor_warm = run_arm(
+            &mut sequence,
+            &trials[0],
+            InstructionInputFirstTransition::Successor,
+        );
+        let compact_warm = run_arm(
+            &mut sequence,
+            &trials[0],
+            InstructionInputFirstTransition::Compact,
+        );
+        assert_eq!(successor_warm.trace, compact_warm.trace);
+
+        let mut successor_walls = Vec::with_capacity(trials.len());
+        let mut compact_walls = Vec::with_capacity(trials.len());
+        let mut successor_active = Vec::with_capacity(trials.len());
+        let mut compact_active = Vec::with_capacity(trials.len());
+        let mut paired_ratios = Vec::with_capacity(trials.len());
+        for (pair, trial) in trials.iter().enumerate() {
+            let successor_first = pair.is_multiple_of(2);
+            let (successor, compact) = if successor_first {
+                (
+                    run_arm(
+                        &mut sequence,
+                        trial,
+                        InstructionInputFirstTransition::Successor,
+                    ),
+                    run_arm(
+                        &mut sequence,
+                        trial,
+                        InstructionInputFirstTransition::Compact,
+                    ),
+                )
+            } else {
+                let compact = run_arm(
+                    &mut sequence,
+                    trial,
+                    InstructionInputFirstTransition::Compact,
+                );
+                let successor = run_arm(
+                    &mut sequence,
+                    trial,
+                    InstructionInputFirstTransition::Successor,
+                );
+                (successor, compact)
+            };
+            assert_eq!(successor.trace, compact.trace);
+            assert!(successor.resident_rows_stable && compact.resident_rows_stable);
+            assert!(successor.static_device_buffers_stable && compact.static_device_buffers_stable);
+            assert_eq!(successor.readbacks, 1);
+            assert_eq!(compact.readbacks, 1);
+            let ratio = compact.wall.as_secs_f64() / successor.wall.as_secs_f64();
+            eprintln!(
+                "instruction_input_first_transition_pair rows={rows} pair={pair} order={} successor_wall={:?} compact_wall={:?} successor_active={:?} compact_active={:?} successor_first_transition={:?} compact_first_transition={:?} compact_over_successor={ratio:.6}",
+                if successor_first {
+                    "successor-compact"
+                } else {
+                    "compact-successor"
+                },
+                successor.wall,
+                compact.wall,
+                successor.gpu_active,
+                compact.gpu_active,
+                successor.gpu_command_wall[1],
+                compact.gpu_command_wall[1],
+            );
+            successor_walls.push(successor.wall);
+            compact_walls.push(compact.wall);
+            successor_active.push(successor.gpu_active);
+            compact_active.push(compact.gpu_active);
+            paired_ratios.push(ratio);
+        }
+        eprintln!(
+            "instruction_input_first_transition_summary rows={rows} pairs={} successor_wall_median={:?} compact_wall_median={:?} successor_active_median={:?} compact_active_median={:?} paired_compact_over_successor_median={:.6}",
+            trials.len(),
+            duration_median(&successor_walls),
+            duration_median(&compact_walls),
+            duration_median(&successor_active),
+            duration_median(&compact_active),
+            f64_median(&mut paired_ratios),
+        );
+    }
+}
+
+#[cfg(feature = "test-utils")]
 pub fn bench_successor_materializer(c: &mut Criterion, context: &SolinasMetal) {
     validate_successor_pipeline(context);
     let dispatch = dispatch();
     let mut group = comparison_group(c, "metal_sumcheck/instruction_input_successor_materializer");
     for rows in cases() {
         let setup_started = Instant::now();
-        let (_workload, mut sequence) = prepare_case(context, rows, dispatch, 0x6a09_e667);
+        let (_workload, mut sequence) = prepare_case_with_first_transition(
+            context,
+            rows,
+            dispatch,
+            0x6a09_e667,
+            InstructionInputFirstTransition::Successor,
+        );
         let setup_wall = setup_started.elapsed();
         let initialization = sequence.storage_initialization();
         let resident_identity = sequence.resident_row_identity();
@@ -140,7 +263,13 @@ pub fn bench_successor_dense_message(c: &mut Criterion, context: &SolinasMetal) 
     );
     for rows in cases() {
         let setup_started = Instant::now();
-        let (workload, mut sequence) = prepare_case(context, rows, dispatch, 0xbb67_ae85);
+        let (workload, mut sequence) = prepare_case_with_first_transition(
+            context,
+            rows,
+            dispatch,
+            0xbb67_ae85,
+            InstructionInputFirstTransition::Successor,
+        );
         let setup_wall = setup_started.elapsed();
         let initialization = sequence.storage_initialization();
         let challenge = AkitaField::from_u64(0x1234_5678_9abc_def0);
@@ -237,7 +366,13 @@ pub fn bench_successor_transition(c: &mut Criterion, context: &SolinasMetal) {
     let mut group = comparison_group(c, "metal_sumcheck/instruction_input_successor_transition");
     for rows in cases() {
         let setup_started = Instant::now();
-        let (workload, mut sequence) = prepare_case(context, rows, dispatch, 0x3c6e_f372);
+        let (workload, mut sequence) = prepare_case_with_first_transition(
+            context,
+            rows,
+            dispatch,
+            0x3c6e_f372,
+            InstructionInputFirstTransition::Successor,
+        );
         let setup_wall = setup_started.elapsed();
         let initialization = sequence.storage_initialization();
         let resident_identity = sequence.resident_row_identity();
@@ -433,7 +568,8 @@ fn bench_message_metal(
     threads: usize,
 ) {
     let suffix = format!("n{rows}_tg{threads}");
-    let _ = group.bench_function(BenchmarkId::new("metal_wall_compact", &suffix), |bench| {
+    let wall_name = format!("metal_wall_{}", sequence.first_transition().as_str());
+    let _ = group.bench_function(BenchmarkId::new(wall_name, &suffix), |bench| {
         bench.iter_custom(|iterations| {
             let mut measured = Duration::ZERO;
             for _ in 0..iterations {
@@ -448,7 +584,8 @@ fn bench_message_metal(
             measured
         });
     });
-    let _ = group.bench_function(BenchmarkId::new("metal_active_compact", &suffix), |bench| {
+    let active_name = format!("metal_active_{}", sequence.first_transition().as_str());
+    let _ = group.bench_function(BenchmarkId::new(active_name, &suffix), |bench| {
         bench.iter_custom(|iterations| {
             let mut measured = Duration::ZERO;
             for _ in 0..iterations {
@@ -472,7 +609,13 @@ fn bench_transition_cases(c: &mut Criterion, context: &SolinasMetal) {
     let dispatch = dispatch();
     let mut group = comparison_group(c, "metal_sumcheck/instruction_input_native_transition");
     for rows in cases() {
-        let (workload, mut sequence) = prepare_case(context, rows, dispatch, 2);
+        let (workload, mut sequence) = prepare_case_with_first_transition(
+            context,
+            rows,
+            dispatch,
+            2,
+            InstructionInputFirstTransition::Compact,
+        );
         let challenge = -AkitaField::from_u64(0x9e37_79b9);
         let initial_gruen = GruenSplitEqPolynomial::new(&workload.point, BindingOrder::LowToHigh);
         let initial_e_in = initial_gruen.e_in_current().to_vec();
@@ -674,15 +817,17 @@ fn bench_service_cpu(
     rows: usize,
 ) {
     let _ = group.bench_function(
-        BenchmarkId::new("cpu_optimized_mirror", format!("n{rows}_cutoff{cutoff}")),
+        BenchmarkId::new("cpu_optimized", format!("n{rows}_cutoff{cutoff}")),
         |bench| {
             bench.iter_custom(|iterations| {
                 let mut measured = Duration::ZERO;
                 for _ in 0..iterations {
-                    let output = run_cpu(workload, cutoff, Capture::TARGET)
-                        .expect("InstructionInput optimized CPU sequence should run");
-                    measured += output.wall;
-                    let _ = black_box(output.trace.final_sumcheck_claim);
+                    let rows = workload.cpu_rows.as_ref().clone();
+                    let started = Instant::now();
+                    let output = run_actual_optimized_with_rows(workload, rows)
+                        .expect("optimized InstructionInput CPU sequence should run");
+                    measured += started.elapsed();
+                    let _ = black_box(output.final_sumcheck_claim);
                 }
                 measured
             });
@@ -699,11 +844,15 @@ fn bench_service_metal(
     dispatch: SequenceDispatch,
 ) {
     let suffix = format!(
-        "n{rows}_cutoff{cutoff}_tg{}-{}-{}",
-        dispatch.native_message, dispatch.native_transition, dispatch.dense_transition
+        "n{rows}_cutoff{cutoff}_first-{}_tg{}-{}-{}",
+        sequence.first_transition().as_str(),
+        dispatch.native_message,
+        dispatch.native_transition,
+        dispatch.dense_transition
     );
     let mut cutoff_readback = vec![AkitaField::zero(); INSTRUCTION_INPUT_TABLES * cutoff];
-    let _ = group.bench_function(BenchmarkId::new("metal_wall_compact", &suffix), |bench| {
+    let wall_name = format!("metal_wall_{}", sequence.first_transition().as_str());
+    let _ = group.bench_function(BenchmarkId::new(wall_name, &suffix), |bench| {
         bench.iter_custom(|iterations| {
             let mut measured = Duration::ZERO;
             for _ in 0..iterations {
@@ -721,7 +870,8 @@ fn bench_service_metal(
             measured
         });
     });
-    let _ = group.bench_function(BenchmarkId::new("metal_active_compact", &suffix), |bench| {
+    let active_name = format!("metal_active_{}", sequence.first_transition().as_str());
+    let _ = group.bench_function(BenchmarkId::new(active_name, &suffix), |bench| {
         bench.iter_custom(|iterations| {
             let mut measured = Duration::ZERO;
             for _ in 0..iterations {
@@ -817,7 +967,13 @@ fn validate(context: &SolinasMetal) {
 fn validate_successor_pipeline(context: &SolinasMetal) {
     let rows = 1 << DEFAULT_VALIDATION_LOG_N;
     let dispatch = dispatch();
-    let (workload, mut sequence) = prepare_case(context, rows, dispatch, 0x510e_527f);
+    let (workload, mut sequence) = prepare_case_with_first_transition(
+        context,
+        rows,
+        dispatch,
+        0x510e_527f,
+        InstructionInputFirstTransition::Successor,
+    );
     let challenge = AkitaField::from_u64(0x1234_5678_9abc_def0);
     let successor_rows = workload
         .cpu_rows
@@ -895,18 +1051,34 @@ fn prepare_case(
     dispatch: SequenceDispatch,
     seed: u64,
 ) -> (Workload, InstructionInputSequence) {
+    prepare_case_with_first_transition(context, rows, dispatch, seed, configured_first_transition())
+}
+
+fn prepare_case_with_first_transition(
+    context: &SolinasMetal,
+    rows: usize,
+    dispatch: SequenceDispatch,
+    seed: u64,
+    first_transition: InstructionInputFirstTransition,
+) -> (Workload, InstructionInputSequence) {
     let mut workload = Workload::new(rows.ilog2() as usize, seed)
         .expect("InstructionInput benchmark workload should build");
     let storage_initialization = storage_initialization();
     let mut sequence = workload
-        .prepare_sequence_with_storage_initialization(context, dispatch, storage_initialization)
+        .prepare_sequence_with_first_transition(
+            context,
+            dispatch,
+            storage_initialization,
+            first_transition,
+        )
         .expect("InstructionInput resident sequence should prepare");
     let initialization = sequence.storage_initialization();
     let primer = sequence
         .prime_native_pipeline()
         .expect("InstructionInput native pipeline should prime");
     eprintln!(
-        "instruction_input storage_initialization={} initialization_bytes={} initialization_wall_ns={} initialization_gpu_active_ns={} primer_rows={} primer_wall_ns={} primer_gpu_active_ns={} successor_materializer_primer={}",
+        "instruction_input first_transition={} storage_initialization={} initialization_bytes={} initialization_wall_ns={} initialization_gpu_active_ns={} primer_rows={} primer_wall_ns={} primer_gpu_active_ns={} successor_materializer_primer={}",
+        first_transition.as_str(),
         initialization.mode.as_str(),
         initialization.bytes,
         initialization.wall.as_nanos(),
@@ -914,7 +1086,7 @@ fn prepare_case(
         primer.source_elements,
         primer.wall.as_nanos(),
         primer.gpu_active.as_nanos(),
-        cfg!(feature = "test-utils"),
+        first_transition == InstructionInputFirstTransition::Successor,
     );
     (workload, sequence)
 }
@@ -929,6 +1101,19 @@ fn storage_initialization() -> InstructionInputStorageInitialization {
         "full" => InstructionInputStorageInitialization::Full,
         value => panic!(
             "JOLT_METAL_INSTRUCTION_INPUT_STORAGE_INITIALIZATION must be lazy, minimal, or full; got {value}"
+        ),
+    }
+}
+
+fn configured_first_transition() -> InstructionInputFirstTransition {
+    match env::var("JOLT_METAL_INSTRUCTION_INPUT_FIRST_TRANSITION")
+        .as_deref()
+        .unwrap_or("compact")
+    {
+        "compact" => InstructionInputFirstTransition::Compact,
+        "successor" => InstructionInputFirstTransition::Successor,
+        value => panic!(
+            "JOLT_METAL_INSTRUCTION_INPUT_FIRST_TRANSITION must be compact or successor; got {value}"
         ),
     }
 }
@@ -979,6 +1164,19 @@ fn successor_dense_message_useful_muls(rows: usize, e_out_elements: usize) -> u6
 
 fn successor_transition_useful_muls(rows: usize, e_out_elements: usize) -> u64 {
     13 * rows as u64 / 2 + 3 * e_out_elements as u64
+}
+
+#[cfg(feature = "test-utils")]
+fn duration_median(values: &[Duration]) -> Duration {
+    let mut values = values.to_vec();
+    values.sort_unstable();
+    values[values.len() / 2]
+}
+
+#[cfg(feature = "test-utils")]
+fn f64_median(values: &mut [f64]) -> f64 {
+    values.sort_unstable_by(f64::total_cmp);
+    values[values.len() / 2]
 }
 
 fn comparison_group<'a>(c: &'a mut Criterion, name: &str) -> BenchmarkGroup<'a, WallTime> {

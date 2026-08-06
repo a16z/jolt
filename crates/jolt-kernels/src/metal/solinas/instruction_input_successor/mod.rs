@@ -1,7 +1,7 @@
 //! Experimental successor kernels for the InstructionInput Metal backend.
 //!
-//! The split phases are available to tests and evaluator builds. The
-//! production backend still selects the existing fused transition.
+//! Explicit configuration can select the split transition for experiments.
+//! The production default remains the existing compact transition.
 
 mod abi;
 pub mod model;
