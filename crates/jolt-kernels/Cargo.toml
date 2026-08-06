@@ -18,7 +18,7 @@ akita = ["jolt-claims/akita", "jolt-field/akita", "jolt-verifier/akita"]
 allocative = ["dep:allocative"]
 metal = ["akita", "dep:metal"]
 parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
-test-utils = ["dep:sha2"]
+test-utils = ["dep:jolt-transcript", "dep:serde", "dep:serde_json", "dep:sha2"]
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
@@ -34,9 +34,12 @@ jolt-poly = { workspace = true, default-features = false }
 jolt-riscv.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck.workspace = true
+jolt-transcript = { workspace = true, optional = true }
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive", "std"], optional = true }
+serde_json = { workspace = true, features = ["std"], optional = true }
 sha2 = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
@@ -74,6 +77,10 @@ required-features = ["metal", "parallel"]
 [[example]]
 name = "metal-spartan-outer-uniskip-eval"
 required-features = ["metal", "parallel"]
+
+[[example]]
+name = "metal-outer-remainder-successor-eval"
+required-features = ["metal", "parallel", "test-utils"]
 
 [[example]]
 name = "metal-instruction-ra-first-message-eval"

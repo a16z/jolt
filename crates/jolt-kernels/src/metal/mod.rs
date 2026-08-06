@@ -19,4 +19,10 @@ pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 #[cfg(test)]
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
 pub use instruction_read_raf::{InstructionReadRafMetalConfig, MetalBackend, MetalConfig};
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub use spartan_outer::{
+    OuterRemainderEvalError, OuterRemainderEvalFixture, OuterRemainderEvalResult,
+    OuterRemainderEvalSample,
+};
 pub use spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};

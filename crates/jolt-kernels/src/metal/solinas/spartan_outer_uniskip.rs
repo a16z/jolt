@@ -280,6 +280,88 @@ impl SpartanOuterUniskipRow {
             imm,
         ]
     }
+
+    #[cfg(feature = "test-utils")]
+    pub(crate) fn spartan_outer_fields<F: jolt_field::Field>(&self) -> [F; 35] {
+        let words = self.words;
+        let flags = words[19];
+        let flag = |bit| F::from_u64((flags >> bit) & 1);
+        let enabled = |bit| ((flags >> bit) & 1) != 0;
+        let signed = |low: u64, high: u64, positive: bool| {
+            let magnitude = u128::from(low) | (u128::from(high) << 64);
+            let value = F::from_u128(magnitude);
+            if positive {
+                value
+            } else {
+                -value
+            }
+        };
+        let load = enabled(FLAG_LOAD);
+        let store = enabled(FLAG_STORE);
+        let slot1 = words[10];
+        let slot2 = words[11];
+        let slot3 = words[12];
+        let ram_address = if load {
+            slot1
+        } else if store {
+            slot3
+        } else {
+            0
+        };
+        let rs2 = if load { 0 } else { slot1 };
+        let rd_write = if store { 0 } else { slot3 };
+        let ram_read = if load {
+            slot3
+        } else if store {
+            slot2
+        } else {
+            0
+        };
+        let ram_write = if load {
+            slot3
+        } else if store {
+            slot1
+        } else {
+            0
+        };
+        [
+            F::from_u64(words[0]),
+            signed(words[1], words[2], enabled(FLAG_RIGHT_INPUT_POSITIVE)),
+            signed(words[3], words[4], enabled(FLAG_PRODUCT_POSITIVE)),
+            flag(FLAG_SHOULD_BRANCH),
+            F::from_u64(words[5]),
+            F::from_u64(words[6]),
+            signed(words[7], words[8], enabled(FLAG_IMM_POSITIVE)),
+            F::from_u64(ram_address),
+            F::from_u64(words[9]),
+            F::from_u64(rs2),
+            F::from_u64(rd_write),
+            F::from_u64(ram_read),
+            F::from_u64(ram_write),
+            F::from_u64(words[13]),
+            F::from_u128(u128::from(words[14]) | (u128::from(words[15]) << 64)),
+            F::from_u64(words[16]),
+            F::from_u64(words[17]),
+            flag(FLAG_NEXT_VIRTUAL),
+            flag(FLAG_NEXT_FIRST),
+            F::from_u64(words[18]),
+            flag(FLAG_SHOULD_JUMP),
+            flag(FLAG_ADD),
+            flag(FLAG_SUB),
+            flag(FLAG_MUL),
+            flag(FLAG_LOAD),
+            flag(FLAG_STORE),
+            flag(FLAG_JUMP),
+            flag(FLAG_WRITE_LOOKUP),
+            flag(FLAG_VIRTUAL),
+            flag(FLAG_ASSERT),
+            flag(FLAG_DO_NOT_UPDATE),
+            flag(FLAG_ADVICE),
+            flag(FLAG_COMPRESSED),
+            flag(FLAG_IS_FIRST),
+            flag(FLAG_IS_LAST),
+        ]
+    }
 }
 
 struct CpuRowGroups {

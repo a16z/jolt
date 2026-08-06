@@ -78,8 +78,6 @@ pub use instruction_ra_sequence::{
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
 };
-#[cfg(feature = "test-utils")]
-pub use outer_remainder::OuterKernelArtifact;
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRemainderSequenceStorage,
@@ -89,6 +87,8 @@ pub use outer_remainder::{
     OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
     OuterRemainderStorageInitializationStats, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
+#[cfg(feature = "test-utils")]
+pub use outer_remainder::{OuterKernelArtifact, SealedOuterArtifact};
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
 };
@@ -223,6 +223,8 @@ pub enum MetalError {
     InvalidOffset,
     #[error("invalid OuterRemainder runtime artifact source")]
     InvalidOuterArtifactSource,
+    #[error("invalid sealed OuterRemainder artifact: {0}")]
+    InvalidSealedOuterArtifact(String),
     #[error("OuterRemainder artifact and runtime binding plans differ")]
     OuterArtifactBindingPlanMismatch,
     #[error("kernel requires Solinas offset {expected:#x}, but the context uses {got:#x}")]

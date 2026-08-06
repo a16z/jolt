@@ -44,6 +44,15 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+#[cfg(feature = "test-utils")]
+mod evaluation;
+
+#[cfg(feature = "test-utils")]
+pub use evaluation::{
+    OuterRemainderEvalError, OuterRemainderEvalFixture, OuterRemainderEvalResult,
+    OuterRemainderEvalSample,
+};
+
 const OUTER_DOMAIN: usize = OUTER_UNISKIP_DOMAIN_SIZE;
 const OUTER_VARIABLES: usize = 35;
 
@@ -746,50 +755,28 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         // Subsequent device failures are terminal because the sumcheck state
         // may already have advanced.
         let tau = take_metal_spartan_outer_tau(session, log_t)?;
-        let host = MetalOuterRemainderHost::new(log_t, &tau, inputs.relation.uniskip_challenge())?;
-        let mut sequence = sequence;
-        let endpoints = {
-            let phase = tracing::info_span!(
-                "MetalOuterRemainder::first_message",
-                dispatch_wall_ns = tracing::field::Empty,
-                gpu_active_ns = tracing::field::Empty,
-            );
-            let _phase_guard = phase.enter();
-            let (e_in, e_out) = host.current_weights();
-            let gpu_before = sequence.gpu_active_time();
-            let started = Instant::now();
-            let endpoints = sequence
-                .materialize_and_first_message(host.stream_lagrange(), e_in, e_out)
-                .map_err(metal_prepare_error)?;
-            record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
-            endpoints
-        };
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
             .outer_remainder_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let tail_elements = cycles.min(
-            self.config
-                .spartan_outer_remainder
-                .dispatch
-                .cpu_tail_elements,
-        );
-        Ok(Box::new(MetalOuterRemainderKernel {
-            host,
-            sequence: Some(sequence),
-            cpu_tail: None,
-            host_tail: Some((
-                vec![AkitaField::zero(); tail_elements],
-                vec![AkitaField::zero(); tail_elements],
-            )),
-            pending_endpoints: Some((endpoints[0], endpoints[1])),
+        let metadata = MetalOuterResidentMetadata {
             compact_rows_storage_id,
             residual_rows_storage_id,
             device_registry_id,
             resident_rows: cycles,
             compact_retained,
-            cpu_tail_elements: tail_elements,
-        }))
+        };
+        Ok(Box::new(MetalOuterRemainderKernel::from_attached_sequence(
+            log_t,
+            &tau,
+            inputs.relation.uniskip_challenge(),
+            sequence,
+            metadata,
+            self.config
+                .spartan_outer_remainder
+                .dispatch
+                .cpu_tail_elements,
+        )?))
     }
 }
 
@@ -1054,6 +1041,15 @@ impl MetalOuterRemainderHost {
     }
 }
 
+#[derive(Clone, Copy)]
+struct MetalOuterResidentMetadata {
+    compact_rows_storage_id: usize,
+    residual_rows_storage_id: usize,
+    device_registry_id: u64,
+    resident_rows: usize,
+    compact_retained: bool,
+}
+
 struct MetalOuterRemainderKernel {
     host: MetalOuterRemainderHost,
     sequence: Option<OuterRemainderSequence>,
@@ -1066,6 +1062,14 @@ struct MetalOuterRemainderKernel {
     resident_rows: usize,
     compact_retained: bool,
     cpu_tail_elements: usize,
+    #[cfg(feature = "test-utils")]
+    completed_gpu_active: Option<Duration>,
+    #[cfg(feature = "test-utils")]
+    completed_dispatch_counts: Option<super::solinas::OuterRemainderDispatchCounts>,
+    #[cfg(feature = "test-utils")]
+    completed_tail_elements: Option<usize>,
+    #[cfg(feature = "test-utils")]
+    completed_round_device_buffer_allocations: Option<usize>,
 }
 
 #[cfg(feature = "allocative")]
@@ -1086,6 +1090,67 @@ impl allocative::Allocative for MetalOuterRemainderKernel {
 }
 
 impl MetalOuterRemainderKernel {
+    fn from_attached_sequence(
+        log_t: usize,
+        tau: &[AkitaField],
+        uniskip_challenge: AkitaField,
+        mut sequence: OuterRemainderSequence,
+        metadata: MetalOuterResidentMetadata,
+        cpu_tail_elements: usize,
+    ) -> Result<Self, KernelError<AkitaField>> {
+        if metadata
+            .resident_rows
+            .checked_mul(2)
+            .is_none_or(|elements| sequence.current_elements() != elements)
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "attached Outer sequence has the wrong trace length",
+            });
+        }
+        let host = MetalOuterRemainderHost::new(log_t, tau, uniskip_challenge)?;
+        let endpoints = {
+            let phase = tracing::info_span!(
+                "MetalOuterRemainder::first_message",
+                dispatch_wall_ns = tracing::field::Empty,
+                gpu_active_ns = tracing::field::Empty,
+            );
+            let _phase_guard = phase.enter();
+            let (e_in, e_out) = host.current_weights();
+            let gpu_before = sequence.gpu_active_time();
+            let started = Instant::now();
+            let endpoints = sequence
+                .materialize_and_first_message(host.stream_lagrange(), e_in, e_out)
+                .map_err(metal_prepare_error)?;
+            record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
+            endpoints
+        };
+        let tail_elements = metadata.resident_rows.min(cpu_tail_elements);
+        Ok(Self {
+            host,
+            sequence: Some(sequence),
+            cpu_tail: None,
+            host_tail: Some((
+                vec![AkitaField::zero(); tail_elements],
+                vec![AkitaField::zero(); tail_elements],
+            )),
+            pending_endpoints: Some((endpoints[0], endpoints[1])),
+            compact_rows_storage_id: metadata.compact_rows_storage_id,
+            residual_rows_storage_id: metadata.residual_rows_storage_id,
+            device_registry_id: metadata.device_registry_id,
+            resident_rows: metadata.resident_rows,
+            compact_retained: metadata.compact_retained,
+            cpu_tail_elements: tail_elements,
+            #[cfg(feature = "test-utils")]
+            completed_gpu_active: None,
+            #[cfg(feature = "test-utils")]
+            completed_dispatch_counts: None,
+            #[cfg(feature = "test-utils")]
+            completed_tail_elements: None,
+            #[cfg(feature = "test-utils")]
+            completed_round_device_buffer_allocations: None,
+        })
+    }
+
     fn restore_cpu_tail(&mut self) -> Result<(), SumcheckError<AkitaField>> {
         let sequence = self.sequence.as_mut().ok_or_else(|| {
             metal_round_error(invalid_outer_remainder_state(
@@ -1263,6 +1328,14 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
             claimed
         };
+        #[cfg(feature = "test-utils")]
+        {
+            self.completed_gpu_active = Some(sequence.gpu_active_time());
+            self.completed_dispatch_counts = Some(sequence.dispatch_counts());
+            self.completed_tail_elements = Some(sequence.current_elements());
+            self.completed_round_device_buffer_allocations =
+                Some(sequence.round_device_buffer_allocations());
+        }
         let remaining_sequence_storage_bytes = sequence
             .storage_stats()
             .map_err(metal_output_error)?

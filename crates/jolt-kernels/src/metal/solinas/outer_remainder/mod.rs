@@ -1,6 +1,8 @@
 mod api;
 mod artifact;
 mod plan;
+#[cfg(feature = "test-utils")]
+mod sealed;
 mod sequence;
 mod shader;
 mod storage;
@@ -21,6 +23,8 @@ pub(crate) use plan::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config,
 };
+#[cfg(feature = "test-utils")]
+pub use sealed::SealedOuterArtifact;
 pub use sequence::OuterRemainderSequence;
 pub(super) use shader::SOURCE;
 pub(crate) use storage::OuterRemainderSequenceStorage;
